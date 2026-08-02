@@ -11,7 +11,7 @@ The name comes from the _talaria_, Hermes's winged sandals. The project is inten
 - Provide a polished terminal workflow closer to the strengths of Claude Code-style interfaces.
 - Preserve Hermes-native capabilities instead of reducing Hermes to generic chat.
 - Use stable integration boundaries where possible: the Hermes API for core runs and sessions, the TUI gateway for richer Hermes control-plane behavior, and typed adapters for deterministic surfaces such as Kanban.
-- Make changes small and reviewable so useful work can be proposed upstream to Hermes.
+- Make changes small and reviewable. Contributing useful work upstream to Hermes is welcome when it fits, but it is not a constraint on Talaria's architecture — see [ADR-0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md).
 - Keep the local development installation separate from an official Hermes installation.
 
 ## Non-goals
@@ -85,7 +85,7 @@ Changes that create durable project knowledge should update the relevant enginee
 
 ## Relationship to Hermes
 
-Talaria is an independent public project intended to explore improvements that may eventually be proposed to the upstream [Hermes Agent](https://github.com/NousResearch/hermes-agent) TUI. It is not an official Hermes distribution and does not imply upstream endorsement.
+Talaria is an independent public project built against [Hermes Agent](https://github.com/NousResearch/hermes-agent)'s public interfaces. It is not an official Hermes distribution and does not imply upstream endorsement.
 
 ## License
 

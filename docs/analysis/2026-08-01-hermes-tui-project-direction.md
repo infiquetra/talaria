@@ -132,6 +132,13 @@ Expose board state and mutations through explicit typed operations. Do not make 
 
 ## Development and contribution model
 
+> **Superseded 2026-08-02.** The three-mode launcher model below, and specifically mode 2
+> (`HERMES_TUI_DIR=<talaria>/ui-tui hermes --tui`, described as "the preferred compatibility mode for
+> UI-only work"), no longer describes the project. Talaria is a standalone client that dials a
+> gateway it did not launch. See
+> [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md).
+> The rest of this section is retained as the record of what was considered.
+
 Talaria is a public repository under Infiquetra, named for Hermes's winged sandals. The name is intended to be memorable while keeping the relationship to Hermes clear. It is not presented as an official Hermes distribution.
 
 The local workflow should support three states:
