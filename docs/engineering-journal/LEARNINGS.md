@@ -4,6 +4,28 @@
 
 ## 2026-08-02
 
+### A line count is not a reuse estimate — reading the file cut the estimate rather than confirming it
+
+**Author.** Reading Hermes's gateway event handler to settle a scoring criterion, at the operator's request
+
+**Context.** The language and TUI framework analysis scored "protocol-knowledge reuse from the existing Hermes terminal tree" at 5 points out of a possible 15, and attached a falsifiable condition: the score rises only if someone reads `ui-tui/src/app/createGatewayEventHandler.ts` and finds that reconciliation and error-recovery logic exceed 40% of it. The whole basis for the criterion existing at all was a line count — the file is 1,419 lines at Hermes `7f4d15515`, and nobody had opened it.
+
+**Evidence.** The read was done in full. Reconciliation, ordering, and race logic is roughly 200 lines — about 22% of the file's 894 code lines and 14% of its total. The bar was not cleared. Three structural findings explain why:
+
+1. **Only about a third of the file is protocol at all.** Roughly 310 lines are terminal theme and background detection with zero protocol content — and four of the file's five exports come from that block, imported by slash commands and config sync rather than by anything event-shaped. Another ~300 lines are Hermes product features (voice, wake word, billing, mixture-of-agents) that Talaria may never want.
+2. **The reconciliation engine is in a different file.** `turnController.ts` is a separate 1,092 lines holding the streaming buffer, segment flushing, and interrupt handling. The handler delegates to it at more than twenty call sites; most of its 45 event cases are four to twenty lines of null-check-and-forward.
+3. **The densest engineering in the file is a cost of the framework, not an asset.** A forced full redraw after every theme swap because the renderer's diff cache tears; a config fetch deferred out of handler construction to avoid React's "too many re-renders" guard in embedded PTYs; a submit deferred by a tick because React strict mode double-invokes updaters. A non-React stack inherits none of those problems and needs none of those lines.
+
+**Mechanism.** The hard-won logic that _is_ protocol-shaped consists of **rules, not machinery** — "a late live event must never overwrite a terminal sub-agent status" is a two-line predicate; "never resurrect a sub-agent whose start was missed" is one boolean flag. Each cost a bug to discover and costs about a line to re-encode. The file's 22% comment density is the reason the transfer works: the lessons are written down, and a written-down lesson is portable in a way that a codebase is not. Reading the file **is** the reuse.
+
+**Consequence for the analysis.** The read lowers the criterion rather than raising it, because the same knowledge is now available to every candidate stack equally. This weakens the strongest remaining argument for staying on TypeScript.
+
+**Side finding.** Hermes's own client states the profile constraint in a comment at `createGatewayEventHandler.ts:965-967` — "the TUI is a single-profile process" — and acts on it by refusing to route a wake-word event belonging to another profile. That is a second, client-side witness for [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)'s narrowed conclusion that Talaria should expect one gateway connection per profile.
+
+**Limit.** `turnController.ts` was not read, only its surface. If its reconciliation engine is less annotated than the handler, part of the reuse argument recovers there.
+
+**Generalizable rule.** A line count measures a file's size, never its value to you — the two diverge most when the file is large, because large files accumulate concerns you did not come for. Before pricing a codebase as a reuse asset, read it and classify it by concern; the estimate that survives contact is usually a fraction of the estimate that motivated the reading. And when a piece of analysis states in advance what evidence would change its score, run that test before re-litigating anything else.
+
 ### The stack was never decided, and six weeks of Hermes drift is now a measured number rather than a worry
 
 **Author.** Persisting the language and TUI framework analysis, at the operator's request

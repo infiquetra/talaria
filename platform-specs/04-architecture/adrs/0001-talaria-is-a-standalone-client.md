@@ -114,6 +114,14 @@ A gateway process binds `HERMES_HOME` at import, before any RPC arrives, so the 
 `_profile_home` override cannot rebind config, skills, or memory for a process that is already
 running — it redirects where that call's session state lives, which is a narrower thing.
 
+**A second witness, added 2026-08-02 from the client side.** Hermes's own terminal UI states the same
+constraint in its own comment and acts on it. At
+`ui-tui/src/app/createGatewayEventHandler.ts:965-967`: "Multi-profile routing: **the TUI is a
+single-profile process**, so a phrase enrolled by ANOTHER profile can't be routed here — surface the
+switch command instead of starting voice on the wrong profile." A wake-word event belonging to a
+different profile prints `hermes -p <profile> --tui` rather than acting locally. The gateway docstring
+and the client comment were written independently and agree.
+
 What remains genuinely open is only the residual: what a `session.create` carrying `profile: B`
 actually resolves in practice, since the quoted docstring describes the dashboard chat path rather
 than a direct attach. It is still a half-day probe and it still does not block this decision — but
