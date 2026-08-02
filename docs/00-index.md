@@ -5,8 +5,10 @@ Authority: `reference`
 
 ## Start here
 
-- [Project direction and conversation analysis](analysis/2026-08-01-hermes-tui-project-direction.md)
+- [Architecture decisions (ADRs)](../platform-specs/04-architecture/adrs/)
+- [Project direction and conversation analysis](analysis/2026-08-01-hermes-tui-project-direction.md) — launcher section superseded by ADR-0001
 - [What Talaria should become — first full-product ideation](ideation/2026-08-02-talaria-product-shape-ideation.md)
+- [Frame log format](formats/frame-log.md)
 - [Public-safe project context](public-safe-summary.md)
 - [Engineering journal](engineering-journal/README.md)
 

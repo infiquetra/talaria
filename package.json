@@ -1,7 +1,7 @@
 {
   "name": "talaria",
   "version": "0.1.0",
-  "description": "A modern, Hermes-native terminal UI built for upstreamable workflows and contribution.",
+  "description": "A modern, Hermes-native terminal UI and fleet console.",
   "license": "MIT",
   "type": "module",
   "engines": {
