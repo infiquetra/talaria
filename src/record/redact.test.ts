@@ -4,9 +4,90 @@ import { REDACTED, isSuspiciousKey, redactFrame, redactUrl } from "./redact.js";
 
 /**
  * These frames mirror the shapes the Hermes gateway actually dispatches, read
- * from `tui_gateway/server.py`. If a test here fails, a credential is one commit
- * away from being written to disk.
+ * from `tui_gateway/methods_prompt.py` at Hermes 7f4d15515. If a test here
+ * fails, a credential is one commit away from being written to disk.
  */
+
+/**
+ * Hermes's four "blocking bridges" and the params key each one carries the
+ * sensitive value in. Mirrors the parametrize list in the gateway's own
+ * `tests/tui_gateway/test_protocol.py`, which groups all four as sensitive
+ * prompts. Kept as data so adding a bridge here is the whole change.
+ */
+const BLOCKING_BRIDGES: ReadonlyArray<readonly [string, string]> = [
+  ["sudo.respond", "password"],
+  ["secret.respond", "value"],
+  ["terminal.read.respond", "text"],
+  ["clarify.respond", "answer"],
+];
+
+describe("blocking bridges", () => {
+  it.each(BLOCKING_BRIDGES)(
+    "withholds the sensitive value on %s",
+    (method, key) => {
+      const canary = `canary-for-${method}`;
+      const { frame, redactions } = redactFrame({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params: { request_id: "r-1", [key]: canary },
+      });
+
+      expect(JSON.stringify(frame)).not.toContain(canary);
+      expect((frame as any).params[key]).toBe(REDACTED);
+      expect(redactions).toContainEqual({
+        path: `params.${key}`,
+        reason: `deny-set:${method}`,
+      });
+    },
+  );
+});
+
+/**
+ * Real key names harvested from the Hermes gateway at `7f4d15515`, not invented
+ * examples. Seventeen distinct key names there contain "token" and exactly one
+ * is a credential, so this boundary is where over-redaction gets caught.
+ */
+describe("key-name net", () => {
+  it.each(["token", "access_token", "api_key", "password", "authorization"])(
+    "withholds %s",
+    (key) => {
+      expect(isSuspiciousKey(key)).toBe(true);
+    },
+  );
+
+  it.each([
+    "max_tokens",
+    "input_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+    "session_total_tokens",
+    "tokens_per_delta",
+    "token_estimate",
+    "token_line",
+    "session_key",
+    "idempotency_key",
+  ])("preserves %s, which is accounting data and not a credential", (key) => {
+    expect(isSuspiciousKey(key)).toBe(false);
+  });
+
+  it("keeps a usage frame numerically intact", () => {
+    const { frame, redactions } = redactFrame({
+      method: "event",
+      params: {
+        type: "usage",
+        payload: { input_tokens: 1200, output_tokens: 340, max_tokens: 4096 },
+      },
+    });
+
+    expect(redactions).toEqual([]);
+    expect((frame as any).params.payload).toEqual({
+      input_tokens: 1200,
+      output_tokens: 340,
+      max_tokens: 4096,
+    });
+  });
+});
 
 describe("redactFrame", () => {
   it("withholds the plaintext sudo password", () => {
@@ -154,4 +235,20 @@ describe("isSuspiciousKey", () => {
       expect(isSuspiciousKey(key)).toBe(false);
     }
   });
+});
+
+describe("camelCase keys", () => {
+  it.each(["authToken", "apiKey", "accessToken", "privateKey"])(
+    "withholds %s",
+    (key) => {
+      expect(isSuspiciousKey(key)).toBe(true);
+    },
+  );
+
+  it.each(["maxTokens", "inputTokens", "outputTokens", "sessionKey"])(
+    "preserves %s",
+    (key) => {
+      expect(isSuspiciousKey(key)).toBe(false);
+    },
+  );
 });

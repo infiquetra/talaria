@@ -62,8 +62,27 @@ is deliberately distinguishable from a missing file.
 ## Redaction
 
 **Credentials never reach the file.** The Hermes gateway carries them in plaintext on ordinary
-client-to-server frames — `sudo.respond` in `params.password`, `secret.respond` in `params.value` —
-so every frame passes a redaction boundary before it is written. See `src/record/redact.ts`.
+client-to-server frames. Hermes calls these its four "blocking bridges", verified against
+`tui_gateway/methods_prompt.py` at Hermes `7f4d15515`:
+
+| method                  | plaintext field   |
+| ----------------------- | ----------------- |
+| `sudo.respond`          | `params.password` |
+| `secret.respond`        | `params.value`    |
+| `terminal.read.respond` | `params.text`     |
+| `clarify.respond`       | `params.answer`   |
+
+Every frame passes a redaction boundary before it is written. See `src/record/redact.ts`.
+
+**Pin the Hermes revision whenever you re-derive this list.** It was first written against a
+checkout six weeks behind the running Hermes, in which these methods lived in a different file, and
+that reading missed `clarify.respond` entirely.
+
+**The recorder is currently receive-only**, so it writes `dir: "in"` frames and nothing else. All
+four fields above travel in the _other_ direction. Redaction is proven by unit tests, not by
+observed traffic, and the direction that actually carries credentials is not yet recorded at all.
+When Talaria gains a send path it must route outbound frames through the same boundary; that is the
+moment this format starts holding secrets.
 
 Withholding is recorded rather than silent, so a reader sees a marked hole instead of clean-looking
 data:
