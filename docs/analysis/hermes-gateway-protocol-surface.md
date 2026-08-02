@@ -16,8 +16,9 @@ Talaria's recorder attaches and listens, so it observes one direction. A protoco
 `ui-tui/` is a working client that sends the other half, which makes it the only available
 documentation of traffic Talaria cannot yet see.
 
-This is not a small program: 58,581 lines across 277 TypeScript files. The parts that carry protocol
-knowledge are much smaller.
+This is not a small program: `ui-tui/src` is 58,581 lines across 277 TypeScript files, and the whole
+`ui-tui/` workspace including `packages/hermes-ink` is 88,744 across 429. The parts that carry
+protocol knowledge are much smaller.
 
 | file                                   | lines | what it is                             |
 | -------------------------------------- | ----: | -------------------------------------- |
