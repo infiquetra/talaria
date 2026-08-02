@@ -29,6 +29,7 @@ git diff --check
 ## Working rules
 
 - Keep changes scoped and prefer small, composable interfaces.
+- **Cite Hermes source by revision, and read the Hermes that is running.** Where a local checkout and an installed copy both exist, read the installed one — resolve it with `python3 -c "import hermes_cli, os; print(os.path.dirname(hermes_cli.__file__))"` and record the revision (`git -C <dir> rev-parse --short=9 HEAD`) alongside any `file:line` you commit. A stale checkout never fails loudly: it answers every question fluently, because it is the same project, only older. Every citation in this repository was once wrong this way.
 - Do not import Hermes implementation modules when an API, gateway, or typed adapter boundary is sufficient.
 - Do not assume optional Hermes features exist. The Hermes API server publishes `GET /v1/capabilities`; the terminal gateway publishes nothing equivalent, so gateway capabilities must be inferred by probing each seam at startup and naming what is absent.
 - Preserve graceful fallback behavior when a richer capability is unavailable.
