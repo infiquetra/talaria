@@ -1,0 +1,14 @@
+# Talaria
+
+Talaria is a public experimental terminal UI for Hermes Agent.
+
+## Read first
+
+- [README.md](README.md)
+- [AGENTS.md](AGENTS.md)
+- [Project direction](docs/analysis/2026-08-01-hermes-tui-project-direction.md)
+- [Engineering journal](docs/engineering-journal/README.md)
+
+## Architectural direction
+
+Use the Hermes API for core run/session behavior, the TUI gateway for richer Hermes-native control-plane features, and typed adapters for deterministic surfaces such as Kanban. Avoid direct Hermes-core imports unless an explicit upstream-facing decision justifies them.

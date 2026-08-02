@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Hermes Agent upstream
+    url: https://github.com/NousResearch/hermes-agent
+    about: Check upstream Hermes issues before filing an integration question here.
