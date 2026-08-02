@@ -4,6 +4,20 @@
 
 ## 2026-08-02
 
+### Review artifacts are repo files, and they arrive carrying their producer's context
+
+**Author.** Reconciling an external doc review of the v0.1 requirements, at the operator's request
+
+**Context.** An external `/doc-review` of the v0.1 requirements document left its durable artifact and four evidence receipts under `docs/reviews/`. The review itself was sound — fourteen findings fixed in place, and on reconciliation every protocol claim it introduced was verified against Hermes `7f4d15515`. But the artifacts were written from the reviewing workspace's perspective, where naming its own gate tooling, reviewer-model alias, and session identifiers is normal.
+
+**Evidence.** The gate-status section named a private plugin repository's script path and a private reviewer-model alias, and the receipts carried local session identifiers; both referenced repositories were confirmed private via the GitHub API, while this repository is public and `docs/reviews/` is tracked. Nothing caught it at generation time because the private-context scan was a habit applied to documents this workspace writes, not to files another workspace delivers into it.
+
+**Mechanism.** A review artifact is generated in the reviewer's context but committed in the target's. Anything the reviewer treats as ambient environment — tool paths, model aliases, session keys — becomes disclosure the moment the target repository is public, and the failure is silent because the files are correct, useful, and requested; nothing about them looks like a leak.
+
+**Fix.** Identifiers were generalized with stable scrubbed tokens before the first commit, each edited file carries a scrub note, and the reconciliation artifact records before/after hashes, because scrubbed receipts no longer match the hashes they recorded — an accepted cost while the review gate is advisory. See the RC2 entry in the reconciliation artifact under `docs/reviews/`.
+
+**Generalizable rule.** Run the private-context scan on every file entering a commit, whoever wrote it — externally-generated artifacts especially, because they embed their producer's environment rather than this repository's conventions. And when evidence files must be edited, record the before/after hashes somewhere durable, so the edit is itself evidenced rather than silent.
+
 ### A recommendation's fallback is a test of its reasoning, and this one failed it
 
 **Author.** Promoting the framework analysis chain into ADRs

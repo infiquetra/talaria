@@ -1,0 +1,16 @@
+{
+  "check": "receipt-presence",
+  "generated_at": "2026-08-02T20:35:14.169059+00:00",
+  "inputs": {
+    "unit": "readiness-panel"
+  },
+  "passed": true,
+  "reasons": [],
+  "receipt_refs": [
+    "state:sessions:scrubbed-reviewer-unit-1",
+    "state:sessions:scrubbed-reviewer-unit-2",
+    "state:sessions:scrubbed-reviewer-unit-3",
+    "state:sessions:scrubbed-continuation-1"
+  ],
+  "scrub_note": "Local session identifiers generalized before commit; tokens are stable across the receipts in this directory."
+}

@@ -1,0 +1,17 @@
+{
+  "check": "tier-compliance",
+  "generated_at": "2026-08-02T20:35:14.227178+00:00",
+  "inputs": {
+    "expected_models": ["scrubbed:reviewer-model"],
+    "unit": "readiness-panel"
+  },
+  "passed": true,
+  "reasons": [],
+  "receipt_refs": [
+    "state:sessions:scrubbed-reviewer-unit-1",
+    "state:sessions:scrubbed-reviewer-unit-2",
+    "state:sessions:scrubbed-reviewer-unit-3",
+    "state:sessions:scrubbed-continuation-1"
+  ],
+  "scrub_note": "Reviewer-model alias and local session identifiers generalized before commit; tokens are stable across the receipts in this directory."
+}

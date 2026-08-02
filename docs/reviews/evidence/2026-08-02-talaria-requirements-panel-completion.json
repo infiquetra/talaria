@@ -1,0 +1,44 @@
+{
+  "kind": "advisory-panel-completion",
+  "parent_session_id": "scrubbed-panel-parent",
+  "required_shape": 3,
+  "required_independence": "independent",
+  "units": [
+    {
+      "unit": "completeness-and-mapping",
+      "receipt_ref": "state:sessions:scrubbed-reviewer-unit-1",
+      "exists": true,
+      "model": "scrubbed:reviewer-model",
+      "parent_matches": true,
+      "ended_at": 1785700109.22113,
+      "end_reason": "agent_close",
+      "completed_final_response": true
+    },
+    {
+      "unit": "protocol-and-architecture",
+      "receipt_ref": "state:sessions:scrubbed-reviewer-unit-2",
+      "exists": true,
+      "model": "scrubbed:reviewer-model",
+      "parent_matches": true,
+      "ended_at": 1785702264.311279,
+      "end_reason": "compression",
+      "completed_final_response": false
+    },
+    {
+      "unit": "security-and-operability",
+      "receipt_ref": "state:sessions:scrubbed-reviewer-unit-3",
+      "exists": true,
+      "model": "scrubbed:reviewer-model",
+      "parent_matches": true,
+      "ended_at": 1785700068.989861,
+      "end_reason": "compression",
+      "completed_final_response": false
+    }
+  ],
+  "receipt_rows_present": 3,
+  "completed_final_units": 1,
+  "panel_complete": false,
+  "gate_effect": "advisory-only",
+  "reason": "Receipt rows exist for all three dispatched units, but only one original unit left a completed final response; panel independence has no delegation-mode verifier in the available saga_gate.py.",
+  "scrub_note": "Parent and unit session identifiers and the reviewer-model alias generalized before commit; tokens are stable across the receipts in this directory."
+}
