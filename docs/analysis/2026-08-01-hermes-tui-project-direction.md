@@ -142,6 +142,18 @@ The local workflow should support three states:
 
 This separation keeps the installed version from being overwritten and makes the distinction between UI changes and protocol changes explicit.
 
+The concrete launcher distinction is:
+
+```text
+HERMES_TUI_DIR=<talaria>/ui-tui hermes --tui
+    built Talaria UI, official Hermes Python/gateway
+
+HERMES_HOME=<isolated-home> <talaria-venv>/bin/hermes --tui --dev
+    Talaria source UI, matching Talaria development gateway/core
+```
+
+`--dev` and `HERMES_TUI_DIR` are separate modes in the current Hermes launcher. The first mode is the compatibility path for UI-only changes; the second is the source path for protocol or core changes. `HERMES_HOME` isolates sessions and configuration when the development core must not touch the normal Hermes state.
+
 ## Proposed implementation sequence
 
 ### Phase 0: repository and runtime proof
