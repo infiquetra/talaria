@@ -12,6 +12,8 @@ coverage/
 # Ideation working records contain live local probes; only the scrubbed
 # artifact under docs/ideation/ is public-safe.
 .claude/saga/
+# Machine-local saga tooling preferences (engine second-opinion choices).
+.saga/
 
 # Local agent-tool state; also keeps `npm run check` from linting it.
 .serena/

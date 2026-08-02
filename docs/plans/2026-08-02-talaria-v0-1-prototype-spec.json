@@ -1,0 +1,114 @@
+{
+  "name": "talaria-v0-1-prototype",
+  "description": "Execute the Talaria v0.1 prototype plan: replay-first milestone (recorder, domain core, Textual gate, status runner) then live-gateway milestone (transport, bridges, slash, daily-driver closure).",
+  "repo": "infiquetra/talaria",
+  "concurrency": {"max_concurrent": 3, "readonly_max_concurrent": 3, "aggregate_max_concurrent": 3},
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "Python scaffold and quality gates",
+      "tier": {"model": "sonnet", "effort": "medium"},
+      "prompt": "U1: Create the Python scaffold and quality gates (pyproject, uv.lock, talaria package, the talaria/cli.py entry point with KTD7 flag parsing, talaria/config.py implementing KTD15's ~/.talaria precedence chain, boundary check, macOS-arm64-required CI matrix). Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U1) as your authoritative spec.",
+      "returns": "Scaffold commit summary, check-command output, boundary-check red/green evidence, config precedence test results.",
+      "depends_on": [],
+      "files": ["pyproject.toml", "uv.lock", "talaria/__init__.py", "talaria/domain/__init__.py", "talaria/cli.py", "talaria/config.py", "tests/domain/test_boundary.py", "tests/test_config.py", ".gitignore", "CLAUDE.md", "AGENTS.md", ".github/workflows/"]
+    },
+    {
+      "unit_id": "U2",
+      "label": "Python recorder and redaction boundary",
+      "tier": {"model": "sonnet", "effort": "high"},
+      "worth_it_because": "Redaction is the worst place for a re-encode bug (origin R26-R27); the port must preserve anchored-pattern semantics exactly, above mechanical-transform care.",
+      "cheaper_fallback": {"model": "sonnet", "effort": "medium"},
+      "prompt": "U2: Re-encode the recorder and redaction boundary in Python with TS contract equivalence. Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U2) as your authoritative spec.",
+      "returns": "Equivalence-harness result, ported test count, outbound synthetic redaction evidence.",
+      "depends_on": ["U1"],
+      "files": ["talaria/recorder/", "talaria/cli.py", "tests/recorder/"]
+    },
+    {
+      "unit_id": "U3",
+      "label": "Domain core: normalize, state, projection, compat baseline",
+      "tier": {"model": "opus", "effort": "high"},
+      "worth_it_because": "Reading turnController.ts (1,092 lines) into a complete reconciliation catalogue and designing deterministic normalization is judgment work; a missed rule is a shipped Hermes-fixed defect (ADR-0003).",
+      "cheaper_fallback": {"model": "sonnet", "effort": "high"},
+      "prompt": "U3: Complete the reconciliation catalogue at the pin, then implement the domain core (models, decode, normalize, state, projection, compat data). Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U3) as your authoritative spec.",
+      "returns": "Catalogue doc path, rule-to-test map, determinism fixture results, closed QUEUED P1.",
+      "depends_on": ["U2"],
+      "files": ["talaria/domain/", "tests/domain/", "docs/analysis/", "docs/engineering-journal/QUEUED.md"]
+    },
+    {
+      "unit_id": "U4",
+      "label": "Fallback presentation-layer assessment (PC8)",
+      "tier": {"model": "sonnet", "effort": "high"},
+      "worth_it_because": "A wrong fallback verdict leaves a failed gate with no landing spot; criteria are fixed by the plan but per-criterion judgment must be sound.",
+      "cheaper_fallback": {"model": "sonnet", "effort": "medium"},
+      "prompt": "U4: Assess prompt_toolkit against the gate criteria to plausibility depth and close the QUEUED P0. Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U4) as your authoritative spec.",
+      "returns": "Assessment doc path with per-criterion verdicts; QUEUED.md closure diff.",
+      "depends_on": [],
+      "files": ["docs/analysis/2026-08-02-python-fallback-presentation-layer.md", "docs/engineering-journal/QUEUED.md"]
+    },
+    {
+      "unit_id": "U6",
+      "label": "Status-line runner (frozen v1 contract)",
+      "tier": {"model": "sonnet", "effort": "medium"},
+      "prompt": "U6: Implement the status-line runner against the frozen KTD5 contract with the full failure matrix. Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U6) as your authoritative spec.",
+      "returns": "Failure-matrix test results, contract doc path, env-sanitization evidence.",
+      "depends_on": ["U3"],
+      "files": ["talaria/status/", "tests/status/", "docs/formats/status-line.md"]
+    },
+    {
+      "unit_id": "U5",
+      "label": "Replay-driven Textual shell - the framework validation gate",
+      "tier": {"model": "opus", "effort": "high"},
+      "worth_it_because": "The gate verdict and the ADR-0002 view-model evidence are the highest-judgment calls in milestone 1; a wrong pass wastes all transport work, a wrong fail discards a good framework.",
+      "cheaper_fallback": {"model": "sonnet", "effort": "high"},
+      "prompt": "U5: Build the replay-driven Textual shell and run the framework validation gate against the pinned corpus and thresholds. Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U5) as your authoritative spec.",
+      "returns": "Gate results doc (corpus identity, measurements, verdict), Pilot suite status, ADR draft path on pass.",
+      "depends_on": ["U3", "U4", "U6"],
+      "files": ["talaria/ui/", "talaria/replay/", "talaria/cli.py", "tests/ui/", "tests/replay/", "docs/analysis/", "docs/engineering-journal/QUEUED.md"]
+    },
+    {
+      "unit_id": "U7",
+      "label": "Live transport: attach, RPC, reconnect, live recording",
+      "tier": {"model": "opus", "effort": "high"},
+      "worth_it_because": "Async correlation, lost-RPC unknown-outcome semantics, and reconnect reconciliation are subtle-concurrency judgment; the credential seam is the plan's least-proven external claim.",
+      "cheaper_fallback": {"model": "sonnet", "effort": "high"},
+      "prompt": "U7: Implement the live transport (loopback ?token= query-parameter attach via a per-dial CredentialProvider, RPC correlation with connection-epoch qualified ids, reconnect reconciliation, LiveSource, outbound recording). Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U7) as your authoritative spec.",
+      "returns": "AE8/AE16 suite results, live smoke-attach evidence, credential-hygiene sweep result.",
+      "depends_on": ["U2", "U3", "U5"],
+      "files": ["talaria/transport/", "tests/transport/", "talaria/ui/app.py", "talaria/ui/composer.py", "docs/engineering-journal/QUEUED.md"]
+    },
+    {
+      "unit_id": "U8",
+      "label": "Blocking prompts: approval path and four bridges",
+      "tier": {"model": "opus", "effort": "high"},
+      "worth_it_because": "Credential-bearing responds with request-id correlation and expiry semantics are security-critical; an error here leaks a secret or answers the wrong request.",
+      "cheaper_fallback": {"model": "sonnet", "effort": "high"},
+      "prompt": "U8: Implement the approval path and four blocking bridges in place, with terminal-read served from the projection. Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U8) as your authoritative spec.",
+      "returns": "Bridge round-trip results, AE3 live-corpus sweep result, expiry/late-answer evidence.",
+      "depends_on": ["U7"],
+      "files": ["talaria/ui/prompts.py", "talaria/domain/terminal_read.py", "tests/transport/test_bridges.py", "tests/ui/test_prompts.py"]
+    },
+    {
+      "unit_id": "U9",
+      "label": "Slash commands and paste collapse",
+      "tier": {"model": "sonnet", "effort": "high"},
+      "worth_it_because": "Six enumerated result shapes with a display-projection rule and honest degradation need careful protocol handling beyond mechanical-medium, though tests are fully specified.",
+      "cheaper_fallback": {"model": "sonnet", "effort": "medium"},
+      "prompt": "U9: Implement gateway slash dispatch (six shapes, local-entry degradation, Talaria-local set) and paste collapse. Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U9) as your authoritative spec.",
+      "returns": "AE9/AE13 results, catalogue inventory summary, live dispatch evidence.",
+      "depends_on": ["U8"],
+      "files": ["talaria/domain/commands.py", "talaria/ui/palette.py", "tests/transport/test_commands.py", "tests/transport/test_paste_collapse.py", "tests/domain/test_dispatch_results.py"]
+    },
+    {
+      "unit_id": "U10",
+      "label": "Daily-driver closure: compat verdict, install, teardown",
+      "tier": {"model": "sonnet", "effort": "high"},
+      "worth_it_because": "The daily-driver verdict must be honest under AE7/AE10 - naming gaps and blocking ready is judgment applied to deterministic checks.",
+      "cheaper_fallback": {"model": "sonnet", "effort": "medium"},
+      "prompt": "U10: Run the compatibility-baseline verification, clean-install job, teardown proofs, and write the daily-driver verdict. Read docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md (unit U10) as your authoritative spec.",
+      "returns": "Verdict doc path (method table, matrix, ready/not-ready), AE10 CI evidence.",
+      "depends_on": ["U9"],
+      "files": ["talaria/transport/compat_check.py", "tests/transport/test_compat_baseline.py", "tests/ui/test_teardown.py", ".github/workflows/", "docs/analysis/"]
+    }
+  ]
+}

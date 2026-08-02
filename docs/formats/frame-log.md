@@ -129,8 +129,16 @@ catch.
 
 ## Guarantees and non-guarantees
 
-**Guaranteed.** Append-only. `seq` gapless within a file. Ordinary traffic byte-identical to what
-arrived. Every withheld value marked.
+**Guaranteed.** Append-only. `seq` gapless within a file. Ordinary traffic round-trips to an equal
+JSON *value* — the same keys with the same values, parsed. Every withheld value marked.
+
+*Amended 2026-08-02.* This guarantee previously read "ordinary traffic byte-identical to what
+arrived." That was never true of this format's own reference implementation: the recorder parses
+each frame and re-serializes it (`src/record/recorder.ts:95-124`), so key order and whitespace have
+never been preserved. The guarantee is corrected to describe what v1 has always actually done.
+**No version bump**, because no reader ever received byte-identical output and none can have
+depended on it. Consumers that need to compare two logs compare parsed values, which is the relation
+the Talaria recorder's equivalence harness implements.
 
 **Not guaranteed.** No hash chain yet — the records are not tamper-evident, and nothing detects an
 edited or truncated file. Adding one is a later decision, and it is the reason redaction had to be

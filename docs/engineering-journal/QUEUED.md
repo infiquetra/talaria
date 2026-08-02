@@ -59,6 +59,19 @@
 **Worth it when.** The gateway advertises enough delegation or spawn-tree state to make the pane meaningful.
 **Context.** Sub-agent visibility is a primary UX goal.
 
+### Attach to a remote (gated) gateway
+
+**Author.** v0.1 prototype plan doc review, 2026-08-02
+**Priority.** P1
+**Effort.** Medium
+**Worth it when.** The operator wants Talaria pointed at a Hermes running on another host. v0.1 is loopback-only by decision, not by limitation.
+**Context.** Whether the gateway's auth gate is active is decided entirely by its bind host: `should_require_auth` (`hermes_cli/web_server.py:437-460` at `7f4d15515`) returns true for anything that is not `localhost`, `127.0.0.1`, or `::1`, and RFC1918 addresses count as public. The legacy `--insecure` escape hatch is accepted but **ignored** since the June 2026 `hermes-0day` campaign, so a remote bind cannot be un-gated — the gated path must be implemented.
+
+It is fully reachable for a client that dials a gateway it did not launch, which the v0.1 plan initially doubted. The complete RFC 8252 native-app flow, verified at the pin: `GET /auth/native/authorize` (`hermes_cli/dashboard_auth/routes.py:289`) runs PKCE against a loopback redirect; `POST /auth/native/token` (`:841`) exchanges the code for `{access_token, refresh_token, token_type: "Bearer"}` explicitly intended for OS-keychain storage; `POST /api/auth/ws-ticket` (`:799`) turns that session into `{ticket, ttl_seconds: 30}`; the ticket goes on the `/api/ws` upgrade URL as `?ticket=`; `POST /auth/native/refresh` (`:894`) rotates. Tickets are single-use with a 30-second TTL (`hermes_cli/dashboard_auth/ws_tickets.py:42`).
+
+**The transport seam for this already exists.** v0.1 ships `CredentialProvider` invoked on every dial including reconnects (KTD11), specifically so a per-connection ticket does not require rewriting reconnect. This work is a new `GatedTicketProvider` plus keychain storage and the PKCE loopback listener — not a transport change.
+**Refs.** [v0.1 plan KTD11](../plans/2026-08-02-talaria-v0-1-prototype-plan.md), [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)
+
 ## P2
 
 ### Add MoA progress and fallback rendering
