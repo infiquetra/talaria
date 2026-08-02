@@ -9,9 +9,19 @@
 **Author.** Reconsidered language and TUI framework analysis
 **Priority.** P0
 **Effort.** Medium
-**Worth it when.** Before adding product behavior beyond the current Ink bootstrap shell.
-**Context.** Drive one bounded Textual projection from a framework-neutral Python reducer and the existing frame-log contract. Prove coalesced streaming, bounded transcript mounting, scroll anchoring, deterministic `run_test()` and `Pilot` behavior, selected pseudo-terminal behavior, framework-independent domain state, strict typing and linting, and clean `uv tool install` launch. Use Bubble Tea v2 only if Textual fails a material gate or a small zero-runtime native executable becomes mandatory.
-**Refs.** [Reconsidered language and TUI framework analysis](../analysis/2026-08-02-language-and-tui-framework-analysis-reconsideration.md)
+**Worth it when.** Before adding product behavior beyond the current TypeScript bootstrap shell.
+**Context.** Drive one bounded Textual projection from a framework-neutral Python reducer and the existing frame-log contract. Prove coalesced streaming, bounded transcript mounting, scroll anchoring, deterministic `run_test()` and `Pilot` behavior, selected pseudo-terminal behavior, framework-independent domain state, strict typing and linting, and clean `uv tool install` launch.
+**Amended 2026-08-02 by ADR-0004.** The fallback is no longer Go with Bubble Tea. The language is settled as Python, so a framework failure selects a different Python presentation layer — which is why identifying one is now a prerequisite rather than a contingency. Choose the vertical slice from the Hermes terminal UI feature inventory rather than from a generic renderer stress list, so the gate produces a prototype instead of a harness.
+**Refs.** [Reconsidered language and TUI framework analysis](../analysis/2026-08-02-language-and-tui-framework-analysis-reconsideration.md), [ADR-0004](../../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)
+
+### Identify and assess a Python fallback presentation layer
+
+**Author.** ADR-0004
+**Priority.** P0
+**Effort.** Small
+**Worth it when.** Before the Textual gate runs, so a failure has somewhere to go.
+**Context.** Every analysis in the chain evaluated Textual as the only Python candidate; the others were all in other languages. Settling the language on Python therefore leaves the fallback set unevaluated. If Textual fails on transcript cost or pseudo-terminal correctness, nobody has assessed what replaces it. Name at least one alternative and check it against the same gate criteria — enough to know it exists and is plausible, not a full comparative analysis.
+**Refs.** [ADR-0004](../../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)
 
 ### Prove the Hermes transport seam
 
@@ -31,6 +41,15 @@
 **Effort.** Medium
 **Worth it when.** Transport fixtures exist and event/state transitions can be tested independently of a terminal.
 **Context.** Stable rendering and reduced flicker depend on state-driven rendering rather than direct callback-driven writes.
+
+### Read Hermes's turn controller and complete the reconciliation-rule catalogue
+
+**Author.** ADR-0003
+**Priority.** P1
+**Effort.** Small
+**Worth it when.** Before the normalization layer is written, since a rule discovered afterwards is a defect found in production.
+**Context.** The 2026-08-02 read covered `ui-tui/src/app/createGatewayEventHandler.ts` and found its reusable content is a set of short rules rather than portable machinery. That handler delegates to `ui-tui/src/app/turnController.ts` (1,092 lines) at more than twenty call sites, and only its call surface has been read. The rule catalogue ADR-0003 depends on is incomplete until the controller is read at a pinned revision.
+**Refs.** [ADR-0003](../../platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md), [LEARNINGS](LEARNINGS.md)
 
 ### Add the sub-agent monitor
 

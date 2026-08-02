@@ -52,6 +52,8 @@
 
 **Author.** Jeff Cox / framework-analysis reconsideration
 
+**Status.** Partly promoted and partly amended on 2026-08-02. Its language half is now [ADR-0004](../../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md): Python is settled, because the operator answered the open seventh consideration — a zero-runtime native executable is **not** a product requirement — which removed Go's only advantage Python cannot match. **The Bubble Tea fallback is retired.** A framework failure is not evidence against the language that selected it, so the fallback is another Python presentation layer; identifying one is now queued as a prerequisite of the gate, because none has ever been assessed. The Textual half stands unchanged and still runs the gate before any ADR names it.
+
 **Decision.** Treat Python with Textual 8.2.8 as Talaria's presumptive stack, subject to a bounded protocol-replay, long-transcript, pseudo-terminal, and clean-install gate. Use Go with Bubble Tea v2 if Textual fails a material correctness or transcript-cost requirement, or if a small zero-runtime native executable becomes mandatory. Do not adopt either dependency in an ADR until the first gate completes.
 
 **Rejected alternatives.** Keeping OpenTUI first would preserve implementation language for a greenfield codebase whose current TypeScript is not a meaningful migration estate. Adopting Textual immediately would leave long-history behavior, PTY correctness, and packaging unproved. Building complete Textual and Bubble Tea clients in parallel would create two products instead of a validation gate. Ratatui remains the alternative if exact cell-buffer equality becomes a release requirement.

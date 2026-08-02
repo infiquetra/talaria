@@ -4,7 +4,9 @@ Talaria is an experimental, Hermes-native terminal UI focused on a calmer, more 
 
 The name comes from the _talaria_, Hermes's winged sandals. The project is intentionally named for the Hermes ecosystem rather than as a private product fork.
 
-> **Status: prototype.** The repository currently contains the project direction, repository standards, and a minimal executable TUI shell. The Hermes integration is not implemented yet.
+> **Status: pre-implementation.** The repository contains the project direction, repository standards, the architecture decisions below, and a small TypeScript shell left over from repository bootstrap. The Hermes integration is not implemented yet.
+>
+> **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)). The terminal framework is not yet selected; Textual is the first candidate through a validation gate recorded in the [engineering journal](docs/engineering-journal/QUEUED.md). The TypeScript shell described under "Quick start" is superseded and receives no new behavior.
 
 ## Goals
 
@@ -35,46 +37,57 @@ The name comes from the _talaria_, Hermes's winged sandals. The project is inten
 
 The first implementation will validate the boundary before building a large UI. The architecture is a direction, not a claim that all adapters exist today.
 
+Across all of it, one rule is already settled: the domain core has no dependency on the terminal
+framework. Frames become normalized events, normalized events become domain state, and only then does
+anything render. See [ADR-0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md).
+
 ## Quick start
 
-### Prerequisites
+There is nothing to install yet. The Python implementation has not started; when it does, Talaria
+will install as an ordinary command:
 
-- Node.js 20 or newer
-- npm
+```bash
+uv tool install talaria
+talaria
+```
 
-### Install and run the prototype
+### The superseded TypeScript bootstrap
+
+The repository still carries the shell it was initialized with — a small Ink prototype, a frame
+recorder, and a redaction boundary. It runs, and its checks pass, but it is not the product and it is
+not being extended. It stays until the Python tree replaces it, because its recorder and redaction
+rules are still the only working evidence of the protocol.
 
 ```bash
 npm install
+npm run check
 npm run dev
 ```
 
-Press `q` or `Esc` to exit the prototype.
-
-### Build and run
-
-```bash
-npm run check
-npm run build
-npm start
-```
-
-The validation command is deliberately narrow at this stage:
-
-- `npm run typecheck` — TypeScript compilation without emitting files
-- `npm test` — unit tests
-- `npm run format:check` — Prettier formatting check
+Press `q` or `Esc` to exit. `npm run check` runs TypeScript compilation, unit tests, and a Prettier
+formatting check.
 
 ## Documentation
 
 - [Documentation index](docs/00-index.md)
+- [Architecture decisions](platform-specs/04-architecture/adrs/) — what is settled and why
 - [Project direction and conversation analysis](docs/analysis/2026-08-01-hermes-tui-project-direction.md)
 - [Engineering journal](docs/engineering-journal/README.md)
 - [Public-safe project context](docs/public-safe-summary.md)
 
+### Settled decisions
+
+| ADR                                                                                          | Decision                                                                    |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)           | Talaria is a standalone process, not a TUI bundle Hermes launches           |
+| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | The domain core is framework-independent; the terminal UI is a projection   |
+| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)   | Talaria re-encodes the Hermes terminal UI's behavior rather than porting it |
+| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is a Python client; the terminal framework is still open            |
+
 ## Contributing
 
-Small, focused pull requests are preferred. Before opening a pull request, run:
+Small, focused pull requests are preferred. Before opening a pull request, run the repository's check
+command. Until the Python implementation lands, that is still the TypeScript bootstrap's:
 
 ```bash
 npm run check
