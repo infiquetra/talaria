@@ -4,6 +4,27 @@
 
 ## 2026-08-02
 
+### The stack was never decided, and six weeks of Hermes drift is now a measured number rather than a worry
+
+**Author.** Persisting the language and TUI framework analysis, at the operator's request
+
+**Context.** The operator asked whether TypeScript/Ink had actually been decided, having noticed the project was building in it. It had not. A four-frame comparative analysis of Rust/ratatui, Python/Textual, TypeScript/Ink, and Go/Bubble Tea existed only in a gitignored working directory, and no ADR had ever been written.
+
+**Evidence.** Two findings, both structural rather than incidental.
+
+1. **The stack was inherited from a bootstrap commit under a framing the project has since abandoned.** Compatibility mode — being loadable by an unmodified `hermes --tui` — is the **only** row that changes between the two scoring framings in either scorecard. Every other row is identical. TypeScript/Ink's decisive advantage was that it alone could inhabit `HERMES_TUI_DIR`. [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md) removed that mode from the product, and the analysis's own swing rule says that scores the criterion at zero. Nobody re-opened the stack question afterwards.
+2. **Re-verifying the analysis against the running Hermes turned a hypothesis into a measurement.** The analysis was written against the six-week-stale fork. Re-read at `7f4d15515`: `createGatewayEventHandler.ts` is 1,419 lines, not 945 (+50%); its test suite 1,984, not 1,601 (+24%); the gateway defines 130 methods, not ~90 (+44%). The analysis had hypothesized "an ongoing drift-tracking tax" on protocol reuse without a rate. The rate is now roughly +80 lines per week on the handler alone.
+
+**Mechanism.** A stale reference does not merely make numbers wrong — it can make an argument _look_ weaker than it is while hiding the reason to distrust it. Here the correction made the reuse asset 34% larger, which strengthens the case for staying on TypeScript, **and** revealed that the asset is a fast-moving target, which weakens the case for treating reuse as a reason. Both effects come from the same correction, and only one of them was visible from the line count.
+
+**What did not change.** Roughly four-fifths of the scoring never touched Hermes at all — every claim about ratatui, Bubble Tea, Textual, upstream Ink, and the JSON-RPC library ecosystems was read from those projects' own repositories. Of the fifth that did touch Hermes, every substantive finding held; only magnitudes moved. So a full re-run was not warranted, and saying so is a decision that had to be defended rather than assumed.
+
+**One claim got stronger on re-verification.** The analysis argued Ink cannot carry Talaria's rendering because two better-resourced teams both replaced it. The hardest evidence for that was not what it cited: `ui-tui/package.json:33` aliases the dependency as `"ink": "npm:@hermes/ink@0.0.1"`. Hermes does not use Ink. It uses its own fork wearing Ink's name.
+
+**Fix.** The analysis is persisted at [docs/analysis/2026-08-02-language-and-tui-framework-analysis.md](../analysis/2026-08-02-language-and-tui-framework-analysis.md), scrubbed, with every Hermes-derived number and citation re-verified and an errata table at the top. **No ADR was written** — the operator asked to review and deliberate first.
+
+**Generalizable rule.** An analysis that never becomes a decision record decays into a de-facto decision anyway, made by whatever the code already is. Persist the reasoning even when the call is not ready, or the next reader infers the call from `package.json`.
+
 ### Hermes's own TUI answers protocol questions the recorder structurally cannot, and reading it caught an over-redaction bug
 
 **Author.** First live recording run, at the operator's prompting
