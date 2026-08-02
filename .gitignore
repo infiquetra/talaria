@@ -8,5 +8,12 @@ coverage/
 !.env.example
 .talaria/
 .hermes/
+
+# Ideation working records contain live local probes; only the scrubbed
+# artifact under docs/ideation/ is public-safe.
+.claude/saga/
+
+# Local agent-tool state; also keeps `npm run check` from linting it.
+.serena/
 .vscode/
 .idea/
