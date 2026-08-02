@@ -4,6 +4,13 @@ Status: `accepted`
 Date: 2026-08-02
 Deciders: operator
 Affected components: transports, core lifetime, packaging, language choice
+Evidence revision: Hermes Agent `7f4d15515` (2026-08-01)
+
+> **Citation correction, 2026-08-02.** Every `file:line` below was re-read against the Hermes that
+> is actually installed and running. As first published they pointed into a checkout six weeks
+> older, in which `tui_gateway/server.py` had not yet been split into `methods_*.py` and every line
+> number was wrong. **The decision was not re-litigated** — each claim was re-verified and held; only
+> the pointers moved. Pin the revision whenever you re-derive any of this.
 
 ## Context
 
@@ -28,19 +35,20 @@ opposite conclusions from real source.
 
 **What the launcher actually does**, verified in the Hermes source rather than inferred:
 
-- `hermes_cli/main.py:1685-1690` accepts only `<HERMES_TUI_DIR>/dist/entry.js` and execs it as
+- `hermes_cli/main.py:1975-1979` accepts only `<HERMES_TUI_DIR>/dist/entry.js` and execs it as
   `node --expose-gc <path>`. The mode admits a Node.js bundle and nothing else.
-- `main.py:2046` runs it as a **blocking foreground child** via `subprocess.call`, then exits with
+- `main.py:2393` runs it as a **blocking foreground child** via `subprocess.call`, then exits with
   the child's code.
 - The argv is **fixed at three elements**. Everything else travels by environment variable, so
   `talaria --headless --json` is unreachable through that path.
-- Exit code 42 is **reserved** by the launcher to mean "the terminal UI requested an update."
+- `main.py:2410-2414` **reserves exit code 42** to mean "the terminal UI requested an update."
 
 One inference that was made during analysis and turned out to be **wrong** is recorded here so it is
-not repeated: bundle mode does _not_ restrict Talaria to one profile. `tui_gateway/server.py:678`
-(`_profile_home`) is an ungated per-call override used by `session.create` and `session.resume`, so
-a bundled client could still open sessions against other profiles. The incompatibility is about
-process lifetime, not profile reach.
+not repeated: bundle mode does _not_ restrict Talaria to one profile. `tui_gateway/server.py:1252`
+(`_profile_home`) is an ungated per-call override used by `session.create`, `session.resume`, and
+`session.delete` (`tui_gateway/methods_session.py:14`, `:306`, `:789`), so a bundled client could
+still open sessions against other profiles. The incompatibility is about process lifetime, not
+profile reach.
 
 ## Decision
 
@@ -48,7 +56,7 @@ process lifetime, not profile reach.
 launch, over WebSocket. It is not built as, and does not aim to be loadable as, a `HERMES_TUI_DIR`
 bundle.
 
-This is not a new integration shape. Hermes already serves and tests it: `hermes_cli/web_server.py:11518`
+This is not a new integration shape. Hermes already serves and tests it: `hermes_cli/web_server.py:15609`
 mounts `@app.websocket("/api/ws")` and hands the socket to `tui_gateway.ws.handle_ws`, driving the
 same dispatch surface the bundled terminal UI uses over stdio, and `ui-tui/src/gatewayClient.ts:38`
 has a `resolveGatewayAttachUrl()` seam with tests covering attach, reconnect, and URL rotation.
@@ -73,8 +81,8 @@ any language that can hold a WebSocket. Process lifetime becomes Talaria's own, 
 precondition for the headless core and for owning panes. Talaria can hold N gateway connections.
 
 **Harder.** Talaria must ship its own install story rather than inheriting Hermes's. A gateway must
-already be running, and the attach path is authenticated (`_ws_auth_ok`, `web_server.py:11146`) and
-in practice depends on the Hermes dashboard process.
+already be running, and the attach path is authenticated (`_ws_auth_ok`, `web_server.py:14527`,
+enforced at `:15615`) and in practice depends on the Hermes dashboard process.
 
 **Stale as a result.** `README.md` and `AGENTS.md` still commit to upstreamability as a design
 constraint. This ADR does not forbid upstream contribution; it removes it as a constraint on
@@ -89,7 +97,24 @@ requiring a running dashboard turns out to be a worse dependency than being a ch
 ## Open, and deliberately not decided here
 
 Whether a session created against profile B through one connection resolves B's model, skills, and
-memory or the launch profile's. `tui_gateway/server.py:670-677` claims the per-call override rebinds
-them; `hermes_cli/web_server.py:~11181` says a profile-scoped chat must spawn its own gateway
-subprocess. If the answer is "the launch profile's," Talaria needs one connection per profile. That
-is a half-day probe and it does not block this decision.
+memory or the launch profile's. If the answer is "the launch profile's," Talaria needs one
+connection per profile.
+
+**The citation re-read narrowed this considerably, in the direction of one connection per profile.**
+Hermes documents the constraint in its own words at `hermes_cli/web_server.py:14570-14578`, in the
+docstring of `_resolve_chat_argv` (defined at `:14539`):
+
+> Every spawned process (the TUI and the `tui_gateway.entry` it launches) resolves
+> `get_hermes_home()` from that env var at its own import, so the child binds the profile's config,
+> skills, memory, and state.db from the start. […] The in-process `HERMES_TUI_GATEWAY_URL` attach is
+> SKIPPED for scoped chats: the dashboard's in-memory gateway runs under the dashboard's own
+> profile, so **a profile-scoped chat must spawn its own gateway subprocess.**
+
+A gateway process binds `HERMES_HOME` at import, before any RPC arrives, so the per-call
+`_profile_home` override cannot rebind config, skills, or memory for a process that is already
+running — it redirects where that call's session state lives, which is a narrower thing.
+
+What remains genuinely open is only the residual: what a `session.create` carrying `profile: B`
+actually resolves in practice, since the quoted docstring describes the dashboard chat path rather
+than a direct attach. It is still a half-day probe and it still does not block this decision — but
+Talaria should now be designed expecting one connection per profile, not one connection for all.

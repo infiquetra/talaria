@@ -6,13 +6,21 @@
  * credentials in plaintext on ordinary client-to-server frames, and a recording
  * that captures them cannot be cleaned up afterwards once it is hash-chained.
  *
- * Verified against the Hermes gateway source (`tui_gateway/server.py`):
+ * Verified against `tui_gateway/methods_prompt.py` at Hermes 7f4d15515
+ * (2026-08-01). Hermes calls these its four "blocking bridges", and its own
+ * protocol test groups all four under `sensitive_prompt`:
  *
- *     @method("sudo.respond")   -> _respond(rid, params, "password")
- *     @method("secret.respond") -> _respond(rid, params, "value")
+ *     @method("clarify.respond")        -> _respond(rid, params, "answer")
+ *     @method("terminal.read.respond")  -> _respond(rid, params, "text")
+ *     @method("sudo.respond")           -> _respond(rid, params, "password")
+ *     @method("secret.respond")         -> _respond(rid, params, "value")
  *
  * The request side is safe -- `sudo.request` is emitted with an empty payload --
  * so the exposure is entirely in the direction Talaria writes.
+ *
+ * Pin the Hermes revision in this comment. The list was first written against a
+ * six-week-old checkout in which these lived in `tui_gateway/server.py`, and
+ * that reading missed `clarify.respond` entirely.
  *
  * Redactions are recorded rather than silently applied, so a reader of the
  * corpus sees that something was withheld instead of a clean-looking hole.
@@ -43,6 +51,11 @@ const DENY_BY_METHOD: Record<string, readonly string[]> = {
   // contain anything the operator's terminal was displaying, including output
   // from an unrelated program.
   "terminal.read.respond": ["text"],
+  // Free-text the operator typed in reply to an agent's question. Not a
+  // credential field by design, which is exactly why it needs an explicit rule:
+  // the key name `answer` looks innocuous, so the net below never catches it,
+  // and "paste the token here" is an ordinary thing for an agent to ask.
+  "clarify.respond": ["answer"],
 };
 
 /**
@@ -52,13 +65,41 @@ const DENY_BY_METHOD: Record<string, readonly string[]> = {
  * credential-bearing method. Any parameter whose *name* looks like a secret is
  * withheld regardless of which method carried it, so a new method leaks nothing
  * before anyone notices it exists.
+ *
+ * These patterns anchor rather than substring-match, which matters more than it
+ * looks. Hermes has seventeen distinct key names containing "token" and exactly
+ * one of them is a credential -- the bare `token`. The other sixteen are usage
+ * counts (`input_tokens`, `max_tokens`, `session_total_tokens`,
+ * `tokens_per_delta`). A substring match on "token" withholds all seventeen,
+ * which destroys the accounting fields the corpus exists to study and makes
+ * every affected frame look tampered with. Over-redaction is not the safe
+ * direction here; it is a different failure.
  */
-const SUSPICIOUS_KEY =
-  /pass(word|phrase)|secret|token|credential|api[-_]?key|private[-_]?key|authorization/i;
+const SENSITIVE_KEY_PATTERNS: readonly RegExp[] = [
+  /^(.*[-_])?pass(word|phrase)$/i,
+  /secret/i,
+  /^(.*[-_])?credentials?$/i,
+  /^authorization$/i,
+  /^(api|private|public|access|secret|signing)[-_]?keys?$/i,
+  // Singular only. `access_token` is a credential; `max_tokens` is an integer.
+  /^(.*[-_])?token$/i,
+];
+
+/**
+ * Normalize a key to snake_case so one set of patterns covers both conventions.
+ *
+ * The gateway is Python and sends `access_token`; the TypeScript client sends
+ * `authToken`. Anchored patterns need a separator to anchor against, so treat a
+ * lower-to-upper boundary as one.
+ */
+function normalizeKey(key: string): string {
+  return key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+}
 
 /** True when a key name alone is reason enough to withhold its value. */
 export function isSuspiciousKey(key: string): boolean {
-  return SUSPICIOUS_KEY.test(key);
+  const normalized = normalizeKey(key);
+  return SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 /** Strip credentials from a URL's query string so it is safe to record. */
