@@ -127,6 +127,18 @@ whether the constraint actually separates candidates.
 Two of the four high-discrimination gates — H3 and H4 — are about **separability from the
 framework**, not about the framework's quality. That is the shape of this decision.
 
+**H2 is about driving the pane manager, not replacing it.** The product-shape ideation's constraint 1
+is binding here: _Talaria drives the pane manager; the pane manager stays sole authority for
+workspace and agent lifecycle._ Talaria does not re-create its features. It speaks the pane manager's
+socket protocol so the terminal UI can compose panes, worktrees, and workspaces it does not own, and
+so a capability that already exists outside Talaria becomes reachable from inside it. Two
+qualifications the survivors attach. Survivor 15 drives the **socket rather than the built-in agent
+integrations**, because the layout verbs are socket-only with no command-line equivalent and the
+built-in integrations invoke bare binaries with no wrapper hook. Survivor 10 records exactly one
+thing the pane manager does not hold — the join between Hermes session, pane, profile, Kanban task,
+and worktree — on the ground that recording a relationship no authority owns is not the same as
+mirroring an authority's state.
+
 ---
 
 ## Weighting
@@ -157,8 +169,10 @@ and knowledge transfers by reading, in any language — only a literal copy-past
 language-locked. The same protocol knowledge also exists in Python already, on the emitting side.
 The frame's instruction: **"Do not score this criterion from the line count."** Its ceiling is 15,
 reachable only if someone reads the handler and finds that reconciliation and error-recovery logic
-exceed 40% of it. **That read has never been done** — and the file is now 50% larger than when the
-instruction was written.
+exceed 40% of it.
+
+**That read was done on 2026-08-02, and the bar was not cleared.** Criterion 7 holds at 5. See
+"Criterion 7, settled" below for the breakdown.
 
 **Criterion 8 is deliberately low** because `QUEUED.md` files independent distribution under "Maybe,"
 and there are zero users. The distribution fact that matters today is the inner loop, which is
@@ -238,6 +252,103 @@ protocol. **Talaria executes nothing** — it is a client talking JSON-RPC to a 
 does the sandboxing — so the reason with the least substitutability is the one that does not apply.
 And the agent loop runs in a Python process elsewhere, so the GC argument is about a different
 workload. Finally: OpenAI has a team.
+
+---
+
+## Criterion 7, settled: the handler was read
+
+The frame set a falsifiable bar in advance — criterion 7 rises above 5 only if reconciliation and
+error-recovery logic exceed 40% of `ui-tui/src/app/createGatewayEventHandler.ts`. The file was read in
+full on 2026-08-02 at Hermes `7f4d15515`. **It does not clear the bar. Criterion 7 stays at 5, and
+the read argues for lowering it rather than raising it.**
+
+### What the 1,419 lines contain
+
+Structurally: 272 blank lines, 254 comment lines, 894 lines of code. Comments are 22% of non-blank
+lines. Forty-five event cases occupy 693 lines, 49% of the file.
+
+By concern. This is one reader's classification of a file that does not partition cleanly, so treat
+the figures as proportions rather than exact counts.
+
+| Concern                                                                                                | Lines | Share |
+| ------------------------------------------------------------------------------------------------------ | ----: | ----: |
+| Terminal theme and background detection                                                                |  ~310 |   22% |
+| Hermes product features (voice, wake word, billing, mixture-of-agents, `/agents` nudge, startup query) |  ~300 |   21% |
+| Core protocol event mapping                                                                            |  ~460 |   32% |
+| Connect and session lifecycle                                                                          |  ~175 |   12% |
+| Imports, wiring, helpers                                                                               |  ~175 |   12% |
+
+Within the core mapping, roughly **200 lines are genuine reconciliation, ordering, and race logic** —
+about 22% of the file's code lines and 14% of its total. Well under the 40% bar.
+
+**The file is misnamed.** Lines 37 to 345 are a terminal theme and background-detection module with
+no protocol content: OSC-11 background probing, the finding that both xterm.js hosts and tmux answer
+`#000000` regardless of the real background, an OSC-10 foreground tiebreaker, a macOS
+`AppleInterfaceStyle` last resort, and a boot-theme cache for a flash-free first frame. Four of the
+file's five exports come from that block, and they are imported by the slash-command handlers and by
+config sync — not by anything event-shaped.
+
+### The hard part is not in this file
+
+`ui-tui/src/app/turnController.ts` is a separate 1,092 lines holding the streaming buffer, segment
+flushing, interrupt handling, tool-trail grouping, and reasoning phases. The handler delegates to it
+at more than twenty call sites. Most event cases are four to twenty lines: null-check the payload,
+call a `turnController` method, return. **Reusing the handler gets you the switchboard, not the
+engine.**
+
+### Why this lowers criterion 7 rather than raising it
+
+The roughly 200 lines of hard-won logic are **rules, not machinery**, and a rule costs about a line
+to re-encode in any language:
+
+- Drop events whose `session_id` does not match the active session, except `gateway.*` — three lines.
+- A late live event must never overwrite a terminal sub-agent status — a two-line predicate and five
+  call sites.
+- Never resurrect a sub-agent whose `start` was missed — one `createIfMissing: false` flag.
+- Normalize an unrecognized `subagent.complete` status to `completed` rather than trusting the wire.
+- When the clarify tool completes with its overlay still live, the backend timed out and returned an
+  empty answer: persist the question and its options to the transcript, deduplicated so
+  `tool.complete` and `message.complete` cannot both write the same record.
+- Clear a notification only on a matching key, so a late clear cannot wipe a newer notice.
+- Set the billing dialog **after** recording message completion, because turn-idle clears it.
+
+Each of these cost Hermes a bug to discover. None costs more than a few lines to encode. The file's
+22% comment density is why: the lessons are written down, and **a written-down lesson transfers by
+being read, in any language.** That is precisely the frame's original argument for keeping this
+criterion low — now demonstrated rather than asserted.
+
+Meanwhile the densest engineering in the file is a cost of Ink, not an asset that would transfer:
+
+- A forced full redraw after any theme swap, because the renderer's diff cache reuses
+  layout-unchanged regions and tears — carrying a fifteen-line comment describing observed screen
+  corruption (`:101`).
+- The `gateway.ready` config fetch is deferred out of handler construction because doing it during
+  React render "can trip React's 'too many re-renders' guard in embedded dashboard PTYs" (`:619`).
+- Clearing the composer and deferring submit by a tick, because React strict mode double-invokes the
+  updater and would otherwise duplicate the turn (`:951`).
+
+A stack that is not React does not inherit those three problems and does not need those lines.
+
+### Two side findings
+
+**Hermes's own client states the profile constraint.** At `createGatewayEventHandler.ts:965-967`:
+"Multi-profile routing: the TUI is a single-profile process, so a phrase enrolled by ANOTHER profile
+can't be routed here." The handler acts on it — a wake-word event belonging to a different profile
+prints the profile-switch command instead of starting voice on the wrong profile. This is a second,
+client-side witness for ADR-0001's narrowed conclusion that Talaria should expect one gateway
+connection per profile.
+
+**The typed contract is the reusable asset, not the handler.** `ui-tui/src/gatewayTypes.ts` is 741
+lines describing the 44 inbound event types and their payloads. That is a real TypeScript head
+start — and it is also a schema, which is the form every other candidate stack can consume.
+
+### The limit of this read
+
+`createGatewayEventHandler.ts` was read in full; `turnController.ts` was not — only its surface. The
+claim that the valuable knowledge is written in comments, and therefore transfers by reading, is
+established for the file that was read. If the reconciliation engine in `turnController.ts` is less
+annotated, some of the reuse argument recovers there. That is the one remaining unrun probe on this
+criterion.
 
 ---
 
@@ -371,8 +482,10 @@ Stated plainly so nobody is handed false precision.
    constraint and `README.md` and `AGENTS.md` were corrected to match. If it is ever reinstated as
    binding, the analysis says insert it at 20 points — near-dispositive, because upstream Hermes is
    TypeScript — and **do not run a comparative survey at all**, because the answer is determined.
-2. **Has anyone read the event handler?** Criterion 7 is scored at 5 provisionally and its ceiling is 15. The read has not been done, and the file is now 1,419 lines. This is the single cheapest
-   action that could move the scale.
+2. ~~**Has anyone read the event handler?**~~ **Answered 2026-08-02.** The read was done and
+   criterion 7 holds at 5 — see "Criterion 7, settled" above. The residual is narrower: nobody has
+   read `turnController.ts`, which holds the reconciliation engine the handler delegates to. That is
+   where the reuse argument could still partially recover.
 3. **Does the fleet population justify the fleet features?** Utilization across profiles has never
    been measured. It bears on the weighting through the scale trap above.
 4. **How much of the implementation will agents write?** Unmeasured, and it bears on the largest
