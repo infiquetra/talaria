@@ -36,6 +36,8 @@
 
 **Author.** Independent framework analysis and reconciliation
 
+**Status.** Superseded on 2026-08-02 by the Textual-first validation decision below. The analysis remains provenance for the earlier weighting.
+
 **Decision.** Treat TypeScript with OpenTUI as Talaria's presumptive stack, subject to a bounded frame-replay and clean-install gate. Use Go with Bubble Tea v2 if OpenTUI fails renderer-correctness, domain-isolation, package-reproducibility, or no-private-fork criteria. Do not add product behavior or renderer infrastructure to the current stock-Ink shell while the gate is open.
 
 **Rejected alternatives.** Adopting OpenTUI immediately would convert a pre-1.0 native dependency into architecture without proving its packaging contract. Continuing on stock Ink would inherit renderer work that Hermes's own private fork demonstrates directly. Ratatui has the strongest low-level buffer test surface but leaves more whole-client infrastructure to Talaria than Bubble Tea. Textual remains the product-velocity alternative if compound widgets become the actual bottleneck, not the default.
@@ -45,6 +47,20 @@
 **Evidence.** [Final language and TUI framework analysis](../analysis/2026-08-02-language-and-tui-framework-analysis-final.md), reconciled from the [independent pass](../analysis/2026-08-02-language-and-tui-framework-analysis-independent.md) and the [original four-candidate analysis](../analysis/2026-08-02-language-and-tui-framework-analysis.md).
 
 **Revisit when.** The validation gate completes; OpenTUI materially changes its runtime, native-package, or API-stability contract; the supported platform matrix becomes explicit; or compound-widget implementation cost exceeds renderer and transport work. The passing result, validated version, and package contract belong in an ADR before the implementation expands.
+
+### Gate Textual first and keep Bubble Tea v2 as the native-distribution fallback
+
+**Author.** Jeff Cox / framework-analysis reconsideration
+
+**Decision.** Treat Python with Textual 8.2.8 as Talaria's presumptive stack, subject to a bounded protocol-replay, long-transcript, pseudo-terminal, and clean-install gate. Use Go with Bubble Tea v2 if Textual fails a material correctness or transcript-cost requirement, or if a small zero-runtime native executable becomes mandatory. Do not adopt either dependency in an ADR until the first gate completes.
+
+**Rejected alternatives.** Keeping OpenTUI first would preserve implementation language for a greenfield codebase whose current TypeScript is not a meaningful migration estate. Adopting Textual immediately would leave long-history behavior, PTY correctness, and packaging unproved. Building complete Textual and Bubble Tea clients in parallel would create two products instead of a validation gate. Ratatui remains the alternative if exact cell-buffer equality becomes a release requirement.
+
+**Rationale.** Talaria will be predominantly agent-built, most Infiquetra repositories and Hermes core are Python, and Textual has the broadest compound-widget surface plus a first-party `run_test()` and `Pilot` verification loop. Python can provide an ordinary `talaria --yolo` command through standard entry points and `uv tool install`; Go's distribution advantage matters only if the product requires a small native artifact without a managed runtime. Textual must still prove bounded transcript mounting, coalesced streaming, framework-independent domain state, deterministic headless behavior, PTY correctness, and clean installation.
+
+**Evidence.** [Reconsidered language and TUI framework analysis](../analysis/2026-08-02-language-and-tui-framework-analysis-reconsideration.md), including late independent research that corrected current Ink and Bubble Tea capabilities and advanced Textual to full scoring.
+
+**Revisit when.** The Textual validation gate completes; the missing seventh operator consideration adds a hard constraint; the supported platform matrix or native-artifact requirement becomes explicit; Textual cannot bound transcript cost without a private fork; or exact cell-buffer replay becomes a release gate. A passing result, validated version, Python support window, and package contract belong in an ADR before implementation expands.
 
 ### Ideation working records stay out of the repository; only the scrubbed artifact ships
 

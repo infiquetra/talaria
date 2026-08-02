@@ -4,14 +4,14 @@
 
 ## P0
 
-### Run the OpenTUI-versus-Bubble Tea validation gate
+### Run the Textual validation gate
 
-**Author.** Final language and TUI framework analysis
+**Author.** Reconsidered language and TUI framework analysis
 **Priority.** P0
 **Effort.** Medium
 **Worth it when.** Before adding product behavior beyond the current Ink bootstrap shell.
-**Context.** Drive both bounded render projections from the same normalized frame-log fixture. Capture logical frames, pseudo-terminal bytes, mode-2026 negotiation, resize and scroll behavior, implementation outside the domain model, and clean-install results. OpenTUI is adopted only if it passes renderer-correctness, domain-isolation, package-reproducibility, and no-private-fork criteria; otherwise Bubble Tea v2 is the selected fallback.
-**Refs.** [Final language and TUI framework analysis](../analysis/2026-08-02-language-and-tui-framework-analysis-final.md)
+**Context.** Drive one bounded Textual projection from a framework-neutral Python reducer and the existing frame-log contract. Prove coalesced streaming, bounded transcript mounting, scroll anchoring, deterministic `run_test()` and `Pilot` behavior, selected pseudo-terminal behavior, framework-independent domain state, strict typing and linting, and clean `uv tool install` launch. Use Bubble Tea v2 only if Textual fails a material gate or a small zero-runtime native executable becomes mandatory.
+**Refs.** [Reconsidered language and TUI framework analysis](../analysis/2026-08-02-language-and-tui-framework-analysis-reconsideration.md)
 
 ### Prove the Hermes transport seam
 

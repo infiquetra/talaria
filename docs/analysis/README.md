@@ -8,6 +8,7 @@ This directory holds public-safe analysis that explains the problem framing, exp
 - [Hermes gateway protocol surface](hermes-gateway-protocol-surface.md)
 - [Original language and TUI framework analysis](2026-08-02-language-and-tui-framework-analysis.md) — four-candidate evidence input; no decision
 - [Independent language and TUI framework analysis](2026-08-02-language-and-tui-framework-analysis-independent.md) — primary-source pass written before reading the original
-- [Final language and TUI framework analysis](2026-08-02-language-and-tui-framework-analysis-final.md) — current recommendation and validation gate
+- [Final language and TUI framework analysis](2026-08-02-language-and-tui-framework-analysis-final.md) — previous reconciled recommendation; superseded by the reconsideration below
+- [Reconsidered language and TUI framework analysis](2026-08-02-language-and-tui-framework-analysis-reconsideration.md) — current recommendation: validate Python/Textual first; Bubble Tea v2 is the fallback
 
 Analysis is not a substitute for implementation documentation or the engineering journal. Promote a settled repo-scoped choice to `docs/engineering-journal/DECISIONS.md`, and keep implementation details close to the code once they exist.

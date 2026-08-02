@@ -11,7 +11,8 @@ Authority: `reference`
 - [Hermes gateway protocol surface](analysis/hermes-gateway-protocol-surface.md) — the event and method vocabularies, read from Hermes's own client
 - [Original language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis.md) — four-candidate evidence input; no decision
 - [Independent language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis-independent.md) — primary-source pass written before reading the original
-- [Final language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis-final.md) — current recommendation: validate TypeScript/OpenTUI first; Bubble Tea v2 is the fallback; stock Ink is rejected
+- [Final language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis-final.md) — previous OpenTUI-first recommendation; superseded by the reconsideration below
+- [Reconsidered language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis-reconsideration.md) — current recommendation: validate Python/Textual first; Bubble Tea v2 is the fallback
 - [Frame log format](formats/frame-log.md)
 - [Public-safe project context](public-safe-summary.md)
 - [Engineering journal](engineering-journal/README.md)
