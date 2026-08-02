@@ -6,6 +6,19 @@ Talaria is an experimental, public terminal UI for Hermes Agent. It owns the cli
 
 Talaria is a standalone client that connects to a Hermes gateway it did not launch; it is not built to be loaded by `hermes --tui`. Focused improvements may still be proposed upstream where they fit, but upstreamability does not constrain the architecture, and divergence is accepted. See [ADR-0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md).
 
+## Read the ADRs before writing code
+
+Four decisions are settled and are not open for re-litigation in an implementation change:
+
+| ADR                                                                                          | What it settles                                                                                     |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)           | Talaria owns its own process lifetime and dials a gateway it did not launch                         |
+| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | The domain core never imports the terminal framework; the UI is a projection of domain state        |
+| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)   | Hermes's terminal UI is documentation of behavior, not a source tree to translate                   |
+| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is written in Python; the terminal framework is still open and subject to a validation gate |
+
+**The repository is mid-transition.** The TypeScript tree under `src/` is superseded repository-bootstrap code. Do not add behavior to it. Do not port it to Python file by file either — its redaction rules and frame-log contract are re-encoded as contracts, and the rest is discarded.
+
 ## Source of truth
 
 - Repository purpose and commands: [README.md](README.md)
@@ -17,18 +30,23 @@ Talaria is a standalone client that connects to a Hermes gateway it did not laun
 
 ## Commands
 
+The Python implementation has not started. Until it does, the check command is the TypeScript
+bootstrap's:
+
 ```bash
 npm install
-npm run dev
 npm run check
-npm run build
-npm start
 git diff --check
 ```
+
+When the Python tree exists, its checks — `ruff`, a strict type checker, and `pytest` — ship with its
+first commit rather than being added later. See [ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md).
 
 ## Working rules
 
 - Keep changes scoped and prefer small, composable interfaces.
+- **The domain core does not import the terminal framework.** Transport, protocol parsing, normalized events, domain state, commands, clocks, and record/replay are plain Python. The UI consumes view models and may request commands; it never holds protocol or session state. This is enforced by a check, not by intention — if you add a domain module, the check covers it. See [ADR-0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md).
+- **Re-encode Hermes's terminal UI behavior; do not translate its code.** Take the protocol contract, the reconciliation rules, and the hard-won terminal knowledge. Leave the component structure, the state shape, and the framework workarounds. Record a keep/change/drop verdict for the features of any surface before implementing it. See [ADR-0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md).
 - **Cite Hermes source by revision, and read the Hermes that is running.** Where a local checkout and an installed copy both exist, read the installed one — resolve it with `python3 -c "import hermes_cli, os; print(os.path.dirname(hermes_cli.__file__))"` and record the revision (`git -C <dir> rev-parse --short=9 HEAD`) alongside any `file:line` you commit. A stale checkout never fails loudly: it answers every question fluently, because it is the same project, only older. Every citation in this repository was once wrong this way.
 - Do not import Hermes implementation modules when an API, gateway, or typed adapter boundary is sufficient.
 - Do not assume optional Hermes features exist. The Hermes API server publishes `GET /v1/capabilities`; the terminal gateway publishes nothing equivalent, so gateway capabilities must be inferred by probing each seam at startup and naming what is absent.

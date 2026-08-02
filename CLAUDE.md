@@ -4,12 +4,15 @@ Talaria is a public, experimental Hermes-native terminal UI. Read [AGENTS.md](AG
 
 ## Navigation
 
+- Architecture decisions: [platform-specs/04-architecture/adrs/](platform-specs/04-architecture/adrs/) — read these first; four are settled
 - Project direction: [docs/analysis/2026-08-01-hermes-tui-project-direction.md](docs/analysis/2026-08-01-hermes-tui-project-direction.md)
 - Durable decisions: [docs/engineering-journal/DECISIONS.md](docs/engineering-journal/DECISIONS.md)
 - Deferred work: [docs/engineering-journal/QUEUED.md](docs/engineering-journal/QUEUED.md)
 - Organization standards: [infiquetra-context-library](https://github.com/infiquetra/infiquetra-context-library)
 
 ## Checks
+
+The Python implementation has not started; this is still the TypeScript bootstrap's check command.
 
 ```bash
 npm run check
@@ -18,6 +21,9 @@ git diff --check
 
 ## Notes
 
+- Talaria is written in Python (ADR-0004). The terminal framework is not selected yet. The TypeScript tree under `src/` is superseded bootstrap code — do not extend it, and do not port it file by file.
+- The domain core never imports the terminal framework (ADR-0002).
+- Hermes's terminal UI is documentation of behavior, not a source tree to translate (ADR-0003).
 - Prefer transport interfaces and capability discovery over direct Hermes internals.
 - Keep the initial UI small until the integration seam is proven.
 - Update the engineering journal when a durable project decision or learning appears.

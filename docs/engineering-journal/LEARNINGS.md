@@ -4,6 +4,20 @@
 
 ## 2026-08-02
 
+### A recommendation's fallback is a test of its reasoning, and this one failed it
+
+**Author.** Promoting the framework analysis chain into ADRs
+
+**Context.** Four analysis documents chose a stack, and the last of them switched the recommendation from TypeScript with OpenTUI to Python with Textual. The switch was argued on four newly-weighted constraints, three of which are about the **language** and not about any framework: the surrounding repositories are Python, Hermes core is Python, and the code will be predominantly agent-authored so a broadly-documented language matters. The same document named Go with Bubble Tea v2 as the fallback if Textual failed its validation gate.
+
+**Evidence.** Those two positions cannot both be right. If the alignment constraints are strong enough to select Python, then a **framework** failing a **rendering** gate is not evidence against the language, and falling back to Go would discard three of the four reasons the choice was made. If the constraints are not that strong, they should not have selected the language. The document also contained its own tiebreaker, unanswered as an explicit empty item on the constraint list: must Talaria be a small native executable that runs without a managed runtime? The operator answered no, which removed the only advantage Go had that Python cannot match — and with it the fallback's entire justification.
+
+**Mechanism.** The error is easy to make and hard to see because the primary choice and the fallback get written at different moments and are read as separate paragraphs. The primary is argued carefully; the fallback is often the runner-up from the previous ranking, carried forward without re-checking that it still answers the same question. Here the ranking had changed underneath it — Go was the fallback under the earlier weighting that valued native distribution, and it survived a rewrite whose whole point was that distribution no longer decided the outcome.
+
+**Consequence.** [ADR-0004](../../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md) settles Python and retires the Bubble Tea fallback. This exposed something the analysis had hidden: **every candidate in the chain except Textual was in another language, so settling on Python leaves the fallback set entirely unevaluated.** Identifying at least one alternative Python presentation layer is now queued as a prerequisite of the gate rather than a contingency after it.
+
+**Generalizable rule.** When a recommendation names a fallback, check that the fallback preserves the reasons for the primary. If choosing the fallback would discard the argument that selected the primary, one of the two is wrong, and the disagreement is load-bearing — it usually means a criterion is doing work in one paragraph that it is not doing in the other. The check costs one question and it is the cheapest audit available on any comparative analysis: _what would we lose by taking the fallback, and is that a thing we just said we needed?_
+
 ### A line count is not a reuse estimate — reading the file cut the estimate rather than confirming it
 
 **Author.** Reading Hermes's gateway event handler to settle a scoring criterion, at the operator's request
