@@ -9,7 +9,9 @@ Authority: `reference`
 - [Project direction and conversation analysis](analysis/2026-08-01-hermes-tui-project-direction.md) — launcher section superseded by ADR-0001
 - [What Talaria should become — first full-product ideation](ideation/2026-08-02-talaria-product-shape-ideation.md)
 - [Hermes gateway protocol surface](analysis/hermes-gateway-protocol-surface.md) — the event and method vocabularies, read from Hermes's own client
-- [Language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis.md) — four candidate stacks compared; **no decision has been made**
+- [Original language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis.md) — four-candidate evidence input; no decision
+- [Independent language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis-independent.md) — primary-source pass written before reading the original
+- [Final language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis-final.md) — current recommendation: validate TypeScript/OpenTUI first; Bubble Tea v2 is the fallback; stock Ink is rejected
 - [Frame log format](formats/frame-log.md)
 - [Public-safe project context](public-safe-summary.md)
 - [Engineering journal](engineering-journal/README.md)
