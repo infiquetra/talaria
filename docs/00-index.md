@@ -6,6 +6,7 @@ Authority: `reference`
 ## Start here
 
 - [Project direction and conversation analysis](analysis/2026-08-01-hermes-tui-project-direction.md)
+- [What Talaria should become — first full-product ideation](ideation/2026-08-02-talaria-product-shape-ideation.md)
 - [Public-safe project context](public-safe-summary.md)
 - [Engineering journal](engineering-journal/README.md)
 
