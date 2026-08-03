@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -414,7 +415,33 @@ def test_userinfo_redaction_preserves_host_port_and_ipv6_brackets() -> None:
     """The address is what makes a corpus readable; only the credential goes."""
     cleaned = redact_url("wss://user:pw@[2001:db8::1]:8443/attach")
 
-    assert cleaned == f"wss://{REDACTED}@[2001:db8::1]:8443/attach"
+    assert cleaned == "wss://%5Bredacted%5D@[2001:db8::1]:8443/attach"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://operator:hunter2@cdp.example/",
+        "wss://user:pw@[2001:db8::1]:8443/attach?token=S",
+        "https://JUST_A_TOKEN@github.com/org/repo.git",
+    ],
+)
+def test_a_redacted_url_can_still_be_parsed(url: str) -> None:
+    """A corpus is append-only, so an unparseable URL in it is not a redaction.
+
+    Writing the bare marker into the userinfo position produced
+    ``[redacted]@host``, which puts a literal ``[`` at the start of the netloc --
+    and ``urlsplit`` then requires the bracketed span to be a valid IPv6 literal,
+    so every later parse of that URL raised ``ValueError``. The frame-log header
+    goes through this function, so a basic-auth endpoint corrupted the header of
+    the whole recording.
+    """
+    cleaned = redact_url(url)
+    parts = urlsplit(cleaned)
+
+    assert parts.hostname == urlsplit(url).hostname
+    assert parts.port == urlsplit(url).port
+    assert unquote(parts.username or "") == REDACTED
 
 
 def test_a_clean_url_is_returned_byte_identical() -> None:

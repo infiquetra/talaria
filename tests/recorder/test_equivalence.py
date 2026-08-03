@@ -35,7 +35,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 import pytest
 
@@ -181,6 +181,73 @@ def _redaction_key(entry: dict[str, Any]) -> tuple[str, str]:
     return entry["path"], entry["reason"]
 
 
+#: Redaction reasons the Python recorder may emit inside a *frame body* where
+#: the TypeScript reference emits nothing (KTD6 divergences 2 and 4 in
+#: ``talaria/recorder/redact.py``). The reference has no in-body URL redaction
+#: at all, so any credential-bearing URL in a frame is a Python-only withholding.
+PYTHON_ONLY_FRAME_REDACTION_REASONS = frozenset({"url-credential"})
+
+
+def _is_authorized_url_divergence(ts_value: object, py_value: object) -> bool:
+    """True when ``py_value`` is ``ts_value`` with URL credentials withheld.
+
+    Encodes the expectation independently rather than calling ``redact_url``:
+    asking the implementation under test whether its own output is correct is
+    the self-comparison this harness exists to avoid. Scheme, host, port and
+    path must survive untouched; every query key must survive with its value
+    either unchanged or replaced by the redaction marker; and userinfo may
+    disappear but must never appear where it was previously absent.
+    """
+    if not isinstance(ts_value, str) or not isinstance(py_value, str):
+        return False
+    if "://" not in ts_value:
+        return False
+    ts, py = urlsplit(ts_value), urlsplit(py_value)
+    if not ts.scheme or not ts.netloc:
+        return False
+    if (ts.scheme, ts.path, ts.fragment) != (py.scheme, py.path, py.fragment):
+        return False
+    if (ts.hostname, ts.port) != (py.hostname, py.port):
+        return False
+    # Userinfo may only be removed or masked, never introduced.
+    if (ts.username, ts.password) == (py.username, py.password) and ts.query == py.query:
+        return False  # nothing diverged; the caller should have matched on equality
+    # `urlsplit` hands back the raw component, so the marker arrives
+    # percent-encoded (`%5Bredacted%5D`) exactly as it sits on disk.
+    if py.username is not None and unquote(py.username) not in ("[redacted]", ts.username):
+        return False
+
+    ts_query = dict(parse_qsl(ts.query, keep_blank_values=True))
+    py_query = dict(parse_qsl(py.query, keep_blank_values=True))
+    if set(ts_query) != set(py_query):
+        return False
+    return all(
+        py_query[key] == ts_query[key] or py_query[key] == "[redacted]" for key in ts_query
+    )
+
+
+def _frames_equivalent(ts_value: object, py_value: object) -> bool:
+    """KTD6 frame equality, allowing only the enumerated Python-only URL superset.
+
+    Previously a flat ``!=``. That was correct until the recorder gained in-body
+    URL redaction: from then on a frame carrying a credential URL diverged
+    legitimately, and the harness had no way to say so — it would have reported
+    "parsed frame value differs" and read as a port bug. Nothing caught the gap
+    because no fixture frame contained a URL at all.
+    """
+    if isinstance(ts_value, dict) and isinstance(py_value, dict):
+        if set(ts_value) != set(py_value):
+            return False
+        return all(_frames_equivalent(ts_value[k], py_value[k]) for k in ts_value)
+    if isinstance(ts_value, list) and isinstance(py_value, list):
+        if len(ts_value) != len(py_value):
+            return False
+        return all(_frames_equivalent(a, b) for a, b in zip(ts_value, py_value, strict=True))
+    if ts_value == py_value:
+        return True
+    return _is_authorized_url_divergence(ts_value, py_value)
+
+
 def compare_records(ts_records: list[dict[str, Any]], py_records: list[dict[str, Any]]) -> None:
     """Assert KTD6's equivalence relation between two frame-log record lists."""
     if not ts_records or not py_records:
@@ -217,7 +284,7 @@ def compare_records(ts_records: list[dict[str, Any]], py_records: list[dict[str,
             )
         # Message text is normalized away (KTD6): engine-specific wording.
 
-        if ts_entry.get("frame") != py_entry.get("frame"):
+        if not _frames_equivalent(ts_entry.get("frame"), py_entry.get("frame")):
             raise EquivalenceError(
                 f"seq {ts_entry['seq']}: parsed frame value differs: "
                 f"ts={ts_entry.get('frame')!r} py={py_entry.get('frame')!r}"
@@ -234,15 +301,22 @@ def compare_records(ts_records: list[dict[str, Any]], py_records: list[dict[str,
             )
 
         extra_in_python = py_redactions - ts_redactions
-        if extra_in_python:
-            # Every extra Python redaction must be drawn from the enumerated
-            # divergence (KTD6). `ticket`/`internal` only ever appear inside
-            # an `endpoint` URL, compared separately above, so no frame-body
-            # redaction should ever land here -- if one does, it is
-            # unexplained drift, not the authorized divergence.
+        # Every extra Python redaction must be drawn from the enumerated
+        # divergence (KTD6). `ticket`/`internal` only ever appear inside an
+        # `endpoint` URL, compared separately above. A frame-body redaction may
+        # land here for exactly one reason -- an in-body credential URL, which
+        # the TypeScript reference does not redact at all. This used to assert
+        # that *no* frame-body redaction could ever be authorized, which stopped
+        # being true when the recorder gained in-body URL redaction.
+        unexplained = {
+            (path, reason)
+            for path, reason in extra_in_python
+            if reason not in PYTHON_ONLY_FRAME_REDACTION_REASONS
+        }
+        if unexplained:
             raise EquivalenceError(
                 f"seq {ts_entry['seq']}: unexplained extra Python redactions "
-                f"not in the enumerated superset: {extra_in_python}"
+                f"not in the enumerated superset: {unexplained}"
             )
 
 
@@ -317,6 +391,75 @@ def test_equivalence_endpoint_divergence_is_exactly_the_enumerated_superset(
 def test_equivalence_over_a_clean_endpoint_with_no_query_string() -> None:
     summary = run_equivalence("ws://127.0.0.1:8765/api/ws", [])
     assert summary["record_count"] == 1  # header only
+
+
+@pytest.mark.parametrize(
+    ("label", "ts_frame", "py_frame"),
+    [
+        (
+            "an ordinary value changed",
+            {"result": {"count": 1}},
+            {"result": {"count": 2}},
+        ),
+        (
+            "a key appeared on one side only",
+            {"result": {"a": 1}},
+            {"result": {"a": 1, "b": 2}},
+        ),
+        (
+            "the URL host was rewritten, not just its credentials",
+            {"url": "wss://gateway.local/attach?token=s"},
+            {"url": "wss://evil.example/attach?token=%5Bredacted%5D"},
+        ),
+        (
+            "a non-credential query value changed under cover of a redaction",
+            {"url": "wss://h/attach?token=s&session=s-1"},
+            {"url": "wss://h/attach?token=%5Bredacted%5D&session=s-2"},
+        ),
+        (
+            "a query key vanished under cover of a redaction",
+            {"url": "wss://h/attach?token=s&session=s-1"},
+            {"url": "wss://h/attach?token=%5Bredacted%5D"},
+        ),
+        (
+            "the path changed",
+            {"url": "wss://h/attach?token=s"},
+            {"url": "wss://h/elsewhere?token=%5Bredacted%5D"},
+        ),
+        (
+            "userinfo was introduced where there was none",
+            {"url": "wss://h/attach?token=s"},
+            {"url": "wss://someone@h/attach?token=%5Bredacted%5D"},
+        ),
+        (
+            "a list changed length",
+            {"items": [1, 2]},
+            {"items": [1, 2, 3]},
+        ),
+    ],
+)
+def test_the_frame_comparator_still_rejects_unauthorized_divergence(
+    label: str, ts_frame: dict[str, Any], py_frame: dict[str, Any]
+) -> None:
+    """The URL allowance must not become a hole the whole frame fits through.
+
+    ``_frames_equivalent`` relaxed an exact ``!=`` into "equal, or a Python-only
+    URL redaction". A relaxation nobody has seen reject anything is
+    indistinguishable from deleting the check.
+    """
+    assert _frames_equivalent(ts_frame, py_frame) is False, label
+
+
+def test_the_frame_comparator_accepts_the_authorized_url_divergence() -> None:
+    """Both shapes the recorder actually produces, and nothing else."""
+    assert _frames_equivalent(
+        {"result": {"url": "ws://h:9222/api/ws?token=secret&session=s-1"}},
+        {"result": {"url": "ws://h:9222/api/ws?token=%5Bredacted%5D&session=s-1"}},
+    )
+    assert _frames_equivalent(
+        {"result": {"url": "http://operator:pw@cdp.example/"}},
+        {"result": {"url": "http://%5Bredacted%5D@cdp.example/"}},
+    )
 
 
 #: R29's committed-fixture size guarantee, mechanically enforced: committed

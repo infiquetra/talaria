@@ -84,6 +84,15 @@ TypeScript reference withholds differently, and the usage counters this module
 exists to preserve (``max_tokens`` and its siblings) are unaffected -- pinned by
 the over-redaction controls in ``tests/recorder/test_redact.py``.
 
+Divergences 2 and 4 were, for a time, enumerated *here* and nowhere the harness
+could see. The equivalence corpus contained no frame carrying a URL at all, and
+``compare_records`` compared frame bodies with a flat equality that had no
+authorized-divergence path -- so the first frame-body URL redaction would have
+been reported as a port bug, and the claim above that the relation is "pinned by
+a test rather than drifting" was false for exactly these two entries. The fixture
+now carries both shapes and the comparator authorizes them by reason, with its
+own independent expectation of what a redacted URL looks like.
+
 **Known and deliberately not covered.** A bearer capability carried in a URL's
 *path* rather than its userinfo or query -- the concrete
 ``ws://<host>:9222/devtools/browser/<GUID>`` form Chrome hands out, where the GUID
@@ -109,7 +118,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import SplitResult, parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import SplitResult, parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 #: A value withheld from the recording. The original never reaches disk.
 REDACTED = "[redacted]"
@@ -237,7 +246,15 @@ def _redact_userinfo(parts: SplitResult) -> tuple[str, bool]:
         # the malformed remainder is not.
         port = None
     netloc = f"{host}:{port}" if port is not None else host
-    return f"{REDACTED}@{netloc}", True
+    # Percent-encoded, not the bare marker. `[redacted]@host` puts a literal
+    # `[` at the start of the netloc, and `urlsplit` then requires the bracketed
+    # span to be a valid IPv6 literal -- so the redacted URL raised ValueError
+    # on every subsequent parse, including the frame-log header's own. A corpus
+    # is append-only; writing a URL into it that the standard library cannot
+    # read back is not a redaction, it is corruption. `%5Bredacted%5D` is also
+    # exactly how the marker already appears in a redacted query value, so the
+    # on-disk convention stays uniform.
+    return f"{quote(REDACTED, safe='')}@{netloc}", True
 
 
 def redact_url(url: str) -> str:

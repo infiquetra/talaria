@@ -27,6 +27,10 @@ The most instructive part is that the walker's docstring already claimed the pro
 
 **Generalizable rule.** When a rule's scope is expressed as a position — a path prefix, a depth, an index — moving the data is enough to defeat it, and data moves for reasons that have nothing to do with security. Bind the rule to the object that owns it and let it travel with the walk. And when a docstring asserts a property, write the test that would fail if the property were absent: a test whose fixture is caught by a *different* mechanism proves nothing about the one being claimed, while looking exactly like proof.
 
+**A second rule, from how the reachability was argued.** The reviewer rated this P1 partly because the pinned gateway has no JSON-RPC batch support — reasoning about the one path they had in mind. But `params.inner.answer` needs no batching; it is a plain frame with one extra level. *Reasoning about a single route the data might take is the same error the code made.* When a defect is that a rule is coupled to position, an argument about reachability that walks one position inherits the bug. Ask what class of shapes defeats the rule, not which known shape does.
+
+**And a third, learned the hard way twice in one session.** A test written to pin a fix must be run against the *pre-fix* code before it is trusted. Two tests written here — one for the empty-entry hole in `content_is_complete`, one for the deny-set — initially passed against the unfixed implementation for unrelated reasons, and would have shipped as decoration. Keeping a verbatim copy of the old function and asserting `old=True, new=False` takes a minute and is the only thing that distinguishes a regression test from a comment.
+
 ### A skipped test is invisible inside a green run, so the standing evidence for parity had never run
 
 **Author.** v0.1 milestone-1 integration, from an external review of CI configuration
