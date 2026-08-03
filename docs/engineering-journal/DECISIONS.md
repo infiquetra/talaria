@@ -223,3 +223,28 @@ Sub-agent rows are cleared by the next `message.start` rather than at turn end. 
 **The candidate fix, and what blocks it.** Withholding the path of non-loopback `ws`/`wss` URLs carries no service-specific shape and costs nothing on study data, since SHAs and resource ids live in `http`/`https` document URLs. It is blocked on *sequencing*, not on harness cost: the comparator would have to encode an expectation about a redactor rule the remote-attach work has not yet defined. The comparator change itself is around ten lines mirroring the existing query-key allowance — an earlier version of this entry priced it as a change to the parity relation, which overstated it and would have caused whoever picked it up to defer it again.
 
 **Revisit when.** Remote gateway attach is implemented (the natural place to extend the comparator), or a non-loopback host is observed in a recorded URL. Both triggers and the mechanical check are in `QUEUED.md`. The trigger this entry originally carried — "remote CDP becomes supported" — was wrong: it had already happened, so it could never fire.
+
+## 2026-08-03
+
+### Tests over real subprocesses assert invariants, not schedules
+
+**Author.** v0.1 milestone-1 integration, from external review; written before segment 3 rather than after its first flake
+
+**Decision.** A test that spawns a real process, or shares a resource with a background loop, asserts a load-independent invariant. Where it needs a specific outcome, it *drives* the precondition rather than hoping the scheduler supplies it.
+
+**The evidence this is a family, not an incident.** Three in this suite already, all with the same mechanism — an unstated timing assumption that holds on an idle machine and dissolves under CI load, where the window is usually exactly the cost of a process spawn:
+
+- `test_the_status_command_runs_and_renders_under_replay` asserted `outcome == "ok"` on a tick fired while the app's own status loop (`talaria/ui/app.py:154`, which ticks before its first sleep) still had one in flight. The KTD5 guard correctly returned `overlapped_skip`. The guard was working; the test assumed it was the only caller.
+- An overlap test configured a 0.3s timeout against a child that slept 0.2s, leaving 0.1s for a Python interpreter to start.
+- `test_overlap_at_most_one_child_ever` reported zero successful invocations of three on a CI leg. Still unexplained, deliberately not folded into the first item's fix — a fix that explains one member of a family and absorbs the other closes an open defect on a resemblance.
+
+**The two rules.**
+
+1. *Assert the invariant, not the schedule.* "At most one child ever ran" is load-independent. "This particular attempt returned `ok`" is a bet on scheduling. Both were available in the status case and only one of them is a test.
+2. *A test sharing a resource with a background loop must stop the loop or account for it.* Accounting can be a bounded retry, but the comment must say which background actor it is racing, or the next reader will read the retry as superstition.
+
+**Rejected alternative.** Reruns, retry plugins, or marking the tests flaky. That treats an unstated precondition as noise, and it hides exactly the class of defect where the production code has a real race — the reason the still-unexplained third instance is kept open rather than retried away.
+
+**Why now.** Segment 3 (U7 transport, U8 remote attach, U10 acceptance against a launched gateway) adds a live socket, reconnect timers, and PTY-driven credential prompts: the highest concentration of background actors and real process spawns in the plan. The cost of this convention is a comment and a driven precondition; the cost of discovering it there is a CI flake that reads as a transport bug.
+
+**Revisit when.** A fourth instance appears despite the rule, which would mean the rule is being read as advice rather than as a precondition to state, or a test genuinely needs to assert a timing property — in which case it should measure a distribution, not a single attempt.
