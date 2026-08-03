@@ -24,7 +24,7 @@ The gate ran three times on 2026-08-03, and only the third run supports this dec
 
 The first reported `pass` and was worthless: four of its seven measurements were structurally
 incapable of failing, and the decisive one compared the projection against itself, so an interface
-rendering *nothing at all* passed with zero content loss. The repaired gate — thirteen checks, each
+rendering _nothing at all_ passed with zero content loss. The repaired gate — thirteen checks, each
 verified to be capable of failing — returned `fail` on three real defects, all of them in Talaria's
 own reconciliation code rather than in the framework. The third run, after those fixes, passed all
 thirteen. Its measurements, corpus identities, exercised matrix, the full three-verdict sequence,
