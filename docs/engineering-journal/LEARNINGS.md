@@ -4,6 +4,20 @@
 
 ## 2026-08-03
 
+### A high-water counter sampled after the trim it is meant to police reports an identity, not a measurement
+
+**Author.** v0.1 milestone-1 integration, from a CI failure
+
+**Evidence.** `talaria/ui/transcript.py` maintained `peak_mounted` as the KTD14 gate's mounted-widget metric, updated at the end of `reconcile()`. The gate reported 501 against a ceiling of 600 and passed. On PR #11 the required macOS CPython 3.12 leg failed on an unrelated-looking assertion in `tests/ui/test_transcript_bounds.py::test_a_resize_storm_preserves_reflow_anchors_and_content`: `assert 49 <= (40 + 1)`, mid-stream, with a test cap of 40. That is a state `peak_mounted` said was unreachable — it had never once reported above `cap + 1`. Instrumenting `mount_all` directly measured post-mount counts of up to **51** against that same cap of 40, with 28 of 33 samples above `cap + 1`, while `peak_mounted` read **41**.
+
+**Mechanism.** `reconcile()` mounts new line widgets and *then* trims back to the cap, awaiting in between. The counter was updated after the trim, at which point the invariant it was measuring had already been restored by construction — so it could not report a value above `mount_cap + 1` whatever the pane did. "501 against 600" read like a measured safety margin; it was `500 + 1`, an identity. The module's own comment argued that a transient the operator sees as a slow frame is the thing that matters and that "a snapshot after the fact cannot see" it — which is precisely what the counter was. The test suite could not catch this either, because three separate assertions checked the tight bound *against the counter*, so they were confirming the tautology rather than the pane.
+
+**Fix.** Sample `peak_mounted` immediately after the mount and before the trim as well. The gate was re-run on the honest metric and still passes — 501 on the stress corpus, **507** sustained, against the unchanged 600 — so the verdict did not change, but the sustained figure is now a real measurement with 93 of headroom. The worst case does not materialize because a backlog larger than the cap is condensed before it is mounted. Tests now assert the two bounds separately: `mounted_count <= cap + 1` once settled, `<= 2 * cap + 1` mid-update.
+
+**Validation.** `uv run pytest` — 359 passed; the two formerly-flaky tests pass 5/5 locally, and the gate re-run exits 0 with `verdict: pass`.
+
+**Generalizable rule.** A metric that samples only where its invariant is guaranteed to hold measures nothing. Before trusting a threshold check, ask what value the instrument is *capable* of reporting — if a failing reading is unreachable by construction, a passing one is not evidence. Corollary: when a metric and a test assert the same bound, the test cannot validate the metric; something outside the pair has to observe it, which here was a loaded CI runner sampling at a moment the developer machine never hit.
+
 ### Assigning `self._closing` in a Textual `App` subclass hangs every Pilot test at teardown, and the traceback names nothing in your code
 
 **Author.** v0.1 unit U5 — the replay-driven Textual shell

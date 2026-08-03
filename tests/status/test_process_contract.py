@@ -70,7 +70,18 @@ def test_overlap_at_most_one_child_ever(tmp_path: Path, sample_payload: StatusPa
     script = "import sys, json, time; json.load(sys.stdin); time.sleep(0.2); print('x')"
 
     async def scenario() -> None:
-        runner = StatusRunner(argv=python_argv(script), launch_cwd=tmp_path, limits=_fast_limits())
+        # Not _fast_limits()'s 0.3s: this test is about the overlap guard, not
+        # the timeout, and 0.3s leaves 0.1s for an entire interpreter spawn once
+        # the child's own 0.2s sleep is paid. That margin holds on a developer
+        # machine and loses on a loaded CI runner, where the surviving tick
+        # times out and the "exactly one ran" assertion fails while the guard
+        # itself is working correctly. The timeout is given room so the outcome
+        # under test is the one being measured.
+        runner = StatusRunner(
+            argv=python_argv(script),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(timeout_seconds=30.0),
+        )
         results = await asyncio.gather(
             runner.tick(sample_payload),
             runner.tick(sample_payload),

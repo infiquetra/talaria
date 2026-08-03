@@ -130,6 +130,15 @@ class TranscriptPane(VerticalScroll):
             new_widgets = [Static(literal_text(line), markup=False) for line in pending]
             self._widgets.extend(new_widgets)
             await self.mount_all(new_widgets)
+            # Sample the peak HERE, before the step-4 trim, not only at the end
+            # of this method. Step 2's comment is right that a transient the
+            # operator can see as a slow frame is the thing that matters — but a
+            # peak sampled only after the trim cannot observe one, because the
+            # trim has by then restored the cap. Measured after the trim this
+            # metric can never exceed mount_cap + 1 whatever the pane does,
+            # which makes it an identity rather than a measurement. The honest
+            # peak is the post-mount count, and it is what the KTD14 gate reads.
+            self.peak_mounted = max(self.peak_mounted, self.mounted_count)
 
         while len(self._widgets) > self.mount_cap:
             widget = self._widgets.popleft()

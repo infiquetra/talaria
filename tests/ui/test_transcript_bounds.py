@@ -20,6 +20,18 @@ from tests.ui.conftest import event, paused_app, streaming_turn
 
 SMALL_CAP = 40
 
+#: The honest transient bound. ``reconcile`` mounts new lines and *then* trims
+#: to the cap, and it awaits in between, so a sample taken mid-reconcile can see
+#: both the pre-existing widgets (at most the cap) and the newly mounted batch
+#: (also at most the cap, since a larger backlog is condensed before mounting),
+#: plus the condensed block. Two different claims live here and the tests keep
+#: them apart: ``mounted_count`` after the stream settles must be within
+#: ``SMALL_CAP + 1``, while ``peak_mounted`` — which samples the transient — is
+#: only bounded by this. Asserting the tight bound against the peak used to pass
+#: for the wrong reason: the peak was sampled after the trim, where it could not
+#: exceed the cap whatever the pane did.
+TRANSIENT_CAP = 2 * SMALL_CAP + 1
+
 
 async def _drain(app: Any, pilot: Any, controls: Any) -> None:
     controls.resume()
@@ -36,9 +48,11 @@ async def test_mounted_widgets_stay_under_the_cap_while_content_stays_reachable(
         await _drain(app, pilot, controls)
         pane = app.transcript
 
-        # Bounded: the cap plus the single condensed block, never more.
-        assert pane.peak_mounted <= SMALL_CAP + 1
+        # Bounded, in the two senses that are actually true. Settled: the cap
+        # plus the single condensed block. Transient: bounded too, but by
+        # TRANSIENT_CAP, because the mount precedes the trim.
         assert pane.mounted_count <= SMALL_CAP + 1
+        assert pane.peak_mounted <= TRANSIENT_CAP
         assert pane.condensed_count > 0, "the corpus never exceeded the cap"
 
         # Complete: everything the domain committed is still served.
@@ -147,11 +161,18 @@ async def test_a_resize_storm_preserves_reflow_anchors_and_content(
         for width, height in ((40, 12), (140, 50), (30, 8), (100, 30), (52, 18)):
             await pilot.resize_terminal(width, height)
             await pilot.pause()
-            assert app.transcript.mounted_count <= SMALL_CAP + 1
+            # Mid-storm, this sample can land inside a reconcile, between the
+            # mount and the trim. TRANSIENT_CAP is the bound that holds there;
+            # asserting SMALL_CAP + 1 here is a race that passes on a fast
+            # machine and fails on a loaded CI runner, which is how this was
+            # found. The settled bound is asserted after the drain below.
+            assert app.transcript.mounted_count <= TRANSIENT_CAP
             assert content_is_complete(app.state, transcript_view(app.state))
 
         await app.drain(timeout=60.0)
         await pilot.pause()
+        # Settled: no reconcile in flight, so the tight bound must hold.
+        assert app.transcript.mounted_count <= SMALL_CAP + 1
 
         view = transcript_view(app.state)
         assert content_is_complete(app.state, view)

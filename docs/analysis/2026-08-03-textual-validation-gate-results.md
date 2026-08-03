@@ -91,7 +91,7 @@ embedded tab.
 | check | measured | threshold | verdict |
 | ----- | -------- | --------- | ------- |
 | mounted line widgets, stress corpus | 501 | ≤ 600 | pass |
-| mounted line widgets, sustained pass | 501 | ≤ 600 | pass |
+| mounted line widgets, sustained pass | 507 | ≤ 600 | pass |
 | resident-set growth, full stress replay | 35.6 MB | < 300 MB | pass |
 | render ticks per second, maximum speed | 2.24 | ≤ 25 | pass |
 | render ticks per second, sustained streaming | 15.21 | ≤ 25 | pass |
@@ -107,12 +107,33 @@ embedded tab.
 everything older. Across the stress corpus 3,954 lines were condensed and 4,454 lines existed in
 total, so the collapse ran continuously rather than once at the end.
 
-The number is a high-water mark read from the pane's own counter, not a sample, and it is written
-inside the update *before* the anchor is restored. That matters: an implementation that mounted a
-whole backlog and then removed the surplus would satisfy a steady-state cap while briefly holding
-eight times it, and a sample taken afterwards could not see the difference.
+The number is a high-water mark read from the pane's own counter, not a sample. That distinction is
+the whole point of the check: an implementation that mounted a whole backlog and then removed the
+surplus would satisfy a steady-state cap while briefly holding many times it, and a sample taken
+afterwards could not see the difference.
 `tests/ui/test_transcript_bounds.py::test_a_backlog_larger_than_the_cap_is_never_mounted_in_full`
 pins the distinction by forcing an entire corpus through one render tick.
+
+**Correction, 2026-08-03, after this document was first written.** The high-water counter did not
+originally do what the paragraph above claims. It was updated at the end of `reconcile()`, *after*
+the loop that trims back to the cap — so it could never report a value above `mount_cap + 1` no
+matter what the pane did in between. The check read like a measurement with a safety margin (501
+against a ceiling of 600) when it was closer to an identity (500 + 1). The bug was found from the
+outside: a mid-stream assertion in the resize-storm test failed on a loaded CI runner at 49 mounted
+widgets against a test cap of 40, which is a state the counter said was impossible. Instrumenting
+`mount_all` directly confirmed a real transient of up to 51 against that same cap of 40.
+
+The counter is now also sampled immediately after the mount and before the trim, so it reports the
+true peak. The gate was re-run on the honest metric and **still passes**: 501 on the stress corpus
+and **507** on the sustained pass, against the unchanged ceiling of 600. The verdict did not change,
+but the sustained figure is now a measurement with 93 of headroom rather than a structural constant.
+The worst case does not materialize here because a backlog larger than the cap is condensed *before*
+it is mounted, so only small increments are ever mounted-then-trimmed.
+
+Two bounds exist and they are not the same number. Settled — no update in flight — the mounted count
+is within `mount_cap + 1`. Mid-update it is bounded by roughly `2 × mount_cap + 1`, since the
+pre-existing widgets and the newly mounted batch are both capped. `tests/ui/test_transcript_bounds.py`
+now asserts each against the state it actually holds in.
 
 ### Memory
 
