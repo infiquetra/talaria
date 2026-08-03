@@ -11,6 +11,7 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 - [ADR-0002 — The domain core is framework-independent](../platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)
 - [ADR-0003 — Talaria re-encodes the Hermes terminal UI's behavior](../platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)
 - [ADR-0004 — Talaria is a Python client](../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)
+- [ADR-0005 — Textual is Talaria's presentation layer](../platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) — `proposed`
 
 ## Analysis and evidence
 

@@ -10,12 +10,13 @@ Talaria is a standalone client that connects to a Hermes gateway it did not laun
 
 Four decisions are settled and are not open for re-litigation in an implementation change:
 
-| ADR                                                                                          | What it settles                                                                                     |
-| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)           | Talaria owns its own process lifetime and dials a gateway it did not launch                         |
-| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | The domain core never imports the terminal framework; the UI is a projection of domain state        |
-| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)   | Hermes's terminal UI is documentation of behavior, not a source tree to translate                   |
-| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is written in Python; the terminal framework is still open and subject to a validation gate |
+| ADR                                                                                          | What it settles                                                                              |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)           | Talaria owns its own process lifetime and dials a gateway it did not launch                  |
+| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | The domain core never imports the terminal framework; the UI is a projection of domain state |
+| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)   | Hermes's terminal UI is documentation of behavior, not a source tree to translate            |
+| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is written in Python; the terminal framework is decided by a validation gate         |
+| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)   | Textual 8.2.8 is the presentation layer — `proposed`, on the U5 gate's pass verdict          |
 
 **The repository is mid-transition.** The TypeScript tree under `src/` is superseded repository-bootstrap code. Do not add behavior to it. Do not port it to Python file by file either — its redaction rules and frame-log contract are re-encoded as contracts, and the rest is discarded.
 

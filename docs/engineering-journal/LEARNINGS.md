@@ -2,6 +2,80 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-03
+
+### Assigning `self._closing` in a Textual `App` subclass hangs every Pilot test at teardown, and the traceback names nothing in your code
+
+**Author.** v0.1 unit U5 — the replay-driven Textual shell
+
+**Evidence.** `talaria/ui/app.py` briefly used `self._closing = True` in its own `shutdown_sources()` to stop the coalescing render tick. Every test using `async with app.run_test()` then hung — not at the assertion, at the *end* of the block — and `faulthandler` dumped only `selectors.select` → `asyncio.base_events._run_once`, with no Talaria frame anywhere in the stack. A minimal Textual app in the same session exited in 0.30 seconds, and a `TalariaApp` over an empty corpus hung, which located the fault in the subclass rather than in the framework or the corpus.
+
+**Mechanism.** `textual.message_pump.MessagePump.__init__` sets `self._closing = False` as an *instance* attribute; `App` inherits it. Setting it to `True` tells the framework its own shutdown is already in progress, so `App._shutdown()` skips the work it would otherwise do and `_process_messages` never returns — `run_test`'s `await app_task` then waits forever. The name is never declared at class level, so a class-dictionary comparison cannot see it, and neither mypy nor ruff has any reason to object: assigning an attribute on `self` is ordinary Python. The same class of collision had already bitten once in this unit, when a coalescing-flush callback named `_flush` silently replaced `App._flush` (which flushes captured stdout).
+
+**Fix.** Renamed to `_teardown_started`, and added `tests/ui/test_app_shadowing.py`, which parses `talaria/ui/app.py` with `ast` and fails the build if any name defined in the class body — or any `self.<name> =` assignment inside it — collides with something in `App.__mro__` or in `vars(App())`, unless it is listed in an explicit `DELIBERATE_OVERRIDES` set. Source parsing rather than `vars(TalariaApp)`, for two reasons: `_closing` is not in any class dictionary, and Textual's `DOMNode.__init_subclass__` injects `_reactives`, `_computes` and friends into every subclass, so the class dictionary is full of names the author never wrote.
+
+**Validation.** `uv run pytest` — 359 passed in 41.8s, from a state where a single Pilot test could not finish inside 900 seconds.
+
+**Generalizable rule.** When subclassing a framework class with a large private surface, treat the instance namespace as shared and check it mechanically. A name collision with a framework's *instance* attribute produces a hang or a silent behaviour change, never a clean error, and the check that catches it has to read the source — the collision is invisible to `vars()` on the class.
+
+### A `Paste` event posted to a Textual widget inserts the text twice
+
+**Author.** v0.1 unit U5
+
+**Evidence.** `tests/ui/test_composer.py` asserts that a 400-line bracketed paste inserts without submitting. Posting `events.Paste(text)` to the `TextArea` produced 798 newlines instead of 399. Reduced to a five-line Textual app: `text_area.post_message(Paste("AB"))` yields `"ABAB"`, while `app.post_message(Paste("CD"))` yields `"CD"`.
+
+**Mechanism.** `TextArea._on_paste` inserts the text and does not stop the event, so it bubbles to the `App`, which forwards it back down to the focused widget — which inserts it again. A real bracketed paste is delivered by the terminal driver to the `App`, so the doubling never happens in production; it is an artefact of addressing the widget directly.
+
+**Fix.** Tests post `Paste` to the app, matching the real delivery path.
+
+**Generalizable rule.** In a bubbling event system, post synthetic input where the real input enters — the top — not where you want it handled. Injecting below the real entry point can exercise a delivery path that production never takes, and here it would have hidden a genuine paste defect behind a passing test.
+
+## 2026-08-02
+
+### A test helper imported as `tests.x.y` collides with mypy's own `files = ["tests"]` scan the moment a `tests/` subpackage has no parent `__init__.py`
+
+**Author.** v0.1 unit U6 — status-line runner
+
+**Evidence.** `tests/status/test_runner.py` and `tests/status/test_process_contract.py` share one helper (`python_argv`, in `tests/status/conftest.py`) and import it with `from tests.status.conftest import python_argv`. Before this fix, `uv run mypy` failed with `Source file found twice under different module names: "status.conftest" and "tests.status.conftest"`, and only for that one file.
+
+**Mechanism.** `pyproject.toml`'s `[tool.mypy] files = ["talaria", "tests"]` makes mypy compute each scanned file's module name by walking up through directories that hold an `__init__.py`, stopping at the first ancestor that doesn't. `tests/` itself had no `__init__.py` (only `tests/domain/__init__.py`, `tests/recorder/__init__.py`, and now `tests/status/__init__.py` did), so the scan named `tests/status/conftest.py` as top-level module `status.conftest`. The `from tests.status.conftest import ...` statement in the two test files asks mypy to additionally resolve an import named `tests.status.conftest` — a different qualified name for the identical physical file — which mypy reports as a collision rather than silently picking one. Every other test subpackage in this repo never triggered it because nothing else cross-imports between test files; each one only relies on pytest's implicit `conftest.py` fixture injection.
+
+**Fix.** Added an empty `tests/__init__.py` so `tests/` is a real package and the whole tree resolves under one root (`tests.status.conftest`), matching the qualified name the import statement already asked for.
+
+**Validation.** `uv run mypy` — `Success: no issues found in 46 source files`; `uv run pytest` unaffected (296 passed) since pytest's `rootdir`/`testpaths` behavior does not depend on `tests/__init__.py` existing.
+
+**Generalizable rule.** If a test file does `from tests.<pkg>.<mod> import ...`, `tests/__init__.py` must exist — otherwise mypy's own file-list scan and that import statement disagree about the file's fully-qualified name, and the error surfaces as a confusing "found twice" rather than a missing-package message.
+
+## 2026-08-02
+
+### Two of Hermes's blocking-prompt bridges expire on the wire with no client handler, and approvals carry no request id at all
+
+**Author.** v0.1 unit U3 — the ADR-0003 reconciliation-catalogue read at `7f4d15515`
+
+**Evidence.** `tui_gateway/server.py:2989-2998` emits a `<bridge>.expire` event on timeout for all four blocking bridges it names — `secret`, `sudo`, `clarify`, `terminal.read`. The shipping terminal UI's event switch (`ui-tui/src/app/createGatewayEventHandler.ts:1174-1182`) handles exactly two of them, `sudo.expire` and `secret.expire`. Separately, `approval.request`'s payload at `:1130-1147` is `{description, command, choices, allow_permanent, smart_denied}` — no `request_id` — and `approval.respond` resolves by session key instead (`tui_gateway/methods_prompt.py:886-920`).
+
+**Mechanism.** The gap is invisible from either side alone. Reading the client, the two handled expiries look like the complete set. Reading the gateway, the emit site looks like it has four listeners. `clarify.expire` is masked because Hermes recovers the same situation by a different route — a `tool.complete` for the clarify tool triggers an abandoned-prompt flush — and `terminal.read.expire` is masked because that bridge is desktop-only, so the terminal UI never sees it in practice. The approval finding is masked differently: a UI that shows one approval at a time never notices that it has no key to show it under.
+
+**Fix.** Talaria routes all four expiries through one prompt registry keyed by `request_id`, and synthesizes a stable session-scoped key for approvals (`approval:<session_id>`) because only one approval can be outstanding per session on this protocol. Both are catalogued as rules RR-27 and RR-28 with named tests, so they are decisions rather than accidents.
+
+**Validation.** `tests/domain/test_prompt_registry.py::test_every_bridge_expires_through_the_same_registry` and `::test_approval_gets_a_synthesized_session_scoped_key`, green in the U3 suite.
+
+**Generalizable rule.** When re-encoding behaviour from a client, read the server's emit sites too — a client's handler list is evidence of what that client needed, not of what the protocol sends.
+
+### A rule catalogue that is only prose rots silently, so the tests parse it
+
+**Author.** v0.1 unit U3
+
+**Evidence.** `docs/analysis/2026-08-02-hermes-reconciliation-rules.md` carries 38 rules in a markdown table whose last column names a test function. `tests/domain/test_reconciliation.py::test_every_catalogued_rule_names_a_test_that_exists` parses that table and fails if any named test is absent from `tests/domain/`; a companion test asserts the rule ids run `RR-01..RR-nn` with no gaps, so a deleted rule is visible rather than merely missing.
+
+**Mechanism.** ADR-0003 names this failure mode precisely — "a missed rule produces a defect months later that Hermes fixed years earlier, and nothing in the codebase points at the omission" — and the same is true one step later: a rule that is catalogued and then never implemented looks identical in a diff to one that is catalogued and implemented. Prose cannot tell those apart. A parser can.
+
+**Fix.** Every rule carries an explicit verdict (re-encode / re-encode with a change / drop) and a named test, including the drops — a dropped rule names the test that proves the drop is still deliberate, which is the only way "we decided not to" stays distinguishable from "we forgot".
+
+**Validation.** The full domain suite is green with the catalogue in place; deleting a row's test name fails `test_every_catalogued_rule_names_a_test_that_exists`.
+
+**Generalizable rule.** If a document is a precondition for code, make the test suite read the document.
+
 ## 2026-08-02
 
 ### `pkgutil.walk_packages` cannot see a module Python can import, so the ADR-0002 guard had a silent hole

@@ -3,12 +3,13 @@ dist
 coverage
 package-lock.json
 
-# Prettier belongs to the superseded TypeScript bootstrap under src/ (ADR-0004);
-# it was never scoped to govern Python-era documentation. Reformatting docs/ is
-# also actively harmful: several files there are pinned evidence. The doc-review
-# artifact records a target_sha256_after for the v0.1 plan, and the review
-# reconciliation records before/after hashes for its receipts — rewriting those
-# bytes invalidates the hashes that prove the review gate was satisfied.
+# Prettier belongs to the superseded TypeScript bootstrap under src/ (ADR-0004)
+# and leaves the repository with it; it was never scoped to govern Python-era
+# documentation. One file here is also byte-pinned: the doc-review artifact
+# records a target_sha256_after for docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md,
+# so reformatting it would invalidate the hash proving the review gate was met.
+# Scoped to docs/ deliberately — README.md, AGENTS.md and CLAUDE.md at the root
+# stay Prettier-governed.
 docs/
 
 # Python tooling artifacts. ruff owns formatting for the Python tree.

@@ -126,10 +126,82 @@ The replacement is now decided. Gate selection is not an operator flag: `should_
 
 **Author.** v0.1 segment 1, unblocking the `check` CI job
 
-**Decision.** `.prettierignore` now excludes `docs/`, `.venv`, and `__pycache__`. Prettier governs the superseded TypeScript bootstrap under `src/` and nothing else; ruff owns formatting for the Python tree, and the documentation tree is formatted by hand.
+**Decision.** `.prettierignore` now excludes `docs/`, `.venv`, and `__pycache__`. Prettier governs the superseded TypeScript bootstrap under `src/` and nothing else; ruff owns formatting for the Python tree, and the `docs/` tree is formatted by hand. The exemption is scoped to `docs/`: the root markdown files — `README.md`, `AGENTS.md`, `CLAUDE.md` — stay Prettier-governed, so the repository's front door keeps a mechanical formatting check.
 
-**Rationale.** The `check` job's `prettier --check .` step had been failing on `main` since `064967b` — not on TypeScript, which typechecks clean and passes all 45 vitest tests, but on ten markdown and JSON files under `docs/`. Several of those are pinned evidence rather than ordinary prose. The doc-review artifact records `target_sha256_after: 010ff5f6…` for the v0.1 plan, and the requirements reconciliation records before/after hashes for its receipts. Running `prettier --write` would have rewritten those bytes and invalidated the hashes that prove the review gate was satisfied — turning a formatting nit into the destruction of the run's own provenance chain.
+**Rationale.** Prettier is here on a lease. It arrived with the TypeScript bootstrap and leaves with it (ADR-0004), so scoping it to the tree it was chosen for is the load-bearing argument: a formatter for a superseded language should not be the authority on Python-era documentation it was never configured to understand. The `check` job's `prettier --check .` step had been failing on `main` since `064967b` — not on TypeScript, which typechecks clean and passes all 45 vitest tests, but on ten markdown and JSON files under `docs/`.
 
-**Rejected alternatives.** `prettier --write .` (invalidates the pinned hashes described above, and would keep doing so every time a plan or review artifact is regenerated). Deleting the `check` job (it still carries real signal — typecheck plus 45 tests — until `src/` is removed). Per-file ignore entries (every new document under `docs/` would fail CI until someone remembered to add it, which is how this failure accumulated in the first place).
+A second, narrower reason applies to exactly one of those ten files. `docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md` is byte-pinned by the doc-review artifact's `target_sha256_after: 010ff5f6…`; running `prettier --write` would rewrite it and invalidate the hash that proves the review gate was satisfied. That is a real hazard, but it is one file, not a general property of `docs/` — the other pinned target on record, the requirements brainstorm, formats clean and was never in the failing set. The scoping decision would stand on the tool-lifecycle argument alone.
+
+**Rejected alternatives.** `prettier --write .` (invalidates the pinned plan hash described above, and would keep doing so every time that plan is regenerated). Deleting the `check` job (it still carries real signal — typecheck plus 45 tests — until `src/` is removed). Per-file ignore entries (every new document under `docs/` would fail CI until someone remembered to add it, which is how this failure accumulated in the first place).
 
 **Revisit when.** The superseded `src/` tree is removed, at which point Prettier and the entire `check` job leave the repository with it. Also revisit if documentation formatting ever needs to be mechanically enforced — that would call for a markdown-aware linter chosen for the Python era, configured to leave pinned artifacts alone.
+
+## 2026-08-02 — The domain view model is an immutable snapshot plus a set of change markers
+
+**Author.** v0.1 unit U3
+
+**Decision.** Every projection emission is a frozen dataclass (`talaria.domain.projection.Snapshot`) carrying the transcript view, the sub-agent view, the prompt view, and the KTD5 status payload, plus `changed: frozenset[str]` naming which of those four regions differs from the previous emission. The UI skips untouched regions without the domain knowing what a widget is.
+
+**Why U3 decided this and not U5.** ADR-0002 left the view-model shape open and assigned it to "the first vertical slice's re-render-cost evidence", which the plan pointed at U5. But U3 has to ship `projection.py`, the status payload, the terminal-read views, and the UI view models *before* U5 exists, so as ordered the question could not be answered where it was asked. U3 chooses; U5 measures and records the number.
+
+**Rationale.** AE2 requires that replaying one corpus twice produces an identical projection. Comparing two values is trivial; comparing two mutation histories is not. In-place mutation would have made the determinism requirement awkward to test at exactly the point where it matters most.
+
+**Rejected alternatives.** In-place mutation with dirty flags (cheaper per frame, but AE2's comparison becomes a bespoke differ nobody trusts). Emitting a diff instead of a snapshot (smaller payloads, but the UI then has to reconstruct state, which puts a second copy of the domain in the presentation layer — the thing ADR-0002 exists to prevent).
+
+**Cost.** One allocation per emission. That is precisely what U5 is asked to measure against KTD14's thresholds; if the measurement is bad, the ADR records it with the evidence rather than U3 having guessed silently.
+
+**Revisit when.** U5's gate publishes its re-render cost and memory growth curve.
+
+## 2026-08-02 — Cancelled is a sticky turn state, and sub-agent rows outlive their turn
+
+**Author.** v0.1 unit U3, from the reconciliation-catalogue read
+
+**Decision.** Two deliberate divergences from Hermes, both recorded in the catalogue with named tests.
+
+`turn == "cancelled"` survives until the next `message.start`. Hermes's `interrupted` latch does the same thing internally (`ui-tui/src/app/turnController.ts:989` is the only site that clears it), but it settles the *displayed* status to `ready` immediately. R4 requires the transcript to show that a turn was cancelled rather than that it ended, and KTD5's status enum already has a `cancelled` member — so a status payload sampled after a cancelled turn reports `cancelled`, not `idle`.
+
+Sub-agent rows are cleared by the next `message.start` rather than at turn end. Hermes drops them at `idle()` and archives the fan-out to disk via `spawn_tree.save`. Talaria has no archive to move them into, because R17 forbids authoring sub-agent state and `spawn_tree.save` is the concrete method that rule excludes.
+
+**Rationale.** The second decision is what makes AE14 testable rather than vacuous. AE14 asks that a terminal sub-agent row survive a late progress event; if rows vanish at turn end, the late event has no row to fail to overwrite and the guard is never exercised.
+
+**Rejected alternatives.** Clearing rows at turn end and testing the guard only mid-turn (matches Hermes, but leaves the AE14 sequence untested where it actually occurs — after `message.complete`). Building a Talaria-side spawn archive (violates R17, and R17 exists because a read-only client is the whole standalone-client boundary in ADR-0001).
+
+**Cost.** One turn's fan-out is retained after the turn ends. Queued at P2 alongside the reasoning-buffer decision, with the U5 growth curve as the input.
+
+**Revisit when.** U5's memory growth curve makes domain-side eviction a requirement, or a live session shows a fan-out large enough for the one-turn retention to matter.
+
+## 2026-08-03 — Textual passed its gate; the presentation layer is settled and the framework choice is drafted as ADR-0005
+
+**Author.** v0.1 unit U5 — the replay-driven Textual shell and framework validation gate
+
+**Decision.** Textual 8.2.8 is Talaria's presentation layer for v0.1, drafted as [ADR-0005](../../platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) (`proposed`, pending operator acceptance). The gate ran on 2026-08-03 and passed all ten threshold checks; measurements are in [Textual validation gate results](../analysis/2026-08-03-textual-validation-gate-results.md).
+
+**The gate is a shipped command, not a one-off script.** `uv run talaria gate --corpus <recording> --deltas 50000` replays both corpora through the real `TalariaApp`, compares every measurement against KTD14's thresholds, prints the whole record as JSON, and exits non-zero on a fail verdict. Re-establishing the verdict after a Textual upgrade is therefore one command rather than an archaeology exercise.
+
+**Rationale.** The plan's central bet was that the prototype and the gate are the same build, because a gate that measures a purpose-built harness proves the harness. That held: every number came from the app the operator runs.
+
+**Two passes, not one, and the reason is a correction.** The first version of the gate measured only an unbounded replay, and reported 1 render tick — because the domain reducer drains 53,516 frames in 1.8 seconds, long before a 50ms coalescing tick can fire more than a handful of times. That is a real result about the reducer and a meaningless one about the renderer, and reporting it alone would have claimed a renderer verdict on reducer evidence. The gate now also replays on the corpus's recorded cadence, scaled to a 60-second window, where the render loop runs 2,764 times against a live stream.
+
+**Answers to two questions earlier ADRs deferred.** ADR-0002 asked for the re-render cost of U3's immutable-snapshot view model: it is not the bottleneck, because one snapshot is allocated per flush rather than per frame. ADR-0004 warned that transcript virtualization would have to be owned explicitly: true, and it cost about 120 lines, holding 501 mounted widgets across a corpus that produced 4,454 lines.
+
+**Rejected alternatives.** Switching to `prompt_toolkit` anyway (trades a measured framework for an assessed one). Deferring the framework decision further (the deferral existed to buy evidence; the evidence exists).
+
+**Cost.** A `textual>=8.2.8,<9` pin, and a namespace shared with a large private framework surface — see the LEARNINGS entry on `_closing`.
+
+**Revisit when.** The Textual pin is widened, a real terminal host exercises what the headless gate could not, or the recorded memory slope of 0.33 MB per 1,000 frames starts to matter in a real session.
+
+## 2026-08-03 — The gate's corpora are cited by digest, and the stress corpus is generated rather than committed
+
+**Author.** v0.1 unit U5
+
+**Decision.** Neither gate corpus enters version control (R29). The recorded session is cited by opaque label, sha256 and frame count. The 53,516-frame stress corpus is *generated* from a seed by `talaria.replay.stress.build_stress_corpus`, and the results doc records the seed and the digest rather than shipping the file.
+
+**Rationale.** A checked-in corpus is a provenance claim nothing verifies — it is whatever was committed, and a later edit is invisible. A seed plus a digest is checkable in one command: regenerate, compare. It is also the only form of provenance compatible with a public repository whose corpora may carry session content the redaction deny-set missed.
+
+**Why the stress corpus is synthetic at all.** The recorded session proves the interface handles *actual* traffic (R30). It cannot carry the thresholds, because its size is whatever the session happened to be, and a threshold measured against an accidental number is not a threshold. The two corpora answer different questions and the results doc keeps them separate.
+
+**Rejected alternatives.** Committing a small real corpus (R29 forbids it, and small defeats the purpose). Generating without a seed (reproducibility is the whole claim). Citing a local path (the public-context rule forbids it, and a path is not evidence anyway).
+
+**Cost.** Anyone reproducing the gate must either supply their own recording or accept that the recorded-session half is skipped. The command degrades honestly: without `--corpus` it runs the stress passes and omits the recorded-session checks rather than pretending.
+
+**Revisit when.** A corpus is needed by a consumer that cannot run the generator — for example a cross-language comparison that has no Python.

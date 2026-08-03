@@ -4,7 +4,7 @@ Talaria is a public, experimental Hermes-native terminal UI. Read [AGENTS.md](AG
 
 ## Navigation
 
-- Architecture decisions: [platform-specs/04-architecture/adrs/](platform-specs/04-architecture/adrs/) — read these first; four are settled
+- Architecture decisions: [platform-specs/04-architecture/adrs/](platform-specs/04-architecture/adrs/) — read these first; four are settled and ADR-0005 (Textual) is proposed
 - Project direction: [docs/analysis/2026-08-01-hermes-tui-project-direction.md](docs/analysis/2026-08-01-hermes-tui-project-direction.md)
 - Durable decisions: [docs/engineering-journal/DECISIONS.md](docs/engineering-journal/DECISIONS.md)
 - Deferred work: [docs/engineering-journal/QUEUED.md](docs/engineering-journal/QUEUED.md)
@@ -28,7 +28,7 @@ removed.
 
 ## Notes
 
-- Talaria is written in Python (ADR-0004). The terminal framework is not selected yet. The TypeScript tree under `src/` is superseded bootstrap code — do not extend it, and do not port it file by file.
+- Talaria is written in Python (ADR-0004) with Textual as the terminal framework (ADR-0005, `proposed` on the U5 gate's pass verdict). The TypeScript tree under `src/` is superseded bootstrap code — do not extend it, and do not port it file by file.
 - The domain core never imports the terminal framework (ADR-0002).
 - Hermes's terminal UI is documentation of behavior, not a source tree to translate (ADR-0003).
 - Prefer transport interfaces and capability discovery over direct Hermes internals.
