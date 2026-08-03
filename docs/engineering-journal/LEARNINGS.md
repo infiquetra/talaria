@@ -4,6 +4,41 @@
 
 ## 2026-08-03
 
+### A security rule coupled to a path string was disarmed by ordinary nesting, and its docstring claimed the opposite
+
+**Author.** v0.1 milestone-1 integration, from an external review of the redaction boundary
+
+**Evidence.** `talaria/recorder/redact.py`. Three defects, each putting a credential into an append-only, hash-chained frame log:
+
+| shape | result before the fix |
+| --- | --- |
+| `{"method": "clarify.respond", "params": {"inner": {"answer": "..."}}}` | credential written verbatim |
+| the same frame inside a batch, or under any wrapping envelope | credential written verbatim |
+| `wss://operator:hunter2@gateway.local/attach?x=1` | round-tripped whole, including in the frame-log header |
+| `http://user:pass@cdp.example/` in a frame body | untouched — the URL check required a `?` before it would look |
+
+**Mechanism.** Two independent causes. The deny-set — the rule covering `answer`, `value`, `text` and `password` on Hermes's four blocking bridges — was resolved once from the outermost object and then applied only where the walker's dotted path was *exactly* `params` or `params[...]`. That coupled a security decision to a string comparison on position, so every shape that moved the frame off the top level silently disarmed it. Those keys are deny-set-only by design: the key-name net is deliberately built not to catch `answer`, so nothing stood behind it. Separately, `redact_url` rewrote only the query and handed `parts.netloc` back to `urlunsplit` verbatim — and `netloc` is exactly where `user:password@host` lives.
+
+The most instructive part is that the walker's docstring already claimed the property it lacked: *"a credential nested inside a batch or an unexpected envelope shape is still caught."* The walk did recurse; the deny-set did not travel with it. The test named `test_catches_a_credential_nested_at_arbitrary_depth` reinforced the false impression — its fixture's credential is under the key `token`, so it exercised the key-name net at depth and never the deny-set. A reviewer checking whether nesting was covered found a green test that said yes.
+
+**Fix.** The method is re-read from each object that carries one and governs that object's own `params` subtree to any depth; only a method actually in the deny-set takes over, so an unrelated inner `{"method": "GET"}` cannot clear a context established above it. `redact_url` withholds the whole userinfo component — the username position too, since `https://<token>@host/` is an ordinary bearer form — and rebuilds `netloc` only when userinfo is present, so clean URLs stay byte-identical for the KTD6 comparison. The frame-body URL check no longer requires a query string.
+
+**Outcome.** All four shapes withheld, verified end-to-end through the real writer; over-redaction controls unchanged (usage counters, harmless URLs, mixed-case hosts, IPv6 literals, percent-escapes). The live U2 corpus on this machine was scanned and is clean: 46 records, zero `devtools/browser`, zero userinfo, zero query-bearing URLs.
+
+**Generalizable rule.** When a rule's scope is expressed as a position — a path prefix, a depth, an index — moving the data is enough to defeat it, and data moves for reasons that have nothing to do with security. Bind the rule to the object that owns it and let it travel with the walk. And when a docstring asserts a property, write the test that would fail if the property were absent: a test whose fixture is caught by a *different* mechanism proves nothing about the one being claimed, while looking exactly like proof.
+
+### A skipped test is invisible inside a green run, so the standing evidence for parity had never run
+
+**Author.** v0.1 milestone-1 integration, from an external review of CI configuration
+
+**Evidence.** All five `@requires_ts_bridge` tests in `tests/recorder/test_equivalence.py` skipped in CI. The `python-check` jobs installed `uv` and never Node, so `node_modules/.bin/tsx` did not exist; the one job that did install Node ran `npm run check`, not pytest. `test_equivalence_over_the_synthetic_credential_corpus` — whose own skip message calls it *"the CI-standing evidence"* for the KTD6/R28 parity relation — had therefore never executed in CI. It passes when actually run, so the port does not diverge; the defect was never a wrong result, only an unrun proof reported as `353 passed`.
+
+**Mechanism.** `pytest.mark.skipif` is the correct behaviour on a developer machine without Node and the wrong behaviour on the job that exists to prove parity, and one marker cannot tell the two apart. Nothing in the run distinguishes "6 skipped" from "6 passed" at a glance, and no summary line says which claim just went unverified.
+
+**Fix.** Node and `npm ci` added to `python-check` — the leg that fails the run, not the informational Linux leg — and `TALARIA_REQUIRE_TS_BRIDGE=1` set for its pytest step, with a test that fails when the variable is set and the bridge is missing. Suite went from 371 passed with 6 skips to 382 passed with zero skips.
+
+**Generalizable rule.** A conditional skip is an unverified claim wearing a green check. Where a test *is* the evidence for a stated property, make its absence fail somewhere: pin the environment that runs it, and assert that environment is present rather than trusting it. Count skips in CI as deliberately as failures.
+
 ### Four of seven gate measurements could not fail, and the one that mattered compared the projection with itself
 
 **Author.** v0.1 milestone-1 integration, from an adversarial audit of the validation gate

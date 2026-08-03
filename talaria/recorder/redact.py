@@ -64,10 +64,34 @@ same reason as the first: an unlisted divergence is what KTD6 forbids.
    which fires only when the string parses as an absolute URL whose query
    actually carries a denied parameter, so the corpus keeps its harmless URLs.
 
+3. *URL userinfo is withheld, not only the query string.* ``urlsplit`` hands
+   ``user:password@host`` back inside ``netloc`` and :func:`urlunsplit` writes it
+   out verbatim, so a URL cleaned only through its query carried its credentials
+   to disk intact -- including in the frame-log *header*, the one place
+   :func:`redact_url` was already wired up. See :func:`_redact_userinfo`.
+
+4. *A URL is examined for credentials even when it has no query string.* The
+   check added in (2) returned early unless the value contained a ``?``, so an
+   operator-configured endpoint of the form ``http://user:pass@host/`` was
+   recorded whole. At the pinned revision ``browser.manage`` returns exactly
+   this value on an ordinary status call (``tui_gateway/server.py:13405``
+   resolves ``BROWSER_CDP_URL`` or ``browser.cdp_url`` and hands it back through
+   ``methods_tools.py:1349``), so a remote CDP endpoint with basic-auth
+   credentials reaches a frame body with no query anywhere in it.
+
 Both make the Python redactor a wider superset; neither withholds anything the
 TypeScript reference withholds differently, and the usage counters this module
 exists to preserve (``max_tokens`` and its siblings) are unaffected -- pinned by
 the over-redaction controls in ``tests/recorder/test_redact.py``.
+
+**Known and deliberately not covered.** A bearer capability carried in a URL's
+*path* rather than its userinfo or query -- the concrete
+``ws://127.0.0.1:9222/devtools/browser/<GUID>`` form Chrome hands out, where the
+GUID alone drives the browser -- is still recorded verbatim. Withholding it would
+mean either a Hermes-shaped path rule or guessing at "high-entropy path segment",
+and the second would redact ordinary URLs the corpus exists to study. The form is
+loopback-only, so the capability is worthless to anyone who cannot already reach
+that machine. Tracked in ``docs/engineering-journal/QUEUED.md``.
 """
 
 from __future__ import annotations
@@ -75,7 +99,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import SplitResult, parse_qsl, urlencode, urlsplit, urlunsplit
 
 #: A value withheld from the recording. The original never reaches disk.
 REDACTED = "[redacted]"
@@ -176,23 +200,56 @@ def is_suspicious_key(key: str) -> bool:
     )
 
 
+def _redact_userinfo(parts: SplitResult) -> tuple[str, bool]:
+    """The netloc with any userinfo withheld, and whether anything was withheld.
+
+    The *whole* userinfo component goes, not just the password half. In
+    ``https://<token>@host/`` the credential sits in the username position, which
+    is an ordinary way to pass a bearer token, so withholding only what follows
+    the colon would leak exactly the case worth catching.
+
+    The netloc is rebuilt only when userinfo is actually present. Round-tripping
+    every URL through ``hostname``/``port`` would lowercase hosts and normalize
+    away the default-port form, changing bytes on URLs carrying no credential at
+    all -- and KTD6 compares those bytes against the TypeScript reference.
+    """
+    if parts.username is None and parts.password is None:
+        return parts.netloc, False
+    host = parts.hostname or ""
+    if ":" in host:
+        # An IPv6 literal: urlsplit strips the brackets, urlunsplit needs them
+        # back or the address runs into the port separator.
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:
+        # A non-numeric port. The host half is still worth keeping; guessing at
+        # the malformed remainder is not.
+        port = None
+    netloc = f"{host}:{port}" if port is not None else host
+    return f"{REDACTED}@{netloc}", True
+
+
 def redact_url(url: str) -> str:
-    """Strip credentials from a URL's query string so it is safe to record."""
+    """Strip credentials from a URL's userinfo and query string so it is safe to record."""
     parts = urlsplit(url)
     if not parts.scheme or not parts.netloc:
         # Not a parseable absolute URL. Withhold it rather than record an
         # unknown string that may itself be a credential.
         return REDACTED
 
+    netloc, changed = _redact_userinfo(parts)
+
     pairs = parse_qsl(parts.query, keep_blank_values=True)
-    changed = False
+    query_changed = False
     redacted_pairs: list[tuple[str, str]] = []
     for key, value in pairs:
         if is_suspicious_key(key) or key in URL_ONLY_DENIED_QUERY_KEYS:
             redacted_pairs.append((key, REDACTED))
-            changed = True
+            query_changed = True
         else:
             redacted_pairs.append((key, value))
+    changed = changed or query_changed
 
     if not changed:
         return url
@@ -203,8 +260,11 @@ def redact_url(url: str) -> str:
     # the reference byte-for-byte on the parts that matter for KTD6 (an
     # exact-value comparison is only made for *un*-redacted query values;
     # redacted ones are compared by presence/state only).
-    new_query = urlencode(redacted_pairs)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+    # Re-encode the query only when a value in it was actually withheld.
+    # `urlencode` normalizes percent-escapes, so re-encoding an untouched query
+    # would change bytes KTD6 compares for equality.
+    new_query = urlencode(redacted_pairs) if query_changed else parts.query
+    return urlunsplit((parts.scheme, netloc, parts.path, new_query, parts.fragment))
 
 
 @dataclass(frozen=True)
@@ -231,21 +291,35 @@ def _redact_credential_url(value: str) -> str | None:
     """Return a cleaned URL when ``value`` is one carrying a credential, else None.
 
     Deliberately narrow. It fires only on a string that parses as an absolute
-    URL *and* whose query actually carries one of the denied parameters, so
-    ordinary prose, file paths, and harmless URLs are recorded untouched — the
-    corpus exists to be studied, and blanket redaction of every string would
-    make it useless. Returning ``None`` for "nothing to do" keeps the caller
-    from having to compare before and after.
+    URL *and* carries a credential in one of the two positions a URL puts them:
+    userinfo, or a query parameter with a denied name. Ordinary prose, file
+    paths, and harmless URLs are recorded untouched — the corpus exists to be
+    studied, and blanket redaction of every string would make it useless.
+    Returning ``None`` for "nothing to do" keeps the caller from having to
+    compare before and after.
+
+    The userinfo check comes first and deliberately does not require a query
+    string. Requiring one is what let ``http://user:pass@cdp.example/`` through:
+    it is a complete credential with no ``?`` anywhere in it, and it is the shape
+    an operator's configured CDP override actually takes (see divergence 4 in the
+    module docstring).
     """
-    if "://" not in value or "?" not in value:
+    if "://" not in value:
         return None
-    parts = urlsplit(value)
-    if not parts.scheme or not parts.netloc or not parts.query:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        # Not parseable as a URL at all (a bad IPv6 literal, say). It is then
+        # not a URL-shaped credential either, and the key-name net still applies.
+        return None
+    if not parts.scheme or not parts.netloc:
+        return None
+    if parts.username is not None or parts.password is not None:
+        return redact_url(value)
+    if not parts.query:
         return None
     names = {name.lower() for name, _ in parse_qsl(parts.query, keep_blank_values=True)}
-    if not any(
-        name in URL_ONLY_DENIED_QUERY_KEYS or is_suspicious_key(name) for name in names
-    ):
+    if not any(name in URL_ONLY_DENIED_QUERY_KEYS or is_suspicious_key(name) for name in names):
         return None
     return redact_url(value)
 
@@ -263,23 +337,50 @@ def redact_frame(frame: Any) -> RedactResult:
 
     Walks the whole frame rather than only the known paths, so a credential
     nested inside a batch or an unexpected envelope shape is still caught.
+
+    **The deny-set travels with the walk.** It used to be resolved once, from the
+    outermost object, and applied only where the dotted path was exactly
+    ``params`` or ``params[...]``. That coupled a security rule to a string
+    comparison on position, and every shape that moved the frame off the top
+    level silently disarmed it: a batch, a wrapping envelope, and — with no
+    batching involved at all — an ordinary ``params.inner.answer``. ``answer``,
+    ``value`` and ``text`` are deny-set-only by design, so nothing else caught
+    them. The method is now re-read from each object that carries one, and it
+    governs that object's own ``params`` subtree to any depth.
     """
     redactions: list[Redaction] = []
-    method = _read_method(frame)
-    denied = _DENY_BY_METHOD.get(method, ()) if method else ()
 
-    def walk(value: Any, path: str) -> Any:
+    def walk(
+        value: Any,
+        path: str,
+        denied: tuple[str, ...],
+        method: str | None,
+        in_params: bool,
+    ) -> Any:
         if isinstance(value, list):
-            return [walk(item, f"{path}[{index}]") for index, item in enumerate(value)]
+            return [
+                walk(item, f"{path}[{index}]", denied, method, in_params)
+                for index, item in enumerate(value)
+            ]
         if value is None or not isinstance(value, dict):
             return value
+
+        # An object carrying its own `method` governs its own subtree. Only a
+        # method that is actually in the deny-set takes over, so an inner
+        # `{"method": "GET"}` -- a plain HTTP verb under some unrelated key --
+        # cannot clear a deny context established above it.
+        local_method = _read_method(value)
+        if local_method is not None and local_method in _DENY_BY_METHOD:
+            denied = _DENY_BY_METHOD[local_method]
+            method = local_method
+            in_params = False
 
         out: dict[str, Any] = {}
         for key, child in value.items():
             child_path = f"{path}.{key}" if path else key
 
-            # An explicit rule for this method, matched at the `params` level.
-            if key in denied and (path == "params" or path.startswith("params[")):
+            # An explicit rule for this method, anywhere beneath its `params`.
+            if in_params and key in denied:
                 redactions.append(Redaction(path=child_path, reason=f"deny-set:{method}"))
                 out[key] = REDACTED
                 continue
@@ -302,7 +403,9 @@ def redact_frame(frame: Any) -> RedactResult:
                     out[key] = cleaned
                     continue
 
-            out[key] = walk(child, child_path)
+            # Once inside a governed `params`, stay inside it for the whole
+            # subtree — that is what makes `params.inner.answer` reachable.
+            out[key] = walk(child, child_path, denied, method, in_params or key == "params")
         return out
 
-    return RedactResult(frame=walk(frame, ""), redactions=redactions)
+    return RedactResult(frame=walk(frame, "", (), None, False), redactions=redactions)

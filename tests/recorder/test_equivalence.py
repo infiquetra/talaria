@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -57,6 +58,31 @@ requires_ts_bridge = pytest.mark.skipif(
     not _tsx_present,
     reason=f"tsx toolchain not found at {TSX_BIN} -- run `npm install` first",
 )
+
+#: Set on the CI leg that installs the bridge. Skipping is the right behaviour
+#: on a developer machine without Node; it is the wrong behaviour on the job
+#: that exists to prove parity.
+REQUIRE_TS_BRIDGE = os.environ.get("TALARIA_REQUIRE_TS_BRIDGE") == "1"
+
+
+def test_the_equivalence_bridge_is_present_where_ci_requires_it() -> None:
+    """A skip is invisible inside a green run, which is how this went unnoticed.
+
+    Every ``@requires_ts_bridge`` test below skipped in CI because the Python
+    jobs installed ``uv`` and never Node, so the harness that is cited as the
+    standing evidence for the KTD6/R28 parity relation had never executed there.
+    The tests pass when actually run -- the port does not diverge -- so the
+    defect was never a wrong result, only an unrun proof. This check fails on
+    the leg that is supposed to run it, rather than letting it lapse again.
+    """
+    if not REQUIRE_TS_BRIDGE:
+        pytest.skip("TALARIA_REQUIRE_TS_BRIDGE is unset -- enforced only on the CI leg")
+    assert _tsx_present, (
+        f"TALARIA_REQUIRE_TS_BRIDGE=1 but the bridge is missing: "
+        f"tsx={TSX_BIN} exists={TSX_BIN.exists()}, "
+        f"bridge={TS_BRIDGE} exists={TS_BRIDGE.exists()}. "
+        "Run `npm ci` before pytest on this job."
+    )
 
 
 class EquivalenceError(AssertionError):

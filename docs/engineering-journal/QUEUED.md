@@ -171,6 +171,16 @@ Two residual defects in `talaria/status/runner.py`, both bounded in blast radius
 
 Both need the same thing to fix properly: wait on child exit and treat the streams as separately terminable, rather than treating stdout EOF as the completion signal. Deferred because it changes the completion semantics of every tick and milestone 1 is closing; the memory, orphan and descriptor-leak defects found alongside these were fixed because they were unbounded.
 
+### A bearer capability carried in a URL path is recorded verbatim
+
+**Priority.** P2 — found by external review of the redaction boundary, 2026-08-03; deliberately not fixed.
+
+`redact_url` withholds credentials from a URL's userinfo and its query string. It does not touch the path, so the concrete Chrome DevTools Protocol form — `ws://127.0.0.1:9222/devtools/browser/<GUID>`, where the GUID alone drives the browser — reaches the frame log intact. It is reachable: at Hermes `7f4d15515`, `browser.manage` returns the operator's configured CDP override on an ordinary status call (`tui_gateway/server.py:13405` → `methods_tools.py:1349`), and that override may be set to the concrete WS form.
+
+Not fixed because both available rules are bad. A Hermes-shaped path rule (`/devtools/browser/<segment>`) protects exactly one known shape and will not generalize to the next capability-bearing path. A generic "high-entropy path segment" heuristic would redact ordinary URLs — commit SHAs, content hashes, UUID resource ids — and the corpus exists to be studied; over-redaction is a different failure, not the safe direction (the same reasoning that keeps `max_tokens` out of the key-name net).
+
+Severity is genuinely low: the form is loopback-only, so the capability is worthless to anyone who cannot already reach that machine. Worth revisiting if a remote CDP endpoint ever becomes a supported configuration, at which point the path capability stops being loopback-scoped and the calculus changes.
+
 
 ## P3
 

@@ -188,7 +188,16 @@ def test_catches_a_credential_on_an_unknown_method_via_the_key_name_net() -> Non
     assert result.redactions[0].reason == "suspicious-key"
 
 
-def test_catches_a_credential_nested_at_arbitrary_depth() -> None:
+def test_the_key_name_net_catches_a_credential_nested_at_arbitrary_depth() -> None:
+    """Named for the net, not for nesting in general.
+
+    The fixture's credential is under the key ``token``, so this exercises the
+    key-name net at depth and nothing else. Read as "nesting is covered" it was
+    actively misleading: the deny-set did *not* survive nesting, and this test
+    passing is what made that look already-tested. The deny-set's own behaviour
+    under nesting is pinned by
+    ``test_the_deny_set_survives_every_envelope_shape``.
+    """
     result = redact_frame(
         {
             "method": "event",
@@ -372,3 +381,101 @@ def test_the_widened_net_still_preserves_the_usage_counters() -> None:
         "maxTokens",
     ):
         assert not is_suspicious_key(name), name
+
+
+# ── Leaks found in external review, 2026-08-03 ────────────────────────
+#
+# Two more, both reported against an earlier commit and re-verified against the
+# head that already carried the fixes above. The first fix closed the query half
+# of the URL problem and left the other half open; the second was never about
+# URLs at all.
+
+
+def test_url_userinfo_is_withheld_even_when_the_query_is_clean() -> None:
+    """``urlsplit`` puts ``user:password@host`` in ``netloc``; ``urlunsplit``
+    wrote it back verbatim, so cleaning only the query carried the credential
+    to disk -- including in the frame-log header, the one place ``redact_url``
+    was already wired up."""
+    cleaned = redact_url("wss://operator:hunter2@gateway.local/attach?x=1")
+
+    assert "hunter2" not in cleaned
+    assert "operator" not in cleaned
+    assert "gateway.local" in cleaned
+    assert "x=1" in cleaned
+
+
+def test_a_bearer_token_in_the_username_position_is_withheld() -> None:
+    """``https://<token>@host/`` is an ordinary way to pass a bearer token, so
+    withholding only the password half would leak the case worth catching."""
+    assert "JUST_A_TOKEN" not in redact_url("https://JUST_A_TOKEN@github.com/org/repo.git")
+
+
+def test_userinfo_redaction_preserves_host_port_and_ipv6_brackets() -> None:
+    """The address is what makes a corpus readable; only the credential goes."""
+    cleaned = redact_url("wss://user:pw@[2001:db8::1]:8443/attach")
+
+    assert cleaned == f"wss://{REDACTED}@[2001:db8::1]:8443/attach"
+
+
+def test_a_clean_url_is_returned_byte_identical() -> None:
+    """KTD6 compares these bytes against the TypeScript reference, so a URL with
+    nothing to withhold must not be normalized on its way through."""
+    for url in (
+        "https://Example.COM:443/Path?A=1&b=%2Fx",
+        "ws://127.0.0.1:8765/api/ws",
+        "https://[2001:db8::1]:8443/api?q=1",
+    ):
+        assert redact_url(url) == url, url
+
+
+def test_a_credential_url_with_no_query_string_at_all_is_withheld() -> None:
+    """The first URL fix returned early unless the value contained a ``?``.
+
+    An operator's configured CDP override is exactly this shape: at the pinned
+    revision ``browser.manage`` hands ``BROWSER_CDP_URL`` straight back on an
+    ordinary status call, and basic-auth credentials in it involve no query.
+    """
+    result = redact_frame(
+        {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "result": {"connected": True, "url": "http://operator:BASIC_AUTH@cdp.example/"},
+        }
+    )
+
+    assert "BASIC_AUTH" not in json.dumps(result.frame)
+    assert [r.reason for r in result.redactions] == ["url-credential"]
+
+
+@pytest.mark.parametrize(
+    ("label", "frame"),
+    [
+        ("bare", {"method": "clarify.respond", "params": {"answer": "LEAK"}}),
+        ("batch", [{"method": "clarify.respond", "params": {"answer": "LEAK"}}]),
+        ("envelope", {"envelope": {"method": "clarify.respond", "params": {"answer": "LEAK"}}}),
+        ("nested", {"method": "clarify.respond", "params": {"inner": {"answer": "LEAK"}}}),
+    ],
+)
+def test_the_deny_set_survives_every_envelope_shape(label: str, frame: object) -> None:
+    """The deny-set was resolved once from the outermost object and applied only
+    where the dotted path was exactly ``params`` or ``params[...]``.
+
+    Every shape that moved the frame off the top level disarmed it. ``answer``,
+    ``value`` and ``text`` are deny-set-only by design -- the key-name net is
+    meant not to catch them -- so nothing else stood behind it. The ``nested``
+    case needs no batching at all, which makes it the reachable one.
+    """
+    assert "LEAK" not in json.dumps(redact_frame(frame).frame), label
+
+
+def test_an_inner_http_verb_cannot_disarm_the_deny_set() -> None:
+    """Re-reading ``method`` per object must not let an unrelated ``"method":
+    "GET"`` under some nested key clear the context established above it."""
+    result = redact_frame(
+        {
+            "method": "clarify.respond",
+            "params": {"req": {"method": "GET", "answer": "LEAK"}},
+        }
+    )
+
+    assert "LEAK" not in json.dumps(result.frame)
