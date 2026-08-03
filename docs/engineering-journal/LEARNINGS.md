@@ -4,6 +4,34 @@
 
 ## 2026-08-03
 
+### A results doc argued against its own headline number, and its table came from a different run than its evidence
+
+**Author.** v0.1 milestone-1 integration, from an external review of the gate
+
+**Evidence.** `docs/analysis/2026-08-03-textual-validation-gate-results.md` published a memory slope of **0.33 MB per 1,000 frames** and extrapolated a million-frame session to "around 330 MB", as the stated input to whether transcript eviction becomes a milestone-3 requirement. Recomputed with the gate's own `_fit_slope` over the published series:
+
+| fit | MB per 1,000 frames | one million frames |
+| --- | --- | --- |
+| all 12 samples | 0.337 | ~337 MB |
+| excluding the final sample | 0.197 | ~197 MB |
+| steady state | 0.109 | ~109 MB |
+
+The final step alone contributes 21.31 MB over 2,636 frames — 59% of all growth in 5% of the frames.
+
+Separately, the doc's RSS table read 90.02 → 125.62 while the evidence JSON it cites read 90.66 → 126.72. Two different gate runs, close enough to look like rounding.
+
+**Mechanism.** Two failures that look nothing alike and are both about the relationship between a number and its basis.
+
+The slope: the section *already contained* a qualification stating that the final jump is teardown rather than streaming and that the interesting figure is the earlier samples — then fitted across all twelve anyway. The prose and the arithmetic disagreed, and the prose was right. Nobody caught it because both halves were individually defensible; only reading them against each other exposes it.
+
+The table: a number that cannot be traced to the artifact it cites survives every recomputation, because each side is internally consistent. Recomputing the slope from the doc's own table would have reproduced the doc's own answer and confirmed nothing.
+
+**Fix.** Steady-state published as the headline with all three fits tabulated and the excluded sample named; extrapolation corrected to ~110 MB; table regenerated directly from the evidence JSON.
+
+**Why the direction matters.** Over-reporting growth is conservative for the 300 MB *threshold* — it can only cause a false fail, never a false pass — so the verdict was never at risk, and the instinct is to file it as cosmetic. It is not conservative for the *decision* the number exists to feed: a 3.1x overstatement argues for eviction work the measurement does not support. A figure that is safe for the gate can still be wrong for the roadmap.
+
+**Generalizable rule.** Two checks, both cheap. First, read a document's qualifications against its own headline: when a section explains why a number is misleading and then publishes it, the explanation is usually the correct half. Second, verify that a published figure and its cited evidence are the *same measurement*, not merely that each is individually correct — provenance drift is invisible to recomputation and outlives every review that only checks the arithmetic.
+
 ### A security rule coupled to a path string was disarmed by ordinary nesting, and its docstring claimed the opposite
 
 **Author.** v0.1 milestone-1 integration, from an external review of the redaction boundary

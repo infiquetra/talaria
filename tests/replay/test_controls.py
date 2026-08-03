@@ -220,7 +220,20 @@ async def test_the_status_command_runs_and_renders_under_replay(tmp_path: Any) -
     app = TalariaApp(source, mode="replay", controls=controls, status_runner=runner)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        # The app fires its own status tick as soon as it starts (app.py:154
+        # schedules the loop, which ticks before its first sleep), and this test
+        # then fires a second one explicitly. When the app's tick is still
+        # awaiting its Python subprocess, KTD5's overlap guard correctly skips
+        # the second one -- that is the guard working, not failing. Asserting
+        # "ok" on the first attempt therefore raced the app against itself, and
+        # lost whenever an interpreter spawn ran slow, which is why it failed
+        # under CI load and passed locally. Retry until a tick actually runs.
         result = await app.status_tick()
+        for _ in range(50):
+            if result is not None and result.outcome != "overlapped_skip":
+                break
+            await asyncio.sleep(0.05)
+            result = await app.status_tick()
         await pilot.pause()
         assert result is not None
         assert result.outcome == "ok"
