@@ -86,6 +86,16 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 
 **Do.** Attach, submit one prompt, interrupt it, drop the socket, confirm the reconnect, and diff the resulting frame log's redaction markers against the AE3 sweep.
 
+**Extended by U9, 2026-08-03.** U9's own verification clause — "a live isolated run dispatches one real catalogue command of each available shape and one collapse round-trip" — is unmet for the same reason and belongs on this run rather than on a second one. **No Hermes gateway was attached at any point in the U9 session.** Everything U9 asserts is against `tests/transport/conftest.py`'s loopback stub, whose reply bodies are transcribed from the pinned handlers; that settles Talaria's side of each contract and settles nothing about what a real gateway sends. Five specific unknowns:
+
+1. **Which result shape each real command actually returns is unverified.** The stub returns the shape the test asked for. A live run would say what `/model`, `/status`, a real skill command and a real bundle answer with, and whether any of them carries a field combination the three-destination routing reads differently from intended.
+2. **Whether a real `commands.catalog` decodes cleanly is unverified.** The stub serves eight entries in the documented shape. A real one carries the full registry plus quick commands plus a skills scan, and its `canon` map is the thing alias resolution depends on.
+3. **Three client-local entries have never been seen in a real catalogue.** The name-plus-category rule is derived from the pinned source, not observed. One live `commands.catalog` settles whether `/density`, `/logs` and `/mouse` arrive under category `TUI` as the source says. `/sessions` is **not** among them and is not an open question: the registry defines `CommandDef("sessions", …, "Session")` (`hermes_cli/commands.py:180` at `7f4d15515`), so the catalogue builder's dedup guard drops the `TUI` extra of that name and serves it as an ordinary dispatchable command. Talaria treats it as one.
+4. **`paste.collapse` has never written a real file.** The placeholder text Talaria inserts is the gateway's, so its exact shape — and whether the path in it is one an operator can open — is unobserved.
+5. **The `slash.exec` / `command.dispatch` split has never been exercised against a real worker.** The pinned source is unambiguous about which handler serves what, and Talaria now calls `slash.exec` first and falls back exactly as Hermes's own client does. What a stub cannot show is what a real slash worker *prints* — whether a command's output arrives as one block, whether a warning accompanies it, and how long the first call takes while the worker subprocess is spawned on demand (`methods_tools.py:1177-1194`).
+
+**Do, additionally.** With the session from the smoke-attach: fetch the catalogue and record its entry count and category names; dispatch one command of each shape the catalogue actually offers; paste 400 lines and confirm the placeholder and the file it names.
+
 ### Audit the egress surfaces as a set, rather than the redactor's call sites
 
 **Author.** v0.1 milestone-2, unit U7 — proposed by the milestone-1 review agent
@@ -273,6 +283,24 @@ So the operator types a password into a focused control that draws nothing, with
 
 ## P2
 
+### Command entry is a listing, not completion — three catalogue fields go unread
+
+**Author.** v0.1 milestone-2, unit U9 (slash commands and paste collapse)
+**Priority.** P2
+**Effort.** Medium
+**Worth it when.** Talaria is being used as a daily driver against a gateway whose catalogue runs to ninety-odd commands, at which point reading the list stops being a substitute for finding one.
+**Context.** U9's plan entry asks for a "minimal entry affordance", and `talaria/ui/palette.py` is exactly that: a foldable region on F3 listing every command with its availability marker. It is a listing. Typing still means typing the whole name, and three fields the gateway already sends are decoded and then unused:
+
+- **`canon`** *is* used, for alias resolution — this one is wired.
+- **`sub`** maps each command to its tab-completable subcommands (`tui_gateway/methods_tools.py:352`). Nothing reads it, so `/goal ` offers nothing after the space.
+- **`skills`** carries a per-skill `{usage, origin}` pair, which the gateway assembles specifically so a client can rank the listing — its own comment says "every consumer that renders the catalog also wants to rank it" (`:337-341`). The listing is in catalogue order instead.
+
+The gateway also publishes `complete.command`, `complete.path` and `complete.at` (`tui_gateway/methods_complete.py`), none of which Talaria calls.
+
+**Deliberately deferred, not overlooked.** A completion overlay is a second focus owner in front of the composer, and the composer is the widget the interface is built around — U9's own decision to make the sub-agent interrupt a row action rather than a key binding turned on the same concern. Getting that wrong costs more than the typing it saves.
+
+**Do.** Filter the listing as the composer's text changes, rank skills by `usage`, and read `sub` for a second-word completion, before reaching for an overlay or for the `complete.*` methods.
+
 ### A deny-all that succeeds can re-offer a control the gateway already resolved
 
 **Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
@@ -365,6 +393,12 @@ Neither is a leak today at prototype scale, and eviction interacts with replay d
 **Context.** `talaria/config.py` type-checks integer settings but does not bound them. Verified 2026-08-03: `TALARIA_STATUS_INTERVAL_SECONDS=-5` resolves to `-5`, and `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES=0` resolves to `0`. KTD16 defines the paste thresholds as "6 or more lines, or 512 or more bytes", so a threshold of `0` collapses every paste including a one-line one; a negative interval hands U6's status runner a negative sleep.
 
 Deliberately not fixed in the scaffold. The bound is a semantic property of the consuming unit, and inventing minimums in the config loader mid-run would be this session guessing at values the plan does not specify. The class predates the scaffold's coercion rewrite — the old code accepted these values too — but the rewrite is the natural place bounds will land.
+
+**Half-resolved by U9, 2026-08-03 — the paste half only.** The consuming unit arrived and answered its own question: `PasteThreshold` treats a non-positive bound as "this half is off", re-encoding the shipping client's `pasteCollapseLines > 0 && …` guard (`ui-tui/src/app/useComposerState.ts:277-280` at `7f4d15515`). So `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES=0` no longer collapses every one-word paste; it disables the line bound and leaves the byte bound working. `talaria/cli.py:_build_paste_threshold` also falls back to the KTD16 defaults for a non-integer value rather than raising, because a malformed paste setting should not stop the client from starting. Pinned by `tests/domain/test_commands.py::test_a_non_positive_line_bound_switches_that_half_off` and `::test_both_bounds_off_collapses_nothing`, both watched to fail with the `> 0` clause removed.
+
+**Not yet reachable end to end.** `talaria/cli.py` builds a `TalariaApp` in exactly one place — `run_replay`, at line 200 — and that is where `_build_paste_threshold(cfg)` is passed. There is no live launcher yet; a bare `talaria` run prints that session startup is not wired, which is U10's work. So the configuration path above is proved by its unit tests and by the replay construction, and is unexercised in the only mode where a paste is ever collapsed. U10 wiring the live launcher closes that, and until it does this item is half-resolved in semantics rather than in reach.
+
+**Still open: `status.interval_seconds`.** `TALARIA_STATUS_INTERVAL_SECONDS=-5` still resolves to `-5` and still hands U6's status runner a negative sleep. There is no equivalent Hermes reading of a negative interval to re-encode, so the bound is a decision the status runner has to make, and it was out of U9's scope. Nothing in this update changes that path.
 
 ### Add MoA progress and fallback rendering
 

@@ -9,14 +9,25 @@ reducer, where a test can prove it without a screen.
 R16's requirement is easy to under-implement. "Collapsed" must not mean "gone":
 when the rows are folded away the count stays on screen, because a fan-out the
 operator cannot see is the situation the count exists to prevent.
+
+U9 adds the one control a row carries: interrupting that child
+(``subagent.interrupt``, R15). It is attached to the row and not to a key
+binding because the call names a ``subagent_id``, and a global key would have to
+guess which of six children the operator meant — see :class:`AgentRow`.
 """
 
 from __future__ import annotations
 
+from typing import ClassVar
+
+from textual import events
 from textual.app import ComposeResult
+from textual.binding import Binding, BindingType
 from textual.containers import Vertical
+from textual.message import Message
 from textual.widgets import Static
 
+from talaria.domain.models import TERMINAL_SUBAGENT_STATUSES
 from talaria.domain.projection import SubagentView
 from talaria.ui.literal import literal_text
 
@@ -31,6 +42,62 @@ def format_row(row_id: str, name: str, status: str, elapsed: float, detail: str 
     if detail:
         return f"{head} — {detail}"
     return head
+
+
+class AgentRow(Static):
+    """One sub-agent line, and the only control that can stop that child (R15).
+
+    **The action lives on the row rather than on a key binding, and that is a
+    correctness property rather than a matter of taste.** ``subagent.interrupt``
+    takes a ``subagent_id`` (``tui_gateway/methods_session.py:2806-2814``), so an
+    interrupt has to name *which* child — and a global key would have to invent
+    a rule for which one it meant. The rule would be wrong exactly when it
+    mattered: a fan-out of six with one runaway is the situation the control
+    exists for, and "the most recent" or "the first running" is a guess about
+    which of the six the operator was looking at.
+
+    A terminal row carries no action at all. Interrupting something that has
+    already completed sends a call the gateway answers ``found: false`` to, and
+    an affordance that is always refused teaches the operator to ignore it.
+    """
+
+    class Interrupt(Message):
+        """Stop this one child. Carries the id, never the row's position."""
+
+        def __init__(self, subagent_id: str, name: str) -> None:
+            super().__init__()
+            self.subagent_id = subagent_id
+            self.name = name
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("enter", "interrupt", "interrupt this sub-agent"),
+    ]
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.subagent_id = ""
+        self.subagent_name = ""
+        self.interruptible = False
+
+    def bind_row(self, *, subagent_id: str, name: str, status: str) -> None:
+        """Point this widget at a row. Reused across renders, so it is re-pointed
+        rather than re-created — a row widget that kept a stale id would
+        interrupt whichever child used to occupy that screen line."""
+        self.subagent_id = subagent_id
+        self.subagent_name = name
+        self.interruptible = status not in TERMINAL_SUBAGENT_STATUSES
+        self.can_focus = self.interruptible
+        self.set_class(self.interruptible, "-interruptible")
+
+    def action_interrupt(self) -> None:
+        if self.interruptible and self.subagent_id:
+            self.post_message(self.Interrupt(self.subagent_id, self.subagent_name))
+
+    def on_click(self, event: events.Click) -> None:
+        if not self.interruptible or not self.subagent_id:
+            return
+        event.stop()
+        self.post_message(self.Interrupt(self.subagent_id, self.subagent_name))
 
 
 class AgentRows(Vertical):
@@ -48,13 +115,16 @@ class AgentRows(Vertical):
     AgentRows > .agents--header {
         color: $text-muted;
     }
+    AgentRow.-interruptible:focus {
+        background: $accent 20%;
+    }
     """
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.collapsed = False
         self._header: Static | None = None
-        self._rows: list[Static] = []
+        self._rows: list[AgentRow] = []
         self._view: SubagentView | None = None
 
     def compose(self) -> ComposeResult:
@@ -68,6 +138,13 @@ class AgentRows(Vertical):
     @property
     def row_texts(self) -> tuple[str, ...]:
         return tuple(str(row.content) for row in self._rows)
+
+    def row_for(self, subagent_id: str) -> AgentRow | None:
+        """The widget currently showing one child, or ``None`` when collapsed."""
+        for row in self._rows:
+            if row.subagent_id == subagent_id:
+                return row
+        return None
 
     async def apply(self, view: SubagentView) -> None:
         """Render the rows, or the count alone when collapsed."""
@@ -88,11 +165,13 @@ class AgentRows(Vertical):
                 format_row(row.id, row.name, row.status, row.elapsed, row.detail)
             )
             if index < len(self._rows):
-                self._rows[index].update(text)
+                widget = self._rows[index]
+                widget.update(text)
             else:
-                widget = Static(text, markup=False)
+                widget = AgentRow(text, markup=False)
                 self._rows.append(widget)
                 await self.mount(widget)
+            widget.bind_row(subagent_id=row.id, name=row.name, status=row.status)
 
     async def toggle_collapsed(self) -> bool:
         """Fold or unfold the rows. The count stays either way (R16)."""

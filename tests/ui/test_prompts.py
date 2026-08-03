@@ -23,6 +23,7 @@ from rich.cells import cell_len
 from textual.widgets import Button, Input
 
 from talaria.domain import state as domain_state
+from talaria.domain.commands import CATALOG_METHOD
 from talaria.domain.models import PromptKind
 from talaria.domain.projection import PromptRow, PromptView, project
 from talaria.domain.state import (
@@ -108,6 +109,18 @@ class RecordingDispatcher:
             return self.outcome
         return RpcOutcome(status="ok", method=method, request_id="1", epoch=1, result={})
 
+    @property
+    def operator_calls(self) -> list[tuple[str, Mapping[str, Any]]]:
+        """Every call except the startup catalogue fetch.
+
+        ``TalariaApp`` reads ``commands.catalog`` once when it mounts in live
+        mode (U9), so a raw ``calls`` list starts with a call no operator made.
+        These tests are about what one operator action sent, so they read this;
+        ``calls`` stays raw, and the fetch itself is asserted over a real socket
+        in ``tests/transport/test_commands.py``.
+        """
+        return [call for call in self.calls if call[0] != CATALOG_METHOD]
+
 
 class ExpiringDispatcher(RecordingDispatcher):
     """A dispatcher that lets a frame arrive *while* the call is outstanding.
@@ -142,6 +155,12 @@ class HoldingDispatcher(RecordingDispatcher):
     the call returns — so a test that lets it close cannot see any of them. Only
     the first call is held, so the escape action the interface offers while an
     answer is travelling can still be exercised in the same test.
+
+    **"First" means the first call an operator made.** ``TalariaApp`` reads
+    ``commands.catalog`` once when it mounts in live mode (U9), and holding
+    *that* held the wrong call: the respond then completed immediately, the
+    window never opened, and four in-flight tests went green over a gate that
+    had already been consumed.
     """
 
     def __init__(self, outcome: RpcOutcome | None = None) -> None:
@@ -157,7 +176,7 @@ class HoldingDispatcher(RecordingDispatcher):
         timeout: float | None = None,
     ) -> RpcOutcome:
         self.calls.append((method, dict(params or {})))
-        if self._hold_next:
+        if self._hold_next and method != CATALOG_METHOD:
             self._hold_next = False
             await self.gate.wait()
         if self.outcome is not None:
@@ -352,7 +371,7 @@ async def test_an_approval_renders_its_choices_and_sends_the_gateways_own_string
         await settle(app, pilot)
         await settle(app, pilot)
 
-        assert dispatcher.calls == [
+        assert dispatcher.operator_calls == [
             ("approval.respond", {"session_id": "s1", "choice": "session"})
         ]
         assert list(app.prompts.card_ids) == []
@@ -466,7 +485,7 @@ async def test_a_clarify_renders_free_text_and_its_answer_is_not_written_down() 
         await pilot.press("enter")
         await settle(app, pilot)
 
-        assert dispatcher.calls == [
+        assert dispatcher.operator_calls == [
             ("clarify.respond", {"request_id": "c-1", "answer": CANARY})
         ]
         # The value went to the gateway and nowhere else. A clarify answer is
@@ -535,7 +554,7 @@ async def test_a_hidden_bridge_masks_its_input_on_the_rendered_screen(
         await pilot.press("enter")
         await settle(app, pilot)
 
-        assert dispatcher.calls == [(method, {"request_id": request_id, field: CANARY})]
+        assert dispatcher.operator_calls == [(method, {"request_id": request_id, field: CANARY})]
         # Every operator-facing surface this process owns, swept together. The
         # screen sweep is paired with a positive: the answered card is gone and
         # the transcript line that replaced it is readable.
@@ -562,7 +581,7 @@ async def test_a_terminal_read_never_renders_a_control() -> None:
         assert "terminal_read" in UNATTENDED_KINDS
         assert list(app.prompts.card_ids) == []
         assert app.prompts.card_for("t-1") is None
-        assert [method for method, _ in dispatcher.calls] == ["terminal.read.respond"]
+        assert [method for method, _ in dispatcher.operator_calls] == ["terminal.read.respond"]
         await app.shutdown_sources()
 
 
@@ -605,7 +624,7 @@ async def test_an_answer_that_arrives_after_the_expiry_sends_nothing() -> None:
         outcome = await app.respond_live("s-1", CANARY)
 
         assert outcome is None
-        assert dispatcher.calls == []
+        assert dispatcher.operator_calls == []
         assert app.composer.notice == PROMPT_NO_LONGER_LIVE
         assert app.state.rejected_responses == 1
         await app.shutdown_sources()
@@ -653,7 +672,7 @@ async def test_an_answer_for_a_session_that_moved_on_is_refused() -> None:
         outcome = await app.respond_live("c-1", CANARY)
 
         assert outcome is None
-        assert dispatcher.calls == []
+        assert dispatcher.operator_calls == []
         assert app.state.rejected_responses == 1
         await app.shutdown_sources()
 
@@ -676,7 +695,7 @@ async def test_a_control_answers_its_own_request_and_not_its_neighbour() -> None
         await pilot.press("enter")
         await settle(app, pilot)
 
-        assert dispatcher.calls == [
+        assert dispatcher.operator_calls == [
             ("secret.respond", {"request_id": "s-2", "value": CANARY})
         ]
         # The neighbour is untouched, and it is the *first* card that survives —
@@ -871,7 +890,7 @@ async def test_a_second_approval_appears_and_both_lose_their_affirmatives() -> N
         outcome = await app.respond_live("approval:s1#1", "once")
 
         assert outcome is None
-        assert dispatcher.calls == []
+        assert dispatcher.operator_calls == []
         assert REFUSED_UNCORRELATED_APPROVAL in app.composer.notice
         assert app.state.rejected_responses == 1
         await app.shutdown_sources()
@@ -929,7 +948,7 @@ async def test_deny_all_sends_one_call_carrying_the_gateways_own_flag() -> None:
         await settle(app, pilot)
         await settle(app, pilot)
 
-        assert dispatcher.calls == [
+        assert dispatcher.operator_calls == [
             ("approval.respond", {"session_id": "s1", "choice": "deny", "all": True})
         ]
         assert list(app.prompts.card_ids) == []
@@ -1263,7 +1282,7 @@ async def test_the_command_is_on_screen_before_the_button_that_grants_it(
         await pilot.click("#choice-0")
         await settle(app, pilot)
         await settle(app, pilot)
-        assert dispatcher.calls == [
+        assert dispatcher.operator_calls == [
             ("approval.respond", {"session_id": "s1", "choice": "once"})
         ]
         await app.shutdown_sources()
@@ -1395,7 +1414,7 @@ async def test_a_second_approval_arriving_mid_answer_cannot_be_answered() -> Non
         await settle(app, pilot)
 
         first = asyncio.create_task(app.respond_live("approval:s1#1", "once"))
-        while not dispatcher.calls:
+        while not dispatcher.operator_calls:
             await asyncio.sleep(0)
         # The answer is on the wire and the prompt is out of the registry: the
         # exact state the rule used to be blind to.
@@ -1419,7 +1438,7 @@ async def test_a_second_approval_arriving_mid_answer_cannot_be_answered() -> Non
 
         outcome = await app.respond_live("approval:s1#2", "once")
         assert outcome is None
-        assert len(dispatcher.calls) == 1
+        assert len(dispatcher.operator_calls) == 1
         assert REFUSED_UNCORRELATED_APPROVAL in app.composer.notice
         assert app.state.rejected_responses == 1
 
@@ -1462,7 +1481,7 @@ async def test_deny_all_names_the_in_flight_approval_without_calling_it_denied()
         await settle(app, pilot)
 
         first = asyncio.create_task(app.respond_live("approval:s1#1", "once"))
-        while not dispatcher.calls:
+        while not dispatcher.operator_calls:
             await asyncio.sleep(0)
 
         feed(app, approval_frame("ls", "directory listing"), seq=101)
@@ -1701,7 +1720,7 @@ async def test_a_terminal_read_that_reaches_no_socket_is_answered_once() -> None
         await app.settle_live()
         await pilot.pause()
 
-        respond_calls = [m for m, _ in dispatcher.calls if m == "terminal.read.respond"]
+        respond_calls = [m for m, _ in dispatcher.operator_calls if m == "terminal.read.respond"]
         assert respond_calls == ["terminal.read.respond"]
         # The bridge that serves the transcript wrote nothing into it. Asserted
         # against the transcript *data* rather than against the screen, because
@@ -1770,7 +1789,7 @@ async def test_narrowing_the_terminal_keeps_the_approval_answerable() -> None:
         # And the click the operator would make actually answers.
         await pilot.click("#choice-0")
         await settle(app, pilot)
-        assert dispatcher.calls == [
+        assert dispatcher.operator_calls == [
             ("approval.respond", {"session_id": "s1", "choice": "once"})
         ]
         await app.shutdown_sources()
@@ -1932,7 +1951,7 @@ async def test_repeated_deny_all_never_claims_more_denials_than_approvals() -> N
         await settle(app, pilot)
 
         first = asyncio.create_task(app.deny_all_approvals_live("s1"))
-        while not dispatcher.calls:
+        while not dispatcher.operator_calls:
             await asyncio.sleep(0)
 
         feed(app, approval_frame("cat /etc/shadow", "credential read"), seq=102)
@@ -1981,7 +2000,7 @@ async def test_deny_all_does_not_call_an_in_flight_allow_a_denial() -> None:
         await settle(app, pilot)
 
         allow = asyncio.create_task(app.respond_live("approval:s1#1", "once"))
-        while not dispatcher.calls:
+        while not dispatcher.operator_calls:
             await asyncio.sleep(0)
 
         feed(app, approval_frame("ls", "directory listing"), seq=101)
@@ -2070,7 +2089,7 @@ async def test_a_stale_approval_stops_blocking_the_next_real_one() -> None:
 
         await pilot.click("#choice-0")
         await settle(app, pilot)
-        assert dispatcher.calls == [
+        assert dispatcher.operator_calls == [
             ("approval.respond", {"session_id": "s1", "choice": "once"})
         ]
         await app.shutdown_sources()
@@ -2207,7 +2226,9 @@ async def test_a_second_card_does_not_keep_a_title_its_control_cannot_honour() -
         await pilot.click("#answer")
         await pilot.press("m", "a", "i", "n", "enter")
         await settle(app, pilot)
-        assert dispatcher.calls == [("clarify.respond", {"request_id": "c-1", "answer": "main"})]
+        assert dispatcher.operator_calls == [
+            ("clarify.respond", {"request_id": "c-1", "answer": "main"})
+        ]
 
         # And the card that said "below" was telling the truth: scrolling there
         # puts a working control on screen.
@@ -2216,7 +2237,7 @@ async def test_a_second_card_does_not_keep_a_title_its_control_cannot_honour() -
         assert "once" in screen_text(app)
         await pilot.click("#choice-0")
         await settle(app, pilot)
-        assert dispatcher.calls[-1] == (
+        assert dispatcher.operator_calls[-1] == (
             "approval.respond",
             {"session_id": "s1", "choice": "once"},
         )
@@ -2503,7 +2524,7 @@ async def test_no_failed_terminal_read_writes_into_the_buffer_it_serves(
         feed(app, event("terminal.read.request", {"request_id": "t-1"}))
         await settle(app, pilot)
 
-        assert [m for m, _ in dispatcher.calls] == ["terminal.read.respond"]
+        assert [m for m, _ in dispatcher.operator_calls] == ["terminal.read.respond"]
         assert app.state.prompt_for("t-1") is None
         # Nothing about the *answer* reached the buffer this bridge serves.
         assert not [e for e in app.state.transcript if "terminal read answered" in e.text]

@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from talaria.domain.commands import CATALOG_METHOD
 from talaria.domain.models import ConnectionStatus
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.replay.source import ReplaySource
@@ -54,6 +55,18 @@ class RecordingDispatcher:
             return self.outcome
         return RpcOutcome(status="ok", method=method, request_id="1", epoch=1, result={})
 
+    @property
+    def operator_calls(self) -> list[tuple[str, Mapping[str, Any]]]:
+        """Every call except the startup catalogue fetch.
+
+        ``TalariaApp`` reads ``commands.catalog`` once when it mounts in live
+        mode (U9), so a raw ``calls`` list starts with a call no operator made.
+        These tests are about what one operator action sent, so they read this;
+        ``calls`` stays raw, and the fetch itself is asserted over a real socket
+        in ``tests/transport/test_commands.py``.
+        """
+        return [call for call in self.calls if call[0] != CATALOG_METHOD]
+
 
 def test_the_dispatcher_double_satisfies_the_protocol() -> None:
     """Guard the guard: a double outside the protocol proves nothing about it."""
@@ -82,7 +95,7 @@ async def test_enter_in_live_mode_dispatches_prompt_submit() -> None:
         await app.settle_live()
         await pilot.pause()
 
-        assert dispatcher.calls == [
+        assert dispatcher.operator_calls == [
             (SUBMIT_METHOD, {"session_id": "s1", "text": "run the tests"})
         ]
         assert app.composer.text == ""
@@ -103,7 +116,7 @@ async def test_enter_on_blank_text_sends_nothing() -> None:
         await app.settle_live()
         await pilot.pause()
 
-        assert dispatcher.calls == []
+        assert dispatcher.operator_calls == []
         assert app.state.transcript == ()
         await app.shutdown_sources()
 
@@ -115,7 +128,7 @@ async def test_surrounding_whitespace_is_trimmed_but_indentation_survives() -> N
 
     async with app.run_test():
         await app.submit_live("\n  def f():\n      return 1\n\n")
-        assert dispatcher.calls[0][1]["text"] == "def f():\n      return 1"
+        assert dispatcher.operator_calls[0][1]["text"] == "def f():\n      return 1"
         await app.shutdown_sources()
 
 
@@ -305,7 +318,7 @@ async def test_f4_in_live_mode_dispatches_session_interrupt() -> None:
         await app.settle_live()
         await pilot.pause()
 
-        assert [method for method, _ in dispatcher.calls] == [INTERRUPT_METHOD]
+        assert [method for method, _ in dispatcher.operator_calls] == [INTERRUPT_METHOD]
         await app.shutdown_sources()
 
 

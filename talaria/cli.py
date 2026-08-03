@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from talaria import config as config_module
+from talaria.domain.commands import PasteThreshold
 from talaria.domain.startup import (
     StartupConflictError,
     StartupMode,
@@ -202,9 +203,30 @@ def run_replay(args: argparse.Namespace) -> int:
         controls=controls,
         status_runner=_build_status_runner(cfg),
         status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
+        paste_threshold=_build_paste_threshold(cfg),
     )
     app.run()
     return 0
+
+
+def _build_paste_threshold(cfg: config_module.Config) -> PasteThreshold:
+    """KTD16's two bounds, from configuration (KTD15).
+
+    Non-integer values fall back to the documented defaults rather than
+    raising. A malformed threshold should not stop the client from starting,
+    and :class:`~talaria.domain.commands.PasteThreshold` already treats a
+    non-positive bound as "this half is off".
+    """
+    from talaria.domain.commands import DEFAULT_COLLAPSE_BYTES, DEFAULT_COLLAPSE_LINES
+
+    def _bound(key: str, fallback: int) -> int:
+        value = cfg.get("composer", key, default=fallback)
+        return value if isinstance(value, int) and not isinstance(value, bool) else fallback
+
+    return PasteThreshold(
+        lines=_bound("paste_collapse_lines", DEFAULT_COLLAPSE_LINES),
+        byte_limit=_bound("paste_collapse_bytes", DEFAULT_COLLAPSE_BYTES),
+    )
 
 
 def run_gate_command(args: argparse.Namespace) -> int:

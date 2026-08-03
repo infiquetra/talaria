@@ -2,6 +2,96 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-03
+
+### Send an ordinary command through `slash.exec`, and keep `command.dispatch` as the fallback
+
+**Author.** v0.1 milestone-2, unit U9 (slash commands and paste collapse), adversarial closing round
+
+**Decision.** `TalariaApp.dispatch_command_live` calls `slash.exec` with the whole command line first. If that is refused it calls `command.dispatch` with the name and argument. Both replies feed the same generic renderer: `slash.exec` answers either `{"output": …}` — decoded as `SlashOutput` — or a `command.dispatch` payload it forwarded internally, which is decoded as the shape it is. The discriminator is whether the reply carries a string `type`.
+
+**Why this is not a symmetry.** At `7f4d15515`, `command.dispatch`'s last line is `_err(rid, 4018, f"not a quick/plugin/bundle/skill command: {name}")` (`tui_gateway/methods_tools.py:1070`). Above it the handler serves only quick commands, plugin commands, skill bundles, skill commands, and twelve hardcoded name groups. The registry has 90 `CommandDef` rows. The catalogue builder drops a row when `cmd.name in _TUI_HIDDEN or cmd.gateway_only` (`methods_tools.py:272`), and those two sets overlap completely: `_TUI_HIDDEN` is `{sethome, set-home, commands, approve, deny}` (`tui_gateway/server.py:11504`), of which the four that are registry command names are all already `gateway_only`. So the filter removes exactly the 8 `gateway_only` rows and **a real catalogue carries 82 registry commands**, plus the three `_TUI_EXTRA` entries that survive the dedup guard. Note `cli_only` is *not* filtered — the 33 `cli_only` rows are catalogued too. Only a minority of those 82 — quick commands, plugin commands, skill bundles, skill commands, and twelve hardcoded name groups — is anything `command.dispatch` serves; the exact residual is not derivable from the registry alone, because three of those five sets are assembled at runtime from the operator's config and installed skills. A client that calls only `command.dispatch` therefore lists most of the catalogue with a blank availability marker, meaning "this dispatches", and refuses those rows on use. That is the same honesty clause the unit already applies to the client-local extras, failing on a set an order of magnitude larger. Hermes's own client has always had the right ordering (`ui-tui/src/app/createSlashHandler.ts:147-166`: `slash.exec` in the try, `command.dispatch` in the `.catch()`).
+
+*An earlier version of this paragraph said the catalogue carries "roughly 78" by subtracting 8 `gateway_only` and "4 hidden" as though they were disjoint, and put the residual at "about 67".* Both numbers were recomputed from the pinned registry by parsing it: the hidden four are inside the eight, and the residual cannot be pinned down without a live catalogue. The qualitative claim the decision rests on — that `command.dispatch` alone would fail most of the listing — is unchanged and is carried by the 4018 line above, not by the arithmetic.
+
+**Rejected alternatives.** *Keeping `command.dispatch` only and marking the affected rows unsupported* was the honest version of the status quo, and it is worse: Talaria cannot tell from a catalogue row which side of that line a command falls on, so it would have to mark almost everything unsupported or guess. *Calling `slash.exec` only* loses skill commands, which it refuses outright (`:1146`), and any command run without a focused session, which it needs and `command.dispatch` does not. *Probing at startup to learn which handler serves what* is 78 speculative dispatches, each a mutation.
+
+**Revisit when.** The gateway merges the two handlers, or publishes per-command routing in the catalogue. Either makes the fallback dead code rather than a second real path, and dead code is the thing to remove.
+
+### Follow an alias to what it points at, with a chain Talaria remembers
+
+**Author.** v0.1 milestone-2, unit U9, adversarial closing round
+
+**Decision.** An `alias` result's target is resolved and run, carrying the original argument, up to `ALIAS_FOLLOW_LIMIT` (3) hops and never onto a name already in the chain.
+
+**Rationale.** An `alias` result names a target and runs nothing — the handler returns `{"type": "alias", "target": qc.get("target", "")}` straight out of the operator's quick-commands config (`methods_tools.py:600`). Hermes's client re-dispatches it (`createSlashHandler.ts:100-102`). Rendering the target and stopping turns a working quick command into a dead end that *looks* like a result, which is worse than an error: the transcript shows a line, so nothing appears to have gone wrong.
+
+**Rejected alternatives.** *Following with no bound*, as the official handler does, treats an alias that points at itself as impossible. It is a config typo. *Refusing to follow and saying so* keeps the client simple and leaves the operator to retype what the gateway just told them.
+
+**Revisit when.** A real quick-commands config is observed with a chain deeper than three, which would make the bound a limitation rather than a guard.
+
+### Insert a large paste literally first, and refuse Enter while the collapse is out
+
+**Author.** v0.1 milestone-2, unit U9, adversarial closing round
+
+**Decision.** `ChatTextArea._on_paste` inserts the pasted text literally and unconditionally, then asks the gateway to collapse it; the placeholder replaces the body by search-and-replace when the reply lands. While any collapse is outstanding, Enter submits nothing and says why — except for the Talaria-local four, which never touch a socket.
+
+**Rationale, including the cost.** Inserting literally first makes KTD4's behaviour the floor for every paste, including one whose collapse is about to fail and one arriving in replay where there is no gateway at all; every failure path then ends in the same place with no branch that clears the editor. **The cost is a window.** For the length of the round trip the composer holds the whole body, and paste-then-Enter is ordinary muscle memory: measured with the guard reverted in a disposable clone, a 401-line, 7919-character paste followed by Enter put the entire body into `prompt.submit` — the assertion `sent(gateway, SUBMIT_METHOD) == []` failed with a payload ending `'…pasted line 399'`. That is precisely the outcome KTD16 exists to prevent. Hermes's client cannot reach that state because it computes its placeholder locally and inserts *that* synchronously (`ui-tui/src/app/useComposerState.ts`), using `paste.collapse` only to backfill the path. The guard is what pays for the inversion.
+
+**Rejected alternatives.** *Computing the placeholder locally, as Hermes does*, removes the window and makes Talaria's placeholder a claim about a file the gateway has not written yet — a reference the operator can submit before it exists. *Inserting nothing until the reply lands* makes every large paste look like a dropped keystroke for the length of an RPC, and loses the text entirely if the reply never comes. *Queueing the submit to run after the collapse* silently sends a message the operator has had no chance to see in its collapsed form.
+
+**Revisit when.** `paste.collapse` is measured against a real gateway. If the round trip is reliably short the guard is nearly invisible; if it is slow, deferring the submit rather than refusing it becomes worth its complexity.
+
+### Route a dispatch result by where its text goes, not by which shape it is
+
+**Author.** v0.1 milestone-2, unit U9 (slash commands and paste collapse)
+
+**Decision.** `talaria/domain/commands.py:render_dispatch` never reads `result.type`. U3's decoder already folds all six `command.dispatch` shapes into one record with three text destinations — `display_text` (the transcript), `submit_text` (the model), `prefill_text` (the composer) — and the renderer routes those three fields. The result is that `exec`, `plugin`, `alias`, `skill`, `send` and `prefill` take one code path, and a seventh shape that populated the same fields would take it too. Pinned by `tests/domain/test_commands.py::test_every_shape_with_the_same_fields_renders_the_same_way`, which builds six results differing *only* in their type and asserts the six renderings are one value.
+
+**Rejected alternatives.** *A handler per result type* is the obvious reading of "six shapes" and is what the constraint "no gateway command gets a bespoke interface" is one step away from: six handlers become seven, then seven with a special case for the bundle. *A command registry mirroring Hermes's*, so Talaria knows what `/model` means, loses the first time Hermes changes it and loses silently. *A `skill` result falling back to `message` when `display` is absent* was rejected in U3 and stays rejected: the gateway emits `display` alongside `message` at every skill and bundle site, so the fallback is only reached when something is wrong, and what it would reach is the expanded scaffold the field exists to keep off the screen.
+
+**A plain `send` renders its `message`, and that is deliberate.** A bundle carries `display`; an ordinary `send` has no projection at all — `/queue` returns the operator's own argument as `message` (`methods_tools.py:573`), `/learn` and `/init` return a built prompt (`:582`, `:590`) — so `message` is the only text there is. Hermes's own client renders it in that case (`shown ? send(message, true, shown) : send(message)`, `createSlashHandler.ts:110-114`) and Talaria matches it, because the only way to treat `/queue` and `/learn` differently is a branch on the command name, which is the one design this unit forbids. `COMMAND_OUTPUT_CLIP` is what keeps a built prompt from displacing the conversation it was run inside. *An earlier version of this entry claimed the opposite of what the code does*, which is the failure a durable journal is least able to afford; it was corrected after measurement, and `tests/domain/test_commands.py::test_a_send_with_no_display_renders_its_message` now pins the behaviour the entry describes.
+
+**One conditional survives, and it is about destinations rather than shapes.** A result that carries `prefill_text` writes `(prefilled into the composer)` to the transcript instead of the body. A `/goal` prefill is routinely a couple of thousand characters; printing it in both places makes the copy the operator cannot edit the larger of the two.
+
+**Revisit when.** The gateway grows a result shape that needs a fourth destination — a file to open, a panel to show — rather than a fourth field in one of the existing three. That is the point at which "route the destinations" stops being complete, and it is a bigger change than adding a branch.
+
+### Identify the gateway's client-local commands by name *and* category
+
+**Author.** v0.1 milestone-2, unit U9
+
+**Decision.** An entry is unsupported when its name is one of `/density`, `/logs`, `/mouse`, `/sessions` **and** its catalogue category is `TUI`. Both halves are required.
+
+**This already discriminates today, on one of the four names.** The registry defines `CommandDef("sessions", "Browse and resume previous sessions", "Session")` (`hermes_cli/commands.py:180`), so the gateway's dedup guard drops the `/sessions` extra and a real `commands.catalog` serves `/sessions` under category `Session` — dispatchable. The plan's list of four client-local names is one name out of date; three render unsupported and `/sessions` renders as an ordinary command. That is a deviation from the plan text, settled by the pinned registry rather than deferred to a live run.
+
+**Rejected alternatives.** *Name alone* refuses the dispatchable `/sessions` above. *Category alone* would refuse every future `TUI`-categorised command sight unseen, including one that is genuinely dispatchable. *Probing each of the four at startup* to see whether they error was rejected outright: `command.dispatch` is classified `evidence-only` by KTD9 precisely because dispatching is a mutation, and four speculative dispatches at startup is four side effects to learn something the catalogue already says.
+
+**Revisit when.** Hermes moves the extras out of `_TUI_EXTRA`, gives them real handlers, or files a registry command under category `TUI` — any of which makes the pair stop discriminating. The check is one function, `_is_client_local`, and the four names and the category are named constants beside it.
+
+### A non-positive paste-collapse bound switches that bound off
+
+**Author.** v0.1 milestone-2, unit U9
+
+**Decision.** `PasteThreshold.trips` treats `lines <= 0` and `byte_limit <= 0` as "this half is not in use". Setting both to zero collapses nothing; setting lines to zero leaves the byte bound working.
+
+**Rationale.** It re-encodes the shipping client's own guard — `pasteCollapseLines > 0 && lineCount >= pasteCollapseLines` (`ui-tui/src/app/useComposerState.ts:277-280` at `7f4d15515`) — so an operator who has tuned Hermes gets the same behaviour from Talaria. It also closes the reading `QUEUED.md`'s unbounded-configuration item flagged: read as a threshold, `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES=0` means "collapse at zero lines" and sends every one-word paste on a round trip.
+
+**Rejected alternatives.** *Clamping to the KTD16 defaults* silently overrides what the operator asked for. *Raising a configuration error* stops the client from starting over a paste setting. Both were rejected because there is a reading of `0` that is useful and unambiguous, and it is the one Hermes already uses.
+
+**Revisit when.** A third bound is added, or the setting grows a form where `0` means something else.
+
+### The interrupt affordance belongs to the sub-agent row
+
+**Author.** v0.1 milestone-2, unit U9
+
+**Decision.** `subagent.interrupt` is reachable only from the row of the child it stops — a click on that row, or Enter while it is focused. Terminal rows carry no affordance at all.
+
+**Rationale.** The call takes a `subagent_id` (`tui_gateway/methods_session.py:2806-2814`), so a global key binding would have to invent a rule for which child it meant, and the rule would be wrong exactly when it mattered: a fan-out of six with one runaway is the situation the control exists for, and "the most recent" or "the first running" is a guess about which of the six the operator was looking at. A finished child answers `found: false`, and an affordance that is always refused teaches the operator to ignore it.
+
+**Rejected alternatives.** *A key binding plus a selection cursor* is the general answer and adds a second focus owner competing with the composer, which is the widget the whole interface is built around. *Reusing F4* was rejected on safety grounds: F4 is `session.interrupt`, whose cancelled state is sticky and suppresses every later delta, so conflating the two would let "stop this child" silently swallow the rest of the parent's reply.
+
+**Revisit when.** The row list grows keyboard navigation for another reason, at which point Enter-on-focus is already the binding and only the cursor is new.
+
 ## 2026-08-01
 
 ### Name the project Talaria

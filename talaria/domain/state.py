@@ -405,6 +405,25 @@ def record_local_note(state: SessionState, text: str, *, at: float) -> SessionSt
     return replace(next_state, last_observed_at=max(state.last_observed_at, at))
 
 
+def record_command_result(state: SessionState, text: str, *, at: float) -> SessionState:
+    """Append what a slash command displayed (U9, R24).
+
+    Separate from :func:`record_local_note` for one measurable reason: that one
+    clips at :data:`~talaria.domain.normalize.SYSTEM_LINE_CLIP` (120
+    characters), which is right for a one-sentence transport note and wrong for
+    the output of ``/status`` or ``/context``. A command's output is the thing
+    the operator asked to see, and 120 characters of it is a different answer
+    from the one they asked for.
+
+    The caller has already bounded the text at
+    :data:`~talaria.domain.commands.COMMAND_OUTPUT_CLIP`, so nothing is clipped
+    a second time here — a second clip would cut a marked truncation in half
+    and leave the ellipsis stranded mid-line.
+    """
+    next_state = _append(state, "system", text)
+    return replace(next_state, last_observed_at=max(state.last_observed_at, at))
+
+
 #: What labels the command in every durable record of an approval.
 #:
 #: One constant for the transcript's arrival entry and its answered entry, so a

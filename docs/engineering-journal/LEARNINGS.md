@@ -4,6 +4,88 @@
 
 ## 2026-08-03
 
+### A working call is not a working feature: `command.dispatch` serves about a seventh of the catalogue
+
+**Author.** v0.1 milestone-2, unit U9 (slash commands and paste collapse), adversarial closing round
+
+**Evidence.** U9 shipped with `TalariaApp.dispatch_command_live` sending every gateway-owned command through `command.dispatch`, and every test passed, because the loopback stub answered every name the test asked about. Reading the handler at the pin settles it: its last line is `_err(rid, 4018, f"not a quick/plugin/bundle/skill command: {name}")` (`tui_gateway/methods_tools.py:1070`). Parsing the registry at the same pin gives 90 `CommandDef` rows — 34 `Session`, 19 `Configuration`, 19 `Tools & Skills`, 17 `Info`, 1 `Exit` — of which 8 are `gateway_only`. The catalogue builder drops a row when `cmd.name in _TUI_HIDDEN or cmd.gateway_only` (`methods_tools.py:272`) and the four hidden registry names are all inside the `gateway_only` eight (`tui_gateway/server.py:11504`), so a real catalogue carries **82** — and only about 11 of those names are among the twelve `command.dispatch` hardcodes. Hermes's own client calls `slash.exec` first and falls back to `command.dispatch` in the `.catch()` (`ui-tui/src/app/createSlashHandler.ts:147-166`). Fixed by re-encoding that ordering; pinned by `tests/transport/test_commands.py::test_an_ordinary_registry_command_runs_over_slash_exec`, watched to fail with `slash.exec` removed from the call path (12 failures).
+
+**Mechanism.** The stub was built from the *shapes* `command.dispatch` returns, which is the right source for decoding and the wrong source for routing. Nothing in the six result shapes says which commands reach them, so a suite that transcribes reply bodies faithfully can be complete about decoding and silent about reachability. The failure would have been invisible in use, too, until an operator typed `/model`: the catalogue's blank availability marker means "this dispatches", so the listing asserted that most of those 82 rows worked.
+
+**Generalizable rule.** When a client re-encodes a protocol, read the handler's **refusal** paths, not only its success paths — the last line of a dispatcher tells you what it is *not* for, and that is the half a fixture built from success bodies can never contradict.
+
+### An alias the gateway resolves can land on a name the client owns
+
+**Author.** v0.1 milestone-2, unit U9, adversarial closing round
+
+**Evidence.** `resolve_command` consulted the Talaria-local four using the typed name, then resolved the gateway's `canon` map, then dispatched. The registry defines `CommandDef("quit", …, "Exit", cli_only=True, aliases=("exit",))` (`hermes_cli/commands.py:330-331` at `7f4d15515`), so a real catalogue carries `canon["/exit"] = "/quit"`. Measured against the shipped code with a catalogue built as the gateway builds it: `resolve_command("/exit", catalog)` returned `GatewayInvocation(name='/quit', …)`. The operator types the exit command, `quit` goes over the socket, the gateway does not implement it, and nothing exits. Fixed by re-checking the local set against the *canonical* name; pinned by `tests/domain/test_commands.py::test_an_alias_the_gateway_resolves_onto_a_local_name_stays_local` and `tests/transport/test_commands.py::test_exit_leaves_talaria_instead_of_going_to_the_gateway`, both watched to fail with the second check removed.
+
+**Mechanism.** The listing-level protection was real but pointed the wrong way: `decode_catalog` shadows a gateway *row* whose name collides with a local one, so `/quit` never appears twice. An alias is not a row. It lives only in `canon`, so nothing in the listing could shadow it, and the ordering guarantee ("local before catalogue") was stated over the typed name while the dangerous name was the one the catalogue produced.
+
+**Generalizable rule.** A precedence rule has to be applied at every point where the name can change. Resolving an alias *is* such a point, so every check that ran before resolution runs again after it.
+
+### Parametrizing over the constant under test writes a test that deletes its own case
+
+**Author.** v0.1 milestone-2, unit U9, adversarial closing round
+
+**Evidence.** A verifier reported that dropping `/mouse` from `CLIENT_LOCAL_NAMES` left the whole suite green. The fix was a test asserting each of the four names is refused, written as `@pytest.mark.parametrize("name", sorted(CLIENT_LOCAL_NAMES))`. Re-running the same mutation: **still green** — removing `/mouse` from the constant removed the `/mouse` case from the parametrization, so the test that existed to catch the deletion silently shrank by one. Fixed by writing the four names out literally in the test; the mutation then fails.
+
+**Mechanism.** This is the "assertion that cannot fail" that U8's five rounds kept producing, in its parametrized form. It is harder to see than the blank-screen version because the test body contains a real, sharp assertion — the vacuity is in where the cases come from, not in what each case claims.
+
+**Generalizable rule.** A test's *inputs* must not be derived from the thing it is testing. If deleting a value from the code under test also deletes the case that would have caught the deletion, the test is decorative.
+
+### Overriding a Textual handler does not replace the one it overrides
+
+**Author.** v0.1 milestone-2, unit U9 (slash commands and paste collapse)
+
+**Evidence.** `ChatTextArea._on_paste` was added to intercept a large paste. Every paste was then inserted **twice**: `tests/ui/test_composer.py::test_a_several_hundred_line_paste_inserts_without_submitting` measured **798 newlines from a 400-line paste**, and `::test_wide_and_combining_characters_survive_the_round_trip` measured `'端末エミュレータ端末エミュレータ' != '端末エミュレータ'`. The two tests already existed and both caught it on the first run after the override landed.
+
+**Mechanism.** Textual does not resolve a handler through the MRO the way a normal method call does. `MessagePump._get_dispatch_methods` (`textual/message_pump.py:758-798` in Textual 8.2.8) loops `for cls in self.__class__.__mro__` and yields `cls.__dict__.get(f"_{method_name}")` from **each** class, so both `ChatTextArea._on_paste` and `TextArea._on_paste` were invoked for one event. The override called `super()._on_paste(event)` to do the literal insert, and then the framework called the base handler again. The loop's one exit is `if message._no_default_action: break`, which `Message.prevent_default()` sets — so `prevent_default()` is what makes an override *be* the handler rather than an addition to it.
+
+The same class's existing `_on_key` override never showed this, and the reason is worth recording because it is why the hazard stayed invisible: `TextArea._on_key` calls `prevent_default()` itself for an ordinary printable key, so the MRO loop broke before reaching the base handler a second time. `TextArea._on_paste` does not. An override is safe or unsafe depending on what the *base* handler happens to do, which is not a property you can read off your own code.
+
+**Generalizable rule.** In Textual, an `_on_*` / `on_*` override runs *in addition to* every same-named handler in its base classes. Call `event.prevent_default()` when the override is meant to replace one, and never infer from a working override in the same class that the pattern is safe.
+
+### A background call added at mount changed three shared surfaces at once
+
+**Author.** v0.1 milestone-2, unit U9
+
+**Evidence.** U9 made `TalariaApp` read `commands.catalog` once when it mounts in live mode. Nothing about the catalogue was wrong; the *unprompted call* broke 29 existing tests and one production behaviour, in three distinct ways:
+
+1. **Exact-call assertions.** Twenty-five tests in `tests/ui/test_prompts.py` and `tests/ui/test_live_wiring.py` assert `dispatcher.calls == [(method, params)]`. Every one now had `('commands.catalog', {})` at index 0.
+2. **A one-shot gate in a test double.** `HoldingDispatcher` parks its *first* call so a test can observe the window while an answer is in flight. The catalogue fetch became the first call and consumed the gate, so four in-flight tests ran with the window already closed — they failed loudly here, but the failure mode of a test that keeps passing over a consumed gate is silent.
+3. **A stolen notice bar.** `tests/transport/test_reconnect.py::test_a_local_credential_problem_is_not_reported_as_a_gateway_rejection` went red because the composer showed `commands.catalog was not sent — not connected to a gateway` where it had shown `set HERMES_DASHBOARD_SESSION_TOKEN`. The background read overwrote the one line that told the operator what to do, with a line naming a *symptom* of that same problem.
+
+**Mechanism.** All three follow from the same thing: a call nobody asked for shares every surface with calls somebody did — the call log, the double's ordering assumptions, and the single-line notice bar. The first two are test-side and the third is real: precedence on a one-line surface is decided by arrival order unless someone decides it deliberately, and background work always arrives last.
+
+A fourth, separate defect came from the same change and is worth its own note: issuing the fetch from `on_mount` is too early against a real socket. `LiveSource` dials asynchronously, so the call resolved `not connected` before the handshake completed and the listing stayed unavailable for the whole session. The fix makes the fetch idempotent and re-runs it whenever the transport reports `connected` — one path covering the mount case (a dispatcher double is usable immediately) and the socket case (the connect callback retries).
+
+**Generalizable rule.** Adding an unprompted call to a shared component is a change to every surface that call touches, not just to the feature that wanted it. Before adding one, ask what already reads the call log, what already assumes the first call is the operator's, and what one-line surface it will now write to last.
+
+### The inert-control rule had only ever been checked in one direction
+
+**Author.** v0.1 milestone-2, unit U9
+
+**Evidence.** AE11's rule is that a control which cannot act must say so rather than quietly do nothing, and the suite checks it thoroughly — for *replay*. Adding U9's `/pause`, `/resume` and `/speed` surfaced the mirror case, which nothing covered: in a **live** session, F8, F9 and F10 flipped `ReplayControls` and reported `paused · 1x`. `ReplaySource` is the only consumer of that object (`talaria/replay/source.py:132,136`), and a live session is fed by `LiveSource`, which never reads it. So three bound keys reported success and changed nothing observable.
+
+Fixed by routing all six entry points — the three keys and the three commands — through one `_pacing_refused_live` helper, and pinned by `tests/transport/test_commands.py::test_the_pacing_function_keys_refuse_a_live_session_too` and `::test_a_pacing_control_in_a_live_session_refuses_out_loud`. Removing the mode check fails six tests; verified in a disposable clone.
+
+**Mechanism.** The refusal was implemented as "replay refuses the controls that need a gateway", which is a statement about one mode. The constraint underneath is symmetric — *a control that cannot act in the current mode says so* — and the other half of it had no owner because replay-only controls were never thought of as controls that could be wrong.
+
+**Generalizable rule.** A rule stated for one mode is half-tested by construction. When a rule mentions a mode, write the sentence without the mode and check the other side of it.
+
+### The four commands the gateway advertises and does not implement need two facts to identify
+
+**Author.** v0.1 milestone-2, unit U9
+
+**Evidence.** `commands.catalog` lists `/density`, `/logs`, `/mouse` and `/sessions` from `_TUI_EXTRA` (`tui_gateway/server.py:11514` at `7f4d15515`). No gateway handler implements them; they are handled inside Hermes's own React terminal UI, so Talaria must list them as unsupported rather than dispatch them. Matching on the four names alone is wrong, and the gateway's own code says why: the catalogue builder skips a `_TUI_EXTRA` row whose name collides with a real registry command, with the comment "The registry entry is canonical" and `/sessions` as its worked example (`tui_gateway/methods_tools.py:290-297`). A name-only rule would mark a genuinely dispatchable `/sessions` unsupported the day the registry adds one.
+
+The second fact is the category. The four extras are filed under `TUI`, and **no** `CommandDef` in `hermes_cli/commands.py` uses that category — verified at the pin by counting every three-positional-argument `CommandDef` call: 33 `Session`, 17 `Info`, 12 `Configuration`, 1 `Exit`, and zero `TUI`. Requiring name **and** category `TUI` is therefore precise where either half alone is not. Pinned by `tests/domain/test_commands.py::test_a_registry_command_reusing_a_tui_name_is_not_marked_unsupported`, which was watched to fail with the category clause removed.
+
+**Mechanism.** The catalogue is a merge of three sources — a registry, a config file, and a filesystem scan — and the merge has a dedup rule. Any classifier that reads one field is reading the merge's output while ignoring the rule that produced it.
+
+**Generalizable rule.** When a remote list is built by merging sources with a precedence rule, classify entries on enough fields to reconstruct which source won; a single field describes the entry, not its provenance.
+
 ### Four fixes that worked for the first case, and the shape they share
 
 **Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth and final adversarial round

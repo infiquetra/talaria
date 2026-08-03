@@ -42,6 +42,34 @@ from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.timer import Timer
 
+from talaria.domain.commands import (
+    CATALOG_METHOD,
+    DISPATCH_METHOD,
+    LIVE_HAS_NO_REPLAY_CLOCK,
+    PASTE_COLLAPSE_METHOD,
+    SLASH_EXEC_METHOD,
+    SUBAGENT_INTERRUPT_METHOD,
+    CommandCatalog,
+    GatewayInvocation,
+    LocalInvocation,
+    PasteThreshold,
+    SlashOutput,
+    UnsupportedInvocation,
+    decode_catalog,
+    decode_collapsed_paste,
+    decode_slash_exec,
+    parse_speed,
+    render_dispatch,
+    render_slash_output,
+    resolve_command,
+    slash_exec_command,
+    unavailable_catalog,
+)
+from talaria.domain.decode import (
+    DispatchResult,
+    UnknownDispatchResult,
+    decode_dispatch_result,
+)
 from talaria.domain.models import ConnectionStatus, PendingPrompt, PromptKind, RunMode
 from talaria.domain.normalize import normalize_frame
 from talaria.domain.projection import (
@@ -62,6 +90,7 @@ from talaria.domain.state import (
     age_out_approvals,
     apply_frame,
     cancel_turn,
+    record_command_result,
     record_local_note,
     record_submission,
     respond_to_all_approvals,
@@ -81,8 +110,9 @@ from talaria.transport.rpc import (
     RpcOutcome,
 )
 from talaria.transport.source import FrameRecord, FrameSource
-from talaria.ui.agents import AgentRows
+from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
+from talaria.ui.palette import PaletteRegion
 from talaria.ui.prompts import (
     DENY_ALL_CHOICE,
     RESPOND_METHODS,
@@ -114,6 +144,69 @@ INTERRUPT_METHOD: Final[str] = "session.interrupt"
 #: :data:`~talaria.replay.controls.MUTATION_CONTROLS`, so replay refuses it
 #: visibly rather than letting a prompt answer quietly go nowhere (AE11).
 PROMPT_RESPOND_CONTROL: Final[str] = "prompt-respond"
+
+#: The two U9 controls that need a gateway, under the names
+#: :data:`~talaria.replay.controls.MUTATION_CONTROLS` already reserved for them.
+COMMAND_DISPATCH_CONTROL: Final[str] = "command-dispatch"
+PASTE_COLLAPSE_CONTROL: Final[str] = "paste-collapse"
+
+#: Said when a command Talaria could not collapse a paste for is still editable.
+#: The wording names the capability rather than the call, because "paste.collapse
+#: failed" tells the operator nothing they can act on and "the paste is still
+#: here, uncollapsed" tells them everything (AE13).
+#:
+#: **It is only said once the composer has been read**, because it is a claim
+#: about the composer. The operator can submit or delete the paste while the
+#: round trip is in flight, and a refusal that then announces "the paste was
+#: left in full" over an empty composer is the U8 failure family: a sentence
+#: asserting a state nothing checked. :data:`PASTE_COLLAPSE_REFUSED` is what is
+#: said when the text is gone — the same news about the gateway, with no claim
+#: about the editor attached.
+PASTE_NOT_COLLAPSED: Final[str] = (
+    "the paste was left in full — the gateway did not collapse it"
+)
+PASTE_COLLAPSE_REFUSED: Final[str] = "the gateway did not collapse the paste"
+
+#: Said when Enter arrives while a paste is still out at the gateway.
+#:
+#: Paste-then-Enter is ordinary muscle memory and it is exactly what KTD16
+#: exists to stop: the literal insert is the floor for every paste, so at that
+#: instant the composer holds the whole several-hundred-line body and submitting
+#: puts it into the turn. Talaria's insert-literal-first ordering is what opens
+#: the window (Hermes's client computes its placeholder locally and never has
+#: one), so Talaria closes it here rather than pretending the window is too
+#: small to matter.
+PASTE_COLLAPSE_IN_FLIGHT: Final[str] = (
+    "a large paste is still being collapsed — nothing was sent; press Enter "
+    "again in a moment"
+)
+
+#: Said when the gateway collapsed a paste that the operator has since edited
+#: away. Nothing is inserted in that case; the file the gateway wrote is named
+#: so the operator can reach it if they wanted it after all.
+PASTE_NO_LONGER_PRESENT: Final[str] = (
+    "the pasted text is no longer in the composer, so nothing was replaced; "
+    "the gateway saved it at"
+)
+
+#: How the transcript names an interrupt the gateway accepted, and one it says
+#: it could not find. ``found: false`` is a real answer, not a failure — the
+#: child had already finished — and reporting it as an interrupt would claim an
+#: act that did not happen.
+SUBAGENT_INTERRUPTED: Final[str] = "interrupted sub-agent"
+SUBAGENT_NOT_FOUND: Final[str] = "the gateway has no such running sub-agent:"
+
+#: How far an ``alias`` chain is followed before Talaria stops and says so.
+#:
+#: Hermes's client re-dispatches an alias target through its own handler with no
+#: guard at all (``createSlashHandler.ts:100-102``), which a quick command
+#: aliased to itself turns into an unbounded loop. Three is well past any real
+#: chain and short enough that the refusal arrives while the operator is still
+#: looking at the command they typed.
+ALIAS_FOLLOW_LIMIT: Final[int] = 3
+
+#: Said when an alias points back into a chain already being followed.
+ALIAS_CIRCULAR: Final[str] = "the alias chain does not end; stopped at"
 
 
 #: Shown when an answer arrives for a prompt the registry no longer holds.
@@ -330,6 +423,7 @@ class TalariaApp(App[None]):
         Binding("f9", "slow_down", "slower", priority=True),
         Binding("f10", "speed_up", "faster", priority=True),
         Binding("f2", "toggle_agents", "sub-agents", priority=True),
+        Binding("f3", "toggle_palette", "commands", priority=True),
         Binding("f4", "interrupt", "interrupt", priority=True),
         Binding("f5", "follow_bottom", "follow", priority=True),
     ]
@@ -346,6 +440,7 @@ class TalariaApp(App[None]):
         mount_cap: int = DEFAULT_MOUNT_CAP,
         dispatcher: LiveDispatcher | None = None,
         call_timeout: float | None = 30.0,
+        paste_threshold: PasteThreshold | None = None,
     ) -> None:
         super().__init__()
         self.source = source
@@ -356,6 +451,22 @@ class TalariaApp(App[None]):
         self.coalesce_interval = coalesce_interval
         self.mount_cap = mount_cap
         self.dispatcher = dispatcher
+        #: KTD16's bounds, resolved from configuration by the caller.
+        self.paste_threshold = (
+            paste_threshold if paste_threshold is not None else PasteThreshold()
+        )
+        #: The gateway's slash inventory, or ``None`` until it has been asked
+        #: for. ``None`` and "fetched, and it failed" are different facts and
+        #: the palette renders them differently, so they are not collapsed into
+        #: one empty catalogue here.
+        self.catalog: CommandCatalog | None = None
+        #: How many ``paste.collapse`` round trips are outstanding. Non-zero
+        #: means the composer still holds a literal body that is about to be
+        #: replaced, so Enter must not put it into the turn.
+        self._collapses_in_flight = 0
+        #: The last notice the paste-collapse path wrote, so a later success
+        #: clears its own failure line and nobody else's.
+        self._last_paste_notice = ""
         #: How long a live call waits before reporting an ``unknown`` outcome.
         #: Bounded because the gateway's own blocking bridges expire at 30s
         #: (``tui_gateway/server.py:2981-2998``), so a call still outstanding
@@ -370,6 +481,7 @@ class TalariaApp(App[None]):
         self._coalesce_timer: Timer | None = None
         self._pump_task: asyncio.Task[None] | None = None
         self._status_task: asyncio.Task[None] | None = None
+        self._catalog_task: asyncio.Task[None] | None = None
         #: In-flight live calls started from a key binding. Held so teardown can
         #: cancel them and so a test can await them without sleeping.
         self._live_tasks: set[asyncio.Task[None]] = set()
@@ -404,8 +516,13 @@ class TalariaApp(App[None]):
             yield TranscriptPane(mount_cap=self.mount_cap, id="transcript")
             yield AgentRows(id="agents")
             yield PromptRegion(id="prompts")
+            yield PaletteRegion(id="palette")
             yield StatusRegion(id="status")
-        yield Composer(notice=self._idle_notice(), id="composer")
+        yield Composer(
+            notice=self._idle_notice(),
+            paste_threshold=self.paste_threshold,
+            id="composer",
+        )
 
     @property
     def transcript(self) -> TranscriptPane:
@@ -418,6 +535,10 @@ class TalariaApp(App[None]):
     @property
     def prompts(self) -> PromptRegion:
         return self.query_one("#prompts", PromptRegion)
+
+    @property
+    def palette(self) -> PaletteRegion:
+        return self.query_one("#palette", PaletteRegion)
 
     @property
     def status_region(self) -> StatusRegion:
@@ -438,6 +559,7 @@ class TalariaApp(App[None]):
         self._pump_task = asyncio.create_task(self._pump())
         if self.status_runner is not None and self.status_runner.enabled:
             self._status_task = asyncio.create_task(self._status_loop())
+        self.fetch_catalog()
         self.composer.text_area.focus()
 
     async def on_unmount(self) -> None:
@@ -463,7 +585,12 @@ class TalariaApp(App[None]):
         if self._coalesce_timer is not None:
             self._coalesce_timer.stop()
             self._coalesce_timer = None
-        for task in (self._pump_task, self._status_task, *self._live_tasks):
+        for task in (
+            self._pump_task,
+            self._status_task,
+            self._catalog_task,
+            *self._live_tasks,
+        ):
             if task is not None and not task.done():
                 task.cancel()
         self._live_tasks.clear()
@@ -611,17 +738,48 @@ class TalariaApp(App[None]):
 
     # ── replay controls (R40, AE11) ──────────────────────────────────────
 
+    def _pacing_notice(self) -> str:
+        """The one sentence the pacing state is reported with.
+
+        Written once because there are now two ways to reach every pacing
+        control — the function keys and U9's ``/pause``, ``/resume``,
+        ``/speed`` — and two renderings of one fact drift. U8's whole
+        :class:`AnswerVerdict` exists because that happened to a safety claim.
+        """
+        return f"{self._idle_notice()} · {self.controls.label}".strip(" ·")
+
+    def _pacing_refused_live(self, name: str) -> bool:
+        """Refuse a pacing control in a live session, out loud. True if refused.
+
+        The controls scale a *recorded* clock: ``ReplaySource`` is the only
+        thing that reads ``ReplayControls``, and a live session is fed by
+        ``LiveSource``, which does not. Before this, F8 in a live session
+        flipped a flag nobody read and reported "paused" — a control that looks
+        like it worked and did nothing, which is the failure AE11 makes visible
+        for the replay direction and had never been checked in this one.
+        """
+        if self.mode == "replay":
+            return False
+        self._notice(f"{name} {LIVE_HAS_NO_REPLAY_CLOCK}")
+        return True
+
     def action_toggle_pause(self) -> None:
+        if self._pacing_refused_live("/pause"):
+            return
         self.controls.toggle_pause()
-        self.composer.show_notice(f"{self._idle_notice()} · {self.controls.label}".strip(" ·"))
+        self._notice(self._pacing_notice())
 
     def action_speed_up(self) -> None:
+        if self._pacing_refused_live("/speed"):
+            return
         self.controls.speed_up()
-        self.composer.show_notice(f"{self._idle_notice()} · {self.controls.label}".strip(" ·"))
+        self._notice(self._pacing_notice())
 
     def action_slow_down(self) -> None:
+        if self._pacing_refused_live("/speed"):
+            return
         self.controls.slow_down()
-        self.composer.show_notice(f"{self._idle_notice()} · {self.controls.label}".strip(" ·"))
+        self._notice(self._pacing_notice())
 
     async def action_toggle_agents(self) -> None:
         await self.agents.toggle_collapsed()
@@ -676,7 +834,15 @@ class TalariaApp(App[None]):
         line = _CONNECTION_NOTICE[state]
         if detail:
             line = f"{line} · {detail}" if line else detail
-        self.composer.show_notice(line)
+        # ``_notice`` rather than ``composer.show_notice``: this is a transport
+        # callback, and the transport reports ``disconnected`` from inside
+        # ``source.close()`` — which :meth:`shutdown_sources` calls *after* the
+        # screen has come down. The unguarded query raised ``NoMatches`` at the
+        # end of an orderly exit, which is exactly the R36 failure the guard on
+        # the prompt path was added for; this path had not inherited it.
+        self._notice(line)
+        if state == "connected":
+            self.fetch_catalog()
 
     def note_reconnect(self, epoch: int) -> None:
         """Mark a successful reconnect in the transcript, once (F6).
@@ -1274,15 +1440,52 @@ class TalariaApp(App[None]):
     # ── composer ─────────────────────────────────────────────────────────
 
     def on_chat_text_area_submitted(self, message: ChatTextArea.Submitted) -> None:
-        """Enter on composed text.
+        """Enter on composed text: a local control, a command, or a message.
 
-        In replay this echoes nothing and keeps the text. Writing the composed
-        message into the transcript would render a line identical to one that
-        had actually been delivered, and no operator could tell the difference
-        afterwards — which is the whole reason AE11 makes inertness visible
-        rather than silent.
+        The order is fixed by PC6 and is not an implementation convenience. The
+        Talaria-local four are resolved *first*, before the catalogue is
+        consulted and before the replay refusal — they never touch a socket, so
+        there is nothing for replay to refuse, and a gateway that later ships a
+        command called ``/quit`` must not be able to take the operator's exit
+        away.
+
+        In replay everything below that echoes nothing and keeps the text.
+        Writing the composed message into the transcript would render a line
+        identical to one that had actually been delivered, and no operator
+        could tell the difference afterwards — which is the whole reason AE11
+        makes inertness visible rather than silent.
         """
         message.stop()
+        invocation = resolve_command(message.text, self.catalog)
+
+        if isinstance(invocation, LocalInvocation):
+            self.perform_local_command(invocation)
+            return
+
+        if isinstance(invocation, UnsupportedInvocation):
+            # Nothing is sent and the text is kept. AE9's clause is that these
+            # degrade *honestly*: the operator learns the command exists, that
+            # it belongs to a different client, and that Talaria did not
+            # quietly do something else instead.
+            self._refuse_unsupported(invocation)
+            return
+
+        if self._collapses_in_flight > 0:
+            # A large paste is out at the gateway and the composer still holds
+            # the literal body, so this Enter would put the whole thing into the
+            # turn — the exact outcome KTD16 exists to prevent. The local four
+            # above are already past this point: they never touch a socket, and
+            # ``/quit`` must work whatever else is in flight.
+            self._notice(PASTE_COLLAPSE_IN_FLIGHT)
+            return
+
+        if isinstance(invocation, GatewayInvocation):
+            if self.mode == "replay" or self.dispatcher is None:
+                self._refuse_mutation(COMMAND_DISPATCH_CONTROL)
+                return
+            self._spawn_live(self._dispatch_and_discard(invocation))
+            return
+
         if self.mode == "replay":
             self._refuse_mutation("submit")
             return
@@ -1291,6 +1494,460 @@ class TalariaApp(App[None]):
     async def _submit_and_discard(self, text: str) -> None:
         """Adapt :meth:`submit_live` to the ``None``-returning task shape."""
         await self.submit_live(text)
+
+    # ── U9: the command catalogue, dispatch, and the local control set ───
+
+    async def action_toggle_palette(self) -> None:
+        await self.palette.toggle()
+
+    def fetch_catalog(self) -> None:
+        """Start the catalogue read, if one is wanted and none is running.
+
+        Called at mount **and** every time the transport reports ``connected``,
+        which is one path rather than two special cases. Mount alone is too
+        early against a real socket: ``LiveSource`` dials asynchronously, so a
+        call issued from ``on_mount`` resolves ``not connected`` before the
+        handshake finishes and the palette would spend the session saying the
+        catalogue was unavailable. Connect alone would miss a dispatcher that
+        is already usable at mount, which is every test double.
+
+        An *available* catalogue is never re-fetched, so an ordinary reconnect
+        costs nothing; one that failed is retried when the socket comes back,
+        which is the case that made this a retry rather than a one-shot.
+
+        The task is held in its own attribute rather than in ``_live_tasks``,
+        for the same reason the status loop is: those are calls the *operator*
+        made, and :meth:`settle_live` exists so a caller can wait for them. A
+        background fetch nobody asked for must not be something every such wait
+        has to outlast — a gateway that never answers it would otherwise stall
+        an unrelated interrupt's settle for the whole call timeout.
+        """
+        if self.mode != "live" or self.dispatcher is None or self._teardown_started:
+            return
+        if self.catalog is not None and self.catalog.available:
+            return
+        if self._catalog_task is not None and not self._catalog_task.done():
+            return
+        self._catalog_task = asyncio.create_task(self._load_catalog_and_discard())
+
+    async def _load_catalog_and_discard(self) -> None:
+        await self.load_catalog()
+
+    async def load_catalog(self) -> CommandCatalog:
+        """Read the gateway's slash inventory once, and never guess at it.
+
+        A call that fails leaves an *unavailable* catalogue rather than an
+        empty one, and the difference is the whole of AE9's honesty clause: an
+        empty listing says the gateway offers no commands, which is a claim,
+        while an unavailable one says Talaria could not read the listing, which
+        is what happened. Both still carry the Talaria-local four, because
+        those never needed the gateway — an operator whose gateway is refusing
+        calls can still type ``/quit``.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded by every caller
+            return unavailable_catalog("no gateway is attached")
+
+        outcome = await dispatcher.call(CATALOG_METHOD, {}, timeout=self.call_timeout)
+        if outcome.confirmed:
+            catalog = decode_catalog(outcome.result)
+        else:
+            catalog = unavailable_catalog(outcome.notice)
+        self.catalog = catalog
+        # **A failed fetch does not take the notice bar.** This read is
+        # background work nobody asked for, and the bar carries whatever the
+        # operator's last action or the transport last said. Announcing here
+        # overwrote the one line that was actionable: a run that could not find
+        # a credential showed "set HERMES_DASHBOARD_SESSION_TOKEN" and then, a
+        # moment later, "commands.catalog was not sent — not connected", which
+        # names a symptom of the first problem as though it were the problem.
+        # The failure is still visible, in the listing, where an operator who
+        # opens it is asking about exactly this.
+        await self.render_catalog()
+        return catalog
+
+    async def render_catalog(self) -> None:
+        """Push the held catalogue at the listing, unless the screen is gone.
+
+        Tolerated for the same reason :meth:`_notice` tolerates it: this fetch
+        is started at mount and can outlive the screen, and a ``NoMatches``
+        raised from inside a torn-down tree surfaces as an unrelated-looking
+        error at the end of an orderly exit (R36). Only the widget's absence is
+        caught, so a genuine rendering failure still raises.
+        """
+        try:
+            palette = self.palette
+        except NoMatches:  # pragma: no cover - teardown ordering
+            return
+        await palette.apply(self.catalog)
+
+    def perform_local_command(self, invocation: LocalInvocation) -> None:
+        """Act on one of PC6's four, with no socket involved.
+
+        Dispatch is a table lookup on :class:`LocalCommand`'s ``action`` rather
+        than a chain of name comparisons, for the same reason the gateway side
+        is generic: the set is data, and a fifth control should be a row in that
+        data rather than an edit here.
+        """
+        command = invocation.command
+        if command.replay_only and self._pacing_refused_live(command.name):
+            # Refused through the same helper the function keys use, so the two
+            # routes to one control cannot come to say different things about
+            # it.
+            return
+
+        if command.action == "quit":
+            self.exit()
+            return
+        if command.action == "pause":
+            self.controls.pause()
+        elif command.action == "resume":
+            self.controls.resume()
+        else:
+            speed = parse_speed(invocation.argument)
+            if speed is None:
+                self._notice(
+                    f"{command.name} wants a rate: a positive multiplier, or 'max' "
+                    f"— nothing changed"
+                )
+                return
+            self.controls.set_speed(speed)
+
+        self.composer.clear()
+        self._notice(self._pacing_notice())
+
+    async def _dispatch_and_discard(self, invocation: GatewayInvocation) -> None:
+        await self.dispatch_command_live(invocation)
+
+    async def dispatch_command_live(
+        self, invocation: GatewayInvocation, *, followed: frozenset[str] = frozenset()
+    ) -> RpcOutcome | None:
+        """Send one command and render whatever shape comes back (R23, R24).
+
+        **Nothing here reads the command's name to decide what to do with the
+        answer.** :func:`~talaria.domain.commands.render_dispatch` routes the
+        three text destinations U3's decoder produced, so all six shapes — and
+        any seventh — take one path. A branch per command name is the design
+        this unit exists to avoid.
+
+        **``slash.exec`` first, ``command.dispatch`` only if it refuses.** This
+        is the ordering Hermes's own client uses
+        (``ui-tui/src/app/createSlashHandler.ts:147-166`` at ``7f4d15515``), and
+        the reason is not symmetry: ``command.dispatch``'s final line is
+        ``_err(rid, 4018, "not a quick/plugin/bundle/skill command: …")``
+        (``methods_tools.py:1070``), so most of the registry — every ordinary
+        ``/model``, ``/status``, ``/context`` — is refused by it and served by
+        the slash worker instead. Calling only ``command.dispatch`` would list
+        those rows as dispatchable and fail every one on use, which is the
+        listing lying about a much larger set than the client-local extras it
+        already marks. The fallback is kept because the reverse is also true:
+        ``slash.exec`` refuses a skill command outright (``:1146``) and needs
+        the session that ``command.dispatch`` does not.
+
+        The submit half is the subtle one. A ``skill`` or ``send`` result
+        carries a ``message`` that is model-facing scaffolding, and it is sent
+        to the gateway **without** being written into the transcript as the
+        operator's line: R24's clause is that the scaffold is never rendered,
+        and ``record_submission`` would render it. What the transcript gets is
+        the display projection, which the gateway built for exactly this.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded by every caller
+            return None
+
+        session_id = self.state.focused_session_id or ""
+        outcome = await dispatcher.call(
+            SLASH_EXEC_METHOD,
+            {"command": slash_exec_command(invocation), "session_id": session_id},
+            timeout=self.call_timeout,
+        )
+        decoded: DispatchResult | UnknownDispatchResult | SlashOutput | None = None
+        if outcome.confirmed:
+            decoded = decode_slash_exec(outcome.result)
+        else:
+            outcome = await dispatcher.call(
+                DISPATCH_METHOD,
+                {
+                    "name": invocation.wire_name,
+                    "arg": invocation.argument,
+                    "session_id": session_id,
+                },
+                timeout=self.call_timeout,
+            )
+            if outcome.confirmed:
+                decoded = decode_dispatch_result(outcome.result)
+
+        if decoded is None:
+            # The composer keeps the command. Unlike a message, re-running a
+            # slash command that may have already run is not a second copy of
+            # anything the agent has to answer — and a command the operator
+            # cannot see any more is one they cannot retype. The notice is the
+            # *fallback's* refusal, not the first call's: that is the one that
+            # says why the command did not run.
+            line = f"{invocation.name}: {outcome.notice}"
+            self.state = record_command_result(
+                self.state, line, at=self.state.last_observed_at
+            )
+            self._notice(outcome.notice)
+            self._dirty = True
+            return outcome
+
+        rendering = (
+            render_slash_output(invocation.name, decoded)
+            if isinstance(decoded, SlashOutput)
+            else render_dispatch(invocation.name, decoded)
+        )
+        self.state = record_command_result(
+            self.state, rendering.transcript_line, at=self.state.last_observed_at
+        )
+        self.composer.clear()
+        if rendering.prefill_text is not None:
+            self.composer.text = rendering.prefill_text
+        unlisted = (
+            "" if invocation.listed else " · the catalogue did not list this command"
+        )
+        self._notice(f"{rendering.notice}{unlisted}".strip(" ·"))
+        self._dirty = True
+
+        if rendering.submit_text:
+            await self._submit_dispatch_payload(invocation.name, rendering.submit_text)
+        if rendering.alias_target:
+            await self._follow_alias(invocation, rendering.alias_target, followed)
+        return outcome
+
+    async def _follow_alias(
+        self, invocation: GatewayInvocation, target: str, followed: frozenset[str]
+    ) -> None:
+        """Run what an alias points at, the way Hermes's own client does.
+
+        An ``alias`` result names a target and runs nothing
+        (``methods_tools.py:600``: the handler returns ``{"type": "alias",
+        "target": qc.get("target", "")}``). Hermes's client re-dispatches it —
+        ``return void handler(`/${d.target}${argTail}`)``
+        (``createSlashHandler.ts:100-102``) — so a client that renders the
+        target and stops has turned a working quick command into a dead end that
+        looks like a result. The original argument goes with it, as it does
+        there.
+
+        Unlike that client this one carries the chain it has already followed,
+        because a quick command aliased to itself is a configuration typo rather
+        than an impossibility, and the official handler recurses on it without a
+        bound.
+        """
+        name = target if target.startswith("/") else f"/{target}"
+        chain = followed | {invocation.name.lower()}
+        if name.lower() in chain or len(chain) >= ALIAS_FOLLOW_LIMIT:
+            line = f"{invocation.name}: {ALIAS_CIRCULAR} {name}"
+            self.state = record_command_result(
+                self.state, line, at=self.state.last_observed_at
+            )
+            self._notice(line)
+            self._dirty = True
+            return
+
+        next_invocation = resolve_command(
+            f"{name} {invocation.argument}".strip(), self.catalog
+        )
+        if isinstance(next_invocation, LocalInvocation):
+            self.perform_local_command(next_invocation)
+            return
+        if isinstance(next_invocation, UnsupportedInvocation):
+            self._refuse_unsupported(next_invocation)
+            return
+        if isinstance(next_invocation, GatewayInvocation):
+            await self.dispatch_command_live(next_invocation, followed=chain)
+            return
+        # The target was not a command line at all — an empty or malformed
+        # ``target`` in the operator's quick-commands config. Named, not guessed
+        # at, and nothing further is sent.
+        line = f"{invocation.name}: the alias names no command"
+        self.state = record_command_result(
+            self.state, line, at=self.state.last_observed_at
+        )
+        self._notice(line)
+        self._dirty = True
+
+    def _refuse_unsupported(self, invocation: UnsupportedInvocation) -> None:
+        """Say a catalogue entry has no dispatch path, durably (AE9).
+
+        The refusal is written into the transcript as well as the notice bar
+        because a gateway refusal is, and two honest refusals that differ only
+        in how long they survive is a difference the operator has to learn. The
+        notice bar is overwritten by the next thing that happens; the transcript
+        is what an operator scrolls back through afterwards.
+        """
+        line = f"{invocation.name} is unsupported — {invocation.reason}"
+        self.state = record_command_result(
+            self.state, line, at=self.state.last_observed_at
+        )
+        self._notice(line)
+        self._dirty = True
+
+    async def _submit_dispatch_payload(self, name: str, text: str) -> None:
+        """Send a result's ``message`` onward, and never render it.
+
+        Deliberately not :meth:`submit_live`: that one writes the text into the
+        transcript as the operator's own line, which for a skill or a bundle is
+        several kilobytes of system-prompt fragment and is precisely what R24
+        forbids. Only the outcome is written down, and only when it is not a
+        clean delivery.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded by the caller
+            return
+        outcome = await dispatcher.call(
+            SUBMIT_METHOD,
+            {"session_id": self.state.focused_session_id or "", "text": text},
+            timeout=self.call_timeout,
+        )
+        delivery = delivery_of(outcome)
+        if outcome.status == "error" or delivery != "confirmed":
+            note = outcome.notice or DELIVERY_NOTES.get(delivery) or ""
+            self.state = record_local_note(
+                self.state, f"{name}: {note}", at=self.state.last_observed_at
+            )
+            self._notice(note)
+        self._dirty = True
+
+    # ── U9: one sub-agent's interrupt, from its own row (R15, AE14) ──────
+
+    def on_agent_row_interrupt(self, message: AgentRow.Interrupt) -> None:
+        message.stop()
+        if self.mode == "replay" or self.dispatcher is None:
+            self._refuse_mutation("interrupt")
+            return
+        self._spawn_live(self._interrupt_subagent_and_discard(message.subagent_id))
+
+    async def _interrupt_subagent_and_discard(self, subagent_id: str) -> None:
+        await self.interrupt_subagent_live(subagent_id)
+
+    async def interrupt_subagent_live(self, subagent_id: str) -> RpcOutcome | None:
+        """Stop one delegated child, and leave the parent turn alone (AE14).
+
+        **This must not do what :meth:`interrupt_live` does.** That one calls
+        ``session.interrupt`` and, on success, marks the operator's own turn
+        cancelled — which is sticky and suppresses every later delta. Applying
+        it here would mean stopping one of six children silently swallowed the
+        rest of the parent's reply. The two calls are one keystroke apart in
+        the interface and the difference between them is the whole of this
+        method.
+
+        ``found: false`` is reported as what it is. The gateway answers that
+        when the child has already finished (``methods_session.py:2806-2814``),
+        and calling it an interrupt would record an act that never happened.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded by every caller
+            return None
+
+        outcome = await dispatcher.call(
+            SUBAGENT_INTERRUPT_METHOD,
+            {"subagent_id": subagent_id},
+            timeout=self.call_timeout,
+        )
+
+        if not outcome.confirmed:
+            line = outcome.notice
+        else:
+            body = outcome.result if isinstance(outcome.result, Mapping) else {}
+            found = bool(body.get("found"))
+            line = (
+                f"{SUBAGENT_INTERRUPTED} {subagent_id}"
+                if found
+                else f"{SUBAGENT_NOT_FOUND} {subagent_id}"
+            )
+        self.state = record_local_note(self.state, line, at=self.state.last_observed_at)
+        self._notice(line)
+        self._dirty = True
+        return outcome
+
+    # ── U9: large-paste collapse (KTD16, AE13) ───────────────────────────
+
+    def on_chat_text_area_large_paste(self, message: ChatTextArea.LargePaste) -> None:
+        """A paste tripped the threshold. It is already in the editor.
+
+        In replay the collapse is refused like every other gateway-needing
+        control, and the refusal is the correct end state rather than a
+        degraded one: the full text is in the composer, which is what KTD4
+        specifies for a paste below the threshold anyway.
+        """
+        message.stop()
+        if self.mode == "replay" or self.dispatcher is None:
+            outcome = self.controls.attempt(PASTE_COLLAPSE_CONTROL)
+            # The preservation clause leads, as it does on the live path. One
+            # notice row is routinely narrower than the sentence, and the half
+            # an operator needs is "your paste is still here" rather than the
+            # name of the control that was refused — putting the refusal first
+            # is what pushed the reassurance off the end of a 60-column row.
+            self._paste_notice(f"{PASTE_NOT_COLLAPSED} — {outcome.notice}")
+            return
+        self._collapses_in_flight += 1
+        self._spawn_live(self._collapse_paste_and_discard(message.text))
+
+    async def _collapse_paste_and_discard(self, text: str) -> None:
+        try:
+            await self.collapse_paste_live(text)
+        finally:
+            # In a ``finally`` because a cancelled or failed round trip must
+            # not leave the composer permanently refusing to submit.
+            self._collapses_in_flight -= 1
+
+    async def collapse_paste_live(self, text: str) -> RpcOutcome | None:
+        """Spool a large paste to the gateway and swap in its placeholder.
+
+        Every failure path ends in the same place, and that is the requirement
+        rather than a convenience: the original text stays in the composer,
+        editable, and nothing partial is submitted (AE13). There is no branch
+        here that clears the editor, so no future edit can make one.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded by every caller
+            return None
+
+        outcome = await dispatcher.call(
+            PASTE_COLLAPSE_METHOD, {"text": text}, timeout=self.call_timeout
+        )
+        collapsed = (
+            decode_collapsed_paste(outcome.result) if outcome.confirmed else None
+        )
+        if collapsed is None:
+            # Which sentence is said depends on reading the composer, because
+            # only one of them is a claim about it. The operator can delete or
+            # submit the paste while the round trip is out.
+            kept = bool(text) and text in self.composer.text
+            head = PASTE_NOT_COLLAPSED if kept else PASTE_COLLAPSE_REFUSED
+            self._paste_notice(f"{head} — {outcome.notice}".strip(" —"))
+            return outcome
+
+        if not self.composer.collapse_paste(text, collapsed.placeholder):
+            self._paste_notice(f"{PASTE_NO_LONGER_PRESENT} {collapsed.path}".strip())
+            return outcome
+        self._clear_paste_notice()
+        return outcome
+
+    def _paste_notice(self, message: str) -> None:
+        """Write a paste-collapse notice, remembering that this feature wrote it."""
+        self._last_paste_notice = message
+        self._notice(message)
+
+    def _clear_paste_notice(self) -> None:
+        """Take the bar back only if this feature is still the one holding it.
+
+        A successful collapse used to clear the notice row unconditionally, and
+        the row is shared: a ``prompt.submit`` that was refused leaves "session
+        is busy" there over a message still sitting undelivered in the composer.
+        Collapsing an unrelated paste a moment later wiped the only sign that
+        the message had not gone. A success needs no announcement of its own —
+        the placeholder in the composer is the evidence — so the only thing to
+        clear is this feature's own earlier failure line.
+        """
+        try:
+            composer = self.composer
+        except NoMatches:  # pragma: no cover - teardown ordering
+            return
+        if self._last_paste_notice and composer.notice == self._last_paste_notice:
+            self._last_paste_notice = ""
+            self._notice("")
 
     # ── scroll anchoring ─────────────────────────────────────────────────
 
