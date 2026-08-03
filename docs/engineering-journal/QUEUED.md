@@ -56,7 +56,7 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 
 ## P1
 
-### Make the macOS checks required status checks on `main`
+### ~~Make the macOS checks required status checks on `main`~~ — CLOSED 2026-08-03
 
 **Author.** v0.1 scaffold code review, 2026-08-02
 **Priority.** P1
@@ -67,6 +67,16 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 An earlier version of the workflow carried a `required: true` matrix key, which reads as though it configured this; it only negated `continue-on-error`. That key has been removed, and job names are now free of incidental matrix values so the check names (`python-check (3.12)`, `python-check (3.13)`) stay stable if protection is configured against them.
 
 **Left to the operator deliberately.** Repository governance is not something an unattended run should change on the operator's behalf, and requiring a check name that does not match exactly would deadlock every merge — including the ones the run was authorized to make. Until it is configured, the gate is enforced behaviorally: this run does not merge without observing the required legs green.
+
+**Closed 2026-08-03 on explicit operator instruction**, immediately after PR #11 merged. Classic branch protection on `main` requires exactly `python-check (3.12)` and `python-check (3.13)`, with `enforce_admins: true`, force pushes and deletions denied.
+
+Three choices inside "set the protection" that the instruction did not spell out, recorded so they can be reversed knowingly:
+
+- **`enforce_admins: true`.** The gap this item exists to close is an unattended run merging a red check, and such a run holds the operator's own admin rights. With admins exempt the protection would not constrain the only actor it was queued for. The cost is that the operator has no bypass either; lifting it is one API call.
+- **Only the two macOS legs are required.** `python-check-linux` is informational by ADR-0005, and `check` covers the TypeScript bootstrap under `src/`, which is superseded and slated for removal — requiring a check that later stops being reported blocks every merge permanently, which is the deadlock this entry already warned about.
+- **`strict: false`.** A branch does not have to be up to date with `main` before merging. This closes the stated gap (red check cannot merge) without forcing a rebase on every merge. It leaves the semantic-merge-conflict hole open, which is a separate concern from this item.
+
+**Verified, not assumed.** `git push origin main` with an empty commit was rejected: `remote: - 2 of 2 required status checks are expected` / `! [remote rejected] main -> main (protected branch hook declined)`. Reading the configuration back would not have proved the hook fires.
 
 ### Decide the trust boundary for repo-local `.talaria/config.toml` before U6 executes a command
 
