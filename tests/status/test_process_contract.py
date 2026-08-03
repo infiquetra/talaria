@@ -8,7 +8,10 @@ one tick's outcome is categorical rather than an exception).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import signal
+import subprocess
 import time
 from pathlib import Path
 
@@ -296,5 +299,122 @@ def test_aclose_kills_an_in_flight_child(tmp_path: Path, sample_payload: StatusP
         await runner.aclose()
         result = await asyncio.wait_for(tick_task, timeout=2.0)
         assert result.outcome in ("timeout", "nonzero_exit")
+
+    asyncio.run(scenario())
+
+
+# ── Resource bounds found by adversarial review, 2026-08-03 ────────────
+
+
+def test_endless_stdout_is_capped_without_buffering_all_of_it(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """The byte limits must bound the read, not just the display.
+
+    Applying them when slicing what ``communicate()`` had already read made
+    them bound what Talaria showed and not what it held: a flooding command
+    drove resident memory past 3 GB inside one two-second tick, every tick.
+    A command that never stops writing must still return a bounded success
+    quickly, because the cap is reached almost immediately.
+    """
+
+    async def scenario() -> None:
+        runner = StatusRunner(
+            argv=("/bin/sh", "-c", "exec yes AAAABBBBCCCCDDDD"),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(timeout_seconds=10.0),
+        )
+        start = time.monotonic()
+        result = await runner.tick(sample_payload)
+        elapsed = time.monotonic() - start
+
+        assert result.outcome == "ok"
+        assert result.truncated is True
+        assert len(result.rows) <= 8
+        # Reaching a 16 KiB cap on an endless writer is near-instant. The
+        # generous bound is deliberate: this asserts "did not wait for the
+        # timeout", not a performance figure.
+        assert elapsed < 5.0
+
+    asyncio.run(scenario())
+
+
+def test_a_backgrounded_worker_does_not_outlive_the_tick(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """A worker with its pipes redirected leaks one process per tick.
+
+    The command exits 0 immediately, so every non-timeout path used to return
+    while leaving the worker running, reparented to init, forever.
+    """
+    marker = "talaria-status-orphan-probe"
+
+    async def scenario() -> None:
+        runner = StatusRunner(
+            argv=("/bin/sh", "-c", f"sleep 937 >/dev/null 2>&1 & echo {marker}"),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(timeout_seconds=10.0),
+        )
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        assert result.rows == (marker,)
+
+        await asyncio.sleep(0.3)
+        survivors = subprocess.run(  # noqa: S603
+            ["/usr/bin/pgrep", "-f", "sleep 937"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.split()
+        for pid in survivors:  # pragma: no cover - only runs on regression
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(int(pid), signal.SIGKILL)
+        assert survivors == []
+
+    asyncio.run(scenario())
+
+
+def test_repeated_timeouts_do_not_leak_file_descriptors(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """Two descriptors per tick, permanently, when a timeout left pipes open."""
+
+    async def scenario() -> None:
+        runner = StatusRunner(
+            argv=("/bin/sh", "-c", "exec sleep 45"),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(timeout_seconds=0.2),
+        )
+        for _ in range(3):  # let any one-off allocation settle
+            assert (await runner.tick(sample_payload)).outcome == "timeout"
+        baseline = len(os.listdir("/dev/fd"))
+        for _ in range(12):
+            await runner.tick(sample_payload)
+        growth = len(os.listdir("/dev/fd")) - baseline
+        # Was a steady 2.00 per tick; anything proportional fails here.
+        assert growth <= 4, f"leaked {growth} descriptors across 12 timeout ticks"
+
+    asyncio.run(scenario())
+
+
+def test_an_argv_the_kernel_never_sees_still_yields_a_categorical_outcome(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """An embedded NUL raises ValueError before any OSError is possible.
+
+    The module's contract is that a tick never raises (R21); only
+    FileNotFoundError and OSError were caught, so this escaped to the caller.
+    """
+
+    async def scenario() -> None:
+        for argv in (("/bin/ec\x00ho",), ("/bin/echo", 5)):
+            runner = StatusRunner(
+                argv=argv,  # type: ignore[arg-type]
+                launch_cwd=tmp_path,
+                limits=_fast_limits(),
+            )
+            result = await runner.tick(sample_payload)
+            assert result.outcome == "spawn_error"
+            assert result.marker is not None
 
     asyncio.run(scenario())

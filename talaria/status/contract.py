@@ -56,7 +56,15 @@ TRUNCATION_MARKER: str = "… truncated"
 _BASE_PASSTHROUGH_NAMES: frozenset[str] = frozenset({"PATH", "HOME", "SHELL", "TERM", "TMPDIR"})
 
 #: ``LANG`` plus every ``LC_*`` locale variable is passed through by prefix.
-_LOCALE_PREFIXES: tuple[str, ...] = ("LANG", "LC_")
+#: ``LANG`` is forwarded by *exact* name and ``LC_`` by prefix. The distinction
+#: is a real leak, not tidiness: matching ``LANG`` as a prefix forwards every
+#: variable merely starting with those four letters, which in an ordinary
+#: developer environment means ``LANGCHAIN_API_KEY`` and ``LANGSMITH_*`` go to
+#: the status child by default. The credential-name deny list does not save it
+#: either — ``is_suspicious_key`` anchors its API-key pattern to the whole name,
+#: so ``LANGCHAIN_API_KEY`` is not suspicious to it.
+_LOCALE_EXACT_NAMES: tuple[str, ...] = ("LANG",)
+_LOCALE_PREFIXES: tuple[str, ...] = ("LC_",)
 
 #: The exact five ``TALARIA_*`` variables KTD5 forwards. Any other
 #: ``TALARIA_*`` name is dropped even if it also appears on the operator
@@ -85,9 +93,19 @@ def _strip_query(url: str) -> str:
     nothing and does not depend on pattern coverage being complete." A
     pattern-based redaction is deliberately not used here — see KTD5's own
     rationale about ``ticket``/``internal`` slipping past ``redactUrl``.
+
+    Userinfo is dropped with it. A URL is allowed to carry ``user:password@``
+    ahead of the host, and that is credential material by definition, so
+    rebuilding the URL from an untouched ``netloc`` would forward a password to
+    the status child while carefully removing the query it rode in next to.
     """
     parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    # hostname/port rather than netloc: netloc still carries any userinfo.
+    host = parts.hostname or ""
+    if ":" in host:  # IPv6 literals need their brackets back.
+        host = f"[{host}]"
+    netloc = f"{host}:{parts.port}" if parts.port is not None else host
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 def build_child_env(
@@ -120,7 +138,7 @@ def build_child_env(
             _maybe_forward(name, parent_env[name])
 
     for name, value in parent_env.items():
-        if any(name == prefix or name.startswith(prefix) for prefix in _LOCALE_PREFIXES):
+        if name in _LOCALE_EXACT_NAMES or name.startswith(_LOCALE_PREFIXES):
             _maybe_forward(name, value)
 
     for name in FORWARDED_TALARIA_VARS:

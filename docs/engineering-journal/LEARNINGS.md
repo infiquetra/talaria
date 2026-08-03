@@ -4,6 +4,22 @@
 
 ## 2026-08-03
 
+### A byte cap applied after the read bounds the display, not the memory
+
+**Author.** v0.1 milestone-1 integration, from an adversarial review of the status runner
+
+**Evidence.** `talaria/status/runner.py` documented a 16 KiB stdout cap and a 4 KiB stderr cap, and enforced both by slicing the result of `Process.communicate()`. `communicate()` reads until EOF. Measured directly: a status command of `sh -c 'exec yes AAAA...'` under a 2-second timeout drove the parent's resident set from **27.6 MB to 3030 MB — +3002 MB in 2.04 seconds** — while the declared stdout cap was 16,384 bytes. A command emitting a finite 512 MB document and exiting 0 returned `outcome=ok` after buffering all 512 MB. The status runner ticks on a timer, so this recurs every tick for as long as the command misbehaves.
+
+**Mechanism.** The limits were applied at the point of *rendering* rather than the point of *reading*, so they answered "how much do we show" when the operator-facing promise was "how much do we hold". Nothing else bounded the read: not the timeout, which only caps how long the flooding continues, and not the row limit, which applies later still.
+
+**Fix.** Read each stream in chunks up to `limit + 1` bytes instead of calling `communicate()`, and kill the process group the moment a cap is crossed. The `+ 1` preserves the existing `len(raw) > limit` truncation test exactly, so `oversize output is a bounded success` (R22) still holds — an endless writer now returns `ok` with `truncated=True` in about 10 ms and **+0 MB**, where it previously returned `timeout` after the full budget and +3 GB.
+
+Two things went wrong in the fix itself and are worth recording. Reading both streams concurrently and waiting for both to finish deadlocks: once stdout stops being read at its cap the child blocks on a full pipe, so stderr never reaches EOF and the tick times out instead of reporting the bounded success it already has. The cap has to kill the group at the moment it is crossed, not after both reads return. Separately, sweeping the process group unconditionally in a `finally` introduced a worse bug than it fixed — `killpg` on an already-reaped child can land on a recycled pid, which surfaced immediately as `PermissionError: Operation not permitted` and would otherwise have been SIGKILL delivered to an unrelated process group. The group must be swept while the child is still unreaped, because until it is reaped the kernel cannot reuse its pid.
+
+**Validation.** `uv run pytest` — 366 passed. The flood, orphaned-worker and descriptor-leak cases are pinned by new tests; measured after the fix: +0 MB on the flood, 0 surviving workers, 0.00 descriptors leaked per tick against a previous steady 2.00.
+
+**Generalizable rule.** When a limit protects a resource, enforce it at the point where the resource is consumed, not where it is displayed. And when a fix involves signals or process groups, ask what the identifier means *after* the thing it names has gone away: a pid is not a stable handle, it is a number the kernel is free to reissue the moment the process is reaped.
+
 ### A file walk that skips symlinks disagrees with the import system, and the guard blesses the gap
 
 **Author.** v0.1 milestone-1 integration, from an adversarial review of the ADR-0002 guard

@@ -46,6 +46,10 @@ TickOutcome = Literal[
 #: Categorical, operator-facing marker text per non-``ok`` outcome (R21: "each
 #: yields its categorical marker"). ``nonzero_exit`` and ``timeout`` interpolate
 #: extra detail at the call site; the entries here are the fixed prefix.
+#: Read granularity for the capped output reads. Small enough that the ceiling
+#: is honoured closely, large enough that an ordinary status line is one read.
+_READ_CHUNK_BYTES = 8192
+
 _MARKERS: dict[TickOutcome, str] = {
     "empty_output": "status: no output",
     "invalid_output": "status: invalid output (not UTF-8)",
@@ -178,11 +182,43 @@ class StatusRunner:
             return StatusTickResult(
                 outcome="spawn_error", marker=f"{_MARKERS['spawn_error']}: {exc}"
             )
+        except (ValueError, TypeError) as exc:
+            # Not every bad argv reaches the kernel. An embedded NUL raises
+            # ValueError and a non-string element raises TypeError, both before
+            # any OSError is possible, and both would escape tick() — which this
+            # module's contract says never happens (R21: no status failure
+            # touches the session loop).
+            return StatusTickResult(
+                outcome="spawn_error", marker=f"{_MARKERS['spawn_error']}: {exc}"
+            )
 
         self._process = process
         try:
             return await self._communicate(process, payload)
         finally:
+            # Unconditional, not just on the timeout path. Two things depend on
+            # it. A command that backgrounds a worker with its pipes redirected
+            # ("worker & echo ok") exits 0 immediately, so every non-timeout
+            # path used to return leaving that worker running — one leaked
+            # process per tick, forever, reparented to init. And because this
+            # block runs when the tick is cancelled, Talaria's own shutdown
+            # cannot leave a status child behind even if nothing calls aclose().
+            # start_new_session=True at spawn is what makes the group the right
+            # unit to kill: the child leads it, so this reaches its descendants.
+            #
+            # Guarded on returncode, and the guard is load bearing rather than
+            # an optimisation. Once the child has been reaped its pid is free
+            # for the kernel to reuse, so signalling it here could deliver
+            # SIGKILL to an unrelated process group that happens to have
+            # inherited the number. The normal paths already swept the group
+            # while the child was still unreaped; this is the cancellation and
+            # early-return backstop, and it only fires when the child is
+            # demonstrably still ours.
+            if process.returncode is None:
+                self._kill_process_group(process)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(process.wait(), timeout=self._limits.timeout_seconds)
+            self._release_pipes(process)
             self._process = None
 
     async def _communicate(
@@ -190,19 +226,23 @@ class StatusRunner:
     ) -> StatusTickResult:
         payload_bytes = encode_payload(payload)
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(payload_bytes), timeout=self._limits.timeout_seconds
+            stdout, stderr, overflowed = await asyncio.wait_for(
+                self._pump(process, payload_bytes), timeout=self._limits.timeout_seconds
             )
         except TimeoutError:
-            self._kill_process_group(process)
-            # Reap: the group kill also takes any backgrounded grandchild
-            # holding the stdout/stderr pipes open (R36) — without the
-            # process-group scope, communicate() here would hang past this
-            # second wait too, because a lone-process kill leaves the pipe
-            # open in the surviving grandchild.
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(process.communicate(), timeout=self._limits.timeout_seconds)
+            # Teardown is handled unconditionally by _run_once's finally block,
+            # which also reaps the group holding these pipes open. This path
+            # used to run a second communicate() here, which both doubled the
+            # configured timeout budget and leaked two file descriptors per
+            # tick whenever the group kill did not free the pipes.
             return StatusTickResult(outcome="timeout", marker=_MARKERS["timeout"])
+
+        if overflowed:
+            # The child was cut off mid-stream once it passed the byte cap, so
+            # its exit status is this runner's doing and says nothing about the
+            # command. Oversize output is a bounded success (R22), so it is
+            # reported as one rather than as the SIGKILL that stopped it.
+            return self._parse_stdout(stdout)
 
         if process.returncode != 0:
             stderr_excerpt = stderr[: self._limits.stderr_limit_bytes].decode(
@@ -251,6 +291,100 @@ class StatusRunner:
 
         return StatusTickResult(outcome="ok", rows=rows, truncated=row_truncated or byte_truncated)
 
+    async def _pump(
+        self, process: asyncio.subprocess.Process, payload_bytes: bytes
+    ) -> tuple[bytes, bytes, bool]:
+        """Feed stdin and read both output streams under a hard byte ceiling.
+
+        This exists because ``Process.communicate()`` reads until EOF. The byte
+        limits were applied afterwards, when slicing what had already been read,
+        so they bounded what Talaria *displayed* and not what it *held*: a
+        command that floods stdout drove resident memory from 28 MB to over
+        3 GB inside a single two-second tick, and it recurs every tick. The
+        limits now bound the read itself.
+
+        Reads one byte past the limit so that ``len(raw) > limit`` still
+        distinguishes "exactly at the cap" from "truncated", which is the test
+        the display path already applies. Once a stream is over its cap there is
+        nothing further to learn from it, so the group is killed rather than
+        drained — draining would be unbounded in time on an endless writer.
+        """
+
+        async def feed() -> None:
+            stdin = process.stdin
+            if stdin is None:
+                return
+            # A child that exits without reading its payload makes this a
+            # broken pipe. That is an ordinary outcome, not a failure.
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                stdin.write(payload_bytes)
+                await stdin.drain()
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                stdin.close()
+
+        async def read_capped(stream: asyncio.StreamReader | None, limit: int) -> bytes:
+            if stream is None:
+                return b""
+            chunks: list[bytes] = []
+            seen = 0
+            while seen <= limit:
+                chunk = await stream.read(min(_READ_CHUNK_BYTES, limit + 1 - seen))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                seen += len(chunk)
+            if seen > limit:
+                # Kill here, the moment the cap is crossed, rather than after
+                # both reads finish. The two reads run concurrently and the
+                # caller needs both: if this one stops reading a flooding stdout
+                # while the child still holds stderr open, the child blocks on a
+                # full stdout pipe, stderr never reaches EOF, and the tick
+                # deadlocks into a timeout instead of reporting the bounded
+                # success it actually has. Killing the group ends the other read
+                # promptly.
+                self._kill_process_group(process)
+            return b"".join(chunks)
+
+        stdout, stderr, _ = await asyncio.gather(
+            read_capped(process.stdout, self._limits.stdout_limit_bytes),
+            read_capped(process.stderr, self._limits.stderr_limit_bytes),
+            feed(),
+        )
+        overflowed = (
+            len(stdout) > self._limits.stdout_limit_bytes
+            or len(stderr) > self._limits.stderr_limit_bytes
+        )
+        if not overflowed:
+            # Both streams reached EOF within budget, which means every writer
+            # closed them — the child itself has exited and is now a zombie
+            # holding its true exit status. Sweep the group *before* reaping,
+            # never after: while the child is unreaped its pid cannot be
+            # recycled, so the group id is provably still ours. A worker the
+            # command backgrounded with its pipes redirected is what this
+            # catches; SIGKILL to the zombie itself is a no-op and does not
+            # disturb the exit status read below.
+            self._kill_process_group(process)
+            await process.wait()
+        return stdout, stderr, overflowed
+
+    def _release_pipes(self, process: asyncio.subprocess.Process) -> None:
+        """Close the child's pipe transports rather than waiting for a collection.
+
+        Without this, a timeout whose group kill did not free the pipes left two
+        descriptors held per tick — measured at a steady 2.00 fd/tick over 100
+        ticks, unaffected by an explicit ``gc.collect()``, because the event loop
+        still references the transport. Reaches for the private transport
+        deliberately: closing it closes stdin, stdout and stderr together, and
+        asyncio exposes no public equivalent on ``Process``.
+        """
+        with contextlib.suppress(Exception):
+            # getattr rather than attribute access: this is private asyncio
+            # internals, so it is treated as something that may simply not be
+            # there on another interpreter rather than as a typed attribute.
+            transport = getattr(process, "_transport", None)
+            if transport is not None:
+                transport.close()
+
     def _kill_process_group(self, process: asyncio.subprocess.Process) -> None:
         """Signal the whole process group, not just ``process`` itself.
 
@@ -258,8 +392,15 @@ class StatusRunner:
         leader, so its pid doubles as the group id — this is what makes
         R36's "stops the status child" true even when the script backgrounds
         a long-lived grandchild.
+
+        PermissionError is suppressed alongside the expected
+        ``ProcessLookupError``: a group whose members have all exited can leave
+        this call landing on a pid the kernel has since reused, and on a
+        recycled pid owned by another user the kernel answers ``EPERM`` rather
+        than ``ESRCH``. Callers guard against reaching that state; this is the
+        second line, and a status tick must not raise (R21).
         """
-        with contextlib.suppress(ProcessLookupError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
 
     async def aclose(self) -> None:

@@ -181,6 +181,14 @@ class TalariaApp(App[None]):
         for task in (self._pump_task, self._status_task):
             if task is not None and not task.done():
                 task.cancel()
+        if self.status_runner is not None:
+            # Cancelling the status task is not enough on its own to satisfy
+            # R36. Cancellation unwinds the tick, and the runner's own teardown
+            # is what stops a child that is still running — without this call
+            # nothing in production ever invoked aclose(), so a status command
+            # outliving Talaria depended entirely on the tick happening to be
+            # idle at exit.
+            await self.status_runner.aclose()
         await self.source.close()
 
     # ── the frame pump ───────────────────────────────────────────────────

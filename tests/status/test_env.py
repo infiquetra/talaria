@@ -150,3 +150,57 @@ def test_child_env_has_no_terminal_framework_or_unexpected_keys() -> None:
     env = build_child_env(parent_env=parent, allowlist=())
     assert "TEXTUAL_DRIVER" not in env
     assert "RANDOM_OTHER_VAR" not in env
+
+
+# ── Credential leaks found by adversarial review, 2026-08-03 ────────────
+
+
+def test_a_lang_prefixed_name_is_not_mistaken_for_a_locale_variable() -> None:
+    """``LANG`` matched as a prefix forwards LANGCHAIN_API_KEY by default.
+
+    The credential-name deny list does not catch it either: ``is_suspicious_key``
+    anchors its API-key pattern to the whole name.
+    """
+    child = build_child_env(
+        parent_env={
+            "LANG": "en_US.UTF-8",
+            "LC_ALL": "en_US.UTF-8",
+            "LANGCHAIN_API_KEY": "leak-1",
+            "LANGSMITH_ENDPOINT": "https://leak-2",
+        },
+        allowlist=(),
+    )
+    assert child["LANG"] == "en_US.UTF-8"
+    assert child["LC_ALL"] == "en_US.UTF-8"
+    assert "LANGCHAIN_API_KEY" not in child
+    assert "LANGSMITH_ENDPOINT" not in child
+
+
+def test_gateway_url_userinfo_is_dropped_along_with_the_query() -> None:
+    """A password in the URL is credential material even without a query."""
+    child = build_child_env(
+        parent_env={
+            "TALARIA_GATEWAY_URL": "https://alice:s3cr3tpw@gw.example.com/api/ws?token=T",
+        },
+        allowlist=(),
+    )
+    forwarded = child["TALARIA_GATEWAY_URL"]
+    assert forwarded == "https://gw.example.com/api/ws"
+    assert "s3cr3tpw" not in forwarded
+    assert "alice" not in forwarded
+    assert "token" not in forwarded
+
+
+def test_stripping_userinfo_keeps_the_port_and_ipv6_brackets() -> None:
+    """The rebuild must not corrupt ordinary loopback or IPv6 gateway URLs."""
+    child = build_child_env(
+        parent_env={"TALARIA_GATEWAY_URL": "ws://127.0.0.1:8765/api/ws?token=T"},
+        allowlist=(),
+    )
+    assert child["TALARIA_GATEWAY_URL"] == "ws://127.0.0.1:8765/api/ws"
+
+    child6 = build_child_env(
+        parent_env={"TALARIA_GATEWAY_URL": "ws://[::1]:8765/api/ws?token=T"},
+        allowlist=(),
+    )
+    assert child6["TALARIA_GATEWAY_URL"] == "ws://[::1]:8765/api/ws"
