@@ -86,12 +86,22 @@ the over-redaction controls in ``tests/recorder/test_redact.py``.
 
 **Known and deliberately not covered.** A bearer capability carried in a URL's
 *path* rather than its userinfo or query -- the concrete
-``ws://127.0.0.1:9222/devtools/browser/<GUID>`` form Chrome hands out, where the
-GUID alone drives the browser -- is still recorded verbatim. Withholding it would
-mean either a Hermes-shaped path rule or guessing at "high-entropy path segment",
-and the second would redact ordinary URLs the corpus exists to study. The form is
-loopback-only, so the capability is worthless to anyone who cannot already reach
-that machine. Tracked in ``docs/engineering-journal/QUEUED.md``.
+``ws://<host>:9222/devtools/browser/<GUID>`` form Chrome hands out, where the GUID
+alone drives the browser -- is still recorded verbatim.
+
+Do not read that as loopback-scoped. Loopback is the *default* CDP host, not a
+constraint: at the pin, ``BROWSER_CDP_URL`` is documented to operators as
+accepting "any running Chromium-family browser", so a remote CDP endpoint is an
+ordinary configuration today. The exposure is real; it is the available fixes
+that are worse than the defect. A Hermes-shaped path rule protects one known
+shape while implying paths are handled, and a "high-entropy path segment"
+heuristic would redact the commit SHAs and resource ids the corpus exists to
+study -- the same over-redaction failure the key-name net is anchored to avoid.
+
+The leading candidate -- withholding the path of non-loopback ``ws``/``wss``
+URLs -- is blocked on the KTD6 comparator, which can express an authorized
+divergence in query-key names but not in paths. Tracked with both revisit
+triggers in ``docs/engineering-journal/QUEUED.md``.
 """
 
 from __future__ import annotations

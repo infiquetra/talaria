@@ -205,3 +205,21 @@ Sub-agent rows are cleared by the next `message.start` rather than at turn end. 
 **Cost.** Anyone reproducing the gate must either supply their own recording or accept that the recorded-session half is skipped. The command degrades honestly: without `--corpus` it runs the stress passes and omits the recorded-session checks rather than pretending.
 
 **Revisit when.** A corpus is needed by a consumer that cannot run the generator — for example a cross-language comparison that has no Python.
+
+## 2026-08-03
+
+### Redact URL credentials by position, and do not redact URL paths at all
+
+**Author.** v0.1 milestone-1 integration, after external review of the redaction boundary
+
+**Decision.** The recorder withholds credentials from the two URL positions that are *defined* to hold them — userinfo and named query parameters — and withholds nothing from a URL's path, even when the path is known to carry a bearer capability.
+
+**Rejected alternatives.** A Hermes-shaped rule for `/devtools/browser/<segment>` was rejected as worse than doing nothing: it protects exactly one known shape while creating the appearance that paths are handled, so the next capability-bearing path leaks silently against a reader's belief that it cannot. That is the identical staleness failure the method deny-set was already bitten by, and the reason the key-name net exists behind it. A "high-entropy path segment" heuristic was rejected because it redacts the commit SHAs, content hashes and UUID resource ids the corpus exists to study — over-redaction is a different failure, not the safe direction, which is the same principle that keeps the sixteen non-credential `token` key names out of the net.
+
+**Rationale.** Userinfo and query parameters have credential semantics independent of any application: `user:password@host` is a credential by RFC, and a query key named `token` or `ticket` is one by the gateway's own protocol. A path segment has no such semantics — it is a capability only because some specific service decided it was, which means any rule covering it is a bet on one service's URL shape. Redaction rules that encode a bet age badly and hide their own staleness.
+
+**Cost, stated plainly.** A capability-bearing path is recorded verbatim. This is *not* mitigated by loopback: loopback is the default CDP host, not a constraint, and Hermes documents `BROWSER_CDP_URL` to operators as accepting any Chromium-family browser, so remote CDP is an ordinary configuration today. The residual exposure needs an operator who has configured a remote endpoint *and* a corpus that leaves the machine.
+
+**The candidate fix, and what blocks it.** Withholding the path of non-loopback `ws`/`wss` URLs carries no service-specific shape and costs nothing on study data, since SHAs and resource ids live in `http`/`https` document URLs. It is blocked on the KTD6 equivalence comparator, which authorizes a Python-only divergence by query-key *name* and compares parsed frame values for exact equality — it has no way to express "the Python side additionally withheld a path". Extending it is a change to the parity relation and belongs with the remote-attach work.
+
+**Revisit when.** Remote gateway attach is implemented (the natural place to extend the comparator), or a non-loopback host is observed in a recorded URL. Both triggers and the mechanical check are in `QUEUED.md`. The trigger this entry originally carried — "remote CDP becomes supported" — was wrong: it had already happened, so it could never fire.
