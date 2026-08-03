@@ -4,6 +4,18 @@
 
 ## 2026-08-03
 
+### A file walk that skips symlinks disagrees with the import system, and the guard blesses the gap
+
+**Author.** v0.1 milestone-1 integration, from an adversarial review of the ADR-0002 guard
+
+**Evidence.** `tests/domain/test_boundary.py` enumerated the domain package with `_DOMAIN_ROOT.rglob("*.py")`. A symlinked subpackage placed at `talaria/domain/linked` — with its real contents outside the tree, importing `textual` — was fully importable (`talaria.domain.linked.evil` resolved and loaded), and the sweep never saw it: `2 passed`. The companion test that exists specifically to close enumeration holes made it worse by *approving* the directory, since the target does contain `__init__.py`. Two sibling holes had the same cause: a sourceless `.pyc` and a compiled `.so` dropped into the package are both importable and neither ends in `.py`.
+
+**Mechanism.** `Path.rglob` does not descend into symlinked directories; Python's import system does. The guard was therefore answering "what source files are in this subtree" when the question it needed to answer was "what can the interpreter import from this package". Detection was never the weak point — every attack that put a forbidden import in front of the sweep was caught, including both spellings of the sibling-package regression the allow-list was built for. The weak point was the list of things handed to the sweep.
+
+**Fix.** Walk with `os.walk(..., followlinks=True)` and match `importlib.machinery.all_suffixes()` instead of the literal `".py"`, which closes the symlink, `.pyc` and `.so` cases together. `Path.rglob(recurse_symlinks=...)` would be the natural spelling but does not exist before Python 3.13, and this project supports 3.12. The `__init__.py` companion test follows symlinks now too, for the same reason. Both attacks were replanted afterwards and both go red; the clean tree still passes.
+
+**Generalizable rule.** When a check enumerates inputs by walking the filesystem, the walk is part of the check and needs attacking separately from the logic. Ask what the *consumer* of the list can reach — here, the interpreter — and enumerate against that definition rather than against a filename convention. A guard whose detection is sound but whose enumeration is incomplete fails silently and looks green, which is strictly worse than one that errors.
+
 ### A high-water counter sampled after the trim it is meant to police reports an identity, not a measurement
 
 **Author.** v0.1 milestone-1 integration, from a CI failure

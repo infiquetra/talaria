@@ -54,8 +54,10 @@ red-by-construction fixture would permanently fail this test.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+from importlib.machinery import all_suffixes
 from pathlib import Path
 
 import talaria.domain
@@ -110,25 +112,57 @@ def _domain_module_names() -> list[str]:
 
     Derived from the filesystem rather than ``pkgutil`` so that a module in a
     directory lacking ``__init__.py`` cannot hide from the sweep.
+
+    Two details here are load bearing, and both were found by attacking an
+    earlier version that used ``_DOMAIN_ROOT.rglob("*.py")``:
+
+    *Follow symlinks.* ``Path.rglob`` does not descend into a symlinked
+    directory, but the import system does. A symlinked subpackage under
+    ``talaria/domain`` was therefore fully importable and completely invisible
+    to the sweep — and worse, the companion ``__init__.py`` test *approved* it,
+    because the directory it points at does contain one. Git stores symlinks,
+    so that can land in a repository and survive review. ``os.walk`` with
+    ``followlinks=True`` is used rather than ``Path.rglob(recurse_symlinks=...)``
+    because that parameter does not exist before Python 3.13 and this project
+    supports 3.12.
+
+    *Match every import suffix, not ``.py``.* A sourceless ``.pyc`` or a
+    compiled ``.so`` dropped into the package imports perfectly well and has no
+    ``.py`` to find. ``importlib.machinery.all_suffixes()`` is the interpreter's
+    own answer to "what can be imported", so it stays correct if that set
+    changes.
     """
     names: list[str] = []
-    for path in sorted(_DOMAIN_ROOT.rglob("*.py")):
-        parts = list(path.relative_to(_DOMAIN_ROOT).with_suffix("").parts)
-        if parts and parts[-1] == "__init__":
-            parts.pop()
-        names.append(".".join([talaria.domain.__name__, *parts]))
-    return names
+    suffixes = tuple(all_suffixes())
+    for dirpath, dirnames, filenames in os.walk(_DOMAIN_ROOT, followlinks=True):
+        dirnames[:] = [name for name in dirnames if name != "__pycache__"]
+        for filename in filenames:
+            if not filename.endswith(suffixes):
+                continue
+            path = Path(dirpath) / filename
+            # Strip only the matched import suffix. Path.with_suffix() would
+            # mangle a name like ``fswatcher.cpython-312-darwin.so``.
+            matched = next(s for s in suffixes if filename.endswith(s))
+            stem = filename[: -len(matched)]
+            parts = list(path.parent.relative_to(_DOMAIN_ROOT).parts)
+            if stem != "__init__":
+                parts.append(stem)
+            names.append(".".join([talaria.domain.__name__, *parts]))
+    return sorted(set(names))
 
 
 def test_every_domain_directory_is_an_importable_package() -> None:
     """A directory without ``__init__.py`` is a hole in the sweep below."""
-    missing = [
-        str(directory.relative_to(_DOMAIN_ROOT.parent))
-        for directory in sorted(_DOMAIN_ROOT.rglob("*"))
-        if directory.is_dir()
-        and directory.name != "__pycache__"
-        and not (directory / "__init__.py").is_file()
-    ]
+    missing = []
+    # followlinks, for the same reason _domain_module_names walks that way: a
+    # symlinked subpackage is importable, so it is in scope for this rule too.
+    for dirpath, dirnames, _ in os.walk(_DOMAIN_ROOT, followlinks=True):
+        dirnames[:] = [name for name in dirnames if name != "__pycache__"]
+        for name in dirnames:
+            directory = Path(dirpath) / name
+            if not (directory / "__init__.py").is_file():
+                missing.append(str(directory.relative_to(_DOMAIN_ROOT.parent)))
+    missing.sort()
     assert not missing, (
         "every directory under talaria/domain must contain __init__.py so the "
         f"ADR-0002 sweep can see its modules; missing in: {missing}"
