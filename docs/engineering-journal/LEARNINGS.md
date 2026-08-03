@@ -4,6 +4,24 @@
 
 ## 2026-08-03
 
+### A key-name matcher normalized the names it was meant to canonicalize, and never looked at values at all
+
+**Author.** v0.1 milestone-1 integration, from a direct probe of the redaction boundary
+
+**Evidence.** `talaria/recorder/redact.py` is the boundary that guarantees credentials never reach the frame log on disk. Fourteen adversarial frame shapes were passed through `redact_frame` and then through `FrameRecorder` end to end, checking the file's raw bytes for a canary. Eleven were caught. **Three wrote the canary to disk**: a key named `ApIkEy`, a key named `api key`, and a credential URL under the innocuous key `url`.
+
+**Mechanism.** Three unrelated causes behind one boundary.
+
+- `_normalize_key` inserts `_` at every lower-to-upper boundary so that `accessToken` becomes `access_token`, which the anchored patterns need. Applied to an unusually cased name it does the opposite of canonicalizing: `ApIkEy` becomes `ap_ik_ey`, separators inserted mid-word, matching nothing.
+- The patterns anchor on a `[-_]` separator class, so `api key` and `api.key` do not match. Only two of the plausible separators were covered.
+- The walker tests key *names* and never inspects values. A frame carrying `{"url": "ws://host/api/ws?token=..."}` has no suspicious key in it, so the token was written verbatim — and KTD11 puts the attach credential in precisely that position, which makes it the likeliest shape to occur rather than an exotic one.
+
+**Fix.** Match key names in a squashed form (lowercased, every separator removed) *in addition to* the camel-normalized form, since neither is a superset of the other. Check string values for absolute URLs whose query actually carries a denied parameter, and redact only those. Both are new divergences from the TypeScript reference and are enumerated in the module docstring, because KTD6's requirement is that the divergence be exactly listed, not that it be small.
+
+**Validation.** All fourteen shapes now redact; the canary is absent from the file bytes. Over-redaction controls confirm `max_tokens`, `input_tokens`, `session_total_tokens`, `tokens_per_delta` and `maxTokens` are still preserved, and a harmless `?page=2` URL is recorded untouched. `uv run pytest` — 371 passed, equivalence harness included.
+
+**Generalizable rule.** A normalizer applied to input it was not designed for can be worse than no normalizer, because it silently produces a well-formed value that is wrong. When a matcher canonicalizes before testing, probe it with inputs that are *badly formed rather than adversarially crafted* — odd casing and unusual separators — since those are what real systems actually emit. And a filter that inspects only names will miss everything carried in values; ask which of the two the credential's own protocol actually uses.
+
 ### A byte cap applied after the read bounds the display, not the memory
 
 **Author.** v0.1 milestone-1 integration, from an adversarial review of the status runner

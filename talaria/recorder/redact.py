@@ -46,6 +46,28 @@ relation explicitly: every TypeScript ``redactions`` entry appears in the
 Python output, and every additional Python entry is drawn from this
 enumerated set (``ticket``, ``internal``) -- so the divergence stays pinned by
 a test rather than drifting.
+
+Two further divergences were added on 2026-08-03 after an adversarial probe put
+credentials on disk through this boundary. Both are enumerated here for the
+same reason as the first: an unlisted divergence is what KTD6 forbids.
+
+1. *Key names are matched in a squashed form as well as a camel-normalized one.*
+   ``_normalize_key`` alone let ``ApIkEy`` and ``api key`` through -- the first
+   because inserting camel-boundary separators rewrites the name into
+   ``ap_ik_ey``, the second because a space is not in the ``[-_]`` class the
+   patterns anchor against. See :func:`_squashed_key`.
+
+2. *String values are checked for credential-bearing URLs, not only key names.*
+   A frame carrying ``{"url": "ws://host/api/ws?token=..."}`` wrote the token
+   verbatim, because no key in that frame is suspicious. KTD11 places the attach
+   credential in exactly that position. See :func:`_redact_credential_url`,
+   which fires only when the string parses as an absolute URL whose query
+   actually carries a denied parameter, so the corpus keeps its harmless URLs.
+
+Both make the Python redactor a wider superset; neither withholds anything the
+TypeScript reference withholds differently, and the usage counters this module
+exists to preserve (``max_tokens`` and its siblings) are unaffected -- pinned by
+the over-redaction controls in ``tests/recorder/test_redact.py``.
 """
 
 from __future__ import annotations
@@ -122,10 +144,36 @@ def _normalize_key(key: str) -> str:
     return _CAMEL_BOUNDARY.sub(r"\1_\2", key).lower()
 
 
+#: Anything that is plausibly a word separator in a key name. ``_normalize_key``
+#: only ever produced ``_``, so ``api key`` and ``api.key`` did not match the
+#: ``[-_]`` separator class the patterns anchor against.
+_SEPARATORS = re.compile(r"[^0-9a-z]+")
+
+
+def _squashed_key(key: str) -> str:
+    """The key lowercased with every separator removed: ``ApI kEy`` -> ``apikey``.
+
+    Tested in addition to :func:`_normalize_key`, not instead of it, because the
+    two catch different things and neither is a superset. The camel normalizer
+    turns ``accessToken`` into ``access_token``, which the anchored patterns
+    need — but it also rewrites an oddly-cased ``ApIkEy`` into ``ap_ik_ey``,
+    inserting separators mid-word and destroying the very name it is meant to
+    canonicalize. The squashed form has no separators to be confused by.
+
+    Squashing is conservative for the ``token`` pattern rather than
+    over-eager: ``max_tokens`` squashes to ``maxtokens``, which still does not
+    match a pattern anchored on ending in the singular ``token``. The usage
+    counters this module deliberately preserves stay preserved.
+    """
+    return _SEPARATORS.sub("", key.lower())
+
+
 def is_suspicious_key(key: str) -> bool:
     """True when a key name alone is reason enough to withhold its value."""
-    normalized = _normalize_key(key)
-    return any(pattern.search(normalized) for pattern in SENSITIVE_KEY_PATTERNS)
+    candidates = (_normalize_key(key), _squashed_key(key))
+    return any(
+        pattern.search(candidate) for candidate in candidates for pattern in SENSITIVE_KEY_PATTERNS
+    )
 
 
 def redact_url(url: str) -> str:
@@ -179,6 +227,29 @@ class RedactResult:
     redactions: list[Redaction] = field(default_factory=list)
 
 
+def _redact_credential_url(value: str) -> str | None:
+    """Return a cleaned URL when ``value`` is one carrying a credential, else None.
+
+    Deliberately narrow. It fires only on a string that parses as an absolute
+    URL *and* whose query actually carries one of the denied parameters, so
+    ordinary prose, file paths, and harmless URLs are recorded untouched — the
+    corpus exists to be studied, and blanket redaction of every string would
+    make it useless. Returning ``None`` for "nothing to do" keeps the caller
+    from having to compare before and after.
+    """
+    if "://" not in value or "?" not in value:
+        return None
+    parts = urlsplit(value)
+    if not parts.scheme or not parts.netloc or not parts.query:
+        return None
+    names = {name.lower() for name, _ in parse_qsl(parts.query, keep_blank_values=True)}
+    if not any(
+        name in URL_ONLY_DENIED_QUERY_KEYS or is_suspicious_key(name) for name in names
+    ):
+        return None
+    return redact_url(value)
+
+
 def _read_method(frame: Any) -> str | None:
     """Read the JSON-RPC method name, tolerating any frame shape."""
     if not isinstance(frame, dict):
@@ -218,6 +289,18 @@ def redact_frame(frame: Any) -> RedactResult:
                 redactions.append(Redaction(path=child_path, reason="suspicious-key"))
                 out[key] = REDACTED
                 continue
+
+            # A credential-bearing URL under an innocent key name. The net
+            # above reads key names only, so a frame carrying
+            # ``{"url": "ws://host/api/ws?token=..."}`` wrote the token to disk
+            # verbatim — and KTD11 puts the attach credential in exactly that
+            # position, which makes this the shape most likely to appear.
+            if isinstance(child, str):
+                cleaned = _redact_credential_url(child)
+                if cleaned is not None:
+                    redactions.append(Redaction(path=child_path, reason="url-credential"))
+                    out[key] = cleaned
+                    continue
 
             out[key] = walk(child, child_path)
         return out

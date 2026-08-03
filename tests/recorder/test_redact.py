@@ -312,3 +312,63 @@ def test_approval_respond_is_deliberately_not_in_the_deny_set() -> None:
 
     assert result.redactions == []
     assert result.frame["params"]["approved"] is True
+
+
+# ── Leaks found by adversarial probe, 2026-08-03 ──────────────────────
+#
+# Each of these three put a credential on disk through the writer. They are
+# kept as separate named tests rather than one parametrized sweep because the
+# three causes are unrelated and a future edit is likely to reopen exactly one.
+
+
+def test_an_oddly_cased_key_is_still_caught() -> None:
+    """``_normalize_key`` rewrites ``ApIkEy`` to ``ap_ik_ey`` and misses it.
+
+    The camel-boundary normalizer inserts separators mid-word when a name is
+    cased unusually, destroying the name it is meant to canonicalize.
+    """
+    assert is_suspicious_key("ApIkEy")
+    assert is_suspicious_key("APIKey")
+    assert is_suspicious_key("api_key")
+
+
+def test_a_separator_other_than_dash_or_underscore_is_still_caught() -> None:
+    """A space is not in the ``[-_]`` class the anchored patterns use."""
+    assert is_suspicious_key("api key")
+    assert is_suspicious_key("api.key")
+    assert is_suspicious_key("api key")
+
+
+def test_a_credential_url_under_an_innocent_key_is_withheld() -> None:
+    """The key-name net reads names only; KTD11 puts the credential in a value."""
+    for query_key in ("token", "ticket", "internal"):
+        result = redact_frame(
+            {"method": "x", "params": {"url": f"ws://h/api/ws?{query_key}=SECRET"}}
+        )
+        assert "SECRET" not in json.dumps(result.frame), query_key
+        assert [r.reason for r in result.redactions] == ["url-credential"]
+
+
+def test_a_harmless_url_is_recorded_untouched() -> None:
+    """Blanket redaction of every string would make the corpus useless."""
+    frame = {"method": "x", "params": {"url": "https://example.com/docs?page=2&sort=asc"}}
+    result = redact_frame(frame)
+    assert result.frame["params"]["url"] == "https://example.com/docs?page=2&sort=asc"
+    assert result.redactions == []
+
+
+def test_the_widened_net_still_preserves_the_usage_counters() -> None:
+    """Squashing separators must not turn ``max_tokens`` into a credential.
+
+    Over-redaction is a different failure, not the safe direction: these
+    counters are what the corpus exists to study.
+    """
+    for name in (
+        "max_tokens",
+        "input_tokens",
+        "output_tokens",
+        "session_total_tokens",
+        "tokens_per_delta",
+        "maxTokens",
+    ):
+        assert not is_suspicious_key(name), name
