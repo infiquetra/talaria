@@ -4,6 +4,18 @@
 
 ## 2026-08-02
 
+### An execution-spec `returns` field is a machine key list, and a passing validator did not prove the type
+
+**Author.** Root-causing why every emitted unit carried a garbled return gate, on operator follow-up to the final doc review
+
+**Context.** The v0.1 execution spec authored each unit's `returns` as a prose sentence ("Scaffold commit summary, check-command output, …"). The workflow emitter declares the field `list[str]` and treats each element as a JSON key name: the emitted unit prompt says "your FINAL message MUST be ONLY a single JSON object with the keys" plus the joined list, and the gate fails the unit if those keys are missing.
+
+**Evidence.** The emitted workflow's U1 gate read `required: ["S", "c", "a", "f", "f", "o", …]` — the sentence's characters — because the loader runs `[str(r) for r in data.get("returns", [])]`, which iterates a string character by character when handed one. Yet `validate --require-receipts` reported the spec valid both before and after the fix. The doc review initially filed this as an emitter bug and recommended avoiding the workflow backend entirely (D28); reading the loader and the prompt-composition code showed the type contract was the emitter's all along.
+
+**Fix.** All ten units' `returns` retyped from prose to snake_case key lists; the re-emitted workflow now carries sane schemas, prompts, and gates, and the launch-time re-emit reproduces them from the spec. The validator's failure to reject a string where a list is required is reported for the plugin repository.
+
+**Generalizable rule.** A passing validator proves only what the validator checks — before filing a bug against a generator, read the type it declares for the field you fed it. And when a defect is attributed across a tool boundary, locate the exact line that misbehaves before deciding which side owns the fix; the wrong attribution here nearly cost the operator the execution backend they wanted.
+
 ### Review artifacts are repo files, and they arrive carrying their producer's context
 
 **Author.** Reconciling an external doc review of the v0.1 requirements, at the operator's request
