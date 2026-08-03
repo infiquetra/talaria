@@ -25,3 +25,43 @@ jobs:
         run: npm run check
       - name: Check whitespace
         run: git diff --check
+
+  # Talaria's actual check pipeline (ADR-0004). PC7's supported matrix is
+  # macOS arm64, so that leg is required; Linux is informational only until
+  # the platform matrix is formally widened.
+  python-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            python-version: "3.12"
+            required: true
+          - os: macos-14
+            python-version: "3.13"
+            required: true
+          - os: ubuntu-latest
+            python-version: "3.12"
+            required: false
+          - os: ubuntu-latest
+            python-version: "3.13"
+            required: false
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ !matrix.required }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Ruff
+        run: uv run ruff check .
+      - name: mypy --strict
+        run: uv run mypy talaria
+      - name: pytest
+        run: uv run pytest
+      - name: bandit
+        run: uv run bandit -r talaria -q

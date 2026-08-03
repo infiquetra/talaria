@@ -19,3 +19,19 @@ coverage/
 .serena/
 .vscode/
 .idea/
+
+# Python (ADR-0004).
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# Recorded frame-log corpora (R29): real sessions may carry content the
+# redaction deny-set missed, so they never enter version control. Committed
+# test fixtures are small synthetic frames checked in individually, not
+# whole corpora.
+corpora/
+tests/**/corpora/
