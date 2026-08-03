@@ -150,7 +150,10 @@ gate failure routed to PC8, not a workaround.
 **KTD5 — Status contract v1 is frozen here (PC2):** delivery is one UTF-8 JSON document on the
 child's stdin (matching the operator's prior-art harness and avoiding argv interpolation, R18);
 output is newline-separated rows on stdout rendered as literal text. Executable path comes from
-`status.command` in the KTD15 config and is exec'd directly — argv array, no shell. Fields:
+`status.command` in the KTD15 config and is exec'd directly — argv array, no shell. An absent
+`status.command` disables the runner: no child is ever spawned and the status region renders
+nothing — the prior-art harness treats the status line as optional, and so does this contract.
+Fields:
 `{version: 1, mode: "replay"|"live", connection: "disconnected"|"connecting"|"connected"|
 "reconnecting"|"auth_failed", session: {id: str, title: str|null}, turn:
 "idle"|"streaming"|"waiting"|"cancelled", pending_prompts: int, subagents: {active: int,
@@ -486,6 +489,53 @@ implementer's ad-hoc default.
 
 ---
 
+## Unattended execution contract
+
+*Added 2026-08-02 by the final pre-`/work` review. This plan is executed by `/work` with the
+operator AFK; every unit must complete without operator input. The operator settled the two
+authorizations below on 2026-08-02; nothing else in this section introduces new scope.*
+
+- **No interactive blocking.** No unit waits on an interactive prompt or an operator action.
+  KTD11's interactive credential prompt is tested (PTY-driven, proven non-echoing) but never sits
+  on an execution path: acceptance credentials arrive via environment or `~/.talaria/credentials`,
+  provisioned by the harness below.
+- **Live acceptance environment.** Nothing listens on the default gateway port on this machine
+  between sessions, so acceptance runs (U7–U10) and self-capture (U2) never assume a standing
+  gateway. The test harness launches its own: the installed CLI provides
+  `hermes dashboard [--port] [--host] [--isolated] [--no-open] [--stop]` (verified against the
+  install's own `--help`), and `_resolve_session_token` (`hermes_cli/web_server.py:300-304`) honors
+  an injected `HERMES_DASHBOARD_SESSION_TOKEN` verbatim — so the harness mints a token, launches a
+  loopback instance on a free port with that token in its environment, hands the same value to
+  Talaria through the KTD11 chain, and tears the instance down afterwards. Sessions created for
+  acceptance are scratch sessions. Talaria itself never launches or terminates a gateway (the
+  non-goal stands); the harness doing so has the same standing as the stub servers.
+- **Corpus self-capture — authorized.** U2's corpus-provenance step states the precedence: an
+  operator-supplied corpus wins; otherwise the harness captures one through the environment above,
+  driving the scratch session with a cheap model (`deepseek-v4-flash`, named by the operator and
+  present in the local catalog, with a cheapest-configured fallback recorded alongside the corpus
+  label).
+- **Push, PR, and merge — authorized.** The executor pushes the working branch to origin so
+  CI-citing verification (U1, U10; R33, R39) completes during the run, opens a PR, and merges to
+  `main` at coherent, revertible milestones — default cadence: the U1 scaffold, end of milestone 1
+  (post-gate), end of milestone 2 (post-verdict). Every PR body and merge message names the units
+  it carries and their verification evidence, written so reverting that one merge cleanly removes
+  the change — "good enough to revert" is the operator's stated bar. If a push fails, the unit runs
+  the identical checks locally, records CI evidence as pending, and the run continues; no unit
+  blocks on GitHub availability.
+- **Halt vs degrade.** A U5 gate **fail** halts the run with the results doc and U4's routing
+  recorded — an unattended executor does not improvise a presentation-layer swap; that is a
+  re-plan, not a unit. A missing or drifted required method in U10 completes the run with an honest
+  **not-ready** verdict. An ordinary red test inside a unit is neither — the unit iterates. Live
+  provocation (U8's bridges, U9's live dispatch, U10's live turn) is bounded: a surface that cannot
+  be provoked live within a fixed attempt budget is recorded as stub-verified-only in the unit
+  report and the daily-driver verdict — never retried indefinitely, and never reported as
+  live-verified.
+- **Pinned reads.** Mid-run Hermes source reads go through
+  `git -C ~/.hermes/hermes-agent show 7f4d15515:<path>`, so evidence stays at the pin even if the
+  install's `HEAD` moves during the run.
+
+---
+
 ## Implementation Units
 
 Ten units in two phases. Phase A is milestone 1 (replay-first, no gateway); phase B is milestone 2
@@ -606,12 +656,20 @@ divergence is pinned by a test rather than left to drift.
 here and U5's gate need a real recorded corpus, and nothing produced one. It is captured with the
 **existing TypeScript recorder**, which already dials the gateway and is already listed as a kept-
 runnable external dependency — not with new Python transport code, so replay-first ordering is
-preserved exactly: no Python touches a socket before the framework verdict. The operator runs the
-TS recorder against the local Hermes during ordinary use until the log reaches at least 5,000
-frames; `~/.hermes/sessions` cannot supply this, holding only LLM request dumps rather than gateway
-frames, so recording is the only source. The corpus stays out of version control (R29), is swept by
-AE3 before use, and is cited by opaque label, sha256, and frame count. This is a capture step, not a
-review or evaluation gate: it needs an afternoon of normal Hermes use with recording on.
+preserved exactly: no Python touches a socket before the framework verdict. `~/.hermes/sessions`
+cannot supply it, holding only LLM request dumps rather than gateway frames, so recording is the
+only source. Two paths produce it, in precedence order. **An operator-supplied corpus wins:** if a
+recording of at least 5,000 frames already exists where the run's configuration points, it is used
+as-is. **Otherwise the unit self-captures** (operator-authorized 2026-08-02): launch the dedicated
+loopback gateway described in the unattended execution contract, attach the TS recorder to it, and
+drive scripted traffic through a scratch session until the log reaches at least 5,000 frames —
+several long streaming turns, plus a sub-agent spawn and a slash dispatch where obtainable, so the
+corpus exercises more than one frame family. The scratch session runs a cheap model:
+`deepseek-v4-flash`, named by the operator and present in the local model catalog; if the running
+configuration does not offer it, the cheapest configured model is used and the substitution recorded
+with the corpus label. The traffic driver is throwaway harness tooling — it must not extend `src/`
+and must not be Python on a socket. Either way the corpus stays out of version control (R29), is
+swept by AE3 before use, and is cited by opaque label, sha256, and frame count.
 
 **Verification:** equivalence harness green against that corpus; AE6 and AE15
 scenarios pass; a committed-fixture size check keeps fixtures synthetic and small (R29).
@@ -881,8 +939,9 @@ credential rotation between attach and reconnect picks up the new token from the
 AE16 equivalence — identical ordered frames via replay and via the stub socket produce identical
 normalized transitions; env canary confirms the token never enters child or diagnostic surfaces.
 
-**Verification:** AE8 and AE16 suites green; a live smoke attach against a running local gateway
-(operator-run, isolated session) confirms the acquisition chain end to end; frame logs recorded
+**Verification:** AE8 and AE16 suites green; a live smoke attach against a harness-launched local
+gateway (per the unattended execution contract: dedicated loopback instance, injected token,
+scratch session) confirms the acquisition chain end to end; frame logs recorded
 live contain redaction markers for every outbound sensitive frame; QUEUED.md's third standing P0,
 "Prove the Hermes transport seam", closes in the same commit.
 
@@ -1049,10 +1108,12 @@ rendering); no capability endpoint emulation — the baseline stays a pinned loc
 | Replay timing masks live-path stutter | false gate confidence | AE16 explicitly re-measures streaming/backpressure/reconnect on the live path in U7; replay's timing result is never inherited (origin dependency note) |
 | Recorded corpora contain something the deny-set missed | public-repo exposure | Corpora never enter version control (R29); the AE3 sweep re-runs over every captured corpus before it is used as a shared fixture source |
 
-External dependencies: a running Hermes dashboard gateway at `7f4d15515` — **the revision installed
-on the operator's machine** (`~/.hermes/hermes-agent` at `HEAD`, Hermes Agent v0.19.1) — for
-milestone 2 acceptance runs, and also for milestone 1's one-time corpus capture, which uses the
-existing TypeScript recorder rather than any Python transport so replay-first ordering holds;
+External dependencies: a Hermes dashboard gateway at `7f4d15515` — **the revision installed on the
+operator's machine** (`~/.hermes/hermes-agent` at `HEAD`, Hermes Agent v0.19.1), launched and torn
+down by the test harness per the unattended execution contract, since nothing listens on the
+default port between sessions — for milestone 2 acceptance runs, and also for milestone 1's
+one-time corpus capture, which uses the existing TypeScript recorder rather than any Python
+transport so replay-first ordering holds (self-capture authorized when no operator corpus exists);
 Textual 8.2.8 and `websockets` from PyPI, both version-bounded in `pyproject.toml` and pinned in
 `uv.lock`; `uv` on the operator's machine; the existing TS recorder (kept runnable for U2's
 equivalence harness and the corpus capture).
@@ -1096,7 +1157,10 @@ nothing this plan schedules.
   caveat).
 - Hermes at `7f4d15515` — **the revision installed on this machine**, read from
   `~/.hermes/hermes-agent` at `HEAD` (Hermes Agent v0.19.1, 2026.7.30), not from a workspace
-  checkout: session-token minting (`hermes_cli/web_server.py:293-304`); WS-upgrade credential
+  checkout; mid-run reads stay pinned via `git -C ~/.hermes/hermes-agent show 7f4d15515:<path>`
+  regardless of where `HEAD` moves: session-token minting, environment-injectable
+  (`hermes_cli/web_server.py:293-304` — `_resolve_session_token` honors
+  `HERMES_DASHBOARD_SESSION_TOKEN` verbatim, else mints fresh per server start); WS-upgrade credential
   acceptance, **query parameters only**
   (`_ws_auth_reason` at `:14443-14524`, `_ws_auth_ok` at `:14527`, `/api/ws` mount and enforcement
   at `:15609-15617`); the HTTP-only token helpers that do **not** govern the WS upgrade — the

@@ -5,12 +5,13 @@ status: complete
 date: 2026-08-02
 target: docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md
 classification: plan
-reviewed_revision: working-tree-untracked
+reviewed_revision: rounds 1-3 working-tree at 064967b; round 4 at 9f8977e plus working tree
 reviewed_head: 064967b32c5975ba77c277b8a68448cc1e3690fa
 target_sha256_before: 2642675aecdac4703b5cb9091be448e233014b6910e397a06e0fff6569e4ad44
-target_sha256_after: 7fbf7d0270fde1f1399da9658a514130a3ce438fc60cf0c9ce03c9a3577c43e6
+target_sha256_after_round3: 7fbf7d0270fde1f1399da9658a514130a3ce438fc60cf0c9ce03c9a3577c43e6
+target_sha256_after: 010ff5f6c13bfd0da573f0333f7ecbf58f89763ef485636f0c0ea4840c4cbe09
 hermes_evidence_revision: 7f4d15515
-external_panel: codex/gpt-5.6-sol (max effort, read-only); ollama-cloud/kimi-k3 (max effort)
+external_panel: codex/gpt-5.6-sol (max effort, read-only); ollama-cloud/kimi-k3 (max effort); round 4 none (stored preference resolved to no engines)
 ready_for_work: true
 ---
 
@@ -20,6 +21,14 @@ ready_for_work: true
 
 **Ready for `/work`.** All twenty-one findings are dispositioned; the operator settled the seven
 that needed a decision on 2026-08-02 and the rest were applied.
+
+**Round 4 (final, unattended lens) — still ready.** The operator requested one last pass before an
+**unattended** `/work` run, fixing everything found, not only P0/P1. Nine further findings
+(D22–D30): five operator-presence assumptions, now resolved by the plan's new "Unattended execution
+contract" section — with push/PR/merge authority and corpus self-capture both operator-authorized
+mid-review on 2026-08-02 — two execution-spec fidelity gaps fixed and revalidated, one environment
+hazard outside the document (the ultracode emitter's return-contract bug, D28) reported with a
+recorded recommendation: launch `/work` with the **inline** backend.
 
 The review found the plan structurally sound — near-complete requirement mapping, replay-first
 ordering that genuinely spends nothing on transport before the framework verdict, a named falsifier
@@ -131,6 +140,37 @@ applied directly. Dispositions landed 2026-08-02 in the same commit as this revi
 | D20 | P3 | U5, KTD4, design diagram | Two replay-mode behaviors float unowned: what Enter does to composed text when no transport exists (a local echo would be indistinguishable from a sent message), and the diagram's dotted `ReplaySource → recorder` edge, which invites re-recording replayed corpora for no stated requirement. | open |
 | D21 | P3 | U5, U6 | U5 is numbered before U6 but depends on it. Unit identifiers are never renumbered once assigned, so this is cosmetic and no action is proposed. | no action |
 
+## Round 4 — final pre-`/work` review, unattended lens (2026-08-02)
+
+Requested by the operator as the last pass before an unattended `/work` run ("I intend for the plan
+to be /work unattended… expect working software and a fully completed plan when I return"), with
+instructions to fix everything found. No external engines this round: the saga engine-offer helper
+returned the stored doc-review preference, which resolved to no engines. Reviewed revision:
+`9f8977e` plus this round's working-tree fixes.
+
+The readiness-skeptic pass held on the plan's own terms — requirement mapping, KTD closure, and
+traceability were checked again and stand. The unattended lens found what three attended rounds had
+no reason to look for: places where the plan silently assumed an operator at the keyboard. Two
+authorizations were settled by the operator mid-review and are now recorded in the plan's
+"Unattended execution contract" section. Environment facts verified this round: nothing listens on
+the default gateway port between sessions; `hermes dashboard` launches a standalone loopback
+gateway (`--port`/`--host`/`--isolated` in the install's own `--help`); `_resolve_session_token`
+(`hermes_cli/web_server.py:300-304`) honors an injected `HERMES_DASHBOARD_SESSION_TOKEN` verbatim;
+`deepseek-v4-flash` is present in the local model catalog; the TS recorder is receive-only
+(`src/transport/attach.ts` records only incoming frames).
+
+| ID | Priority | Location | Finding | Disposition |
+| -- | -------: | -------- | ------- | ----------- |
+| D22 | P1 | U2 corpus provenance | The capture step required the operator ("runs the TS recorder during ordinary use… an afternoon of normal Hermes use") — an unattended run stalls at U2, and U5's gate corpus with it. | Fixed — precedence order: an operator-supplied corpus wins; otherwise **self-capture, operator-authorized 2026-08-02** — harness-launched loopback gateway, TS recorder attached, scripted traffic on a cheap model (`deepseek-v4-flash` per the operator, cheapest-configured fallback recorded with the corpus label) |
+| D23 | P1 | U7 verification; all live acceptance | Live runs assumed a standing, operator-run gateway; nothing listens on the default port (verified this round). | Fixed — the unattended execution contract has the harness launch and tear down a dedicated loopback instance with an injected token it therefore knows; U7's "operator-run" wording replaced with the harness-run form |
+| D24 | P1 | U5 on-fail routing; U8–U10 live provocation | "Route the project to the fallback" is a re-plan an unattended executor must not improvise; unbounded live-provocation retries could stall a unit forever. | Fixed — halt-vs-degrade semantics in the contract: U5 gate fail **halts** with evidence recorded; U10 missing/drifted method completes with an honest not-ready verdict; live provocation is attempt-bounded and downgrades to stub-verified-only, recorded, never reported as live-verified |
+| D25 | P1 | U1/U10 CI evidence | CI green requires commits on GitHub; push authority during an unattended run is the operator's, and the plan assumed it silently. | **operator** — push, PR, and merge to `main` authorized 2026-08-02, at coherent revertible milestones with revert-quality messages (the operator's stated bar); on push failure, identical local checks run and CI is recorded pending, never blocking |
+| D26 | P2 | KTD11 acquisition chain | The chain ends in an interactive prompt; unattended execution must never reach it, and nothing said how acceptance credentials are provisioned. | Fixed — contract: credentials arrive via environment or `~/.talaria/credentials`, provisioned from the token the harness injected at gateway launch; the prompt stays tested (PTY, non-echo) but never sits on an execution path |
+| D27 | P2 | Execution spec U5, U6 | Spec `depends_on` omitted U2 for both U5 (corpus dependency, named in the plan) and U6 (imports U2's redaction module per KTD5) — topologically masked by U3→U2, but the spec is the dispatch artifact. | Fixed — both edges added; spec revalidates (`OK: talaria-v0-1-prototype (10 units)`); all ten unit prompts now direct the executor to apply the unattended execution contract |
+| D28 | P2 | Execution environment (outside the document) | The saga workflow emitter (v0.122.0) builds each unit's return-contract JSON schema by iterating the `returns` prose character by character (`required: ["A", "s", "s", …]`), and `/work`'s ultracode backend **re-emits at launch**, so fixing the committed file cannot help. | **Reported — not a plan defect.** Blocks only the `cc-workflows-ultracode` backend; the inline and team-execution backends read the spec directly. Recommendation recorded: choose **inline** at `/work` launch until the emitter is fixed upstream in the plugin repository |
+| D29 | P3 | KTD5 | Behavior with no `status.command` configured was unstated. | Fixed — absent means disabled: no child ever spawned, region renders nothing (the prior art treats the status line as optional) |
+| D30 | P3 | Sources; U3 | Mid-run Hermes reads implicitly trusted the install's `HEAD` staying at the pin. | Fixed — reads go through `git -C ~/.hermes/hermes-agent show 7f4d15515:<path>`; evidence stays pinned regardless of `HEAD` movement |
+
 ## External panel
 
 Two engines were dispatched at the operator's request. Both were treated as advisory: every finding
@@ -184,10 +224,11 @@ anyone — that is what the U5 gate exists to settle, and no reviewer can settle
 
 - Target: `docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md`
 - Classification: plan
-- Reviewed revision: working tree, untracked, at repository `HEAD` `064967b`
-- Readiness: **ready for `/work`**
-- Blocking findings: none. All twenty-one dispositioned; PC2, PC4, and PC10 close; no open question blocks a unit
-- Applied fixes: twenty-four groups across two review rounds, plus a third pass applying the operator's seven decisions; the plan and the execution spec both revalidate (`OK: talaria-v0-1-prototype (10 units)`)
+- Reviewed revision: rounds 1–3 at working tree over `064967b`; round 4 at `9f8977e` plus working tree
+- Readiness: **ready for unattended `/work`**
+- Blocking findings: none. All thirty dispositioned (D1–D21 rounds 1–3; D22–D30 round 4); PC2, PC4, and PC10 close; no open question blocks a unit; no unit blocks on operator presence
+- Applied fixes: twenty-four groups across two review rounds, a third pass applying the operator's seven decisions, and a fourth-round unattended-execution pass (contract section, corpus self-capture, harness-launched acceptance gateway, halt-vs-degrade semantics, two spec dependency edges); the plan and the execution spec both revalidate (`OK: talaria-v0-1-prototype (10 units)`)
 - Review artifact: this file
 - Override rationale: DR15's review-panel block is overridden by the operator and recorded in `docs/engineering-journal/DECISIONS.md` — it is a receipt gap against a verifier that does not exist, and the substantive review obligation was discharged by this review plus a two-engine external panel
-- Next step: `/work` at U1
+- Operator authorizations recorded 2026-08-02: push/PR/merge to `main` at revertible milestones during the unattended run; corpus self-capture on `deepseek-v4-flash`
+- Next step: `/work` at U1 — choose the **inline** backend at launch (D28: the ultracode emitter garbles return contracts and re-emits at launch)
