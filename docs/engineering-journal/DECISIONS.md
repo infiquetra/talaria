@@ -170,25 +170,42 @@ Sub-agent rows are cleared by the next `message.start` rather than at turn end. 
 
 **Revisit when.** U5's memory growth curve makes domain-side eviction a requirement, or a live session shows a fan-out large enough for the one-turn retention to matter.
 
-## 2026-08-03 — Textual passed its gate; the presentation layer is settled and the framework choice is drafted as ADR-0005
+## 2026-08-03 — Textual passed its gate; the presentation layer is settled and ADR-0005 is accepted
 
 **Author.** v0.1 unit U5 — the replay-driven Textual shell and framework validation gate
 
-**Decision.** Textual 8.2.8 is Talaria's presentation layer for v0.1, drafted as [ADR-0005](../../platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) (`proposed`, pending operator acceptance). The gate ran on 2026-08-03 and passed all ten threshold checks; measurements are in [Textual validation gate results](../analysis/2026-08-03-textual-validation-gate-results.md).
+**Decision.** Textual 8.2.8 is Talaria's presentation layer for v0.1, recorded as [ADR-0005](../../platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md), `accepted` by the operator on 2026-08-03. The gate ran three times that day — `pass` on a gate that was measuring itself, `fail` on the repaired gate, and `pass` on the repaired gate once the three defects it found were fixed. Acceptance rests on the third run and its thirteen checks; measurements and the full sequence are in [Textual validation gate results](../analysis/2026-08-03-textual-validation-gate-results.md).
 
 **The gate is a shipped command, not a one-off script.** `uv run talaria gate --corpus <recording> --deltas 50000` replays both corpora through the real `TalariaApp`, compares every measurement against KTD14's thresholds, prints the whole record as JSON, and exits non-zero on a fail verdict. Re-establishing the verdict after a Textual upgrade is therefore one command rather than an archaeology exercise.
 
 **Rationale.** The plan's central bet was that the prototype and the gate are the same build, because a gate that measures a purpose-built harness proves the harness. That held: every number came from the app the operator runs.
 
-**Two passes, not one, and the reason is a correction.** The first version of the gate measured only an unbounded replay, and reported 1 render tick — because the domain reducer drains 53,516 frames in 1.8 seconds, long before a 50ms coalescing tick can fire more than a handful of times. That is a real result about the reducer and a meaningless one about the renderer, and reporting it alone would have claimed a renderer verdict on reducer evidence. The gate now also replays on the corpus's recorded cadence, scaled to a 60-second window, where the render loop runs 2,764 times against a live stream.
+**Two passes, not one, and the reason is a correction.** The first version of the gate measured only an unbounded replay, and reported 1 render tick — because the domain reducer drains 53,516 frames in 2.3 seconds, long before a 50ms coalescing tick can fire more than a handful of times. That is a real result about the reducer and a meaningless one about the renderer, and reporting it alone would have claimed a renderer verdict on reducer evidence. The gate now also replays on the corpus's recorded cadence, scaled to a 60-second window, where the render loop runs 2,907 times against a live stream.
 
-**Answers to two questions earlier ADRs deferred.** ADR-0002 asked for the re-render cost of U3's immutable-snapshot view model: it is not the bottleneck, because one snapshot is allocated per flush rather than per frame. ADR-0004 warned that transcript virtualization would have to be owned explicitly: true, and it cost about 120 lines, holding 501 mounted widgets across a corpus that produced 4,454 lines.
+**Answers to two questions earlier ADRs deferred.** ADR-0002 asked for the re-render cost of U3's immutable-snapshot view model: it is not the bottleneck, because one snapshot is allocated per flush rather than per frame. ADR-0004 warned that transcript virtualization would have to be owned explicitly: true, and it cost about 120 lines, holding 501 mounted widgets across a corpus that produced 4,454 lines. It also turned out to be where all three gate failures lived, which is the honest version of "cheap".
 
 **Rejected alternatives.** Switching to `prompt_toolkit` anyway (trades a measured framework for an assessed one). Deferring the framework decision further (the deferral existed to buy evidence; the evidence exists).
 
 **Cost.** A `textual>=8.2.8,<9` pin, and a namespace shared with a large private framework surface — see the LEARNINGS entry on `_closing`.
 
-**Revisit when.** The Textual pin is widened, a real terminal host exercises what the headless gate could not, or the recorded memory slope of 0.33 MB per 1,000 frames starts to matter in a real session.
+**Revisit when.** The Textual pin is widened, a real terminal host exercises what the headless gate could not, or the recorded steady-state memory slope of 0.23 MB per 1,000 frames starts to matter in a real session. That slope rose from 0.11 when the reconciliation defect was fixed, because the pane now does work it had been skipping — see the LEARNINGS entry on defects that suppress the cost of the work they suppress.
+
+## 2026-08-03 — The projection publishes its committed boundary; a bounded window tracks a position, not a tally
+
+**Author.** v0.1 milestone-1, closing the U5 gate failure
+
+**Decision.** Two rules for any renderer that diffs against `TranscriptView`.
+
+1. **The domain names the settled region; the renderer never infers it.** `TranscriptView.committed_lines` is the index where the provisional streaming block begins. A renderer may skip re-examining lines below it and must re-examine everything above it, every tick. Inferring "settled" from two snapshots agreeing on a line is invalid, because the provisional block sits *after* the committed lines and moves down whenever an entry commits mid-stream.
+2. **A bounded window stores where it starts, not how much it has evicted.** `TranscriptPane._top` is an absolute index. `condensed_count` is derived from it, so mounted-plus-condensed equals the transcript length by construction, and the number can fall when the window is re-derived further up.
+
+**Rejected alternatives.** *Reconciling the full window each tick* — correct, and O(transcript) per 50ms tick, which is the cost KTD14 exists to bound. *Making notice lines non-transient* — proposed in the defect report and does nothing, because the notice lines were never transient; the streaming block is what moves. *Placing the provisional block before the committed lines* so the projection is append-only — contradicts KTD10, which requires a mid-stream `read_terminal` to describe the screen the operator is actually looking at.
+
+**Rationale.** The renderer cannot compute the boundary from the data it receives, and every attempt to guess it is a guess about immutability — exactly the class of assumption that should be stated by the party that owns it. The cost is one integer per snapshot. Adding it to a frozen dataclass in the domain does not import a framework, so ADR-0002 is untouched.
+
+**Cost.** `TranscriptView` gains a field that every hand-built view in a test must now either pass or default. The default is `0` — "assume nothing is settled" — so omitting it makes a consumer do more work rather than skip work it should have done.
+
+**Revisit when.** The transcript grows a second provisional region (an editable draft in the scroll-back, say). Then one integer stops being enough and the projection should publish spans rather than a boundary.
 
 ## 2026-08-03 — The gate's corpora are cited by digest, and the stress corpus is generated rather than committed
 

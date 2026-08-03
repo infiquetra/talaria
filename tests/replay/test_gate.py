@@ -189,31 +189,45 @@ async def test_the_gate_runs_end_to_end_and_records_corpus_identity() -> None:
     assert "/" not in result.stress.corpus.label
 
 
-@pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Open defect: TranscriptPane.reconcile desynchronizes from the projection "
-        "when a transient notice line appears mid-transcript and later disappears. "
-        "reconcile assumes append-only growth in which only the trailing block is "
-        "provisional, so a line inserted and later withdrawn above that block leaves "
-        "the pane permanently misaligned. Measured on the recorded corpus: 274 lines "
-        "rendered against 275 projected, misaligned from index 251, with one line of "
-        "real content rendered nowhere at all. Strict, so that fixing reconcile turns "
-        "this red and forces the marker to be removed."
-    ),
-)
-async def test_the_gate_verdict_is_pass() -> None:
-    """The product claim, kept separate so its failure is visible rather than absorbed.
+#: The two checks that are floors on *how much was sampled*, not claims about the
+#: product. Both ride a 20ms poll against ``RSS_SAMPLE_EVERY`` frames, so they can
+#: only be satisfied by a run long enough in wall-clock terms to be polled that
+#: many times — which a 600-delta corpus at unbounded replay speed never is; it
+#: drains between two polls. They are calibrated for KTD14's real 50,000-delta
+#: run and are reported by the published evidence, not by this test.
+SCALE_DEPENDENT_CHECKS = frozenset({"enough_memory_samples", "enough_content_checkpoints"})
 
-    The original gate could not detect this: its content check compared
-    ``transcript_view(app.state)`` against ``app.state`` — the projection against
-    itself — so no interface defect of any kind could fail it.
+
+@pytest.mark.asyncio
+async def test_every_product_claim_holds_at_reduced_scale() -> None:
+    """The product claims, kept separate so a failure is visible rather than absorbed.
+
+    This used to assert ``verdict == "pass"`` under a strict xfail blamed entirely
+    on ``TranscriptPane``'s reconciliation. Half of that was right — the pane did
+    desynchronize, and ``tests/ui/test_transcript_bounds.py`` now pins the fix at
+    unit size — but the attribution was wrong: at 600 deltas the two sample-count
+    floors above cannot be met by any implementation, so the assertion was
+    unreachable on its own terms and would have stayed red after a perfect fix.
+    An xfail whose stated reason is not the only reason is a comment that lies.
+
+    What is asserted instead is exact and reachable: every check that is a claim
+    about the product passes, and the only ones that do not are the two scale
+    floors, named. A content-loss regression puts ``content_loss`` in the failing
+    set, which is not a subset of the named floors, so this still turns red.
+
+    The original gate could not detect a rendering defect at all: its content
+    check compared ``transcript_view(app.state)`` against ``app.state`` — the
+    projection against itself — so no interface defect of any kind could fail it.
     """
     result = await run_gate(live_corpus=None, deltas=600, seed=7)
-    assert result.verdict == "pass"
+    failed = {name for name, check in result.checks.items() if not check["pass"]}
+    assert failed <= SCALE_DEPENDENT_CHECKS, f"a product claim failed: {sorted(failed)}"
     assert result.stress.content_loss_failures == 0
     assert result.cadence.content_loss_failures == 0
+    # The scale floors are named rather than skipped, so nobody reads the
+    # subset assertion above as "the gate passed at this size". It did not.
+    assert result.verdict == "fail"
+    assert failed == SCALE_DEPENDENT_CHECKS
 
 
 @pytest.mark.asyncio

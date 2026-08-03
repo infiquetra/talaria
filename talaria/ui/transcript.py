@@ -19,6 +19,18 @@ cap meaningless the moment one entry is a 4,000-line tool dump.
 pane keeps the previous line tuple and advances a stable index. The only region
 it ever re-examines is the provisional tail — the in-flight streaming block —
 which is why a 50,000-delta replay does not cost O(transcript) per 50ms tick.
+
+**"Committed" is the projection's word, not a guess made from matching text.**
+The stable index is clamped to :attr:`TranscriptView.committed_lines` for
+exactly that reason. The provisional block sits *after* the committed lines, so
+appending an entry while a turn is streaming pushes every provisional line down
+by the length of the new entry. Two consecutive snapshots can therefore agree on
+a provisional line by coincidence — the streaming text simply did not change
+between those two ticks — and inferring "settled" from that agreement is wrong.
+It was wrong here: the floor advanced into the streaming block on frame 31 of
+the stress corpus while zero entries had been committed, and the pane was
+misaligned from line 0 for the remaining 616 frames, rendering 274 lines against
+275 projected with one line of conversation on screen nowhere.
 """
 
 from __future__ import annotations
@@ -67,7 +79,18 @@ class TranscriptPane(VerticalScroll):
         self._lines: tuple[str, ...] = ()
         self._stable = 0
         self._widgets: deque[Static] = deque()
-        self._condensed_count = 0
+        #: Absolute index of the first mounted line, tracked directly rather
+        #: than inferred from how many times a trim has run. It used to be
+        #: inferred: a counter incremented on every left-hand eviction served as
+        #: both "lines folded away" and "where the window starts". Those are the
+        #: same number only if no line is ever evicted twice, and correct
+        #: reconciliation evicts twice routinely — the provisional block is
+        #: dropped from the right and re-derived, so lines cross the left edge
+        #: again. On the 50,000-delta corpus the counter reached 7,493 for a
+        #: transcript that only ever had 4,454 lines, which put the window at an
+        #: index the projection does not have and made the pane render a wrong
+        #: slice of a correct projection.
+        self._top = 0
         self._condensed: Static | None = None
         #: Highest mounted-widget count observed. The gate reads this rather
         #: than sampling, so a spike between two samples cannot be missed.
@@ -94,8 +117,15 @@ class TranscriptPane(VerticalScroll):
 
     @property
     def condensed_count(self) -> int:
-        """Lines represented by the condensed block rather than by a widget."""
-        return self._condensed_count
+        """Lines represented by the condensed block rather than by a widget.
+
+        Read as a position, which is what makes ``condensed_count + mounted``
+        equal the transcript length: it is the index the mounted window starts
+        at, so it can fall as well as rise if the window is re-derived further
+        up. A cumulative eviction tally cannot fall, and that is exactly how it
+        came to exceed the number of lines that had ever existed.
+        """
+        return self._top
 
     @property
     def rendered_lines(self) -> tuple[str, ...]:
@@ -110,71 +140,80 @@ class TranscriptPane(VerticalScroll):
         stable = self._common_prefix(current)
 
         removed_top_height = 0
-        # 1. Drop the provisional tail that changed. Only the in-flight
-        #    streaming block can land here, so this loop is short.
-        while self._top_index + len(self._widgets) > stable and self._widgets:
+        # 1. Drop every mounted widget at or beyond the first divergence.
+        #    Normally only the in-flight streaming block lands here, so the loop
+        #    is short; when an entry commits mid-stream the whole provisional
+        #    block is re-derived, which is the correct amount of work rather
+        #    than an unlucky amount.
+        while self._top + len(self._widgets) > stable and self._widgets:
             widget = self._widgets.pop()
             await widget.remove()
 
-        start = self._top_index + len(self._widgets)
+        # The divergence can also sit *below* the window, if a line that had
+        # already been condensed changed. Nothing un-condenses it, but the
+        # window must stop claiming a position the projection no longer has.
+        if not self._widgets:
+            self._top = min(self._top, stable)
+
+        # 2. Condense from the top *before* mounting, never after, and by
+        #    position rather than by repeated single-widget trims. The pane
+        #    keeps the newest ``mount_cap`` lines, so the widget count cannot
+        #    exceed the cap even for one frame. Trimming after the mount held
+        #    the steady-state cap while transiently mounting 667 widgets against
+        #    KTD14's ceiling of 600: a slow frame the operator can see and a
+        #    snapshot taken afterwards cannot.
+        desired_top = max(self._top, len(current) - self.mount_cap)
+        while self._top < desired_top and self._widgets:
+            widget = self._widgets.popleft()
+            removed_top_height += max(1, widget.outer_size.height)
+            await widget.remove()
+            self._top += 1
+        # Lines the window never reached are condensed without ever having been
+        # a widget, which is the whole point of condensing before mounting.
+        self._top = max(self._top, desired_top)
+
+        # 3. Mount exactly the window's missing suffix. By construction
+        #    ``len(current) - self._top <= mount_cap``, so this cannot overshoot.
+        start = self._top + len(self._widgets)
         pending = list(current[start:])
-
-        # 2. A backlog larger than the cap is condensed *before* it is
-        #    mounted, never after. Mounting 4,000 widgets and immediately
-        #    removing 3,500 of them would satisfy the steady-state cap while
-        #    briefly holding eight times it — a transient that a snapshot after
-        #    the fact cannot see and a slow frame the operator can. Everything
-        #    already mounted is going to fall off anyway in that case, so it is
-        #    dropped first and the surplus new lines never become widgets.
-        if len(pending) >= self.mount_cap:
-            while self._widgets:
-                widget = self._widgets.popleft()
-                removed_top_height += max(1, widget.outer_size.height)
-                self._condensed_count += 1
-                await widget.remove()
-            surplus = len(pending) - self.mount_cap
-            if surplus > 0:
-                self._condensed_count += surplus
-                pending = pending[surplus:]
-
-        # 3. Mount what is left, then enforce the cap incrementally.
         if pending:
             new_widgets = [Static(literal_text(line), markup=False) for line in pending]
             self._widgets.extend(new_widgets)
             await self.mount_all(new_widgets)
-            # Sample the peak HERE, before the step-4 trim, not only at the end
-            # of this method. Step 2's comment is right that a transient the
-            # operator can see as a slow frame is the thing that matters — but a
-            # peak sampled only after the trim cannot observe one, because the
-            # trim has by then restored the cap. Measured after the trim this
-            # metric can never exceed mount_cap + 1 whatever the pane does,
-            # which makes it an identity rather than a measurement. The honest
-            # peak is the post-mount count, and it is what the KTD14 gate reads.
+            # Sampled at the moment of maximum mount, which is now also the end
+            # of the method — there is no later trim to hide a spike behind.
+            # Keeping the sample here anyway, because a future edit that
+            # reintroduces a trim should not silently turn this metric back into
+            # an identity that can never exceed the cap whatever the pane does.
             self.peak_mounted = max(self.peak_mounted, self.mounted_count)
 
-        while len(self._widgets) > self.mount_cap:
-            widget = self._widgets.popleft()
-            removed_top_height += max(1, widget.outer_size.height)
-            self._condensed_count += 1
-            await widget.remove()
-        if self._condensed_count:
-            await self._render_condensed()
+        await self._render_condensed()
 
         self._lines = current
-        self._stable = stable
+        # The floor for the *next* scan is clamped to the committed boundary,
+        # while the truncation above used the true divergence point. The two
+        # differ on purpose. Truncating at the true divergence keeps unchanged
+        # provisional widgets mounted, so a streaming delta churns one widget
+        # rather than the whole block. Storing the true divergence as the floor
+        # was the defect: a provisional line that merely *happened* to match
+        # between two ticks was recorded as settled, and the scan never looked
+        # at it again. It then moved -- appending an entry mid-stream pushes the
+        # whole streaming block down, which the corpus does fifteen times -- and
+        # the pane stayed misaligned from that point to the end of the session.
+        # Committed lines are the only ones that can never move, so they are the
+        # only ones the floor may cover.
+        self._stable = min(stable, view.committed_lines)
         self.peak_mounted = max(self.peak_mounted, self.mounted_count)
         self._restore_anchor(removed_top_height)
-
-    @property
-    def _top_index(self) -> int:
-        return self._condensed_count
 
     def _common_prefix(self, current: tuple[str, ...]) -> int:
         """How many leading lines are unchanged since the last snapshot.
 
-        Scanning starts at the previously established stable index, so the work
-        per tick is proportional to the size of the provisional streaming block
-        rather than to the length of the transcript.
+        Scanning starts at the previously established stable index, which
+        :meth:`apply` keeps at or below the committed boundary. The work per tick
+        is therefore proportional to the newly committed lines plus the
+        provisional streaming block, rather than to the length of the transcript
+        — and every line that can still move is looked at every time.
         """
         index = min(self._stable, len(current), len(self._lines))
         limit = min(len(current), len(self._lines))
@@ -183,7 +222,16 @@ class TranscriptPane(VerticalScroll):
         return index
 
     async def _render_condensed(self) -> None:
-        text = literal_text(CONDENSED_TEMPLATE.format(count=self._condensed_count))
+        # The block goes away when the window is re-derived far enough up that
+        # nothing is below it any more. Leaving a "0 earlier lines condensed"
+        # banner mounted would be both wrong on screen and an extra widget in
+        # every count that is supposed to mean "lines".
+        if self._top == 0:
+            if self._condensed is not None:
+                await self._condensed.remove()
+                self._condensed = None
+            return
+        text = literal_text(CONDENSED_TEMPLATE.format(count=self._top))
         if self._condensed is None:
             self._condensed = Static(text, markup=False, classes="transcript--condensed")
             await self.mount(self._condensed, before=0)

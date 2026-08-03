@@ -4,6 +4,41 @@
 
 ## 2026-08-03
 
+### The diagnosis in the defect report was wrong, and both proposed fixes followed from it
+
+**Author.** v0.1 milestone-1, closing the U5 gate failure
+
+**Evidence.** QUEUED.md carried a P0 saying `TranscriptPane` desynchronizes because "a transient notice line appears mid-transcript and later disappears", and offered two remedies: reconcile the full window, or make notice lines non-transient. Replaying the stress corpus through the reducer and simulating the pane's index arithmetic in plain Python found 15 incidents where a line below the pane's stable floor changed. **All 15 were of one class, and it was neither of the two the report described: zero committed lines ever changed.** The first is frame 31, where the floor stood at line 1 while **zero** entries had been committed — the floor was entirely inside the streaming block.
+
+**Mechanism.** The domain transcript is strictly append-only and entry text is immutable, so no line ever disappears. What moves is the **provisional streaming block**, which `transcript_view` places *after* the committed lines. Committing an entry while a turn is still streaming pushes every provisional line down by the length of that entry. The pane recorded its scan floor at the true divergence point, and two consecutive snapshots agree on a provisional line whenever the streaming text did not change between them — constant with multi-line streaming, since each delta only rewrites the last line. The floor advanced on that coincidence, onto lines that were about to move, and nothing looked at them again.
+
+Neither proposed remedy would have worked. Reconciling the full window costs O(transcript) per 50ms tick, which is the cost KTD14 exists to bound. Making notice lines non-transient fixes nothing, because the notice lines were never transient — they are ordinary committed entries.
+
+The fix is for the projection to publish the boundary rather than have the renderer guess it: `TranscriptView.committed_lines`, with `self._stable = min(stable, view.committed_lines)`. Truncation still uses the true divergence, so a streaming delta churns one widget rather than the whole block.
+
+**Generalizable rule.** A defect report's *measurement* is evidence; its *mechanism* is a hypothesis, and the remedies it proposes inherit whatever is wrong with the hypothesis. Reproduce the mechanism before implementing the fix, especially when the report is your own.
+
+### Correct reconciliation exposed two defects the incorrect one had been hiding
+
+**Author.** v0.1 milestone-1, closing the U5 gate failure
+
+**Evidence.** With the floor clamp in place the 600-frame test passed and content loss went to zero — and the full-scale gate still returned `fail`, on two checks that had been green before the fix:
+
+| check | before the fix | after the floor clamp | threshold |
+| --- | --- | --- | --- |
+| peak mounted widgets, stress | 501 | **667** | ≤ 600 |
+| content loss, stress | 0 of 11 | **1 of 11** | 0 |
+
+At the failing checkpoint the pane reported **7,493 lines condensed out of a transcript that had only ever contained 4,454**.
+
+**Mechanism.** Two independent defects, both masked by the first one.
+
+1. **A window position was being inferred from an eviction tally.** `_condensed_count` incremented on every left-hand eviction and was *also* used as `_top_index`, the absolute index of the first mounted line. Those are the same number only if no line is ever evicted twice. Correct reconciliation evicts twice routinely: the provisional block is dropped from the right and re-derived, so lines cross the left edge again. The tally then exceeded the number of lines that had ever existed, the window sat at an index the projection does not have, and the pane rendered a wrong slice of a correct projection. The incorrect floor had hidden this by never re-deriving the block. Fixed by tracking `self._top` directly and deriving `condensed_count` from it — a position, which can fall when the window is re-derived further up, where a tally cannot.
+
+2. **The cap was enforced after the mount, not before.** `apply` mounted the new batch and then trimmed, so the transient peak was `existing + batch`. With the floor wrong, batches were small; with it right, a tick that re-derives the whole provisional block mounts it in one go — 667 widgets against KTD14's ceiling of 600. Fixed by condensing from the top *before* mounting, so `len(current) - self._top <= mount_cap` holds at every instant. The pane's own test constant relaxed the bound to `2 * cap + 1` to accommodate the old order; it is now `cap + 1`, which is the claim actually being made.
+
+**Generalizable rule.** When a fix makes previously-green checks go red, the first hypothesis should be that the checks were green *because* of the bug, not in spite of it. A defect that suppresses work also suppresses everything that work would have exercised.
+
 ### The fix for a credential leak corrupted the artifact, and the check that would have caught it could not reach the case
 
 **Author.** v0.1 milestone-1 integration, from external review of the redaction boundary

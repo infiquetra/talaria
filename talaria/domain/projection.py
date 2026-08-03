@@ -58,10 +58,24 @@ class TranscriptView:
     One transcript entry can produce several lines; ``entry_count`` keeps the
     two countable independently so a test can assert content completeness (R6)
     without depending on how many newlines an entry happened to contain.
+
+    ``committed_lines`` says where the provisional region begins, and it exists
+    because a consumer cannot work it out. Lines ``[0, committed_lines)`` come
+    from committed entries: entries are immutable and only ever appended, so
+    those lines are fixed forever and a diffing renderer may skip them. The rest
+    is in-flight streaming text, which is rewritten in place *and moves* — when
+    an entry is appended mid-stream it lands before the streaming block, so
+    every provisional line shifts down. A renderer that treats a matching
+    provisional line as settled will desynchronize the first time that happens,
+    which is exactly the defect this field was added to make impossible.
+
+    The default is ``0`` — "assume nothing is settled" — so a hand-built view
+    that omits it makes a consumer do more work rather than less.
     """
 
     lines: tuple[str, ...]
     entry_count: int
+    committed_lines: int = 0
 
     @property
     def total_lines(self) -> int:
@@ -172,9 +186,14 @@ def transcript_view(state: SessionState) -> TranscriptView:
     lines: list[str] = []
     for entry in state.transcript:
         lines.extend(_entry_lines(entry))
+    committed = len(lines)
     if state.streaming_text:
         lines.extend(state.streaming_text.splitlines() or [""])
-    return TranscriptView(lines=tuple(lines), entry_count=len(state.transcript))
+    return TranscriptView(
+        lines=tuple(lines),
+        entry_count=len(state.transcript),
+        committed_lines=committed,
+    )
 
 
 def _entry_lines(entry: TranscriptEntry) -> list[str]:
