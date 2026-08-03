@@ -181,7 +181,22 @@ class SubagentRow:
 
 @dataclass(frozen=True)
 class PendingPrompt:
-    """An outstanding human-facing prompt, keyed by ``request_id`` (R8)."""
+    """An outstanding human-facing prompt, keyed by ``request_id`` (R8).
+
+    Four of the fields are kind-specific, and they are plain optional members
+    rather than a per-kind hierarchy because the registry's whole value is that
+    one lookup answers for all five bridges. ``choices`` belongs to approval and
+    clarify; ``command`` belongs to approval alone; ``read_start`` and
+    ``read_count`` belong to terminal-read alone.
+
+    ``session_id`` is the second half of R9's correlation clause. The reducer
+    already drops an event addressed to a session that is not focused, so a
+    prompt cannot be *registered* for the wrong session — but a prompt already
+    on screen when the focus moves is a different situation, and an answer must
+    not be routed by request id alone. Storing the session the prompt was raised
+    for is what turns that from a property of the ordering into something a
+    respond can check.
+    """
 
     request_id: str
     kind: PromptKind
@@ -189,6 +204,26 @@ class PendingPrompt:
     opened_at: float
     seq: int
     choices: tuple[str, ...] = field(default=())
+    session_id: str | None = None
+    #: approval only: the command the agent is asking permission to run, exactly
+    #: as the gateway sent it (redacted there, ``tools/approval.py:3651-3660``).
+    #:
+    #: It is a **separate field from** ``summary`` rather than folded into it,
+    #: and that separation is the whole safety property. The gateway sends both
+    #: ``command`` and ``description``, and ``description`` is essentially
+    #: always populated — with the *pattern warnings* that triggered the prompt
+    #: (``"; ".join(desc for _, desc, _ in warnings)`` at ``:3616``), not with
+    #: the command. A one-line summary that prefers ``description`` therefore
+    #: shows the operator "recursive delete outside the workspace" and never
+    #: shows them ``rm -rf /``. One string cannot carry both, because the
+    #: description belongs on one line and the command has to be wrapped whole.
+    command: str = ""
+    #: terminal-read only: the window the agent asked for. ``None`` means the
+    #: agent omitted the argument, which the gateway's contract defines as "the
+    #: visible screen" — a different question from "line 0", so the absence is
+    #: carried through rather than defaulted here.
+    read_start: int | None = None
+    read_count: int | None = None
 
 
 def _as_int(value: Any, fallback: int) -> int:

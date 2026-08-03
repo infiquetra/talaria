@@ -78,11 +78,20 @@ Every frame passes a redaction boundary before it is written. See `src/record/re
 checkout six weeks behind the running Hermes, in which these methods lived in a different file, and
 that reading missed `clarify.respond` entirely.
 
-**The recorder is currently receive-only**, so it writes `dir: "in"` frames and nothing else. All
-four fields above travel in the _other_ direction. Redaction is proven by unit tests, not by
-observed traffic, and the direction that actually carries credentials is not yet recorded at all.
-When Talaria gains a send path it must route outbound frames through the same boundary; that is the
-moment this format starts holding secrets.
+**The recorder now writes both directions, and this format now holds secrets.** It was receive-only
+until the live transport landed, at which point the caveat this paragraph used to carry — "the
+direction that actually carries credentials is not yet recorded at all" — stopped being true. Every
+outbound frame is written through the same boundary before it is sent, including all four fields
+above, so redaction is no longer proven only by unit test: `tests/transport/test_bridges.py`
+answers each bridge over a real socket with a distinctive value and then searches the raw bytes of
+the file the recorder wrote.
+
+**Consequence for anyone handling a recording.** A frame log captured from a live session is now a
+file that a credential was deliberately kept out of, rather than a file no credential could reach.
+The difference matters when the deny-set goes stale: the key-name net behind it (`redact.py`) is
+what covers a bridge Hermes adds after this list was written, and it does not cover a field named
+something innocuous. `params.answer` is the standing example — a clarify answer is free text, the
+name looks harmless, and "paste the token here" is an ordinary thing for an agent to ask.
 
 Withholding is recorded rather than silent, so a reader sees a marked hole instead of clean-looking
 data:

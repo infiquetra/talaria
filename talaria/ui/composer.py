@@ -83,12 +83,23 @@ class Composer(Vertical):
     Composer > ChatTextArea {
         height: auto;
         max-height: 8;
-        border: none;
         padding: 0;
     }
     Composer > .composer--notice {
         height: 1;
         color: $warning;
+        /* One row, and the row is *routinely* too narrow for the line. Every
+           honest delivery note names both what happened and what to do about
+           it, so the operative clause is often past column 60 — and a plain
+           one-row Static clips it with nothing on screen to say it clipped. A
+           sentence that stops mid-clause reads as a sentence that ended, which
+           is the same silent-truncation failure the command body's overflow
+           marker exists to prevent. ``text-overflow: ellipsis`` is only
+           reachable with wrapping off: with wrapping on the widget folds the
+           tail onto a second row that ``height: 1`` then hides, and nothing is
+           ever marked. */
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     """
 
@@ -99,6 +110,17 @@ class Composer(Vertical):
         self._text_area: ChatTextArea | None = None
 
     def compose(self) -> ComposeResult:
+        # ``compact`` rather than ``border: none`` in this class's CSS, and the
+        # difference is two rows of jitter. ``TextArea`` re-declares
+        # ``border: tall`` inside its own ``&:focus`` block, which outranks a
+        # descendant selector written here — so the editor was three rows while
+        # focused and one row while not, and the whole interface above it jumped
+        # by two the instant focus moved. That is not only ugly: a mouse press on
+        # a prompt button moves focus here away, the layout shifts under the
+        # cursor between the press and the release, and the click lands on
+        # whatever slid into that row. ``compact`` sets ``-textual-compact``,
+        # whose ``!important`` wins in both states, so the height stops
+        # depending on focus at all.
         self._text_area = ChatTextArea(
             "",
             language=None,
@@ -106,6 +128,7 @@ class Composer(Vertical):
             show_line_numbers=False,
             placeholder=PLACEHOLDER,
             id="composer-input",
+            compact=True,
         )
         yield self._text_area
         self._notice_widget = Static(

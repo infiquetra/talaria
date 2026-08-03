@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from talaria.domain.decode import (
     DecodedFrame,
@@ -101,6 +101,20 @@ class SessionState:
     transcript: tuple[TranscriptEntry, ...] = ()
     subagents: tuple[SubagentState, ...] = ()
     prompts: tuple[PendingPrompt, ...] = ()
+    #: Prompts whose answer is on the wire right now.
+    #:
+    #: :func:`respond_to_prompt` takes a prompt out of ``prompts`` *before* the
+    #: call goes out, so one question cannot collect two answers while the first
+    #: is in flight. It parks it here rather than dropping it, because the
+    #: gateway can still speak about a request during that window: a
+    #: ``<bridge>.expire`` that arrives while the answer is travelling used to
+    #: find nothing, write no marker, and record no flushed id — after which an
+    #: answer that reached no socket put the control back on screen for a bridge
+    #: the gateway had already closed, permanently, with no second expiry ever
+    #: coming. Parking the prompt is what gives :func:`_on_prompt_expire`
+    #: something to name and what makes ``flushed_prompt_ids`` reachable in the
+    #: case :func:`restore_prompt` documents.
+    answering: tuple[PendingPrompt, ...] = ()
     usage: Usage = field(default_factory=Usage)
 
     #: Unknown event types seen, in first-seen order, deduplicated.
@@ -111,6 +125,27 @@ class SessionState:
     #: tool-completion path cannot both write the same trace.
     flushed_prompt_ids: frozenset[str] = frozenset()
 
+    #: Approvals :func:`age_out_approvals` withdrew whose fate is still unknown.
+    #:
+    #: **This exists because a withdrawal removes the evidence that the session
+    #: was blocked.** ``turn_status`` reports ``waiting`` only while ``prompts``
+    #: is non-empty, so the instant an approval ages out the turn falls back to
+    #: ``streaming`` and the screen says ``working…`` — about a session whose
+    #: agent Talaria has no reason to believe resumed. Under the gateway's
+    #: default 300-second wait it very likely did resume, because approval fails
+    #: closed and returns (``tools/approval.py:4050`` returns ``"outcome":
+    #: "timeout"``). Under a deployment that raised that timeout above Talaria's
+    #: own :data:`APPROVAL_STALE_AFTER`, it did not: the gateway is still
+    #: holding, and ``working…`` describes a session that will never move.
+    #:
+    #: Talaria cannot tell those two apart, and the honest state is neither
+    #: ``waiting`` nor ``working`` but "withdrawn, and what happens next is
+    #: unknown". That state is carried here rather than as a fifth ``turn``
+    #: value because KTD5 freezes the v1 status contract at four
+    #: (``docs/formats/status-line.md``); it is spent on the screen instead, by
+    #: :func:`~talaria.ui.prompts.activity_line`.
+    withdrawn_approvals: int = 0
+
     last_status_note: str = ""
     last_observed_at: float = 0.0
     entry_seq: int = 0
@@ -119,12 +154,67 @@ class SessionState:
     late_events_ignored: int = 0
     synthetic_turn_starts: int = 0
     rejected_responses: int = 0
+    #: Prompt requests whose ``request_id`` was already outstanding. That is the
+    #: gateway re-announcing a live prompt across a reconnect (F6) and keeping
+    #: the first record is correct — but it used to be the *same line* that
+    #: silently discarded a second approval, so the two are now separated and
+    #: this one is counted rather than invisible.
+    duplicate_prompts_ignored: int = 0
+    #: How many ``approval.request`` events this session has raised. Approval
+    #: carries no request id on the wire, so this counter is what makes each
+    #: arrival a distinct registry entry instead of the second one colliding
+    #: with the first and being thrown away.
+    approvals_seen: int = 0
 
     def prompt_for(self, request_id: str) -> PendingPrompt | None:
         for prompt in self.prompts:
             if prompt.request_id == request_id:
                 return prompt
         return None
+
+    def answering_for(self, request_id: str) -> PendingPrompt | None:
+        """The prompt with an answer in flight under this id, if any."""
+        for prompt in self.answering:
+            if prompt.request_id == request_id:
+                return prompt
+        return None
+
+    def outstanding_approvals(self, session_id: str | None) -> tuple[PendingPrompt, ...]:
+        """Every approval the gateway may still be holding for one session.
+
+        **``answering`` is searched as well as ``prompts``, and that is the
+        whole point of this method.** "Outstanding" is a statement about the
+        *gateway's* queue, not about Talaria's screen, and an approval whose
+        answer is in flight has not left that queue yet — the reply that would
+        say so has not arrived. Reading ``prompts`` alone made the one approval
+        the operator had *just answered* invisible to the rule whose entire job
+        is to stop a second one being answered: :func:`respond_to_prompt` moves
+        a prompt out of ``prompts`` before the call goes out, so for the length
+        of one round trip the count was one short. A second ``approval.request``
+        arriving inside that window was marked answerable, offered its
+        affirmative buttons, and answered — putting two ``approval.respond``
+        calls in flight against a resolver that pops the FIFO head with no
+        discriminator. Which command each one released was then decided by
+        arrival order.
+
+        Ordered by ``seq``, the frame sequence the prompt arrived on, because
+        that is the order the gateway enqueued them and therefore the order its
+        resolver pops them in (``tools/approval.py:2214-2222``: oldest first,
+        FIFO). Concatenating the two tuples would not give that order —
+        ``answering`` holds whatever was answered most recently, which is
+        routinely *older* than what is still on screen.
+        """
+        return tuple(
+            sorted(
+                (
+                    p
+                    for p in (*self.prompts, *self.answering)
+                    if p.kind == "approval"
+                    and (session_id is None or p.session_id == session_id)
+                ),
+                key=lambda p: (p.seq, p.request_id),
+            )
+        )
 
     def subagent_for(self, identity: str) -> SubagentState | None:
         for row in self.subagents:
@@ -185,6 +275,8 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
         interim_boundary=0,
         subagents=(),
         prompts=(),
+        answering=(),
+        approvals_seen=0,
         flushed_prompt_ids=frozenset(),
         last_status_note="",
     )
@@ -313,23 +405,340 @@ def record_local_note(state: SessionState, text: str, *, at: float) -> SessionSt
     return replace(next_state, last_observed_at=max(state.last_observed_at, at))
 
 
-def respond_to_prompt(state: SessionState, request_id: str) -> tuple[SessionState, bool]:
-    """Answer an outstanding prompt. Returns the new state and whether it took.
+#: What labels the command in every durable record of an approval.
+#:
+#: One constant for the transcript's arrival entry and its answered entry, so a
+#: reader searching a saved transcript for what was approved has one string to
+#: search for rather than two that drifted apart.
+APPROVAL_COMMAND_LABEL: Final[str] = "command: "
+
+#: The answer was typed into a control the registry no longer holds.
+REFUSED_NOT_OUTSTANDING: Final[str] = (
+    "that prompt is no longer waiting for an answer — nothing was sent"
+)
+
+#: The answer belongs to a session that is no longer the focused one.
+REFUSED_WRONG_SESSION: Final[str] = (
+    "that prompt belongs to a session Talaria is no longer showing — nothing was sent"
+)
+
+#: Why a queued approval carries no answer control. Shown on the card by the
+#: projection and repeated by the refusal below, from this one string, so the
+#: screen and the registry cannot come to say different things.
+UNCORRELATED_APPROVAL: Final[str] = (
+    "more than one approval is waiting and this gateway sends no request id "
+    "with an approval, so an answer cannot be aimed at one of them"
+)
+
+#: What the operator is told if an answer is attempted anyway.
+REFUSED_UNCORRELATED_APPROVAL: Final[str] = (
+    f"{UNCORRELATED_APPROVAL} — nothing was sent; deny them all, or let them expire"
+)
+
+
+def respond_to_prompt(
+    state: SessionState, request_id: str, *, session_id: str | None = None
+) -> tuple[SessionState, str | None]:
+    """Answer an outstanding prompt. Returns the new state and any refusal.
+
+    The second element is ``None`` when the answer may be sent, and otherwise
+    the operator-facing reason it may not. It is a reason rather than a boolean
+    because the three refusals below want three different sentences on screen,
+    and a caller that has to re-derive which one fired is a caller that will
+    eventually derive the wrong one.
 
     A response for a ``request_id`` with no outstanding prompt is **refused
     here**, before it can reach the socket. The gateway tolerates a late respond
-    (``_respond(..., allow_expired=True)`` at ``tui_gateway/server.py:10233-10235``
+    (``_respond(..., allow_expired=True)`` at ``tui_gateway/server.py:10228-10235``
     answers ``{"status": "expired"}``), but tolerating it is not the same as
     routing it correctly — R8 requires that a late response cannot be attached
     to a different request, and the only place that can be guaranteed is the
     registry that knows which ids are live.
+
+    ``session_id`` is the other half of R9's correlation clause, and it is
+    checked here for the same reason: a caller comparing the two itself would be
+    one caller's discipline, while the registry is the one place that knows what
+    session each live id belongs to. Passing ``None`` skips the check, which is
+    what a caller with no session context (a replay-mode test, the domain suite)
+    actually means — it is not an assertion that any session matches.
+
+    **The third refusal is about approval alone, and it is a safety rule rather
+    than a race.** ``approval.request`` carries no request id
+    (``tui_gateway/server.py:1655-1674``) and ``approval.respond`` takes no
+    discriminator: it pops the *oldest* entry in the session's queue
+    (``tools/approval.py:2214-2222``). While exactly one approval is
+    outstanding, that is unambiguous — the answer lands on that approval, or on
+    an empty queue, and the reply's own ``resolved`` count says which. The
+    moment a second approval is outstanding it stops being unambiguous, because
+    the gateway also removes an entry on timeout and on interrupt **without
+    emitting anything** (``tools/approval.py:3336-3344``), so the queue head and
+    the oldest card on screen can differ. Answering then approves a command the
+    operator was never shown. So Talaria refuses, and the interface offers the
+    one answer that needs no correlation instead: deny every queued approval at
+    once.
+
+    Every refusal increments ``rejected_responses`` rather than raising. A
+    refused response is an ordinary race, not a fault.
     """
     prompt = state.prompt_for(request_id)
     if prompt is None:
-        return replace(state, rejected_responses=state.rejected_responses + 1), False
+        return _refuse(state), REFUSED_NOT_OUTSTANDING
+    if session_id is not None and prompt.session_id is not None and prompt.session_id != session_id:
+        return _refuse(state), REFUSED_WRONG_SESSION
+    if prompt.kind == "approval" and len(state.outstanding_approvals(prompt.session_id)) > 1:
+        return _refuse(state), REFUSED_UNCORRELATED_APPROVAL
 
-    remaining = tuple(p for p in state.prompts if p.request_id != request_id)
-    return replace(state, prompts=remaining), True
+    return _start_answering(state, (prompt,)), None
+
+
+@dataclass(frozen=True)
+class DenyAllScope:
+    """What one ``all: true`` denial covers, split by what may be claimed of it.
+
+    Two groups, because two different questions have two different answers and
+    reporting one number for both is how deny-all first came to under-count and
+    then came to over-claim.
+
+    ``taken`` is what *this* call moved out of the registry. It is exactly what
+    this call may put back (``not_sent``) or settle, and it is the only group
+    whose fate this call decides: nothing else in the session had an answer
+    travelling for it, so the ``all`` denial is the only respond that reaches
+    it.
+
+    ``already_in_flight`` is the approvals a *different* call is still waiting
+    on. The gateway's ``all`` reaches them too —
+    ``resolve_gateway_approval(..., resolve_all=True)`` takes ``list(queue)``
+    and applies the choice to every entry — so they must be *named*: an
+    operator told "2 denied" when the denial swept three is being misled about
+    a safety action. But they must not be named as **denied**, which is the
+    claim the old ``total`` made. Each of them has its own ``approval.respond``
+    on the wire, and that respond can carry an affirmative the operator pressed
+    a moment earlier. Which one the gateway applies is decided by arrival order
+    there, which Talaria neither knows nor waits for. Summing the two produced
+    a transcript holding two different fates for one command: ``denied every
+    waiting approval: 2 waiting`` beside ``approval answered: once · command:
+    rm -rf /``.
+
+    So the counts are reported separately and the second one is reported as
+    undecided. That also bounds repeated presses, which the sum did not: a
+    second deny-all inside the first one's round trip re-counted every approval
+    the first had already claimed, so three approvals and two presses reported
+    five denials. ``denied`` only ever counts prompts this call removed from the
+    registry, and a press that removes none is refused — so the denials claimed
+    across a session can never exceed the approvals that arrived in it.
+    """
+
+    taken: tuple[PendingPrompt, ...] = ()
+    already_in_flight: tuple[PendingPrompt, ...] = ()
+
+    @property
+    def denied(self) -> int:
+        """How many approvals **this call** took off the screen and denied."""
+        return len(self.taken)
+
+    @property
+    def undecided(self) -> int:
+        """How many the ``all`` flag also reaches whose outcome cannot be named."""
+        return len(self.already_in_flight)
+
+
+def respond_to_all_approvals(
+    state: SessionState, *, session_id: str | None
+) -> tuple[SessionState, DenyAllScope]:
+    """Take every answerable approval in one session, for the answer that needs
+    no aim — and report every approval the gateway will resolve.
+
+    ``approval.respond`` accepts ``all: true``, which routes to
+    ``resolve_gateway_approval(..., resolve_all=True)`` and applies one choice
+    to every entry in the session's queue (``tools/approval.py:2219-2226``). One
+    choice for every entry needs no correlation at all, which is what makes it
+    the only safe action while more than one approval is outstanding — and why
+    the interface only ever offers it as *deny*: an affirmative applied to a
+    command nobody has read is the defect this whole rule exists to prevent.
+
+    An approval whose own answer is already travelling is **named but not
+    taken, and not claimed as denied**. Named, because the gateway's ``all``
+    reaches it and an operator told "2 denied" when the denial swept three is
+    being misled about a safety action. Not taken, because the call that owns
+    it will settle or restore it when its reply lands, and a second owner would
+    either resurrect a control whose answer is in flight or settle one twice.
+    Not claimed as denied, because its own respond may carry an affirmative —
+    see :class:`DenyAllScope`.
+
+    Refused when nothing is answerable: deny-all is only ever reached from a
+    mounted card, so an empty ``taken`` means the queue emptied underneath the
+    operator between the press and the dispatch.
+    """
+    outstanding = state.outstanding_approvals(session_id)
+    live = {p.request_id for p in state.prompts}
+    taken = tuple(p for p in outstanding if p.request_id in live)
+    if not taken:
+        return _refuse(state), DenyAllScope()
+    scope = DenyAllScope(
+        taken=taken,
+        already_in_flight=tuple(p for p in outstanding if p.request_id not in live),
+    )
+    return _start_answering(state, taken), scope
+
+
+def _refuse(state: SessionState) -> SessionState:
+    return replace(state, rejected_responses=state.rejected_responses + 1)
+
+
+def _start_answering(
+    state: SessionState, prompts: tuple[PendingPrompt, ...]
+) -> SessionState:
+    """Move prompts out of the registry and into the in-flight set."""
+    taken = {p.request_id for p in prompts}
+    return replace(
+        state,
+        prompts=tuple(p for p in state.prompts if p.request_id not in taken),
+        answering=(*state.answering, *prompts),
+    )
+
+
+def settle_prompt(state: SessionState, request_id: str) -> SessionState:
+    """Drop an in-flight answer once its outcome is known. Idempotent.
+
+    Called for every terminal outcome, including the ones that put the control
+    back — an id left in ``answering`` forever would let a much later expiry
+    write a marker for a question that was answered minutes ago.
+    """
+    if state.answering_for(request_id) is None:
+        return state
+    return replace(
+        state, answering=tuple(p for p in state.answering if p.request_id != request_id)
+    )
+
+
+def restore_prompt(state: SessionState, prompt: PendingPrompt) -> SessionState:
+    """Put a prompt back after an answer that reached no socket at all.
+
+    :func:`respond_to_prompt` clears the prompt *before* the call goes out, so
+    one question cannot collect two answers while the first is in flight — for
+    a secret or a sudo password that is the worst retry available. The cost is
+    that a call which failed is a question the operator can no longer answer, so
+    the one outcome that is *definite* about non-delivery — nothing was written
+    to any socket — puts the control back.
+
+    Two conditions refuse the restore, and both are races rather than faults. A
+    request id already in ``flushed_prompt_ids`` expired while the call was out,
+    so restoring it would put a control on screen that the gateway has stopped
+    listening to. An id already outstanding means the gateway re-announced the
+    prompt across a reconnect, and the announced one is the live record.
+
+    The first of those guards used to be unreachable, which is worth stating
+    because it looked correct and was load-bearing. Both writers of
+    ``flushed_prompt_ids`` require the prompt to still be *outstanding*, and by
+    construction it is not — this function is only ever called about a prompt
+    ``respond_to_prompt`` already removed. An expiry landing in that window
+    therefore wrote nothing at all and the control came back for a bridge the
+    gateway had closed, forever, because no second expiry is ever emitted. The
+    ``answering`` set is what closed that hole; see its field docstring.
+
+    No transcript entry is written. The ``prompt`` line was appended when the
+    request first arrived and the transcript is append-only, so a second one
+    would show the agent asking twice.
+    """
+    state = settle_prompt(state, prompt.request_id)
+    if prompt.request_id in state.flushed_prompt_ids:
+        return state
+    if state.prompt_for(prompt.request_id) is not None:
+        return state
+    return replace(state, prompts=(*state.prompts, prompt))
+
+
+#: How long an approval may sit unanswered before Talaria stops offering it.
+#:
+#: **Approval is the one bridge the gateway never announces a timeout for.**
+#: ``<bridge>.expire`` is emitted for ``secret``, ``sudo``, ``clarify`` and
+#: ``terminal.read`` and for nothing else (``tui_gateway/server.py:2981-2998``
+#: at Hermes ``7f4d15515``); ``tools/approval.py`` drops its own entry on
+#: timeout and on interrupt through ``_drop_entry()`` with no emit at all. So
+#: :data:`_EXPIRE_EVENTS` correctly has no ``approval.expire`` — and nothing
+#: else aged an approval out either, which left a card on screen for a question
+#: the gateway had stopped holding. That card is not merely stale: a second,
+#: genuine approval arriving beside it is marked unanswerable, because the rule
+#: that counts outstanding approvals counts the phantom too. The operator then
+#: cannot allow the command they actually want to allow, and the only offered
+#: action denies it.
+#:
+#: 300 seconds is the gateway's own default (``_get_approval_timeout()``,
+#: ``tools/approval.py:2648-2657``). It is **configurable there**, so this is
+#: not a deadline Talaria knows — it is the only number Talaria has any grounds
+#: for, and what the operator is told when it passes says exactly that. What is
+#: not in doubt is the direction of failure: the gateway fails closed
+#: (``"Silence is not consent."``, ``:2976``, recorded as ``"outcome":
+#: "timeout"`` at ``:4050``), so an approval Talaria stops offering is one the
+#: gateway has most likely already refused rather than one it might still grant.
+APPROVAL_STALE_AFTER: Final[float] = 300.0
+
+#: What the transcript says when an approval is withdrawn locally.
+#:
+#: Every clause is something Talaria observed or can cite, and the sentence
+#: stops before the one thing it cannot know. "nothing was sent" is a fact
+#: about this process. "the gateway's default wait is 5 minutes" is a fact
+#: about the pinned source. "has probably stopped waiting" is a hedge and is
+#: written as one. What is deliberately absent is the word *denied*: the
+#: gateway fails closed so a denial is the likely outcome, but no reply said so
+#: and the timeout is configurable, so claiming it would be inventing an
+#: acknowledgement.
+APPROVAL_AGED_OUT: Final[str] = (
+    "approval no longer offered — nothing was sent; the gateway's default wait "
+    "is 5 minutes and it announces no approval timeout, so it has probably "
+    "stopped waiting"
+)
+
+
+def age_out_approvals(state: SessionState, *, now: float) -> SessionState:
+    """Withdraw approvals older than :data:`APPROVAL_STALE_AFTER`. Pure.
+
+    Only approvals, because only approval lacks a gateway ``.expire`` — aging
+    the other four out locally would race the event that is actually coming and
+    write a second, differently-worded marker for the same timeout.
+
+    Only prompts still in ``prompts``: an approval in ``answering`` has a call
+    of its own outstanding, and that call has a bounded timeout that will settle
+    or restore it. Two owners for one entry is the bookkeeping defect this
+    module already carries two comments about.
+
+    ``now`` is passed in rather than read, for the reason every clock in this
+    package is: the caller knows which clock its ``opened_at`` came from. Live
+    frames are stamped with the wall clock and replayed frames with the
+    recorded one, and mixing them would age out a whole recorded corpus on the
+    first tick. A non-positive ``now`` or ``opened_at`` disables the check
+    entirely, which is the honest reading of "this record has no usable time"
+    — a corpus whose timestamps did not parse must not be treated as ancient.
+
+    The withdrawal is recorded in ``flushed_prompt_ids`` for the same reason an
+    expiry is: it is the latch that stops a late ``restore_prompt`` putting the
+    control back after Talaria has told the operator it is gone.
+    """
+    if now <= 0.0:
+        return state
+    stale = tuple(
+        p
+        for p in state.prompts
+        if p.kind == "approval" and p.opened_at > 0.0 and now - p.opened_at >= APPROVAL_STALE_AFTER
+    )
+    if not stale:
+        return state
+    dropped = {p.request_id for p in stale}
+    next_state = replace(
+        state,
+        prompts=tuple(p for p in state.prompts if p.request_id not in dropped),
+        flushed_prompt_ids=state.flushed_prompt_ids | dropped,
+        # Counted, not flagged: two approvals can age out on one tick, and the
+        # screen names how many were withdrawn rather than saying "an approval"
+        # about a number it knows.
+        withdrawn_approvals=state.withdrawn_approvals + len(stale),
+    )
+    for prompt in stale:
+        line = f"{APPROVAL_AGED_OUT}: {prompt.summary}"
+        if prompt.command:
+            line = f"{line}\n{APPROVAL_COMMAND_LABEL}{prompt.command}"
+        next_state = _append(next_state, "prompt-expired", line)
+    return next_state
 
 
 # ── The reducer ──────────────────────────────────────────────────────────
@@ -399,7 +808,7 @@ def _apply_event(state: SessionState, event: GatewayEvent) -> SessionState:
 
     handler = _HANDLERS.get(event.type)
     if handler is not None:
-        return handler(state, event)
+        return _clear_withdrawal_on_progress(state, handler(state, event))
 
     if event.type in SYSTEM_LINE_EVENTS:
         return _apply_system_line(state, event)
@@ -408,6 +817,36 @@ def _apply_event(state: SessionState, event: GatewayEvent) -> SessionState:
         return state
 
     return state
+
+
+def _turn_progress(state: SessionState) -> tuple[Any, ...]:
+    """The fields that move when the agent is doing something."""
+    return (state.turn, state.turn_index, state.streaming_text, state.segments)
+
+
+def _clear_withdrawal_on_progress(
+    before: SessionState, after: SessionState
+) -> SessionState:
+    """Retire :attr:`SessionState.withdrawn_approvals` once the agent moves.
+
+    A withdrawal says "what the session does next is unknown". The moment the
+    agent produces a token or the turn changes phase, it is no longer unknown —
+    it is observed — so the unknown state has to end, or the screen keeps
+    hedging over a session it can watch working.
+
+    **The clearing evidence is deliberately narrow.** A heartbeat, an
+    ambient event, or another prompt arriving proves the socket is alive and
+    proves nothing about the agent, which is exactly the distinction the
+    withdrawn state exists to keep. So only the turn phase, the turn index and
+    the assistant's own accumulating text count — the case this must not clear
+    on is the bad one, where the gateway is still holding the approval and the
+    agent is blocked inside the tool call producing nothing at all.
+    """
+    if not after.withdrawn_approvals:
+        return after
+    if _turn_progress(after) == _turn_progress(before):
+        return after
+    return replace(after, withdrawn_approvals=0)
 
 
 # ── Turn lifecycle ───────────────────────────────────────────────────────
@@ -723,20 +1162,40 @@ def _on_prompt_request(state: SessionState, event: GatewayEvent) -> SessionState
 
     ``approval.request`` carries no ``request_id`` at the pin — its payload is
     ``{description, command, choices, allow_permanent, smart_denied}``
-    (``createGatewayEventHandler.ts:1130-1147``) and ``approval.respond``
-    resolves by session key instead (``tui_gateway/methods_prompt.py:886-900``).
-    R8 nevertheless requires a keyed registry, so approvals get a synthesized
-    session-scoped key. There can only be one approval outstanding per session
-    on this protocol, so the synthesized key is stable rather than a guess.
+    (``tui_gateway/server.py:1655-1674``) and ``approval.respond`` resolves by
+    session key instead (``tui_gateway/methods_prompt.py:886-905``). R8
+    nevertheless requires a keyed registry, so approvals get a synthesized key.
+
+    **That key counts arrivals; it used to be one key per session.** A stable
+    ``approval:<session_id>`` looked safe on the reasoning that a session can
+    only block on one approval at a time, and that reasoning is wrong: every
+    guarded call appends its own entry to a per-session *list*
+    (``tools/approval.py:3271-3272``) and each one emits its own
+    ``approval.request``. With one key the second approval collided with the
+    first and was thrown away by the dedupe below — no card, no transcript line,
+    no counter — while the operator went on looking at the first command and the
+    gateway went on holding two. Pressing "once" then resolved the queue's head.
+    Every arrival is now its own entry, so nothing that blocks a session is ever
+    discarded. Which of them may be *answered* is decided in
+    :func:`respond_to_prompt`, not here.
+
+    The dedupe that remains is the reconnect case (F6): a ``request_id`` already
+    outstanding is the gateway re-announcing a live prompt, and keeping the
+    first record is correct. It is counted so it stays visible.
     """
     kind = _PROMPT_EVENTS[event.type]
     request_id = coerce_text(event.payload.get("request_id"))
+    approvals_seen = state.approvals_seen
     if not request_id and kind == "approval":
-        request_id = f"approval:{state.focused_session_id or 'session'}"
+        approvals_seen += 1
+        request_id = f"approval:{state.focused_session_id or 'session'}#{approvals_seen}"
     if not request_id:
         return state
-    if state.prompt_for(request_id) is not None:
-        return state
+    if state.prompt_for(request_id) is not None or state.answering_for(request_id) is not None:
+        return replace(
+            state, duplicate_prompts_ignored=state.duplicate_prompts_ignored + 1
+        )
+    state = replace(state, approvals_seen=approvals_seen)
 
     summary = _prompt_summary(kind, event.payload)
     raw_choices = event.payload.get("choices")
@@ -745,6 +1204,7 @@ def _on_prompt_request(state: SessionState, event: GatewayEvent) -> SessionState
         if isinstance(raw_choices, list)
         else ()
     )
+    command = coerce_text(event.payload.get("command")) if kind == "approval" else ""
     prompt = PendingPrompt(
         request_id=request_id,
         kind=kind,
@@ -752,21 +1212,79 @@ def _on_prompt_request(state: SessionState, event: GatewayEvent) -> SessionState
         opened_at=event.at,
         seq=event.seq,
         choices=choices,
+        session_id=event.session_id or state.focused_session_id,
+        command=command,
+        read_start=_optional_index(event.payload.get("start")) if kind == "terminal_read" else None,
+        read_count=_optional_index(event.payload.get("count")) if kind == "terminal_read" else None,
     )
     return _append(
         replace(state, prompts=(*state.prompts, prompt)),
         "prompt",
-        f"{kind} prompt awaiting an answer: {summary}",
+        prompt_registration_line(prompt),
     )
 
 
+def prompt_registration_line(prompt: PendingPrompt) -> str:
+    """The transcript entry that records a prompt arriving — the audit anchor.
+
+    **For an approval this is the only place the whole command is written
+    down.** The answered line downstream goes through
+    :func:`record_local_note`, which clips at
+    :data:`~talaria.domain.normalize.SYSTEM_LINE_CLIP`; this entry does not,
+    because "which command did I approve" is the question the transcript exists
+    to answer afterwards and a clipped answer to it is not an answer. The
+    command goes on its own line so a multi-line command stays multi-line —
+    :func:`~talaria.domain.projection.transcript_view` splits an entry on
+    newlines, so each one becomes its own row rather than a single row with
+    ``\\n`` defanged into a control picture.
+
+    **A ``terminal_read`` gets one of these too, and that is a decision rather
+    than an oversight.** This buffer is what ``terminal.read`` serves back to
+    the agent, so every line here is an input to the next read, and
+    :meth:`~talaria.ui.app.TalariaApp._report_prompt_outcome` keeps Talaria's
+    own commentary about its *answers* out for exactly that reason. This line
+    stays because it records what the *gateway* asked for, not what Talaria
+    replied: it is one line per request, it does not compound, and an agent
+    reading the operator's screen is a privacy-relevant act that the operator's
+    own record should show. Recorded in ``docs/engineering-journal/DECISIONS.md``.
+    """
+    line = f"{prompt.kind} prompt awaiting an answer: {prompt.summary}"
+    if prompt.command:
+        return f"{line}\n{APPROVAL_COMMAND_LABEL}{prompt.command}"
+    return line
+
+
+def _optional_index(value: Any) -> int | None:
+    """Read an optional non-negative window argument, or ``None``.
+
+    ``bool`` is rejected for the same reason :func:`_as_int` rejects it — it is
+    an ``int`` subclass, and a ``True`` where a line number belongs is a
+    protocol oddity to ignore rather than to read as line 1. Anything that is
+    not an integer becomes ``None``, which the gateway's own contract defines
+    as "the visible screen" rather than as an error.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
 def _prompt_summary(kind: PromptKind, payload: Mapping[str, Any]) -> str:
-    """A one-line description that never carries the answer.
+    """A one-line **header** that never carries the answer, and never stands in
+    for the command.
 
     Only fields the gateway sends *outbound* are read. The credential-bearing
     half of every bridge travels the other way (R9), so there is nothing
     sensitive to include here — but reading only the named fields keeps it that
     way if a payload grows.
+
+    For approval this is the *description* — which at the pin is the joined
+    pattern warnings that triggered the prompt, not the command
+    (``tools/approval.py:3616``, ``:3651-3660``). It is a header and nothing
+    more: the command travels beside it in ``PendingPrompt.command`` and is
+    rendered whole. This function used to be the *only* approval field the
+    interface read, which is how ``rm -rf / --no-preserve-root`` could be
+    approved from a card whose one line of text said "recursive delete outside
+    the workspace".
     """
     if kind == "clarify":
         return coerce_text(payload.get("question")) or "clarification requested"
@@ -791,18 +1309,31 @@ def _on_prompt_expire(state: SessionState, event: GatewayEvent) -> SessionState:
     bridges. The gateway emits ``.expire`` for ``secret``, ``sudo``, ``clarify``
     and ``terminal.read`` alike (``tui_gateway/server.py:2989-2998``); the
     shipping terminal UI only handles the first two.
+
+    **An expiry is honoured for a prompt whose answer is in flight, too.**
+    :func:`respond_to_prompt` empties ``prompts`` before the call goes out, so
+    for the length of one round trip an arriving ``.expire`` used to match
+    nothing and return the state untouched: no marker, and no entry in
+    ``flushed_prompt_ids``. That second omission is the damaging one, because
+    ``flushed_prompt_ids`` is the only thing standing between an answer that
+    reached no socket and a resurrected control — and the gateway never sends a
+    second expiry, so the control came back for a bridge that had already
+    closed and stayed there for the rest of the session, with the turn pinned at
+    ``waiting``. ``answering`` is searched for exactly this window. The marker
+    is the same marker, because from the operator's side the same thing
+    happened: the question timed out unanswered.
     """
     request_id = coerce_text(event.payload.get("request_id"))
     if not request_id:
         return state
-    prompt = state.prompt_for(request_id)
+    prompt = state.prompt_for(request_id) or state.answering_for(request_id)
     if prompt is None:
         return state
-    remaining = tuple(p for p in state.prompts if p.request_id != request_id)
     return _append(
         replace(
             state,
-            prompts=remaining,
+            prompts=tuple(p for p in state.prompts if p.request_id != request_id),
+            answering=tuple(p for p in state.answering if p.request_id != request_id),
             flushed_prompt_ids=state.flushed_prompt_ids | {request_id},
         ),
         "prompt-expired",
@@ -1089,17 +1620,25 @@ _HANDLERS: Mapping[str, _Handler] = {
 EXPIRE_EVENT_KINDS: Mapping[str, PromptKind] = _EXPIRE_EVENTS
 
 __all__ = [
+    "APPROVAL_AGED_OUT",
+    "APPROVAL_COMMAND_LABEL",
+    "APPROVAL_STALE_AFTER",
     "DELIVERY_NOTES",
     "EXPIRE_EVENT_KINDS",
     "DeliveryState",
+    "DenyAllScope",
     "SessionState",
+    "age_out_approvals",
     "apply_frame",
     "apply_frames",
     "cancel_turn",
     "focus_session",
     "is_terminal_status",
+    "prompt_registration_line",
     "record_local_note",
     "record_submission",
+    "respond_to_all_approvals",
     "respond_to_prompt",
+    "restore_prompt",
     "set_connection",
 ]
