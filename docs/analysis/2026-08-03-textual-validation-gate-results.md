@@ -6,15 +6,15 @@ Date: 2026-08-03
 
 ## Verdict
 
-> **SUPERSEDED 2026-08-03, later the same day. The verdict is now `fail`, and the framework
-> decision is NOT settled.** Everything below this box was written when the gate reported
-> `pass`. It is kept as written, because the reason it was wrong is the most useful thing in
-> this document.
+> **This document has been through three verdicts in one day, and the sequence is the most
+> useful thing in it.** `pass` on a gate that was measuring itself → `fail` on the repaired
+> gate, which found real defects → `pass` on the repaired gate after those defects were fixed.
+> Everything below the history is the third run. Nothing from the first run's numbers survives.
 >
-> An adversarial audit found that four of the gate's seven measurements were structurally
-> incapable of failing, and proved it by injecting the exact defect each check exists to
-> detect. The decisive one: the content-completeness check called
-> `content_is_complete(app.state, transcript_view(app.state))` — the projection compared
+> **First verdict: `pass`, and worthless.** An adversarial audit found that four of the gate's
+> seven measurements were structurally incapable of failing, and proved it by injecting the
+> exact defect each check exists to detect. The decisive one: the content-completeness check
+> called `content_is_complete(app.state, transcript_view(app.state))` — the projection compared
 > against itself. `content_is_complete`'s own docstring warns that this "would pass no matter
 > what", and both call sites did precisely it. Making the transcript pane a no-op, so the
 > interface rendered *nothing at all*, still produced a `pass` verdict with zero content loss.
@@ -27,28 +27,39 @@ Date: 2026-08-03
 > The checks were repaired to measure what they claim: mounted widgets from `len(children)`,
 > renders counted where renders happen, content completeness compared against the pane's
 > actually-rendered lines, plus new checks for frame accounting, minimum sample counts, and a
-> missing corpus path becoming an error instead of a silent skip.
+> missing corpus path becoming an error instead of a silent skip. That is 13 checks, not 10.
 >
-> **The repaired gate immediately failed, on a real defect.** `TranscriptPane.reconcile`
-> desynchronizes from the projection when a transient notice line appears mid-transcript and
-> later disappears: it assumes append-only growth in which only the trailing block is
-> provisional, so a line inserted and later withdrawn above that block leaves the pane
-> permanently misaligned. Measured on the recorded corpus: **274 lines rendered against 275
-> projected, misaligned from index 251, with one line of real content rendered nowhere at
-> all.** The operator would silently lose a line of the conversation.
+> **Second verdict: `fail`, on three real defects.** All three were in Talaria's own
+> reconciliation code, and the third only became visible once the first was fixed:
 >
-> Per the plan's unattended contract, a U5 gate failure halts the run. It has halted here.
-> `platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md` must not
-> be accepted on this evidence. What the gate now measures honestly, and what still passes
-> (memory, determinism, render cadence, frame accounting) is recorded in
-> `evidence/2026-08-03-textual-validation-gate.json`.
+> 1. **The pane's scan floor advanced into the provisional streaming block.** The projection
+>    places in-flight streaming text *after* the committed lines, so committing an entry
+>    mid-stream pushes every provisional line down. Two snapshots agree on a provisional line
+>    whenever the stream did not move between them, and the pane read that agreement as
+>    "settled". Measured: **274 lines rendered against 275 projected, misaligned from index
+>    251, with one line of real content rendered nowhere at all.**
+> 2. **The window's position was inferred from an eviction tally.** One counter served as both
+>    "lines folded away" and "index of the first mounted line". Those agree only if no line is
+>    ever evicted twice — and correct reconciliation evicts twice routinely. The tally reached
+>    **7,493 for a transcript that only ever held 4,454 lines.**
+> 3. **The mount cap was enforced after the mount, not before**, so a tick that re-derived the
+>    whole provisional block transiently held **667 widgets against a ceiling of 600.**
 >
-> Note what this does *not* say. It is not evidence that Textual is unsuitable — the defect is
-> in Talaria's own reconciliation code, not in the framework. It says the framework question is
-> still open, because the run that claimed to answer it was measuring itself.
+> Defects 2 and 3 had been reported as passing checks before defect 1 was fixed, because
+> defect 1 suppressed the work that would have exercised them.
+>
+> **Third verdict: `pass`, and this time the checks can fail.** All 13. The fixes are
+> `TranscriptView.committed_lines` (the domain publishes the settled boundary rather than
+> leaving the renderer to infer it), `TranscriptPane._top` as an absolute position, and
+> condensing before mounting. Each is pinned by a test verified to fail against the
+> implementation it replaced.
+>
+> Note what none of this says. At no point was there evidence that Textual is unsuitable —
+> every defect was in Talaria's own code. What the second verdict said was that the framework
+> question was still *open*, because the run that claimed to answer it was measuring itself.
 
-**Pass.** All ten threshold checks passed. Textual 8.2.8 is validated as Talaria's presentation
-layer for v0.1, and unit U5 of the
+**Pass.** All thirteen threshold checks passed. Textual 8.2.8 is validated as Talaria's
+presentation layer for v0.1, and unit U5 of the
 [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md) is discharged.
 
 The verdict is arithmetic. Every check is a number compared against a threshold fixed in advance by
@@ -82,11 +93,11 @@ Two corpora, three passes.
 | recorded session | a real Hermes session, 5,773 frames | no delay at all | does the interface drive from actual gateway traffic (R30) |
 
 The two stress passes exist because one of them alone would have been misleading. At unbounded
-speed the domain reducer drains 53,516 frames in **1.8 seconds** — faster than the 50ms coalescing
+speed the domain reducer drains 53,516 frames in **2.3 seconds** — faster than the 50ms coalescing
 tick can fire more than a handful of times. That is a real and good result (it is what "coalescing
 is engaged" looks like), but it means the unbounded pass measures the *reducer*, not the renderer.
 The sustained pass replays on the corpus's own recorded cadence, scaled so the run occupies about a
-minute, and the render loop then runs 2,764 times against a live stream. Reporting only the first
+minute, and the render loop then runs 2,907 times against a live stream. Reporting only the first
 number would have claimed a renderer result on reducer evidence.
 
 ### Corpus identity
@@ -131,22 +142,34 @@ embedded tab.
 
 | check | measured | threshold | verdict |
 | ----- | -------- | --------- | ------- |
+| frames applied vs frames in corpus | 53,516 | = 53,516 | pass |
 | mounted line widgets, stress corpus | 501 | ≤ 600 | pass |
-| mounted line widgets, sustained pass | 507 | ≤ 600 | pass |
-| resident-set growth, full stress replay | 35.6 MB | < 300 MB | pass |
-| render ticks per second, maximum speed | 2.24 | ≤ 25 | pass |
-| render ticks per second, sustained streaming | 15.21 | ≤ 25 | pass |
+| mounted line widgets, sustained pass | 501 | ≤ 600 | pass |
+| resident-set growth, full stress replay | 44.3 MB | < 300 MB | pass |
+| render ticks per second, maximum speed | 3.50 | ≤ 25 | pass |
+| render ticks per second, sustained streaming | 15.28 | ≤ 25 | pass |
 | content loss, stress corpus | 0 of 11 checkpoints | 0 | pass |
 | content loss, sustained pass | 0 of 11 checkpoints | 0 | pass |
 | content loss, recorded session | 0 of 2 checkpoints | 0 | pass |
+| memory samples taken | 12 | ≥ 6 | pass |
+| content checkpoints taken | 11 | ≥ 5 | pass |
 | replay determinism (AE11) | identical | identical | pass |
 | mutation controls inert (AE11) | `interrupt`, `submit` refused | both refused | pass |
 
+The last four rows are the checks added when the gate was repaired. Two of them —
+"memory samples taken" and "content checkpoints taken" — are floors on *how much was
+sampled*, because a check that runs zero times reports zero failures. They are the reason
+`run_gate(deltas=600)` in the unit test cannot reach a `pass` verdict at any implementation
+quality: a 600-delta corpus at unbounded replay speed drains between two 20ms polls, so the
+samples are never taken. The unit test asserts that these two, and only these two, are what
+fails at reduced scale.
+
 ### Mounted widgets
 
-501 is the designed steady state: a 500-line cap plus the single condensed block that stands in for
-everything older. Across the stress corpus 3,954 lines were condensed and 4,454 lines existed in
-total, so the collapse ran continuously rather than once at the end.
+501 is the designed steady state and, since this run, also the peak: a 500-line cap plus the single
+condensed block that stands in for everything older. Across the stress corpus 3,954 lines were
+condensed and 4,454 lines existed in total, so the collapse ran continuously rather than once at the
+end.
 
 The number is a high-water mark read from the pane's own counter, not a sample. That distinction is
 the whole point of the check: an implementation that mounted a whole backlog and then removed the
@@ -155,26 +178,36 @@ afterwards could not see the difference.
 `tests/ui/test_transcript_bounds.py::test_a_backlog_larger_than_the_cap_is_never_mounted_in_full`
 pins the distinction by forcing an entire corpus through one render tick.
 
-**Correction, 2026-08-03, after this document was first written.** The high-water counter did not
-originally do what the paragraph above claims. It was updated at the end of `reconcile()`, *after*
-the loop that trims back to the cap — so it could never report a value above `mount_cap + 1` no
-matter what the pane did in between. The check read like a measurement with a safety margin (501
-against a ceiling of 600) when it was closer to an identity (500 + 1). The bug was found from the
-outside: a mid-stream assertion in the resize-storm test failed on a loaded CI runner at 49 mounted
-widgets against a test cap of 40, which is a state the counter said was impossible. Instrumenting
-`mount_all` directly confirmed a real transient of up to 51 against that same cap of 40.
+**Correction 1, 2026-08-03.** The high-water counter did not originally do what the paragraph above
+claims. It was updated at the end of `apply()`, *after* the loop that trims back to the cap — so it
+could never report a value above `mount_cap + 1` no matter what the pane did in between. The check
+read like a measurement with a safety margin (501 against a ceiling of 600) when it was closer to an
+identity (500 + 1). The bug was found from the outside: a mid-stream assertion in the resize-storm
+test failed on a loaded CI runner at 49 mounted widgets against a test cap of 40, which is a state
+the counter said was impossible. Instrumenting `mount_all` directly confirmed a real transient of up
+to 51 against that same cap of 40. The counter is now sampled immediately after the mount.
 
-The counter is now also sampled immediately after the mount and before the trim, so it reports the
-true peak. The gate was re-run on the honest metric and **still passes**: 501 on the stress corpus
-and **507** on the sustained pass, against the unchanged ceiling of 600. The verdict did not change,
-but the sustained figure is now a measurement with 93 of headroom rather than a structural constant.
-The worst case does not materialize here because a backlog larger than the cap is condensed *before*
-it is mounted, so only small increments are ever mounted-then-trimmed.
+**Correction 2, 2026-08-03, later.** With the peak sampled honestly *and* the reconciliation defect
+fixed, the stress pass measured **667** widgets — over the ceiling. Fixing the pane's scan floor
+made it re-derive the whole provisional block whenever an entry commits mid-stream, and `apply`
+mounted that block before trimming, so the transient was `existing + batch`. The earlier 501 and 507
+were low because the pane was skipping work it should have been doing.
 
-Two bounds exist and they are not the same number. Settled — no update in flight — the mounted count
-is within `mount_cap + 1`. Mid-update it is bounded by roughly `2 × mount_cap + 1`, since the
-pre-existing widgets and the newly mounted batch are both capped. `tests/ui/test_transcript_bounds.py`
-now asserts each against the state it actually holds in.
+The order is now condense-then-mount: the pane drops from the top until
+`len(current) - self._top <= mount_cap`, and only then mounts. The count cannot exceed the cap at
+any instant, transient or settled, so **there is one bound and it is `mount_cap + 1`** — 501, on
+both passes, against the unchanged ceiling of 600. `TRANSIENT_CAP` in
+`tests/ui/test_transcript_bounds.py` was `2 * SMALL_CAP + 1` to accommodate the old order; it is now
+`SMALL_CAP + 1`, and it is asserted against `peak_mounted`, which is sampled at the moment of
+maximum mount. Passing it is therefore a claim about the pane rather than about where the sample sits.
+
+**The accounting is also asserted now, and it was wrong before.** Every line must be either mounted
+or condensed, exactly once: `condensed_count + len(rendered_lines) == total_lines`, with
+`rendered_lines == lines[condensed_count:]`. It did not hold. `condensed_count` was a cumulative
+eviction tally doubling as the window's start index, and on this corpus it reached **7,493 against a
+transcript of 4,454 lines** — a window positioned at an index the projection does not have. It is
+now derived from an explicitly tracked position, and on this run it is 3,954, which with 500 mounted
+lines accounts for all 4,454 exactly.
 
 ### Memory
 
@@ -183,40 +216,44 @@ The full series for the unbounded stress pass, in megabytes:
 
 | frames | RSS (MB) |
 | ------ | -------- |
-| 0 | 90.66 |
-| 6,720 | 100.11 |
-| 10,752 | 101.00 |
-| 15,168 | 102.34 |
-| 20,096 | 102.88 |
-| 25,472 | 103.23 |
-| 31,296 | 103.67 |
-| 35,392 | 104.19 |
-| 40,000 | 104.52 |
-| 46,208 | 104.89 |
-| 50,880 | 105.41 |
-| 53,516 | 126.72 |
+| 0 | 90.17 |
+| 5,504 | 104.06 |
+| 11,712 | 106.73 |
+| 15,424 | 109.27 |
+| 20,160 | 111.83 |
+| 25,088 | 112.31 |
+| 30,784 | 113.67 |
+| 35,008 | 114.12 |
+| 40,384 | 114.39 |
+| 45,440 | 114.77 |
+| 50,304 | 115.11 |
+| 53,516 | 134.52 |
 
-> **Corrected 2026-08-03**, after external review. This section previously published the
-> all-points slope of **0.33 MB per 1,000 frames** as the headline and extrapolated a
-> million-frame session to "around 330 MB". That figure is dominated by a single final sample
-> which qualification 2 below *already told the reader to exclude* — the section argued against
-> its own headline number and then used the headline number anyway. The table above was also
-> transcribed from an earlier gate run than the one in the published evidence JSON; both now
-> come from the same run.
+> **Corrected twice on 2026-08-03.** First, after external review: this section had published
+> the all-points slope of 0.33 MB per 1,000 frames as the headline and extrapolated a
+> million-frame session to "around 330 MB", a figure dominated by a single final sample that
+> qualification 2 below *already told the reader to exclude*. The section argued against its own
+> headline number and then used it anyway. Second, after the reconciliation fix: the numbers
+> below are from the third gate run, and they are **higher** than the corrected figures from the
+> second. The steady-state slope went from 0.109 to 0.232 MB per 1,000 frames. That is not
+> noise. The pane now re-derives the provisional block whenever an entry commits mid-stream —
+> real work it was previously skipping because its scan floor was wrong — so it allocates and
+> discards more `Static` widgets per tick. The earlier, more flattering number was measured
+> against an interface that was losing a line of the conversation.
 
-**Steady-state slope: 0.11 MB per 1,000 frames.** All-points slope, including teardown:
-0.34 MB per 1,000 frames. Growth across the replay: 36.06 MB against a 300 MB ceiling.
+**Steady-state slope: 0.23 MB per 1,000 frames.** All-points slope, including teardown:
+0.48 MB per 1,000 frames. Growth across the replay: 44.34 MB against a 300 MB ceiling.
 
 The gap between those two numbers is the whole of this section. Recomputed with the gate's own
 `_fit_slope` over the published series:
 
 | fit | MB per 1,000 frames | one million frames |
 | --- | --- | --- |
-| all 12 samples | 0.337 | ~337 MB |
-| excluding the final sample | 0.197 | ~197 MB |
-| steady state (samples 2..11) | **0.109** | **~109 MB** |
+| all 12 samples | 0.479 | ~479 MB |
+| excluding the final sample | 0.372 | ~372 MB |
+| steady state (samples 2..11) | **0.232** | **~232 MB** |
 
-The final step alone adds 21.31 MB over 2,636 frames — **59% of all growth in 5% of the frames.**
+The final step alone adds 19.41 MB over 3,212 frames — **44% of all growth in 6% of the frames.**
 
 Three honest qualifications, because this is the measurement most easily over-read.
 
@@ -232,22 +269,25 @@ Three honest qualifications, because this is the measurement most easily over-re
    pass, which starts at the sustained pass's mark.
 
 What the slope is *for*: KTD14 bounds mounted widgets, not the domain transcript, and the domain
-transcript accumulates without eviction. Extrapolating the steady-state 0.11 MB per 1,000 frames, a
-session of one million frames would sit around **110 MB**. That is the input to the deferred
-QUEUED.md item "Bound the domain transcript, not just the mounted widget count" — the gate's job was
-to produce the number, not to spend the decision.
+transcript accumulates without eviction. Extrapolating the steady-state 0.23 MB per 1,000 frames, a
+session of one million frames would sit around **232 MB** — inside the 300 MB ceiling, but no longer
+comfortably. That is the input to the deferred QUEUED.md item "Bound the domain transcript, not just
+the mounted widget count" — the gate's job was to produce the number, not to spend the decision, and
+this number argues for that work considerably more strongly than the previous one did.
 
-**Why the correction matters in the direction it does.** Over-reporting growth is conservative for
-the 300 MB *threshold* — it can only cause a false fail, never a false pass, so the gate's verdict
-was never at risk. It is not conservative for the *decision*: a 3.1x overstatement argues for
-eviction work in milestone 3 that this measurement does not actually support. A number that is safe
-for the gate and wrong for the roadmap is still wrong.
+**Why the direction of each correction matters.** Over-reporting growth is conservative for the
+300 MB *threshold* — it can only cause a false fail, never a false pass, so the gate's verdict was
+never at risk from the first correction. It is not conservative for the *decision*: a 3.1x
+overstatement argues for eviction work that the measurement did not support. The second correction
+runs the other way and is the more interesting one: a defect that suppressed real work also
+suppressed the memory cost of that work, so the interface looked cheaper than it is. Both are
+reminders that a measurement inherits every defect of the thing it measures.
 
 ### Render cadence
 
 Counted with a monotonic counter incremented in the coalescing flush callback. At maximum replay
-speed: 4 flushes over 1.786 seconds, 2.24/s. Under sustained streaming: 2,764 flushes over 181.7
-seconds, 15.21/s — below the 20/s ceiling the 50ms coalescing boundary imposes by construction, and
+speed: 8 flushes over 2.286 seconds, 3.50/s. Under sustained streaming: 2,907 flushes over 190.2
+seconds, 15.28/s — below the 20/s ceiling the 50ms coalescing boundary imposes by construction, and
 well under the 25/s threshold.
 
 Read this as a *check that coalescing is engaged* rather than as a performance score. A regression
@@ -256,10 +296,15 @@ and nothing subtler.
 
 ### Content completeness
 
-At each checkpoint, every line of every committed domain transcript entry must appear, in order, in
-the projection the UI renders from. Deliberately not "the projection equals itself": the check walks
-the domain's own entries and requires each line to be findable in sequence, so a projection that
-dropped or reordered an entry fails. Zero failures across 24 checkpoints in three passes.
+Two claims, checked separately, because they fail separately. **The domain kept the conversation:**
+every line of every committed transcript entry appears, in order, in the projection — the check
+walks the domain's own entries rather than comparing the projection to itself, and matches whole
+lines rather than substrings. **The interface is showing it:** at the settled checkpoint, the pane's
+rendered lines must equal the projection's window at the pane's own top index, and mounted plus
+condensed must equal the whole transcript. The second is the one that caught the reconciliation
+defect, and the one the original gate had no equivalent of at all.
+
+Zero failures across 24 checkpoints in three passes.
 
 This is the measurement that would catch the worst available outcome — a fast, bounded, smooth
 interface quietly losing the conversation — which is why it is checked repeatedly during the stream

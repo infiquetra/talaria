@@ -10,63 +10,63 @@
       "note": "generated, seed 20260802: 50000 deltas across 625 turns, with interleaved malformed frames, unknown event types and sub-agent fan-out",
       "sha256": "34b52ddaba7b33f993ca621aff765f2337c4581d0aef9d2899267b50d3033c0c"
     },
-    "elapsed_seconds": 187.828,
+    "elapsed_seconds": 190.249,
     "frames_applied": 53516,
-    "peak_mounted_widgets": 507,
-    "render_ticks": 2852,
-    "render_ticks_per_second": 15.184,
-    "rss_growth_mb": 21.88,
+    "peak_mounted_widgets": 501,
+    "render_ticks": 2907,
+    "render_ticks_per_second": 15.28,
+    "rss_growth_mb": 16.23,
     "rss_series_mb": [
       [
         0,
-        126.72
+        134.53
       ],
       [
-        5011,
-        134.56
+        5000,
+        141.02
       ],
       [
-        10007,
-        142.78
+        10012,
+        149.44
       ],
       [
-        15001,
-        144.47
+        15002,
+        149.59
       ],
       [
-        20001,
-        144.56
+        20003,
+        149.64
       ],
       [
-        25006,
-        144.92
+        25001,
+        149.64
       ],
       [
-        30003,
-        146.11
+        30006,
+        149.64
       ],
       [
-        35003,
-        146.11
+        35007,
+        149.64
       ],
       [
         40006,
-        146.19
+        149.89
       ],
       [
-        45003,
-        146.44
+        45002,
+        150.16
       ],
       [
-        50004,
-        146.5
+        50002,
+        150.16
       ],
       [
         53516,
-        148.59
+        150.77
       ]
     ],
-    "rss_slope_mb_per_1k_frames": 0.2753,
+    "rss_slope_mb_per_1k_frames": 0.19,
     "transcript_entries": 1954,
     "transcript_lines": 4454
   },
@@ -84,6 +84,27 @@
       "measured": 0,
       "pass": true,
       "threshold": 0
+    },
+    "enough_content_checkpoints": {
+      "comparison": ">=",
+      "description": "content completeness was actually checked, not merely scheduled",
+      "measured": 11,
+      "pass": true,
+      "threshold": 5
+    },
+    "enough_memory_samples": {
+      "comparison": ">=",
+      "description": "memory series has enough points to fit a slope worth publishing",
+      "measured": 12,
+      "pass": true,
+      "threshold": 6
+    },
+    "frames_accounted_for": {
+      "comparison": "==",
+      "description": "frames applied equals frames in the stress corpus",
+      "measured": 53516,
+      "pass": true,
+      "threshold": 53516
     },
     "inert_mutation_controls": {
       "comparison": "==",
@@ -115,27 +136,27 @@
     "mounted_widgets_sustained": {
       "comparison": "<=",
       "description": "mounted line widgets during the sustained-streaming pass",
-      "measured": 507,
+      "measured": 501,
       "pass": true,
       "threshold": 600
     },
     "render_ticks_per_second": {
       "comparison": "<=",
       "description": "coalescing flushes per second at maximum replay speed",
-      "measured": 2.265,
+      "measured": 3.499,
       "pass": true,
       "threshold": 25.0
     },
     "render_ticks_per_second_sustained": {
       "comparison": "<=",
       "description": "coalescing flushes per second under sustained streaming",
-      "measured": 15.184,
+      "measured": 15.28,
       "pass": true,
       "threshold": 25.0
     },
     "replay_determinism": {
       "comparison": "==",
-      "description": "1x-with-pause, 64x and unbounded replays end in identical domain state (AE11)",
+      "description": "64x, 64x-with-pause and unbounded replays end in identical domain state (AE11); MIN_SPEED is not replayed -- see QUEUED.md",
       "measured": true,
       "pass": true,
       "threshold": true
@@ -143,7 +164,7 @@
     "rss_growth_mb": {
       "comparison": "<=",
       "description": "resident-set growth across the full stress replay (MB)",
-      "measured": 36.062,
+      "measured": 44.344,
       "pass": true,
       "threshold": 300.0
     }
@@ -164,27 +185,27 @@
       "note": "frame-log v1, recorded 2026-08-03T03:50:01.513Z",
       "sha256": "88a3604c34b75c40110cf6a7cff4e27aef078fbd3a668223ecfd5cd2b3cef751"
     },
-    "elapsed_seconds": 0.359,
+    "elapsed_seconds": 0.394,
     "frames_applied": 5773,
     "peak_mounted_widgets": 275,
-    "render_ticks": 3,
-    "render_ticks_per_second": 8.348,
-    "rss_growth_mb": 0.83,
+    "render_ticks": 4,
+    "render_ticks_per_second": 10.16,
+    "rss_growth_mb": 0.16,
     "rss_series_mb": [
       [
         0,
-        151.44
-      ],
-      [
-        5568,
-        151.95
+        154.62
       ],
       [
         5773,
-        152.27
+        154.72
+      ],
+      [
+        5773,
+        154.78
       ]
     ],
-    "rss_slope_mb_per_1k_frames": 0.1199,
+    "rss_slope_mb_per_1k_frames": 0.0217,
     "transcript_entries": 22,
     "transcript_lines": 275
   },
@@ -195,7 +216,7 @@
     "textual": "8.2.8"
   },
   "stress": {
-    "condensed_lines": 4574,
+    "condensed_lines": 3954,
     "content_loss_checkpoints": 11,
     "content_loss_failures": 0,
     "corpus": {
@@ -205,63 +226,63 @@
       "note": "generated, seed 20260802: 50000 deltas across 625 turns, with interleaved malformed frames, unknown event types and sub-agent fan-out",
       "sha256": "34b52ddaba7b33f993ca621aff765f2337c4581d0aef9d2899267b50d3033c0c"
     },
-    "elapsed_seconds": 1.766,
+    "elapsed_seconds": 2.286,
     "frames_applied": 53516,
     "peak_mounted_widgets": 501,
-    "render_ticks": 4,
-    "render_ticks_per_second": 2.265,
-    "rss_growth_mb": 36.06,
+    "render_ticks": 8,
+    "render_ticks_per_second": 3.499,
+    "rss_growth_mb": 44.34,
     "rss_series_mb": [
       [
         0,
-        90.66
+        90.17
       ],
       [
-        6720,
-        100.11
+        5504,
+        104.06
       ],
       [
-        10752,
-        101.0
+        11712,
+        106.73
       ],
       [
-        15168,
-        102.34
+        15424,
+        109.27
       ],
       [
-        20096,
-        102.88
+        20160,
+        111.83
       ],
       [
-        25472,
-        103.23
+        25088,
+        112.31
       ],
       [
-        31296,
-        103.67
+        30784,
+        113.67
       ],
       [
-        35392,
-        104.19
+        35008,
+        114.12
       ],
       [
-        40000,
-        104.52
+        40384,
+        114.39
       ],
       [
-        46208,
-        104.89
+        45440,
+        114.77
       ],
       [
-        50880,
-        105.41
+        50304,
+        115.11
       ],
       [
         53516,
-        126.72
+        134.52
       ]
     ],
-    "rss_slope_mb_per_1k_frames": 0.3373,
+    "rss_slope_mb_per_1k_frames": 0.4791,
     "transcript_entries": 1954,
     "transcript_lines": 4454
   },
