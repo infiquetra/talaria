@@ -474,6 +474,58 @@ def test_a_credential_url_with_no_query_string_at_all_is_withheld() -> None:
     assert [r.reason for r in result.redactions] == ["url-credential"]
 
 
+# ── Case handling and the honesty of the redaction record, 2026-08-03 ──
+
+
+@pytest.mark.parametrize("key", ["Ticket", "TICKET", "tIcKeT", "Internal", "INTERNAL"])
+def test_a_denied_url_query_key_is_withheld_whatever_its_case(key: str) -> None:
+    """``ticket`` and ``internal`` were compared against the raw query key.
+
+    Every other name rule in the module is case-insensitive (the patterns carry
+    ``re.IGNORECASE``; ``_squashed_key`` lowercases), and nothing normalizes a
+    query key on the way in, so this set was the one rule an attacker — or an
+    ordinary gateway that happened to capitalize — could walk past.
+    ``ws://h/api/ws?Ticket=SECRET`` reached the corpus verbatim.
+    """
+    assert "SECRET" not in redact_url(f"ws://h/api/ws?{key}=SECRET"), key
+
+
+@pytest.mark.parametrize("key", ["Ticket", "TICKET", "Internal", "Token"])
+def test_a_mixed_case_credential_url_in_a_frame_is_both_withheld_and_reported(
+    key: str,
+) -> None:
+    """The leak and the false record are the same bug seen from two sides.
+
+    ``_redact_credential_url`` lowercases when *deciding* to redact, so it fired
+    on ``?Ticket=``, got an unchanged string back from ``redact_url``, and
+    ``redact_frame`` appended the redaction record anyway: the frame kept the
+    credential and the corpus asserted the credential had been withheld.
+    """
+    frame: dict[str, Any] = {"method": "x", "params": {"url": f"ws://h/api/ws?{key}=SECRET"}}
+    result = redact_frame(frame)
+
+    assert "SECRET" not in json.dumps(result.frame), key
+    assert [r.reason for r in result.redactions] == ["url-credential"], key
+    assert result.frame["params"]["url"] != frame["params"]["url"], (
+        "a redaction was recorded against a value that did not change"
+    )
+
+
+def test_an_already_redacted_url_is_not_reported_as_a_second_withholding() -> None:
+    """A ``Redaction`` is a claim about the bytes on disk, so it cannot outrun them.
+
+    Re-recording a URL whose credential is already ``[redacted]`` fires the same
+    rule and changes nothing. Reporting it would tell a reader that this pass
+    withheld something, which is false — and the general form of that falsehood
+    is what put a credential in the corpus under a redaction record.
+    """
+    frame = {"method": "x", "params": {"url": "ws://h/api/ws?ticket=%5Bredacted%5D"}}
+    result = redact_frame(frame)
+
+    assert result.frame == frame
+    assert result.redactions == []
+
+
 @pytest.mark.parametrize(
     ("label", "frame"),
     [

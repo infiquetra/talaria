@@ -45,38 +45,68 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 **Closed by.** Unit U4 of the [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md), discharging PC8/KTD12. `prompt_toolkit` is assessed against the gate criteria to plausibility depth (with `urwid` recorded as secondary candidate) in [Python fallback presentation layer](../analysis/2026-08-02-python-fallback-presentation-layer.md), dated before the U5 gate verdict. Verdict: plausible on all five assessed criteria — bounded transcript strategy, streaming coalescing, multi-line editing/bracketed paste, headless test story, install cleanliness.
 **Refs.** [ADR-0004](../../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md), [Python fallback presentation layer](../analysis/2026-08-02-python-fallback-presentation-layer.md)
 
-### Prove the Hermes transport seam
+### ~~Prove the Hermes transport seam~~ — CLOSED 2026-08-03
 
 **Author.** Project bootstrap
 **Priority.** P0
 **Effort.** Medium
 **Worth it when.** The prototype shell is ready for the first real integration slice.
 **Context.** Talaria needs capability discovery, session lifecycle, prompt streaming, cancellation, and approval handling before UI work can be judged against real Hermes behavior.
-**Refs.** [Project direction](../analysis/2026-08-01-hermes-tui-project-direction.md)
+
+**Closed by.** Unit U7 of the [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md): `talaria/transport/attach.py`, `talaria/transport/rpc.py`, `talaria/transport/credentials.py`, and `LiveSource` in `talaria/transport/source.py`, with the live-submit and interrupt wiring in `talaria/ui/app.py` and `talaria/ui/composer.py`. Evidence is `tests/transport/` (78 tests) plus `tests/ui/test_live_wiring.py`.
+
+**What is proved, and by what.** Each of these runs against a stub gateway that is a *real* WebSocket server on loopback, dialled with the real `websockets` client — not a hand-written double, because a double would prove that Talaria calls a function with a string rather than that a server which only reads the URL query can authenticate the connection.
+
+- **Attach over the authenticated path.** The credential arrives as the `?token=` URL query parameter and nowhere else, matching the pin's `ws.query_params`-only check (`hermes_cli/web_server.py:14443-14524`).
+- **Credential acquisition, per dial.** Environment, then a `?token=` already on `TALARIA_GATEWAY_URL`, then `<config_dir>/credentials` (refused unless `0600` or stricter), then a non-echoing prompt — proved against a real pseudo-terminal, and confirmed to fail if the prompt is swapped for `input()`.
+- **Prompt streaming.** Identical ordered frames from a file and from a socket produce identical domain state after *every* frame, not merely at the end (AE16 / R31).
+- **Cancellation.** `session.interrupt` marks the turn cancelled only on a confirmed reply; an interrupt whose outcome was lost with the transport changes nothing and says so (R4, AE8).
+- **Reconnect.** Distinct visible states, a credential re-read on every dial (a rotated token is picked up), no duplicate transcript entries, outstanding prompts re-keyed once, and sub-agent terminal states preserved against a re-announced start (R35, F6).
+- **Lost outcomes.** An RPC interrupted by a disconnect resolves to `unknown`, and a reply from a stale connection epoch is counted and discarded rather than resolving a reused request id into a false success (KTD13).
+- **Recording.** Both directions now pass the U2 redaction boundary before any frame-log write.
+
+**What is deliberately NOT closed by this, so it is not mistaken for done.**
+
+- **No live attach against a real Hermes gateway was performed.** Every assertion above is against the stub. The plan's verification clause asks for a smoke attach against a harness-launched local gateway; that belongs to U10's acceptance run and is queued below.
+- **Capability discovery and session lifecycle** — the two other clauses of this item's original context — are R34 and R2, owned by U10 and U3/U10 respectively. This item closes the *transport seam*; it does not close the startup path that chooses a session, which is why a bare `talaria` run still exits rather than dialling.
+- **Approval and the four blocking bridges** are U8.
+
+**Refs.** [Project direction](../analysis/2026-08-01-hermes-tui-project-direction.md), [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md) unit U7
+
+### Smoke-attach the transport against a real local Hermes gateway
+
+**Author.** v0.1 milestone-2, unit U7
+**Priority.** P0
+**Effort.** Small
+**Worth it when.** U10's acceptance run, which already launches a dedicated loopback gateway instance with an injected token and a scratch session.
+**Context.** U7's whole evidence base is a stub server that reads the URL query the way the pin says Hermes does. That settles the *client* side, and it cannot settle one thing: whether a real Hermes accepts what Talaria sends. Two specific unknowns are worth naming rather than assuming away.
+
+1. **How an authentication failure reaches the client is unverified.** `gateway_ws` calls `await ws.close(code=4401)` *before* accepting the upgrade (`hermes_cli/web_server.py:15615-15617`), and whether the client observes that as a WebSocket close with code 4401 or as an HTTP handshake rejection is decided by the ASGI server, not by Hermes. `classify_dial_error` handles both shapes deliberately; a live run would say which one actually occurs, and whether the HTTP status is 401 or 403.
+2. **The frame log recorded live has never been checked against a real corpus.** The redaction assertions are against frames this repository wrote.
+
+**Do.** Attach, submit one prompt, interrupt it, drop the socket, confirm the reconnect, and diff the resulting frame log's redaction markers against the AE3 sweep.
+
+### Audit the egress surfaces as a set, rather than the redactor's call sites
+
+**Author.** v0.1 milestone-2, unit U7 — proposed by the milestone-1 review agent
+**Priority.** P0
+**Effort.** Medium
+**Worth it when.** Before U8 lands, because U8's four blocking-prompt bridges and U10's live acceptance run each add several more surfaces of exactly these kinds.
+**Context.** The same defect has now appeared three times in three different places, and each time it was found by someone tripping over it rather than by looking. Milestone-1's P0 was two call sites and disk. U7's `describe_dial_error` was *zero* call sites and the screen — the operator's session token rendered into a composer notice by a wrong-scheme endpoint typo, and re-leaked on every reconnect. The common root is that `redact_url` is a function invoked where somebody remembered, not a boundary that everything crosses.
+
+Enumerating the redactor's call sites is the wrong direction: it can only find places already thought about. Enumerate the places data *leaves* the process and ask which of them crosses the boundary. From the incidents so far, the kinds worth sweeping are:
+
+- exception stringification (`str(exc)` anywhere a dial target, URL, or credential can be in scope — `talaria/transport/source.py:385` and `:541` are the same shape as the fixed leak, safe today only because those exceptions happen not to carry the endpoint)
+- `repr()` and `__str__` on transport objects and anything reachable from them
+- retained failure state (`LiveSource.last_failure` and anything like it)
+- operator-visible text that formats a dial target — notices, status lines, diagnostics
+- log lines and the status payload
+
+**Do.** Build the list of surfaces first and write it down, then check each one, then decide which need the boundary applied. Record the negatives too — `credentials.py`'s `tomllib` parse error was checked across four malformed files and is genuinely safe, and that should not need re-checking. The rule to test against is both halves: the credential is absent **and** the diagnostic survives. A redaction that eats the message it was protecting has already happened twice in this module.
+
+**Already covered by U7, so start after these.** `describe_dial_error` now scrubs through `scrub_urls` plus a literal pass over the credential in use, and `LiveSource` scrubs `last_failure` on the disconnect and close-error paths (`source.py:385`, `:541`), so the three exception-stringification sites known at the time are closed and pinned by tests that assert both halves. `AttachTarget.safe_url` is the choke point for the endpoint and is credential-free twice over — stripped at construction, then routed through `redact_url` so userinfo is withheld too. The outcome object is swept by `test_the_attach_outcome_carries_no_credential_anywhere`, with one documented exclusion: the live `GatewayConnection`, because `websockets` retains `connection.request.path` including the query and no client library can avoid that. **What remains unaudited** is the rest of the list as a *set* — `repr()` on transport objects generally, log lines, the status payload, and every new surface U8's bridges and U10's acceptance run introduce.
 
 ## P1
-
-### Intermittent pane-content mismatch in the bounded-mount test — cause not found
-
-**Author.** v0.1 milestone-1, 2026-08-03
-**Priority.** P1
-**Effort.** Unknown — the work is diagnosis, not a known fix.
-**Worth it when.** Before the next milestone merges, or immediately if it recurs on a required check rather than an informational one.
-
-`tests/ui/test_transcript_bounds.py::test_mounted_widgets_stay_under_the_cap_while_content_stays_reachable` fails intermittently on `assert pane.rendered_lines == view.lines[pane.condensed_count:]`. Observed twice: once on `python-check-linux (3.13)` in CI (an informational leg, not required for merge) and once locally in a batch of six whole-suite runs under random ordering. Ten consecutive whole-suite runs afterwards passed, so the rate is low and load- or order-dependent.
-
-**The signature is specific.** The line *count* reconciles — `len(rendered) + condensed == total_lines` passes — but the content is shifted: a line is duplicated at the seam and the tail moves one place, so the last line falls off the comparison. That is what a stable index one position too high produces: one stale widget is kept and the remainder is mounted after it.
-
-**What has been ruled out, so a future attempt does not repeat it.**
-
-- *The reconciliation arithmetic itself.* A faithful pure-list mirror of `TranscriptPane.apply`, driven by the real reducer over the same fixture, was run against 4,000 randomized flush schedules with no desync. Given a consistent sequence of projections, the index arithmetic is sound.
-- *Overlapping renders, as constructed.* Two `render_snapshot` calls forced to interleave — the second landing new frames and projecting while the first is awaiting inside `apply` — did not corrupt the pane. A test written to pin that path passed with and without the serialization lock, so it pins nothing and was not kept.
-- *The pane merely lagging.* A lag produces a prefix of the projection, not a duplicate.
-
-**What was done anyway, and what it is not.** `render_snapshot` is now serialized behind an `asyncio.Lock`. It is genuinely not reentrant, and three callers reach it — `drain`, the gate's settled checkpoint, and the coalescing timer — of which only the last is ordered by Textual's message pump. Closing that is cheap and correct on its own terms. **It has not been shown to fix the failure above**, and must not be recorded as having done so.
-
-**Next step for whoever picks this up.** Capture a reproducing `pytest-randomly` seed (run without `-q` so the seed banner is visible, loop until failure, then replay with `--randomly-seed=<n>`). The assertion has already done its job once by catching a real defect class; the remaining question is whether this instance is the product or the harness.
-
 
 ### ~~Make the macOS checks required status checks on `main`~~ — CLOSED 2026-08-03
 
@@ -100,7 +130,15 @@ Three choices inside "set the protection" that the instruction did not spell out
 
 **Verified, not assumed.** `git push origin main` with an empty commit was rejected: `remote: - 2 of 2 required status checks are expected` / `! [remote rejected] main -> main (protected branch hook declined)`. Reading the configuration back would not have proved the hook fires.
 
-### Decide the trust boundary for repo-local `.talaria/config.toml` before U6 executes a command
+### ~~`test_mounted_widgets_stay_under_the_cap` fails intermittently under load~~ — CLOSED 2026-08-03
+
+**Author.** v0.1 milestone-2, unit U7 — found while running the project check, and fixed rather than queued
+**Priority.** P1
+**Context.** `tests/ui/test_transcript_bounds.py::test_mounted_widgets_stay_under_the_cap_while_content_stays_reachable` failed intermittently on `pane.rendered_lines == view.lines[pane.condensed_count:]` — **one line of skew**, `'line 38.3' != 'line 38.4'` at index 30. The file already documented the symptom: the `_drain` helper's docstring says the accounting assertions "fail roughly one run in three, and only under whole-suite load", and `_drain` forces a flush specifically to suppress it. Measured with U7 present: 2 failures in 12 paired runs, and 2 failures in 9 whole-suite runs.
+
+**It was not a test bug.** `TalariaApp.render_snapshot` has two kinds of caller — the coalescing timer, which Textual runs on the message pump and never re-enters, and forced flushes (`drain`, and the gate's checkpoints) which run on the *calling* task. Those two were never serialized against each other, and `TranscriptPane.apply` is a read-modify-write over its own window bookkeeping spanning several awaits. Two passes over different projections interleave and leave the pane holding a window the projection does not have. The U5 gate calls `drain` at every checkpoint, so this was live in the gate too.
+
+**Closed by.** An `asyncio.Lock` around `render_snapshot`, uncontended in the ordinary path because Textual's timer never re-enters its own callback. Pinned by `tests/ui/test_transcript_bounds.py::test_two_renders_can_never_reconcile_the_pane_at_the_same_time`, which measures overlap depth: 2 against the unfixed code, 1 with the lock. Rate after the fix: 12 of 12 paired runs clean.
 
 **Author.** v0.1 scaffold code review, 2026-08-02 (rated P2 advisory by the review; carried at P1 here because the trigger is the next milestone)
 **Priority.** P1
@@ -151,7 +189,9 @@ The review named two viable resolutions: require a repo-local config file to be 
 
 It is fully reachable for a client that dials a gateway it did not launch, which the v0.1 plan initially doubted. The complete RFC 8252 native-app flow, verified at the pin: `GET /auth/native/authorize` (`hermes_cli/dashboard_auth/routes.py:289`) runs PKCE against a loopback redirect; `POST /auth/native/token` (`:841`) exchanges the code for `{access_token, refresh_token, token_type: "Bearer"}` explicitly intended for OS-keychain storage; `POST /api/auth/ws-ticket` (`:799`) turns that session into `{ticket, ttl_seconds: 30}`; the ticket goes on the `/api/ws` upgrade URL as `?ticket=`; `POST /auth/native/refresh` (`:894`) rotates. Tickets are single-use with a 30-second TTL (`hermes_cli/dashboard_auth/ws_tickets.py:42`).
 
-**The transport seam for this already exists.** v0.1 ships `CredentialProvider` invoked on every dial including reconnects (KTD11), specifically so a per-connection ticket does not require rewriting reconnect. This work is a new `GatedTicketProvider` plus keychain storage and the PKCE loopback listener — not a transport change.
+**The transport seam for this now exists, in code — updated 2026-08-03 by unit U7.** `talaria/transport/credentials.py` defines `CredentialProvider.acquire()`, and `LiveSource._dial` calls it on **every** dial including every reconnect; `tests/transport/test_reconnect.py::test_the_provider_is_invoked_once_per_dial_and_again_on_reconnect` fails if a credential is cached across a reconnect, and `::test_a_credential_rotated_between_attach_and_reconnect_is_picked_up` fails if the re-read does not reach the wire. `redact_url` already denies `ticket` and `internal` by name (KTD6's Python-only superset) and `AttachTarget` strips all three credential forms from an endpoint, so the recording and hygiene boundaries are ready too.
+
+So this work is a new `GatedTicketProvider` returning `("ticket", <single-use value>)`, plus keychain storage and the PKCE loopback listener. Nothing in `LiveSource`, `RpcCorrelator`, or the UI should need to change — and if it does, that is the signal the seam was drawn in the wrong place, which is worth reporting rather than working around.
 **Refs.** [v0.1 plan KTD11](../plans/2026-08-02-talaria-v0-1-prototype-plan.md), [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)
 
 ## P2

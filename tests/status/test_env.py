@@ -8,8 +8,13 @@ from __future__ import annotations
 
 from talaria.status.contract import (
     FORWARDED_TALARIA_VARS,
+    GATEWAY_URL_ENV_VAR,
     build_child_env,
 )
+
+#: A value with no other reason to appear anywhere, so "is it in the child
+#: environment" can be asked of the whole mapping rather than one key.
+_CANARY = "canary-token-must-not-reach-a-child"
 
 
 def _parent_env(**overrides: str) -> dict[str, str]:
@@ -189,6 +194,41 @@ def test_gateway_url_userinfo_is_dropped_along_with_the_query() -> None:
     assert "s3cr3tpw" not in forwarded
     assert "alice" not in forwarded
     assert "token" not in forwarded
+
+
+def test_the_allowlist_cannot_re_forward_the_gateway_url_with_its_token() -> None:
+    """Allowlisting a variable must not be a way to undo its sanitizer.
+
+    The query strip used to live inside the ``TALARIA_*`` loop, and the operator
+    allowlist ran afterwards over the same names with no strip of its own, so
+    naming ``TALARIA_GATEWAY_URL`` on the allowlist overwrote the cleaned value
+    with the raw one and handed the attach token (KTD13) to a spawned child.
+    ``is_suspicious_key("TALARIA_GATEWAY_URL")`` is False, so nothing else
+    stopped it. Reachable today through ``talaria replay`` with a status command
+    configured.
+    """
+    raw = f"ws://127.0.0.1:9119/api/ws?token={_CANARY}&extra=1"
+
+    without = build_child_env(parent_env=_parent_env(TALARIA_GATEWAY_URL=raw), allowlist=())
+    with_allowlist = build_child_env(
+        parent_env=_parent_env(TALARIA_GATEWAY_URL=raw),
+        allowlist=(GATEWAY_URL_ENV_VAR,),
+    )
+
+    assert with_allowlist[GATEWAY_URL_ENV_VAR] == "ws://127.0.0.1:9119/api/ws"
+    assert with_allowlist == without, "the allowlist changed what a sanitized name forwards"
+    assert not any(_CANARY in value for value in with_allowlist.values())
+
+
+def test_the_allowlist_cannot_re_forward_gateway_url_userinfo_either() -> None:
+    """The same bypass, with the credential in the position a query strip alone
+    would have missed — so this pins the sanitizer, not one branch of it."""
+    child = build_child_env(
+        parent_env={"TALARIA_GATEWAY_URL": f"wss://alice:{_CANARY}@gw.example.com/api/ws"},
+        allowlist=(GATEWAY_URL_ENV_VAR,),
+    )
+    assert child[GATEWAY_URL_ENV_VAR] == "wss://gw.example.com/api/ws"
+    assert not any(_CANARY in value for value in child.values())
 
 
 def test_stripping_userinfo_keeps_the_port_and_ipv6_brackets() -> None:

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Literal
 
 from talaria.domain.decode import (
     DecodedFrame,
@@ -228,6 +228,89 @@ def cancel_turn(state: SessionState, *, at: float) -> SessionState:
         interim_boundary=0,
         last_observed_at=max(state.last_observed_at, at),
     )
+
+
+#: What is known about one submitted message's delivery.
+#:
+#: ``confirmed`` is the gateway's own acknowledgement. The other four are the
+#: distinct ways a submit ends without one, and they are kept apart because
+#: each earns a *different claim* in the transcript — not for tidiness. Two of
+#: them are not even the same kind of claim: ``not_sent`` means nothing was
+#: written to any socket, so the message was definitely not delivered, while
+#: ``no_reply``, ``connection_lost`` and ``unknown`` all mean the request went
+#: out and the answer did not come back, so the message may well have been
+#: delivered.
+#:
+#: The practical consequence, and the reason the distinction is load-bearing:
+#: a message that was never sent invites exactly one resend, and a message that
+#: may already have been delivered invites none, because resending it makes the
+#: agent do the work twice.
+DeliveryState = Literal["confirmed", "not_sent", "no_reply", "connection_lost", "unknown"]
+
+#: The transcript line each unconfirmed delivery earns.
+#:
+#: Every one of these is a statement of fact about what happened, so no entry
+#: may name a cause the caller did not actually observe. ``unknown`` is the
+#: fallback for a call that resolved without a recognized reason: it says only
+#: that no acknowledgement arrived, because that is all that is known.
+DELIVERY_NOTES: Mapping[DeliveryState, str] = {
+    "not_sent": (
+        "not sent — this message was never written to a gateway, so nothing "
+        "received it; send it again when the connection is back"
+    ),
+    "no_reply": (
+        "delivery unconfirmed — the message was sent and no reply arrived "
+        "before the deadline"
+    ),
+    "connection_lost": (
+        "delivery unconfirmed — the connection dropped before the gateway "
+        "acknowledged this message"
+    ),
+    "unknown": "delivery unconfirmed — the gateway never acknowledged this message",
+}
+
+
+def record_submission(
+    state: SessionState, text: str, *, at: float, delivery: DeliveryState
+) -> SessionState:
+    """Write the operator's own message into the transcript (R3).
+
+    The gateway never echoes a submitted prompt back as an event — there is no
+    such type in ``KNOWN_EVENT_TYPES`` — so the operator's own line exists only
+    if the client writes it. That is why this is a local transition rather than
+    something the reducer derives from a frame.
+
+    ``delivery`` is the whole reason this takes an argument at all. When the
+    ``prompt.submit`` call resolved to ``unknown`` (AE8), both of the tidy
+    options are dishonest: writing the line plainly claims delivery, and writing
+    nothing hides a message the agent may be about to answer. So the line is
+    written *and* marked, and the marker is a separate transcript entry rather
+    than a suffix on the operator's own words, so nothing rewrites what they
+    typed.
+
+    It is a :data:`DeliveryState` rather than a boolean because a boolean forced
+    one sentence to cover four different events, and the sentence it carried
+    ("the connection dropped") was false for three of them. The worst case was a
+    submit attempted with no connection at all: nothing was written to any
+    socket, and the transcript nevertheless described the message as possibly
+    delivered.
+    """
+    next_state = _append(state, "user", text)
+    note = DELIVERY_NOTES.get(delivery)
+    if note is not None:
+        next_state = _append(next_state, "system", note)
+    return replace(next_state, last_observed_at=max(state.last_observed_at, at))
+
+
+def record_local_note(state: SessionState, text: str, *, at: float) -> SessionState:
+    """Append a Talaria-authored system line (reconnects, unknown outcomes).
+
+    Kept distinct from :func:`_apply_system_line` so the two sources of a system
+    entry cannot be confused in review: that one renders text the *gateway*
+    sent, this one renders text Talaria wrote about its own transport.
+    """
+    next_state = _append(state, "system", clip_system_line(text))
+    return replace(next_state, last_observed_at=max(state.last_observed_at, at))
 
 
 def respond_to_prompt(state: SessionState, request_id: str) -> tuple[SessionState, bool]:
@@ -1006,13 +1089,17 @@ _HANDLERS: Mapping[str, _Handler] = {
 EXPIRE_EVENT_KINDS: Mapping[str, PromptKind] = _EXPIRE_EVENTS
 
 __all__ = [
+    "DELIVERY_NOTES",
     "EXPIRE_EVENT_KINDS",
+    "DeliveryState",
     "SessionState",
     "apply_frame",
     "apply_frames",
     "cancel_turn",
     "focus_session",
     "is_terminal_status",
+    "record_local_note",
+    "record_submission",
     "respond_to_prompt",
     "set_connection",
 ]

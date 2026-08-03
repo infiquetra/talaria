@@ -172,6 +172,12 @@ SENSITIVE_KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
 #: addition to the key-name net above. ``token`` is already caught by
 #: :data:`SENSITIVE_KEY_PATTERNS`; ``ticket`` and ``internal`` are the
 #: Python-only superset (see module docstring, KTD6/PC10).
+#:
+#: Membership is tested against a **lowercased** key. Every other name-matching
+#: rule in this module is case-insensitive (the patterns carry ``re.IGNORECASE``,
+#: ``_squashed_key`` lowercases), and a query key is not normalized by anything
+#: on the way in, so a set compared against the raw key was the one rule in the
+#: file an attacker could evade by pressing shift.
 URL_ONLY_DENIED_QUERY_KEYS: frozenset[str] = frozenset({"ticket", "internal"})
 
 _CAMEL_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
@@ -271,7 +277,12 @@ def redact_url(url: str) -> str:
     query_changed = False
     redacted_pairs: list[tuple[str, str]] = []
     for key, value in pairs:
-        if is_suspicious_key(key) or key in URL_ONLY_DENIED_QUERY_KEYS:
+        # `key.lower()`, not `key`: the members of URL_ONLY_DENIED_QUERY_KEYS are
+        # lowercase, query keys are not case-normalized by anything, and
+        # `is_suspicious_key` — the other half of this condition — has matched
+        # case-insensitively all along. A raw comparison here withheld `?ticket=`
+        # and recorded `?Ticket=` verbatim.
+        if is_suspicious_key(key) or key.lower() in URL_ONLY_DENIED_QUERY_KEYS:
             redacted_pairs.append((key, REDACTED))
             query_changed = True
         else:
@@ -341,14 +352,25 @@ def _redact_credential_url(value: str) -> str | None:
         return None
     if not parts.scheme or not parts.netloc:
         return None
-    if parts.username is not None or parts.password is not None:
-        return redact_url(value)
-    if not parts.query:
-        return None
-    names = {name.lower() for name, _ in parse_qsl(parts.query, keep_blank_values=True)}
-    if not any(name in URL_ONLY_DENIED_QUERY_KEYS or is_suspicious_key(name) for name in names):
-        return None
-    return redact_url(value)
+    if parts.username is None and parts.password is None:
+        if not parts.query:
+            return None
+        names = {name.lower() for name, _ in parse_qsl(parts.query, keep_blank_values=True)}
+        if not any(
+            name in URL_ONLY_DENIED_QUERY_KEYS or is_suspicious_key(name) for name in names
+        ):
+            return None
+
+    cleaned = redact_url(value)
+    # The single exit, and the reason it is single: this function decides
+    # whether to fire on a lowercased view of the query keys, and `redact_url`
+    # decides what to withhold on its own. When those two disagreed, the caller
+    # got the value back untouched *and* appended a Redaction saying the
+    # credential had been withheld — a corpus that documents a redaction it did
+    # not perform, which is worse than the leak, because the leak is at least
+    # visible to anyone who reads the frame. Reporting is now derived from the
+    # bytes rather than from the decision to look at them.
+    return cleaned if cleaned != value else None
 
 
 def _read_method(frame: Any) -> str | None:
@@ -425,7 +447,12 @@ def redact_frame(frame: Any) -> RedactResult:
             # position, which makes this the shape most likely to appear.
             if isinstance(child, str):
                 cleaned = _redact_credential_url(child)
-                if cleaned is not None:
+                # `cleaned != child` is belt to `_redact_credential_url`'s own
+                # braces. The invariant is that `redactions` describes bytes that
+                # actually changed, and it is cheap enough to enforce at the one
+                # place the record is written rather than trusting every rule
+                # that feeds it to have got its own answer right.
+                if cleaned is not None and cleaned != child:
                     redactions.append(Redaction(path=child_path, reason="url-credential"))
                     out[key] = cleaned
                     continue

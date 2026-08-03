@@ -133,6 +133,27 @@ class Composer(Vertical):
         self.text_area.text = value
 
     @property
+    def submitted_text(self) -> str:
+        """What a live submit would actually send: the text with edges trimmed.
+
+        Trailing whitespace is an artifact of typing, not content — but the
+        *interior* is left alone, because a pasted code block's indentation is
+        exactly the thing an operator would be furious to have silently
+        reformatted.
+        """
+        return self.text.strip()
+
+    def clear(self) -> None:
+        """Empty the editor after a message has actually left (R3).
+
+        Only called once a submit is known to have been delivered or is known to
+        be recorded in the transcript. A composer cleared on a refused or failed
+        send loses what the operator typed, which is the one thing a chat client
+        must never do.
+        """
+        self.text_area.text = ""
+
+    @property
     def notice(self) -> str:
         if self._notice_widget is None:
             return ""

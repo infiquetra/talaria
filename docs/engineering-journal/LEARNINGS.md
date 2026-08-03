@@ -4,6 +4,68 @@
 
 ## 2026-08-03
 
+### The "flaky test" was an unserialized renderer, and three plausible reproductions passed before one worked
+
+**Author.** v0.1 milestone-2, unit U7 (found while running the project check)
+
+**Evidence.** `tests/ui/test_transcript_bounds.py::test_mounted_widgets_stay_under_the_cap_while_content_stays_reachable` failed on `pane.rendered_lines == view.lines[pane.condensed_count:]` with **one line of skew** — `'line 38.3' != 'line 38.4'` at index 30 — in 2 of 12 paired runs and 2 of 9 whole-suite runs. The file already described the symptom as a test-harness timing problem: the `_drain` helper's docstring says the accounting assertions "fail roughly one run in three, and only under whole-suite load", and `_drain` forces a flush to suppress it.
+
+**Mechanism.** Not a test problem. `TalariaApp.render_snapshot` has two kinds of caller, and only one of them is serialized. The coalescing timer runs on Textual's message pump and never re-enters itself; forced flushes — `TalariaApp.drain`, and every checkpoint in the U5 gate — run on whatever task called them. `TranscriptPane.apply` is a read-modify-write over `_top` and `_stable` spanning several awaits, so a forced flush that starts while a timer-driven pass is inside `apply`, over a *different* projection, leaves the pane holding a window the projection does not have. One line of skew is exactly what a single interleaved mount produces. Fixed with an `asyncio.Lock` around `render_snapshot`, uncontended in the ordinary path. Rate after: 12 of 12 clean.
+
+**Three reproductions passed against the unfixed code before one failed**, and each failure taught the same lesson in a different disguise:
+
+1. `asyncio.gather(render_snapshot(), render_snapshot())` — the first render stores its snapshot *before* it awaits, so the second finds `changed` empty and returns without entering `apply`.
+2. The same, with the domain state advanced between them — better, but the first render had no mounting work (the pane was already current after `_drain`), so `apply` returned without ever yielding and the first finished before the second could enter.
+3. Only when **both** renders had real mounting work, and the second started while the first was demonstrably parked inside `apply`, did the overlap appear: measured depth 2 unfixed, 1 fixed.
+
+**Generalizable rule.** When a test is called flaky and the harness already carries a workaround for it, treat the workaround as the report of a defect nobody finished diagnosing. And a concurrency reproduction that passes is not evidence of correctness until you have measured the interleave you were trying to cause — count the overlap, do not infer it from the assertion.
+
+### A guard against identifier reuse is untestable if the identifiers can never repeat
+
+**Author.** v0.1 milestone-2, unit U7 (live transport)
+
+**Evidence.** KTD13 requires RPC replies to be correlated by `(connection epoch, request id)` rather than by request id alone, so a reply arriving late from a socket already declared dead cannot satisfy an identifier minted after reconnect. The obvious implementation pairs that key with a process-wide monotonic id counter — and with a monotonic counter the guard can never fire, because no id is ever reused. `talaria/transport/rpc.py` therefore restarts the id counter on every `open_epoch()`. `tests/transport/test_rpc.py::test_a_stale_epoch_reply_cannot_resolve_a_reused_identifier` asserts `second.id == first.id` before it asserts anything about the guard, and both epoch tests were confirmed to fail against a deliberately-broken correlator keyed on id alone.
+
+**Mechanism.** The failure the epoch key prevents needs three things to coincide: a call in flight when the socket drops, a reconnect, and a *reused* identifier. A monotonic counter removes the third, so the code looks correct, the guard looks tested, and the guard is dead. Restarting per connection is also what a freshly dialled client would naturally do — one connection is in flight at a time — so the choice that makes the race reachable is the same one that matches the wire.
+
+**Generalizable rule.** When a guard depends on a precondition your own code can make impossible, make the precondition *reachable on purpose* and pin it with an assertion inside the test — otherwise the guard is decoration and its test is a tautology.
+
+### An RPC's "unknown" outcome has to reach the transcript as three different renderings, not one
+
+**Author.** v0.1 milestone-2, unit U7 (live transport)
+
+**Evidence.** AE8 says a call interrupted by a disconnect is marked unknown rather than successful. Applying that literally at the UI produced two defects, both caught by writing the transcript assertion before the handler.
+
+1. **An unconfirmed submit written plainly is a lie; written not at all it is a different lie.** If Talaria writes the operator's line as though it were delivered, the operator believes it was; if it writes nothing, the agent may answer a question that is nowhere in the transcript. `record_submission(..., confirmed=False)` writes the line *and* a separate `system` entry saying delivery is unconfirmed, and the composer is cleared — because leaving the text in the composer as well invites a resend, and a resend of a message that did arrive makes the agent do the work twice.
+2. **An unconfirmed interrupt must not apply the cancelled state.** `cancelled` is sticky in this domain (it suppresses later deltas until the next `message.start`), so optimistically cancelling on an unknown outcome would silently swallow the rest of a turn that never stopped. Verified: forcing `interrupt_live` to cancel unconditionally fails `tests/transport/test_reconnect.py::test_an_interrupt_only_cancels_the_turn_when_the_gateway_agrees` with `assert 'cancelled' == 'streaming'`.
+
+**Mechanism.** "Unknown" is not a severity between success and failure; it is a statement about *what is knowable*, and each caller has a different safe action under it. Submit's safe action is "record it and mark it"; interrupt's safe action is "change nothing and say so". A shared `if not outcome.ok:` branch would have given both the same one.
+
+**Generalizable rule.** Where a three-valued outcome meets user-visible state, write the assertion about what the screen may claim before writing the handler — the second and third values are where the design decisions are, and a two-branch handler will quietly assign one of them to the wrong side.
+
+### A pseudo-terminal test for "does not echo" fails two ways before it works
+
+**Author.** v0.1 milestone-2, unit U7 (live transport)
+
+**Evidence.** R9 requires the interactive credential prompt not to echo. The weak version of this test asserts that the module references `getpass`; it passes against an implementation that references `getpass` and then calls `input()`. The real version drives a pseudo-terminal and searches the master side for the typed credential — and it took two corrections to become correct:
+
+1. **`subprocess.Popen` with the pty slave as stdin hangs.** `getpass.getpass` opens `/dev/tty` first, and a child that is not a session leader resolves that to the *test runner's* controlling terminal, where the typed credential never arrives. `pty.fork()` makes the child a session leader with the pty as its controlling terminal, which is what makes `/dev/tty` the right device.
+2. **Typing before the prompt appears proves nothing.** Until `getpass` clears `ECHO` through `termios`, the line discipline is still echoing, so an early write is reflected by the *terminal* and the assertion fires against the wrong cause. The probe waits for the prompt, then types.
+
+Confirmed discriminating: replacing the prompt with `input()` makes `tests/transport/test_attach.py::test_the_interactive_prompt_does_not_echo` fail with the credential visible in the terminal transcript.
+
+**Generalizable rule.** For a security property that a real device enforces, test against the real device — and when the test hangs or passes trivially, suspect the test harness's relationship to that device before suspecting the code.
+
+### A rate measured over a 61-millisecond window is not a rate
+
+**Author.** v0.1 milestone-2, unit U7 (live transport)
+
+**Evidence.** AE16 asks the live path to meet KTD14's streaming thresholds on its own measurements. Firing 2,000 delta frames into the socket as fast as loopback allows produced **two** coalescing flushes in 0.0616 seconds, which divides to "32.5 flushes per second" against a ceiling of 25 — a failure reported by a measurement with no information in it. KTD14 specifies a fixed 60-second window for exactly this reason. The test now paces the frames over 1.5 seconds (shorter than KTD14's window, long enough that the 50ms coalescing boundary has fired ~30 times), asserts the elapsed window is at least that long before dividing, and separately asserts the coalescing property directly: 2,000 deltas produced fewer than 200 renders.
+
+**Mechanism.** A ratio inherits the sampling error of its denominator. Below a few multiples of the timer period, the numerator is a small integer and one extra flush moves the result by tens of percent. Pacing the input also matches what the gateway actually does — Hermes coalesces per-token frames on a ~33ms timer of its own (`tui_gateway/ws.py`) — so the unpaced version was measuring loopback throughput, not the renderer.
+
+**Generalizable rule.** Before asserting a threshold on a rate, assert that the measurement window is long enough for the rate to mean something; a threshold test that can be failed by scheduling jitter is a flake with a story.
+
 ### The diagnosis in the defect report was wrong, and both proposed fixes followed from it
 
 **Author.** v0.1 milestone-1, closing the U5 gate failure
@@ -504,3 +566,95 @@ What is actually there is a **notification poller, not a board API**: `_KANBAN_P
 **Validation.** The direction is documented in [the project analysis](../analysis/2026-08-01-hermes-tui-project-direction.md), with the initial prototype checks passing once dependencies are installed.
 
 **Generalizable rule.** Do not mistake a generic chat protocol for a complete agent control-plane contract.
+
+## 2026-08-03
+
+### An assertion that cannot fail is the dominant defect shape in this suite, not a footnote
+
+**Evidence.** U7's adversarial verification pass found five tests that pass for a reason other than the one they claim, each proved by breaking the code they nominally cover and watching them stay green:
+
+| Test | What it claims | Why it cannot fail |
+|---|---|---|
+| `test_the_credential_never_reaches_argv` (`tests/transport/test_attach.py:220`) | the token never reaches a command line | reads the *pytest process's* `sys.argv`, which nothing under test writes. Adding a `dialed_url` field carrying the credentialed URL to `AttachSuccess` passed 99/99. |
+| the module's "credential arrives as `?token=` and nowhere else" claim | the credential is in the query and nowhere else | `tests/transport/conftest.py` records only `request.path` and stores no handshake headers. Duplicating the token into an `X-Talaria-Token` header on every dial passed 99/99. |
+| `test_reads_pause_at_the_byte_bound_as_well` (`tests/transport/test_reconnect.py:661`) | reads pause on the byte bound | its only assertion, `peak_queued_bytes >= 512`, is already implied by the loop it waited on, because `_enqueue` updates the high-water mark before incrementing `read_pauses`. Deleting `await self._reads_allowed.wait()` failed the *frame*-bound test and passed this one. |
+| `test_each_transport_state_renders_a_distinct_line` (`tests/ui/test_live_wiring.py:201`) | four transport states render distinguishably | each expected fragment is a substring of its own state name, and `connecting` is a substring of `reconnecting`. Setting both notices to one identical string passed 99/99. |
+| the two `runtime_checkable` protocol tests | a type satisfies `CredentialProvider` / `LiveDispatcher` | `isinstance` against a `runtime_checkable` Protocol is a `hasattr` check. `def acquire(self, a, b, c)` returning a string satisfies the first; `call = 42` satisfies the second. |
+
+Milestone-1 remediated a sixth of the same shape: `test_the_key_name_net_catches_a_credential_nested_at_arbitrary_depth` (`tests/recorder/test_redact.py:192`) was renamed for what it actually pins, its docstring records why the old name misled, and the missing coverage was added beside it as `test_the_deny_set_survives_every_envelope_shape` (`:486`).
+
+**The line numbers above describe the state at discovery.** All five were remediated in the same commit that records this entry, each replacement verified to fail against the defect its predecessor missed: the `sys.argv` sweep became `test_the_attach_outcome_carries_no_credential_anywhere` (traverses every string reachable from the outcome plus its repr; catches the `dialed_url` injection that passed 102/102 before); the query-only claim became `test_the_credential_arrives_in_the_query_and_in_no_header`, backed by a stub that now records every handshake header as a `(name, value)` list — repeats kept, because a dict would drop the duplicate `Cookie` a credential could hide in — and guarded against its own vacuous pass by asserting headers were captured at all; the backpressure test became `test_reads_pause_at_the_byte_bound_and_resume_at_half`, which now fails alongside the frame-bound test when the pause is deleted rather than passing beside it; and the distinctness test split into `test_the_four_transport_states_render_four_different_lines` (no notice empty, all four different, none contained *whole* inside another — containment is the property "connecting"/"reconnecting" violated) plus `test_each_transport_state_names_its_own_condition`.
+
+The sixth, the two `runtime_checkable` protocol checks, is **not** remediated and is not a defect to fix: `isinstance` against a `runtime_checkable` Protocol is a `hasattr` check by language design and cannot verify signatures. The honest remedy is to stop reading those tests as evidence of conformance — they pin attribute presence, which is all they ever could.
+
+**Mechanism.** All six share one structure: the assertion is a consequence of something the test already established, rather than an independent observation of the system. A canary sweep that reads its own process's state; a bound implied by the loop that waited for it; a fragment that is a substring of the name it came from; an equality re-derived from an equality just asserted. None of them is careless — each reads as a reasonable check, which is why they survive review. They fail only under the one question that distinguishes them: *what change to the production code would turn this red?*
+
+**Why it is worse than a missing test.** A gap is visible in a coverage report and reads as work outstanding. An assertion that cannot fail occupies the slot where the real check would go and reports itself green, so nobody looks again. Five of these sat under a suite that a reviewer would describe as thorough — 99 tests over a transport whose headline claims were, in fact, unpinned.
+
+**Generalizable rule.** A test is not finished when it passes; it is finished when it has been observed to fail against a deliberately broken version of the thing it covers. Where that is impractical, say so in the docstring rather than letting the green tick imply it. Name the test for the property it actually pins, not the property you wish it pinned — the U7 sweep was named for a claim three times broader than its one load-bearing assertion.
+
+**The same shape reaches the harness, not just the assertion.** A check that imports the thing it checks must **fail** when the import fails, never skip. The out-of-band script written to verify the `describe_dial_error` fix resolves the function by name across three candidates and exits non-zero when none is found, because the fix was mid-rewrite and a rename was likely: had it died on `ImportError`, the run would have produced no failing case and read exactly like "no leak." A skipped check and a passing check are indistinguishable in a summary line. This is worth applying forward rather than only cataloguing backward — it was caught while the rewrite was in flight, not after a rename silently greened it.
+
+**Three ways a claim presents as verified without being measured**, all three hit during this one review: a claim *adjacent* to verified things (the tree was measured clean, then reported clean minutes later while two agents wrote to it); a claim from a *reliable source* (a peer's finding taken as fact because their previous findings held); and a claim from *read source* — quoting the guard at `redact.py:263-266` and asserting how it behaves at runtime. The third is the most deceptive, because the citation makes it look measured: `urlsplit` turned out to be far more permissive than reading the guard suggested, parsing a trailing sentence into the query string rather than rejecting it. Reading a guard is not running it. A measurement also has an expiry — reporting one without saying when it was taken is the first variant in slow motion.
+
+**And knowing a failure mode by name is not inoculation against it.** A fourth instance arrived inside a message describing the other three: an A/B comparison of wrapped versus unwrapped `git` output, run as two reads at different instants against a tree that two agents were actively writing to, producing a confident report of tool corruption (`1221` vs `1245` insertions, a line count off by one). The moving variable had been identified by name moments earlier, in the same message. Re-run back to back on a static tree, the two agree exactly. The rule that would have caught it is narrower and more useful than "verify your claims": **control the variable you already know is moving** — an A/B across a changing baseline measures the change, not the thing under test.
+
+**A fifth variant, and the one that fooled two of us at once: an instrument that cannot see the variable.** Both the reviewer and the parent watched the tree settle by running `git diff --shortstat`, read a near-static number, and concluded the writing had stopped. `--shortstat` counts **tracked** files only, and the directory absorbing nearly all the work — `tests/transport/`, entirely new — was untracked. The gauge was structurally incapable of registering the change it was being used to rule out, and a blind gauge reads exactly like a stable one. It surfaced only when a test *count* moved (264 → 264 → 268) across runs the insertion count called identical. So: **confirm the instrument can observe the variable before trusting a null reading.** For working-tree state that means `git status --porcelain` including untracked entries, or file mtimes — never a tracked-only diffstat.
+
+### A sanitizer attached to one selection rule is not a boundary
+
+**Evidence.** `build_child_env` (`talaria/status/contract.py`) stripped the credential query from `TALARIA_GATEWAY_URL` inside the loop that forwards the known `TALARIA_*` variables, then ran the operator allowlist loop afterwards with no stripping at all. Because `is_suspicious_key("TALARIA_GATEWAY_URL")` is `False`, an operator who allowlisted that variable got the raw value written over the sanitized one, and the session token reached a spawned child process's environment:
+
+```
+allowlist=[]                        -> ws://127.0.0.1:9119/api/ws
+allowlist=['TALARIA_GATEWAY_URL']   -> ws://127.0.0.1:9119/api/ws?token=<secret>
+```
+
+Reachable today through `talaria replay` with any status command configured. Fixed by moving the sanitizer out of the selection loop into `_sanitize(name, value)`, called from `_maybe_forward` — the one path every forwarded variable takes, whichever rule chose it. Pinned by `test_the_allowlist_cannot_re_forward_the_gateway_url_with_its_token` and a userinfo variant, so the test pins the sanitizer rather than one branch of it; moving the strip back inside the `TALARIA_*` loop fails exactly those two.
+
+**Mechanism.** Two rules selected values for forwarding; only one of them was taught to clean. The cleaning was correct, well-tested, and simply not on the path the second rule took. This is the same shape as the `redact_url` findings in U7 and milestone-1: a redactor invoked where somebody remembered rather than a boundary everything crosses. It recurs because attaching the cleanup next to the code that motivated it is the locally obvious thing to do.
+
+**Generalizable rule.** Put the sanitizer on the single choke point every value crosses, never on the branch that happens to have prompted it — and when auditing, enumerate the *egress surfaces* and ask which cross the boundary, rather than enumerating the sanitizer's existing call sites, which can only rediscover the places already thought about.
+
+### A redaction record must be derived from bytes that changed, never from the decision to inspect them
+
+**Evidence.** `redact_url` compared query keys against `URL_ONLY_DENIED_QUERY_KEYS` case-*sensitively* while `_redact_credential_url` lowercased when deciding whether to fire. So for `?Ticket=<secret>` the rule fired, `redact_url` returned the string unchanged, and `redact_frame` appended `Redaction(path='url', reason='url-credential')` anyway:
+
+```
+redact_frame({"url": "ws://h/api/ws?Ticket=CANARY"})
+ -> frame unchanged, redactions=[Redaction(path='url', reason='url-credential')]
+```
+
+A recorded corpus asserted in its own redaction list that a value had been withheld while the credential sat in the frame body verbatim. `?Token=` was fine — only the two Python-only superset keys had the gap, and only against the shift key.
+
+**Mechanism.** The record was produced by the *decision to redact*, not by the redaction. Those two agree right up until a rule fires and does nothing, which is exactly the case a case-sensitivity bug creates. Fixed on both sides: the key comparison lowercases like every other name rule in the file, `_redact_credential_url` returns `cleaned if cleaned != value else None`, and `redact_frame` will not append a record unless the bytes actually differ — belt and braces, because the corpus is append-only and a false attestation in it cannot be withdrawn later.
+
+**Generalizable rule.** Derive the audit record from the observed change, not from the intent. A claim about what was withheld is worth less than nothing when it can be true of an unmodified value: the corpus's whole worth is that it is a faithful record, and an entry that lies about itself makes every other entry unfalsifiable too.
+
+### A guard whose argument is derived from the value it checks can never fire
+
+**Evidence.** `RpcCorrelator.resolve` exists to discard a reply that belongs to a dead connection, and its docstring names the failure precisely: *"`epoch` is the epoch of the connection the frame was **read from**, supplied by the reader loop. Passing the correlator's own epoch here would defeat the entire guard, which is why it is a required keyword."* The only production caller then did exactly that:
+
+```python
+self.correlator.resolve(frame, epoch=self.correlator.epoch)   # source.py, pre-fix
+```
+
+So `if epoch != self._epoch` was unsatisfiable for every frame the reader would ever ingest, and `stale_epoch_replies` was a counter production could not increment. Deleting the guard entirely left 85 tests passing; only a unit test that called `resolve()` by hand with a literal stale epoch ever exercised it. Fixed by storing the epoch at dial time (`_dial` keeps `self._connection_epoch`), capturing it beside the connection in `_read_loop`, and passing *that* through `_ingest`.
+
+**Mechanism.** Making the parameter keyword-only was a real precaution against positional-argument confusion, and it worked — the caller supplies it by name, correctly spelled, and still defeats the check, because the value came from the object being guarded. A keyword requirement constrains *how* an argument is passed, never *where it came from*. The docstring's warning was accurate and was not enough, because prose cannot bind an argument.
+
+**A second, related trap in the test.** The end-to-end reproduction could not be produced by hanging up the socket: `_ingest` is synchronous and the reader single-threaded, so nothing between `recv()` returning and correlation can open a new epoch — which is precisely why the defect was invisible. The test therefore performs, in order and by hand, the three correlator operations that `_handle_disconnect` and `call` perform, then has the stub deliver the epoch-1 reply. That is the *state* the guard exists for, reached over the real reader; the docstring says so plainly rather than implying a natural race was reproduced.
+
+**Generalizable rule.** When a guard compares an argument against internal state, check where the caller gets that argument. If it can reach for the same field the guard compares against, the check is decorative — and it will read as covered, because the unit tests that supply the argument by hand all pass. Capture the value at the moment it is still independent (here: dial time) and carry it, rather than re-reading it at the point of use.
+
+### The dialler is handed the only credentialed string in the system, so its exceptions are a credential surface
+
+**Evidence.** `AttachTarget` is credential-free by construction — `from_url` strips the credential query, and `safe_url` additionally routes through `redact_url` so userinfo is withheld too. Exactly one string in the process carries the token: the return of `dial_url(credential)`, built for the call and never stored. It is handed to `websockets.connect`, and `InvalidURI.__str__` is `f"{self.uri} isn't a valid URI: {self.msg}"` — the URI it was handed. `describe_dial_error` interpolated `str(exc)`, so a single `http://` for `ws://` typo put the operator's session token into `LiveSource.last_failure`, the `on_connection` detail, and the composer notice on screen — and re-leaked it on every reconnect attempt, since `_dial` is reached from both the initial connect and the retry loop.
+
+**Mechanism.** The docstring reasoned that the dialler "is never handed anything but the URL", which is true and backwards: that URL is the one credentialed value in the system. Everything the design does right — stripping at construction, redacting the property, never storing the dial URL — makes the exception path the *only* remaining surface, and therefore the one worth checking first rather than last.
+
+**The obvious fix ships a worse bug.** Routing `str(exc)` through `redact_url` looks correct and passes a regression test written against the reproduction, because it does remove the token there. What it also does is delete the diagnostic: `urlsplit` is far more permissive than its scheme/netloc guard suggests, so when the message *starts* with the URL, `parse_qsl` swallows the trailing sentence into the value of `token` and redacting that key takes the explanation with it. Worse, the ordinary failures — `ConnectionRefusedError`, `TimeoutError`, DNS — carry no URL at all, fail the guard, and collapse whole to `[redacted]`. That is every routine "could not connect" message, and it is the common path. Behavior also depends on *where* the URL sits in the sentence, which disqualifies it as a boundary on its own.
+
+The fix is a third primitive, `scrub_urls`, which redacts URL-shaped substrings in place and leaves surrounding prose intact, plus a literal pass over the credential just used. Redaction damaging the artifact it protects has now happened twice in this module — milestone-1's userinfo fix first emitted `[redacted]@host`, which `urlsplit` could not parse, corrupting append-only frame-log headers.
+
+**Generalizable rule.** Test a redaction on both halves, always: the secret is gone **and** the message still says what went wrong. A single-half test certifies the regression. And when auditing, ask which values are credentialed *by construction* and follow those — here exactly one string was, and every surface it touched was a leak candidate.

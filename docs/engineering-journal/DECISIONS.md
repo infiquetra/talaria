@@ -265,3 +265,66 @@ Sub-agent rows are cleared by the next `message.start` rather than at turn end. 
 **Why now.** Segment 3 (U7 transport, U8 remote attach, U10 acceptance against a launched gateway) adds a live socket, reconnect timers, and PTY-driven credential prompts: the highest concentration of background actors and real process spawns in the plan. The cost of this convention is a comment and a driven precondition; the cost of discovering it there is a CI flake that reads as a transport bug.
 
 **Revisit when.** A fourth instance appears despite the rule, which would mean the rule is being read as advice rather than as a precondition to state, or a test genuinely needs to assert a timing property — in which case it should measure a distribution, not a single attempt.
+
+## 2026-08-03
+
+### The credential is a per-dial provider, and the correlation key carries a connection epoch
+
+**Author.** v0.1 milestone-2, unit U7 (live transport)
+
+**Decision.** Two shapes in the live transport are fixed here, and neither is negotiable by a later unit without a new entry.
+
+1. **Credentials are acquired through `CredentialProvider.acquire()`, called on every dial including every reconnect.** v0.1 ships `LoopbackTokenProvider` only. The environment and the credential file are re-read per call, so a rotated token is picked up by the next reconnect; a credential that came from the interactive prompt is held in memory and never re-prompted.
+2. **In-flight RPCs are keyed by `(connection epoch, request id)`, and request ids restart at 1 on every epoch.** A reply read from a connection that is no longer current is counted and discarded. Every call interrupted by a disconnect resolves to `unknown` — never to an error and never to a success.
+
+**Rejected alternatives.** Fetching a token once at startup is correct for the loopback `?token=` form and only for it, and it makes the reconnect path silently depend on the credential being a fixed string — adding gated `?ticket=` support later would then mean rewriting reconnect, which is the most concurrency-sensitive code in the client. Keying replies by request id alone is correct until a reconnect races a late reply, at which point it converts an honest `unknown` into a reported success; that is the one failure R35 names explicitly. A globally monotonic id counter would make the epoch key look correct while making its guard permanently unreachable (see LEARNINGS).
+
+**Rationale.** Both decisions cost one small object each and buy the property that the *shape* of the code does not change when the deferred work lands. The provider is one interface and one class; the epoch is one integer and a tuple key.
+
+**Cost, stated plainly.** Two counters and a per-dial round trip that, for the loopback provider, reads one environment variable and possibly stats one file. Nothing measurable.
+
+**Revisit when.** Remote or gated attach lands (`GatedTicketProvider` is specified in QUEUED.md), or the client ever needs more than one connection open at a time — at which point "the current epoch" stops being a single value and the discard rule needs restating.
+
+### The transport publishes connection state by callback, and `connect_failed` is a cause, not a state
+
+**Author.** v0.1 milestone-2, unit U7 (live transport)
+
+**Decision.** `LiveSource` reports connection lifecycle through an `on_connection(state, detail)` callback rather than by injecting synthetic frames into the frame stream. R35's four conditions map onto KTD5's five frozen states as: authentication failure → `auth_failed`; initial connection failure → `disconnected` with `failure_kind == "connect_failed"` and no epoch ever opened; disconnect → `disconnected` after an epoch was opened; reconnect → `reconnecting`. The cause travels beside the state as a `detail` string. `auth_failed` survives `close()`.
+
+**Rejected alternatives.** Emitting a synthetic `gateway.disconnected` event would carry the state into domain state through the existing reducer with no new plumbing — and would put a frame in the recorded corpus that no gateway ever sent, poisoning the one artifact whose entire value is that it is a faithful record. Adding a sixth `connect_failed` member to `ConnectionStatus` would be a `version: 2` change to the status contract KTD5 froze at the first commit, for a distinction that an accompanying string carries adequately.
+
+**Rationale.** The seam between transport and domain is narrow on purpose (KTD3); a second channel for a second kind of information is cheaper than widening the first one, and it keeps "what arrived on the wire" and "what the transport is doing" separable in the corpus.
+
+**Cost, stated plainly.** The transport re-declares `LiveConnectionState` rather than importing `ConnectionStatus` (ADR-0002 keeps the domain out of the transport's imports), so two spellings of one enum exist. `tests/transport/test_reconnect.py::test_the_transport_and_domain_connection_enums_are_identical` is the price, paid once.
+
+**Revisit when.** A third consumer needs transport state and the callback starts growing parameters, or the status contract moves to `version: 2` for an unrelated reason — the natural moment to fold `connect_failed` in properly.
+
+### The credential file is TOML, and looser-than-0600 is refused before it is read
+
+**Author.** v0.1 milestone-2, unit U7 (live transport)
+
+**Decision.** `<config_dir>/credentials` is a TOML document with a `token` key and an optional `url` key. Any file whose mode has a group or other bit set is refused with an error naming the mode and the `chmod` that fixes it; the check runs before the file is opened. Owner-execute (`0700`) is not refused — it exposes the file to nobody the way `0640` does.
+
+**Rejected alternatives.** A bare single-line token file is what an operator would produce with `echo`, and it is genuinely more convenient — but it cannot carry the endpoint, and supporting both formats means guessing which one a file is, which is exactly the ambiguity a credential path should not have. Reading the file first and checking permissions afterwards produces a friendlier error and defeats the check: a file the whole machine can read has already leaked, and opening it anyway is the one action that makes the leak useful.
+
+**Rationale.** KTD15 already establishes TOML as this repository's configuration language and `talaria/config.py` as the only reader of `config.toml`; using a second format for the file next to it would be a decision with no argument behind it. Whitespace is stripped from the value because `echo "$TOKEN"` appends a newline, and the gateway's constant-time comparison rejects it with no useful message.
+
+**Cost, stated plainly.** An operator who writes the file by hand must type `token = "..."` rather than the bare value, and the error for a malformed file says so explicitly.
+
+**Revisit when.** A second credential form needs storing (a refresh token for the deferred RFC 8252 native-app flow), which the TOML shape already accommodates — or an OS keychain becomes the primary store, at which point this file becomes a fallback and its format matters less.
+
+### An agent that deliberately breaks code works in a disposable clone, never in the shared checkout
+
+**Author.** v0.1 milestone-2, unit U7 (live transport) — raised by the milestone-1 review agent after a misattribution
+
+**Decision.** Any agent whose method is deliberate breakage — mutation testing, "prove this test can fail", injected-failure verification — extracts its own copy with `git archive <ref> | tar -x -C <scratch>` and works there. It does not mutate files in the operator's working tree, even transiently, and it does not create scratch test files under `tests/`. **The rule is carried in the agent's prompt, not only here.** A subagent never reads this file; its entire world is the text it was spawned with, so a standard recorded only in the journal reaches the humans and the parent and no one who has to follow it. Treat the prompt as a configuration surface: anything an agent must do belongs in the prompt text verbatim, and the omission recurs once per agent that is not told.
+
+**Rejected alternatives.** Coordinating between adversaries with a snapshot protocol — announce, mutate, restore, announce — does not work, because **snapshot-and-restore is only sound for a single writer.** Agent A snapshots, Agent B mutates the same file, A restores from its snapshot and writes back a baseline that already contains B's edit — or erases it. Both agents `diff` against their own snapshot, both report a clean restore, and the file is still wrong. That is not a hypothetical; it is the state this incident produced. Serializing adversarial agents so only one mutates at a time is sound, but it buys correctness by deleting the parallelism the verification panel exists for. Doing nothing and relying on each agent to restore what it broke is what we did; it held for each agent's own mutations and did not survive a second writer.
+
+**Rationale.** Two U7 verification agents mutated `talaria/transport/rpc.py` concurrently. One saw the other's breakage, assumed a closed world of itself plus the one agent it knew about, attributed the damage to the milestone-1 reviewer, and deliberately left the file broken so as not to disturb what it believed was that agent's in-flight experiment. The reviewer had never written to the tree at all and proved it: `rpc.py` does not exist on the branch it reviewed. So a real defect — the epoch guard deleted from the one function whose job is to never confirm an unconfirmed call — sat in the checkout preserved by an act of care aimed at the wrong thing. A guard protecting a false premise reads as diligence and costs more than no guard, because the next reader trusts it.
+
+Two things generalize past the incident. First, **an agent's model of "who else is writing here" is whatever its prompt happened to mention, which is almost never the real set** — the reporting agent knew about neither the peer it blamed nor its own sibling. That is why the fix cannot be a coordination protocol between agents: they cannot enumerate each other. Second, **the danger is worst for exactly the files an adversary is most likely to be pointed at.** `rpc.py` was untracked, so there was no committed baseline and no `git restore`; the only recovery path was one agent's private scratch backup. This inverts the usual intuition — the safest file to break in a shared tree is a committed one, and the most dangerous is the in-progress uncommitted file the implementer is still writing, which is precisely the file under review. A disposable copy is not tidiness there; it is the only thing standing between an experiment and work git cannot recover.
+
+**Cost, stated plainly.** About 200-500ms and a working tree's worth of disk per agent, and the agent's findings cite paths inside its clone, so line numbers must be translated back before they are actionable. Both are cheap against one contaminated verification round.
+
+**Revisit when.** Verification agents stop mutating code to prove their point, or the harness gains first-class per-agent worktrees that make the extraction implicit rather than something each prompt has to ask for.

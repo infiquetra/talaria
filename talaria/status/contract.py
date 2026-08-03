@@ -83,7 +83,7 @@ FORWARDED_TALARIA_VARS: tuple[str, ...] = (
 #: potential credential material in its query string (KTD11's attach token
 #: rides this URL). Its query string is stripped entirely rather than
 #: pattern-filtered — see :func:`_strip_query`.
-_GATEWAY_URL_VAR = "TALARIA_GATEWAY_URL"
+GATEWAY_URL_ENV_VAR = "TALARIA_GATEWAY_URL"
 
 
 def _strip_query(url: str) -> str:
@@ -108,6 +108,20 @@ def _strip_query(url: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
+def _sanitize(name: str, value: str) -> str:
+    """Clean a value that is safe to forward by name but not as written.
+
+    Applied to every variable on its way into the child environment, whichever
+    rule selected it. Keyed by name because that is what makes it total: a
+    sanitizer attached to one forwarding rule protects only the names that
+    arrive through that rule, and the operator allowlist can name any variable
+    at all — including one the enumerated ``TALARIA_*`` rule had already cleaned.
+    """
+    if name == GATEWAY_URL_ENV_VAR:
+        return _strip_query(value)
+    return value
+
+
 def build_child_env(
     *,
     parent_env: Mapping[str, str],
@@ -125,13 +139,21 @@ def build_child_env(
     before being forwarded. A ``TALARIA_*`` prefix is not by itself a pass
     (KTD5): the credential-shaped-name deny outranks the enumerated
     ``TALARIA_*`` set and the operator allowlist both.
+
+    Value sanitizing happens in :func:`_sanitize`, on the one path every
+    forwarded variable takes, rather than in the loop that happens to know about
+    a given name. It used to sit inside the ``TALARIA_*`` loop, which meant the
+    operator allowlist — running afterwards, over the same names, with no
+    sanitizing of its own — overwrote the cleaned ``TALARIA_GATEWAY_URL`` with
+    the raw one and handed the attach token to the child. A rule that only holds
+    when a name arrives through the expected loop is not a boundary.
     """
     child_env: dict[str, str] = {}
 
     def _maybe_forward(name: str, value: str) -> None:
         if is_suspicious_key(name):
             return
-        child_env[name] = value
+        child_env[name] = _sanitize(name, value)
 
     for name in _BASE_PASSTHROUGH_NAMES:
         if name in parent_env:
@@ -142,12 +164,8 @@ def build_child_env(
             _maybe_forward(name, value)
 
     for name in FORWARDED_TALARIA_VARS:
-        if name not in parent_env:
-            continue
-        value = parent_env[name]
-        if name == _GATEWAY_URL_VAR:
-            value = _strip_query(value)
-        _maybe_forward(name, value)
+        if name in parent_env:
+            _maybe_forward(name, parent_env[name])
 
     for name in allowlist:
         if name in parent_env:

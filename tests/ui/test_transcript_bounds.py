@@ -9,6 +9,7 @@ either half on its own is not.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -297,4 +298,85 @@ async def test_the_projection_and_the_domain_transcript_agree_at_every_pause_poi
             if app.replay_complete.is_set():
                 break
         assert checked >= 3
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_two_renders_can_never_reconcile_the_pane_at_the_same_time(
+    stress_frames: list[dict[str, Any]],
+) -> None:
+    """The mechanism behind this file's long-standing intermittent failure.
+
+    ``render_snapshot`` has two kinds of caller. The coalescing timer runs on
+    Textual's message pump and never re-enters itself; forced flushes —
+    ``TalariaApp.drain`` and the gate's checkpoints — run on whatever task called
+    them. The two are not serialized with each other, and ``TranscriptPane.apply``
+    is a read-modify-write over its own window bookkeeping spanning several
+    awaits. A second pass that starts while the first is inside ``apply``, over a
+    *different* projection, leaves the pane holding a window the projection does
+    not have.
+
+    Measured before the fix as a **one-line skew** — ``'line 38.3' != 'line
+    38.4'`` at index 30 — in the mounted-widget test above: 2 failures in 12 runs
+    of this file plus ``tests/replay``, and only under load. With
+    ``render_snapshot`` serialized, 12 of 12 clean.
+
+    Three details make this deterministic where the original failure was
+    probabilistic, and each of them was a version of this test that passed
+    against the unfixed code:
+
+    * The second render starts while the first is *parked inside* ``apply``, not
+      merely at the same time. Two renders launched together never overlap: the
+      first stores its snapshot before it awaits, so the second finds nothing
+      changed and returns.
+    * **Both** renders need real mounting work. ``apply`` over a view the pane
+      already holds returns without ever yielding, so the first render finishes
+      before the second can enter. Hence a batch of frames folded before each.
+    * The state advances between them, so the two renders carry different views —
+      which is what the interleaved window bookkeeping actually corrupts.
+
+    Measured against the unfixed code: overlap depth 2. With the lock: 1.
+    """
+    app, controls = paused_app(stress_frames, mount_cap=SMALL_CAP)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _drain(app, pilot, controls)
+
+        pane = app.transcript
+        original = pane.apply
+        depth = 0
+        peak = 0
+        entered = asyncio.Event()
+
+        async def counting_apply(view: Any) -> None:
+            nonlocal depth, peak
+            depth += 1
+            peak = max(peak, depth)
+            entered.set()
+            try:
+                await asyncio.sleep(0)
+                await original(view)
+            finally:
+                depth -= 1
+
+        pane.apply = counting_apply  # type: ignore[method-assign]
+        try:
+            for record in records(streaming_turn([f"batch A {i}\n" for i in range(30)])):
+                app.ingest(record)
+            app.snapshot = None
+            first = asyncio.create_task(app.render_snapshot())
+            await entered.wait()
+
+            for record in records(streaming_turn([f"batch B {i}\n" for i in range(30)])):
+                app.ingest(record)
+            second = asyncio.create_task(app.render_snapshot())
+            await asyncio.gather(first, second)
+        finally:
+            pane.apply = original  # type: ignore[method-assign]
+
+        assert peak >= 1, "the harness never reached apply, so it proves nothing"
+        assert peak == 1, "two renders reconciled the pane concurrently"
+
+        view = transcript_view(app.state)
+        assert len(pane.rendered_lines) + pane.condensed_count == view.total_lines
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
         await app.shutdown_sources()

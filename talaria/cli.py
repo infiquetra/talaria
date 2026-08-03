@@ -154,11 +154,15 @@ def main(argv: list[str] | None = None) -> int:
         return run_gate_command(args)
 
     selection_from_args(args)
-    # The live transport (U7) is not built yet. Until it lands, a bare
-    # `talaria` run resolves the startup path and exits rather than pretending
-    # to connect — R30's replay-first ordering means the only working session
-    # today is `talaria replay`.
-    print("talaria: no live transport yet — run `talaria replay <corpus>` (U5).")
+    # The live transport exists as of U7 (`talaria.transport.source.LiveSource`),
+    # but the startup path that turns a KTD7 selection into a focused session —
+    # create, resume, or an explicit id — is U10's. A bare `talaria` run
+    # therefore resolves the startup precedence and exits rather than dialling
+    # into a session it cannot yet choose.
+    print(
+        "talaria: the live transport has landed, but session startup is not wired "
+        "yet — run `talaria replay <corpus>`."
+    )
     return 0
 
 
