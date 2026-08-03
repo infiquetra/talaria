@@ -4,6 +4,20 @@
 
 ## 2026-08-02
 
+### `pkgutil.walk_packages` cannot see a module Python can import, so the ADR-0002 guard had a silent hole
+
+**Author.** Code review of the v0.1 Python scaffold (segment 1)
+
+**Context.** ADR-0002 — the domain core never imports the terminal framework — has exactly one enforcement mechanism: `tests/domain/test_boundary.py`. The first version enumerated domain modules with `pkgutil.walk_packages`, then asserted that no `textual.*` module appeared in `sys.modules` afterward. Both halves were wrong in ways that a green test run could not reveal.
+
+**Evidence.** Against a synthetic package, a module at `pkg/session/handlers.py` with no `pkg/session/__init__.py` produced `walk_packages(...) == []` — the sweep listed *nothing at all* — while `importlib.import_module("pkg.session.handlers")` located and executed that same module. Reproduced in this repository: adding `talaria/domain/models/decode.py` containing `import textual`, without an `__init__.py` beside it, left the boundary test green. Separately, importing `textual` into the pytest process *before* running the committed test made it fail and accuse the domain package of a violation it had not committed.
+
+**Mechanism.** `walk_packages` walks *packages*, and a directory without `__init__.py` is a namespace package it will not descend into by default — but Python's import system resolves the module anyway. So the guard's blind spot is precisely an ordinary omission: nobody notices a missing `__init__.py`, because imports keep working. The second defect is the mirror image — reading process-global `sys.modules` measures the whole pytest process, not the domain package, so the check breaks as soon as `talaria/ui/` lands and legitimately imports Textual.
+
+**Fix.** The module list now comes from a filesystem walk of `talaria/domain/**/*.py`, a companion test asserts every directory under `talaria/domain` carries an `__init__.py`, and the import sweep runs in a subprocess so what it observes is attributable to the domain package alone. Falsified in both directions: the missing-`__init__.py` case now fails on the directory assertion, the packaged violation fails on the sweep, and a pre-imported `textual` in the pytest process no longer produces a false accusation.
+
+**Generalizable rule.** When a single test is the *only* enforcement of an architecture decision, verify it fails on the violation it exists to catch — and check that its enumeration step sees everything the runtime does. A guard that enumerates differently from the import system is not a weaker guard; it is a guard with a silent hole, which is worse, because it reports success. Corollary: a check that reads process-global state measures the process, not the subject.
+
 ### An execution-spec `returns` field is a machine key list, and a passing validator did not prove the type
 
 **Author.** Root-causing why every emitted unit carried a garbled return gate, on operator follow-up to the final doc review

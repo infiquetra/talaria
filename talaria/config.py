@@ -2,8 +2,12 @@
 
 The only module in this repository that reads settings from the filesystem.
 Contents live under ``~/.talaria/`` (relocatable for tests via
-``TALARIA_CONFIG_DIR``): ``config.toml`` for settings, ``credentials`` (mode
-0600, KTD11) for the attach credential, and ``recordings/`` for frame logs.
+``TALARIA_CONFIG_DIR``): ``config.toml`` for settings, ``credentials`` for the
+attach credential, and ``recordings/`` for frame logs.
+
+This module only *computes* the credential path. Creating that file, enforcing
+its mode 0600, and reading it belong to U7's credential provider (KTD11) — no
+code here opens it, so nothing here can leak its contents.
 
 Precedence, highest first: an explicit command-line override, a ``TALARIA_*``
 environment variable, a repo-local ``./.talaria/config.toml``, the global
@@ -16,12 +20,27 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
+
+class ConfigError(Exception):
+    """A configuration source is unreadable or holds a value of the wrong type.
+
+    Carries the offending file or environment variable in its message so the
+    operator is pointed at the cause rather than at a traceback inside this
+    module.
+    """
+
+
 #: Built-in defaults. Every key a later unit reads must have an entry here so
-#: that a missing config file never produces a missing setting.
+#: that a missing config file never produces a missing setting. The type of the
+#: value recorded here is also what environment-variable overrides are coerced
+#: to, so a default of ``None`` means "string-valued, no default".
 DEFAULTS: dict[str, Any] = {
     "status": {"command": None, "interval_seconds": 5},
     "environment": {"allowlist": []},
@@ -38,6 +57,9 @@ _ENV_KEY_MAP: dict[str, tuple[str, str]] = {
     "TALARIA_COMPOSER_PASTE_COLLAPSE_BYTES": ("composer", "paste_collapse_bytes"),
 }
 
+_TRUE_LITERALS = frozenset({"1", "true", "yes", "on"})
+_FALSE_LITERALS = frozenset({"0", "false", "no", "off"})
+
 
 def global_config_dir() -> Path:
     """The global ``~/.talaria`` directory, or its ``TALARIA_CONFIG_DIR`` override.
@@ -52,7 +74,11 @@ def global_config_dir() -> Path:
 
 
 def credentials_path(config_dir: Path | None = None) -> Path:
-    """The KTD11 credential file: ``<config_dir>/credentials``, mode 0600."""
+    """The KTD11 credential file: ``<config_dir>/credentials``.
+
+    Path computation only. U7 owns creating it, enforcing mode 0600, and
+    reading it.
+    """
     return (config_dir if config_dir is not None else global_config_dir()) / "credentials"
 
 
@@ -64,24 +90,48 @@ def recordings_dir(config_dir: Path | None = None) -> Path:
 def _read_toml(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
-    with path.open("rb") as fh:
-        return tomllib.load(fh)
+    try:
+        with path.open("rb") as fh:
+            return tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"{path} is not valid TOML: {exc}") from exc
+    except OSError as exc:
+        raise ConfigError(f"{path} could not be read: {exc}") from exc
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
     """Merge ``override`` onto ``base``, recursing into nested dicts only."""
     result = dict(base)
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge(result[key], value)
+        if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
+            result[key] = _deep_merge(dict(result[key]), value)
         else:
             result[key] = value
     return result
 
 
-def _coerce_env_value(raw: str) -> Any:
-    if raw.lstrip("-").isdigit():
-        return int(raw)
+def _coerce_env_value(env_name: str, raw: str, default: Any) -> Any:
+    """Coerce ``raw`` to the type :data:`DEFAULTS` records for the setting.
+
+    Keyed off the declared type rather than the shape of the string, so a
+    string-valued setting given a numeric-looking value stays a string.
+    """
+    # bool before int: bool is a subclass of int.
+    if isinstance(default, bool):
+        lowered = raw.strip().lower()
+        if lowered in _TRUE_LITERALS:
+            return True
+        if lowered in _FALSE_LITERALS:
+            return False
+        raise ConfigError(
+            f"{env_name} expects a boolean "
+            f"({'/'.join(sorted(_TRUE_LITERALS | _FALSE_LITERALS))}), got {raw!r}"
+        )
+    if isinstance(default, int):
+        try:
+            return int(raw.strip())
+        except ValueError:
+            raise ConfigError(f"{env_name} expects an integer, got {raw!r}") from None
     return raw
 
 
@@ -91,29 +141,45 @@ def _env_overrides() -> dict[str, Any]:
         raw = os.environ.get(env_name)
         if raw is None:
             continue
-        overrides.setdefault(section, {})[key] = _coerce_env_value(raw)
+        default = DEFAULTS.get(section, {}).get(key)
+        overrides.setdefault(section, {})[key] = _coerce_env_value(env_name, raw, default)
     return overrides
+
+
+def _freeze(value: Any) -> Any:
+    """Recursively convert containers to read-only equivalents.
+
+    Without this, :class:`Config`'s ``frozen=True`` is cosmetic: a caller that
+    mutates a nested dict or list reachable from ``values`` corrupts the
+    snapshot, and — when the section came straight from :data:`DEFAULTS` —
+    could corrupt the built-in defaults for the rest of the process.
+    """
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
 class Config:
-    """A fully resolved configuration snapshot."""
+    """A fully resolved, deeply immutable configuration snapshot."""
 
-    values: dict[str, Any]
+    values: Mapping[str, Any]
     config_dir: Path
 
     def get(self, *path: str, default: Any = None) -> Any:
         """Look up a dotted path, e.g. ``config.get("status", "command")``."""
         node: Any = self.values
         for part in path:
-            if not isinstance(node, dict) or part not in node:
+            if not isinstance(node, Mapping) or part not in node:
                 return default
             node = node[part]
         return node
 
 
 def load_config(
-    cli_overrides: dict[str, Any] | None = None,
+    cli_overrides: Mapping[str, Any] | None = None,
     cwd: Path | None = None,
 ) -> Config:
     """Resolve KTD15's five-level precedence chain into a :class:`Config`.
@@ -122,15 +188,21 @@ def load_config(
     repo-local ``./.talaria/config.toml`` under ``cwd``, the global
     ``~/.talaria/config.toml`` (or its ``TALARIA_CONFIG_DIR`` redirection),
     and :data:`DEFAULTS`.
+
+    Raises :class:`ConfigError` if a config file is unreadable or malformed, or
+    if a ``TALARIA_*`` variable holds a value of the wrong type.
     """
     cwd = cwd if cwd is not None else Path.cwd()
     config_dir = global_config_dir()
 
-    merged = dict(DEFAULTS)
+    # deepcopy, not dict(): a shallow copy hands out the *same* nested section
+    # objects DEFAULTS holds, so mutating a returned section would rewrite the
+    # built-in defaults for the whole process.
+    merged = deepcopy(DEFAULTS)
     merged = _deep_merge(merged, _read_toml(config_dir / "config.toml"))
     merged = _deep_merge(merged, _read_toml(cwd / ".talaria" / "config.toml"))
     merged = _deep_merge(merged, _env_overrides())
     if cli_overrides:
         merged = _deep_merge(merged, cli_overrides)
 
-    return Config(values=merged, config_dir=config_dir)
+    return Config(values=_freeze(merged), config_dir=config_dir)
