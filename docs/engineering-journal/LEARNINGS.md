@@ -4,6 +4,30 @@
 
 ## 2026-08-03
 
+### Four of seven gate measurements could not fail, and the one that mattered compared the projection with itself
+
+**Author.** v0.1 milestone-1 integration, from an adversarial audit of the validation gate
+
+**Evidence.** The Textual validation gate reported `pass` on all ten checks and was about to settle the framework decision for v0.1. An audit injected, into each check, the exact defect that check exists to detect:
+
+| injected defect | what actually happened | what the gate reported |
+| --- | --- | --- |
+| removed the two `widget.remove()` calls | 4,455 widgets genuinely mounted, 7.4x the 600 ceiling | `mounted_widgets: 501`, pass |
+| removed the condense-before-mount guard | 540 widgets mounted in one tick against a cap of 40 | `peak_mounted: 41`, test passes |
+| made `TranscriptPane.apply` a no-op | interface rendered nothing at all, blank screen | `content_loss: 0`, pass |
+| discarded 9 of every 10 inbound frames | 90% of the conversation destroyed | `content_loss: 0`, `frames_applied` still matched |
+| scheduled a render on every frame | coalescing entirely defeated, 6,419 real renders | rate went *down*, pass |
+
+**Mechanism.** Six of the seven measurements were counters the object under test maintained about itself; only resident-set memory was observed from outside. The decisive one was `content_is_complete(app.state, transcript_view(app.state))` — the projection compared against a pure function of the same state. Its own docstring warns that comparing the projection with itself "would pass no matter what", and both call sites did exactly that. `mounted_count` returned `len(self._widgets)`, a private deque the pane maintained and nothing reconciled against the real tree. `render_ticks` was incremented in a `set_interval(0.05, ...)` callback, so it was bounded by 20/s by construction and could never breach its own 25/s threshold.
+
+Notably the *thresholds* were all honest — every constant matched the plan exactly, nothing was quietly loosened. The dishonesty was entirely in what was measured, which is much harder to see in review than a moved goalpost.
+
+**Fix.** `mounted_count` reads `len(self.children)`; renders are counted in `render_snapshot` where a render happens; content completeness is compared against the pane's actually-rendered lines at a settled checkpoint; plus new checks for frame accounting, minimum sample counts, and a missing corpus path raising instead of silently dropping three of ten checks.
+
+**Outcome.** The repaired gate failed immediately, on a real defect: `TranscriptPane.reconcile` desynchronizes when a transient notice line appears mid-transcript and later disappears, leaving 274 lines rendered against 275 projected with one line of conversation rendered nowhere. The run halted per the plan's unattended contract. The framework question is open again — not because Textual failed, but because the evidence that said it passed was measuring itself.
+
+**Generalizable rule.** For every check in a gate, ask what value it is *capable* of reporting, and then go and produce a failing one. A check that has never been observed to fail, and cannot be made to fail on demand, is decoration — and a gate made of such checks is worse than no gate, because it converts an open question into a settled one. Prefer measurements taken from outside the thing measured; when the subject supplies its own numbers, something independent has to corroborate them.
+
 ### A key-name matcher normalized the names it was meant to canonicalize, and never looked at values at all
 
 **Author.** v0.1 milestone-1 integration, from a direct probe of the redaction boundary

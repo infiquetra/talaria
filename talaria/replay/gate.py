@@ -54,6 +54,15 @@ from talaria.transport.source import FrameRecord
 from talaria.ui.app import TalariaApp
 from talaria.ui.transcript import DEFAULT_MOUNT_CAP
 
+
+class GateError(Exception):
+    """The gate could not run as specified.
+
+    Raised rather than degrading quietly. A gate that measures fewer things than
+    it claims and still exits 0 is worse than one that refuses to run.
+    """
+
+
 # ── KTD14 thresholds (PC7) ───────────────────────────────────────────────
 
 #: Mounted line widgets allowed at any point of the stress corpus.
@@ -67,6 +76,17 @@ RENDER_TICKS_PER_SECOND_CEILING = 25.0
 
 #: How often the memory series is sampled, in frames.
 RSS_SAMPLE_EVERY = 5_000
+
+#: Minimum points required before a fitted slope is worth publishing. The
+#: sampler advances past every boundary crossed within one 20ms poll, so on a
+#: fast machine the series can collapse to two points — an endpoint difference
+#: reported as a fitted slope. Below this the gate fails rather than publishing
+#: a number it did not really measure.
+MIN_RSS_SAMPLES = 6
+
+#: Minimum content checkpoints. "0 of 1" and "0 of 11" are very different
+#: claims, and only the second is evidence.
+MIN_CONTENT_CHECKPOINTS = 5
 
 #: Terminal geometry the gate renders at. Fixed so a measurement taken on one
 #: machine means the same thing on another.
@@ -143,7 +163,9 @@ class GateResult:
     stress: GateMeasurement
     cadence: GateMeasurement
     live: GateMeasurement | None
-    determinism_identical: bool
+    #: None when no live corpus was replayed, so an unmeasured run cannot
+    #: be mistaken for a passing one.
+    determinism_identical: bool | None
     inert_controls_refused: tuple[str, ...]
     matrix: dict[str, str]
     checks: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -199,6 +221,70 @@ def _fit_slope(series: list[tuple[int, float]]) -> float:
         return 0.0
     numerator = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
     return numerator / denominator
+
+
+def interface_shows_everything(app: TalariaApp, *, settled: bool) -> bool:
+    """Is the conversation actually on screen, as opposed to merely in the domain?
+
+    :func:`content_is_complete` is a domain-side check, and at both of its call
+    sites the ``view`` argument was ``transcript_view(app.state)`` — a pure
+    function of the very state being walked. Its own docstring warns that
+    comparing the projection against itself "would pass no matter what", which
+    is precisely what the call sites did. Making ``TranscriptPane.apply`` a
+    no-op, so the interface rendered nothing at all, produced a completely blank
+    screen and a ``pass`` verdict with zero content loss.
+
+    This reads the pane instead. Every line the pane still holds as a widget
+    must be the projection's line at the same position, and the pane's own
+    accounting — mounted lines plus condensed lines — must add up to the whole
+    transcript, which is what makes "bounded" and "complete" one claim rather
+    than two. A pane that renders nothing fails on the second half; a pane that
+    renders the wrong text fails on the first.
+    """
+    view = transcript_view(app.state)
+    pane = app.transcript
+    on_screen = tuple(pane.rendered_lines)
+    if len(on_screen) > len(view.lines):
+        return False
+
+    # Correctness, checked always: whatever the pane is showing must be a real
+    # contiguous window of the projection, not invented or reordered text.
+    # Anchored at the pane's own top index rather than at the tail, because
+    # mid-stream the pane is legitimately behind — it renders on a coalescing
+    # boundary, so between flushes it holds an older, shorter window. Requiring
+    # it to match the newest tail at every instant is a race, not a defect.
+    top = pane.condensed_count
+    window = tuple(view.lines[top : top + len(on_screen)])
+    if not settled:
+        # Mid-stream this asserts liveness, not equality. The pane renders on a
+        # coalescing boundary, and an arbitrary number of deltas can land
+        # between two flushes — each appending lines and rewriting the tail in
+        # place — so the pane is legitimately behind by an unknown number of
+        # lines, and *any* suffix comparison against the current projection is a
+        # race. Asserting equality here failed all eleven sustained checkpoints
+        # against a pane that was provably correct once settled.
+        #
+        # What still holds while the stream moves: the pane cannot be showing
+        # more than exists. That is a true invariant at every instant, so it is
+        # asserted at every instant.
+        #
+        # Deliberately not asserting "the pane is non-blank" here as well. It
+        # reads like a stronger check but it is a race — before the first flush
+        # the projection legitimately has content the pane has not rendered yet,
+        # which failed exactly one checkpoint per run — and it catches nothing
+        # the settled check below does not already catch outright: a pane that
+        # renders nothing fails the settled sum, since 0 mounted plus 0
+        # condensed cannot equal a non-empty transcript.
+        return len(on_screen) + pane.condensed_count <= len(view.lines)
+
+    if on_screen != window:
+        return False
+
+    # Completeness, checked only once the stream has stopped and a flush has
+    # run. Now there is no in-flight snapshot to be behind, so every line must
+    # be either mounted or accounted for by the condensed block. This is the
+    # half that a pane rendering nothing at all fails.
+    return len(on_screen) + pane.condensed_count == len(view.lines)
 
 
 def content_is_complete(state: SessionState, view: TranscriptView) -> bool:
@@ -295,8 +381,23 @@ async def measure_replay(
                     # content check runs at the same cadence rather than
                     # needing a second schedule.
                     checkpoints += 1
+                    # Both halves: the domain kept the conversation, and the
+                    # interface is actually showing it.
                     if not content_is_complete(app.state, transcript_view(app.state)):
                         failures += 1
+                    # The interface-side check runs only at the settled
+                    # checkpoint, not here. A coalescing renderer is, by
+                    # design, an unknown number of flushes behind the
+                    # projection at any given instant: it can show fewer lines
+                    # than exist (nothing flushed yet) and briefly more than
+                    # exist (a completing turn shortened the projection under
+                    # a window the pane still holds). Every invariant strong
+                    # enough to be worth asserting is therefore a race here,
+                    # and asserting one produced a steady one-to-eleven
+                    # spurious failures per run against a pane that was
+                    # provably correct the moment the stream stopped. What is
+                    # checked mid-stream is the domain claim above; the
+                    # interface claim is checked where it is true.
                     while applied >= next_mark:
                         next_mark += RSS_SAMPLE_EVERY
 
@@ -311,9 +412,18 @@ async def measure_replay(
         # complete when the stream stops, not only while it is moving.
         controls.pause()
         await pilot.pause()
+        # "Settled" has to mean a flush has actually run, not merely that the
+        # stream stopped. The coalescing timer may not fire again after the last
+        # frame lands, which left the pane one flush behind the projection and
+        # failed the interface check below against a pane that was correct the
+        # moment it was allowed to catch up.
+        await app.render_snapshot()
+        await pilot.pause()
         checkpoints += 1
         final_view = transcript_view(app.state)
         if not content_is_complete(app.state, final_view):
+            failures += 1
+        elif not interface_shows_everything(app, settled=True):
             failures += 1
         rss_series.append((app.frames_applied, _rss_mb()))
 
@@ -431,10 +541,20 @@ async def run_gate(
     )
 
     live_measurement: GateMeasurement | None = None
-    determinism_identical = True
+    #: None means "not measured", which is not the same as True. This defaulted
+    #: to True and was published verbatim, so a run that never replayed a live
+    #: corpus still reported determinism_identical: true having compared
+    #: nothing at all.
+    determinism_identical: bool | None = None
     refusals: tuple[str, ...] = ()
 
-    if live_corpus is not None and Path(live_corpus).exists():
+    if live_corpus is not None and not Path(live_corpus).exists():
+        # A typo in the path used to degrade the gate from ten checks to seven
+        # and still exit 0. Silently measuring less than you claim to is the
+        # failure mode this whole module exists to avoid.
+        raise GateError(f"live corpus not found: {live_corpus}")
+
+    if live_corpus is not None:
         records = load_frame_records(live_corpus)
         identity = live_corpus_identity(live_corpus, records)
         live_measurement, _, _ = await measure_replay(records, identity, mount_cap=mount_cap)
@@ -447,6 +567,36 @@ async def run_gate(
         refusals = await exercise_inert_controls(records)
 
     checks: dict[str, dict[str, Any]] = {
+        # Frames the app applied against frames the corpus contains. Content
+        # loss upstream of the reducer is invisible to a check whose ground
+        # truth is the reducer's own output: discarding nine of every ten
+        # inbound frames destroyed 90% of the conversation and still reported
+        # zero content loss, because the destroyed frames were never in the
+        # ground truth to begin with. This is the accounting that notices.
+        "frames_accounted_for": {
+            "description": "frames applied equals frames in the stress corpus",
+            "measured": stress_measurement.frames_applied,
+            "threshold": stress_identity.frame_count,
+            "comparison": "==",
+            "pass": stress_measurement.frames_applied == stress_identity.frame_count,
+        },
+        # A check that runs zero times reports zero failures. Both sampled
+        # checks below ride a 20ms poll that skips boundaries wholesale on a
+        # fast machine, so the sample count is itself a pass condition.
+        "enough_memory_samples": {
+            "description": "memory series has enough points to fit a slope worth publishing",
+            "measured": len(stress_measurement.rss_series_mb),
+            "threshold": MIN_RSS_SAMPLES,
+            "comparison": ">=",
+            "pass": len(stress_measurement.rss_series_mb) >= MIN_RSS_SAMPLES,
+        },
+        "enough_content_checkpoints": {
+            "description": "content completeness was actually checked, not merely scheduled",
+            "measured": stress_measurement.content_loss_checkpoints,
+            "threshold": MIN_CONTENT_CHECKPOINTS,
+            "comparison": ">=",
+            "pass": stress_measurement.content_loss_checkpoints >= MIN_CONTENT_CHECKPOINTS,
+        },
         "mounted_widgets": _check(
             "mounted line widgets at any point of the stress corpus",
             stress_measurement.peak_mounted_widgets,

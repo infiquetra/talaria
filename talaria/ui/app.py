@@ -228,11 +228,19 @@ class TalariaApp(App[None]):
         if self._teardown_started or not self._dirty:
             return
         self._dirty = False
-        self.render_ticks += 1
         await self.render_snapshot()
 
     async def render_snapshot(self) -> None:
         """Project once, then update only the regions the projection says moved."""
+        # Counted here, where a render actually happens, rather than in
+        # _render_tick. _render_tick is the callback of a set_interval timer, so
+        # a count taken there is bounded by the timer frequency (20/s at a 50ms
+        # interval) and can never breach the gate's 25/s ceiling however the
+        # renderer behaves. Defeating coalescing entirely — scheduling a render
+        # per inbound frame — drove real renders to one per frame while the
+        # reported rate went *down*. The point of this metric is to notice
+        # exactly that, so it counts renders, not timer firings.
+        self.render_ticks += 1
         previous = self.snapshot
         snapshot = project(self.state, mode=self.mode, previous=previous)
         self.snapshot = snapshot

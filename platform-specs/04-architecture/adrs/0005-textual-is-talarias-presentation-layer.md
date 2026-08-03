@@ -1,5 +1,12 @@
 # ADR-0005: Textual is Talaria's presentation layer
 
+> **BLOCKED 2026-08-03 — do not accept.** The validation gate this ADR rests on was
+> found to be measuring itself: its content check compared the projection against the
+> projection, so an interface rendering nothing at all passed it. The repaired gate
+> returns `fail` on a real reconciliation defect in `TranscriptPane`. This ADR stays
+> `proposed` and must not be accepted until the gate passes honestly. See
+> [the gate results](../../../docs/analysis/2026-08-03-textual-validation-gate-results.md).
+
 Status: `proposed`
 Date: 2026-08-03
 Deciders: operator

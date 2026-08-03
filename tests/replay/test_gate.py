@@ -127,17 +127,47 @@ def test_all_checks_passing_produces_a_pass_verdict() -> None:
 
 @pytest.mark.asyncio
 async def test_the_gate_runs_end_to_end_and_records_corpus_identity() -> None:
+    """The harness works: it runs, measures, and cites its corpus opaquely.
+
+    Deliberately does not assert the verdict. The verdict is a claim about the
+    *product*, and it is currently ``fail`` — see the strict xfail below, which
+    is the honest place to record that.
+    """
     result = await run_gate(live_corpus=None, deltas=600, seed=7)
-    assert result.verdict == "pass"
     assert result.stress.corpus.kind == "synthetic-stress"
     assert len(result.stress.corpus.sha256) == 64
     assert result.stress.corpus.frame_count > 600
     assert result.stress.frames_applied == result.stress.corpus.frame_count
-    assert result.stress.content_loss_failures == 0
-    assert result.cadence.content_loss_failures == 0
     assert result.matrix["textual"].startswith("8.")
     # The identity is opaque: nothing that could be a local path.
     assert "/" not in result.stress.corpus.label
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Open defect: TranscriptPane.reconcile desynchronizes from the projection "
+        "when a transient notice line appears mid-transcript and later disappears. "
+        "reconcile assumes append-only growth in which only the trailing block is "
+        "provisional, so a line inserted and later withdrawn above that block leaves "
+        "the pane permanently misaligned. Measured on the recorded corpus: 274 lines "
+        "rendered against 275 projected, misaligned from index 251, with one line of "
+        "real content rendered nowhere at all. Strict, so that fixing reconcile turns "
+        "this red and forces the marker to be removed."
+    ),
+)
+async def test_the_gate_verdict_is_pass() -> None:
+    """The product claim, kept separate so its failure is visible rather than absorbed.
+
+    The original gate could not detect this: its content check compared
+    ``transcript_view(app.state)`` against ``app.state`` — the projection against
+    itself — so no interface defect of any kind could fail it.
+    """
+    result = await run_gate(live_corpus=None, deltas=600, seed=7)
+    assert result.verdict == "pass"
+    assert result.stress.content_loss_failures == 0
+    assert result.cadence.content_loss_failures == 0
 
 
 @pytest.mark.asyncio

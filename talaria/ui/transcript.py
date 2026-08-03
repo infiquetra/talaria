@@ -77,8 +77,20 @@ class TranscriptPane(VerticalScroll):
 
     @property
     def mounted_count(self) -> int:
-        """Line widgets currently mounted, including the condensed block."""
-        return len(self._widgets) + (1 if self._condensed is not None else 0)
+        """Widgets actually in the tree — ``len(self.children)``, not bookkeeping.
+
+        This used to return ``len(self._widgets) + 1``, counting the pane's own
+        private deque. The deque is what this class *believes* it has mounted,
+        and nothing reconciled it against the real tree, so any widget that left
+        the deque while staying mounted was invisible to the metric forever.
+        Deleting the two ``widget.remove()`` calls left 4,455 ``Static`` widgets
+        genuinely mounted — more than seven times the gate's 600 ceiling — while
+        this property still reported 501 and the gate passed.
+
+        A measurement the measured object supplies about itself is not a
+        measurement. ``self.children`` is Textual's own record of the tree.
+        """
+        return len(self.children)
 
     @property
     def condensed_count(self) -> int:

@@ -6,6 +6,47 @@ Date: 2026-08-03
 
 ## Verdict
 
+> **SUPERSEDED 2026-08-03, later the same day. The verdict is now `fail`, and the framework
+> decision is NOT settled.** Everything below this box was written when the gate reported
+> `pass`. It is kept as written, because the reason it was wrong is the most useful thing in
+> this document.
+>
+> An adversarial audit found that four of the gate's seven measurements were structurally
+> incapable of failing, and proved it by injecting the exact defect each check exists to
+> detect. The decisive one: the content-completeness check called
+> `content_is_complete(app.state, transcript_view(app.state))` — the projection compared
+> against itself. `content_is_complete`'s own docstring warns that this "would pass no matter
+> what", and both call sites did precisely it. Making the transcript pane a no-op, so the
+> interface rendered *nothing at all*, still produced a `pass` verdict with zero content loss.
+> Alongside it: `mounted_widgets` counted the pane's private bookkeeping deque rather than the
+> widget tree (a leak of 4,455 widgets, 7.4x the ceiling, reported as 501), and
+> `render_ticks_per_second` was counted in a 50ms timer callback, so it was bounded by 20/s by
+> construction and could never breach its own 25/s threshold — defeating coalescing entirely
+> made the number go *down*.
+>
+> The checks were repaired to measure what they claim: mounted widgets from `len(children)`,
+> renders counted where renders happen, content completeness compared against the pane's
+> actually-rendered lines, plus new checks for frame accounting, minimum sample counts, and a
+> missing corpus path becoming an error instead of a silent skip.
+>
+> **The repaired gate immediately failed, on a real defect.** `TranscriptPane.reconcile`
+> desynchronizes from the projection when a transient notice line appears mid-transcript and
+> later disappears: it assumes append-only growth in which only the trailing block is
+> provisional, so a line inserted and later withdrawn above that block leaves the pane
+> permanently misaligned. Measured on the recorded corpus: **274 lines rendered against 275
+> projected, misaligned from index 251, with one line of real content rendered nowhere at
+> all.** The operator would silently lose a line of the conversation.
+>
+> Per the plan's unattended contract, a U5 gate failure halts the run. It has halted here.
+> `platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md` must not
+> be accepted on this evidence. What the gate now measures honestly, and what still passes
+> (memory, determinism, render cadence, frame accounting) is recorded in
+> `evidence/2026-08-03-textual-validation-gate.json`.
+>
+> Note what this does *not* say. It is not evidence that Textual is unsuitable — the defect is
+> in Talaria's own reconciliation code, not in the framework. It says the framework question is
+> still open, because the run that claimed to answer it was measuring itself.
+
 **Pass.** All ten threshold checks passed. Textual 8.2.8 is validated as Talaria's presentation
 layer for v0.1, and unit U5 of the
 [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md) is discharged.

@@ -4,6 +4,19 @@
 
 ## P0
 
+### TranscriptPane.reconcile desynchronizes when a mid-transcript line is withdrawn
+
+**Priority.** P0 — this is what the repaired validation gate fails on, 2026-08-03. It blocks ADR-0005 and the milestone-1 merge.
+
+`reconcile` assumes the projection grows by appending, and that only the trailing streaming block is provisional: it finds the common prefix, drops the changed tail, and mounts what is new. A transient notice line — Hermes emits these, e.g. `· computing...` and `! unknown event type: ...` — can appear *above* that trailing block and later disappear. When it does, the pane's line list and the projection diverge permanently, because nothing ever revisits the region below the common prefix.
+
+Measured on the recorded 5,773-frame corpus at the settled checkpoint, after forced flushes: **274 lines rendered against 275 projected**, first misalignment at index 251, and one line of real conversation text (`Yet the essential model remains recognizable from the VT100...`) rendered nowhere at all — neither mounted nor condensed. The operator silently loses a line.
+
+Pinned by `tests/replay/test_gate.py::test_the_gate_verdict_is_pass`, marked `xfail(strict=True)` so that fixing `reconcile` turns the test red and forces the marker to be removed rather than leaving a stale exemption behind.
+
+Fixing this is U5's work and needs a design decision, not a patch: either reconcile the full window rather than the suffix below the common prefix, or make the projection's notice lines non-transient so the append-only assumption becomes true. The second is probably cheaper and is arguably the right model anyway — a line the operator saw should not vanish.
+
+
 ### ~~Run the Textual validation gate~~ — CLOSED 2026-08-03, verdict **pass**
 
 **Author.** Reconsidered language and TUI framework analysis
