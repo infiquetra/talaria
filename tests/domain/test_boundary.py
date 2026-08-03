@@ -32,6 +32,19 @@ So: the domain may import the standard library and its own package, and
 nothing else. Widening either allowance below is a deliberate ADR-0002
 decision, not a routine edit.
 
+**What a green run here does and does not prove.** It proves the domain core
+imports no third-party package and no sibling ``talaria`` package. It does
+**not** prove I/O discipline: the whole standard library is allowed, so a
+domain module may ``import socket``, ``subprocess`` or ``asyncio`` and stay
+green. That is the correct scope for this check — banning ``pathlib`` would be
+absurd — but ADR-0002's rationale is partly about keeping I/O out of the domain
+(KTD3 puts the ``FrameSource`` seam in ``talaria/transport/`` because a live
+implementation owns a socket). Since this is the only mechanical ADR-0002
+signal in the repository, it is easy to read a green run as the whole boundary.
+I/O discipline remains a design-review property, not something this test
+enforces. It is also import-time only: a lazy ``import`` inside a function body
+evades it.
+
 The "demonstrably red on a deliberate violation" scenario required by U1's
 test-scenario list is verified by adding a scratch domain module that imports
 a third-party package, running this test once, and discarding it — a committed
