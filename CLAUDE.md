@@ -12,12 +12,19 @@ Talaria is a public, experimental Hermes-native terminal UI. Read [AGENTS.md](AG
 
 ## Checks
 
-The Python implementation has not started; this is still the TypeScript bootstrap's check command.
+The Python implementation has started (ADR-0004). Run the project check with `uv`:
 
 ```bash
-npm run check
+uv sync --all-groups
+uv run ruff check .
+uv run mypy
+uv run pytest
+uv run bandit -r talaria -q
 git diff --check
 ```
+
+The TypeScript bootstrap's `npm run check` still applies to the superseded `src/` tree until it is
+removed.
 
 ## Notes
 

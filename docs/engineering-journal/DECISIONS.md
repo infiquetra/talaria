@@ -121,3 +121,15 @@ The replacement is now decided. Gate selection is not an operator flag: `should_
 **Learning.** A process gate whose verifier was never implemented becomes a permanent block that looks like diligence. When a finding requires a mechanical check, confirm the checker exists before the finding is allowed to gate anything; otherwise record it as advisory from the start.
 
 **Revisit when.** Talaria gains contributors beyond the operator, or a mechanical panel-independence verifier lands in the saga tooling — at which point review ceremony has a real reader and a real check.
+
+## 2026-08-03 — Prettier is scoped to the TypeScript bootstrap; docs are excluded
+
+**Author.** v0.1 segment 1, unblocking the `check` CI job
+
+**Decision.** `.prettierignore` now excludes `docs/`, `.venv`, and `__pycache__`. Prettier governs the superseded TypeScript bootstrap under `src/` and nothing else; ruff owns formatting for the Python tree, and the documentation tree is formatted by hand.
+
+**Rationale.** The `check` job's `prettier --check .` step had been failing on `main` since `064967b` — not on TypeScript, which typechecks clean and passes all 45 vitest tests, but on ten markdown and JSON files under `docs/`. Several of those are pinned evidence rather than ordinary prose. The doc-review artifact records `target_sha256_after: 010ff5f6…` for the v0.1 plan, and the requirements reconciliation records before/after hashes for its receipts. Running `prettier --write` would have rewritten those bytes and invalidated the hashes that prove the review gate was satisfied — turning a formatting nit into the destruction of the run's own provenance chain.
+
+**Rejected alternatives.** `prettier --write .` (invalidates the pinned hashes described above, and would keep doing so every time a plan or review artifact is regenerated). Deleting the `check` job (it still carries real signal — typecheck plus 45 tests — until `src/` is removed). Per-file ignore entries (every new document under `docs/` would fail CI until someone remembered to add it, which is how this failure accumulated in the first place).
+
+**Revisit when.** The superseded `src/` tree is removed, at which point Prettier and the entire `check` job leave the repository with it. Also revisit if documentation formatting ever needs to be mechanically enforced — that would call for a markdown-aware linter chosen for the Python era, configured to leave pinned artifacts alone.

@@ -30,8 +30,19 @@ Four decisions are settled and are not open for re-litigation in an implementati
 
 ## Commands
 
-The Python implementation has not started. Until it does, the check command is the TypeScript
-bootstrap's:
+The Python implementation has started (ADR-0004). The project check is:
+
+```bash
+uv sync --all-groups
+uv run ruff check .
+uv run mypy
+uv run pytest
+uv run bandit -r talaria -q
+git diff --check
+```
+
+The TypeScript bootstrap's check command still applies to the superseded `src/` tree until it is
+removed:
 
 ```bash
 npm install

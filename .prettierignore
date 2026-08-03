@@ -2,3 +2,15 @@ node_modules
 dist
 coverage
 package-lock.json
+
+# Prettier belongs to the superseded TypeScript bootstrap under src/ (ADR-0004);
+# it was never scoped to govern Python-era documentation. Reformatting docs/ is
+# also actively harmful: several files there are pinned evidence. The doc-review
+# artifact records a target_sha256_after for the v0.1 plan, and the review
+# reconciliation records before/after hashes for its receipts — rewriting those
+# bytes invalidates the hashes that prove the review gate was satisfied.
+docs/
+
+# Python tooling artifacts. ruff owns formatting for the Python tree.
+.venv
+__pycache__

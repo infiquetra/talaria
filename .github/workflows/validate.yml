@@ -25,3 +25,73 @@ jobs:
         run: npm run check
       - name: Check whitespace
         run: git diff --check
+
+  # Talaria's actual check pipeline (ADR-0004). PC7's supported matrix is
+  # macOS arm64, so this job carries no continue-on-error: a failure here
+  # fails the workflow run.
+  #
+  # Failing the run is NOT the same as blocking a merge. Making these checks
+  # required status checks is a repository-settings change (branch protection
+  # or a ruleset) that cannot be expressed in this file; `main` currently has
+  # neither. Tracked in docs/engineering-journal/QUEUED.md. Job names are kept
+  # free of incidental matrix keys so the check names stay stable if branch
+  # protection is later configured against them.
+  python-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    runs-on: macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Ruff
+        run: uv run ruff check .
+      - name: mypy --strict
+        run: uv run mypy
+      - name: pytest
+        run: uv run pytest
+      - name: bandit
+        run: uv run bandit -r talaria -q
+
+  # Informational until the platform matrix is formally widened: a failure
+  # here does not fail the run. It does emit a warning annotation, so an
+  # informational failure stays visibly distinct from a pass instead of
+  # disappearing into a green run.
+  python-check-linux:
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+      - name: Ruff
+        run: uv run ruff check .
+      - name: mypy --strict
+        run: uv run mypy
+      - name: pytest
+        run: uv run pytest
+      - name: bandit
+        run: uv run bandit -r talaria -q
+      - name: Flag the informational failure
+        if: failure()
+        run: |
+          MSG="Python ${{ matrix.python-version }} on ubuntu-latest failed."
+          MSG="$MSG This does not fail the run (Linux is outside PC7's supported"
+          MSG="$MSG matrix) but it is a real failure, not a skip."
+          echo "::warning title=Linux leg failed (informational)::$MSG"
