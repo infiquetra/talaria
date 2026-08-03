@@ -183,39 +183,65 @@ The full series for the unbounded stress pass, in megabytes:
 
 | frames | RSS (MB) |
 | ------ | -------- |
-| 0 | 90.02 |
-| 6,976 | 98.92 |
-| 11,072 | 99.59 |
-| 15,104 | 100.89 |
-| 21,376 | 101.62 |
-| 25,472 | 102.05 |
-| 30,912 | 102.34 |
-| 35,328 | 102.69 |
-| 40,896 | 102.97 |
-| 45,312 | 103.34 |
-| 51,456 | 103.62 |
-| 53,516 | 125.62 |
+| 0 | 90.66 |
+| 6,720 | 100.11 |
+| 10,752 | 101.00 |
+| 15,168 | 102.34 |
+| 20,096 | 102.88 |
+| 25,472 | 103.23 |
+| 31,296 | 103.67 |
+| 35,392 | 104.19 |
+| 40,000 | 104.52 |
+| 46,208 | 104.89 |
+| 50,880 | 105.41 |
+| 53,516 | 126.72 |
 
-Fitted slope: **0.33 MB per 1,000 frames**. Growth across the replay: 35.6 MB against a 300 MB
-ceiling.
+> **Corrected 2026-08-03**, after external review. This section previously published the
+> all-points slope of **0.33 MB per 1,000 frames** as the headline and extrapolated a
+> million-frame session to "around 330 MB". That figure is dominated by a single final sample
+> which qualification 2 below *already told the reader to exclude* — the section argued against
+> its own headline number and then used the headline number anyway. The table above was also
+> transcribed from an earlier gate run than the one in the published evidence JSON; both now
+> come from the same run.
+
+**Steady-state slope: 0.11 MB per 1,000 frames.** All-points slope, including teardown:
+0.34 MB per 1,000 frames. Growth across the replay: 36.06 MB against a 300 MB ceiling.
+
+The gap between those two numbers is the whole of this section. Recomputed with the gate's own
+`_fit_slope` over the published series:
+
+| fit | MB per 1,000 frames | one million frames |
+| --- | --- | --- |
+| all 12 samples | 0.337 | ~337 MB |
+| excluding the final sample | 0.197 | ~197 MB |
+| steady state (samples 2..11) | **0.109** | **~109 MB** |
+
+The final step alone adds 21.31 MB over 2,636 frames — **59% of all growth in 5% of the frames.**
 
 Three honest qualifications, because this is the measurement most easily over-read.
 
 1. **`ru_maxrss` is a maximum, not a current.** It is monotonic by construction and can never show
    memory being returned. Every number above is therefore an upper bound on what was held, not a
    description of what is held now.
-2. **The final jump is teardown, not streaming.** The step from 103.62 MB at 51,456 frames to
-   125.62 MB at the end is the final render plus the pause-and-measure sequence, not the stream. The
-   interesting figure is the shape of the first eleven samples, which is close to flat after the
-   first 10,000 frames.
+2. **The final jump is teardown, not streaming.** The last step is the final render plus the
+   pause-and-measure sequence, not the stream. The interesting figure is the shape of the earlier
+   samples, which is close to flat after the first 10,000 frames. This is why the steady-state fit
+   is the headline and the all-points fit is shown beside it rather than instead of it.
 3. **The sustained pass ran in the same process**, so its series starts at the previous pass's
-   high-water mark (125.62 MB) and its 21.1 MB growth is not independent evidence.
+   high-water mark and its growth is not independent evidence. The same is true of the recorded
+   pass, which starts at the sustained pass's mark.
 
 What the slope is *for*: KTD14 bounds mounted widgets, not the domain transcript, and the domain
-transcript accumulates without eviction. Extrapolating 0.33 MB per 1,000 frames, a session of one
-million frames would sit around 330 MB. That is the input to the deferred QUEUED.md item "Bound the
-domain transcript, not just the mounted widget count" — the gate's job was to produce the number,
-not to spend the decision.
+transcript accumulates without eviction. Extrapolating the steady-state 0.11 MB per 1,000 frames, a
+session of one million frames would sit around **110 MB**. That is the input to the deferred
+QUEUED.md item "Bound the domain transcript, not just the mounted widget count" — the gate's job was
+to produce the number, not to spend the decision.
+
+**Why the correction matters in the direction it does.** Over-reporting growth is conservative for
+the 300 MB *threshold* — it can only cause a false fail, never a false pass, so the gate's verdict
+was never at risk. It is not conservative for the *decision*: a 3.1x overstatement argues for
+eviction work in milestone 3 that this measurement does not actually support. A number that is safe
+for the gate and wrong for the roadmap is still wrong.
 
 ### Render cadence
 

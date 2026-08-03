@@ -293,12 +293,20 @@ def content_is_complete(state: SessionState, view: TranscriptView) -> bool:
     Deliberately not ``view == transcript_view(state)``: that would compare the
     projection against itself and pass no matter what. This walks the domain's
     own entries and requires each of their lines to be findable in sequence.
+
+    Matching is by whole line, not by substring. Substring containment had two
+    holes: appending junk to every rendered line still contained the original,
+    and an *empty* entry text produced an empty fragment, which is ``in`` every
+    string — so an empty-text entry matched whatever line the cursor happened to
+    be on and advanced past it. Each entry's expected lines are rendered through
+    the projection one entry at a time, which applies the same speaker prefix the
+    real projection applies without this function having to know what it is.
     """
     cursor = 0
     lines = view.lines
     for entry in state.transcript:
-        for fragment in entry.text.split("\n"):
-            while cursor < len(lines) and fragment not in lines[cursor]:
+        for expected in transcript_view(SessionState(transcript=(entry,))).lines:
+            while cursor < len(lines) and lines[cursor] != expected:
                 cursor += 1
             if cursor >= len(lines):
                 return False
@@ -650,8 +658,14 @@ async def run_gate(
             "measured": determinism_identical,
             "threshold": True,
             "comparison": "==",
-            "description": "1x-with-pause, 64x and unbounded replays end in identical "
-            "domain state (AE11)",
+            # Says what the code actually replays. The previous wording claimed
+            # "1x-with-pause", and 1x is never replayed -- the pause runs at 64x
+            # like the baseline, so this exercises two distinct speeds against
+            # AE11's "at any speed", not three. Overstating the treatments in a
+            # published check description is the same class of defect as
+            # overstating a threshold.
+            "description": "64x, 64x-with-pause and unbounded replays end in identical "
+            "domain state (AE11); MIN_SPEED is not replayed -- see QUEUED.md",
             "pass": determinism_identical,
         }
         checks["inert_mutation_controls"] = {

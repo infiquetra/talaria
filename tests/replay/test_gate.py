@@ -72,6 +72,52 @@ def test_content_completeness_detects_a_dropped_entry() -> None:
     assert content_is_complete(state, reordered) is False
 
 
+def test_content_completeness_matches_whole_lines_not_substrings() -> None:
+    """Substring containment let a corrupted line pass as an intact one.
+
+    Every rendered line still *contains* the original text, so a renderer that
+    appended to each one satisfied the old check while showing the operator
+    something the domain never said.
+    """
+    state = SessionState(
+        transcript=(TranscriptEntry(kind="assistant", text="first", turn_index=0, seq=1),)
+    )
+
+    assert content_is_complete(state, TranscriptView(lines=("first",), entry_count=1)) is True
+    assert (
+        content_is_complete(state, TranscriptView(lines=("first + junk",), entry_count=1)) is False
+    )
+
+
+def test_content_completeness_does_not_let_an_empty_entry_match_anything() -> None:
+    """An empty entry produced an empty fragment, and ``"" in anything`` is True.
+
+    So an empty-text entry matched whatever line the cursor happened to sit on
+    and advanced past it, consuming a real line's slot without checking it.
+    """
+    state = SessionState(
+        transcript=(
+            TranscriptEntry(kind="assistant", text="", turn_index=0, seq=1),
+            TranscriptEntry(kind="assistant", text="third", turn_index=0, seq=2),
+        )
+    )
+
+    # The empty entry renders as an empty line; both must be present, in order.
+    assert content_is_complete(state, TranscriptView(lines=("", "third"), entry_count=2)) is True
+
+    # The discriminating case. Here the empty entry's line is absent and an
+    # unrelated line sits in its place. Under substring matching the empty
+    # fragment matched "second", consumed that slot, and "third" then matched
+    # the next line -- so the whole thing passed while the projection showed a
+    # line the domain never committed and omitted one it did. Chosen so the
+    # cursor does not simply run out of lines, which is a different failure and
+    # would have made this test pass against the unfixed code too.
+    assert (
+        content_is_complete(state, TranscriptView(lines=("second", "third"), entry_count=2))
+        is False
+    )
+
+
 def test_the_memory_slope_is_a_fit_over_the_series_not_the_endpoints() -> None:
     flat = [(0, 50.0), (5000, 50.0), (10000, 50.0)]
     rising = [(0, 50.0), (5000, 55.0), (10000, 60.0)]
