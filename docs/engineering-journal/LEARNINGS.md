@@ -4,6 +4,35 @@
 
 ## 2026-08-03
 
+### The fix for a credential leak corrupted the artifact, and the check that would have caught it could not reach the case
+
+**Author.** v0.1 milestone-1 integration, from external review of the redaction boundary
+
+**Evidence.** Closing a URL-userinfo leak by writing the redaction marker into the userinfo position produced `[redacted]@host`, which does not parse:
+
+```
+>>> urlsplit("http://[redacted]@cdp.example/")
+ValueError: 'cdp.example' does not appear to be an IPv4 or IPv6 address
+```
+
+The frame-log header runs through `redact_url`, so a basic-auth endpoint corrupted the header of an entire recording. Separately, the equivalence corpus that is supposed to pin the KTD6 relation contained **zero** frames carrying a URL — 0 of 19 — and `compare_records` compared frame bodies with a flat equality that had no authorized-divergence path at all.
+
+**Mechanism.** Two independent failures that arrived together.
+
+The corruption: a bare `[` at the start of a `netloc` commits Python's parser to an IPv6 literal, and it then rejects the real hostname that follows. `urlsplit`/`urlunsplit` do not round-trip a `netloc` edited by hand — `netloc` has its own grammar, and the sentinel value `[redacted]` violates it. The output was inspected as a *string* (does the secret still appear? no) and never as a *URL* (does it still parse? no).
+
+The unreachable check: the in-body URL redaction added earlier was a genuine KTD6 divergence, enumerated in the module docstring and nowhere the harness could see it. With no URL in any fixture frame, the harness could not exercise the divergence; with no frame-body allowance, it could not have permitted it. Its comment asserting that any frame-body redaction is "unexplained drift" had been false since that commit. The docstring's claim that the relation is "pinned by a test rather than drifting" was untrue for exactly the two entries most likely to matter.
+
+**Fix.** Emit `%5Bredacted%5D`, which parses and is already the on-disk form of a redacted query value; three round-trip cases pinned, including IPv6-with-port. Fixture carries both divergent shapes; the comparator authorizes them by reason with its own independent expectation of a redacted URL, and eight attack cases pin the relaxation so the allowance cannot swallow an arbitrary frame difference.
+
+**Generalizable rules.** Three.
+
+1. *A security fix can be worse than the bug.* A credential in a header is a disclosure; a header nothing can parse is a destroyed recording, in an append-only artifact with no repair path. When hardening something that writes to durable storage, ask what the fix costs if it is wrong, not only what the leak costs.
+2. *Anything that rewrites a structured value must be asserted to parse back*, not merely inspected for the absence of the secret. "The credential is gone" and "the result is still a URL" are different claims and the first does not imply the second.
+3. *Reachability of a check is its own review target.* This is the fifth instance in one milestone of a check that looked like evidence and was not — the `peak_mounted` identity, `content_is_complete` comparing state to a function of itself, `mounted_count` reading its own bookkeeping, a credential fixture caught by the wrong mechanism, and a corpus with no URLs pinning URL redaction. Different causes, one shape: the check and the thing checked were not independent. Ask what input would make each check fail, then confirm that input is in the corpus.
+
+**Worth recording about how it was found.** The bug surfaced while building a fixture to exercise a comparator change previously priced as too expensive to attempt. The cheap check that was nearly skipped found the expensive defect, and the pricing that justified skipping it was itself wrong. When a cost estimate is the only thing standing between you and a check, verify the estimate.
+
 ### A results doc argued against its own headline number, and its table came from a different run than its evidence
 
 **Author.** v0.1 milestone-1 integration, from an external review of the gate
