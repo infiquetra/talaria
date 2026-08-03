@@ -100,6 +100,23 @@ class TalariaApp(App[None]):
 
         self._dirty = True
         self._teardown_started = False
+        #: Serializes render_snapshot, which is not reentrant: it reads
+        #: self.snapshot, projects, writes it back, and then *awaits* inside
+        #: TranscriptPane.apply while widgets mount and unmount. A second render
+        #: entering during that await would diff against a half-applied pane and
+        #: both would mutate the same deque and top index.
+        #:
+        #: Three callers invoke it and they are not all serialized by Textual's
+        #: message pump: `drain` calls `_render_tick` directly, the gate's
+        #: settled checkpoint calls `render_snapshot` directly, and the
+        #: coalescing interval timer calls it through the pump. Two of those are
+        #: outside the pump's ordering, so nothing was preventing overlap.
+        #:
+        #: Added on structural grounds, not on a reproduction. See the QUEUED
+        #: entry on the intermittent pane-content assertion: this hazard is real
+        #: and cheap to close, but it has NOT been shown to be the cause of that
+        #: failure, and this lock must not be recorded as having fixed it.
+        self._render_lock = asyncio.Lock()
         self._coalesce_timer: Timer | None = None
         self._pump_task: asyncio.Task[None] | None = None
         self._status_task: asyncio.Task[None] | None = None
@@ -240,15 +257,16 @@ class TalariaApp(App[None]):
         # per inbound frame — drove real renders to one per frame while the
         # reported rate went *down*. The point of this metric is to notice
         # exactly that, so it counts renders, not timer firings.
-        self.render_ticks += 1
-        previous = self.snapshot
-        snapshot = project(self.state, mode=self.mode, previous=previous)
-        self.snapshot = snapshot
+        async with self._render_lock:
+            self.render_ticks += 1
+            previous = self.snapshot
+            snapshot = project(self.state, mode=self.mode, previous=previous)
+            self.snapshot = snapshot
 
-        if "transcript" in snapshot.changed:
-            await self.transcript.apply(snapshot.transcript)
-        if "subagents" in snapshot.changed:
-            await self.agents.apply(snapshot.subagents)
+            if "transcript" in snapshot.changed:
+                await self.transcript.apply(snapshot.transcript)
+            if "subagents" in snapshot.changed:
+                await self.agents.apply(snapshot.subagents)
 
     # ── the status region (U6) ───────────────────────────────────────────
 

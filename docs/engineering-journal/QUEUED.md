@@ -56,6 +56,28 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 
 ## P1
 
+### Intermittent pane-content mismatch in the bounded-mount test — cause not found
+
+**Author.** v0.1 milestone-1, 2026-08-03
+**Priority.** P1
+**Effort.** Unknown — the work is diagnosis, not a known fix.
+**Worth it when.** Before the next milestone merges, or immediately if it recurs on a required check rather than an informational one.
+
+`tests/ui/test_transcript_bounds.py::test_mounted_widgets_stay_under_the_cap_while_content_stays_reachable` fails intermittently on `assert pane.rendered_lines == view.lines[pane.condensed_count:]`. Observed twice: once on `python-check-linux (3.13)` in CI (an informational leg, not required for merge) and once locally in a batch of six whole-suite runs under random ordering. Ten consecutive whole-suite runs afterwards passed, so the rate is low and load- or order-dependent.
+
+**The signature is specific.** The line *count* reconciles — `len(rendered) + condensed == total_lines` passes — but the content is shifted: a line is duplicated at the seam and the tail moves one place, so the last line falls off the comparison. That is what a stable index one position too high produces: one stale widget is kept and the remainder is mounted after it.
+
+**What has been ruled out, so a future attempt does not repeat it.**
+
+- *The reconciliation arithmetic itself.* A faithful pure-list mirror of `TranscriptPane.apply`, driven by the real reducer over the same fixture, was run against 4,000 randomized flush schedules with no desync. Given a consistent sequence of projections, the index arithmetic is sound.
+- *Overlapping renders, as constructed.* Two `render_snapshot` calls forced to interleave — the second landing new frames and projecting while the first is awaiting inside `apply` — did not corrupt the pane. A test written to pin that path passed with and without the serialization lock, so it pins nothing and was not kept.
+- *The pane merely lagging.* A lag produces a prefix of the projection, not a duplicate.
+
+**What was done anyway, and what it is not.** `render_snapshot` is now serialized behind an `asyncio.Lock`. It is genuinely not reentrant, and three callers reach it — `drain`, the gate's settled checkpoint, and the coalescing timer — of which only the last is ordered by Textual's message pump. Closing that is cheap and correct on its own terms. **It has not been shown to fix the failure above**, and must not be recorded as having done so.
+
+**Next step for whoever picks this up.** Capture a reproducing `pytest-randomly` seed (run without `-q` so the seed banner is visible, loop until failure, then replay with `--randomly-seed=<n>`). The assertion has already done its job once by catching a real defect class; the remaining question is whether this instance is the product or the harness.
+
+
 ### ~~Make the macOS checks required status checks on `main`~~ — CLOSED 2026-08-03
 
 **Author.** v0.1 scaffold code review, 2026-08-02
