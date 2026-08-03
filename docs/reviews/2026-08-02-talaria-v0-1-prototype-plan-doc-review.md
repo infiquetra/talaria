@@ -26,9 +26,12 @@ that needed a decision on 2026-08-02 and the rest were applied.
 **unattended** `/work` run, fixing everything found, not only P0/P1. Nine further findings
 (D22–D30): five operator-presence assumptions, now resolved by the plan's new "Unattended execution
 contract" section — with push/PR/merge authority and corpus self-capture both operator-authorized
-mid-review on 2026-08-02 — two execution-spec fidelity gaps fixed and revalidated, one environment
-hazard outside the document (the ultracode emitter's return-contract bug, D28) reported with a
-recorded recommendation: launch `/work` with the **inline** backend.
+mid-review on 2026-08-02 — two execution-spec fidelity gaps fixed and revalidated, one
+return-contract hazard (D28) initially attributed to the workflow emitter and later root-caused to
+this spec: `returns` is a typed list of JSON key names (`execution_spec.py:1131`), and the spec had
+authored prose sentences into it. Fixed post-review by rewriting all ten units' `returns` as key
+lists; the re-emitted workflow now carries sane return gates and the ultracode backend is viable.
+The plugin's validator accepting the wrong type remains reported upstream.
 
 The review found the plan structurally sound — near-complete requirement mapping, replay-first
 ordering that genuinely spends nothing on transport before the framework verdict, a named falsifier
@@ -167,7 +170,7 @@ gateway (`--port`/`--host`/`--isolated` in the install's own `--help`); `_resolv
 | D25 | P1 | U1/U10 CI evidence | CI green requires commits on GitHub; push authority during an unattended run is the operator's, and the plan assumed it silently. | **operator** — push, PR, and merge to `main` authorized 2026-08-02, at coherent revertible milestones with revert-quality messages (the operator's stated bar); on push failure, identical local checks run and CI is recorded pending, never blocking |
 | D26 | P2 | KTD11 acquisition chain | The chain ends in an interactive prompt; unattended execution must never reach it, and nothing said how acceptance credentials are provisioned. | Fixed — contract: credentials arrive via environment or `~/.talaria/credentials`, provisioned from the token the harness injected at gateway launch; the prompt stays tested (PTY, non-echo) but never sits on an execution path |
 | D27 | P2 | Execution spec U5, U6 | Spec `depends_on` omitted U2 for both U5 (corpus dependency, named in the plan) and U6 (imports U2's redaction module per KTD5) — topologically masked by U3→U2, but the spec is the dispatch artifact. | Fixed — both edges added; spec revalidates (`OK: talaria-v0-1-prototype (10 units)`); all ten unit prompts now direct the executor to apply the unattended execution contract |
-| D28 | P2 | Execution environment (outside the document) | The saga workflow emitter (v0.122.0) builds each unit's return-contract JSON schema by iterating the `returns` prose character by character (`required: ["A", "s", "s", …]`), and `/work`'s ultracode backend **re-emits at launch**, so fixing the committed file cannot help. | **Reported — not a plan defect.** Blocks only the `cc-workflows-ultracode` backend; the inline and team-execution backends read the spec directly. Recommendation recorded: choose **inline** at `/work` launch until the emitter is fixed upstream in the plugin repository |
+| D28 | P2 | Execution spec (root cause revised post-review) | Every unit's return gate emitted garbled (`required: ["A", "s", "s", …]`). Initially attributed to the workflow emitter; root-caused on operator follow-up to this spec: `returns` is declared `list[str]` of JSON key names (emitter `execution_spec.py:1131`; the emitted prompt reads "a single JSON object with the keys <returns joined>"), and the spec had authored prose sentences, which the loader (`:1337`) iterates character by character. The plugin validator accepting a string where a list is required is the residual upstream gap. | **Fixed.** All ten units' `returns` retyped from prose to snake_case key lists; spec revalidates (`OK: … 10 units`); re-emitted workflow carries sane schemas and prompts, so the launch-time re-emit is now safe and the `cc-workflows-ultracode` backend is viable. Validator type-gap reported for the plugin repository |
 | D29 | P3 | KTD5 | Behavior with no `status.command` configured was unstated. | Fixed — absent means disabled: no child ever spawned, region renders nothing (the prior art treats the status line as optional) |
 | D30 | P3 | Sources; U3 | Mid-run Hermes reads implicitly trusted the install's `HEAD` staying at the pin. | Fixed — reads go through `git -C ~/.hermes/hermes-agent show 7f4d15515:<path>`; evidence stays pinned regardless of `HEAD` movement |
 
@@ -231,4 +234,4 @@ anyone — that is what the U5 gate exists to settle, and no reviewer can settle
 - Review artifact: this file
 - Override rationale: DR15's review-panel block is overridden by the operator and recorded in `docs/engineering-journal/DECISIONS.md` — it is a receipt gap against a verifier that does not exist, and the substantive review obligation was discharged by this review plus a two-engine external panel
 - Operator authorizations recorded 2026-08-02: push/PR/merge to `main` at revertible milestones during the unattended run; corpus self-capture on `deepseek-v4-flash`
-- Next step: `/work` at U1 — choose the **inline** backend at launch (D28: the ultracode emitter garbles return contracts and re-emits at launch)
+- Next step: `/work` at U1 — any backend, including `cc-workflows-ultracode` (D28 resolved: the spec's `returns` fields were retyped from prose to key lists on 2026-08-02, so the launch-time re-emit now produces sane return gates; the emit-time concurrency check passes at `aggregate_max_concurrent: 3`)
