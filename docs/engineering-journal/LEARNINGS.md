@@ -2,6 +2,295 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-03
+
+### The diagnosis in the defect report was wrong, and both proposed fixes followed from it
+
+**Author.** v0.1 milestone-1, closing the U5 gate failure
+
+**Evidence.** QUEUED.md carried a P0 saying `TranscriptPane` desynchronizes because "a transient notice line appears mid-transcript and later disappears", and offered two remedies: reconcile the full window, or make notice lines non-transient. Replaying the stress corpus through the reducer and simulating the pane's index arithmetic in plain Python found 15 incidents where a line below the pane's stable floor changed. **All 15 were of one class, and it was neither of the two the report described: zero committed lines ever changed.** The first is frame 31, where the floor stood at line 1 while **zero** entries had been committed — the floor was entirely inside the streaming block.
+
+**Mechanism.** The domain transcript is strictly append-only and entry text is immutable, so no line ever disappears. What moves is the **provisional streaming block**, which `transcript_view` places *after* the committed lines. Committing an entry while a turn is still streaming pushes every provisional line down by the length of that entry. The pane recorded its scan floor at the true divergence point, and two consecutive snapshots agree on a provisional line whenever the streaming text did not change between them — constant with multi-line streaming, since each delta only rewrites the last line. The floor advanced on that coincidence, onto lines that were about to move, and nothing looked at them again.
+
+Neither proposed remedy would have worked. Reconciling the full window costs O(transcript) per 50ms tick, which is the cost KTD14 exists to bound. Making notice lines non-transient fixes nothing, because the notice lines were never transient — they are ordinary committed entries.
+
+The fix is for the projection to publish the boundary rather than have the renderer guess it: `TranscriptView.committed_lines`, with `self._stable = min(stable, view.committed_lines)`. Truncation still uses the true divergence, so a streaming delta churns one widget rather than the whole block.
+
+**Generalizable rule.** A defect report's *measurement* is evidence; its *mechanism* is a hypothesis, and the remedies it proposes inherit whatever is wrong with the hypothesis. Reproduce the mechanism before implementing the fix, especially when the report is your own.
+
+### Correct reconciliation exposed two defects the incorrect one had been hiding
+
+**Author.** v0.1 milestone-1, closing the U5 gate failure
+
+**Evidence.** With the floor clamp in place the 600-frame test passed and content loss went to zero — and the full-scale gate still returned `fail`, on two checks that had been green before the fix:
+
+| check | before the fix | after the floor clamp | threshold |
+| --- | --- | --- | --- |
+| peak mounted widgets, stress | 501 | **667** | ≤ 600 |
+| content loss, stress | 0 of 11 | **1 of 11** | 0 |
+
+At the failing checkpoint the pane reported **7,493 lines condensed out of a transcript that had only ever contained 4,454**.
+
+**Mechanism.** Two independent defects, both masked by the first one.
+
+1. **A window position was being inferred from an eviction tally.** `_condensed_count` incremented on every left-hand eviction and was *also* used as `_top_index`, the absolute index of the first mounted line. Those are the same number only if no line is ever evicted twice. Correct reconciliation evicts twice routinely: the provisional block is dropped from the right and re-derived, so lines cross the left edge again. The tally then exceeded the number of lines that had ever existed, the window sat at an index the projection does not have, and the pane rendered a wrong slice of a correct projection. The incorrect floor had hidden this by never re-deriving the block. Fixed by tracking `self._top` directly and deriving `condensed_count` from it — a position, which can fall when the window is re-derived further up, where a tally cannot.
+
+2. **The cap was enforced after the mount, not before.** `apply` mounted the new batch and then trimmed, so the transient peak was `existing + batch`. With the floor wrong, batches were small; with it right, a tick that re-derives the whole provisional block mounts it in one go — 667 widgets against KTD14's ceiling of 600. Fixed by condensing from the top *before* mounting, so `len(current) - self._top <= mount_cap` holds at every instant. The pane's own test constant relaxed the bound to `2 * cap + 1` to accommodate the old order; it is now `cap + 1`, which is the claim actually being made.
+
+**Generalizable rule.** When a fix makes previously-green checks go red, the first hypothesis should be that the checks were green *because* of the bug, not in spite of it. A defect that suppresses work also suppresses everything that work would have exercised.
+
+### The fix for a credential leak corrupted the artifact, and the check that would have caught it could not reach the case
+
+**Author.** v0.1 milestone-1 integration, from external review of the redaction boundary
+
+**Evidence.** Closing a URL-userinfo leak by writing the redaction marker into the userinfo position produced `[redacted]@host`, which does not parse:
+
+```
+>>> urlsplit("http://[redacted]@cdp.example/")
+ValueError: 'cdp.example' does not appear to be an IPv4 or IPv6 address
+```
+
+The frame-log header runs through `redact_url`, so a basic-auth endpoint corrupted the header of an entire recording. Separately, the equivalence corpus that is supposed to pin the KTD6 relation contained **zero** frames carrying a URL — 0 of 19 — and `compare_records` compared frame bodies with a flat equality that had no authorized-divergence path at all.
+
+**Mechanism.** Two independent failures that arrived together.
+
+The corruption: a bare `[` at the start of a `netloc` commits Python's parser to an IPv6 literal, and it then rejects the real hostname that follows. `urlsplit`/`urlunsplit` do not round-trip a `netloc` edited by hand — `netloc` has its own grammar, and the sentinel value `[redacted]` violates it. The output was inspected as a *string* (does the secret still appear? no) and never as a *URL* (does it still parse? no).
+
+The unreachable check: the in-body URL redaction added earlier was a genuine KTD6 divergence, enumerated in the module docstring and nowhere the harness could see it. With no URL in any fixture frame, the harness could not exercise the divergence; with no frame-body allowance, it could not have permitted it. Its comment asserting that any frame-body redaction is "unexplained drift" had been false since that commit. The docstring's claim that the relation is "pinned by a test rather than drifting" was untrue for exactly the two entries most likely to matter.
+
+**Fix.** Emit `%5Bredacted%5D`, which parses and is already the on-disk form of a redacted query value; three round-trip cases pinned, including IPv6-with-port. Fixture carries both divergent shapes; the comparator authorizes them by reason with its own independent expectation of a redacted URL, and eight attack cases pin the relaxation so the allowance cannot swallow an arbitrary frame difference.
+
+**Generalizable rules.** Three.
+
+1. *A security fix can be worse than the bug.* A credential in a header is a disclosure; a header nothing can parse is a destroyed recording, in an append-only artifact with no repair path. When hardening something that writes to durable storage, ask what the fix costs if it is wrong, not only what the leak costs.
+2. *Anything that rewrites a structured value must be asserted to parse back*, not merely inspected for the absence of the secret. "The credential is gone" and "the result is still a URL" are different claims and the first does not imply the second.
+3. *Reachability of a check is its own review target.* This is the fifth instance in one milestone of a check that looked like evidence and was not — the `peak_mounted` identity, `content_is_complete` comparing state to a function of itself, `mounted_count` reading its own bookkeeping, a credential fixture caught by the wrong mechanism, and a corpus with no URLs pinning URL redaction. Different causes, one shape: the check and the thing checked were not independent. Ask what input would make each check fail, then confirm that input is in the corpus.
+
+**Worth recording about how it was found.** The bug surfaced while building a fixture to exercise a comparator change previously priced as too expensive to attempt. The cheap check that was nearly skipped found the expensive defect, and the pricing that justified skipping it was itself wrong. When a cost estimate is the only thing standing between you and a check, verify the estimate.
+
+### A results doc argued against its own headline number, and its table came from a different run than its evidence
+
+**Author.** v0.1 milestone-1 integration, from an external review of the gate
+
+**Evidence.** `docs/analysis/2026-08-03-textual-validation-gate-results.md` published a memory slope of **0.33 MB per 1,000 frames** and extrapolated a million-frame session to "around 330 MB", as the stated input to whether transcript eviction becomes a milestone-3 requirement. Recomputed with the gate's own `_fit_slope` over the published series:
+
+| fit | MB per 1,000 frames | one million frames |
+| --- | --- | --- |
+| all 12 samples | 0.337 | ~337 MB |
+| excluding the final sample | 0.197 | ~197 MB |
+| steady state | 0.109 | ~109 MB |
+
+The final step alone contributes 21.31 MB over 2,636 frames — 59% of all growth in 5% of the frames.
+
+Separately, the doc's RSS table read 90.02 → 125.62 while the evidence JSON it cites read 90.66 → 126.72. Two different gate runs, close enough to look like rounding.
+
+**Mechanism.** Two failures that look nothing alike and are both about the relationship between a number and its basis.
+
+The slope: the section *already contained* a qualification stating that the final jump is teardown rather than streaming and that the interesting figure is the earlier samples — then fitted across all twelve anyway. The prose and the arithmetic disagreed, and the prose was right. Nobody caught it because both halves were individually defensible; only reading them against each other exposes it.
+
+The table: a number that cannot be traced to the artifact it cites survives every recomputation, because each side is internally consistent. Recomputing the slope from the doc's own table would have reproduced the doc's own answer and confirmed nothing.
+
+**Fix.** Steady-state published as the headline with all three fits tabulated and the excluded sample named; extrapolation corrected to ~110 MB; table regenerated directly from the evidence JSON.
+
+**Why the direction matters.** Over-reporting growth is conservative for the 300 MB *threshold* — it can only cause a false fail, never a false pass — so the verdict was never at risk, and the instinct is to file it as cosmetic. It is not conservative for the *decision* the number exists to feed: a 3.1x overstatement argues for eviction work the measurement does not support. A figure that is safe for the gate can still be wrong for the roadmap.
+
+**Generalizable rule.** Two checks, both cheap. First, read a document's qualifications against its own headline: when a section explains why a number is misleading and then publishes it, the explanation is usually the correct half. Second, verify that a published figure and its cited evidence are the *same measurement*, not merely that each is individually correct — provenance drift is invisible to recomputation and outlives every review that only checks the arithmetic.
+
+### A security rule coupled to a path string was disarmed by ordinary nesting, and its docstring claimed the opposite
+
+**Author.** v0.1 milestone-1 integration, from an external review of the redaction boundary
+
+**Evidence.** `talaria/recorder/redact.py`. Three defects, each putting a credential into an append-only, hash-chained frame log:
+
+| shape | result before the fix |
+| --- | --- |
+| `{"method": "clarify.respond", "params": {"inner": {"answer": "..."}}}` | credential written verbatim |
+| the same frame inside a batch, or under any wrapping envelope | credential written verbatim |
+| `wss://operator:hunter2@gateway.local/attach?x=1` | round-tripped whole, including in the frame-log header |
+| `http://user:pass@cdp.example/` in a frame body | untouched — the URL check required a `?` before it would look |
+
+**Mechanism.** Two independent causes. The deny-set — the rule covering `answer`, `value`, `text` and `password` on Hermes's four blocking bridges — was resolved once from the outermost object and then applied only where the walker's dotted path was *exactly* `params` or `params[...]`. That coupled a security decision to a string comparison on position, so every shape that moved the frame off the top level silently disarmed it. Those keys are deny-set-only by design: the key-name net is deliberately built not to catch `answer`, so nothing stood behind it. Separately, `redact_url` rewrote only the query and handed `parts.netloc` back to `urlunsplit` verbatim — and `netloc` is exactly where `user:password@host` lives.
+
+The most instructive part is that the walker's docstring already claimed the property it lacked: *"a credential nested inside a batch or an unexpected envelope shape is still caught."* The walk did recurse; the deny-set did not travel with it. The test named `test_catches_a_credential_nested_at_arbitrary_depth` reinforced the false impression — its fixture's credential is under the key `token`, so it exercised the key-name net at depth and never the deny-set. A reviewer checking whether nesting was covered found a green test that said yes.
+
+**Fix.** The method is re-read from each object that carries one and governs that object's own `params` subtree to any depth; only a method actually in the deny-set takes over, so an unrelated inner `{"method": "GET"}` cannot clear a context established above it. `redact_url` withholds the whole userinfo component — the username position too, since `https://<token>@host/` is an ordinary bearer form — and rebuilds `netloc` only when userinfo is present, so clean URLs stay byte-identical for the KTD6 comparison. The frame-body URL check no longer requires a query string.
+
+**Outcome.** All four shapes withheld, verified end-to-end through the real writer; over-redaction controls unchanged (usage counters, harmless URLs, mixed-case hosts, IPv6 literals, percent-escapes). The live U2 corpus on this machine was scanned and is clean: 46 records, zero `devtools/browser`, zero userinfo, zero query-bearing URLs.
+
+**Generalizable rule.** When a rule's scope is expressed as a position — a path prefix, a depth, an index — moving the data is enough to defeat it, and data moves for reasons that have nothing to do with security. Bind the rule to the object that owns it and let it travel with the walk. And when a docstring asserts a property, write the test that would fail if the property were absent: a test whose fixture is caught by a *different* mechanism proves nothing about the one being claimed, while looking exactly like proof.
+
+**A second rule, from how the reachability was argued.** The reviewer rated this P1 partly because the pinned gateway has no JSON-RPC batch support — reasoning about the one path they had in mind. But `params.inner.answer` needs no batching; it is a plain frame with one extra level. *Reasoning about a single route the data might take is the same error the code made.* When a defect is that a rule is coupled to position, an argument about reachability that walks one position inherits the bug. Ask what class of shapes defeats the rule, not which known shape does.
+
+**And a third, learned the hard way twice in one session.** A test written to pin a fix must be run against the *pre-fix* code before it is trusted. Two tests written here — one for the empty-entry hole in `content_is_complete`, one for the deny-set — initially passed against the unfixed implementation for unrelated reasons, and would have shipped as decoration. Keeping a verbatim copy of the old function and asserting `old=True, new=False` takes a minute and is the only thing that distinguishes a regression test from a comment.
+
+### A skipped test is invisible inside a green run, so the standing evidence for parity had never run
+
+**Author.** v0.1 milestone-1 integration, from an external review of CI configuration
+
+**Evidence.** All five `@requires_ts_bridge` tests in `tests/recorder/test_equivalence.py` skipped in CI. The `python-check` jobs installed `uv` and never Node, so `node_modules/.bin/tsx` did not exist; the one job that did install Node ran `npm run check`, not pytest. `test_equivalence_over_the_synthetic_credential_corpus` — whose own skip message calls it *"the CI-standing evidence"* for the KTD6/R28 parity relation — had therefore never executed in CI. It passes when actually run, so the port does not diverge; the defect was never a wrong result, only an unrun proof reported as `353 passed`.
+
+**Mechanism.** `pytest.mark.skipif` is the correct behaviour on a developer machine without Node and the wrong behaviour on the job that exists to prove parity, and one marker cannot tell the two apart. Nothing in the run distinguishes "6 skipped" from "6 passed" at a glance, and no summary line says which claim just went unverified.
+
+**Fix.** Node and `npm ci` added to `python-check` — the leg that fails the run, not the informational Linux leg — and `TALARIA_REQUIRE_TS_BRIDGE=1` set for its pytest step, with a test that fails when the variable is set and the bridge is missing. Suite went from 371 passed with 6 skips to 382 passed with zero skips.
+
+**Generalizable rule.** A conditional skip is an unverified claim wearing a green check. Where a test *is* the evidence for a stated property, make its absence fail somewhere: pin the environment that runs it, and assert that environment is present rather than trusting it. Count skips in CI as deliberately as failures.
+
+### Four of seven gate measurements could not fail, and the one that mattered compared the projection with itself
+
+**Author.** v0.1 milestone-1 integration, from an adversarial audit of the validation gate
+
+**Evidence.** The Textual validation gate reported `pass` on all ten checks and was about to settle the framework decision for v0.1. An audit injected, into each check, the exact defect that check exists to detect:
+
+| injected defect | what actually happened | what the gate reported |
+| --- | --- | --- |
+| removed the two `widget.remove()` calls | 4,455 widgets genuinely mounted, 7.4x the 600 ceiling | `mounted_widgets: 501`, pass |
+| removed the condense-before-mount guard | 540 widgets mounted in one tick against a cap of 40 | `peak_mounted: 41`, test passes |
+| made `TranscriptPane.apply` a no-op | interface rendered nothing at all, blank screen | `content_loss: 0`, pass |
+| discarded 9 of every 10 inbound frames | 90% of the conversation destroyed | `content_loss: 0`, `frames_applied` still matched |
+| scheduled a render on every frame | coalescing entirely defeated, 6,419 real renders | rate went *down*, pass |
+
+**Mechanism.** Six of the seven measurements were counters the object under test maintained about itself; only resident-set memory was observed from outside. The decisive one was `content_is_complete(app.state, transcript_view(app.state))` — the projection compared against a pure function of the same state. Its own docstring warns that comparing the projection with itself "would pass no matter what", and both call sites did exactly that. `mounted_count` returned `len(self._widgets)`, a private deque the pane maintained and nothing reconciled against the real tree. `render_ticks` was incremented in a `set_interval(0.05, ...)` callback, so it was bounded by 20/s by construction and could never breach its own 25/s threshold.
+
+Notably the *thresholds* were all honest — every constant matched the plan exactly, nothing was quietly loosened. The dishonesty was entirely in what was measured, which is much harder to see in review than a moved goalpost.
+
+**Fix.** `mounted_count` reads `len(self.children)`; renders are counted in `render_snapshot` where a render happens; content completeness is compared against the pane's actually-rendered lines at a settled checkpoint; plus new checks for frame accounting, minimum sample counts, and a missing corpus path raising instead of silently dropping three of ten checks.
+
+**Outcome.** The repaired gate failed immediately, on a real defect: `TranscriptPane.reconcile` desynchronizes when a transient notice line appears mid-transcript and later disappears, leaving 274 lines rendered against 275 projected with one line of conversation rendered nowhere. The run halted per the plan's unattended contract. The framework question is open again — not because Textual failed, but because the evidence that said it passed was measuring itself.
+
+**Generalizable rule.** For every check in a gate, ask what value it is *capable* of reporting, and then go and produce a failing one. A check that has never been observed to fail, and cannot be made to fail on demand, is decoration — and a gate made of such checks is worse than no gate, because it converts an open question into a settled one. Prefer measurements taken from outside the thing measured; when the subject supplies its own numbers, something independent has to corroborate them.
+
+### A key-name matcher normalized the names it was meant to canonicalize, and never looked at values at all
+
+**Author.** v0.1 milestone-1 integration, from a direct probe of the redaction boundary
+
+**Evidence.** `talaria/recorder/redact.py` is the boundary that guarantees credentials never reach the frame log on disk. Fourteen adversarial frame shapes were passed through `redact_frame` and then through `FrameRecorder` end to end, checking the file's raw bytes for a canary. Eleven were caught. **Three wrote the canary to disk**: a key named `ApIkEy`, a key named `api key`, and a credential URL under the innocuous key `url`.
+
+**Mechanism.** Three unrelated causes behind one boundary.
+
+- `_normalize_key` inserts `_` at every lower-to-upper boundary so that `accessToken` becomes `access_token`, which the anchored patterns need. Applied to an unusually cased name it does the opposite of canonicalizing: `ApIkEy` becomes `ap_ik_ey`, separators inserted mid-word, matching nothing.
+- The patterns anchor on a `[-_]` separator class, so `api key` and `api.key` do not match. Only two of the plausible separators were covered.
+- The walker tests key *names* and never inspects values. A frame carrying `{"url": "ws://host/api/ws?token=..."}` has no suspicious key in it, so the token was written verbatim — and KTD11 puts the attach credential in precisely that position, which makes it the likeliest shape to occur rather than an exotic one.
+
+**Fix.** Match key names in a squashed form (lowercased, every separator removed) *in addition to* the camel-normalized form, since neither is a superset of the other. Check string values for absolute URLs whose query actually carries a denied parameter, and redact only those. Both are new divergences from the TypeScript reference and are enumerated in the module docstring, because KTD6's requirement is that the divergence be exactly listed, not that it be small.
+
+**Validation.** All fourteen shapes now redact; the canary is absent from the file bytes. Over-redaction controls confirm `max_tokens`, `input_tokens`, `session_total_tokens`, `tokens_per_delta` and `maxTokens` are still preserved, and a harmless `?page=2` URL is recorded untouched. `uv run pytest` — 371 passed, equivalence harness included.
+
+**Generalizable rule.** A normalizer applied to input it was not designed for can be worse than no normalizer, because it silently produces a well-formed value that is wrong. When a matcher canonicalizes before testing, probe it with inputs that are *badly formed rather than adversarially crafted* — odd casing and unusual separators — since those are what real systems actually emit. And a filter that inspects only names will miss everything carried in values; ask which of the two the credential's own protocol actually uses.
+
+### A byte cap applied after the read bounds the display, not the memory
+
+**Author.** v0.1 milestone-1 integration, from an adversarial review of the status runner
+
+**Evidence.** `talaria/status/runner.py` documented a 16 KiB stdout cap and a 4 KiB stderr cap, and enforced both by slicing the result of `Process.communicate()`. `communicate()` reads until EOF. Measured directly: a status command of `sh -c 'exec yes AAAA...'` under a 2-second timeout drove the parent's resident set from **27.6 MB to 3030 MB — +3002 MB in 2.04 seconds** — while the declared stdout cap was 16,384 bytes. A command emitting a finite 512 MB document and exiting 0 returned `outcome=ok` after buffering all 512 MB. The status runner ticks on a timer, so this recurs every tick for as long as the command misbehaves.
+
+**Mechanism.** The limits were applied at the point of *rendering* rather than the point of *reading*, so they answered "how much do we show" when the operator-facing promise was "how much do we hold". Nothing else bounded the read: not the timeout, which only caps how long the flooding continues, and not the row limit, which applies later still.
+
+**Fix.** Read each stream in chunks up to `limit + 1` bytes instead of calling `communicate()`, and kill the process group the moment a cap is crossed. The `+ 1` preserves the existing `len(raw) > limit` truncation test exactly, so `oversize output is a bounded success` (R22) still holds — an endless writer now returns `ok` with `truncated=True` in about 10 ms and **+0 MB**, where it previously returned `timeout` after the full budget and +3 GB.
+
+Two things went wrong in the fix itself and are worth recording. Reading both streams concurrently and waiting for both to finish deadlocks: once stdout stops being read at its cap the child blocks on a full pipe, so stderr never reaches EOF and the tick times out instead of reporting the bounded success it already has. The cap has to kill the group at the moment it is crossed, not after both reads return. Separately, sweeping the process group unconditionally in a `finally` introduced a worse bug than it fixed — `killpg` on an already-reaped child can land on a recycled pid, which surfaced immediately as `PermissionError: Operation not permitted` and would otherwise have been SIGKILL delivered to an unrelated process group. The group must be swept while the child is still unreaped, because until it is reaped the kernel cannot reuse its pid.
+
+**Validation.** `uv run pytest` — 366 passed. The flood, orphaned-worker and descriptor-leak cases are pinned by new tests; measured after the fix: +0 MB on the flood, 0 surviving workers, 0.00 descriptors leaked per tick against a previous steady 2.00.
+
+**Generalizable rule.** When a limit protects a resource, enforce it at the point where the resource is consumed, not where it is displayed. And when a fix involves signals or process groups, ask what the identifier means *after* the thing it names has gone away: a pid is not a stable handle, it is a number the kernel is free to reissue the moment the process is reaped.
+
+### A file walk that skips symlinks disagrees with the import system, and the guard blesses the gap
+
+**Author.** v0.1 milestone-1 integration, from an adversarial review of the ADR-0002 guard
+
+**Evidence.** `tests/domain/test_boundary.py` enumerated the domain package with `_DOMAIN_ROOT.rglob("*.py")`. A symlinked subpackage placed at `talaria/domain/linked` — with its real contents outside the tree, importing `textual` — was fully importable (`talaria.domain.linked.evil` resolved and loaded), and the sweep never saw it: `2 passed`. The companion test that exists specifically to close enumeration holes made it worse by *approving* the directory, since the target does contain `__init__.py`. Two sibling holes had the same cause: a sourceless `.pyc` and a compiled `.so` dropped into the package are both importable and neither ends in `.py`.
+
+**Mechanism.** `Path.rglob` does not descend into symlinked directories; Python's import system does. The guard was therefore answering "what source files are in this subtree" when the question it needed to answer was "what can the interpreter import from this package". Detection was never the weak point — every attack that put a forbidden import in front of the sweep was caught, including both spellings of the sibling-package regression the allow-list was built for. The weak point was the list of things handed to the sweep.
+
+**Fix.** Walk with `os.walk(..., followlinks=True)` and match `importlib.machinery.all_suffixes()` instead of the literal `".py"`, which closes the symlink, `.pyc` and `.so` cases together. `Path.rglob(recurse_symlinks=...)` would be the natural spelling but does not exist before Python 3.13, and this project supports 3.12. The `__init__.py` companion test follows symlinks now too, for the same reason. Both attacks were replanted afterwards and both go red; the clean tree still passes.
+
+**Generalizable rule.** When a check enumerates inputs by walking the filesystem, the walk is part of the check and needs attacking separately from the logic. Ask what the *consumer* of the list can reach — here, the interpreter — and enumerate against that definition rather than against a filename convention. A guard whose detection is sound but whose enumeration is incomplete fails silently and looks green, which is strictly worse than one that errors.
+
+### A high-water counter sampled after the trim it is meant to police reports an identity, not a measurement
+
+**Author.** v0.1 milestone-1 integration, from a CI failure
+
+**Evidence.** `talaria/ui/transcript.py` maintained `peak_mounted` as the KTD14 gate's mounted-widget metric, updated at the end of `reconcile()`. The gate reported 501 against a ceiling of 600 and passed. On PR #11 the required macOS CPython 3.12 leg failed on an unrelated-looking assertion in `tests/ui/test_transcript_bounds.py::test_a_resize_storm_preserves_reflow_anchors_and_content`: `assert 49 <= (40 + 1)`, mid-stream, with a test cap of 40. That is a state `peak_mounted` said was unreachable — it had never once reported above `cap + 1`. Instrumenting `mount_all` directly measured post-mount counts of up to **51** against that same cap of 40, with 28 of 33 samples above `cap + 1`, while `peak_mounted` read **41**.
+
+**Mechanism.** `reconcile()` mounts new line widgets and *then* trims back to the cap, awaiting in between. The counter was updated after the trim, at which point the invariant it was measuring had already been restored by construction — so it could not report a value above `mount_cap + 1` whatever the pane did. "501 against 600" read like a measured safety margin; it was `500 + 1`, an identity. The module's own comment argued that a transient the operator sees as a slow frame is the thing that matters and that "a snapshot after the fact cannot see" it — which is precisely what the counter was. The test suite could not catch this either, because three separate assertions checked the tight bound *against the counter*, so they were confirming the tautology rather than the pane.
+
+**Fix.** Sample `peak_mounted` immediately after the mount and before the trim as well. The gate was re-run on the honest metric and still passes — 501 on the stress corpus, **507** sustained, against the unchanged 600 — so the verdict did not change, but the sustained figure is now a real measurement with 93 of headroom. The worst case does not materialize because a backlog larger than the cap is condensed before it is mounted. Tests now assert the two bounds separately: `mounted_count <= cap + 1` once settled, `<= 2 * cap + 1` mid-update.
+
+**Validation.** `uv run pytest` — 359 passed; the two formerly-flaky tests pass 5/5 locally, and the gate re-run exits 0 with `verdict: pass`.
+
+**Generalizable rule.** A metric that samples only where its invariant is guaranteed to hold measures nothing. Before trusting a threshold check, ask what value the instrument is *capable* of reporting — if a failing reading is unreachable by construction, a passing one is not evidence. Corollary: when a metric and a test assert the same bound, the test cannot validate the metric; something outside the pair has to observe it, which here was a loaded CI runner sampling at a moment the developer machine never hit.
+
+### Assigning `self._closing` in a Textual `App` subclass hangs every Pilot test at teardown, and the traceback names nothing in your code
+
+**Author.** v0.1 unit U5 — the replay-driven Textual shell
+
+**Evidence.** `talaria/ui/app.py` briefly used `self._closing = True` in its own `shutdown_sources()` to stop the coalescing render tick. Every test using `async with app.run_test()` then hung — not at the assertion, at the *end* of the block — and `faulthandler` dumped only `selectors.select` → `asyncio.base_events._run_once`, with no Talaria frame anywhere in the stack. A minimal Textual app in the same session exited in 0.30 seconds, and a `TalariaApp` over an empty corpus hung, which located the fault in the subclass rather than in the framework or the corpus.
+
+**Mechanism.** `textual.message_pump.MessagePump.__init__` sets `self._closing = False` as an *instance* attribute; `App` inherits it. Setting it to `True` tells the framework its own shutdown is already in progress, so `App._shutdown()` skips the work it would otherwise do and `_process_messages` never returns — `run_test`'s `await app_task` then waits forever. The name is never declared at class level, so a class-dictionary comparison cannot see it, and neither mypy nor ruff has any reason to object: assigning an attribute on `self` is ordinary Python. The same class of collision had already bitten once in this unit, when a coalescing-flush callback named `_flush` silently replaced `App._flush` (which flushes captured stdout).
+
+**Fix.** Renamed to `_teardown_started`, and added `tests/ui/test_app_shadowing.py`, which parses `talaria/ui/app.py` with `ast` and fails the build if any name defined in the class body — or any `self.<name> =` assignment inside it — collides with something in `App.__mro__` or in `vars(App())`, unless it is listed in an explicit `DELIBERATE_OVERRIDES` set. Source parsing rather than `vars(TalariaApp)`, for two reasons: `_closing` is not in any class dictionary, and Textual's `DOMNode.__init_subclass__` injects `_reactives`, `_computes` and friends into every subclass, so the class dictionary is full of names the author never wrote.
+
+**Validation.** `uv run pytest` — 359 passed in 41.8s, from a state where a single Pilot test could not finish inside 900 seconds.
+
+**Generalizable rule.** When subclassing a framework class with a large private surface, treat the instance namespace as shared and check it mechanically. A name collision with a framework's *instance* attribute produces a hang or a silent behaviour change, never a clean error, and the check that catches it has to read the source — the collision is invisible to `vars()` on the class.
+
+### A `Paste` event posted to a Textual widget inserts the text twice
+
+**Author.** v0.1 unit U5
+
+**Evidence.** `tests/ui/test_composer.py` asserts that a 400-line bracketed paste inserts without submitting. Posting `events.Paste(text)` to the `TextArea` produced 798 newlines instead of 399. Reduced to a five-line Textual app: `text_area.post_message(Paste("AB"))` yields `"ABAB"`, while `app.post_message(Paste("CD"))` yields `"CD"`.
+
+**Mechanism.** `TextArea._on_paste` inserts the text and does not stop the event, so it bubbles to the `App`, which forwards it back down to the focused widget — which inserts it again. A real bracketed paste is delivered by the terminal driver to the `App`, so the doubling never happens in production; it is an artefact of addressing the widget directly.
+
+**Fix.** Tests post `Paste` to the app, matching the real delivery path.
+
+**Generalizable rule.** In a bubbling event system, post synthetic input where the real input enters — the top — not where you want it handled. Injecting below the real entry point can exercise a delivery path that production never takes, and here it would have hidden a genuine paste defect behind a passing test.
+
+## 2026-08-02
+
+### A test helper imported as `tests.x.y` collides with mypy's own `files = ["tests"]` scan the moment a `tests/` subpackage has no parent `__init__.py`
+
+**Author.** v0.1 unit U6 — status-line runner
+
+**Evidence.** `tests/status/test_runner.py` and `tests/status/test_process_contract.py` share one helper (`python_argv`, in `tests/status/conftest.py`) and import it with `from tests.status.conftest import python_argv`. Before this fix, `uv run mypy` failed with `Source file found twice under different module names: "status.conftest" and "tests.status.conftest"`, and only for that one file.
+
+**Mechanism.** `pyproject.toml`'s `[tool.mypy] files = ["talaria", "tests"]` makes mypy compute each scanned file's module name by walking up through directories that hold an `__init__.py`, stopping at the first ancestor that doesn't. `tests/` itself had no `__init__.py` (only `tests/domain/__init__.py`, `tests/recorder/__init__.py`, and now `tests/status/__init__.py` did), so the scan named `tests/status/conftest.py` as top-level module `status.conftest`. The `from tests.status.conftest import ...` statement in the two test files asks mypy to additionally resolve an import named `tests.status.conftest` — a different qualified name for the identical physical file — which mypy reports as a collision rather than silently picking one. Every other test subpackage in this repo never triggered it because nothing else cross-imports between test files; each one only relies on pytest's implicit `conftest.py` fixture injection.
+
+**Fix.** Added an empty `tests/__init__.py` so `tests/` is a real package and the whole tree resolves under one root (`tests.status.conftest`), matching the qualified name the import statement already asked for.
+
+**Validation.** `uv run mypy` — `Success: no issues found in 46 source files`; `uv run pytest` unaffected (296 passed) since pytest's `rootdir`/`testpaths` behavior does not depend on `tests/__init__.py` existing.
+
+**Generalizable rule.** If a test file does `from tests.<pkg>.<mod> import ...`, `tests/__init__.py` must exist — otherwise mypy's own file-list scan and that import statement disagree about the file's fully-qualified name, and the error surfaces as a confusing "found twice" rather than a missing-package message.
+
+## 2026-08-02
+
+### Two of Hermes's blocking-prompt bridges expire on the wire with no client handler, and approvals carry no request id at all
+
+**Author.** v0.1 unit U3 — the ADR-0003 reconciliation-catalogue read at `7f4d15515`
+
+**Evidence.** `tui_gateway/server.py:2989-2998` emits a `<bridge>.expire` event on timeout for all four blocking bridges it names — `secret`, `sudo`, `clarify`, `terminal.read`. The shipping terminal UI's event switch (`ui-tui/src/app/createGatewayEventHandler.ts:1174-1182`) handles exactly two of them, `sudo.expire` and `secret.expire`. Separately, `approval.request`'s payload at `:1130-1147` is `{description, command, choices, allow_permanent, smart_denied}` — no `request_id` — and `approval.respond` resolves by session key instead (`tui_gateway/methods_prompt.py:886-920`).
+
+**Mechanism.** The gap is invisible from either side alone. Reading the client, the two handled expiries look like the complete set. Reading the gateway, the emit site looks like it has four listeners. `clarify.expire` is masked because Hermes recovers the same situation by a different route — a `tool.complete` for the clarify tool triggers an abandoned-prompt flush — and `terminal.read.expire` is masked because that bridge is desktop-only, so the terminal UI never sees it in practice. The approval finding is masked differently: a UI that shows one approval at a time never notices that it has no key to show it under.
+
+**Fix.** Talaria routes all four expiries through one prompt registry keyed by `request_id`, and synthesizes a stable session-scoped key for approvals (`approval:<session_id>`) because only one approval can be outstanding per session on this protocol. Both are catalogued as rules RR-27 and RR-28 with named tests, so they are decisions rather than accidents.
+
+**Validation.** `tests/domain/test_prompt_registry.py::test_every_bridge_expires_through_the_same_registry` and `::test_approval_gets_a_synthesized_session_scoped_key`, green in the U3 suite.
+
+**Generalizable rule.** When re-encoding behaviour from a client, read the server's emit sites too — a client's handler list is evidence of what that client needed, not of what the protocol sends.
+
+### A rule catalogue that is only prose rots silently, so the tests parse it
+
+**Author.** v0.1 unit U3
+
+**Evidence.** `docs/analysis/2026-08-02-hermes-reconciliation-rules.md` carries 38 rules in a markdown table whose last column names a test function. `tests/domain/test_reconciliation.py::test_every_catalogued_rule_names_a_test_that_exists` parses that table and fails if any named test is absent from `tests/domain/`; a companion test asserts the rule ids run `RR-01..RR-nn` with no gaps, so a deleted rule is visible rather than merely missing.
+
+**Mechanism.** ADR-0003 names this failure mode precisely — "a missed rule produces a defect months later that Hermes fixed years earlier, and nothing in the codebase points at the omission" — and the same is true one step later: a rule that is catalogued and then never implemented looks identical in a diff to one that is catalogued and implemented. Prose cannot tell those apart. A parser can.
+
+**Fix.** Every rule carries an explicit verdict (re-encode / re-encode with a change / drop) and a named test, including the drops — a dropped rule names the test that proves the drop is still deliberate, which is the only way "we decided not to" stays distinguishable from "we forgot".
+
+**Validation.** The full domain suite is green with the catalogue in place; deleting a row's test name fails `test_every_catalogued_rule_names_a_test_that_exists`.
+
+**Generalizable rule.** If a document is a precondition for code, make the test suite read the document.
+
 ## 2026-08-02
 
 ### `pkgutil.walk_packages` cannot see a module Python can import, so the ADR-0002 guard had a silent hole

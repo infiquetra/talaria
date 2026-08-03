@@ -1,0 +1,290 @@
+{
+  "cadence": {
+    "condensed_lines": 3954,
+    "content_loss_checkpoints": 11,
+    "content_loss_failures": 0,
+    "corpus": {
+      "frame_count": 53516,
+      "kind": "synthetic-stress",
+      "label": "talaria-stress-v1-50000d-seed20260802",
+      "note": "generated, seed 20260802: 50000 deltas across 625 turns, with interleaved malformed frames, unknown event types and sub-agent fan-out",
+      "sha256": "34b52ddaba7b33f993ca621aff765f2337c4581d0aef9d2899267b50d3033c0c"
+    },
+    "elapsed_seconds": 190.249,
+    "frames_applied": 53516,
+    "peak_mounted_widgets": 501,
+    "render_ticks": 2907,
+    "render_ticks_per_second": 15.28,
+    "rss_growth_mb": 16.23,
+    "rss_series_mb": [
+      [
+        0,
+        134.53
+      ],
+      [
+        5000,
+        141.02
+      ],
+      [
+        10012,
+        149.44
+      ],
+      [
+        15002,
+        149.59
+      ],
+      [
+        20003,
+        149.64
+      ],
+      [
+        25001,
+        149.64
+      ],
+      [
+        30006,
+        149.64
+      ],
+      [
+        35007,
+        149.64
+      ],
+      [
+        40006,
+        149.89
+      ],
+      [
+        45002,
+        150.16
+      ],
+      [
+        50002,
+        150.16
+      ],
+      [
+        53516,
+        150.77
+      ]
+    ],
+    "rss_slope_mb_per_1k_frames": 0.19,
+    "transcript_entries": 1954,
+    "transcript_lines": 4454
+  },
+  "checks": {
+    "content_loss": {
+      "comparison": "<=",
+      "description": "checkpoints at which a domain transcript entry was missing from the projection",
+      "measured": 0,
+      "pass": true,
+      "threshold": 0
+    },
+    "content_loss_sustained": {
+      "comparison": "<=",
+      "description": "same check taken while the stream is still moving",
+      "measured": 0,
+      "pass": true,
+      "threshold": 0
+    },
+    "enough_content_checkpoints": {
+      "comparison": ">=",
+      "description": "content completeness was actually checked, not merely scheduled",
+      "measured": 11,
+      "pass": true,
+      "threshold": 5
+    },
+    "enough_memory_samples": {
+      "comparison": ">=",
+      "description": "memory series has enough points to fit a slope worth publishing",
+      "measured": 12,
+      "pass": true,
+      "threshold": 6
+    },
+    "frames_accounted_for": {
+      "comparison": "==",
+      "description": "frames applied equals frames in the stress corpus",
+      "measured": 53516,
+      "pass": true,
+      "threshold": 53516
+    },
+    "inert_mutation_controls": {
+      "comparison": "==",
+      "description": "mutation controls invoked mid-replay refused and said so",
+      "measured": [
+        "interrupt",
+        "submit"
+      ],
+      "pass": true,
+      "threshold": [
+        "interrupt",
+        "submit"
+      ]
+    },
+    "live_corpus_content_loss": {
+      "comparison": "<=",
+      "description": "same check against the recorded session",
+      "measured": 0,
+      "pass": true,
+      "threshold": 0
+    },
+    "mounted_widgets": {
+      "comparison": "<=",
+      "description": "mounted line widgets at any point of the stress corpus",
+      "measured": 501,
+      "pass": true,
+      "threshold": 600
+    },
+    "mounted_widgets_sustained": {
+      "comparison": "<=",
+      "description": "mounted line widgets during the sustained-streaming pass",
+      "measured": 501,
+      "pass": true,
+      "threshold": 600
+    },
+    "render_ticks_per_second": {
+      "comparison": "<=",
+      "description": "coalescing flushes per second at maximum replay speed",
+      "measured": 3.499,
+      "pass": true,
+      "threshold": 25.0
+    },
+    "render_ticks_per_second_sustained": {
+      "comparison": "<=",
+      "description": "coalescing flushes per second under sustained streaming",
+      "measured": 15.28,
+      "pass": true,
+      "threshold": 25.0
+    },
+    "replay_determinism": {
+      "comparison": "==",
+      "description": "64x, 64x-with-pause and unbounded replays end in identical domain state (AE11); MIN_SPEED is not replayed -- see QUEUED.md",
+      "measured": true,
+      "pass": true,
+      "threshold": true
+    },
+    "rss_growth_mb": {
+      "comparison": "<=",
+      "description": "resident-set growth across the full stress replay (MB)",
+      "measured": 44.344,
+      "pass": true,
+      "threshold": 300.0
+    }
+  },
+  "determinism_identical": true,
+  "inert_controls_refused": [
+    "interrupt",
+    "submit"
+  ],
+  "live": {
+    "condensed_lines": 0,
+    "content_loss_checkpoints": 2,
+    "content_loss_failures": 0,
+    "corpus": {
+      "frame_count": 5773,
+      "kind": "recorded-session",
+      "label": "talaria-live-v1-5773f-88a3604c34b7",
+      "note": "frame-log v1, recorded 2026-08-03T03:50:01.513Z",
+      "sha256": "88a3604c34b75c40110cf6a7cff4e27aef078fbd3a668223ecfd5cd2b3cef751"
+    },
+    "elapsed_seconds": 0.394,
+    "frames_applied": 5773,
+    "peak_mounted_widgets": 275,
+    "render_ticks": 4,
+    "render_ticks_per_second": 10.16,
+    "rss_growth_mb": 0.16,
+    "rss_series_mb": [
+      [
+        0,
+        154.62
+      ],
+      [
+        5773,
+        154.72
+      ],
+      [
+        5773,
+        154.78
+      ]
+    ],
+    "rss_slope_mb_per_1k_frames": 0.0217,
+    "transcript_entries": 22,
+    "transcript_lines": 275
+  },
+  "matrix": {
+    "machine": "arm64",
+    "os": "Darwin 25.5.0",
+    "python": "3.12.11",
+    "textual": "8.2.8"
+  },
+  "stress": {
+    "condensed_lines": 3954,
+    "content_loss_checkpoints": 11,
+    "content_loss_failures": 0,
+    "corpus": {
+      "frame_count": 53516,
+      "kind": "synthetic-stress",
+      "label": "talaria-stress-v1-50000d-seed20260802",
+      "note": "generated, seed 20260802: 50000 deltas across 625 turns, with interleaved malformed frames, unknown event types and sub-agent fan-out",
+      "sha256": "34b52ddaba7b33f993ca621aff765f2337c4581d0aef9d2899267b50d3033c0c"
+    },
+    "elapsed_seconds": 2.286,
+    "frames_applied": 53516,
+    "peak_mounted_widgets": 501,
+    "render_ticks": 8,
+    "render_ticks_per_second": 3.499,
+    "rss_growth_mb": 44.34,
+    "rss_series_mb": [
+      [
+        0,
+        90.17
+      ],
+      [
+        5504,
+        104.06
+      ],
+      [
+        11712,
+        106.73
+      ],
+      [
+        15424,
+        109.27
+      ],
+      [
+        20160,
+        111.83
+      ],
+      [
+        25088,
+        112.31
+      ],
+      [
+        30784,
+        113.67
+      ],
+      [
+        35008,
+        114.12
+      ],
+      [
+        40384,
+        114.39
+      ],
+      [
+        45440,
+        114.77
+      ],
+      [
+        50304,
+        115.11
+      ],
+      [
+        53516,
+        134.52
+      ]
+    ],
+    "rss_slope_mb_per_1k_frames": 0.4791,
+    "transcript_entries": 1954,
+    "transcript_lines": 4454
+  },
+  "verdict": "pass"
+}

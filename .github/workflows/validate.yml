@@ -45,6 +45,19 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+      # The KTD6/R28 equivalence harness runs the *real* TypeScript reference
+      # recorder through a tsx subprocess. Without Node the whole harness
+      # skipped, and a skip is invisible inside a green "353 passed" -- so the
+      # test whose own skip message calls it "the CI-standing evidence" for the
+      # parity claim had never once run in CI. It is installed here, on the leg
+      # that fails the run, rather than on the informational Linux leg.
+      - name: Set up Node.js (TypeScript equivalence bridge)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the equivalence bridge
+        run: npm ci
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
@@ -56,6 +69,10 @@ jobs:
       - name: mypy --strict
         run: uv run mypy
       - name: pytest
+        # Turns a missing bridge into a failure on this leg instead of a skip,
+        # so the parity proof cannot quietly stop running again.
+        env:
+          TALARIA_REQUIRE_TS_BRIDGE: "1"
         run: uv run pytest
       - name: bandit
         run: uv run bandit -r talaria -q

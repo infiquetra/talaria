@@ -8,6 +8,22 @@ that reaches :func:`talaria.config.load_config` without this fixture would pass
 or fail on machine-local state, silently. Later units (U3's startup-precedence
 tests, U6's status runner) call into config without knowing this fixture
 exists, which is exactly why it is autouse and repository-wide.
+
+**Writing a test that reads a fixture file? Read this first.** Because the
+fixture below calls ``monkeypatch.chdir(tmp_path)``, every test in this suite
+runs from a temporary directory. A repo-relative path like
+``Path("tests/recorder/fixtures/frame.jsonl")`` therefore raises
+``FileNotFoundError``, and the error says nothing about the working directory.
+Anchor fixture paths to the test module instead — use the :func:`fixtures_dir`
+fixture below, or ``Path(__file__).parent / "fixtures"``.
+
+**Do not "fix" that FileNotFoundError by deleting the chdir.** It is load
+bearing: without it, ``load_config()`` called with no ``cwd`` resolves the
+repo-local level against the real repository and reads its git-ignored
+``.talaria/config.toml``. KTD15 designs that file for per-project status
+commands and KTD5 makes ``status.command`` executable, so removing the chdir
+reopens a real hole and the suite starts passing or failing on machine state.
+``test_repo_local_level_is_isolated_to_tmp_path`` pins it.
 """
 
 from __future__ import annotations
@@ -46,3 +62,14 @@ def isolated_global_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     for env_name in config_module._ENV_KEY_MAP:
         monkeypatch.delenv(env_name, raising=False)
     return global_dir
+
+
+@pytest.fixture
+def fixtures_dir(request: pytest.FixtureRequest) -> Path:
+    """The ``fixtures/`` directory beside the requesting test module.
+
+    Anchored to the test file rather than the working directory, so it keeps
+    working under the autouse ``chdir`` above. Prefer this over a repo-relative
+    path when a test needs a checked-in corpus or frame log.
+    """
+    return Path(request.path).parent / "fixtures"

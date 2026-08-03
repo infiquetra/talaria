@@ -6,7 +6,7 @@ The name comes from the _talaria_, Hermes's winged sandals. The project is inten
 
 > **Status: pre-implementation.** The repository contains the project direction, repository standards, the architecture decisions below, and a small TypeScript shell left over from repository bootstrap. The Hermes integration is not implemented yet.
 >
-> **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)). The terminal framework is not yet selected; Textual is the first candidate through a validation gate recorded in the [engineering journal](docs/engineering-journal/QUEUED.md). The TypeScript shell described under "Quick start" is superseded and receives no new behavior.
+> **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)) with **Textual** as its terminal framework, which passed its validation gate on 2026-08-03 — see the [gate results](docs/analysis/2026-08-03-textual-validation-gate-results.md) and [ADR-0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) (`proposed`). The TypeScript shell described under "Quick start" is superseded and receives no new behavior.
 
 ## Goals
 
@@ -43,8 +43,25 @@ anything render. See [ADR-0002](platform-specs/04-architecture/adrs/0002-the-dom
 
 ## Quick start
 
-There is nothing to install yet. The Python implementation has not started; when it does, Talaria
-will install as an ordinary command:
+The Python implementation has started. There is no live gateway transport yet — milestone 1 drives
+the entire interface from a recorded frame log, with no socket open anywhere in the process.
+
+```bash
+uv sync --all-groups
+
+# Record a session from a running Hermes gateway.
+uv run talaria record ws://127.0.0.1:9119/api/ws?token=<token>
+
+# Replay that recording through the full interface. F8 pauses, F9/F10 change
+# speed, F2 folds the sub-agent rows, F5 re-follows the newest line. Controls
+# that would change something on the gateway are visibly inert in replay.
+uv run talaria replay <recording.jsonl>
+
+# Re-run the framework validation gate. Exits non-zero on a fail verdict.
+uv run talaria gate --corpus <recording.jsonl> --deltas 50000
+```
+
+When the live transport lands, Talaria installs as an ordinary command:
 
 ```bash
 uv tool install talaria
@@ -82,7 +99,8 @@ formatting check.
 | [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)           | Talaria is a standalone process, not a TUI bundle Hermes launches           |
 | [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | The domain core is framework-independent; the terminal UI is a projection   |
 | [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)   | Talaria re-encodes the Hermes terminal UI's behavior rather than porting it |
-| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is a Python client; the terminal framework is still open            |
+| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is a Python client; the terminal framework is decided by a gate     |
+| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)   | Textual is the presentation layer (`proposed`, on the gate's pass verdict)  |
 
 ## Contributing
 

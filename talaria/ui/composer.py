@@ -1,0 +1,144 @@
+"""The bordered multi-line composer (KTD4, R10–R12).
+
+``Input`` is single-line, so R12 eliminates it before the comparison starts;
+``TextArea`` is the only framework-provided multi-line editor R11's paste and
+wide-character requirements permit. Configuration is fixed by KTD4:
+``language=None`` (no syntax engine to re-interpret a chat message),
+``soft_wrap=True``, ``show_line_numbers=False``, and a placeholder that
+documents the two bindings — discoverability is a requirement, not a nicety.
+
+**Enter submits and Ctrl+J inserts a newline.** Enter-submits matches Hermes and
+every chat interface. The newline key is Ctrl+J rather than Shift+Enter because
+Ctrl+J is a plain line feed that every terminal in the supported matrix can
+deliver, while Shift+Enter needs the kitty keyboard protocol the matrix does not
+assume.
+
+**In replay mode Enter must not echo.** There is no gateway, so nothing can be
+sent. The tempting local behaviour — drop the composed text into the transcript
+— produces a line that is indistinguishable on screen from a message that was
+actually delivered, which is the exact confusion AE11's inert-control rule
+exists to prevent. So the composer keeps the text, renders the refusal notice,
+and writes nothing to the transcript.
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+from textual import events
+from textual.app import ComposeResult
+from textual.containers import Vertical
+from textual.message import Message
+from textual.widgets import Static, TextArea
+
+from talaria.ui.literal import literal_text
+
+#: Shown in the empty composer. Carries both bindings because R12 asks that
+#: "submit versus newline" be discoverable without documentation.
+PLACEHOLDER: Final[str] = "Message  ·  Enter sends  ·  Ctrl+J newline"
+
+
+class ChatTextArea(TextArea):
+    """``TextArea`` with Enter rebound to submit and Ctrl+J to newline.
+
+    The rebinding is done by intercepting the key rather than by editing
+    ``BINDINGS``: Textual's ``TextArea`` inserts a newline for Enter inside
+    ``_on_key`` (it is treated as an insert, not as a binding), so a binding
+    entry alone would be shadowed and the widget would keep inserting.
+    """
+
+    class Submitted(Message):
+        """Enter was pressed on composed text."""
+
+        def __init__(self, composer: ChatTextArea, text: str) -> None:
+            super().__init__()
+            self.composer = composer
+            self.text = text
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self, self.text))
+            return
+        if event.key in ("ctrl+j", "shift+enter"):
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        await super()._on_key(event)
+
+
+class Composer(Vertical):
+    """The bordered region R10 requires stay visible while the transcript streams."""
+
+    DEFAULT_CSS = """
+    Composer {
+        height: auto;
+        max-height: 12;
+        border: round $accent;
+        border-title-align: left;
+        padding: 0 1;
+    }
+    Composer > ChatTextArea {
+        height: auto;
+        max-height: 8;
+        border: none;
+        padding: 0;
+    }
+    Composer > .composer--notice {
+        height: 1;
+        color: $warning;
+    }
+    """
+
+    def __init__(self, *, notice: str = "", **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._initial_notice = notice
+        self._notice_widget: Static | None = None
+        self._text_area: ChatTextArea | None = None
+
+    def compose(self) -> ComposeResult:
+        self._text_area = ChatTextArea(
+            "",
+            language=None,
+            soft_wrap=True,
+            show_line_numbers=False,
+            placeholder=PLACEHOLDER,
+            id="composer-input",
+        )
+        yield self._text_area
+        self._notice_widget = Static(
+            literal_text(self._initial_notice), markup=False, classes="composer--notice"
+        )
+        yield self._notice_widget
+
+    def on_mount(self) -> None:
+        self.border_title = "compose"
+
+    # ── text access, so tests never reach through to the framework ───────
+
+    @property
+    def text_area(self) -> ChatTextArea:
+        if self._text_area is None:  # pragma: no cover - compose always runs first
+            raise RuntimeError("composer queried before it was composed")
+        return self._text_area
+
+    @property
+    def text(self) -> str:
+        return self.text_area.text
+
+    @text.setter
+    def text(self, value: str) -> None:
+        self.text_area.text = value
+
+    @property
+    def notice(self) -> str:
+        if self._notice_widget is None:
+            return ""
+        return str(self._notice_widget.content)
+
+    def show_notice(self, message: str) -> None:
+        """Render a refusal or status line beneath the editor, keeping the text."""
+        if self._notice_widget is not None:
+            self._notice_widget.update(literal_text(message))
