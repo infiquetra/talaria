@@ -14,6 +14,15 @@ environment variable, a repo-local ``./.talaria/config.toml``, the global
 ``~/.talaria/config.toml`` (or its ``TALARIA_CONFIG_DIR`` redirection), and the
 built-in default. Consumers (U5's status runner, U6, U7's credential provider)
 call :func:`load_config` rather than touching the filesystem themselves.
+
+**Consumer contract.** The resolved snapshot is deeply immutable, which changes
+the types a caller gets back: every mapping is a ``MappingProxyType`` and every
+list-declared setting — ``environment.allowlist``, for instance — is returned as
+a **tuple**, whether it came from :data:`DEFAULTS`, a TOML file, or a CLI
+override. So ``cfg.get("environment", "allowlist") == []`` is False, and
+``json.dumps(cfg.values)`` raises ``TypeError``. Rebuild plain containers
+explicitly when serializing; ``dict(cfg.values)`` is a shallow unwrap and leaves
+nested sections as proxies.
 """
 
 from __future__ import annotations

@@ -91,7 +91,7 @@ jobs:
       - name: Flag the informational failure
         if: failure()
         run: |
-          echo "::warning title=Linux leg failed (informational)::\
-          Python ${{ matrix.python-version }} on ubuntu-latest failed. This does \
-          not fail the run — Linux is not in PC7's supported matrix — but it is \
-          a real failure, not a skip."
+          MSG="Python ${{ matrix.python-version }} on ubuntu-latest failed."
+          MSG="$MSG This does not fail the run (Linux is outside PC7's supported"
+          MSG="$MSG matrix) but it is a real failure, not a skip."
+          echo "::warning title=Linux leg failed (informational)::$MSG"

@@ -133,17 +133,76 @@ Boundary-guard falsification, run three ways:
 | Same violation, `__init__.py` added | fails — names 43 imported `textual.*` modules |
 | `textual` pre-imported into the pytest process, domain clean | **passes** — no false accusation |
 
-## Known gap carried forward
+## Opening the PR closed the CI gap, and exposed a third failure
 
-**CI has not been observed green.** U1 reported this honestly rather than claiming the bar was met.
-The cause is mechanical: `.github/workflows/validate.yml` triggers on push-to-`main` and on
-`pull_request`, so pushing the feature branch alone starts no run. CI evidence arrives when the
-pull request opens. Until then the plan's U1 verification bar — "CI green on the scaffold commit on
-the required macOS arm64 job across both Python versions" — is **unmet**, and the local checks above
-are what stands in its place.
+`.github/workflows/validate.yml` triggers on push-to-`main` and on `pull_request`, so pushing the
+feature branch alone started no run — which is why CI had never been observed green. Opening
+[PR #10](https://github.com/infiquetra/talaria/pull/10) produced that evidence for the first time,
+and the first run **failed**.
+
+Not on this branch's code. TypeScript typechecked clean and all 45 vitest tests passed; the failure
+was `prettier --check .` over ten markdown and JSON files under `docs/`. It had been failing on
+`main` since `064967b`, so it predates this work — these commits added three more files to the pile.
+
+`prettier --write` would have been the wrong fix. The doc-review artifact records
+`target_sha256_after: 010ff5f6…` for the v0.1 plan, and the requirements reconciliation records
+before/after hashes for its receipts; reformatting would have rewritten those bytes and invalidated
+the hashes that prove the review gate was satisfied. Prettier belongs to the superseded `src/`
+bootstrap (ADR-0004) and was never scoped to govern Python-era documentation, so `.prettierignore`
+now excludes `docs/` instead. The plan's live sha256 was re-checked afterward and still matches the
+doc-review's recorded hash exactly. Recorded in [DECISIONS](../engineering-journal/DECISIONS.md).
+
+**The U1 verification bar is now met.** CI is green on the full matrix: `python-check (3.12)` and
+`python-check (3.13)` on macOS arm64, `check`, and both informational Linux legs.
+
+## Delta re-review
+
+The re-review of the fix commits returned **CLEAN** — 0 P0, 0 P1. Both original P1s were confirmed
+fixed, with the reviewer independently reproducing the green checks against a `git archive` extract
+rather than this working tree. Two new P2s and three P3s were raised; all five are folded in above
+rather than deferred, because each one's failure scenario lands in segment 2.
+
+The most valuable finding answered a question worth asking directly: *is there still a way for a
+domain module to import a presentation framework and stay green?* There was. `_FORBIDDEN_PREFIXES`
+named `textual` literally, making the guard a **deny-list of one framework** — a domain module
+importing `prompt_toolkit` passed cleanly. That is not hypothetical: U4, in this same branch,
+assessed and recommended `prompt_toolkit` as the fallback for exactly the case where Textual fails
+its gate. Adopting it would have silently disarmed ADR-0002's only enforcement. The guard is now an
+**allow-list** — the domain may import the standard library and its own package, nothing else — so
+it cannot go stale when the framework choice moves.
+
+Also fixed: the test-isolation fixture redirected only the *global* config level while its own
+docstring described the repo-local hole it left open (`load_config()` resolves `./.talaria/` against
+`Path.cwd()`, and KTD15 designs that file for per-project status commands, so an operator having a
+real one is expected, not exotic); `AGENTS.md` — the document `CLAUDE.md` tells contributors to read
+first — still documented `uv run mypy talaria`, which was verified to report success on an injected
+type error in `tests/` that `uv run mypy` catches; and the tuple/`MappingProxyType` consumer
+contract is now documented, since immutability changed what callers get back.
+
+One finding was recorded rather than fixed: integer settings are type-validated but not
+range-validated, so `TALARIA_STATUS_INTERVAL_SECONDS=-5` and `paste_collapse_lines=0` both resolve.
+The bound is a semantic property of the consuming unit, and inventing minimums the plan does not
+specify is not this session's call. Queued at P2 for U6.
+
+**A defect in the fix itself was caught by falsifying it.** The first allow-list attempt listed
+`talaria` as an allowed *prefix*, and since `"talaria.tui".startswith("talaria.")` is true, it
+permitted every subpackage in the project — the check would have passed a domain module importing
+`talaria.ui`. Splitting the root package (exact match only) from allowed subtrees (prefix match)
+fixed it. Re-falsified five ways afterward:
+
+| Scenario | Result |
+| -------- | ------ |
+| domain imports `websockets` (installed dependency) | fails — `found: ['websockets']` |
+| domain imports `textual` | fails — `found: ['rich', 'textual', 'typing_extensions']` |
+| domain imports `talaria.tui` | fails — `violating ADR-0002: ['talaria.tui']` |
+| domain imports `talaria.ui` | fails — `violating ADR-0002: ['talaria.ui']` |
+| clean tree | passes |
+
+Final local state: ruff clean, mypy clean over 9 files, **23 passed**, bandit clean,
+`git diff --check` clean, `npm run check` exit 0.
 
 ## Next step
 
-Open the scaffold pull request (which is what triggers CI), confirm the macOS legs pass on both
-Python 3.12 and 3.13, then merge to `main` under the operator's pre-recorded authorization and
-start segment 2.
+Merge PR #10 under the operator's pre-recorded authorization, confirming checks are green at merge
+time rather than trusting the earlier run, then start segment 2 (U2 recorder, U3 domain core, U6
+status runner, U5 Textual gate). A U5 `gate_verdict` of **fail** halts the run.

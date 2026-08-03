@@ -35,7 +35,7 @@ The Python implementation has started (ADR-0004). The project check is:
 ```bash
 uv sync --all-groups
 uv run ruff check .
-uv run mypy talaria
+uv run mypy
 uv run pytest
 uv run bandit -r talaria -q
 git diff --check

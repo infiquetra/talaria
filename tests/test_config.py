@@ -114,6 +114,23 @@ def test_config_dir_defaults_to_home_talaria_without_the_env_override(
     assert config_module.global_config_dir() == Path.home() / ".talaria"
 
 
+def test_repo_local_level_is_isolated_to_tmp_path(tmp_path: Path) -> None:
+    """A ``load_config()`` with no ``cwd`` must not reach the real repository.
+
+    The repo-local level resolves against ``Path.cwd()``, so without the
+    conftest fixture's ``chdir`` this call would read the repository's own
+    git-ignored ``.talaria/config.toml`` and pass or fail on machine state.
+    """
+    repo_local = tmp_path / ".talaria"
+    repo_local.mkdir()
+    (repo_local / "config.toml").write_text('[status]\ncommand = "tmp-scoped"\n')
+
+    cfg = load_config()  # deliberately no cwd argument
+
+    assert Path.cwd().resolve() == tmp_path.resolve()
+    assert cfg.get("status", "command") == "tmp-scoped"
+
+
 def test_string_setting_keeps_a_numeric_looking_env_value_as_a_string(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

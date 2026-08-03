@@ -98,6 +98,16 @@ It is fully reachable for a client that dials a gateway it did not launch, which
 
 ## P2
 
+### Range-validate the integer configuration settings
+
+**Author.** v0.1 scaffold code review (delta re-review), 2026-08-03
+**Priority.** P2
+**Effort.** Small
+**Worth it when.** U6 builds the status runner and U5 the composer — those units know what a valid bound is, and this module does not.
+**Context.** `talaria/config.py` type-checks integer settings but does not bound them. Verified 2026-08-03: `TALARIA_STATUS_INTERVAL_SECONDS=-5` resolves to `-5`, and `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES=0` resolves to `0`. KTD16 defines the paste thresholds as "6 or more lines, or 512 or more bytes", so a threshold of `0` collapses every paste including a one-line one; a negative interval hands U6's status runner a negative sleep.
+
+Deliberately not fixed in the scaffold. The bound is a semantic property of the consuming unit, and inventing minimums in the config loader mid-run would be this session guessing at values the plan does not specify. The class predates the scaffold's coercion rewrite — the old code accepted these values too — but the rewrite is the natural place bounds will land.
+
 ### Add MoA progress and fallback rendering
 
 **Author.** Project bootstrap

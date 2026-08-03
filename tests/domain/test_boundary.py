@@ -1,12 +1,12 @@
 """ADR-0002 boundary check.
 
 Imports every module under ``talaria.domain`` **in a fresh subprocess** and
-fails the domain test run if the presentation framework (``textual``) or
-``talaria.ui`` landed in that subprocess's ``sys.modules`` afterward. This
-lives in the domain package's own test run, not a separate lint step, so it
-fails the same way a domain unit test would.
+fails the domain test run if anything outside the domain's allowed import set
+landed in that subprocess's ``sys.modules`` afterward. This lives in the domain
+package's own test run, not a separate lint step, so it fails the same way a
+domain unit test would.
 
-Two properties this check has to hold, both of which an earlier version got
+Three properties this check has to hold, each of which an earlier version got
 wrong:
 
 *Complete.* The module list comes from a filesystem walk, not
@@ -18,13 +18,23 @@ package a package rather than relying on namespace-package behavior.
 
 *Attributable.* The sweep runs in a subprocess, so what it observes is caused
 by ``talaria.domain`` alone. Reading the pytest process's own ``sys.modules``
-would fail whenever any other test imported ``textual`` first — which becomes
-routine once ``talaria/ui`` lands, since that package is the one place the
-framework is allowed.
+would fail whenever any other test imported a framework first — which becomes
+routine once ``talaria/ui`` lands, since that package is the one place a
+presentation framework is allowed.
+
+*Durable.* The rule is an **allow-list**, not a list of banned frameworks. An
+earlier version named ``textual`` literally, which made it a deny-list of one:
+a domain module importing ``prompt_toolkit`` — the fallback U4 assessed and
+recommended for exactly the case where Textual fails its gate — passed
+cleanly. A deny-list goes stale the moment the project's framework choice
+moves, and it goes stale silently, which is the worst way for a guard to fail.
+So: the domain may import the standard library and its own package, and
+nothing else. Widening either allowance below is a deliberate ADR-0002
+decision, not a routine edit.
 
 The "demonstrably red on a deliberate violation" scenario required by U1's
 test-scenario list is verified by adding a scratch domain module that imports
-textual, running this test once, and discarding it — a committed
+a third-party package, running this test once, and discarding it — a committed
 red-by-construction fixture would permanently fail this test.
 """
 
@@ -37,22 +47,48 @@ from pathlib import Path
 
 import talaria.domain
 
-_FORBIDDEN_PREFIXES = ("textual", "talaria.ui")
+#: The root package, allowed as an *exact* match only. Importing any
+#: ``talaria.domain`` module necessarily executes ``talaria/__init__.py``, so
+#: the root has to be permitted — but permitting it as a prefix would allow
+#: every subpackage in the project and disarm the check below entirely.
+_ALLOWED_INTERNAL_EXACT = ("talaria",)
+
+#: Subtrees the domain core may import, prefix-matched. Everything else in the
+#: project — ``talaria.ui``, a future ``talaria.tui``, ``talaria.transport`` —
+#: is out of bounds, so renaming the presentation package cannot quietly
+#: disarm this check. Widening this tuple is an ADR-0002 decision.
+_ALLOWED_INTERNAL_TREES = ("talaria.domain",)
+
 _DOMAIN_ROOT = Path(talaria.domain.__file__).parent
 
 _SWEEP = """
 import importlib, json, sys
 
-module_names, forbidden = json.loads(sys.argv[1])
+module_names, allowed_exact, allowed_trees = json.loads(sys.argv[1])
+
+# Snapshot first: whatever the interpreter loaded to bootstrap itself is not
+# the domain package's doing, and site-packages .pth hooks vary by machine.
+before = {name.split(".")[0] for name in sys.modules}
+
 for name in module_names:
     importlib.import_module(name)
 
-violations = sorted(
-    loaded
-    for loaded in sys.modules
-    if any(loaded == p or loaded.startswith(p + ".") for p in forbidden)
+after = {name.split(".")[0] for name in sys.modules}
+third_party = sorted(
+    top
+    for top in after - before
+    if top not in sys.stdlib_module_names and top != "talaria"
 )
-print(json.dumps(violations))
+
+internal = sorted(
+    name
+    for name in sys.modules
+    if name.split(".")[0] == "talaria"
+    and name not in allowed_exact
+    and not any(name == t or name.startswith(t + ".") for t in allowed_trees)
+)
+
+print(json.dumps({"third_party": third_party, "internal": internal}))
 """
 
 
@@ -72,7 +108,7 @@ def _domain_module_names() -> list[str]:
 
 
 def test_every_domain_directory_is_an_importable_package() -> None:
-    """A directory without ``__init__.py`` is a hole in the sweep above."""
+    """A directory without ``__init__.py`` is a hole in the sweep below."""
     missing = [
         str(directory.relative_to(_DOMAIN_ROOT.parent))
         for directory in sorted(_DOMAIN_ROOT.rglob("*"))
@@ -86,11 +122,13 @@ def test_every_domain_directory_is_an_importable_package() -> None:
     )
 
 
-def test_domain_package_does_not_import_presentation_framework() -> None:
+def test_domain_package_imports_only_stdlib_and_its_own_package() -> None:
     module_names = _domain_module_names()
     assert module_names, "the ADR-0002 sweep found no domain modules to import"
 
-    payload = json.dumps([module_names, list(_FORBIDDEN_PREFIXES)])
+    payload = json.dumps(
+        [module_names, list(_ALLOWED_INTERNAL_EXACT), list(_ALLOWED_INTERNAL_TREES)]
+    )
     # Fixed argv, no shell, test-only: the payload is this module's own data.
     completed = subprocess.run(
         [sys.executable, "-c", _SWEEP, payload],
@@ -103,8 +141,15 @@ def test_domain_package_does_not_import_presentation_framework() -> None:
         f"{completed.stdout}\n{completed.stderr}"
     )
 
-    violations = json.loads(completed.stdout)
-    assert not violations, (
-        "talaria.domain (or a module it imported) pulled in a presentation "
-        f"framework module, violating ADR-0002: {violations}"
+    observed = json.loads(completed.stdout)
+
+    assert not observed["third_party"], (
+        "talaria.domain (or a module it imported) pulled in a third-party "
+        "package, violating ADR-0002. The domain core may import the standard "
+        f"library and talaria only; found: {observed['third_party']}"
+    )
+    assert not observed["internal"], (
+        "talaria.domain (or a module it imported) pulled in a talaria package "
+        f"outside {list(_ALLOWED_INTERNAL_TREES)}, violating ADR-0002: "
+        f"{observed['internal']}"
     )
