@@ -1,0 +1,24 @@
+{
+  "description": "Small, synthetic, committed receive-only frame corpus for the TS/Python recorder equivalence harness (R28, R29, AE6). Every credential-shaped value here is a canary string, never a real secret. Kept intentionally small: R29 requires committed fixtures to be small synthetic frames only, never a real recorded corpus.",
+  "frames": [
+    "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"type\":\"gateway.ready\"}}",
+    "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"type\":\"assistant_delta\",\"session_id\":\"s-1\",\"payload\":{\"text\":\"hello there\"}}}",
+    "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"type\":\"usage\",\"payload\":{\"input_tokens\":1200,\"output_tokens\":340,\"max_tokens\":4096,\"session_total_tokens\":9001}}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"sudo.respond\",\"params\":{\"request_id\":\"r-sudo-1\",\"password\":\"canary-sudo-password\"}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"secret.respond\",\"params\":{\"request_id\":\"r-secret-1\",\"value\":\"canary-secret-value\"}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"terminal.read.respond\",\"params\":{\"request_id\":\"r-term-1\",\"text\":\"$ cat ~/.env\\nAPI_KEY=canary-terminal-buffer-secret\"}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"clarify.respond\",\"params\":{\"request_id\":\"r-clarify-1\",\"answer\":\"canary-clarify-answer-with-a-token-in-it\"}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"model.save_key\",\"params\":{\"slug\":\"deepseek\",\"api_key\":\"canary-model-save-key-value\"}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":16,\"method\":\"approval.respond\",\"params\":{\"request_id\":\"r-approval-1\",\"approved\":true,\"reason\":\"looks fine, not a credential\"}}",
+    "{\"jsonrpc\":\"2.0\",\"method\":\"future.unknown.respond\",\"params\":{\"api_key\":\"canary-unknown-method-key\"}}",
+    "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"payload\":{\"config\":{\"provider\":{\"token\":\"canary-deep-nested-secret\"}}}}}",
+    "{\"jsonrpc\":\"2.0\",\"method\":\"batch\",\"params\":{\"items\":[{\"ok\":1},{\"password\":\"canary-array-nested-secret\"}]}}",
+    "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"authToken\":\"canary-camel-case-auth-token\",\"sessionKey\":\"not-a-secret-session-key\"}}",
+    "null",
+    "42",
+    "\"a plain string frame\"",
+    "this is not valid json at all {{{",
+    "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"type\":\"subagent.start\",\"payload\":{\"id\":\"sa-1\",\"name\":\"researcher\",\"status\":\"running\"}}}",
+    "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"type\":\"subagent.complete\",\"payload\":{\"id\":\"sa-1\",\"name\":\"researcher\",\"status\":\"completed\"}}}"
+  ]
+}
