@@ -74,7 +74,7 @@ Status values: **measured**, **inferred**, **unmet**.
 | 6a | What "shape matches" covers | measured | Top-level only: the response's own key set and each value's kind. A gateway whose every *nested* payload had changed was graded `present` with `0 blocking` — deliberate v0.1 scope (`talaria/domain/compat.py:343`), stated here because `present` sounds broader than it is | `talaria/domain/compat.py::compare_shape` |
 | 7 | **R36** — a normal exit restores the terminal | measured | The real client run on a pseudo-terminal; `termios` snapshotted before, during and after; attributes after are byte-identical to before. The falsifiability control (`SIGKILL` on the same run) leaves the terminal in raw mode, and that is asserted | `tests/ui/test_teardown.py::test_a_normal_exit_restores_the_terminal_modes`, `::test_the_terminal_restore_assertion_can_fail` |
 | 8 | **R36** — an induced mid-stream failure still restores the terminal | measured | A frame source that streams two frames then raises; the app reports it, closes the source and exits 70; the terminal is restored | `::test_an_induced_mid_stream_failure_still_restores_the_terminal` |
-| 9 | **R36** — no child process outlives Talaria | measured | The status command backgrounds a ten-minute worker; the worker is verified alive during the run and gone after exit, on both the normal and the failure path | `::test_a_normal_exit_leaves_no_status_child_or_grandchild`, `::test_an_induced_mid_stream_failure_still_stops_the_status_child` |
+| 9 | **R36** — no child process outlives Talaria | measured | The status command backgrounds a ten-minute worker; the worker is verified alive during the run and gone after exit, on both the normal and the failure path. A third case — a child spawned but **not yet recorded** by the runner — leaked, was found by CI after this document was first written, and is fixed; see §A leak this document originally missed | `::test_a_normal_exit_leaves_no_status_child_or_grandchild`, `::test_an_induced_mid_stream_failure_still_stops_the_status_child`, `tests/status/test_process_contract.py::test_aclose_sweeps_a_child_whose_spawn_has_not_been_recorded_yet` |
 | 10 | **R36** — local waiters resolve at teardown | measured | A call in flight against a gateway that never answers resolves `unknown` with reason *the transport was closed*, rather than hanging | `::test_a_call_in_flight_at_teardown_resolves_instead_of_hanging` |
 | 11 | **F7** — the gateway survives Talaria's exit | measured *against the stub* | Two tests. In process: after teardown a second client dials the same server object and receives the greeting. At process granularity: the stub runs as a **separate OS process, left in Talaria's own process group** so a mis-aimed group signal would kill it, and after teardown it is alive, still accepting connections, and still greeting. The server is the loopback stub, not Hermes | `::test_the_gateway_is_still_serving_after_talaria_exits`, `::test_the_gateway_process_survives_a_talaria_that_shares_its_process_group` |
 | 12 | **R1** — argv carries no credential | measured **on macOS and Linux** | A running process built by the real launcher, holding a live credential in memory, inspected through the platform's own facility — `ps -ww` on macOS, `/proc/<pid>/cmdline` on Linux: no token, no `?token=` URL, no endpoint. The Linux half was measured when this branch first reached CI: all five process-surface tests ran and passed on `ubuntu-latest` under Python 3.12 and 3.13 (run `30865814553`). Earlier drafts of this document said the `/proc` branch had never executed, which was true when written | `tests/transport/test_process_surface.py::test_a_running_talarias_command_line_carries_no_credential` |
@@ -267,6 +267,48 @@ and tears down cleanly.
 **What it is not evidence of.** That any of those seven calls means to Hermes
 what this repository believes it means. The server on the other end was written
 here.
+
+## A leak this document originally missed
+
+Worth its own section, because it is the one R36 defect that survived the build,
+two adversarial reviews and thirteen green local test runs, and because how it
+was found says more than what it was.
+
+**What happened.** The branch was pushed and the pull request opened. The second
+push carried **documentation changes only** — not one line of Python — and
+`python-check (3.13)` went red on
+`tests/ui/test_teardown.py::test_teardown_stops_a_status_child_this_app_does_not_own`,
+a test U10 itself had added. A status child was alive after teardown.
+
+**What it was.** `asyncio.create_subprocess_exec` forks and execs the child and
+then keeps awaiting while the subprocess transport is wired up. For the whole of
+that tail the child is running — far enough here to write its own pid to a file —
+while `StatusRunner._process` is still `None`, because the parent is suspended
+inside the `await`. And because it is suspended, other coroutines run. A teardown
+landing in that window read `self._process is None`, concluded there was no child
+to kill, and returned. Cancellation could not cover it either: the `finally` that
+sweeps the process group opens *after* the spawn, so a spawn interrupted before
+recording has no sweep at all.
+
+**How it was confirmed, since it would not reproduce.** Twelve runs of the test
+alone and three full-suite runs on Python 3.13 all passed locally. Rather than
+re-run until it broke, the suspected window was widened deliberately —
+`await asyncio.sleep(0.5)` inserted between the spawn returning and the
+assignment — and it failed every time, on the same assertion. With the fix in and
+that half-second window still widened, it passes.
+
+**The fix and its test.** `aclose()` now waits on a `_spawn_settled` event before
+deciding there is nothing to kill. The intermittent app-level test can only catch
+this by luck of scheduling, so it is not the pin: the pin is
+`tests/status/test_process_contract.py::test_aclose_sweeps_a_child_whose_spawn_has_not_been_recorded_yet`,
+which makes the transport tail explicit, asserts the window genuinely exists
+before relying on it, and was watched to fail with only the wait removed.
+
+**Why it belongs in this document.** R36 is one of the requirements this document
+grades, row 9 said *measured*, and it was — for the two cases anyone had thought
+of. The honest reading is that a green suite covered the shapes its authors
+imagined, and the first slower machine that ever ran it found a third. That is an
+argument for the verdict this document already reaches, not against it.
 
 ## Test-suite honesty
 

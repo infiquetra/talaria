@@ -4,6 +4,16 @@
 
 ## 2026-08-03
 
+### A child is alive before the parent has recorded it, so teardown found nothing to kill
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), found by CI
+
+**Evidence.** `python-check (3.13)` failed on the pull request carrying U10, on a **documentation-only commit**, with `tests/ui/test_teardown.py::test_teardown_stops_a_status_child_this_app_does_not_own` reporting a status child alive after teardown. Not reproducible locally: 12 runs of that test alone and 3 full-suite runs on Python 3.13 all passed. Reproduced deterministically instead, by inserting `await asyncio.sleep(0.5)` between the spawn returning and `self._process = process` — the test then failed every time, on the same assertion, with the same message. Fixed by having `aclose()` wait on a new `_spawn_settled` event; with the fix in place and the artificial half-second window still widened, the test passes. Pinned deterministically by `tests/status/test_process_contract.py::test_aclose_sweeps_a_child_whose_spawn_has_not_been_recorded_yet`, watched to fail with only the wait removed.
+
+**Mechanism.** `asyncio.create_subprocess_exec` forks and execs the child and *then keeps awaiting* while the subprocess transport is wired up. Throughout that tail the child is running — in this case far enough to write its own pid to a file — while the parent is still suspended inside the `await`, so `StatusRunner._process` is still `None`. Because the parent is suspended, other coroutines run: a teardown landing in that window read `self._process is None`, concluded there was no child to kill, and returned. The child leaked. Cancellation could not save it either, since the `finally` that sweeps the group is inside a `try` that begins *after* the spawn, so a spawn interrupted before recording has no sweep at all. The window is real but short, which is exactly why it passed thirteen local full runs and appeared only on a slower CI runner.
+
+**Generalizable rule.** Between "a resource exists" and "the program has recorded that it exists" there is a window, and it is wide open precisely because the recording step sits after an `await`. Any teardown that decides from a `None` — *no handle, so nothing to clean up* — is wrong in that window; it must wait for the acquisition to settle rather than read a field that has not been written yet.
+
 ### Two of the daily-driver verdict's weakest rows were weak only because nobody had pushed
 
 **Author.** v0.1 milestone-2, unit U10 (daily-driver closure), commit verification

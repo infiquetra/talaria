@@ -685,10 +685,14 @@ class TalariaApp(App[None]):
             # teardown tests three times left no status child behind, so it is
             # not the only thing standing between R36 and a leaked process.
             #
-            # It is kept for the two things cancellation does not cover. It
-            # sweeps *synchronously*, before the loop ever reschedules the
-            # cancelled task, so teardown does not depend on that task getting
-            # another turn. And it covers a tick this app does not own —
+            # It is kept for the three things cancellation does not cover. It
+            # sweeps without waiting for the cancelled task to get another turn
+            # (it yields only when a spawn is still in flight, which is the
+            # third case below). It closes the window in which a child has been
+            # forked but not yet recorded by the runner, where cancellation
+            # sweeps nothing because the group is not known yet — an R36 leak
+            # CI caught after this line was written; see
+            # ``StatusRunner.aclose``. And it covers a tick this app does not own —
             # anything that called ``status_runner.tick()`` from a task other
             # than ``_status_task`` — which is what
             # ``test_teardown_stops_a_status_child_this_app_does_not_own``

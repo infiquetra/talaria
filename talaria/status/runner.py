@@ -128,6 +128,11 @@ class StatusRunner:
         )
         self._running = False
         self._process: asyncio.subprocess.Process | None = None
+        #: Set once a spawn has settled — the child is recorded in
+        #: ``_process``, or the spawn failed and there is nothing to record.
+        #: ``None`` before the first spawn. :meth:`aclose` waits on it, because
+        #: a child that exists but is not yet recorded is a child nothing sweeps.
+        self._spawn_settled: asyncio.Event | None = None
 
     @property
     def enabled(self) -> bool:
@@ -164,6 +169,16 @@ class StatusRunner:
             raise RuntimeError("_run_once called with no configured argv")
         env = build_child_env(parent_env=self._parent_env, allowlist=self._allowlist)
 
+        # ``create_subprocess_exec`` forks and execs the child, then *keeps
+        # awaiting* while the subprocess transport is wired up. The child is
+        # already running during that tail — it can do real work, write files,
+        # and be seen by anything watching — while ``self._process`` is still
+        # ``None``. A teardown landing in that window used to find nothing to
+        # kill and return, leaving the child behind (R36). This event lets
+        # :meth:`aclose` wait for the spawn to settle rather than conclude from
+        # a ``None`` that no child exists.
+        spawn_settled = asyncio.Event()
+        self._spawn_settled = spawn_settled
         try:
             process = await asyncio.create_subprocess_exec(
                 *self._argv,
@@ -174,6 +189,10 @@ class StatusRunner:
                 env=env,
                 start_new_session=True,  # KTD5: process-group-scoped termination.
             )
+            # Recorded here rather than after the ``except`` chain, so that
+            # "the event is set" and "the process is recorded" cannot be
+            # observed out of order.
+            self._process = process
         except FileNotFoundError:
             return StatusTickResult(
                 outcome="missing_executable", marker=_MARKERS["missing_executable"]
@@ -191,8 +210,12 @@ class StatusRunner:
             return StatusTickResult(
                 outcome="spawn_error", marker=f"{_MARKERS['spawn_error']}: {exc}"
             )
+        finally:
+            # Every path out of the spawn settles it, including the three
+            # failures above — an ``aclose`` waiting here must not hang because
+            # the executable was missing.
+            spawn_settled.set()
 
-        self._process = process
         try:
             return await self._communicate(process, payload)
         finally:
@@ -431,7 +454,23 @@ class StatusRunner:
         runs that ``finally`` before this coroutine's first ``await`` returns, so
         the group is already gone by the time control arrives here. A guard
         nothing can exercise is a guard nobody can trust, so it is not here.
+
+        **A spawn in flight is waited for, not treated as an absent child.**
+        ``create_subprocess_exec`` forks the child and then keeps awaiting while
+        the transport is set up, so there is a real window in which the child is
+        running and ``self._process`` is still ``None``. Reading ``None`` and
+        returning left that child alive — an R36 leak that reproduces
+        deterministically if the window is widened, and that reached CI as an
+        intermittent failure of
+        ``tests/ui/test_teardown.py::test_teardown_stops_a_status_child_this_app_does_not_own``.
         """
+        settled = self._spawn_settled
+        if settled is not None and not settled.is_set():
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(
+                    settled.wait(), timeout=self._limits.timeout_seconds
+                )
+
         process = self._process
         if process is None or process.returncode is not None:
             return

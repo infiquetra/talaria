@@ -303,6 +303,89 @@ def test_aclose_kills_an_in_flight_child(tmp_path: Path, sample_payload: StatusP
     asyncio.run(scenario())
 
 
+def test_aclose_sweeps_a_child_whose_spawn_has_not_been_recorded_yet(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """R36's narrowest window: forked and running, but not yet in ``_process``.
+
+    ``asyncio.create_subprocess_exec`` forks and execs the child and *then*
+    keeps awaiting while the subprocess transport is wired up. For the whole of
+    that tail the child is already running — it can do work, write files, and be
+    signalled — while :attr:`StatusRunner._process` is still ``None``.
+    :meth:`StatusRunner.aclose` used to read that ``None``, conclude there was
+    no child to kill, and return, leaving it alive.
+
+    Timing alone makes this rare: on an unloaded machine the spawn settles long
+    before any teardown reaches it, which is why the whole suite passed
+    thirteen local runs. It surfaced on a slower CI runner as an intermittent
+    failure of
+    ``tests/ui/test_teardown.py::test_teardown_stops_a_status_child_this_app_does_not_own``.
+    That test can only catch this by luck of scheduling. Here the transport tail
+    is made explicit, so the window is deterministic and this is the test that
+    actually pins the fix — verified to fail with the ``_spawn_settled`` wait
+    removed from ``aclose``.
+
+    ``sleep 900`` rather than a short sleep on purpose: if the sweep does not
+    happen, the child is still there to be observed rather than having exited on
+    its own and made the assertion pass for the wrong reason.
+    """
+    marker = tmp_path / "child.pid"
+    argv = ["sh", "-c", f'echo $$ > "{marker}"; sleep 900']
+
+    def alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    async def scenario() -> None:
+        runner = StatusRunner(
+            argv=argv, launch_cwd=tmp_path, limits=_fast_limits(timeout_seconds=30.0)
+        )
+        real_spawn = asyncio.create_subprocess_exec
+
+        async def spawn_with_a_visible_transport_tail(
+            *args: object, **kwargs: object
+        ) -> asyncio.subprocess.Process:
+            process = await real_spawn(*args, **kwargs)  # type: ignore[arg-type]
+            # The tail of a real spawn, stretched until a teardown can land in it.
+            await asyncio.sleep(0.5)
+            return process
+
+        asyncio.create_subprocess_exec = spawn_with_a_visible_transport_tail
+        try:
+            tick_task = asyncio.create_task(runner.tick(sample_payload))
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                if marker.exists() and marker.read_text(encoding="utf-8").strip():
+                    break
+                await asyncio.sleep(0.005)
+            child = int(marker.read_text(encoding="utf-8").strip())
+
+            # The positive half: the child is real and running, and the spawn
+            # genuinely has not been recorded yet. Without both, the assertion
+            # below would pass against a window that never existed.
+            assert alive(child), "the status child never ran"
+            assert runner._process is None, (
+                "the spawn was already recorded, so this test is not exercising "
+                "the unrecorded-spawn window it exists for"
+            )
+
+            await runner.aclose()
+            assert not alive(child), (
+                "aclose returned while a spawned-but-unrecorded child was still "
+                "running — the R36 teardown leak"
+            )
+        finally:
+            asyncio.create_subprocess_exec = real_spawn
+            tick_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await tick_task
+
+    asyncio.run(scenario())
+
+
 # ── Resource bounds found by adversarial review, 2026-08-03 ────────────
 
 
