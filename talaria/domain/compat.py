@@ -190,11 +190,36 @@ COMPAT_BASELINE: tuple[MethodBaseline, ...] = (
         request_fixture={"subagent_id": ""},
         response_shape={"found": "bool", "subagent_id": "str"},
     ),
+    # ``slash.exec`` and ``command.dispatch`` are one path, not two. An ordinary
+    # catalogue command goes out over ``slash.exec``, and only a command that
+    # handler refuses falls back to ``command.dispatch``
+    # (``talaria/domain/commands.py:54-66``). Both have to be pinned: a client
+    # that verified only the fallback would report daily-driver ready and then
+    # fail on the first command an operator typed, which is the exact failure
+    # R34 exists to prevent.
+    #
+    # The reply is an untagged union. The slash worker answers ``{"output": …}``,
+    # adding ``warning`` only when running the command had a side effect the
+    # gateway had to mirror into the session (``methods_tools.py:1198-1203``). A
+    # skill, a bundle, or a pending-input command is instead forwarded to
+    # ``command.dispatch`` and *that* payload is returned verbatim (``:1102-1140``),
+    # so the union's second arm is pinned by the entry below rather than
+    # duplicated here. Talaria discriminates on a string ``type``, the same test
+    # Hermes's own client uses (``talaria/domain/commands.py:644-667``).
+    MethodBaseline(
+        method="slash.exec",
+        classification="evidence-only",
+        evidence="tui_gateway/methods_tools.py:1073-1211",
+        purpose="The route an ordinary catalogue command actually takes (R23, R24).",
+        request_fixture={"session_id": "", "command": "help"},
+        response_shape={"output": "str", "warning": "str"},
+        optional_keys=frozenset({"warning"}),
+    ),
     MethodBaseline(
         method="command.dispatch",
         classification="evidence-only",
         evidence="tui_gateway/methods_tools.py:432-1071",
-        purpose="Generic slash dispatch and its six result shapes (R23, R24).",
+        purpose="The fallback slash route and its six result shapes (R23, R24).",
         request_fixture={"name": "help", "arg": "", "session_id": ""},
         response_shape={"type": "str"},
         optional_keys=frozenset(
