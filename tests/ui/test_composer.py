@@ -14,6 +14,7 @@ import pytest
 from textual.events import Paste
 
 from talaria.replay.controls import INERT_NOTICE
+from talaria.ui.app import PASTE_NOT_COLLAPSED
 from talaria.ui.composer import PLACEHOLDER, Composer
 from tests.ui.conftest import event, paused_app, streaming_turn
 
@@ -75,8 +76,21 @@ async def test_a_several_hundred_line_paste_inserts_without_submitting() -> None
 
         assert app.composer.text.count("\n") == 399
         assert app.composer.text.endswith("pasted line 399")
-        # Nothing was submitted, so no mutation control was even reached.
-        assert controls.refusals == []
+        # The literal insert is exact, not merely long: a paste inserted twice
+        # is also "several hundred lines" and is a real defect Textual's
+        # MRO-wide handler dispatch produced here (see ``ChatTextArea._on_paste``).
+        assert app.composer.text == pasted
+        # Nothing was submitted. What *was* reached is the collapse, which needs
+        # a gateway — so replay refuses it out loud (AE11) and the full text
+        # stays exactly where KTD4 put it. ``submit`` is absent from this list
+        # and that is the assertion: Enter was never pressed.
+        assert [outcome.name for outcome in controls.refusals] == ["paste-collapse"]
+        assert INERT_NOTICE in app.composer.notice
+        # The preservation clause leads, as it does on the live path. The notice
+        # is one row and routinely narrower than the sentence; at 60 columns the
+        # refusal-first ordering pushed "the paste was left in full" — the half
+        # the operator needs — past the end of the row with nothing to mark it.
+        assert app.composer.notice.startswith(PASTE_NOT_COLLAPSED)
         await app.shutdown_sources()
 
 

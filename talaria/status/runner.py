@@ -128,6 +128,11 @@ class StatusRunner:
         )
         self._running = False
         self._process: asyncio.subprocess.Process | None = None
+        #: Set once a spawn has settled — the child is recorded in
+        #: ``_process``, or the spawn failed and there is nothing to record.
+        #: ``None`` before the first spawn. :meth:`aclose` waits on it, because
+        #: a child that exists but is not yet recorded is a child nothing sweeps.
+        self._spawn_settled: asyncio.Event | None = None
 
     @property
     def enabled(self) -> bool:
@@ -164,6 +169,16 @@ class StatusRunner:
             raise RuntimeError("_run_once called with no configured argv")
         env = build_child_env(parent_env=self._parent_env, allowlist=self._allowlist)
 
+        # ``create_subprocess_exec`` forks and execs the child, then *keeps
+        # awaiting* while the subprocess transport is wired up. The child is
+        # already running during that tail — it can do real work, write files,
+        # and be seen by anything watching — while ``self._process`` is still
+        # ``None``. A teardown landing in that window used to find nothing to
+        # kill and return, leaving the child behind (R36). This event lets
+        # :meth:`aclose` wait for the spawn to settle rather than conclude from
+        # a ``None`` that no child exists.
+        spawn_settled = asyncio.Event()
+        self._spawn_settled = spawn_settled
         try:
             process = await asyncio.create_subprocess_exec(
                 *self._argv,
@@ -174,6 +189,10 @@ class StatusRunner:
                 env=env,
                 start_new_session=True,  # KTD5: process-group-scoped termination.
             )
+            # Recorded here rather than after the ``except`` chain, so that
+            # "the event is set" and "the process is recorded" cannot be
+            # observed out of order.
+            self._process = process
         except FileNotFoundError:
             return StatusTickResult(
                 outcome="missing_executable", marker=_MARKERS["missing_executable"]
@@ -191,8 +210,12 @@ class StatusRunner:
             return StatusTickResult(
                 outcome="spawn_error", marker=f"{_MARKERS['spawn_error']}: {exc}"
             )
+        finally:
+            # Every path out of the spawn settles it, including the three
+            # failures above — an ``aclose`` waiting here must not hang because
+            # the executable was missing.
+            spawn_settled.set()
 
-        self._process = process
         try:
             return await self._communicate(process, payload)
         finally:
@@ -206,16 +229,28 @@ class StatusRunner:
             # start_new_session=True at spawn is what makes the group the right
             # unit to kill: the child leads it, so this reaches its descendants.
             #
-            # Guarded on returncode, and the guard is load bearing rather than
-            # an optimisation. Once the child has been reaped its pid is free
-            # for the kernel to reuse, so signalling it here could deliver
-            # SIGKILL to an unrelated process group that happens to have
-            # inherited the number. The normal paths already swept the group
-            # while the child was still unreaped; this is the cancellation and
-            # early-return backstop, and it only fires when the child is
-            # demonstrably still ours.
+            # **Not guarded on returncode**, and that is a correction. The guard
+            # that used to be here — sweep only while the leader is unreaped —
+            # was written against pid recycling, and it silently disabled the
+            # sweep for the one command shape the paragraph above says it exists
+            # for. ``worker & echo ok`` exits the *leader* immediately while the
+            # worker keeps the pipes open, so asyncio's child watcher reaps the
+            # leader within milliseconds and the reads then block until the
+            # timeout. By the time this block runs, ``returncode`` is 0 and the
+            # sweep was skipped: measured at one surviving ``sleep`` per tick,
+            # exactly the leak the comment claimed to have fixed.
+            #
+            # The recycling risk the guard was written for is real and is
+            # accepted here, because it is bounded and the leak was not. This
+            # runs inside one tick — at most ``timeout_seconds`` after the
+            # leader exited — and ``self._process`` is cleared below, so
+            # :meth:`aclose` can only ever signal a group whose tick is still in
+            # flight. For the pid to have been recycled inside that window the
+            # machine would have to allocate every pid in its range within a
+            # couple of seconds, and the *certain* alternative is a leaked
+            # process on every tick for as long as Talaria runs.
+            self._kill_process_group(process)
             if process.returncode is None:
-                self._kill_process_group(process)
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(process.wait(), timeout=self._limits.timeout_seconds)
             self._release_pipes(process)
@@ -409,7 +444,33 @@ class StatusRunner:
         Safe to call whether or not a tick is in flight, and safe to call more
         than once. Talaria's own teardown path calls this unconditionally so a
         status child is never left running after Talaria exits.
+
+        **This handles the still-running child only, and that is deliberate.**
+        The reaped-leader case — a command that backgrounds a worker, exits at
+        once, and leaves the worker holding the pipes — belongs to
+        :meth:`_run_once`'s ``finally``, which sweeps the group whatever the
+        leader's state. Widening this method to cover it as well was measured to
+        add a branch nothing in the suite could reach: cancelling the status task
+        runs that ``finally`` before this coroutine's first ``await`` returns, so
+        the group is already gone by the time control arrives here. A guard
+        nothing can exercise is a guard nobody can trust, so it is not here.
+
+        **A spawn in flight is waited for, not treated as an absent child.**
+        ``create_subprocess_exec`` forks the child and then keeps awaiting while
+        the transport is set up, so there is a real window in which the child is
+        running and ``self._process`` is still ``None``. Reading ``None`` and
+        returning left that child alive — an R36 leak that reproduces
+        deterministically if the window is widened, and that reached CI as an
+        intermittent failure of
+        ``tests/ui/test_teardown.py::test_teardown_stops_a_status_child_this_app_does_not_own``.
         """
+        settled = self._spawn_settled
+        if settled is not None and not settled.is_set():
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(
+                    settled.wait(), timeout=self._limits.timeout_seconds
+                )
+
         process = self._process
         if process is None or process.returncode is not None:
             return

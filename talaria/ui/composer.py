@@ -19,6 +19,17 @@ sent. The tempting local behaviour — drop the composed text into the transcrip
 actually delivered, which is the exact confusion AE11's inert-control rule
 exists to prevent. So the composer keeps the text, renders the refusal notice,
 and writes nothing to the transcript.
+
+**Large pastes are inserted first and collapsed second (KTD16, AE13).** At or
+above six lines or 512 bytes the composer asks the gateway to spool the text to
+a file and hand back a one-line placeholder. The order matters: the literal
+text goes in the moment the paste arrives, exactly as KTD4 specifies for a
+small one, and the placeholder replaces it only once a placeholder actually
+exists. The obvious alternative — hold the text, insert nothing, wait for the
+round trip — leaves the operator's paste in no visible place at all for the
+duration of an RPC, and leaves it nowhere at all if the RPC fails. Here a
+failure is simply a paste that did not collapse: the full text is still in the
+editor, still editable, and the notice says the capability was not there.
 """
 
 from __future__ import annotations
@@ -31,6 +42,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Static, TextArea
 
+from talaria.domain.commands import PasteThreshold
 from talaria.ui.literal import literal_text
 
 #: Shown in the empty composer. Carries both bindings because R12 asks that
@@ -54,6 +66,51 @@ class ChatTextArea(TextArea):
             super().__init__()
             self.composer = composer
             self.text = text
+
+    class LargePaste(Message):
+        """A paste tripped KTD16's threshold and is already in the editor.
+
+        Carries the pasted body so the app can send it, and nothing else: the
+        app does not need to know where in the document it landed, because the
+        swap is done by :meth:`Composer.collapse_paste` against the text as it
+        stands at that moment rather than against a remembered offset.
+        """
+
+        def __init__(self, composer: ChatTextArea, text: str) -> None:
+            super().__init__()
+            self.composer = composer
+            self.text = text
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        #: KTD16's bounds. Replaced by :class:`Composer` from configuration.
+        self.paste_threshold = PasteThreshold()
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        """Insert the paste literally, then ask for a collapse if it is large.
+
+        ``super()`` runs first and unconditionally, so KTD4's literal insert is
+        the floor for every paste — including one whose collapse is about to
+        fail, and including one arriving in replay where there is no gateway to
+        collapse it.
+
+        **``prevent_default()`` is load-bearing and is not about the default
+        action.** Textual dispatches a message to the handler defined in *every*
+        class of the receiver's MRO, not just the most derived one
+        (``message_pump.py:758-798``: ``for cls in self.__class__.__mro__ … yield
+        cls.__dict__.get(f"_{method_name}")``). So defining ``_on_paste`` here
+        does not replace ``TextArea._on_paste``; it runs in addition to it, and
+        every paste was inserted twice — measured as 798 newlines from a
+        400-line paste. ``_no_default_action`` is the flag that loop breaks on,
+        which makes ``prevent_default`` the way to say "this override *is* the
+        handler". The same hazard is why :meth:`_on_key`'s two intercepted keys
+        call it; the difference is that ``TextArea._on_key`` sets it itself for
+        ordinary keys and ``TextArea._on_paste`` never does.
+        """
+        event.prevent_default()
+        await super()._on_paste(event)
+        if event.text and self.paste_threshold.trips(event.text):
+            self.post_message(self.LargePaste(self, event.text))
 
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
@@ -83,22 +140,53 @@ class Composer(Vertical):
     Composer > ChatTextArea {
         height: auto;
         max-height: 8;
-        border: none;
         padding: 0;
     }
     Composer > .composer--notice {
         height: 1;
         color: $warning;
+        /* One row, and the row is *routinely* too narrow for the line. Every
+           honest delivery note names both what happened and what to do about
+           it, so the operative clause is often past column 60 — and a plain
+           one-row Static clips it with nothing on screen to say it clipped. A
+           sentence that stops mid-clause reads as a sentence that ended, which
+           is the same silent-truncation failure the command body's overflow
+           marker exists to prevent. ``text-overflow: ellipsis`` is only
+           reachable with wrapping off: with wrapping on the widget folds the
+           tail onto a second row that ``height: 1`` then hides, and nothing is
+           ever marked. */
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     """
 
-    def __init__(self, *, notice: str = "", **kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        notice: str = "",
+        paste_threshold: PasteThreshold | None = None,
+        **kwargs: object,
+    ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._initial_notice = notice
         self._notice_widget: Static | None = None
         self._text_area: ChatTextArea | None = None
+        self.paste_threshold = (
+            paste_threshold if paste_threshold is not None else PasteThreshold()
+        )
 
     def compose(self) -> ComposeResult:
+        # ``compact`` rather than ``border: none`` in this class's CSS, and the
+        # difference is two rows of jitter. ``TextArea`` re-declares
+        # ``border: tall`` inside its own ``&:focus`` block, which outranks a
+        # descendant selector written here — so the editor was three rows while
+        # focused and one row while not, and the whole interface above it jumped
+        # by two the instant focus moved. That is not only ugly: a mouse press on
+        # a prompt button moves focus here away, the layout shifts under the
+        # cursor between the press and the release, and the click lands on
+        # whatever slid into that row. ``compact`` sets ``-textual-compact``,
+        # whose ``!important`` wins in both states, so the height stops
+        # depending on focus at all.
         self._text_area = ChatTextArea(
             "",
             language=None,
@@ -106,7 +194,9 @@ class Composer(Vertical):
             show_line_numbers=False,
             placeholder=PLACEHOLDER,
             id="composer-input",
+            compact=True,
         )
+        self._text_area.paste_threshold = self.paste_threshold
         yield self._text_area
         self._notice_widget = Static(
             literal_text(self._initial_notice), markup=False, classes="composer--notice"
@@ -133,6 +223,27 @@ class Composer(Vertical):
         self.text_area.text = value
 
     @property
+    def submitted_text(self) -> str:
+        """What a live submit would actually send: the text with edges trimmed.
+
+        Trailing whitespace is an artifact of typing, not content — but the
+        *interior* is left alone, because a pasted code block's indentation is
+        exactly the thing an operator would be furious to have silently
+        reformatted.
+        """
+        return self.text.strip()
+
+    def clear(self) -> None:
+        """Empty the editor after a message has actually left (R3).
+
+        Only called once a submit is known to have been delivered or is known to
+        be recorded in the transcript. A composer cleared on a refused or failed
+        send loses what the operator typed, which is the one thing a chat client
+        must never do.
+        """
+        self.text_area.text = ""
+
+    @property
     def notice(self) -> str:
         if self._notice_widget is None:
             return ""
@@ -142,3 +253,27 @@ class Composer(Vertical):
         """Render a refusal or status line beneath the editor, keeping the text."""
         if self._notice_widget is not None:
             self._notice_widget.update(literal_text(message))
+
+    # ── paste collapse (KTD16, AE13) ─────────────────────────────────────
+
+    def collapse_paste(self, original: str, placeholder: str) -> bool:
+        """Swap one pasted body for the gateway's placeholder, or leave it be.
+
+        Returns whether the swap happened. It is a search-and-replace over the
+        current text rather than a splice at a remembered offset because the
+        offset is not trustworthy by the time the reply lands: the round trip
+        spans an RPC, during which the operator may have typed above the paste,
+        pasted again, or deleted part of it. A stale offset would quietly
+        overwrite whatever had moved into those columns.
+
+        A body that is no longer present — the operator edited or deleted it —
+        means the swap does not happen and the caller says so. Not finding it is
+        the correct outcome there: the alternative is appending a placeholder
+        for text that is no longer in the composer, which would submit a
+        reference to a file whose contents nobody is looking at.
+        """
+        current = self.text
+        if not original or original not in current:
+            return False
+        self.text = current.replace(original, placeholder, 1)
+        return True

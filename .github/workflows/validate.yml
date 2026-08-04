@@ -77,6 +77,61 @@ jobs:
       - name: bandit
         run: uv run bandit -r talaria -q
 
+  # AE10 / R39: the client installs into a clean environment and runs there.
+  #
+  # Deliberately *not* a step inside python-check. That job installs the
+  # development environment with `uv sync --all-groups` and runs everything
+  # through `uv run`, so a `talaria` that only works from inside the project
+  # venv would pass it. This job never runs `uv sync` and never uses `uv run`:
+  # it installs the built wheel as a tool, into directories created for this
+  # run, and then invokes the console script by absolute path with a scrubbed
+  # environment.
+  #
+  # The matrix recorded in docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md
+  # lists exactly the combinations this job and python-check exercise, and
+  # nothing broader.
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    runs-on: macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install talaria as a tool, into a clean prefix
+        env:
+          UV_TOOL_DIR: ${{ runner.temp }}/tool-dir
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/tool-bin
+        run: uv tool install .
+      - name: Run the installed console script with a scrubbed environment
+        env:
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/tool-bin
+        # `env -i` rather than the job's environment: the point of AE10 is that
+        # the installed client works on a machine that is not this checkout.
+        # HERMES_DASHBOARD_SESSION_TOKEN is not set here and must never be —
+        # `--help` dials nothing, and a credential in this job's environment
+        # would be a credential in the runner's process surface (R1).
+        run: |
+          env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/fake-home" \
+            "$UV_TOOL_BIN_DIR/talaria" --help
+      - name: The install wrote nothing outside its own prefix
+        # Specifically: nothing into a Hermes installation. Talaria is a
+        # standalone client (ADR-0001) and installing it must not touch the
+        # thing it connects to. There is no Hermes on the runner, so this
+        # asserts the weaker, checkable form — the tool prefix is where the
+        # executable landed, and the repository is unchanged.
+        env:
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/tool-bin
+        run: |
+          test -x "$UV_TOOL_BIN_DIR/talaria"
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+
   # Informational until the platform matrix is formally widened: a failure
   # here does not fail the run. It does emit a warning annotation, so an
   # informational failure stays visibly distinct from a pass instead of

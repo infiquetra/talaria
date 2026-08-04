@@ -45,38 +45,132 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 **Closed by.** Unit U4 of the [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md), discharging PC8/KTD12. `prompt_toolkit` is assessed against the gate criteria to plausibility depth (with `urwid` recorded as secondary candidate) in [Python fallback presentation layer](../analysis/2026-08-02-python-fallback-presentation-layer.md), dated before the U5 gate verdict. Verdict: plausible on all five assessed criteria — bounded transcript strategy, streaming coalescing, multi-line editing/bracketed paste, headless test story, install cleanliness.
 **Refs.** [ADR-0004](../../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md), [Python fallback presentation layer](../analysis/2026-08-02-python-fallback-presentation-layer.md)
 
-### Prove the Hermes transport seam
+### ~~Prove the Hermes transport seam~~ — CLOSED 2026-08-03
 
 **Author.** Project bootstrap
 **Priority.** P0
 **Effort.** Medium
 **Worth it when.** The prototype shell is ready for the first real integration slice.
 **Context.** Talaria needs capability discovery, session lifecycle, prompt streaming, cancellation, and approval handling before UI work can be judged against real Hermes behavior.
-**Refs.** [Project direction](../analysis/2026-08-01-hermes-tui-project-direction.md)
+
+**Closed by.** Unit U7 of the [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md): `talaria/transport/attach.py`, `talaria/transport/rpc.py`, `talaria/transport/credentials.py`, and `LiveSource` in `talaria/transport/source.py`, with the live-submit and interrupt wiring in `talaria/ui/app.py` and `talaria/ui/composer.py`. Evidence is `tests/transport/` (78 tests) plus `tests/ui/test_live_wiring.py`.
+
+**What is proved, and by what.** Each of these runs against a stub gateway that is a *real* WebSocket server on loopback, dialled with the real `websockets` client — not a hand-written double, because a double would prove that Talaria calls a function with a string rather than that a server which only reads the URL query can authenticate the connection.
+
+- **Attach over the authenticated path.** The credential arrives as the `?token=` URL query parameter and nowhere else, matching the pin's `ws.query_params`-only check (`hermes_cli/web_server.py:14443-14524`).
+- **Credential acquisition, per dial.** Environment, then a `?token=` already on `TALARIA_GATEWAY_URL`, then `<config_dir>/credentials` (refused unless `0600` or stricter), then a non-echoing prompt — proved against a real pseudo-terminal, and confirmed to fail if the prompt is swapped for `input()`.
+- **Prompt streaming.** Identical ordered frames from a file and from a socket produce identical domain state after *every* frame, not merely at the end (AE16 / R31).
+- **Cancellation.** `session.interrupt` marks the turn cancelled only on a confirmed reply; an interrupt whose outcome was lost with the transport changes nothing and says so (R4, AE8).
+- **Reconnect.** Distinct visible states, a credential re-read on every dial (a rotated token is picked up), no duplicate transcript entries, outstanding prompts re-keyed once, and sub-agent terminal states preserved against a re-announced start (R35, F6).
+- **Lost outcomes.** An RPC interrupted by a disconnect resolves to `unknown`, and a reply from a stale connection epoch is counted and discarded rather than resolving a reused request id into a false success (KTD13).
+- **Recording.** Both directions now pass the U2 redaction boundary before any frame-log write.
+
+**What is deliberately NOT closed by this, so it is not mistaken for done.**
+
+- **No live attach against a real Hermes gateway was performed.** Every assertion above is against the stub. The plan's verification clause asks for a smoke attach against a harness-launched local gateway; that belongs to U10's acceptance run and is queued below.
+- **Capability discovery and session lifecycle** — the two other clauses of this item's original context — are R34 and R2, owned by U10 and U3/U10 respectively. This item closes the *transport seam*; it does not close the startup path that chooses a session, which is why a bare `talaria` run still exits rather than dialling.
+- **Approval and the four blocking bridges** are U8.
+
+**Refs.** [Project direction](../analysis/2026-08-01-hermes-tui-project-direction.md), [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md) unit U7
+
+### Smoke-attach the transport against a real local Hermes gateway
+
+**Author.** v0.1 milestone-2, unit U7
+**Priority.** P0
+**Effort.** Small
+**Worth it when.** U10's acceptance run, which already launches a dedicated loopback gateway instance with an injected token and a scratch session.
+**Context.** U7's whole evidence base is a stub server that reads the URL query the way the pin says Hermes does. That settles the *client* side, and it cannot settle one thing: whether a real Hermes accepts what Talaria sends. Two specific unknowns are worth naming rather than assuming away.
+
+1. **How an authentication failure reaches the client is unverified.** `gateway_ws` calls `await ws.close(code=4401)` *before* accepting the upgrade (`hermes_cli/web_server.py:15615-15617`), and whether the client observes that as a WebSocket close with code 4401 or as an HTTP handshake rejection is decided by the ASGI server, not by Hermes. `classify_dial_error` handles both shapes deliberately; a live run would say which one actually occurs, and whether the HTTP status is 401 or 403.
+2. **The frame log recorded live has never been checked against a real corpus.** The redaction assertions are against frames this repository wrote.
+
+**Do.** Attach, submit one prompt, interrupt it, drop the socket, confirm the reconnect, and diff the resulting frame log's redaction markers against the AE3 sweep.
+
+**Extended by U9, 2026-08-03.** U9's own verification clause — "a live isolated run dispatches one real catalogue command of each available shape and one collapse round-trip" — is unmet for the same reason and belongs on this run rather than on a second one. **No Hermes gateway was attached at any point in the U9 session.** Everything U9 asserts is against `tests/transport/conftest.py`'s loopback stub, whose reply bodies are transcribed from the pinned handlers; that settles Talaria's side of each contract and settles nothing about what a real gateway sends. Five specific unknowns:
+
+1. **Which result shape each real command actually returns is unverified.** The stub returns the shape the test asked for. A live run would say what `/model`, `/status`, a real skill command and a real bundle answer with, and whether any of them carries a field combination the three-destination routing reads differently from intended.
+2. **Whether a real `commands.catalog` decodes cleanly is unverified.** The stub serves eight entries in the documented shape. A real one carries the full registry plus quick commands plus a skills scan, and its `canon` map is the thing alias resolution depends on.
+3. **Three client-local entries have never been seen in a real catalogue.** The name-plus-category rule is derived from the pinned source, not observed. One live `commands.catalog` settles whether `/density`, `/logs` and `/mouse` arrive under category `TUI` as the source says. `/sessions` is **not** among them and is not an open question: the registry defines `CommandDef("sessions", …, "Session")` (`hermes_cli/commands.py:180` at `7f4d15515`), so the catalogue builder's dedup guard drops the `TUI` extra of that name and serves it as an ordinary dispatchable command. Talaria treats it as one.
+4. **`paste.collapse` has never written a real file.** The placeholder text Talaria inserts is the gateway's, so its exact shape — and whether the path in it is one an operator can open — is unobserved.
+5. **The `slash.exec` / `command.dispatch` split has never been exercised against a real worker.** The pinned source is unambiguous about which handler serves what, and Talaria now calls `slash.exec` first and falls back exactly as Hermes's own client does. What a stub cannot show is what a real slash worker *prints* — whether a command's output arrives as one block, whether a warning accompanies it, and how long the first call takes while the worker subprocess is spawned on demand (`methods_tools.py:1177-1194`).
+
+**Do, additionally.** With the session from the smoke-attach: fetch the catalogue and record its entry count and category names; dispatch one command of each shape the catalogue actually offers; paste 400 lines and confirm the placeholder and the file it names.
+
+### R1's environment clause is unmet, and no change to Talaria can meet it
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure)
+**Priority.** P0 — it is a security requirement recorded as met nowhere, and the mitigation is an operator procedure that is not yet written down outside this journal and the verdict document.
+**Effort.** Small (a documentation decision), or Medium (removing the environment credential source entirely).
+**Worth it when.** Before Talaria is used by anyone other than its author on a shared machine.
+
+**Context.** R1 asks that a running Talaria's command line **and environment** carry no credential. The argv half holds and is measured: a running process built by the real launcher and holding a live credential shows no token, no `?token=` URL and no endpoint in `ps -ww` / `/proc/<pid>/cmdline`, and every environment entry carrying the credential is one the process was launched with (`tests/transport/test_process_surface.py`). The environment half cannot hold when the operator uses KTD11's highest-precedence source, `HERMES_DASHBOARD_SESSION_TOKEN`: the kernel snapshots the environment block at `exec` and `/proc/<pid>/environ` serves that snapshot for the life of the process, so `os.environ.pop` changes nothing a reader can see; macOS exposes the same to the owning user through `ps -E`.
+
+The mitigation exists and is measured: KTD11's third level, a `0600` file at `<config_dir>/credentials`, leaves the process environment clean (`::test_the_credential_file_route_keeps_the_environment_clean`).
+
+**Do.** Decide one of two things and write it into the README rather than only here. Either (a) document the credential file as the supported route whenever the process surface matters, and keep the environment variable as a convenience with a stated caveat; or (b) drop the environment variable from the precedence chain, accepting that it is the variable Hermes's own dashboard publishes and that dropping it costs every operator a setup step.
+
+**Do not.** Widen R1's wording so the argv half satisfies it. The failing half is asserted by a test that asserts the *failure*, so if Talaria ever does scrub its inherited environment that test goes red and somebody has to remove it on purpose.
+
+### R2, R3 and the F1/F7 live demonstrations are unmet — the whole live acceptance run
+
+**Author.** v0.1 milestone-2, unit U10
+**Priority.** P0 — this is the gap that makes the daily-driver verdict *not ready*.
+**Effort.** Medium.
+**Worth it when.** Immediately; it is the first thing that should happen after this branch lands.
+
+**Context.** U7's queued smoke-attach item above names the transport half. U10's own verification clause names three more, and none of them happened: **R2** (a real attach resolving KTD7's precedence chain against a running gateway and landing in the expected session), **R3** (one prompt streamed to completion through the live path, its transcript compared against replay from the same recorded frames), and the origin's **F1** and **F7** flows demonstrated live in an isolated session.
+
+What U10 *did* build is the path they would exercise. `talaria/cli.py:build_live_app` assembles the live shell, and `TalariaApp.open_session` resolves the selection into `session.create`, or `session.most_recent` followed by `session.resume`, or a direct `session.resume` — all proved against the loopback stub in `tests/transport/test_session_startup.py`, including the order (compatibility probes before the open) and the parameters as the *server* received them. Nothing in it has been answered by Hermes.
+
+**Do.** Run the smoke-attach above and, in the same isolated session: (1) launch bare, with `--resume`, and with `--session <id>`, and record which session each lands in; (2) submit one prompt and let it stream to completion with `--record` on, then run `talaria replay` over that recording and diff the two transcripts; (3) record the compatibility check's real output — how many of the five read-only probes come back `present`, and whether `spawn_tree.list` refuses the fixture. Then update the evidence table and the verdict in `docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`.
+
+**Recording this is now possible from the client, which it was not when this item was written.** `LiveSource` accepted a recorder and `build_live_app` never passed one, and `talaria record` draws no interface — so step (2)'s "with the recorder on" named something the shipped client could not do. U10's closeout added `talaria --record [PATH]`. Use it; the frame log's header carries the credential-stripped endpoint, and every frame passes the U2 redaction boundary before it is written.
+
+### The install job and the CI matrix are declared but have never run
+
+**Author.** v0.1 milestone-2, unit U10
+**Priority.** P1
+**Effort.** Small — it is a push.
+**Worth it when.** As soon as this branch is pushed.
+
+**Context.** `.github/workflows/validate.yml` gained an `install` job that installs the wheel with `uv tool install` into a fresh prefix and runs the console script under `env -i`. AE10 asks that this pass in CI. It has not, because this work is uncommitted. The same is true of the two existing Python legs for this change. The equivalent was run by hand on macOS and passed; the verdict document's platform matrix marks the CI rows *declared, not observed* and must be corrected once they have run.
+
+**Do.** Push, read the run, and correct the matrix rows in the verdict document from the actual result — including a failure, if that is what happens.
+
+### The platform matrix is one operating system and two terminal hosts
+
+**Author.** v0.1 milestone-2, unit U10
+**Priority.** P2
+**Effort.** Medium.
+**Worth it when.** Before claiming support for anything the matrix does not list.
+
+**Context.** R39 says the recorded matrix lists exactly what was exercised. What was exercised is macOS arm64, Python 3.12.11 and 3.13, a bare pseudo-terminal at 100×30, a tmux 3.7b pane at 100×30, and a clean `uv tool install`. Not exercised, and therefore claimed nowhere: Linux as a daily driver (the CI leg is informational and runs the test suite, not the interface), Windows, any real terminal emulator, screen, mosh, any remote session, any narrow terminal under a real emulator, and Python 3.14.
+
+**Do.** Add one real terminal emulator and one Linux desktop run to the matrix before the next verdict revision, and re-run the pseudo-terminal teardown tests at a narrow width (80×24 and below) — U8's height-zero failure family lived exactly there.
+
+### Audit the egress surfaces as a set, rather than the redactor's call sites
+
+**Author.** v0.1 milestone-2, unit U7 — proposed by the milestone-1 review agent
+**Priority.** P0
+**Effort.** Medium
+**Worth it when.** Before U8 lands, because U8's four blocking-prompt bridges and U10's live acceptance run each add several more surfaces of exactly these kinds.
+**Context.** The same defect has now appeared three times in three different places, and each time it was found by someone tripping over it rather than by looking. Milestone-1's P0 was two call sites and disk. U7's `describe_dial_error` was *zero* call sites and the screen — the operator's session token rendered into a composer notice by a wrong-scheme endpoint typo, and re-leaked on every reconnect. The common root is that `redact_url` is a function invoked where somebody remembered, not a boundary that everything crosses.
+
+Enumerating the redactor's call sites is the wrong direction: it can only find places already thought about. Enumerate the places data *leaves* the process and ask which of them crosses the boundary. From the incidents so far, the kinds worth sweeping are:
+
+- exception stringification (`str(exc)` anywhere a dial target, URL, or credential can be in scope — `talaria/transport/source.py:385` and `:541` are the same shape as the fixed leak, safe today only because those exceptions happen not to carry the endpoint)
+- `repr()` and `__str__` on transport objects and anything reachable from them
+- retained failure state (`LiveSource.last_failure` and anything like it)
+- operator-visible text that formats a dial target — notices, status lines, diagnostics
+- log lines and the status payload
+
+**Do.** Build the list of surfaces first and write it down, then check each one, then decide which need the boundary applied. Record the negatives too — `credentials.py`'s `tomllib` parse error was checked across four malformed files and is genuinely safe, and that should not need re-checking. The rule to test against is both halves: the credential is absent **and** the diagnostic survives. A redaction that eats the message it was protecting has already happened twice in this module.
+
+**What U8 added, and what it swept.** The four blocking-prompt bridges are the first path on which Talaria sends an operator-typed *credential*, so this item's "before U8 lands" trigger has now fired. U8 closed the surfaces it created rather than the standing list: the respond value is proven absent from the recorded frame log's raw bytes (over a real socket, not by unit test), from the status document, from every transcript entry, from the composer notice, from `LiveSource.last_failure`, and from the rendered screen via `App.export_screenshot`; the terminal-read failure text goes through `scrub_urls` and is asserted on both halves. It also found a case of the "redaction ate the message" failure this item warns about twice — the failure line was clipped at `SYSTEM_LINE_CLIP` because the constant repeated the exception's own first clause. **Still unaudited:** the list as a *set*, including `repr()` on transport objects generally and log lines.
+
+**Already covered by U7, so start after these.** `describe_dial_error` now scrubs through `scrub_urls` plus a literal pass over the credential in use, and `LiveSource` scrubs `last_failure` on the disconnect and close-error paths (`source.py:385`, `:541`), so the three exception-stringification sites known at the time are closed and pinned by tests that assert both halves. `AttachTarget.safe_url` is the choke point for the endpoint and is credential-free twice over — stripped at construction, then routed through `redact_url` so userinfo is withheld too. The outcome object is swept by `test_the_attach_outcome_carries_no_credential_anywhere`, with one documented exclusion: the live `GatewayConnection`, because `websockets` retains `connection.request.path` including the query and no client library can avoid that. **What remains unaudited** is the rest of the list as a *set* — `repr()` on transport objects generally, log lines, the status payload, and every new surface U8's bridges and U10's acceptance run introduce.
 
 ## P1
-
-### Intermittent pane-content mismatch in the bounded-mount test — cause not found
-
-**Author.** v0.1 milestone-1, 2026-08-03
-**Priority.** P1
-**Effort.** Unknown — the work is diagnosis, not a known fix.
-**Worth it when.** Before the next milestone merges, or immediately if it recurs on a required check rather than an informational one.
-
-`tests/ui/test_transcript_bounds.py::test_mounted_widgets_stay_under_the_cap_while_content_stays_reachable` fails intermittently on `assert pane.rendered_lines == view.lines[pane.condensed_count:]`. Observed twice: once on `python-check-linux (3.13)` in CI (an informational leg, not required for merge) and once locally in a batch of six whole-suite runs under random ordering. Ten consecutive whole-suite runs afterwards passed, so the rate is low and load- or order-dependent.
-
-**The signature is specific.** The line *count* reconciles — `len(rendered) + condensed == total_lines` passes — but the content is shifted: a line is duplicated at the seam and the tail moves one place, so the last line falls off the comparison. That is what a stable index one position too high produces: one stale widget is kept and the remainder is mounted after it.
-
-**What has been ruled out, so a future attempt does not repeat it.**
-
-- *The reconciliation arithmetic itself.* A faithful pure-list mirror of `TranscriptPane.apply`, driven by the real reducer over the same fixture, was run against 4,000 randomized flush schedules with no desync. Given a consistent sequence of projections, the index arithmetic is sound.
-- *Overlapping renders, as constructed.* Two `render_snapshot` calls forced to interleave — the second landing new frames and projecting while the first is awaiting inside `apply` — did not corrupt the pane. A test written to pin that path passed with and without the serialization lock, so it pins nothing and was not kept.
-- *The pane merely lagging.* A lag produces a prefix of the projection, not a duplicate.
-
-**What was done anyway, and what it is not.** `render_snapshot` is now serialized behind an `asyncio.Lock`. It is genuinely not reentrant, and three callers reach it — `drain`, the gate's settled checkpoint, and the coalescing timer — of which only the last is ordered by Textual's message pump. Closing that is cheap and correct on its own terms. **It has not been shown to fix the failure above**, and must not be recorded as having done so.
-
-**Next step for whoever picks this up.** Capture a reproducing `pytest-randomly` seed (run without `-q` so the seed banner is visible, loop until failure, then replay with `--randomly-seed=<n>`). The assertion has already done its job once by catching a real defect class; the remaining question is whether this instance is the product or the harness.
-
 
 ### ~~Make the macOS checks required status checks on `main`~~ — CLOSED 2026-08-03
 
@@ -100,7 +194,15 @@ Three choices inside "set the protection" that the instruction did not spell out
 
 **Verified, not assumed.** `git push origin main` with an empty commit was rejected: `remote: - 2 of 2 required status checks are expected` / `! [remote rejected] main -> main (protected branch hook declined)`. Reading the configuration back would not have proved the hook fires.
 
-### Decide the trust boundary for repo-local `.talaria/config.toml` before U6 executes a command
+### ~~`test_mounted_widgets_stay_under_the_cap` fails intermittently under load~~ — CLOSED 2026-08-03
+
+**Author.** v0.1 milestone-2, unit U7 — found while running the project check, and fixed rather than queued
+**Priority.** P1
+**Context.** `tests/ui/test_transcript_bounds.py::test_mounted_widgets_stay_under_the_cap_while_content_stays_reachable` failed intermittently on `pane.rendered_lines == view.lines[pane.condensed_count:]` — **one line of skew**, `'line 38.3' != 'line 38.4'` at index 30. The file already documented the symptom: the `_drain` helper's docstring says the accounting assertions "fail roughly one run in three, and only under whole-suite load", and `_drain` forces a flush specifically to suppress it. Measured with U7 present: 2 failures in 12 paired runs, and 2 failures in 9 whole-suite runs.
+
+**It was not a test bug.** `TalariaApp.render_snapshot` has two kinds of caller — the coalescing timer, which Textual runs on the message pump and never re-enters, and forced flushes (`drain`, and the gate's checkpoints) which run on the *calling* task. Those two were never serialized against each other, and `TranscriptPane.apply` is a read-modify-write over its own window bookkeeping spanning several awaits. Two passes over different projections interleave and leave the pane holding a window the projection does not have. The U5 gate calls `drain` at every checkpoint, so this was live in the gate too.
+
+**Closed by.** An `asyncio.Lock` around `render_snapshot`, uncontended in the ordinary path because Textual's timer never re-enters its own callback. Pinned by `tests/ui/test_transcript_bounds.py::test_two_renders_can_never_reconcile_the_pane_at_the_same_time`, which measures overlap depth: 2 against the unfixed code, 1 with the lock. Rate after the fix: 12 of 12 paired runs clean.
 
 **Author.** v0.1 scaffold code review, 2026-08-02 (rated P2 advisory by the review; carried at P1 here because the trigger is the next milestone)
 **Priority.** P1
@@ -110,6 +212,17 @@ Three choices inside "set the protection" that the instruction did not spell out
 
 The review named two viable resolutions: require a repo-local config file to be explicitly trusted before it is honored, or exclude command-valued keys from the repo-local level while leaving the rest of KTD15's order intact. Either is a change to a key technical decision the plan settled, which is why it is recorded for decision rather than made unilaterally mid-run.
 **Refs.** [v0.1 plan KTD15 and KTD5](../plans/2026-08-02-talaria-v0-1-prototype-plan.md)
+
+### Let the operator decline a blocking prompt without waiting for it to expire
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+**Priority.** P1
+**Effort.** Small
+**Worth it when.** Someone runs Talaria against a real session and hits a sudo prompt they do not want to answer.
+**Context.** U8's controls can answer a prompt but cannot decline one. The shipping terminal UI can: `answerSudo('')` and `answerSecret('')` clear the overlay locally when the operator submits nothing, and `useInputHandlers.ts:119` / `:128` send `{password: ''}` / `{value: ''}` on escape, which releases the gateway's blocking wait immediately instead of making the tool sit out its full 120-second (sudo) or configured (secret) timeout. Talaria's operator has to let it expire.
+
+The reason it is not in U8 is that "an empty value" and "no answer" are the same thing on this wire, and the deliberate choice — decline — deserves a distinct affordance rather than an accidental one, which is a keybinding decision rather than a transport one. Note the interaction with U8's own decision that a cleared prompt is not re-offered: a declined prompt must clear like an answered one, not restore.
+**Refs.** [DECISIONS.md](DECISIONS.md) "A prompt is cleared before its answer is sent", `ui-tui/src/app/useMainApp.ts:936-975` at Hermes `7f4d15515`
 
 ### Build the stable screen model
 
@@ -151,10 +264,217 @@ The review named two viable resolutions: require a repo-local config file to be 
 
 It is fully reachable for a client that dials a gateway it did not launch, which the v0.1 plan initially doubted. The complete RFC 8252 native-app flow, verified at the pin: `GET /auth/native/authorize` (`hermes_cli/dashboard_auth/routes.py:289`) runs PKCE against a loopback redirect; `POST /auth/native/token` (`:841`) exchanges the code for `{access_token, refresh_token, token_type: "Bearer"}` explicitly intended for OS-keychain storage; `POST /api/auth/ws-ticket` (`:799`) turns that session into `{ticket, ttl_seconds: 30}`; the ticket goes on the `/api/ws` upgrade URL as `?ticket=`; `POST /auth/native/refresh` (`:894`) rotates. Tickets are single-use with a 30-second TTL (`hermes_cli/dashboard_auth/ws_tickets.py:42`).
 
-**The transport seam for this already exists.** v0.1 ships `CredentialProvider` invoked on every dial including reconnects (KTD11), specifically so a per-connection ticket does not require rewriting reconnect. This work is a new `GatedTicketProvider` plus keychain storage and the PKCE loopback listener — not a transport change.
+**The transport seam for this now exists, in code — updated 2026-08-03 by unit U7.** `talaria/transport/credentials.py` defines `CredentialProvider.acquire()`, and `LiveSource._dial` calls it on **every** dial including every reconnect; `tests/transport/test_reconnect.py::test_the_provider_is_invoked_once_per_dial_and_again_on_reconnect` fails if a credential is cached across a reconnect, and `::test_a_credential_rotated_between_attach_and_reconnect_is_picked_up` fails if the re-read does not reach the wire. `redact_url` already denies `ticket` and `internal` by name (KTD6's Python-only superset) and `AttachTarget` strips all three credential forms from an endpoint, so the recording and hygiene boundaries are ready too.
+
+So this work is a new `GatedTicketProvider` returning `("ticket", <single-use value>)`, plus keychain storage and the PKCE loopback listener. Nothing in `LiveSource`, `RpcCorrelator`, or the UI should need to change — and if it does, that is the signal the seam was drawn in the wrong place, which is worth reporting rather than working around.
 **Refs.** [v0.1 plan KTD11](../plans/2026-08-02-talaria-v0-1-prototype-plan.md), [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)
 
+### A Talaria-authored delivery note is longer than the transcript's own line clip
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), third adversarial round
+**Priority.** P1 — raised from P2 in the fourth round.
+**Effort.** Small
+**Worth it when.** Before a live run leans on the transcript as the record of what happened to an unconfirmed answer — or sooner, if an operator reports being told to "send it again" with the sentence cut off.
+
+**Context.** `record_local_note` bounds an entry at `SYSTEM_LINE_CLIP` (120 characters) and marks the cut with an ellipsis, which is correct for text the gateway wrote. `DELIVERY_NOTES["not_sent"]` is **121 characters on its own**, so every line that prefixes it loses its tail — `"…send it again when the connection is bac…"`. Measured: `"2 approvals not denied — " + DELIVERY_NOTES["not_sent"]` is 146 characters, and the single-answer path's `"sudo not answered — …"` is 143.
+
+**Correction to this entry's own wording, fourth round.** It described the defect as "pre-existing and not introduced by the deny-all fix". That is misleading in a public journal: U8 is *entirely uncommitted*, so nothing in it is pre-existing relative to `main`, and "pre-existing" reads as "inherited from a shipped release". What is true is narrower — it predates this **round**, not this unit. The deny-all path made it visible by putting the same note on a second path; both paths arrived in U8.
+
+The clip is not the wrong behaviour — a bound on transcript entries is deliberate — but *which half survives* it should be a decision, not an accident. `record_submission` already solves this for a submitted message by writing the note as its own transcript entry rather than as a suffix, and that is the obvious shape here too.
+
+**Not fixed now** because the change touches the wording shared with the submit path and the combined-line assertions in four existing tests, which is a wider blast radius than the defects each round was scoped to. The deny-all line was arranged so the operative clause ("delivery unconfirmed", "not sent") lands well inside the bound and only the explanatory tail is cut.
+
+**Partly mitigated, fourth round, on a different surface.** The composer notice bar is one row with no wrap, and a long note used to stop mid-clause with nothing marking the cut. It now carries `text-wrap: nowrap` plus `text-overflow: ellipsis`, so the *screen* marks its own truncation the way the transcript already did. That is the marker, not the length — the notes are still longer than either surface.
+
+**Worth checking at the same time.** Whether `record_local_note` should clip at all for a Talaria-authored constant, or whether the clip belongs only on the paths that embed gateway text (`outcome.notice` does).
+
+### A card whose control is on screen and working is titled "answer below — scroll"
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), verification of the fifth adversarial round
+**Priority.** P1
+**Effort.** Small — the mechanism is identified precisely.
+**Worth it when.** Before the reachability marker is presented to anyone as a reliable cue. It is currently right in the dangerous direction and wrong in the safe one.
+
+**Context.** The `answer below — scroll` border title is applied, after an ordinary terminal resize with no operator scroll, to a card whose buttons are drawn on screen and answer a click. Reproduced against the real app: an approval plus a `secret.request` plus a `sudo.request` queued, mounted at 120x40, then `pilot.resize_terminal(60, 20)`. From one `export_screenshot()` the card's title reads `answer below — scroll` while `"once"` is present on the same screen, and `pilot.click("#choice-0")` sends `("approval.respond", {"session_id": "s1", "choice": "once"})`. No card on that screen says `waiting for you`, so the operator's only cue is the false one — and the action it names, scrolling down, moves the working buttons off screen.
+
+It is stale rather than transient: twelve consecutive settle cycles leave the title unchanged, and one direct call to `mark_unreachable_controls()` against the final geometry flips it back.
+
+**Mechanism.** `reveal_actions` (`talaria/ui/prompts.py`) scrolls with `scroll_to_widget(...)` and then schedules the marking with a **single** `call_after_refresh(self.mark_unreachable_controls)`. One deferral is not enough — the marking reads the region's geometry before the scroll has committed, records the pre-scroll answer, and nothing recomputes afterwards. The comment above that line says the deferral exists precisely so the check runs against the post-scroll arrangement; measured, it does not.
+
+**Severity, stated fairly.** This is the *inverse* of the defect the fix was written for, and the inverse is the safer direction: the control is present and clickable, the operator is merely told something untrue about it. A sweep for the original direction — 26 terminal heights at width 120, four approvals plus a clarify mounting into a full region, every scroll position at 80x30, and five other arrangements — found **zero** cards left looking live with an unreachable control. The multi-card fix achieved its safety goal; this is the bill for it.
+
+**Not the same as the hand-scrolled item below.** That one's premise is that resize and re-wrap recompute correctly and only hand-scrolling escapes them. There is no operator scroll in this reproduction: the resize path itself yields the stale label.
+
+### The resize trigger for the reachability marker is unpinned, and it is the only trigger a command-less prompt has
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), verification of the fifth adversarial round
+**Priority.** P1
+**Effort.** Small — one test.
+**Worth it when.** Immediately. This is the round-5 hole entered from the other side, and the code is correct today only by luck of nobody having touched it.
+
+**Context.** Round 5 asked whether the `CommandPanel.Rewrapped` channel was dead weight and pinned it on both halves. It did not ask the mirror question. Deleting `self.call_after_refresh(self.reveal_actions)` from `PromptRegion.on_resize` leaves **all 651 tests green**, and the call is load-bearing: six clarify prompts (no command body, so no `CommandPanel` exists and no `Rewrapped` message is ever posted) mounted at 120x40 and resized to 60x12 give, unmutated, five cards correctly marked `answer below — scroll`; with the trigger deleted, **zero** cards marked and the same five controls still unreachable — the original defect restored in full, suite green.
+
+Every round-5 test that resizes uses approval cards, whose command body posts `Rewrapped` on the same resize and masks the missing trigger. The uncovered case is any prompt *without* a command — clarify, secret, sudo — in a region that resizes.
+
+**Suggested framing.** One test: several clarify cards, resize the terminal narrower, assert every card whose control leaves `scrollable_content_region` is retitled. Closing this also closes the mount-path item below, which is the same hole from the other direction. This is the repository's own "a guard nothing can exercise is a guard nobody can trust" rule applied to round 5's own new code.
+
+### ~~`test_a_card_mounting_into_a_full_region_is_still_recomputed` fails intermittently across full runs~~ — CLOSED 2026-08-03
+
+**Closed by.** Reading the chain rather than re-running until it broke. The marking is **two chained `call_after_refresh` calls** deep — `CommandPanel.Rewrapped` → `reveal_actions` (`talaria/ui/prompts.py:802`) → `mark_unreachable_controls` (`:852`) — while the test's `settle()` helper pumps exactly **two** refresh cycles. That is a margin with no slack, and a machine slow enough to lose one cycle samples the border title before the second deferral lands. The hypothesis recorded below was the right one; this is its confirmation, plus the specific arithmetic that makes it true.
+
+The test now waits for the marking with a bounded budget instead of sampling at a fixed refresh depth. **That is not the "obvious change" this item declined to make.** Polling *the same assertion* with a deadline still fails when the marking never lands — which is exactly what the defect this test exists for produces — and that was verified rather than assumed: deleting `call_after_refresh(self.reveal_actions)` from the `Rewrapped` handler still fails the test with the wait in place. What the wait removes is only the assertion that the marking arrives within a particular number of refresh cycles, which was never the behaviour under test.
+
+**Not reproducible locally, and that stayed true to the end** — 20 runs of the test alone and 6 full-suite runs under six busy loops, all green, all reporting zero extra cycles needed. Both observed failures were on GitHub runners. So the fix rests on the mechanism being legible in the code and on the mutation still killing the test, not on a red run turning green.
+
+**The two P1 items below are untouched by this.** They are about cards that are *never* recomputed, which is a product defect; this was about when a test looked.
+
+### The original entry
+
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Priority.** P1 — not because the product symptom is severe, but because a suite that fails intermittently cannot be used as a gate, and this unit's definition of done is a green `uv run pytest`.
+**Effort.** Small to make the test deterministic; medium to answer the question underneath it.
+**Worth it when.** Before anyone treats a single green `pytest` run as evidence, and before the next unit inherits the habit of re-running until it passes.
+
+**Reproduction.** `uv run pytest -q` from the repository root, repeated. Measured on the U10 closeout tree, macOS 26.5.2 arm64, Python 3.12.11: **thirteen consecutive full runs, twelve green and one with `tests/ui/test_prompts.py::test_a_card_mounting_into_a_full_region_is_still_recomputed` failed** — eight runs during closeout (one red) and five more afterwards during commit verification (all green), so the observed post-closeout rate is roughly one in thirteen and a handful of green runs says very little. The adversarial review measured two failures in five on the pre-closeout tree, with the assertion `assert 'waiting for you' == 'answer below — scroll'` — the border-title assertion at the end of that test, not the geometry assertion before it. It is **not** reproducible in isolation: 20 consecutive runs of that test alone, with four busy loops saturating the machine, all passed. Something about the full-suite ordering is required.
+
+**What is and is not known.** The failing assertion says the card's control is off screen (that assertion passes) and the card is still titled "waiting for you". The marking is reached through two chained deferrals — `CommandPanel.Rewrapped` → `call_after_refresh(reveal_actions)` → `call_after_refresh(mark_unreachable_controls)` — while the test's `settle()` helper awaits two `pilot.pause()` cycles. **Hypothesis, not a measurement:** the test observes the arrangement one refresh before the marking lands. If that is right this is a test-synchronization defect and the product is correct. If it is wrong, it is a third face of the two items below and the product intermittently never marks at all.
+
+**Deliberately not "fixed" at closeout.** The obvious change — poll for the title with a deadline instead of asserting it once — makes the red run green without settling which of those two it is. A red test whose cause is unknown is worth more than a green one that was adjusted until it passed. Resolve the hypothesis first: instrument `mark_unreachable_controls` to record when it runs, run the full suite until it fails, and read whether it ran at all.
+
+### A control-only card mounting into a full prompt region is never recomputed
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round — found while fixing the multi-card reveal, queued rather than fixed. Re-priced from P2 to P1 by the round's verification, which disproved the mitigation this item originally claimed.
+**Priority.** P1
+**Effort.** Small
+**Worth it when.** A session queues a clarify, a secret or a sudo behind enough other prompts to fill the region — or before the "answer below — scroll" marker is relied on as a guarantee rather than as a best effort.
+
+**Context.** `PromptRegion` recomputes which cards can reach their control on two triggers: its own `Resize`, and `CommandPanel.Rewrapped`. Instrumented over a run, a card mounting into a region that has already reached `max-height: 70%` fires **only** `Rewrapped` — which is what pins that channel — but `Rewrapped` comes from the command body, and only approvals have one. A clarify, secret or sudo mounting into a full region therefore fires **neither** trigger: measured, `on_resize` and `on_command_panel_rewrapped` both stayed silent, and the new card kept the default `waiting for you` title with its input below the fold.
+
+**This item first said the case was "partly masked" because `PromptRegion.apply` calls `card.focus_answer()` and Textual scrolls a focused widget into view. That mitigation was measured and does not happen — raise the priority accordingly.** Four approvals at 120x40, then a `sudo.request`: `app.focused` is the sudo card's `Input` at region `(2, 49, 115, 1)`, the region's `scrollable_content_region` is `(0, 10, 119, 25)`, and `contains_region` is **False**. Pressing six keys leaves the input's `value` six characters long while the same screenshot contains neither the words `sudo password` nor a single password-mask glyph anywhere.
+
+So the operator types a password into a focused control that draws nothing, with no visual confirmation of any kind. Nothing leaks — R9 holds, the value never reaches the transcript, the screen or a log — but "type your password blind" is a materially worse failure than the stale-title one this item was originally filed under, and it is the reason this is P1 rather than P2.
+
+**Suggested framing.** Schedule the recomputation from `apply` whenever it mounted or removed a card. Note that doing so makes the `Rewrapped` channel redundant for the mount case — check, by deleting it and running `test_a_card_mounting_into_a_full_region_is_still_recomputed`, whether it still has a case of its own before keeping both.
+
 ## P2
+
+### `compare_shape` compares the top level only, so a wholly restructured payload reads as "present"
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Priority.** P2
+**Effort.** Medium — the comparison is easy; deciding how deep to go and what an *acceptable* nested change looks like is the work.
+**Worth it when.** A real gateway has been attached (R2) and the check has been run against at least one Hermes upgrade, so the false-positive cost of going deeper is knowable rather than guessed.
+
+**Context.** The startup compatibility check grades a method `present` when the response's own key set and each value's *kind* match U3's pin. Nothing below that is looked at. Measured: a gateway answering `commands.catalog` with `{"pairs": [{"name": "/status", "desc": "renamed field layout"}]}`, `agents.list` with `{"processes": ["not-an-object-at-all"]}` and `spawn_tree.list` with `{"entries": [{"totally": "different", "from": "the pin"}]}` produced `ready: True`, `0 blocking`, and `commands.catalog: present, top-level response shape matches 7f4d15515`.
+
+This is U3's deliberate v0.1 scope and `talaria/domain/compat.py:343` says so. It is queued rather than left implicit because the word an operator reads is `present`, which sounds like a broader statement than the one being made — every entry in `commands.catalog` could have been restructured and the check would say the catalogue was fine, while the parser that consumes it fell over. The wording now says "top-level response shape" in the code, the report line and the verdict document; the *coverage* is unchanged.
+
+**Suggested framing.** One level deeper for the three methods whose payload Talaria actually parses element by element (`commands.catalog`, `agents.list`, `spawn_tree.list`): compare the kind of the first element of each recorded list. Do not recurse generally — the maintenance cost is what U3 rejected, and that judgement still holds.
+
+### ~~R1's Linux half has never executed — the `/proc` branch is unmeasured~~ — CLOSED 2026-08-03
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Priority.** P2
+**Effort.** Small, and it needs a Linux machine or a Linux CI runner.
+**Worth it when.** The CI matrix runs the process-surface tests on Linux, or anybody proposes to run Talaria on Linux as a daily driver.
+
+**Closed by.** Pushing the U10 branch, which is the first time this repository's CI had anything to run. On the pull request that carries the daily-driver verdict (GitHub Actions run `30865814553`), `python-check-linux` executed **all five** process-surface tests on `ubuntu-latest` under Python 3.12 and 3.13, and all five passed — so the `/proc/<pid>/cmdline` and `/proc/<pid>/environ` branches have now run against a real process on the platform whose kernel behaviour the R1 argument rests on. Read as this item asked: the job's own output was inspected line by line rather than trusted from a green tick, which matters because the job is `continue-on-error: true`. Its progress line was `tests/transport/test_process_surface.py .....`, five dots and no skip. The same run also executed all fourteen pseudo-terminal teardown tests on Linux with no skips; the seven Linux skips are all the TypeScript equivalence bridge, which needs `node_modules`.
+
+**What this does not close.** Nobody has driven the interface on Linux, and no real terminal emulator has been used on either platform. R1's environment clause remains **unmet** on Linux exactly as on macOS — the measurement confirmed the mechanism rather than removing it. See the item above.
+
+**Context.** `tests/transport/test_process_surface.py::read_surface` has two branches: `/proc/<pid>/cmdline` and `/proc/<pid>/environ` on Linux, `ps -ww` / `ps -Eww` on macOS. Only the macOS branch has ever run. The Linux branch is marked `# pragma: no cover - exercised on Linux only` and is exactly that — never exercised. Every R1 measurement in this build is a macOS measurement.
+
+That matters more than a coverage gap usually would, because the *argument* for R1's unmet half is a Linux argument: the kernel snapshots the environment block at `exec` and serves it from `/proc/<pid>/environ` for the life of the process, which is why scrubbing cannot work. The claim is right, and it is reasoned from documentation rather than measured here.
+
+**Suggested framing.** The existing `python-check-linux` job runs the suite on Ubuntu with `continue-on-error: true`. Read its output for these five tests specifically before trusting anything in the R1 section on Linux; a `continue-on-error` job that is never read is not evidence.
+
+
+### Command entry is a listing, not completion — three catalogue fields go unread
+
+**Author.** v0.1 milestone-2, unit U9 (slash commands and paste collapse)
+**Priority.** P2
+**Effort.** Medium
+**Worth it when.** Talaria is being used as a daily driver against a gateway whose catalogue runs to ninety-odd commands, at which point reading the list stops being a substitute for finding one.
+**Context.** U9's plan entry asks for a "minimal entry affordance", and `talaria/ui/palette.py` is exactly that: a foldable region on F3 listing every command with its availability marker. It is a listing. Typing still means typing the whole name, and three fields the gateway already sends are decoded and then unused:
+
+- **`canon`** *is* used, for alias resolution — this one is wired.
+- **`sub`** maps each command to its tab-completable subcommands (`tui_gateway/methods_tools.py:352`). Nothing reads it, so `/goal ` offers nothing after the space.
+- **`skills`** carries a per-skill `{usage, origin}` pair, which the gateway assembles specifically so a client can rank the listing — its own comment says "every consumer that renders the catalog also wants to rank it" (`:337-341`). The listing is in catalogue order instead.
+
+The gateway also publishes `complete.command`, `complete.path` and `complete.at` (`tui_gateway/methods_complete.py`), none of which Talaria calls.
+
+**Deliberately deferred, not overlooked.** A completion overlay is a second focus owner in front of the composer, and the composer is the widget the interface is built around — U9's own decision to make the sub-agent interrupt a row action rather than a key binding turned on the same concern. Getting that wrong costs more than the typing it saves.
+
+**Do.** Filter the listing as the composer's text changes, rank skills by `usage`, and read `sub` for a second-word completion, before reaching for an overlay or for the `complete.*` methods.
+
+### A deny-all that succeeds can re-offer a control the gateway already resolved
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+**Priority.** P2
+**Effort.** Small
+**Worth it when.** Before an operator is expected to trust that a card which reappears is a live question. Also whenever the deny-all-while-in-flight decision is revisited — this is one of its costs.
+
+**Read this beside the decision it comes from:** *"Deny-all reports what it decided and what it cannot know as two clauses, not one total"* in `DECISIONS.md`, whose rejected alternatives include refusing deny-all while an answer is in flight. This item is the price of that rejection and should be weighed with it rather than on its own.
+
+**Context.** `approval.respond` with `all: true` resolves the whole session queue, including an entry whose own `approval.respond` is still travelling. When that in-flight call comes back `not_sent`, `_record_prompt_outcome` takes the restore branch and `restore_prompt` puts the card back — offering `once` for an approval the gateway denied a moment earlier. Pressing it sends a second `approval.respond` into a queue that should be empty; the reply's `resolved: 0` is caught and reported (`GATEWAY_HAD_NO_APPROVAL`), so the outcome is a confusing screen rather than a wrong grant.
+
+**PLAUSIBLE, not confirmed.** Read from two code paths and **not reproduced**. Reproducing it needs a `not_sent` outcome on the single-answer call while a deny-all succeeds on the same session, which the `HoldingDispatcher` can arrange.
+
+**Likely shape of the fix.** `restore_prompt` already declines to restore a prompt whose id is in `flushed_prompt_ids`; a deny-all that resolves the queue could latch every id it swept, which is the same latch an expiry uses and would need no new mechanism.
+
+### The `feed()` fixture's clock is nine days behind the age-out's
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+**Priority.** P2
+**Effort.** Small
+**Worth it when.** Before any prompt test is given a real `coalesce_interval`, or the next time a prompt test flakes on an empty screen.
+
+**Context.** `tests/ui/test_prompts.py`'s `feed()` stamps frames at `1_785_000_000 + seq`, roughly nine days behind wall clock, while the live age-out reads `time.time()`. Every approval fed that way is already stale by nine days. Nothing fails today only because `live_app` parks the coalesce timer at 3600 s, so the tick that would withdraw them never runs — roughly thirty prompt tests are one `coalesce_interval=` argument away from silently asserting against an empty screen. The two round-5 age-out tests avoid it by ingesting a `FrameRecord` stamped from the real clock.
+
+**Product behaviour is unaffected, and this was checked rather than assumed.** `LiveSource` stamps frames from its own clock, defaulting to `time.time` (`talaria/transport/source.py:37,181,517`), so a live approval's `opened_at` and the age-out's `now` come from the same clock.
+
+**Suggested framing.** Either stamp `feed()` from the real clock, or make `live_app` refuse a real coalesce interval unless the test opts in explicitly — the second is the stronger version, because it makes the trap loud at the moment a test walks into it.
+
+### A hand-scrolled prompt region carries a stale reachability marker
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+**Priority.** P2
+**Effort.** Small
+**Worth it when.** Alongside the item above — the two share a fix.
+
+**Context.** `mark_unreachable_controls` runs after a resize or a re-wrap and not after a scroll, so an operator who scrolls the region by hand can leave a card marked `answer below — scroll` whose control is now on screen, or leave the ordinary `waiting for you` on a card whose control has just scrolled off. The direction of the error is a wrong label rather than the original silent inertness, and the scrolled state is one the operator caused and can undo — which is why this is separated from the defect it comes from. `ScrollableContainer` exposes `scroll_y` as a reactive, so a `watch_scroll_y` that chains to `super()` is the obvious hook; it needs a throttle, because it would otherwise run on every row of a drag.
+
+### Two queued approvals with realistic commands: the second one is unreadable
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
+**Priority.** P2
+**Effort.** Medium — this is a layout redesign, not a scroll fix.
+**Worth it when.** A real session queues two approvals with long commands, or before an operator is expected to *read* rather than merely dismiss a queue.
+
+**Context.** At 80x24 with two long commands, the second card is cut by `PromptRegion`'s `max-height: 70%`. Measured: `deny all` appears once rather than twice, and `max_scroll_y == 9`.
+
+**Severity is below the resize defect fixed this round, and the reason is what makes it a P2 rather than a P1.** The *first* card's `deny all` is visible, and one press denies the whole queue — so the operator is never trapped without a safe action. The harm is being unable to read the second command before denying it, and for a denial that is the survivable direction.
+
+**Worth fixing at the same time.** The overflow marker reads `… +N more lines (whole command in transcript)`. The second clause is true of the transcript *data* and false of the transcript *pane* at the moment the decision is live — the pane is scrolled to the bottom and the arrival entry has usually left it.
+
+### Honour the clarify bridge's multi-select hint
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+**Priority.** P2
+**Effort.** Small
+**Worth it when.** A real session raises a clarify that sets the flag, or checkbox-style answers appear in a corpus.
+**Context.** `clarify.request` carries `multi_select: true` when the tool wants several choices, and the gateway emits the field *only* when it is true so that single-select payloads keep their pre-multi-select shape (`tui_gateway/server.py:5506-5519`). Its own comment says renderers without checkbox support "ignore the extra field and stay single-select (a single answer still parses as a one-element list on the tool side)", so Talaria's single-choice control is a supported degradation rather than a defect. It is recorded here because the degradation is currently *silent*: the operator is not told that the question wanted more than one answer.
+**Refs.** `tui_gateway/server.py:5506-5519` at Hermes `7f4d15515`
+
+### Send `approval.respond`'s `all` flag, or establish that the choice string carries it
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts)
+**Priority.** P2
+**Effort.** Small
+**Worth it when.** An operator reports that picking "always" did not stop the next identical approval.
+**Context.** `approval.respond` accepts an `all` parameter, passed to `resolve_gateway_approval(..., resolve_all=params.get("all", False))` (`tui_gateway/methods_prompt.py:887-905`). The shipping terminal UI never sends it — it sends `{choice, session_id}` and nothing else (`useMainApp.ts:928`) — so the `session`/`always` semantics must ride the choice string, and Talaria matches that exactly. What is *not* established is whether the flag does something the string does not; the read stopped at the call site rather than following `resolve_gateway_approval` into `tools/approval.py`. Cheap to settle, and the failure it would produce is an approval the operator believes they answered permanently.
+**Refs.** `tui_gateway/methods_prompt.py:887-905`, `ui-tui/src/app/useMainApp.ts:928` at Hermes `7f4d15515`
 
 ### Bound the domain transcript, not just the mounted widget count
 
@@ -180,6 +500,12 @@ Neither is a leak today at prototype scale, and eviction interacts with replay d
 **Context.** `talaria/config.py` type-checks integer settings but does not bound them. Verified 2026-08-03: `TALARIA_STATUS_INTERVAL_SECONDS=-5` resolves to `-5`, and `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES=0` resolves to `0`. KTD16 defines the paste thresholds as "6 or more lines, or 512 or more bytes", so a threshold of `0` collapses every paste including a one-line one; a negative interval hands U6's status runner a negative sleep.
 
 Deliberately not fixed in the scaffold. The bound is a semantic property of the consuming unit, and inventing minimums in the config loader mid-run would be this session guessing at values the plan does not specify. The class predates the scaffold's coercion rewrite — the old code accepted these values too — but the rewrite is the natural place bounds will land.
+
+**Half-resolved by U9, 2026-08-03 — the paste half only.** The consuming unit arrived and answered its own question: `PasteThreshold` treats a non-positive bound as "this half is off", re-encoding the shipping client's `pasteCollapseLines > 0 && …` guard (`ui-tui/src/app/useComposerState.ts:277-280` at `7f4d15515`). So `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES=0` no longer collapses every one-word paste; it disables the line bound and leaves the byte bound working. `talaria/cli.py:_build_paste_threshold` also falls back to the KTD16 defaults for a non-integer value rather than raising, because a malformed paste setting should not stop the client from starting. Pinned by `tests/domain/test_commands.py::test_a_non_positive_line_bound_switches_that_half_off` and `::test_both_bounds_off_collapses_nothing`, both watched to fail with the `> 0` clause removed.
+
+**Reach closed by U10, 2026-08-03.** `talaria/cli.py:build_live_app` now assembles the live shell — transport, credential provider, status runner, startup selection — and passes `_build_paste_threshold(cfg)` into it, so a bare `talaria` run reaches the configured thresholds in the one mode where a paste is ever collapsed. Pinned by `tests/test_cli.py::test_the_configured_paste_thresholds_reach_the_live_app`, which compares a configured launcher against a default one so it asserts the configuration was *read* rather than that a threshold exists, and was watched to fail with the `paste_threshold=` argument removed from `build_live_app`. **Reach is not the same as live proof:** no paste has been collapsed by a Hermes gateway, because none has been attached — see the daily-driver verdict, `docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`.
+
+**Still open: `status.interval_seconds`.** `TALARIA_STATUS_INTERVAL_SECONDS=-5` still resolves to `-5` and still hands U6's status runner a negative sleep. There is no equivalent Hermes reading of a negative interval to re-encode, so the bound is a decision the status runner has to make, and it was out of U9's scope. Nothing in this update changes that path.
 
 ### Add MoA progress and fallback rendering
 
@@ -244,7 +570,146 @@ The real dependency is sequencing: the comparator has to encode an expectation a
 This is a check someone runs, not an alarm that fires by itself. Instrumenting the redaction boundary to count non-loopback hosts would make it self-firing, and was not done because adding a counter to the security boundary for a P2 is a poor trade — but that is the honest limitation of trigger 2, and trigger 1 is the one to rely on.
 
 
+### The withdrawn-approval hedge does not retire when the screen shows the agent working
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), verification of the fifth adversarial round
+**Priority.** P2
+**Effort.** Small
+**Worth it when.** Alongside any other work on the clearing rule. The line is stale rather than false, which is why it is not P1.
+
+**Context.** `_clear_withdrawal_on_progress` (`talaria/domain/state.py`) clears the withdrawn count only when `_turn_progress` — `(turn, turn_index, streaming_text, segments)` — moves. `_on_tool_start`, `_on_tool_complete`, `_on_status_update` and `_on_session_info` all only call `_append`, which touches none of those four fields.
+
+Reproduced with `APPROVAL_STALE_AFTER` patched to 0.05s: after a withdrawal, feeding `tool.complete {name: "bash", summary: "denied by timeout"}` — exactly the event the default-configuration case produces, the gateway's own fail-closed timeout coming back through the tool — leaves `withdrawn_approvals` at 1, and one screenshot contains both `bash ✓ denied by timeout` and `1 approval withdrawn — whether the agent is still blocked is unknown`. Unchanged after `tool.start`, `status.update` and `session.info` too. The hedge survives an unbounded number of tool calls and only ends on a `message.delta` or a turn-phase change.
+
+This contradicts the clearing rule's own docstring: *"The moment the agent produces a token or the turn changes phase, it is no longer unknown — it is observed."* A tool completing is such an observation.
+
+**Severity, stated fairly.** The sentence is a hedge about Talaria's knowledge, so a stale one is a screen contradicting itself rather than a screen lying about the session being busy — and it never reinstates `working…`, which is the failure R8 actually forbids.
+
+**Suggested framing.** Widen `_turn_progress` to include tool activity, but do it narrowly and pin both directions: the case that must *not* clear is the bad one, where the gateway still holds the approval and the agent is blocked inside a tool call producing nothing. A tool *completing* is progress; a tool *starting* may not be.
+
+### `focus_session` does not clear `withdrawn_approvals`
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), verification of the fifth adversarial round
+**Priority.** P2
+**Effort.** Trivial — one field, one assertion.
+**Worth it when.** Before anything calls `focus_session`. There is still no production caller, which is the only reason this is latent.
+
+**Context.** `focus_session`'s docstring says it exists to stop "session A's state bleeding into session B", and it clears `prompts`, `answering`, `approvals_seen`, `flushed_prompt_ids`, `turn`, `segments` and `streaming_text`. Round 5 added `withdrawn_approvals` and did not add it to the reset. Measured: `focus_session(SessionState(withdrawn_approvals=3, approvals_seen=5), "s2")` returns `approvals_seen=0` and **`withdrawn_approvals=3`**.
+
+A screen consequence was attempted and could not be built: `focus_session` sets `turn="idle"`, and any later event that makes the turn stream also trips the clearing rule. So this is a genuinely broken invariant on a reset function, latent rather than visible, and unpinned. It belongs beside the existing `focus_session` item rather than separately from it.
+
+### The terminal-read arrival line is the residual self-contamination, and it is measured
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), verification of the fifth adversarial round
+**Priority.** P2
+**Effort.** Small
+**Worth it when.** Before a real session does many reads, or whenever the terminal-read decision is next opened.
+
+**Context.** The decision to keep `terminal_read prompt awaiting an answer: …` in the transcript was originally justified with the claim that it "does not compound". Two independent lenses measured that it does — the correction is now in `DECISIONS.md` beside the decision. Six sequential reads in a session whose only real content is one `message.delta` grow the served payload from 172 to 512 bytes, and the sixth answer is six copies of the arrival line plus one line of actual content.
+
+No individual line grows — that was round 3's defect. But the buffer accumulates one self-generated line per read, without bound in the number of reads, which is the same property the decision's rejected-alternatives paragraph uses to turn *outcome* lines down. Net accounting: the fifth round removed between zero and one line per **failed** read and left one line per **every** read, so the residual is strictly larger than what was removed.
+
+**Suggested framing.** Move the arrival record to a side channel the read projection does not serve, keeping the audit property without the feedback. Dropping it entirely is the alternative already rejected, on the grounds that an agent reading the operator's screen should not be invisible in the operator's own record.
+
+
 ## P3
+
+### A malformed `status.command` turns the status line off without saying so
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Priority.** P3
+**Effort.** Small for a stderr line; medium for an in-interface notice, which is the version worth having.
+**Worth it when.** A second configuration setting acquires the same silent-fallback behaviour, or an operator reports that their status line "just stopped working".
+
+**Context.** `status.command = ["sh", "-c", "date"]` in `config.toml` — a TOML array, the obvious guess for an argv — used to raise `AttributeError` out of `shlex.split`. Once U10 put `_build_status_runner` on the bare-`talaria` launch path that became a full traceback and exit 1 with no interface at all: a whole client refusing to start over an optional status line. `parse_command` now returns `None` for any non-string, matching the policy `cli._build_paste_threshold` already documents for its own malformed input.
+
+The client starts, and nothing tells the operator why their status line is missing. That is the right trade against crashing and the wrong end state.
+
+**Suggested framing.** `build_live_app` and `run_replay` both already assemble configuration before the app exists. Collect the settings that fell back, hand them to `TalariaApp` as startup notes, and record them as local transcript entries at mount — the same surface the compatibility check's blocking rows use, which exists and is already read by tests.
+
+### Four guards inside round 5's reachability code have no test that can fail
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), verification of the fifth adversarial round
+**Priority.** P3
+**Effort.** Small
+**Worth it when.** Alongside the P1 resize-trigger item, which is the same rule applied to the same code.
+
+**Context.** Each of these survives deletion with the entire 651-test suite green, and each has a docstring paragraph arguing it matters. The behaviour is correct in every case — it was verified separately — so these are test gaps, not defects.
+
+- **Both-directions retitling.** Making `mark_unreachable_controls` one-directional (mark, never un-mark) leaves the suite green. Real behaviour verified by hand: at 120x40 both cards read `waiting for you`; at 60x20 the approval reads `answer below — scroll`; back at 120x40 it reads `waiting for you` again.
+- **`scrollable_content_region` rather than `region`.** The docstring argues the outer region is wrong because it includes the border and the scrollbar column. Swapping it leaves the suite green.
+- **The zero-height clause.** Dropping `and target.region.height > 0` — whose docstring says "a control laid out at zero height is mounted, focusable, and draws nothing" — leaves the suite green.
+- **The withdrawn line's absence from an idle turn.** Adding it to the idle branch of `activity_line` leaves the suite green.
+
+There is also a predicate asymmetry worth resolving while here: `reveal_actions` breaks on `target.is_mounted` alone, while `mark_unreachable_controls` additionally requires `target.region.height > 0`. A first card whose control laid out at zero height would consume the reveal and leave every card marked with none revealed. Reasoned from the source, not reproduced.
+
+**Context for why this is P3 and not higher.** This repository's recorded rule is that a guard nothing can exercise is a guard nobody can trust — round 4 deleted its own unreachable latch on exactly that basis. These are the same shape in round 5's new code. They are P3 because the behaviour is right today; the risk is that the next edit breaks one silently.
+
+
+
+### Replay can fabricate an age-out the recording never contained
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+**Priority.** P3
+**Effort.** Small
+**Worth it when.** A recorded corpus is used as evidence of what a session showed, rather than as a rendering exercise.
+
+**Context.** `_age_out_approvals` uses the recorded clock in replay, which is what keeps AE2's "replay it twice, get the same state" true. But a corpus where an approval sits outstanding across 400 recorded seconds will withdraw the card and inject a `prompt-expired` transcript entry the gateway never emitted. Determinism holds — the fabricated entry is identical on every replay — so the failure is not a flake; it is that the replayed transcript shows an event that did not happen. Reachability in a real corpus is unproven; the 400-second gap is a synthetic construction.
+
+**Suggested framing.** Either mark locally synthesized entries distinctly in replay, or suppress the age-out entirely in replay on the grounds that a recording's approvals have already had whatever fate they had. The second is simpler and loses nothing, because the reason the age-out exists — a phantom approval disabling the correlation rule for the *next* one — is a live-session concern.
+
+### The age-out sentence speaks about "the gateway" from a pinned constant
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+**Priority.** P3
+**Effort.** Small
+**Worth it when.** A deployment is known to run a non-default `HERMES_APPROVAL_TIMEOUT`, or the gateway starts publishing its configuration.
+
+**Context.** `APPROVAL_AGED_OUT` reads "the gateway's default wait is 5 minutes and it announces no approval timeout, so it has probably stopped waiting". Both facts are read from Hermes at `7f4d15515` (`tools/approval.py:2648-2657`, `tui_gateway/server.py:2981-2998`), not from the connected gateway. The hedge — "probably" — keeps the sentence from being false, but it reads as a statement about *this* deployment when it is a statement about the pinned source. The same gap is what makes `withdrawn_approvals` necessary at all; see the post-withdrawal decision in `DECISIONS.md`.
+
+**Suggested framing.** Say whose default it is ("Hermes's default wait is 5 minutes"), or probe the seam at startup and name the number when it is knowable and its absence when it is not — the pattern AGENTS.md already asks for on gateway capabilities.
+
+### `answer_terminal_read`'s unavailable-projection path leaves the prompt registered
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round
+**Priority.** P3 — **latent**; the code is correct today and the invariant it depends on is not enforced.
+**Effort.** Small
+**Worth it when.** Before anything else can make `transcript_view_for_read()` return `None`.
+
+**Context.** `talaria/ui/app.py:1201-1215` discards the request id from `_answering` and writes a note, but leaves the prompt registered. `_answer_unattended_prompts`'s docstring now depends on the opposite: "this dispatches on sight, so the bound is that every outcome settles the prompt". Proven **unreachable as a loop today** — the only trigger is `transcript_view_for_read()` returning `None`, which happens only during teardown or before the first render, and both of those stop the render tick that would re-dispatch.
+
+**Frame it as making the code honour the invariant its docstring depends on**, not as fixing a loop. The one-line change is to settle the prompt on that path as every other outcome does; the reason it needs a moment's thought is deciding whether a read that could not be answered should leave any trace in the registry at all.
+
+### `focus_session` disarms the in-flight bookkeeping the prompt registry depends on
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
+**Priority.** P3 — **latent**, and the priority is low only because of that. Fix it before anything calls the function.
+**Effort.** Small
+**Worth it when.** Before the first production caller. `grep -rn "focus_session" talaria/` finds exactly two hits — the definition and the `__all__` entry — so there is no caller today.
+
+**Context.** `focus_session` (`talaria/domain/state.py:237-260`) clears `prompts`, `answering` and `flushed_prompt_ids`. The last two are precisely what the third round added to make the in-flight answer window safe:
+
+- clearing `answering` re-enters the shipped uncorrelated-approval defect through another door — `outstanding_approvals` searches `answering` so an approval whose answer is travelling still counts, and a focus switch inside that round trip makes it stop counting;
+- clearing `flushed_prompt_ids` removes the latch that stops `restore_prompt` resurrecting a prompt the gateway has already closed, and `prompt_view` (`talaria/domain/projection.py:321`) applies no session filter, so a resurrected foreign-session prompt renders.
+
+Reproduced at the domain level.
+
+**Its own docstring is currently false**, and that is worth fixing whichever way this goes: it says "the caller here is reconnect, not a UI control", describing a caller that does not exist. Reconnect does not call it today.
+
+**Decide, don't patch.** Either the reconnect path should call it (in which case the in-flight sets need a considered policy — probably settle rather than drop), or the function should not survive to v0.1 with no caller.
+
+### The terminal-read bridge serves un-defanged bytes, and the screen it claims to describe is defanged
+
+**Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round — found while fixing the bidi/zero-width defect, queued rather than fixed.
+**Priority.** P3
+**Effort.** Small, once the boundary is decided.
+**Worth it when.** An agent is observed acting on terminal-read output rather than treating it as prose, or the defang set changes again.
+
+**Context.** `defang` now replaces bidirectional-override and zero-width characters as well as C0 controls, and it runs at *render* time — `literal_text` is the one door onto a widget. So the card, the command panel and the transcript pane are all clean, and the stored `TranscriptEntry.text` deliberately keeps the gateway's bytes as the audit record.
+
+`terminal_read` (`talaria/domain/projection.py:446`) serves `TranscriptView.lines`, which are built straight from those stored entries. So the buffer the agent receives is **not** the buffer the operator sees whenever a defanged character is present: the agent gets `‮`, the screen shows `�`. The bridge's contract is "what is on screen".
+
+**Not fixed now** because the fix has to choose a boundary and the choice is not obvious. Defanging in `transcript_view` would put the terminal layer's rule into `talaria.domain`, which ADR-0002 forbids; defanging in `answer_terminal_read` puts it on the UI side of the seam but then the projection's own tests describe a buffer nobody is served. Neither is a five-line change, and the divergence is currently cosmetic — an LLM reading JSON does not perform bidi reordering.
 
 ### Desktop-like configuration views
 

@@ -8,6 +8,8 @@ test that mounts one widget by hand proves something the gate never asserted.
 
 from __future__ import annotations
 
+import html
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -20,6 +22,24 @@ from talaria.ui.app import TalariaApp
 
 #: Recorded seconds between synthetic frames, matching the stress generator.
 STEP = 0.004
+
+
+def screen_text(app: TalariaApp) -> str:
+    """Everything the operator can read, as plain text.
+
+    ``App.export_screenshot`` returns an SVG whose glyphs sit inside ``<text>``
+    elements with spaces written as ``&#160;``. Every assertion about what is on
+    screen goes through here, and the reason to have it rather than to search
+    the raw SVG is that ``"once" in svg`` is easy to satisfy by accident while
+    ``"once" in screen_text(app)`` is a claim about a rendered row.
+
+    Pair every "this is absent" with a "this is present" from the same string.
+    A negative assertion against a screen is satisfied by a blank screen, and a
+    blank screen is a real failure mode: a control laid out at zero height is
+    mounted, focusable and completely invisible.
+    """
+    body = re.sub(r"<[^>]+>", "", app.export_screenshot())
+    return html.unescape(body).replace("\xa0", " ")
 
 
 def event(kind: str, payload: dict[str, Any], *, session: str = "s1") -> dict[str, Any]:
