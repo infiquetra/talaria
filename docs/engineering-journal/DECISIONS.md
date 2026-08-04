@@ -2,6 +2,24 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-04
+
+### When Talaria takes a control away, the caret goes back to the composer
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Decision.** A region that removes a control holding the caret, or revokes that control's focusability, posts `CaretReleased` (`talaria/ui/focus.py`); `TalariaApp.on_caret_released` focuses the composer. Three sites raise it today: `PromptRegion.apply` when a card is removed, `AgentRows.apply` when rows are removed, and `AgentRow.bind_row` when a finished child makes its own row unfocusable. Focus moves the *operator* makes are never touched.
+
+**Why.** Textual's own answer — `Screen._reset_focus` — hands the caret to the neighbouring entry in the focus chain, and the neighbour above every control Talaria mounts is the `VerticalScroll` region containing it. A scroll container is focusable so arrow keys scroll it, and it discards every printable key it is given, so the interface silently stops accepting text with nothing on screen to say why. The composer is the answer for the same reason it is focused at mount: it is the only widget whose whole job is to accept typing, and it is what the operator is reaching for in every case that raises this.
+
+**Rejected alternative — assert the invariant in the render pass.** Simpler, and it would need no message: check at the end of each render that the caret is somewhere sensible and move it if not. Rejected because the render pass runs on the coalescing timer, so it would drag the caret back roughly twenty times a second from anywhere the operator deliberately put it — making the transcript impossible to focus and scroll. The defect is specifically *the caret moving without the operator*, so the fix belongs at those transitions and nowhere else. `tests/ui/test_focus_returns.py::test_a_deliberate_focus_move_is_left_alone` fails if this is ever reintroduced.
+
+**Rejected alternative — make `PromptRegion` unfocusable while it holds no cards.** Fixes the two prompt paths cheaply and truthfully (an empty scroll region has nothing to scroll). Rejected because the caret then falls to `TranscriptPane`, which is also a `VerticalScroll` and swallows keys identically, and because it does nothing at all for the sub-agent row — whose caret is lost without any widget being removed.
+
+**Rejected alternative — have the regions focus the composer themselves.** Fewer moving parts than a message. Rejected on ADR-0002's grain: a widget that reaches across the tree for a named sibling can only be mounted in a screen that has one, and these regions are otherwise self-contained.
+
+**Revisit when.** A fourth site needs to raise this, or a control appears that should legitimately keep the caret after the operator answers it. Either is a sign the rule wants to be "hand back to whatever last had it" rather than "hand back to the composer" — which needs a focus history the app does not keep today.
+
 ## 2026-08-03
 
 ### A background task that dies takes the client down, rather than being reported and left running
@@ -756,6 +774,8 @@ Two things generalize past the incident. First, **an agent's model of "who else 
 **Decision.** `read_answer(kind, outcome)` returns an `AnswerVerdict` — one of `error`, `not_sent`, `discarded`, `used`, plus the operator-facing reason and whether the control may go back. `_record_prompt_outcome` (one prompt) and `deny_all_approvals_live` (the whole queue) both switch on it. Neither reads `outcome.status`, `delivery_of`, or `gateway_refusal` directly.
 
 **Rejected alternatives.** *Leave the two paths independent and fix deny-all in place* — a second correct copy, which is the arrangement that produced the defect. *Put the verdict in the domain* — it combines a transport outcome with a gateway reply body, and `gateway_refusal` and `delivery_of` already live at the UI boundary; moving all three would pull `RpcOutcome` into the domain core for no gain. *Keep the resolved count in every deny-all line* — an unacknowledged call carries no count, and the clause pushes the delivery note past `SYSTEM_LINE_CLIP`, which is where the reason lives.
+
+**Correction, 2026-08-04.** Half of that last alternative's reasoning has since evaporated, and the decision should not be read as still resting on it. `SYSTEM_LINE_CLIP` no longer exists: it was split into `DETAIL_LINE_CLIP` (120) and `TRANSCRIPT_LINE_CLIP` (2000) once a live gateway showed the 120-character bound was Hermes's clip on a *one-row activity region*, wrongly generalized to Talaria's scrolling transcript. The deny-all line is nowhere near the new bound, so nothing is pushed past anything. **The alternative stays rejected on the other ground**, which was always the stronger one and does not depend on a length: an unacknowledged call carries no count, so the clause would tell the operator nothing.
 
 **Rationale.** Three independent signals decide what a respond may be written down as: the JSON-RPC envelope, U7's delivery table, and the reply body (both ways this gateway discards an answer come back as successes). Deny-all read none of them, and it is the *only* action the interface offers once two approvals queue — so the design funnelled the safety-critical case into the one path that had never been hardened. This journal already carries the rule from a redaction defect of the same shape: a sanitizer attached to one selection rule is not a boundary.
 

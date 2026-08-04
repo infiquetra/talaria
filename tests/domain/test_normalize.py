@@ -23,8 +23,11 @@ from talaria.domain.decode import (
 )
 from talaria.domain.models import GatewayEvent, SubagentStatus
 from talaria.domain.normalize import (
+    DETAIL_LINE_CLIP,
+    TRANSCRIPT_LINE_CLIP,
     applies_to_focused_session,
-    clip_system_line,
+    clip_detail_line,
+    clip_transcript_line,
     coerce_text,
     is_terminal_status,
     keep_terminal_else,
@@ -81,6 +84,56 @@ def test_known_event_set_covers_the_four_blocking_bridges() -> None:
         "terminal.read.request",
     ):
         assert event_type in KNOWN_EVENT_TYPES
+
+
+#: The three payloads below are transcribed from a recording of a real gateway,
+#: ``2026-08-04T16-02-24-964Z.jsonl``, rather than composed here. That matters:
+#: every other fixture in this suite was written from a *reading* of Hermes, and
+#: a reading is exactly what missed these three.
+_OBSERVED_LIVE_FRAMES = (
+    raw_event("sessions.changed", {}, session_id=None),
+    raw_event(
+        "session.title",
+        {"session_id": "20260804_120225_7487d0", "title": "Testing the Assistant"},
+    ),
+    raw_event(
+        "session.reclaimed",
+        {
+            "session_id": "e5696a04",
+            "stored_session_id": "20260804_115840_20ea65",
+            "reason": "ws_orphan_reap",
+        },
+        session_id=None,
+    ),
+)
+
+
+def test_known_event_set_covers_what_a_live_gateway_actually_sends() -> None:
+    """Three types a running gateway emitted that the source reading missed.
+
+    All three are present in Hermes at ``7f4d15515``, the revision
+    ``KNOWN_EVENT_TYPES`` was derived from, so this is a hole in the derivation
+    rather than a newer Hermes. ``session.title`` is the instructive one: it is
+    also a callable *method*, which is how a grep for the emitting site slid
+    past it.
+    """
+    for frame in _OBSERVED_LIVE_FRAMES:
+        event_type = frame["params"]["type"]
+        assert isinstance(_decode(frame), GatewayEvent), event_type
+
+
+def test_an_ordinary_live_turn_leaves_no_unknown_markers_in_the_transcript() -> None:
+    """The cost of the gap was not correctness but noise.
+
+    Two ordinary turns against a live gateway put *seven* ``unknown event type``
+    lines into the transcript — ``sessions.changed`` alone fires several times
+    per turn. The module's own docstring calls unknown events "expected
+    traffic"; expected traffic that annotates itself on every occurrence drowns
+    the conversation it is interleaved with.
+    """
+    state = replay(list(_OBSERVED_LIVE_FRAMES))
+    assert state.unknown_event_types == ()
+    assert [entry for entry in state.transcript if entry.kind == "unknown-event"] == []
 
 
 # ── R5: malformed frames ─────────────────────────────────────────────────
@@ -219,10 +272,62 @@ def test_push_unique_skips_a_repeated_tail_and_bounds_growth() -> None:
     assert len(items) == 8
 
 
-def test_clip_system_line_marks_the_cut() -> None:
-    clipped = clip_system_line("x" * 200)
-    assert len(clipped) == 121
+def test_clip_detail_line_marks_the_cut() -> None:
+    clipped = clip_detail_line("x" * 200)
+    assert len(clipped) == DETAIL_LINE_CLIP + 1
     assert clipped.endswith("…")
+
+
+def test_clip_transcript_line_marks_the_cut() -> None:
+    clipped = clip_transcript_line("x" * (TRANSCRIPT_LINE_CLIP + 80))
+    assert len(clipped) == TRANSCRIPT_LINE_CLIP + 1
+    assert clipped.endswith("…")
+
+
+#: Transcribed from a live gateway's ``status.update``. Hermes emits this whole
+#: — its handler passes ``p.text`` to ``pushActivity`` with no ``slice`` — and
+#: Talaria used to cut it at 120 characters, landing mid-identifier on
+#: ``context_file_max_`` and discarding "chars, or use a larger-context model!".
+#: The remedy is the only part of a warning worth reading.
+_TRUNCATION_WARNING = (
+    "⚠️  Context file AGENTS.md TRUNCATED: 74668 chars exceeds limit of 65280 "
+    "— trim the file, pin a larger context_file_max_chars, or use a "
+    "larger-context model!"
+)
+
+
+def test_a_gateway_warning_reaches_the_transcript_with_its_remedy_intact() -> None:
+    """The measured regression: a 157-character warning, cut at 120.
+
+    Asserted on the *remedy* rather than on a length, because the defect was
+    never that the line was shortened — it was that the half naming the fix is
+    the half a clip takes first.
+    """
+    state = replay(
+        [raw_event("status.update", {"text": _TRUNCATION_WARNING, "kind": "warn"})]
+    )
+    written = next(e.text for e in state.transcript if "AGENTS.md" in e.text)
+    assert written == _TRUNCATION_WARNING
+    assert "use a larger-context model!" in written
+    assert "context_file_max_chars" in written, "the setting must stay copyable"
+    assert not written.endswith("…")
+
+
+def test_a_subagent_detail_line_is_still_bound_to_one_row() -> None:
+    """Loosening the transcript bound must not loosen this one.
+
+    A sub-agent row renders its ``detail`` on a single screen line, so here the
+    cut is a layout constraint rather than a judgement about diagnostics.
+    """
+    state = replay(
+        [
+            raw_event("subagent.start", {"subagent_id": "sa-1", "task_index": 0}),
+            raw_event("subagent.progress", {"subagent_id": "sa-1", "text": "y" * 400}),
+        ]
+    )
+    detail = state.subagents[0].detail[-1]
+    assert len(detail) == DETAIL_LINE_CLIP + 1
+    assert detail.endswith("…")
 
 
 def test_coerce_text_never_stringifies_arbitrary_values() -> None:

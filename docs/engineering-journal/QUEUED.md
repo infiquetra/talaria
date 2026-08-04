@@ -273,7 +273,11 @@ It is fully reachable for a client that dials a gateway it did not launch, which
 So this work is a new `GatedTicketProvider` returning `("ticket", <single-use value>)`, plus keychain storage and the PKCE loopback listener. Nothing in `LiveSource`, `RpcCorrelator`, or the UI should need to change — and if it does, that is the signal the seam was drawn in the wrong place, which is worth reporting rather than working around.
 **Refs.** [v0.1 plan KTD11](../plans/2026-08-02-talaria-v0-1-prototype-plan.md), [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)
 
-### A Talaria-authored delivery note is longer than the transcript's own line clip
+### ~~A Talaria-authored delivery note is longer than the transcript's own line clip~~ — CLOSED 2026-08-04
+
+**Closed by.** Splitting the one 120-character clip into two bounds by destination — `DETAIL_LINE_CLIP` (120, for a sub-agent row's single screen line) and `TRANSCRIPT_LINE_CLIP` (2000, for the scrolling transcript). The 146-character deny-all line and the 143-character single-answer line now land whole, and `tests/ui/test_prompts.py` asserts the deny-all sentence by equality rather than as a prefix.
+
+**This entry asked the right question and the answer turned out to be simpler than either option it weighed.** It framed the choice as "which half survives the clip" and proposed moving the note to its own transcript entry. Neither was needed: the clip itself was misapplied. It had been re-encoded from Hermes's `gateway.stderr` bound, which exists so a runaway line cannot own a **one-row activity region** — a constraint Talaria's scrolling transcript does not have. The closing note the entry itself flagged as "worth checking at the same time" — *whether `record_local_note` should clip at all* — is what the fix acted on.
 
 **Author.** v0.1 milestone-2, unit U8 (blocking prompts), third adversarial round
 **Priority.** P1 — raised from P2 in the fourth round.
@@ -614,6 +618,40 @@ A screen consequence was attempted and could not be built: `focus_session` sets 
 No individual line grows — that was round 3's defect. But the buffer accumulates one self-generated line per read, without bound in the number of reads, which is the same property the decision's rejected-alternatives paragraph uses to turn *outcome* lines down. Net accounting: the fifth round removed between zero and one line per **failed** read and left one line per **every** read, so the residual is strictly larger than what was removed.
 
 **Suggested framing.** Move the arrival record to a side channel the read projection does not serve, keeping the audit property without the feedback. Dropping it entirely is the alternative already rejected, on the grounds that an agent reading the operator's screen should not be invisible in the operator's own record.
+
+### Talaria inherits the age of a gateway it does not own, and cannot say so when that gateway fails
+
+**Author.** First operator-supervised live run, 2026-08-04.
+**Priority.** P2 — deferred deliberately. The TUI's own defects come first; this one has a known operator workaround.
+**Effort.** Small for the diagnosis half; Medium-and-architectural for the launch half.
+**Worth it when.** A second operator hits it, or the first time someone who did not read this entry has to debug a failed handshake.
+
+**What happened.** Four of the five Hermes dashboards on this machine refused Talaria's WebSocket handshake with HTTP 500. The cause was not in Talaria and not in Hermes's current source: the four dashboards were **launchd processes started nine days before**, holding a stale `hermes_constants` module in memory, while the `tui_gateway/server.py` they lazily import had since gained a `DEFAULT_INDICATOR_STYLE` constant. The import failed inside a long-lived process against code that was correct on disk. `launchctl kickstart -k` on each fixed all four.
+
+**Why Hermes's own terminal UI never sees this.** It does not dial a gateway — it **spawns one**, `python -m tui_gateway.entry` over stdio, fresh on every launch (`ui-tui/src/gatewayClient.ts:356`). A stale gateway is not a state it can reach. Talaria dials a dashboard it did not start, so it inherits however old that process happens to be. That is not an oversight; it is [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md) working as decided — *"It owns its own lifetime and dials a Hermes gateway it did not launch."*
+
+**Two separable pieces of work, and they should not be conflated.**
+
+*The diagnosis half is a plain bug and does not touch any ADR.* Talaria rendered `handshake rejected with HTTP 500 (server rejected Web…` and nothing else. Finding the cause took launchd inspection, a dashboard stderr log, and `git log -S` against Hermes. A client that says which endpoint it dialled, how old that process is, and that a restart is the usual remedy would have replaced all of it. Note the message was *also* truncated — that specific cut is fixed, but the message was unactionable at any length.
+
+*The launch half is an architecture decision and needs a superseding ADR, not a convenience feature.* Options, roughly in increasing distance from ADR-0001: **(a)** ensure a dashboard is running and start `hermes dashboard` if none answers — launches a supported service, keeps the WebSocket transport, brushes the "did not launch" clause; **(b)** spawn `tui_gateway.entry` over stdio the way the native TUI does — removes this failure class outright, but couples Talaria to a Hermes *internal module path*, which is exactly what this repository's guidance says to avoid in favour of transport interfaces and capability discovery. Neither should be smuggled in as a fix for the incident above.
+
+**Recommendation on file.** Do the diagnosis half whenever the connection path is next touched; open the launch half as its own ADR conversation. The incident is an argument for better error reporting, and only weakly an argument for changing who owns the gateway's lifetime.
+
+### Nothing on screen says where the caret is when it is not in the composer
+
+**Author.** First operator-supervised live run, 2026-08-04.
+**Priority.** P2
+**Effort.** Small, but it reopens a settled layout decision.
+**Worth it when.** The next time the composer's border or the focus styling is touched, or the first time an operator reports typing into a dead interface after the `CaretReleased` fix has shipped.
+
+**Context.** Talaria silently stopped accepting typed text mid-session. The root cause — the caret landing on a scroll region that discards keys — is fixed (`talaria/ui/focus.py`, and the decision beside it in `DECISIONS.md`). This item is the *second* half of what made that defect so hard to see, and it survives the fix.
+
+When the caret is not in the composer, the interface looks exactly the same as when it is. The composer shows its placeholder whenever it is empty, focused or not, so the one widget an operator would check reports nothing. `AgentRow.-interruptible:focus` has a background tint, but the two scroll regions and the composer have no focus styling at all, deliberately: `talaria/ui/composer.py:181-189` records that a `&:focus` border made the composer one row taller while focused, so the whole interface above it jumped by two rows every time the caret moved — including on a mouse press on a prompt button. The fix was to stop depending on focus for styling entirely.
+
+So the requirement is narrow and real: **an indication of where the caret is that does not change any widget's height.** Candidates that satisfy it — a border *colour* change with the border always present, a caret glyph or colour shift in the placeholder row, or a marker in the status line. What must not come back is anything that adds or removes a row.
+
+**Why it is still worth doing with the bug fixed.** The `CaretReleased` rule covers the three transitions known today, and its own `DECISIONS.md` entry names the condition under which a fourth appears. A focus indicator is the thing that would let an operator *see* the fourth one in the second it happens, rather than reporting it as "the app stopped responding" a session later.
 
 
 ## P3

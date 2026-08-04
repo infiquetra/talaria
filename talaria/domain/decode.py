@@ -96,10 +96,27 @@ _UNHANDLED_BY_HERMES_TUI: frozenset[str] = frozenset(
     {"terminal.read.request", "clarify.expire", "terminal.read.expire"}
 )
 
+#: Types a *running* gateway was observed emitting that the two sets above
+#: missed. The provenance is deliberately separate, because it is different in
+#: kind: everything above was derived by reading Hermes at ``7f4d15515``, and
+#: these three were found by attaching to a live gateway on 2026-08-04 and
+#: watching two ordinary turns produce seven ``unknown event type`` lines.
+#:
+#: All three are present at ``7f4d15515``, so this was a hole in the reading,
+#: not a newer Hermes. ``session.title`` shows how the hole opened: it is also a
+#: callable method, so it reads as request traffic at most of its call sites.
+#: Keeping this set apart is the honest record that a source reading alone did
+#: not converge, and the place any future live capture should add to.
+_OBSERVED_ON_A_LIVE_GATEWAY: frozenset[str] = frozenset(
+    {"sessions.changed", "session.title", "session.reclaimed"}
+)
+
 #: Everything Talaria recognizes. A type outside this set is surfaced by name
 #: (R5) rather than dropped — the gateway registers far more methods than any
 #: client uses, so unknown events are expected traffic, not a defect.
-KNOWN_EVENT_TYPES: frozenset[str] = _HANDLED_BY_HERMES_TUI | _UNHANDLED_BY_HERMES_TUI
+KNOWN_EVENT_TYPES: frozenset[str] = (
+    _HANDLED_BY_HERMES_TUI | _UNHANDLED_BY_HERMES_TUI | _OBSERVED_ON_A_LIVE_GATEWAY
+)
 
 
 # ── Protocol errors ──────────────────────────────────────────────────────

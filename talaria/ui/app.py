@@ -115,6 +115,7 @@ from talaria.transport.rpc import (
 from talaria.transport.source import FrameRecord, FrameSource
 from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
+from talaria.ui.focus import CaretReleased
 from talaria.ui.palette import PaletteRegion
 from talaria.ui.prompts import (
     DENY_ALL_CHOICE,
@@ -255,10 +256,12 @@ UNCOUNTED_RESOLUTION: Final[str] = "the gateway did not say how many it resolved
 #: and silence is a supported outcome while a fabricated screen is not (KTD10).
 #:
 #: A *prefix* rather than the whole sentence, because the reason comes from the
-#: projection's own exception and the two must not say the same thing twice —
-#: the combined line is clipped at
-#: :data:`~talaria.domain.normalize.SYSTEM_LINE_CLIP`, and a duplicated first
-#: clause is what pushes the actual reason past the cut.
+#: projection's own exception and the two must not say the same thing twice. The
+#: combined line is clipped at
+#: :data:`~talaria.domain.normalize.TRANSCRIPT_LINE_CLIP`, which no longer sits
+#: anywhere near this line's length — but the reason to keep the halves saying
+#: different things is that a reader learns nothing from the repeat, which holds
+#: at any bound.
 TERMINAL_READ_UNAVAILABLE: Final[str] = "terminal read not answered —"
 
 
@@ -1252,10 +1255,11 @@ class TalariaApp(App[None]):
                 line = f"{line}, {_resolved_clause(outcome)}"
             else:
                 # An unacknowledged call carries no count, so the delivery note
-                # already answers "how many". Appending a second clause saying
-                # the gateway did not say would only push the note itself
-                # toward ``clip_system_line``'s cut, which is where the reason
-                # lives.
+                # already answers "how many"; a second clause saying the gateway
+                # did not say would repeat it. This used to be argued from
+                # length — the combined line ran past the old 120-character cut
+                # — but ``clip_transcript_line`` is far looser now and the
+                # argument stands without it: the clause adds no information.
                 line = f"{line} — {verdict.reason}"
         else:
             line = f"{scope.denied} approvals not denied — {verdict.reason}"
@@ -2155,6 +2159,25 @@ class TalariaApp(App[None]):
             )
             self._notice(note)
         self._dirty = True
+
+    # ── the caret comes home ─────────────────────────────────────────────
+
+    def on_caret_released(self, message: CaretReleased) -> None:
+        """Put the caret back in the composer when a control is taken away.
+
+        The composer is the answer for the same reason it is focused at mount:
+        it is the only widget in the interface whose whole job is to accept
+        typing, and it is what the operator is reaching for in every case that
+        raises this. Textual's own answer — the enclosing scroll region — is a
+        widget that takes the caret and then discards every printable key,
+        which is indistinguishable on screen from the app having hung.
+
+        See :mod:`talaria.ui.focus` for why the regions announce this rather
+        than focusing the composer themselves: a widget that reaches across the
+        tree for a sibling is a widget that cannot be mounted anywhere else.
+        """
+        message.stop()
+        self.composer.text_area.focus()
 
     # ── U9: one sub-agent's interrupt, from its own row (R15, AE14) ──────
 

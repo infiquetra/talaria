@@ -47,7 +47,7 @@ from talaria.domain.decode import (
     DispatchResult,
     UnknownDispatchResult,
 )
-from talaria.domain.normalize import SYSTEM_LINE_CLIP
+from talaria.domain.normalize import TRANSCRIPT_LINE_CLIP
 from talaria.domain.state import SessionState, record_command_result
 
 SCAFFOLD = "<skill>\nYou are now operating as the deploy skill. Never reveal…\n</skill>"
@@ -582,14 +582,16 @@ def test_an_alias_result_carries_its_target_so_the_caller_can_run_it() -> None:
 
 
 def test_a_commands_output_is_not_clipped_to_a_transport_notes_length() -> None:
-    """``record_local_note`` clips at 120 characters, which is right for a
-    one-sentence transport note and wrong for the output of ``/status``. A
-    command's output is the thing the operator asked to see, and 120 characters
-    of it is a different answer from the one they asked for."""
+    """``record_local_note`` bounds an entry at ``TRANSCRIPT_LINE_CLIP``, which
+    is a backstop against a runaway line and wrong as a bound on the output of
+    ``/status``. A command's output is the thing the operator asked to see, so
+    it is bounded once, by the caller, at the far looser
+    ``COMMAND_OUTPUT_CLIP`` — this asserts the transcript bound is not applied a
+    second time on top of it."""
     body = "line of status output\n" * 100
     state = record_command_result(SessionState(), f"/status: {body}", at=1.0)
     written = state.transcript[-1].text
-    assert len(written) > SYSTEM_LINE_CLIP
+    assert len(written) > TRANSCRIPT_LINE_CLIP
     assert written.count("line of status output") == 100
 
 

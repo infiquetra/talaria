@@ -29,6 +29,7 @@ from textual.widgets import Static
 
 from talaria.domain.models import TERMINAL_SUBAGENT_STATUSES
 from talaria.domain.projection import SubagentView
+from talaria.ui.focus import CaretReleased, holds_caret
 from talaria.ui.literal import literal_text
 
 #: Status column width, so rows line up without a table widget. The longest
@@ -86,6 +87,14 @@ class AgentRow(Static):
         self.subagent_id = subagent_id
         self.subagent_name = name
         self.interruptible = status not in TERMINAL_SUBAGENT_STATUSES
+        # A child that finishes takes its row's control away without taking the
+        # row away, and that is a case Textual does not cover. It moves the
+        # caret off a widget that was *removed*; a widget that merely stopped
+        # being focusable keeps it. The row would then sit outside the focus
+        # chain still holding the caret, eating every key the operator typed —
+        # so the caret is handed back here, before the row stops accepting it.
+        if not self.interruptible and self.has_focus:
+            self.post_message(CaretReleased())
         self.can_focus = self.interruptible
         self.set_class(self.interruptible, "-interruptible")
 
@@ -158,8 +167,11 @@ class AgentRows(Vertical):
             self._header.update(literal_text(f"sub-agents: {label}{suffix}"))
 
         wanted = [] if self.collapsed else list(view.rows)
+        released = False
         while len(self._rows) > len(wanted):
-            await self._rows.pop().remove()
+            doomed = self._rows.pop()
+            released = released or holds_caret(doomed)
+            await doomed.remove()
         for index, row in enumerate(wanted):
             text = literal_text(
                 format_row(row.id, row.name, row.status, row.elapsed, row.detail)
@@ -172,6 +184,12 @@ class AgentRows(Vertical):
                 self._rows.append(widget)
                 await self.mount(widget)
             widget.bind_row(subagent_id=row.id, name=row.name, status=row.status)
+
+        # Collapsing with f2 removes every row at once, so the operator can lose
+        # the caret to a keystroke of their own — which is exactly when they are
+        # least likely to suspect the interface of having stopped listening.
+        if released:
+            self.post_message(CaretReleased())
 
     async def toggle_collapsed(self) -> bool:
         """Fold or unfold the rows. The count stays either way (R16)."""
