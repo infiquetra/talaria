@@ -412,6 +412,63 @@ def record_submission(
     return replace(next_state, last_observed_at=max(state.last_observed_at, at))
 
 
+#: The gateway method a composed message is sent with
+#: (``tui_gateway/methods_prompt.py:67`` at ``7f4d15515``: ``params`` are
+#: ``session_id`` and ``text``).
+#:
+#: It lives in the domain because both ends of it are domain concerns: the
+#: composer's dispatcher writes this frame, and :func:`replayed_submission_text`
+#: reads the operator's words back out of a recorded one. ``talaria.ui.app``
+#: imports it under the same name, which is where its callers reach for it.
+SUBMIT_METHOD: Final[str] = "prompt.submit"
+
+
+def replayed_submission_text(frame: Any) -> str | None:
+    """The operator's words, recovered from a recorded outbound ``prompt.submit``.
+
+    Returns ``None`` for every other frame, so a caller can hand this each
+    outbound record without first knowing what it is.
+
+    **Why this can be read at all.** ``record_submission`` exists because the
+    gateway never echoes a submitted prompt back as an event, so the operator's
+    line is written locally and appears in no inbound frame. A recording of a
+    live session does hold it — in the *outbound* half of the frame log, which
+    the replay path discards. That is why a replay of a real session used to
+    rebuild the agent's side of a conversation and not the question it answered.
+
+    Kept in the domain, and kept to extraction only, so the shape of the frame
+    is asserted framework-free and the decision about *when* to apply it stays
+    with the caller that knows which mode it is in.
+    """
+    if not isinstance(frame, Mapping) or frame.get("method") != SUBMIT_METHOD:
+        return None
+    params = frame.get("params")
+    if not isinstance(params, Mapping):
+        return None
+    text = params.get("text")
+    return text if isinstance(text, str) and text else None
+
+
+def record_replayed_submission(state: SessionState, text: str, *, at: float) -> SessionState:
+    """Write a replayed operator line, claiming nothing about its delivery.
+
+    Deliberately not :func:`record_submission` with a ``delivery`` value. That
+    argument exists so the transcript can state what was *observed* about a live
+    call's outcome, and a replay observed nothing: it is reading a frame that
+    was written to a socket some time ago, and the acknowledgement — if one came
+    — is a later frame this has not reached yet. Passing ``confirmed`` here would
+    put a claim in the transcript that no code checked.
+
+    The delivery *notes* a live run wrote are absent from a replay for the same
+    reason the operator's line was: they are locally authored and never crossed
+    the wire. That is a real gap in what a frame log can reconstruct, and it is
+    recorded as one rather than papered over with a guess.
+    """
+    return replace(
+        _append(state, "user", text), last_observed_at=max(state.last_observed_at, at)
+    )
+
+
 def record_local_note(state: SessionState, text: str, *, at: float) -> SessionState:
     """Append a Talaria-authored system line (reconnects, unknown outcomes).
 
@@ -1712,7 +1769,9 @@ __all__ = [
     "is_terminal_status",
     "prompt_registration_line",
     "record_local_note",
+    "record_replayed_submission",
     "record_submission",
+    "replayed_submission_text",
     "respond_to_all_approvals",
     "respond_to_prompt",
     "restore_prompt",

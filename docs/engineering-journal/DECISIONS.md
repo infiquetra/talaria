@@ -4,6 +4,24 @@
 
 ## 2026-08-04
 
+### A replay reads one outbound frame: the operator's own submitted prompt
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Decision.** `TalariaApp.ingest` still refuses to fold outbound frames through the reducer, with one exception taken only in replay mode: a recorded `prompt.submit` becomes a `user` transcript entry, via `replayed_submission_text` and `record_replayed_submission`. Live mode does not take that branch. `SUBMIT_METHOD` moves to `talaria.domain.state` and is re-exported from `talaria.ui.app`, because both ends of the method are now domain concerns.
+
+**Why.** The gateway never echoes a submitted prompt back as an event, so the operator's line is written locally at submit time — which never happens in a replay. Replaying a recording of a real session rebuilt the agent's half of the conversation and omitted the question, making R3's own evidence method ("one live turn compared against a replay of the same frames", `talaria/cli.py`) impossible to complete and leaving R30's frame-log-driven interface visibly short a line. The text was never missing from the recording; it was in the outbound half of the frame log the whole time.
+
+**Why live mode must not do it.** `submit_live` has already written the line before the recorder stores the frame, so an unconditional fold prints the operator's message twice — and a duplicated line reads as a message that was actually sent twice, which is worse than an absent one. `tests/replay/test_operator_line.py` fails in one direction if the branch is removed and in the other if the mode test is.
+
+**It claims nothing about delivery.** `record_submission` takes a `DeliveryState` so the transcript can state what a live caller *observed* about the outcome. A replay observed nothing — the acknowledgement, if it came, is a later frame — so `record_replayed_submission` writes the words and stops rather than putting `confirmed` in a transcript on no evidence.
+
+**Known gap, recorded rather than papered over.** The delivery *notes* a live run writes (`not sent`, `delivery unconfirmed`) are locally authored and cross no wire, so a replay cannot reconstruct them either. A recording of a session whose submit went unacknowledged replays as though it were fine.
+
+**Rejected alternative — correlate the request id to its response and set the delivery state.** More faithful. Rejected for now because frames arrive in order, so the outcome is not known at the moment the request is ingested; it would need a deferred amendment to an entry already written, which the append-only transcript has no mechanism for.
+
+**Revisit when.** A second outbound method turns out to carry state that exists nowhere else — that would make this a general "requests the replay must read" rule rather than a single exception, and it should be named as one rather than accumulating branches in `ingest`.
+
 ### The invisible-character table holds characters that leave the picture unchanged, which lets the emoji presentation selectors out
 
 **Author.** post-v0.1, second operator session against a live gateway
