@@ -4,6 +4,18 @@
 
 ## 2026-08-04
 
+### Two event names that mean the same English word carried opposite things, and reading only the client is what hid it
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Evidence.** The reasoning line on screen read `· (◐) indexing...The user wants me to reply with exactly a specific string`. The recording of that turn (`2026-08-04T18-38-10-881Z.jsonl`, frames 21-25) shows why: `thinking.delta` carried `(◐) indexing...`, then an empty `thinking.delta` to retire it, then fifteen `reasoning.delta` frames carrying the actual reasoning. `talaria/domain/state.py` routed both event types to `_on_reasoning_delta`, which appends, and which ignored the empty frame because it ignored every falsy text. Fixed with a separate `_on_thinking_delta` writing a replaceable `SessionState.thinking_notice`, surfaced on the activity line; pinned by `tests/domain/test_thinking_status.py`, whose defect tests were watched to fail against the pre-fix tree with the operator's own line in the assertion output.
+
+**Mechanism.** Hermes names the two channels almost identically and uses them for opposite things. `thinking.delta` is the *spinner*: `run_agent._emit_wait_notice` writes it so a long provider stall says what it is waiting on, and the docstring at `run_agent.py:1047` states the contract outright — the callback "is bridged to the `thinking.delta` event, which both render as the live spinner/status line". The model's actual thinking never touches it; it reaches the client through `agent._fire_reasoning_delta` (`chat_completion_helpers.py:3629-3633`) as `reasoning.delta`. Hermes's own TUI does feed `thinking.delta` into its reasoning buffer as well, which is what a reading of the client alone shows — but Hermes gates reasoning *display* on a setting that is off by default, so the spinner text almost never surfaces there. Talaria removed that gate deliberately for R6, and removing it is what turned a latent quirk into a visible one.
+
+**The visible line was the mild half.** `reasoning.available` delivers the complete reasoning block and declines to overwrite deltas that already built one — correct, or the block would duplicate what is on screen. A spinner sitting in the delta buffer is indistinguishable from that, so the guard fired and the whole block was discarded. Confirmed on a live turn after the fix was written (`2026-08-04T19-00-12-373Z.jsonl`): `thinking.delta` sent `(▶) optimizing...` at frame 20 and `reasoning.available` sent the reasoning at frame 26. Replayed against the pre-fix tree, the transcript's only reasoning entry is `(▶) optimizing...` and the model's reasoning is gone — content loss, which is exactly what R6 forbids. A prefix on screen is a cosmetic complaint; the same bug one branch over was silently deleting the thing the requirement protects.
+
+**Generalizable rule.** When a protocol has two events whose names are synonyms in English, do not infer their contract from how one client happens to handle them — find the server-side emitter and read what writes each one. A client's handling can be wrong, can be historical, or can be invisible behind a display setting that hides the disagreement. And when a channel that was being *dropped* starts being *kept*, re-examine every guard that treats "we already have some of this" as a reason to refuse more: un-gating an input does not just add content, it changes what every downstream emptiness check is looking at.
+
 ### The framework's answer for "where does focus go now" was a widget that accepts the caret and discards every key
 
 **Author.** post-v0.1, second operator session against a live gateway

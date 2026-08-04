@@ -94,6 +94,21 @@ class SessionState:
     streaming_text: str = ""
     #: Reasoning accumulated this turn, committed at turn end (R6: never dropped).
     reasoning_text: str = ""
+    #: The gateway's live "what are we waiting on" note, replaced in place.
+    #:
+    #: This is the ``thinking.delta`` channel, and it is chrome rather than
+    #: transcript content. Hermes says so itself at ``run_agent.py:1047``: the
+    #: ``thinking_callback`` is "bridged to the ``thinking.delta`` event, which
+    #: both render as the live spinner/status line". The model's actual thinking
+    #: arrives on ``reasoning.delta`` instead, from
+    #: ``agent._fire_reasoning_delta`` (``chat_completion_helpers.py:3629-3633``).
+    #:
+    #: So it is held as one replaceable string rather than accumulated into
+    #: :attr:`reasoning_text`, and it never reaches the transcript. Appending it
+    #: there was the defect: a live gateway sent ``(◐) indexing...`` on this
+    #: channel and the reasoning entry came out as
+    #: ``· (◐) indexing...The user wants me to…``.
+    thinking_notice: str = ""
     #: Assistant text already committed this turn, used for final-tail dedupe.
     segments: tuple[str, ...] = ()
     #: Segments below this index were sealed by ``message.interim``.
@@ -272,6 +287,7 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
         turn="idle",
         streaming_text="",
         reasoning_text="",
+        thinking_notice="",
         segments=(),
         interim_boundary=0,
         subagents=(),
@@ -317,6 +333,7 @@ def cancel_turn(state: SessionState, *, at: float) -> SessionState:
         turn="cancelled",
         streaming_text="",
         reasoning_text="",
+        thinking_notice="",
         segments=(),
         interim_boundary=0,
         last_observed_at=max(state.last_observed_at, at),
@@ -885,6 +902,7 @@ def _on_message_start(state: SessionState, event: GatewayEvent) -> SessionState:
         turn_index=state.turn_index + 1,
         streaming_text="",
         reasoning_text="",
+        thinking_notice="",
         segments=(),
         interim_boundary=0,
         subagents=(),
@@ -894,11 +912,16 @@ def _on_message_start(state: SessionState, event: GatewayEvent) -> SessionState:
 def _ensure_streaming(state: SessionState) -> SessionState:
     """Open a turn for a delta that arrived without a ``message.start``.
 
-    Hermes drops these (``thinking.delta`` returns early when not busy,
-    ``createGatewayEventHandler.ts:752-754``). Talaria cannot: R6 says transcript
-    content is never dropped, and a missing start is one of the sequences AE2
-    names. So the turn is synthesized, counted, and marked in the transcript —
-    a deterministic, visible outcome rather than a silent one.
+    Hermes drops these — ``reasoning.delta`` records nothing when no turn is
+    open, and its handler for the spinner channel returns early when the UI is
+    not busy (``createGatewayEventHandler.ts:752-754``). Talaria cannot: R6 says
+    transcript content is never dropped, and a missing start is one of the
+    sequences AE2 names. So the turn is synthesized, counted, and marked in the
+    transcript — a deterministic, visible outcome rather than a silent one.
+
+    The spinner channel is the one delta that does *not* come here.
+    :func:`_on_thinking_delta` carries no transcript content, so opening a turn
+    for one would spend a synthetic-start marker on a status frame.
     """
     if state.turn == "streaming":
         return state
@@ -908,6 +931,7 @@ def _ensure_streaming(state: SessionState) -> SessionState:
         turn_index=state.turn_index + 1,
         streaming_text="",
         reasoning_text="",
+        thinking_notice="",
         segments=(),
         interim_boundary=0,
         synthetic_turn_starts=state.synthetic_turn_starts + 1,
@@ -995,6 +1019,7 @@ def _on_message_complete(state: SessionState, event: GatewayEvent) -> SessionSta
         turn="idle",
         streaming_text="",
         reasoning_text="",
+        thinking_notice="",
         segments=(),
         interim_boundary=0,
         usage=usage,
@@ -1050,6 +1075,36 @@ def _on_reasoning_delta(state: SessionState, event: GatewayEvent) -> SessionStat
     return replace(opened, reasoning_text=opened.reasoning_text + text)
 
 
+def _on_thinking_delta(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Replace the live wait-state note. Never appends, never opens a turn.
+
+    ``thinking.delta`` is Hermes's spinner text, not the model's reasoning —
+    ``run_agent._emit_wait_notice`` writes it so a long provider stall says what
+    it is waiting on instead of showing a bare spinner, and the TUI renders it as
+    a status line it overwrites. Talaria's transcript is append-only, so the two
+    behaviours that follow from that are the same two ``_ignore`` already applies
+    to ``tool.progress``: replay it and a progress spinner becomes transcript
+    spam, and synthesize a turn for it and every idle spinner frame writes a
+    ``stream began without a message.start event`` line.
+
+    R6 is not weakened by this. Its obligation is that *reasoning-block content*
+    is never dropped, and the reasoning block arrives on ``reasoning.delta``,
+    which is untouched here and still accumulated in full. This note is not
+    dropped either — it is shown on the activity line, which is the region that
+    matches what it is: one row, overwritten, describing right now.
+
+    An empty payload clears the note. That is Hermes's own convention — it falls
+    back to ``statusFromBusy()`` on an empty value — and the live gateway sends
+    exactly that to retire a notice.
+    """
+    if state.turn == "cancelled":
+        return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    text = event.payload.get("text")
+    if not isinstance(text, str):
+        return state
+    return replace(state, thinking_notice=clip_detail_line(text.strip()))
+
+
 def _on_reasoning_available(state: SessionState, event: GatewayEvent) -> SessionState:
     """Adopt a whole reasoning block, but only if none was captured yet.
 
@@ -1082,6 +1137,7 @@ def _on_error(state: SessionState, event: GatewayEvent) -> SessionState:
         turn="idle",
         streaming_text="",
         reasoning_text="",
+        thinking_notice="",
         segments=(),
         interim_boundary=0,
     )
@@ -1604,7 +1660,7 @@ _HANDLERS: Mapping[str, _Handler] = {
     "message.delta": _on_message_delta,
     "message.interim": _on_message_interim,
     "message.complete": _on_message_complete,
-    "thinking.delta": _on_reasoning_delta,
+    "thinking.delta": _on_thinking_delta,
     "reasoning.delta": _on_reasoning_delta,
     "reasoning.available": _on_reasoning_available,
     "moa.reference": _on_moa_reference,

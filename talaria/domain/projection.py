@@ -172,6 +172,15 @@ class PromptView:
     #: see :attr:`~talaria.domain.state.SessionState.withdrawn_approvals`.
     withdrawn: int = 0
 
+    #: The gateway's live wait-state note, or ``""``.
+    #:
+    #: It rides this view because the activity line is its only reader, and the
+    #: activity line is a function of this view. Hermes emits it so a long
+    #: provider stall can say what it is waiting on; carrying it here is what
+    #: lets ``working…`` be replaced by that explanation instead of sitting on
+    #: screen next to a transcript that has stopped moving.
+    notice: str = ""
+
     @property
     def request_ids(self) -> tuple[str, ...]:
         return tuple(row.request_id for row in self.rows)
@@ -376,6 +385,7 @@ def prompt_view(state: SessionState) -> PromptView:
             for p in state.prompts
         ),
         withdrawn=state.withdrawn_approvals,
+        notice=state.thinking_notice,
     )
 
 
