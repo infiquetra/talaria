@@ -4,6 +4,16 @@
 
 ## 2026-08-03
 
+### Two of the daily-driver verdict's weakest rows were weak only because nobody had pushed
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), commit verification
+
+**Evidence.** The verdict document shipped with row 12 marked *measured on macOS only* — "the reader has a `/proc` branch for Linux and it has never executed" — and row 14 marked *CI job declared, not observed*, both filed as real gaps, one of them a P2 in `QUEUED.md`. Pushing the branch and opening its pull request ran seven checks in about two and a half minutes and closed both. `python-check-linux` executed all five process-surface tests on `ubuntu-latest` under Python 3.12 and 3.13, all passing, so `/proc/<pid>/cmdline` and `/proc/<pid>/environ` have now been read against a real process; the `install` job passed on both versions. The same run also put all fourteen pseudo-terminal teardown tests through Linux with no skips.
+
+**Mechanism.** The work was deliberately left uncommitted through build, two adversarial reviews and a fix pass, which is right — but CI is a measurement instrument that only reads when work is pushed, so every claim depending on it stayed unmeasured for the whole unit and got written up as a limitation of the *build* rather than of the *process*. Nobody was wrong; the evidence was simply on the other side of a `git push`. It is worth noticing that the Linux job carries `continue-on-error: true`, so a green tick alone would have proved nothing — the job's own output had to be read line by line, which is what the queued item had asked for.
+
+**Generalizable rule.** Before writing "this has never been measured" into a verdict, ask which of the unmeasured things a push would measure — CI is usually the cheapest instrument available and it is easy to forget it is switched off while a branch sits local.
+
 ### A fire-and-forget task that dies leaves an interface that looks perfectly healthy — and there were three of them, not one
 
 **Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification

@@ -77,9 +77,9 @@ Status values: **measured**, **inferred**, **unmet**.
 | 9 | **R36** — no child process outlives Talaria | measured | The status command backgrounds a ten-minute worker; the worker is verified alive during the run and gone after exit, on both the normal and the failure path | `::test_a_normal_exit_leaves_no_status_child_or_grandchild`, `::test_an_induced_mid_stream_failure_still_stops_the_status_child` |
 | 10 | **R36** — local waiters resolve at teardown | measured | A call in flight against a gateway that never answers resolves `unknown` with reason *the transport was closed*, rather than hanging | `::test_a_call_in_flight_at_teardown_resolves_instead_of_hanging` |
 | 11 | **F7** — the gateway survives Talaria's exit | measured *against the stub* | Two tests. In process: after teardown a second client dials the same server object and receives the greeting. At process granularity: the stub runs as a **separate OS process, left in Talaria's own process group** so a mis-aimed group signal would kill it, and after teardown it is alive, still accepting connections, and still greeting. The server is the loopback stub, not Hermes | `::test_the_gateway_is_still_serving_after_talaria_exits`, `::test_the_gateway_process_survives_a_talaria_that_shares_its_process_group` |
-| 12 | **R1** — argv carries no credential | measured **on macOS only** | A running process built by the real launcher, holding a live credential in memory, inspected through `ps -ww`: no token, no `?token=` URL, no endpoint. The reader has a `/proc` branch for Linux and **it has never executed** — every R1 figure in this document is a macOS figure | `tests/transport/test_process_surface.py::test_a_running_talarias_command_line_carries_no_credential` |
+| 12 | **R1** — argv carries no credential | measured **on macOS and Linux** | A running process built by the real launcher, holding a live credential in memory, inspected through the platform's own facility — `ps -ww` on macOS, `/proc/<pid>/cmdline` on Linux: no token, no `?token=` URL, no endpoint. The Linux half was measured when this branch first reached CI: all five process-surface tests ran and passed on `ubuntu-latest` under Python 3.12 and 3.13 (run `30865814553`). Earlier drafts of this document said the `/proc` branch had never executed, which was true when written | `tests/transport/test_process_surface.py::test_a_running_talarias_command_line_carries_no_credential` |
 | 13 | **R1** — the environment carries no credential | **partially unmet — see below** | Talaria adds nothing credential-shaped to its own environment (set comparison against what it was launched with). An **inherited** `HERMES_DASHBOARD_SESSION_TOKEN` remains visible for the process's life and cannot be removed | `::test_talaria_adds_no_credential_of_its_own_to_its_environment`, `::test_the_inherited_credential_is_visible_in_the_process_environment` |
-| 14 | **AE10** — a clean-environment install produces a working `talaria` | measured locally; **CI job declared, not observed** | `uv tool install .` into a fresh prefix, then the console script invoked by absolute path under `env -i`: `talaria --help` works. The CI job exists in `.github/workflows/validate.yml` and has not run, because this work is uncommitted | this document, §Install |
+| 14 | **AE10** — a clean-environment install produces a working `talaria` | measured locally **and in CI** | `uv tool install .` into a fresh prefix, then the console script invoked by absolute path under `env -i`: `talaria --help` works. The CI `install` job ran for the first time on this branch's pull request and passed on Python 3.12 and 3.13 (run `30865814553`) | this document, §Install |
 | 15 | **R39** — the platform matrix records exactly what was exercised | measured | See §Platform matrix. One operating system, two Python versions, two terminal hosts, one multiplexer | §Platform matrix |
 | 16 | The launcher runs end to end — attach, probe, open, render, exit | measured *against the stub* | The real console script (`python -m talaria.cli`, no arguments) on a pseudo-terminal against the loopback stub: one connection accepted, the five read-only probes and no mutating method among them, exactly one `session.create`, tens of kilobytes of interface drawn, `ctrl+q` → exit 0, terminal restored | §Launcher run |
 | 17 | **R2** — live startup acceptance against a running gateway | **unmet** | The KTD7 precedence chain resolves into a real `session.create` / `session.resume` call and the launcher completes that sequence — against the stub. No Hermes gateway has answered one | `tests/transport/test_session_startup.py` |
@@ -150,15 +150,18 @@ assertion is satisfied by an environment read that came back empty.
 
 **Cannot hold.** The operator's highest-precedence credential source is the
 `HERMES_DASHBOARD_SESSION_TOKEN` environment variable (KTD11), which Talaria
-inherits. On macOS — the platform every measurement here was taken on — the
-inherited value is readable through `ps -E` **by the owning user**, and that was
-measured on a running process. On Linux the kernel snapshots the environment
-block at `exec` and serves that snapshot from `/proc/<pid>/environ` for the life
-of the process, so `os.environ.pop` changes nothing a reader can see; that
-sentence is read from documentation, not measured — the test's `/proc` branch
-has never run (queued as a P2). **R1's environment clause is therefore not met
-when the credential is supplied through the environment, and no change to
-Talaria can meet it.**
+inherits. On macOS the inherited value is readable through `ps -E` **by the
+owning user**, and that was measured on a running process. On Linux the kernel
+snapshots the environment block at `exec` and serves that snapshot from
+`/proc/<pid>/environ` for the life of the process, so `os.environ.pop` changes
+nothing a reader can see — **measured**, when this branch first reached CI: all
+five process-surface tests ran and passed on `ubuntu-latest` under Python 3.12
+and 3.13, exercising the `/proc` branch of the reader against a real running
+process. (Earlier drafts said that sentence was read from documentation rather
+than measured, and filed the unexecuted branch as a P2. It was true when written;
+pushing the branch is what changed it.) **R1's environment clause is therefore
+not met when the credential is supplied through the environment, on either
+platform, and no change to Talaria can meet it.**
 
 **The mitigation exists and is measured.** KTD11's third precedence level is a
 `0600` credential file at `<config_dir>/credentials`. With the credential
@@ -174,9 +177,9 @@ red and somebody has to delete it deliberately.
 
 ## Platform matrix
 
-R39: **exactly what was exercised, nothing broader.** Rows marked *declared*
-describe CI jobs that exist in `.github/workflows/validate.yml` and have not run
-for this change, because this work is uncommitted.
+R39: **exactly what was exercised, nothing broader.** The two GitHub-runner rows
+were marked *declared, not observed* until this branch was pushed; they now carry
+the result of the run that opened its pull request.
 
 | Operating system | Arch | Python | Terminal host | Multiplexer | What ran | Result |
 |---|---|---|---|---|---|---|
@@ -186,13 +189,17 @@ for this change, because this work is uncommitted.
 | macOS 26.5.2 (build 25F84) | arm64 | 3.12.11 | tmux 3.7b pane, 100×30 | tmux 3.7b | `talaria replay`, rendered transcript read back from the pane, `ctrl+q` | pass — 28 non-blank rendered lines, exit 0 |
 | macOS 26.5.2 (build 25F84) | arm64 | 3.12.11 | pseudo-terminal, `TERM=xterm-256color`, 100×30 | none | the real console script, live mode, against the loopback stub | pass — see §Launcher run |
 | macOS 26.5.2 (build 25F84) | arm64 | 3.12.11 | `env -i`, no `TERM` | none | `uv tool install .` into a fresh prefix, then `talaria --help` | pass |
-| macOS 14 (GitHub runner) | — | 3.12, 3.13 | — | — | full check + install smoke | *declared, not observed* |
-| Ubuntu (GitHub runner) | — | 3.12, 3.13 | — | — | full check, informational only | *declared, not observed* |
+| macOS 14 (GitHub runner) | — | 3.12, 3.13 | — | — | full check; `install` job (`uv tool install` + `talaria --help`) | **pass**, run `30865814553` |
+| Ubuntu (GitHub runner) | — | 3.12, 3.13 | pseudo-terminal (in-test) | none | full check, informational only — including all 14 pseudo-terminal teardown tests and all 5 process-surface tests | **pass** — `868 passed, 7 skipped`, run `30865814553`. The 7 skips are all the TypeScript equivalence bridge, which needs `node_modules` |
 
-Not exercised at all, and therefore claimed nowhere: Linux as a daily driver,
-Windows, any terminal emulator other than a bare pseudo-terminal and a tmux
-pane, screen, mosh, any remote session, any terminal narrower than 100 columns
-under a real emulator, and Python 3.14.
+Not exercised at all, and therefore claimed nowhere: **Linux as a daily driver**
+— the suite passes there, including the pseudo-terminal teardown and
+process-surface tests, but no person has driven the interface on a Linux machine,
+no tmux pane and no real terminal emulator has been used there, and the
+launcher-against-the-stub run in §Launcher run was performed on macOS only —
+Windows, any terminal emulator other than a bare pseudo-terminal and a tmux pane,
+screen, mosh, any remote session, any terminal narrower than 100 columns under a
+real emulator, and Python 3.14.
 
 Library versions in the measured rows: Textual 8.2.8, websockets 15.0.1.
 
@@ -205,6 +212,11 @@ installed console script invoked **by absolute path** under `env -i` with only
 Nothing was written outside the tool prefix, and nothing at all was written into
 a Hermes installation — Talaria is a standalone client (ADR-0001) and installing
 it must not touch the thing it connects to.
+
+**In CI.** The `install` job ran for the first time when this branch was pushed
+and opened its pull request, and passed on Python 3.12 and 3.13 (run
+`30865814553`, 13 seconds each). Earlier drafts of this document recorded it as
+declared but never executed.
 
 **Why it is a separate CI job and not a step in the existing one.** The existing
 `python-check` job builds the development environment with `uv sync --all-groups`
@@ -346,18 +358,22 @@ so the test now uses a dispatcher that never answers, which is what separates
 "teardown cancelled it" from "it happened to end".
 
 **Not fixed, recorded instead.** The intermittent prompt-geometry failure
-(§Test-suite honesty), `compare_shape`'s top-level-only comparison, the
-never-executed Linux `/proc` branch, and the silence of a malformed
-`status.command` — all four are in `docs/engineering-journal/QUEUED.md` with
-reproductions.
+(§Test-suite honesty), `compare_shape`'s top-level-only comparison, and the
+silence of a malformed `status.command` are in
+`docs/engineering-journal/QUEUED.md` with reproductions. A fourth item — the
+Linux `/proc` branch that had never executed — was closed by pushing the branch
+rather than by any change to the code.
 
 ## Verdict
 
 Reading the table: rows 17, 18 and 19 are **unmet**, row 13 is **partially
-unmet**, row 6 covers twelve of seventeen required gateway methods as **inferred
-rather than measured** (two of those twelve with a real response shape observed
-and matching, ten with nothing), row 12 is macOS-only, and row 14's CI job is
-declared but unobserved. The suite itself is green four runs in five.
+unmet**, and row 6 covers twelve of seventeen required gateway methods as
+**inferred rather than measured** (two of those twelve with a real response shape
+observed and matching, ten with nothing). Rows 12 and 14 were the two weakest
+*measured* rows in earlier drafts — macOS-only, and a CI job that had never run —
+and both were closed by pushing this branch; that is worth noting because it is
+the only kind of gap on this list that closes without a Hermes gateway. The suite
+itself fails intermittently, twelve runs green in thirteen.
 
 AE7 and R39 say the ready verdict is blocked on any gap.
 
@@ -397,9 +413,12 @@ In order, because each depends on the one before it:
 3. **R1's remaining half** — either accept the environment-inherited credential
    as an operator-side choice and document the credential-file route as the
    supported one, or stop supporting the environment variable.
-4. **The matrix** — a second operating system, and at least one real terminal
-   emulator rather than a bare pseudo-terminal.
-5. **CI** — push, and let the declared jobs actually run.
+4. **The matrix** — **partly done.** A second operating system now runs the full
+   suite in CI, including the pseudo-terminal and process-surface tests. What is
+   still missing is a person driving the interface on Linux, and at least one real
+   terminal emulator rather than a bare pseudo-terminal on either platform.
+5. **CI** — **done.** The branch was pushed, and all seven checks passed on the
+   pull request that carries this document, `install` and Linux among them.
 
 Until at least (1) and (2) are done and recorded here, this document's verdict
 does not move.

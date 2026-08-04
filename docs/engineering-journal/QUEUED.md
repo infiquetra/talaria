@@ -361,12 +361,16 @@ This is U3's deliberate v0.1 scope and `talaria/domain/compat.py:343` says so. I
 
 **Suggested framing.** One level deeper for the three methods whose payload Talaria actually parses element by element (`commands.catalog`, `agents.list`, `spawn_tree.list`): compare the kind of the first element of each recorded list. Do not recurse generally — the maintenance cost is what U3 rejected, and that judgement still holds.
 
-### R1's Linux half has never executed — the `/proc` branch is unmeasured
+### ~~R1's Linux half has never executed — the `/proc` branch is unmeasured~~ — CLOSED 2026-08-03
 
 **Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
 **Priority.** P2
 **Effort.** Small, and it needs a Linux machine or a Linux CI runner.
 **Worth it when.** The CI matrix runs the process-surface tests on Linux, or anybody proposes to run Talaria on Linux as a daily driver.
+
+**Closed by.** Pushing the U10 branch, which is the first time this repository's CI had anything to run. On the pull request that carries the daily-driver verdict (GitHub Actions run `30865814553`), `python-check-linux` executed **all five** process-surface tests on `ubuntu-latest` under Python 3.12 and 3.13, and all five passed — so the `/proc/<pid>/cmdline` and `/proc/<pid>/environ` branches have now run against a real process on the platform whose kernel behaviour the R1 argument rests on. Read as this item asked: the job's own output was inspected line by line rather than trusted from a green tick, which matters because the job is `continue-on-error: true`. Its progress line was `tests/transport/test_process_surface.py .....`, five dots and no skip. The same run also executed all fourteen pseudo-terminal teardown tests on Linux with no skips; the seven Linux skips are all the TypeScript equivalence bridge, which needs `node_modules`.
+
+**What this does not close.** Nobody has driven the interface on Linux, and no real terminal emulator has been used on either platform. R1's environment clause remains **unmet** on Linux exactly as on macOS — the measurement confirmed the mechanism rather than removing it. See the item above.
 
 **Context.** `tests/transport/test_process_surface.py::read_surface` has two branches: `/proc/<pid>/cmdline` and `/proc/<pid>/environ` on Linux, `ps -ww` / `ps -Eww` on macOS. Only the macOS branch has ever run. The Linux branch is marked `# pragma: no cover - exercised on Linux only` and is exactly that — never exercised. Every R1 measurement in this build is a macOS measurement.
 
