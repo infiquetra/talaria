@@ -94,12 +94,17 @@ from talaria.domain.state import (
     focus_session,
     record_command_result,
     record_local_note,
+    record_replayed_submission,
     record_submission,
+    replayed_submission_text,
     respond_to_all_approvals,
     respond_to_prompt,
     restore_prompt,
     set_connection,
     settle_prompt,
+)
+from talaria.domain.state import (
+    SUBMIT_METHOD as SUBMIT_METHOD,
 )
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.status.runner import StatusRunner, StatusTickResult
@@ -134,10 +139,12 @@ from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptPane
 #: the UI flushes on this tick rather than per token.
 COALESCE_INTERVAL: Final[float] = 0.05
 
-#: The gateway method a composed message is sent with
-#: (``tui_gateway/methods_prompt.py:67`` at ``7f4d15515``: ``params`` are
-#: ``session_id`` and ``text``).
-SUBMIT_METHOD: Final[str] = "prompt.submit"
+#: ``SUBMIT_METHOD`` — the gateway method a composed message is sent with — is
+#: re-exported from :mod:`talaria.domain.state` in the import block above rather
+#: than spelled again here. Both ends of it matter now: the composer writes the
+#: frame, and :func:`~talaria.domain.state.replayed_submission_text` reads the
+#: operator's words back out of a recorded one. Two string literals that have to
+#: agree is one literal too many.
 
 #: The gateway method that stops the in-flight turn (R4;
 #: ``tui_gateway/methods_session.py:2706``). Distinct from ``subagent.interrupt``
@@ -797,12 +804,32 @@ class TalariaApp(App[None]):
     def ingest(self, record: FrameRecord) -> None:
         """Fold one frame into domain state. Pure except for the dirty flag.
 
-        Outbound frames are counted but never folded: a recording of what
-        Talaria itself sent is not a description of what the session became,
-        and replaying it as if it were would double-apply the operator's turn.
+        Outbound frames are not folded through the reducer: a recording of what
+        Talaria itself sent is not a description of what the session became, and
+        replaying a request as if it were an event would double-apply the
+        operator's turn.
+
+        **One outbound frame is read anyway, and only in replay mode.** The
+        gateway never echoes a submitted prompt back, so the operator's own line
+        is written locally by :func:`~talaria.domain.state.record_submission` —
+        which happens on submit, and never happens in a replay. A replay of a
+        real session therefore rebuilt the agent's half of a conversation and
+        not the question it answered, which makes R3's own evidence method (one
+        live turn, compared against a replay of the same frames) impossible to
+        complete. The text is in the recording, in the outbound ``prompt.submit``
+        this recovers it from.
+
+        Live mode must not take this branch, and that is the whole reason for
+        the mode test: there the local write has already happened, so folding
+        the frame too would print the operator's message twice.
         """
         self.frames_applied += 1
         if record.direction == "out":
+            if self.mode == "replay":
+                text = replayed_submission_text(record.frame)
+                if text is not None:
+                    self.state = record_replayed_submission(self.state, text, at=record.at)
+                    self._dirty = True
             return
         decoded = normalize_frame(
             record.frame,

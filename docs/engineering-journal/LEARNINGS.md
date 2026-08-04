@@ -4,6 +4,18 @@
 
 ## 2026-08-04
 
+### R3's evidence method could not have passed, and the reason was a line nobody thought of as content
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Evidence.** R3 — "the operator can submit a prompt and watch the response stream into the transcript" — was carried as unmet because no Hermes gateway had ever been attached. It has now been attached repeatedly: a dashboard on loopback, `talaria --record`, a prompt submitted, the reply streamed to completion. The comparison the repo itself specifies for R3 (`talaria/cli.py`: "one live turn streamed to completion and its transcript compared against a replay of the same frames") now passes on a 32-frame recording — three live rows, three replayed lines, byte-identical, `interface_shows_everything` true, corpus cited by digest and count under R29.
+
+**Mechanism, and why the comparison could not have passed before.** The first attempt compared a live screen against a replay and reported zero differences, which was true and meaningless: the pane had scrolled, so the rows compared happened to exclude the operator's own line — and that line was exactly the one a replay could not produce. `record_submission` writes it locally at submit time because the gateway never echoes a prompt back as an event, and a replay never submits anything. `TalariaApp.ingest` then discarded every outbound frame on the reasoning that a request is not a description of what the session became. Correct for the *response* to a request; wrong for this one, whose params carry text that exists nowhere else. So a replay of a real session rebuilt the agent's half of the conversation and left out the question it was answering — and under R30 ("drives the entire interface from a frame log") that is an interface driven to a visibly incomplete state.
+
+**The fix is mode-scoped, and the constraint is the interesting half.** In replay mode a recorded `prompt.submit` now becomes the operator's line. In live mode it must not, because the local write has already happened and folding the frame as well would print the message twice — which reads as a message that was genuinely sent twice, a worse defect than the one being fixed. Both directions are pinned: removing the app branch fails the replay test, and making it unconditional fails the live test.
+
+**Generalizable rule.** A verification that passes is not evidence until you can say what it would have caught. This one compared whatever happened to be on screen, so its scope was set by a scroll position rather than by the claim — and the single row it omitted was the row the system could not produce. When a comparison's inputs are captured rather than constructed, check that the capture covers the thing most likely to be missing, and prefer a case small enough to fit entirely in view over a realistic one that does not.
+
 ### A security control stated as a property of characters was really a property of pictures, and only the second version can be tested
 
 **Author.** post-v0.1, second operator session against a live gateway

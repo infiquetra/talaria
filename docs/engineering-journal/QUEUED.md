@@ -130,6 +130,12 @@ What U10 *did* build is the path they would exercise. `talaria/cli.py:build_live
 
 **Recording this is now possible from the client, which it was not when this item was written.** `LiveSource` accepted a recorder and `build_live_app` never passed one, and `talaria record` draws no interface — so step (2)'s "with the recorder on" named something the shipped client could not do. U10's closeout added `talaria --record [PATH]`. Use it; the frame log's header carries the credential-stripped endpoint, and every frame passes the U2 redaction boundary before it is written.
 
+**Step (2) — R3 — is done, 2026-08-04.** A Hermes dashboard on loopback, `talaria --record`, a prompt submitted from the composer, the reply streamed to completion. Replaying the same recording rebuilds a transcript byte-identical to the live screen: three rows, three lines, `interface_shows_everything` true. Corpus cited by digest and frame count rather than path (R29): `talaria-live-v1-32f-5f477fa24fa5`, sha256 `5f477fa24fa50b391d73eee6f455190000281980a8db33c17f4130208d997549`, frame-log v1 recorded 2026-08-04T19:37:35.709Z.
+
+The comparison could not have passed before that run, and the reason was a defect it exposed: a replay could not reconstruct the operator's own line at all, because it is written locally at submit time and `ingest` discarded every outbound frame. Fixed — see the DECISIONS entry "A replay reads one outbound frame". The first attempt at this comparison *did* report zero differences, from a scrolled screen capture whose compared rows happened to exclude that very line; use a turn short enough to fit entirely in view.
+
+**What is still open in this item.** Step (1), the three startup paths — bare has been exercised many times and lands in a session, but neither `--resume` nor `--session <id>` has been run against Hermes, so KTD7's precedence chain is unverified live. Step (3), the compatibility check's real output, is unrecorded. F1 and F7 have not been demonstrated. The verdict document has not been updated.
+
 ### The install job and the CI matrix are declared but have never run
 
 **Author.** v0.1 milestone-2, unit U10
@@ -366,6 +372,19 @@ So the operator types a password into a focused control that draws nothing, with
 **Suggested framing.** Schedule the recomputation from `apply` whenever it mounted or removed a card. Note that doing so makes the `Rewrapped` channel redundant for the mount case — check, by deleting it and running `test_a_card_mounting_into_a_full_region_is_still_recomputed`, whether it still has a case of its own before keeping both.
 
 ## P2
+
+### A replay cannot reconstruct Talaria's own delivery notes, so an unacknowledged submit replays as a clean one
+
+**Author.** post-v0.1, second operator session against a live gateway
+**Priority.** P2
+**Effort.** Medium — the correlation is easy; amending an entry the append-only transcript has already written is not.
+**Worth it when.** A replay is used to diagnose a *failed* session rather than to demonstrate a working one. Until then the gap only understates trouble in recordings that had none.
+
+**Context.** `record_submission` writes the operator's line and, when the `prompt.submit` call did not resolve cleanly, a second `system` entry naming what is known — `not sent`, `delivery unconfirmed — the connection dropped`, and the two others in `DELIVERY_NOTES`. Those notes are authored locally from an observed RPC outcome and cross no wire, so they are in no frame log.
+
+Replay now reconstructs the operator's line from the recorded outbound `prompt.submit` (see DECISIONS, "A replay reads one outbound frame") and deliberately claims nothing about delivery — `record_replayed_submission` takes no `DeliveryState`, because at the moment the request is ingested the answer is a frame that has not arrived yet. The consequence is that a recording of a session whose submit went unacknowledged replays as though it were fine: the operator's line appears, the warning under it does not.
+
+**Suggested framing.** The evidence is in the recording — the response frame carries the request `id`. What is missing is a way to *amend* a transcript entry after later frames arrive, which the append-only transcript has no mechanism for and should probably not grow one for casually. Consider instead deferring the write: hold the submitted text until its response frame resolves, then write the line and any note together. Note what that costs — the operator's line would appear a beat late in a replay, where today it appears exactly where it was sent.
 
 ### `compare_shape` compares the top level only, so a wholly restructured payload reads as "present"
 
