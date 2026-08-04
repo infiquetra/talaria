@@ -1590,14 +1590,13 @@ async def test_deny_all_says_delivery_is_unconfirmed_exactly_when_it_is() -> Non
         assert "delivery unconfirmed" in line
         # And it is the *same* sentence the single-answer path uses, taken from
         # the one table rather than a second wording that happens to agree
-        # today. Asserted as a prefix because ``clip_system_line`` bounds a
-        # transcript entry at 120 characters and marks its own cut — the
-        # operative clause is inside the bound, the explanatory tail is not.
+        # today. This was once asserted as a prefix, because the 120-character
+        # transcript clip cut the explanatory tail off every delivery note; the
+        # whole sentence now survives, so it is asserted whole.
         reason = read_answer("approval", outcome).reason
         assert reason is not None
-        assert f"{DENIED_EVERY_APPROVAL}: 2 waiting — {reason}".startswith(
-            line.rstrip("…")
-        )
+        assert line == f"{DENIED_EVERY_APPROVAL}: 2 waiting — {reason}"
+        assert not line.endswith("…")
         await app.shutdown_sources()
 
 

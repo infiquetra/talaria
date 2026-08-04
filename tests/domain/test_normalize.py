@@ -23,8 +23,11 @@ from talaria.domain.decode import (
 )
 from talaria.domain.models import GatewayEvent, SubagentStatus
 from talaria.domain.normalize import (
+    DETAIL_LINE_CLIP,
+    TRANSCRIPT_LINE_CLIP,
     applies_to_focused_session,
-    clip_system_line,
+    clip_detail_line,
+    clip_transcript_line,
     coerce_text,
     is_terminal_status,
     keep_terminal_else,
@@ -269,10 +272,62 @@ def test_push_unique_skips_a_repeated_tail_and_bounds_growth() -> None:
     assert len(items) == 8
 
 
-def test_clip_system_line_marks_the_cut() -> None:
-    clipped = clip_system_line("x" * 200)
-    assert len(clipped) == 121
+def test_clip_detail_line_marks_the_cut() -> None:
+    clipped = clip_detail_line("x" * 200)
+    assert len(clipped) == DETAIL_LINE_CLIP + 1
     assert clipped.endswith("…")
+
+
+def test_clip_transcript_line_marks_the_cut() -> None:
+    clipped = clip_transcript_line("x" * (TRANSCRIPT_LINE_CLIP + 80))
+    assert len(clipped) == TRANSCRIPT_LINE_CLIP + 1
+    assert clipped.endswith("…")
+
+
+#: Transcribed from a live gateway's ``status.update``. Hermes emits this whole
+#: — its handler passes ``p.text`` to ``pushActivity`` with no ``slice`` — and
+#: Talaria used to cut it at 120 characters, landing mid-identifier on
+#: ``context_file_max_`` and discarding "chars, or use a larger-context model!".
+#: The remedy is the only part of a warning worth reading.
+_TRUNCATION_WARNING = (
+    "⚠️  Context file AGENTS.md TRUNCATED: 74668 chars exceeds limit of 65280 "
+    "— trim the file, pin a larger context_file_max_chars, or use a "
+    "larger-context model!"
+)
+
+
+def test_a_gateway_warning_reaches_the_transcript_with_its_remedy_intact() -> None:
+    """The measured regression: a 157-character warning, cut at 120.
+
+    Asserted on the *remedy* rather than on a length, because the defect was
+    never that the line was shortened — it was that the half naming the fix is
+    the half a clip takes first.
+    """
+    state = replay(
+        [raw_event("status.update", {"text": _TRUNCATION_WARNING, "kind": "warn"})]
+    )
+    written = next(e.text for e in state.transcript if "AGENTS.md" in e.text)
+    assert written == _TRUNCATION_WARNING
+    assert "use a larger-context model!" in written
+    assert "context_file_max_chars" in written, "the setting must stay copyable"
+    assert not written.endswith("…")
+
+
+def test_a_subagent_detail_line_is_still_bound_to_one_row() -> None:
+    """Loosening the transcript bound must not loosen this one.
+
+    A sub-agent row renders its ``detail`` on a single screen line, so here the
+    cut is a layout constraint rather than a judgement about diagnostics.
+    """
+    state = replay(
+        [
+            raw_event("subagent.start", {"subagent_id": "sa-1", "task_index": 0}),
+            raw_event("subagent.progress", {"subagent_id": "sa-1", "text": "y" * 400}),
+        ]
+    )
+    detail = state.subagents[0].detail[-1]
+    assert len(detail) == DETAIL_LINE_CLIP + 1
+    assert detail.endswith("…")
 
 
 def test_coerce_text_never_stringifies_arbitrary_values() -> None:

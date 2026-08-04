@@ -51,7 +51,8 @@ from talaria.domain.normalize import (
     AMBIENT_IGNORED_EVENTS,
     SYSTEM_LINE_EVENTS,
     applies_to_focused_session,
-    clip_system_line,
+    clip_detail_line,
+    clip_transcript_line,
     coerce_text,
     is_terminal_status,
     keep_terminal_else,
@@ -401,7 +402,7 @@ def record_local_note(state: SessionState, text: str, *, at: float) -> SessionSt
     entry cannot be confused in review: that one renders text the *gateway*
     sent, this one renders text Talaria wrote about its own transport.
     """
-    next_state = _append(state, "system", clip_system_line(text))
+    next_state = _append(state, "system", clip_transcript_line(text))
     return replace(next_state, last_observed_at=max(state.last_observed_at, at))
 
 
@@ -409,11 +410,11 @@ def record_command_result(state: SessionState, text: str, *, at: float) -> Sessi
     """Append what a slash command displayed (U9, R24).
 
     Separate from :func:`record_local_note` for one measurable reason: that one
-    clips at :data:`~talaria.domain.normalize.SYSTEM_LINE_CLIP` (120
-    characters), which is right for a one-sentence transport note and wrong for
-    the output of ``/status`` or ``/context``. A command's output is the thing
-    the operator asked to see, and 120 characters of it is a different answer
-    from the one they asked for.
+    clips at :data:`~talaria.domain.normalize.TRANSCRIPT_LINE_CLIP`, which is a
+    backstop against a runaway line and wrong as a bound on the output of
+    ``/status`` or ``/context``. A command's output is the thing the operator
+    asked to see, so it is bounded once, by the caller, at the far looser
+    :data:`~talaria.domain.commands.COMMAND_OUTPUT_CLIP`.
 
     The caller has already bounded the text at
     :data:`~talaria.domain.commands.COMMAND_OUTPUT_CLIP`, so nothing is clipped
@@ -1073,7 +1074,7 @@ def _on_error(state: SessionState, event: GatewayEvent) -> SessionState:
     operator cancelled is not a second, different outcome.
     """
     message = coerce_text(event.payload.get("message")) or "unknown error"
-    next_state = _append(state, "error", f"error: {clip_system_line(message)}")
+    next_state = _append(state, "error", f"error: {clip_transcript_line(message)}")
     if state.turn == "cancelled":
         return next_state
     return replace(
@@ -1095,7 +1096,7 @@ def _on_tool_start(state: SessionState, event: GatewayEvent) -> SessionState:
     name = coerce_text(event.payload.get("name")) or "tool"
     context = coerce_text(event.payload.get("context"))
     line = f"⏺ {name} {context}".rstrip()
-    return _append(state, "tool", clip_system_line(line))
+    return _append(state, "tool", clip_transcript_line(line))
 
 
 def _on_tool_complete(state: SessionState, event: GatewayEvent) -> SessionState:
@@ -1119,7 +1120,7 @@ def _on_tool_complete(state: SessionState, event: GatewayEvent) -> SessionState:
     marker = "✗" if error else "✓"
     detail = error or summary
     line = f"⏺ {name or 'tool'} {marker} {detail}".rstrip()
-    next_state = _append(next_state, "tool", clip_system_line(line))
+    next_state = _append(next_state, "tool", clip_transcript_line(line))
 
     diff = _strip_diff_chrome(coerce_text(event.payload.get("inline_diff")))
     if diff:
@@ -1249,7 +1250,7 @@ def prompt_registration_line(prompt: PendingPrompt) -> str:
     **For an approval this is the only place the whole command is written
     down.** The answered line downstream goes through
     :func:`record_local_note`, which clips at
-    :data:`~talaria.domain.normalize.SYSTEM_LINE_CLIP`; this entry does not,
+    :data:`~talaria.domain.normalize.TRANSCRIPT_LINE_CLIP`; this entry does not,
     because "which command did I approve" is the question the transcript exists
     to answer afterwards and a clipped answer to it is not an answer. The
     command goes on its own line so a multi-line command stays multi-line —
@@ -1467,7 +1468,7 @@ def _on_subagent_thinking(state: SessionState, event: GatewayEvent) -> SessionSt
         event,
         proposed_status="running",
         create_if_missing=False,
-        detail_line=clip_system_line(text),
+        detail_line=clip_detail_line(text),
     )
 
 
@@ -1482,7 +1483,7 @@ def _on_subagent_tool(state: SessionState, event: GatewayEvent) -> SessionState:
         event,
         proposed_status="running",
         create_if_missing=False,
-        detail_line=clip_system_line(line),
+        detail_line=clip_detail_line(line),
     )
 
 
@@ -1495,7 +1496,7 @@ def _on_subagent_progress(state: SessionState, event: GatewayEvent) -> SessionSt
         event,
         proposed_status="running",
         create_if_missing=False,
-        detail_line=clip_system_line(text),
+        detail_line=clip_detail_line(text),
     )
 
 
@@ -1509,7 +1510,7 @@ def _on_subagent_complete(state: SessionState, event: GatewayEvent) -> SessionSt
         event,
         proposed_status=status,
         create_if_missing=False,
-        detail_line=clip_system_line(summary) if summary else None,
+        detail_line=clip_detail_line(summary) if summary else None,
         authoritative_status=status,
     )
 
@@ -1554,7 +1555,7 @@ def _on_status_update(state: SessionState, event: GatewayEvent) -> SessionState:
     if not text or text == state.last_status_note:
         return state
     return _append(
-        replace(state, last_status_note=text), "system", clip_system_line(text)
+        replace(state, last_status_note=text), "system", clip_transcript_line(text)
     )
 
 
@@ -1564,7 +1565,7 @@ def _apply_system_line(state: SessionState, event: GatewayEvent) -> SessionState
     ) or coerce_text(event.payload.get("line"))
     if not text:
         return state
-    return _append(state, "system", clip_system_line(text))
+    return _append(state, "system", clip_transcript_line(text))
 
 
 def _on_moa_reference(state: SessionState, event: GatewayEvent) -> SessionState:

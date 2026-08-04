@@ -255,10 +255,12 @@ UNCOUNTED_RESOLUTION: Final[str] = "the gateway did not say how many it resolved
 #: and silence is a supported outcome while a fabricated screen is not (KTD10).
 #:
 #: A *prefix* rather than the whole sentence, because the reason comes from the
-#: projection's own exception and the two must not say the same thing twice —
-#: the combined line is clipped at
-#: :data:`~talaria.domain.normalize.SYSTEM_LINE_CLIP`, and a duplicated first
-#: clause is what pushes the actual reason past the cut.
+#: projection's own exception and the two must not say the same thing twice. The
+#: combined line is clipped at
+#: :data:`~talaria.domain.normalize.TRANSCRIPT_LINE_CLIP`, which no longer sits
+#: anywhere near this line's length — but the reason to keep the halves saying
+#: different things is that a reader learns nothing from the repeat, which holds
+#: at any bound.
 TERMINAL_READ_UNAVAILABLE: Final[str] = "terminal read not answered —"
 
 
@@ -1252,10 +1254,11 @@ class TalariaApp(App[None]):
                 line = f"{line}, {_resolved_clause(outcome)}"
             else:
                 # An unacknowledged call carries no count, so the delivery note
-                # already answers "how many". Appending a second clause saying
-                # the gateway did not say would only push the note itself
-                # toward ``clip_system_line``'s cut, which is where the reason
-                # lives.
+                # already answers "how many"; a second clause saying the gateway
+                # did not say would repeat it. This used to be argued from
+                # length — the combined line ran past the old 120-character cut
+                # — but ``clip_transcript_line`` is far looser now and the
+                # argument stands without it: the clause adds no information.
                 line = f"{line} — {verdict.reason}"
         else:
             line = f"{scope.denied} approvals not denied — {verdict.reason}"

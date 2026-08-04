@@ -71,10 +71,32 @@ AMBIENT_IGNORED_EVENTS: frozenset[str] = frozenset(
 DETAIL_LIMIT = 8
 
 #: Hermes clips a ``gateway.stderr`` line to 120 characters
-#: (``createGatewayEventHandler.ts:880``) so a runaway line cannot own the
-#: activity area. Re-encoded for every system line, since the same argument
-#: applies to any gateway-authored text.
-SYSTEM_LINE_CLIP = 120
+#: (``createGatewayEventHandler.ts:880``, and again at ``:1015-1016``, whose
+#: comment says it exists "to match the 120-char clip used for
+#: ``gateway.stderr`` activity entries"). **Both sites are scoped to
+#: ``gateway.stderr`` alone**, and both feed a one-row activity region, so the
+#: bound is about the region's height rather than about the text being
+#: gateway-authored. Re-encoded here for the one Talaria surface with the same
+#: shape: a sub-agent row's single ``detail`` line.
+DETAIL_LINE_CLIP = 120
+
+#: What bounds a transcript entry. This is **not** a re-encoding of Hermes —
+#: Hermes clips no transcript text at all; ``status.update`` reaches
+#: ``pushActivity`` with ``p.text`` whole (``createGatewayEventHandler.ts:775``,
+#: body at ``:811-817``). Talaria formerly reused the 120 above here on the
+#: reasoning that "the same argument applies to any gateway-authored text". It
+#: does not: the argument is that a runaway line must not own a *one-row*
+#: region, and the transcript scrolls. What the reuse cost was measured on a
+#: live gateway — a 157-character ``status.update`` reading "…trim the file, pin
+#: a larger context_file_max_chars, or use a larger-context model!" reached the
+#: screen cut mid-identifier at ``context_file_max_``, so the remedy it named
+#: was unreadable and the setting could not even be copied.
+#:
+#: A bound still exists, because an unbounded line is a rendering hazard rather
+#: than a diagnostic. It sits an order of magnitude above any human-readable
+#: notice and below :data:`~talaria.domain.commands.COMMAND_OUTPUT_CLIP`, which
+#: bounds text the operator explicitly asked to see.
+TRANSCRIPT_LINE_CLIP = 2000
 
 
 def normalize_frame(
@@ -204,12 +226,33 @@ def coerce_text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def clip_system_line(text: str, limit: int = SYSTEM_LINE_CLIP) -> str:
-    """Bound one gateway-authored line, marking the cut so it is not mistaken
-    for the whole message."""
+def _clip(text: str, limit: int) -> str:
+    """Bound one line, marking the cut so it is not mistaken for the whole
+    message."""
     if len(text) <= limit:
         return text
     return text[:limit] + "…"
+
+
+def clip_detail_line(text: str, limit: int = DETAIL_LINE_CLIP) -> str:
+    """Bound the single ``detail`` line of a sub-agent row.
+
+    The row is one screen line, so the cut is a layout constraint and a tight
+    bound is correct. Use :func:`clip_transcript_line` for anything that lands
+    in the transcript, which scrolls.
+    """
+    return _clip(text, limit)
+
+
+def clip_transcript_line(text: str, limit: int = TRANSCRIPT_LINE_CLIP) -> str:
+    """Bound one transcript entry — a backstop against a runaway line, not a
+    summary.
+
+    Deliberately loose. A transcript entry is frequently the only account an
+    operator gets of a failure, and a diagnostic cut before its remedy is worse
+    than a long one: the reader cannot tell that advice was ever offered.
+    """
+    return _clip(text, limit)
 
 
 def push_unique(items: Sequence[str], value: str, limit: int = DETAIL_LIMIT) -> tuple[str, ...]:

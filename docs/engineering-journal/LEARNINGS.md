@@ -4,6 +4,26 @@
 
 ## 2026-08-04
 
+### A re-encoded constant carried Hermes's number and dropped the reason for it
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Evidence.** A live `status.update` arrived reading `⚠️  Context file AGENTS.md TRUNCATED: 74668 chars exceeds limit of 65280 — trim the file, pin a larger context_file_max_chars, or use a larger-context model!` — 157 characters. `SYSTEM_LINE_CLIP = 120` cut it to `…pin a larger context_file_max_` plus an ellipsis, discarding `chars, or use a larger-context model!`. The clip landed **mid-identifier**, so the setting the warning named could not even be copied. Read from the recording rather than the screen, so the cut is attributable to the clip and not to terminal wrapping. The same bound had already truncated a handshake failure to `handshake rejected with HTTP 500 (server rejected Web…` while that failure was being diagnosed. Fixed by splitting one constant into `DETAIL_LINE_CLIP` (120) and `TRANSCRIPT_LINE_CLIP` (2000) in `talaria/domain/normalize.py`; pinned by `tests/domain/test_normalize.py::test_a_gateway_warning_reaches_the_transcript_with_its_remedy_intact`, watched to fail against the old bound with exactly the observed cut.
+
+**Mechanism.** The constant's own comment recorded the error in plain sight: *"Hermes clips a `gateway.stderr` line to 120 characters … so a runaway line cannot own the activity area. Re-encoded for every system line, since the same argument applies to any gateway-authored text."* The first sentence is accurate and the second does not follow from it. Hermes's two 120-char clips are both scoped to `gateway.stderr` and both feed a **one-row activity region** — the second site says so outright, *"to match the 120-char clip used for `gateway.stderr` activity entries"* — and Hermes's `status.update` handler passes `p.text` to `pushActivity` with no `slice` at all. So the bound was never about the text being gateway-authored; it was about the height of the region receiving it. Talaria's transcript scrolls, which is precisely the property that makes the original argument inapplicable. The number was re-encoded faithfully and the justification was widened in the same breath, which is how a correct citation ends up supporting a claim its source does not make.
+
+**Generalizable rule.** When re-encoding a bound from another system, carry its *scope* with its value — which inputs it applies to and which region it protects — and re-derive it for the local surface rather than generalizing from "the same argument applies". A truncation is also a content decision, not only a layout one: whatever it cuts is a claim about what the reader does not need, and the remedy is the half of a diagnostic that a length-based cut takes first.
+
+### A nine-day-old process failed against source that was correct on disk
+
+**Author.** post-v0.1, second operator session — diagnosis, not a Talaria code change
+
+**Evidence.** Four of five Hermes dashboards refused Talaria's WebSocket handshake with HTTP 500 while a fifth accepted it. Dashboard stderr gave `ImportError: cannot import name 'DEFAULT_INDICATOR_STYLE' from 'hermes_constants'` at `tui_gateway/server.py:26`. The constant **exists** in the checked-out source. The four failing dashboards were launchd jobs started Jul 26 19:52; the constant landed Aug 3 14:42 in commit `0845232d7`. Each held a `hermes_constants` module imported nine days earlier and satisfied a *lazy* import from today's `server.py` against it. `launchctl kickstart -k gui/$(id -u)/ai.hermes.<profile>.labyrinth` on each returned all five to HTTP 101.
+
+**Mechanism.** Long-lived processes make "the code" ambiguous — there is the code on disk and the code in memory, and a lazy import is the seam where a process can hold both at once and disagree with itself. Hermes's own terminal UI cannot reach this state because it does not dial a gateway, it spawns one per launch (`ui-tui/src/gatewayClient.ts:356`); Talaria dials a dashboard it did not start, so by [ADR-0001](../../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md) it inherits that process's age. Reading the repository would have proved the constant present and concluded, wrongly, that the error was impossible.
+
+**Generalizable rule.** When a running service contradicts its own source, compare *process start time* against the commit that introduced the symbol before doubting either. And a client that inherits a service's lifetime inherits its staleness: what it owes the operator is not a proxied status code but the age and identity of what it dialled.
+
 ### The first real launch failed on the one interaction no test could have had — asking a human a question
 
 **Author.** post-v0.1, first operator attach against a live Hermes gateway
