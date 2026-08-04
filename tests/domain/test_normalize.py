@@ -83,6 +83,56 @@ def test_known_event_set_covers_the_four_blocking_bridges() -> None:
         assert event_type in KNOWN_EVENT_TYPES
 
 
+#: The three payloads below are transcribed from a recording of a real gateway,
+#: ``2026-08-04T16-02-24-964Z.jsonl``, rather than composed here. That matters:
+#: every other fixture in this suite was written from a *reading* of Hermes, and
+#: a reading is exactly what missed these three.
+_OBSERVED_LIVE_FRAMES = (
+    raw_event("sessions.changed", {}, session_id=None),
+    raw_event(
+        "session.title",
+        {"session_id": "20260804_120225_7487d0", "title": "Testing the Assistant"},
+    ),
+    raw_event(
+        "session.reclaimed",
+        {
+            "session_id": "e5696a04",
+            "stored_session_id": "20260804_115840_20ea65",
+            "reason": "ws_orphan_reap",
+        },
+        session_id=None,
+    ),
+)
+
+
+def test_known_event_set_covers_what_a_live_gateway_actually_sends() -> None:
+    """Three types a running gateway emitted that the source reading missed.
+
+    All three are present in Hermes at ``7f4d15515``, the revision
+    ``KNOWN_EVENT_TYPES`` was derived from, so this is a hole in the derivation
+    rather than a newer Hermes. ``session.title`` is the instructive one: it is
+    also a callable *method*, which is how a grep for the emitting site slid
+    past it.
+    """
+    for frame in _OBSERVED_LIVE_FRAMES:
+        event_type = frame["params"]["type"]
+        assert isinstance(_decode(frame), GatewayEvent), event_type
+
+
+def test_an_ordinary_live_turn_leaves_no_unknown_markers_in_the_transcript() -> None:
+    """The cost of the gap was not correctness but noise.
+
+    Two ordinary turns against a live gateway put *seven* ``unknown event type``
+    lines into the transcript — ``sessions.changed`` alone fires several times
+    per turn. The module's own docstring calls unknown events "expected
+    traffic"; expected traffic that annotates itself on every occurrence drowns
+    the conversation it is interleaved with.
+    """
+    state = replay(list(_OBSERVED_LIVE_FRAMES))
+    assert state.unknown_event_types == ()
+    assert [entry for entry in state.transcript if entry.kind == "unknown-event"] == []
+
+
 # ── R5: malformed frames ─────────────────────────────────────────────────
 
 
