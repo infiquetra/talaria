@@ -54,8 +54,9 @@ from talaria.ui.app import (
     TalariaApp,
     read_answer,
 )
-from talaria.ui.literal import INVISIBLE_MARK, defang
+from talaria.ui.literal import INVISIBLE_MARK, PRESENTATION_SELECTORS, defang
 from talaria.ui.prompts import (
+    COMMAND_MIN_WIDTH,
     COMMAND_PREVIEW_LINES,
     CONTROL_OFFSCREEN_TITLE,
     DENY_ALL_CHOICE,
@@ -2552,7 +2553,9 @@ def test_the_defang_table_covers_every_unicode_format_character() -> None:
 
     # The half that is not ``Cf`` and shares the effect anyway, named one by
     # one so dropping a range from the table fails here rather than silently.
-    for codepoint in (0x115F, 0x1160, 0x3164, 0xFE00, 0xFE0F, 0xFFA0, 0xE0100, 0xE01EF):
+    # U+FE0E and U+FE0F are absent on purpose — see the presentation-selector
+    # tests below, which assert the exemption is exactly those two.
+    for codepoint in (0x115F, 0x1160, 0x3164, 0xFE00, 0xFE0D, 0xFFA0, 0xE0100, 0xE01EF):
         assert defang(chr(codepoint)) == INVISIBLE_MARK, f"U+{codepoint:04X}"
 
     # A hidden instruction carried in Tag characters is one cell per character
@@ -2563,6 +2566,82 @@ def test_the_defang_table_covers_every_unicode_format_character() -> None:
     # And ordinary text is untouched, so the sweep above is not passing because
     # ``defang`` replaces everything.
     assert defang("git status --short") == "git status --short"
+
+
+# ── the two characters held out of that table ────────────────────────────
+
+
+def test_an_emoji_asking_for_its_coloured_form_arrives_whole() -> None:
+    """The reported defect. ``⚠️`` is U+26A0 followed by VARIATION SELECTOR-16,
+    and marking the selector put a replacement character in the middle of every
+    emoji an agent wrote."""
+    assert defang("⚠️ check the lock file") == "⚠️ check the lock file"
+    assert INVISIBLE_MARK not in defang("ℹ️ ❤️ ✔️ ➡️ ⭐️")
+
+
+def test_the_exemption_is_exactly_the_two_presentation_selectors() -> None:
+    """Named one by one in both directions, because the interesting failure is a
+    range that grew rather than one that shrank."""
+    for codepoint in PRESENTATION_SELECTORS:
+        assert defang(chr(codepoint)) == chr(codepoint), f"U+{codepoint:04X}"
+    assert PRESENTATION_SELECTORS == (0xFE0E, 0xFE0F)
+
+    # The rest of the variation selectors are still marked — VS-1 through VS-14
+    # below, VS-17 through VS-256 above. Those select glyph variants a reader
+    # cannot reliably tell apart, so they fail the test the two above pass.
+    # (U+FE10 is not the neighbour above: the selector block ends at U+FE0F and
+    # U+FE10 is PRESENTATION FORM FOR VERTICAL COMMA, a visible ``Po``.)
+    for codepoint in (0xFE0D, *range(0xE0100, 0xE0104), 0xE01EF):
+        assert defang(chr(codepoint)) == INVISIBLE_MARK, f"U+{codepoint:04X}"
+
+
+def test_the_zero_width_joiner_is_still_marked_even_inside_an_emoji() -> None:
+    """The line this exemption is drawn on, stated as the case that does *not*
+    move.
+
+    A presentation selector is exempt because it changes the picture — one cell
+    becomes two, so the extra bytes are on screen. U+200D changes nothing: ``rm``
+    and ``r<ZWJ>m`` are the same picture and different commands, which is the
+    whole hazard. That it is also how a multi-person emoji is assembled does not
+    make it less of one, so those still arrive as their parts.
+    """
+    assert defang("r‍m -rf /") == f"r{INVISIBLE_MARK}m -rf /"
+    family = "\U0001f468‍\U0001f469‍\U0001f467"
+    assert defang(family).count(INVISIBLE_MARK) == 2
+
+
+def test_a_presentation_selector_changes_the_picture_and_a_joiner_does_not() -> None:
+    """The exemption's premise, measured rather than asserted.
+
+    If this ever stops holding — if a terminal stack renders ``⚠`` and ``⚠️``
+    identically — then the selector belongs back in the table, because two byte
+    strings would again be one picture.
+    """
+    for bare, selected in (("⚠", "⚠️"), ("❤", "❤️"), ("ℹ", "ℹ️")):
+        assert cell_len(bare) != cell_len(selected), bare
+    assert cell_len("rm") == cell_len(defang("rm"))
+
+
+def test_a_command_carrying_an_emoji_wraps_at_the_width_it_is_drawn_at() -> None:
+    """The exemption changes how wide a command is, so the wrap has to agree.
+
+    ``wrap_command`` cuts by rendered cells, not characters, and a selector adds
+    a cell without adding a character. A wrap that counted characters would put
+    more on a row than the terminal can draw, and the row after it would start
+    somewhere other than where the operator sees it start — which on an approval
+    card is a command that reads differently from the one that runs.
+    """
+    command = "echo " + "⚠️" * 30 + " done"
+    rows = wrap_command(command, COMMAND_MIN_WIDTH, limit=10)
+    assert len(rows) > 1, "nothing wrapped; the assertions below prove nothing"
+    for row in rows:
+        assert cell_len(row) <= COMMAND_MIN_WIDTH, row
+    assert "".join(rows) == command, "characters were dropped or reordered by the wrap"
+
+    # And the selector never lands at the head of a row, split from the
+    # character it modifies — that would draw as a lone marker glyph.
+    for row in rows[1:]:
+        assert ord(row[0]) not in PRESENTATION_SELECTORS, row
 
 
 @pytest.mark.asyncio

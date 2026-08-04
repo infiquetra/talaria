@@ -4,6 +4,18 @@
 
 ## 2026-08-04
 
+### A security control stated as a property of characters was really a property of pictures, and only the second version can be tested
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Evidence.** Agent prose arrived on screen as `⚠� check the lock file` — the warning sign, then a replacement character. `defang`'s table covered U+FE00–U+FE0F, so VARIATION SELECTOR-16 was marked and every emoji that asks for its coloured form was split. Narrowed to exempt U+FE0E and U+FE0F; verified live, where a reply came back reading `Status ✅ done, ⚠️ warning, ℹ️ note, family 👨�👩�👧` — the three presentation-selector emoji whole, the ZWJ family still marked, which is the intended split.
+
+**Mechanism.** The table had been described as "characters that change what a terminal draws without drawing anything themselves", and the second clause did the selecting. That reading admits the presentation selectors, because they do draw nothing themselves. But the control exists so that an approved *picture* identifies the bytes that run, and under that purpose the criterion is "draws nothing **and leaves the picture the same**" — which admits U+200D (`rm` and `r<ZWJ>m` are one picture) and excludes U+FE0F (`⚠` is one cell, `⚠️` is two). The restatement is not a loosening dressed up; it is the criterion the rest of the table already satisfies, made explicit enough to exclude something.
+
+**And the restated version is measurable, where the original was not.** "Changes what a terminal draws without drawing anything itself" cannot be checked in a test — there is no way to ask a string whether it is sneaky. "Renders at a different width than the character alone" can: `cell_len("⚠") != cell_len("⚠️")` is now an assertion, and it fails if a Rich or terminal change ever collapses the two, which is exactly the condition under which the exemption should be withdrawn. The same measurement is what killed the wider version of the change — `cell_len("r<ZWJ>m")` returns 1 where a terminal draws 2, so exempting the joiner would have desynchronised `wrap_command`'s column arithmetic from the screen.
+
+**Generalizable rule.** When a security control's stated criterion is a property of the *input* ("these characters are invisible"), check it against the property of the *outcome* it exists to protect ("no two inputs may look alike"). The two agree on most cases and disagree exactly at the edge you are being asked about — and the outcome version usually turns out to be measurable, which converts a judgment call into a test that will fail when the judgment stops holding.
+
 ### Two event names that mean the same English word carried opposite things, and reading only the client is what hid it
 
 **Author.** post-v0.1, second operator session against a live gateway
