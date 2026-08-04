@@ -65,12 +65,12 @@ Status values: **measured**, **inferred**, **unmet**.
 
 | # | What the plan asked for | Status | What was actually done | Where |
 |---|---|---|---|---|
-| 1 | **R34** — startup verification invokes only KTD9's read-only set | measured | Five read-only methods probed over a real socket; the *server's* received-call record contains those five names and none of the twelve mutating ones | `tests/transport/test_compat_baseline.py::test_no_mutating_method_appears_in_the_startup_call_log` |
+| 1 | **R34** — startup verification invokes only KTD9's read-only set | measured | Five read-only methods probed over a real socket; the *server's* received-call record contains those five names and none of the thirteen mutating ones | `tests/transport/test_compat_baseline.py::test_no_mutating_method_appears_in_the_startup_call_log` |
 | 2 | **AE7** — a missing method is named and blocks ready | measured | Each of the five read-only methods removed in turn (`-32601`, the gateway's own answer at `tui_gateway/server.py:1762`); the report names that method, the other four still pass, `ready` is false | `test_a_missing_method_is_named_and_blocks_ready` |
 | 3 | **AE7** — a drifted response shape is flagged | measured | A dropped key, a changed value kind, and an added key each flagged by name against the pinned signature | `test_a_dropped_response_key_is_flagged_by_name` and the two beside it |
 | 4 | A probe that never answers must not read as a pass | measured | An unanswered probe grades `unproved` and blocks; a gateway that drops the socket mid-check leaves one named `unproved` row and two `present` rows | `test_a_probe_that_never_comes_back_blocks_rather_than_passing` |
-| 5 | The startup probe cannot invoke a mutating method by mistake | measured | The guard is called directly with each of the twelve evidence-only entries and raises before the dispatcher is touched (call count asserted at zero) | `test_probing_an_evidence_only_method_raises_before_any_call` |
-| 6 | The **twelve** other required methods are compatible | **inferred** | Never invoked by Talaria. Their evidence is the pinned source line plus the recorded request fixture and response shape in `talaria/domain/compat.py`. Two of the twelve — `session.create` and `prompt.submit` — additionally had their real top-level response shapes observed in U2's live capture and both matched the pin (see above); the other ten have no runtime evidence of any kind | `talaria/domain/compat.py` |
+| 5 | The startup probe cannot invoke a mutating method by mistake | measured | The guard is called directly with each of the thirteen evidence-only entries and raises before the dispatcher is touched (call count asserted at zero) | `test_probing_an_evidence_only_method_raises_before_any_call` |
+| 6 | The **thirteen** other required methods are compatible | **inferred** | Never probed at startup. Their evidence is the pinned source line plus the recorded request fixture and response shape in `talaria/domain/compat.py`. Three of the thirteen — `session.create`, `prompt.submit` and `slash.exec` — have since been called by Talaria itself against a real Hermes dashboard and answered without error; the other ten have no runtime evidence of any kind | `talaria/domain/compat.py` |
 | 6a | What "shape matches" covers | measured | Top-level only: the response's own key set and each value's kind. A gateway whose every *nested* payload had changed was graded `present` with `0 blocking` — deliberate v0.1 scope (`talaria/domain/compat.py:343`), stated here because `present` sounds broader than it is | `talaria/domain/compat.py::compare_shape` |
 | 7 | **R36** — a normal exit restores the terminal | measured | The real client run on a pseudo-terminal; `termios` snapshotted before, during and after; attributes after are byte-identical to before. The falsifiability control (`SIGKILL` on the same run) leaves the terminal in raw mode, and that is asserted | `tests/ui/test_teardown.py::test_a_normal_exit_restores_the_terminal_modes`, `::test_the_terminal_restore_assertion_can_fail` |
 | 8 | **R36** — an induced mid-stream failure still restores the terminal | measured | A frame source that streams two frames then raises; the app reports it, closes the source and exits 70; the terminal is restored | `::test_an_induced_mid_stream_failure_still_restores_the_terminal` |
@@ -88,8 +88,8 @@ Status values: **measured**, **inferred**, **unmet**.
 
 ## The method table
 
-Seventeen gateway methods are required. Five can be checked at startup without
-side effects; twelve cannot, and are not.
+Eighteen gateway methods are required. Five can be checked at startup without
+side effects; thirteen cannot, and are not.
 
 **Probed at startup — verified live against a socket (a stub socket):**
 
@@ -110,7 +110,8 @@ side effects; twelve cannot, and are not.
 | `prompt.submit` | submitting a turn | `methods_prompt.py:67-313` | **never invoked by Talaria.** Real top-level response shape observed in U2's live capture; matches the pin |
 | `session.interrupt` | cancelling a turn | `methods_session.py:2706-2775` | **not verified at runtime** |
 | `subagent.interrupt` | interrupting one child | `methods_session.py:2806-2814` | **not verified at runtime** |
-| `command.dispatch` | generic slash dispatch | `methods_tools.py:432-1071` | **not verified at runtime** |
+| `slash.exec` | the route an ordinary slash command takes | `methods_tools.py:1073-1211` | **called by Talaria against a real Hermes** — ten calls across the live recordings, all answered |
+| `command.dispatch` | the fallback slash route, for what `slash.exec` refuses | `methods_tools.py:432-1071` | **not verified at runtime** |
 | `paste.collapse` | collapsing a large paste | `methods_complete.py:14-39` | **not verified at runtime** |
 | `approval.respond` | answering an approval | `methods_prompt.py:886-920` | **not verified at runtime** |
 | `clarify.respond` | answering a clarification | `methods_prompt.py:858-864` | **not verified at runtime** |
@@ -118,12 +119,15 @@ side effects; twelve cannot, and are not.
 | `sudo.respond` | answering a sudo bridge | `methods_prompt.py:876-878` | **not verified at runtime** |
 | `terminal.read.respond` | answering the terminal-read bridge | `methods_prompt.py:867-873` | **not verified at runtime** |
 
-**Twelve of seventeen required methods have never been called by Talaria**, and
-ten of those twelve have no runtime evidence from anything at all. The two
-exceptions are named above: `session.create` and `prompt.submit` were answered by
-a real Hermes dashboard during U2's capture, and their top-level response shapes
-match the pin. That is evidence about *Hermes*, not about Talaria's transport —
-the client that made those calls was the TypeScript reference recorder.
+**Thirteen of eighteen required methods are never probed at startup**, and ten of
+those thirteen have no runtime evidence from anything at all. Three are
+exceptions, and what makes them exceptions changed on 2026-08-04: `session.create`,
+`prompt.submit` and `slash.exec` were called by **Talaria itself** against a real
+Hermes dashboard on loopback, and every one of those calls was answered without an
+error. Earlier drafts of this section recorded the first two as response shapes
+observed through the TypeScript reference recorder, which was true when written;
+Talaria's own frame logs now carry the calls. The other ten have still never left
+Talaria.
 
 The startup check states the gap on every run rather than reporting
 "compatible": its first line reads `gateway compatibility: 0 blocking, 12
@@ -411,9 +415,9 @@ rather than by any change to the code.
 ## Verdict
 
 Reading the table: rows 17, 18 and 19 are **unmet**, row 13 is **partially
-unmet**, and row 6 covers twelve of seventeen required gateway methods as
-**inferred rather than measured** (two of those twelve with a real response shape
-observed and matching, ten with nothing). Rows 12 and 14 were the two weakest
+unmet**, and row 6 covers thirteen of eighteen required gateway methods as
+**inferred rather than measured** (three of those thirteen since called by
+Talaria against a real gateway and answered, ten with nothing). Rows 12 and 14 were the two weakest
 *measured* rows in earlier drafts — macOS-only, and a CI job that had never run —
 and both were closed by pushing this branch; that is worth noting because it is
 the only kind of gap on this list that closes without a Hermes gateway. The suite

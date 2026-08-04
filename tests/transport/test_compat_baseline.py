@@ -69,6 +69,7 @@ FORBIDDEN_AT_STARTUP: tuple[str, ...] = (
     "prompt.submit",
     "session.interrupt",
     "subagent.interrupt",
+    "slash.exec",
     "command.dispatch",
     "paste.collapse",
     "approval.respond",
@@ -201,7 +202,7 @@ def test_the_literal_probe_set_is_exactly_the_pinned_read_only_set() -> None:
     assert set(FORBIDDEN_AT_STARTUP) == set(EVIDENCE_ONLY_METHODS)
     assert not set(EXPECTED_PROBE_SET) & set(FORBIDDEN_AT_STARTUP)
     assert len(EXPECTED_PROBE_SET) == 5, "the read-only set changed size"
-    assert len(FORBIDDEN_AT_STARTUP) == 12, "the evidence-only set changed size"
+    assert len(FORBIDDEN_AT_STARTUP) == 13, "the evidence-only set changed size"
 
 
 @pytest.mark.parametrize("method", FORBIDDEN_AT_STARTUP)
@@ -540,7 +541,7 @@ async def test_a_clean_report_still_says_how_much_it_did_not_verify(
     healthy_gateway: StubGateway,
 ) -> None:
     """The honesty clause. A summary reading "compatible" on a run that probed
-    five of seventeen methods would be a claim about twelve it never touched."""
+    five of eighteen methods would be a claim about thirteen it never touched."""
     source = await attached(healthy_gateway)
     try:
         report = await check_compatibility(source, session_id="s-9f12", timeout=5.0)
@@ -549,9 +550,9 @@ async def test_a_clean_report_still_says_how_much_it_did_not_verify(
 
     head = report.lines()[0]
     assert "0 blocking" in head
-    assert "12 unverified at runtime" in head
+    assert "13 unverified at runtime" in head
     assert "7f4d15515" in head
-    assert len(report.verdicts) == len(COMPAT_BASELINE) == 17
+    assert len(report.verdicts) == len(COMPAT_BASELINE) == 18
 
 
 @pytest.mark.asyncio

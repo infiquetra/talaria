@@ -4,6 +4,18 @@
 
 ## 2026-08-04
 
+### The compatibility check verified the fallback route and not the one commands actually take
+
+**Author.** post-v0.1, conformance audit, first pass
+
+**Evidence.** `talaria/domain/compat.py` pinned seventeen gateway methods and `slash.exec` was not among them — while `talaria/domain/commands.py:54-66` sends every ordinary catalogue command over `slash.exec` and reaches `command.dispatch` only for what that handler refuses. The seventeen included the fallback and not the primary. Talaria's own frame logs settled that this was live behaviour rather than a reading of the source: across seventeen recordings from 2026-08-04, Talaria called `slash.exec` ten times against a real Hermes dashboard and was answered ten times with no error. Fixed by pinning the entry (evidence-only, `tui_gateway/methods_tools.py:1073-1211` at `7f4d15515`, request `{session_id, command}`, reply `{output}` plus a conditional `warning`) and by `tests/domain/test_compat_coverage.py`, which fails on the pre-fix tree naming `talaria/domain/commands.py::SLASH_EXEC_METHOD`.
+
+**Mechanism.** R34's promise is that a missing required method is *named* and blocks the daily-driver verdict. The check keeps that promise by iterating `COMPAT_BASELINE`, so its reach is exactly the baseline's contents: a method absent from the list is not reported missing, it is not reported at all. Startup would have announced daily-driver ready against a gateway that had renamed or dropped `slash.exec`, and the failure would have surfaced on the first slash command an operator typed. Every existing test shared the blind spot for the same reason — `EXPECTED_PROBE_SET`, `FORBIDDEN_AT_STARTUP` and the report's own "unverified at runtime" count are all derived from the baseline, so a method missing from it is missing from its tests too and the suite stays green.
+
+**Why a recording found what a thousand tests could not.** The tests reason over what the client *declares*; the frame log records what it *did*. Those two disagree exactly when a declaration is missing, which is the one case the declaration-derived tests cannot represent. Nothing about the gap was subtle once the two were put side by side — the method appears ten times in traffic and zero times in the baseline — but no artifact in the repository held both facts until the corpus was read as evidence rather than kept as replay input.
+
+**Generalizable rule.** A completeness check is only as complete as its list, so the list needs a check of its own, and that check has to draw on a source the list does not control. Here the independent source is the code's own `*_METHOD` constants, read by parsing rather than importing. A scan like that is worth having only with a falsifiability control beside it: a scan that silently matches nothing satisfies its assertions forever, and that failure looks exactly like success.
+
 ### R3's evidence method could not have passed, and the reason was a line nobody thought of as content
 
 **Author.** post-v0.1, second operator session against a live gateway

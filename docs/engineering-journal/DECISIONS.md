@@ -4,6 +4,22 @@
 
 ## 2026-08-04
 
+### Every gateway method Talaria names must be pinned in the compatibility baseline, and a scan enforces it
+
+**Author.** post-v0.1, conformance audit, first pass
+
+**Decision.** `tests/domain/test_compat_coverage.py` parses `talaria/` for module-level `*_METHOD` string constants, and `talaria/ui/prompts.py` for the `_BRIDGES` table, and requires every method name it finds to be in `REQUIRED_METHODS`. The check is deliberately one-directional: the baseline may hold methods that no constant names, because the read-only probes are issued by iterating `COMPAT_BASELINE` itself and so need no constant.
+
+**Why.** `slash.exec` was dispatched by `talaria/domain/commands.py` and absent from the baseline, which made it invisible to the startup check R34 relies on — see the LEARNINGS entry of the same date. Size assertions already existed (`len(EXPECTED_PROBE_SET) == 5`, `len(FORBIDDEN_AT_STARTUP) == 12`) and both passed throughout, because a count pins the size of the list and says nothing about whether the list is the right one. The gap can only close from the other direction: start from what the code declares and require the baseline to account for it.
+
+**Why parsing rather than importing.** Parsing reaches modules nothing in a domain test would otherwise import, cannot run whatever a module does at import time, and keeps the terminal framework out of `tests/domain/` — the bridge table lives in `talaria/ui/prompts.py`, which imports Textual at module scope. The cost is that the scan depends on a naming convention, which is why the falsifiability control pins the ten method names it is known to reach and the bridge table's exact five.
+
+**Rejected alternative — scan for any method-shaped string literal.** A gateway event type is indistinguishable in shape from a method name: `message.delta` and `paste.collapse` are the same string to a regular expression. The scan would have been mostly false positives, and an assertion that has to be suppressed constantly stops being read.
+
+**Rejected alternative — a hand-maintained list of methods to cross-check.** That is a second list with the same failure mode as the first, and nothing would keep the two in step.
+
+**Revisit when.** A gateway method reaches the wire without passing through a `*_METHOD` constant or the bridge table — an inline literal at a call site, or a name assembled at runtime. The scan cannot see either, and the honest response is to change how methods are named rather than to widen the scan into guesswork.
+
 ### A replay reads one outbound frame: the operator's own submitted prompt
 
 **Author.** post-v0.1, second operator session against a live gateway
