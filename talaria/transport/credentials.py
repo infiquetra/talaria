@@ -233,7 +233,19 @@ class LoopbackTokenProvider:
             )
 
         prompt = self._prompt if self._prompt is not None else _hidden_prompt
-        typed = await _await_maybe(prompt(self.PROMPT_LABEL))
+        try:
+            typed = await _await_maybe(prompt(self.PROMPT_LABEL))
+        except (EOFError, OSError) as exc:
+            # There is no terminal to ask on. :func:`getpass.getpass` falls back
+            # to reading stdin, and a closed or absent stdin makes that an
+            # ``EOFError`` — which used to escape this whole module as an
+            # unhandled exception, surfacing three layers up as "the frame
+            # stream failed" and telling an operator running Talaria under a
+            # supervisor nothing about the credential they need to supply.
+            raise CredentialError(
+                f"no terminal to prompt for a gateway credential ({exc}); set "
+                f"{TOKEN_ENV_VAR} or write {self._describe_path()}"
+            ) from exc
         value = _clean(typed)
         if not value:
             raise CredentialError("no gateway credential was entered at the prompt")

@@ -81,6 +81,7 @@ from talaria.domain.projection import (
     project,
     terminal_read,
 )
+from talaria.domain.startup import StartupSelection
 from talaria.domain.state import (
     APPROVAL_COMMAND_LABEL,
     DELIVERY_NOTES,
@@ -90,6 +91,7 @@ from talaria.domain.state import (
     age_out_approvals,
     apply_frame,
     cancel_turn,
+    focus_session,
     record_command_result,
     record_local_note,
     record_submission,
@@ -102,6 +104,7 @@ from talaria.domain.state import (
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.transport.attach import scrub_urls
+from talaria.transport.compat_check import CompatReport, check_compatibility
 from talaria.transport.rpc import (
     LOST_WITH_TRANSPORT,
     NEVER_SENT,
@@ -257,6 +260,56 @@ UNCOUNTED_RESOLUTION: Final[str] = "the gateway did not say how many it resolved
 #: :data:`~talaria.domain.normalize.SYSTEM_LINE_CLIP`, and a duplicated first
 #: clause is what pushes the actual reason past the cut.
 TERMINAL_READ_UNAVAILABLE: Final[str] = "terminal read not answered —"
+
+
+#: KTD7's three startup methods, and the read that resolves ``--resume``.
+#: ``session.most_recent`` is read-only and is the one of the four a startup
+#: probe is allowed to invoke; the other three are evidence-only in U3's
+#: classification and are called here as the operator's *action*, not as a
+#: capability probe. That distinction is the whole of R34: this code opens the
+#: session the operator asked for, and never calls a method to find out whether
+#: it could have.
+MOST_RECENT_METHOD: Final[str] = "session.most_recent"
+CREATE_METHOD: Final[str] = "session.create"
+RESUME_METHOD: Final[str] = "session.resume"
+
+#: The terminal width reported to ``session.create``/``session.resume``. Hermes
+#: re-wraps stored history to this (``tui_gateway/methods_session.py:14``), and a
+#: fixed 80 would re-wrap a wide terminal's history to something narrower than
+#: the screen it is about to be drawn on.
+DEFAULT_SESSION_COLS: Final[int] = 80
+
+#: Said when ``--resume`` found no session to resume.
+#:
+#: Talaria stops rather than creating one. Silently starting a new conversation
+#: for an operator who asked to return to their last one is the kind of
+#: substitution that is only noticed several turns later.
+NO_SESSION_TO_RESUME: Final[str] = (
+    "no previous session to resume — the gateway reports none. "
+    "Start a new one with a bare `talaria`."
+)
+
+#: Prefix for the line that names a session startup the gateway refused or never
+#: answered. The outcome's own notice supplies the rest.
+SESSION_START_FAILED: Final[str] = "could not open a session:"
+
+#: How the transcript names the compatibility check's blocking rows. The verdict
+#: document is where "not ready" is decided; this is the operator's copy of the
+#: same evidence, at the moment it is discovered.
+COMPAT_BLOCKED: Final[str] = "gateway compatibility check found a gap:"
+
+#: How the transcript names a frame source that failed rather than ended.
+STREAM_FAILED: Final[str] = "the frame stream failed —"
+
+#: How the transcript names a background task that died of an exception. The
+#: label that follows says which one, because "the startup sequence never ran"
+#: and "the catalogue never arrived" leave very different clients behind.
+BACKGROUND_FAILED: Final[str] = "a background task failed —"
+
+#: Process exit code for that failure. Distinct from 0 so a supervisor can tell
+#: a stream that ended from one that broke, and distinct from 1 so it is not
+#: confused with a usage error.
+STREAM_FAILURE_EXIT_CODE: Final[int] = 70
 
 
 #: What the composer says for each transport state that is not ``connected``.
@@ -441,6 +494,7 @@ class TalariaApp(App[None]):
         dispatcher: LiveDispatcher | None = None,
         call_timeout: float | None = 30.0,
         paste_threshold: PasteThreshold | None = None,
+        startup: StartupSelection | None = None,
     ) -> None:
         super().__init__()
         self.source = source
@@ -460,6 +514,14 @@ class TalariaApp(App[None]):
         #: the palette renders them differently, so they are not collapsed into
         #: one empty catalogue here.
         self.catalog: CommandCatalog | None = None
+        #: KTD7's resolved startup path, or ``None`` when the caller does not
+        #: want a session opened — which is every test that drives the app with
+        #: a dispatcher double, and replay, where there is nothing to open.
+        self.startup = startup
+        #: The startup compatibility check's report, or ``None`` until it has
+        #: run. ``None`` and "ran, and found gaps" are different facts, so they
+        #: are not collapsed (R34, AE7).
+        self.compat: CompatReport | None = None
         #: How many ``paste.collapse`` round trips are outstanding. Non-zero
         #: means the composer still holds a literal body that is about to be
         #: replaced, so Enter must not put it into the turn.
@@ -482,6 +544,17 @@ class TalariaApp(App[None]):
         self._pump_task: asyncio.Task[None] | None = None
         self._status_task: asyncio.Task[None] | None = None
         self._catalog_task: asyncio.Task[None] | None = None
+        #: The one-shot live startup sequence: compatibility check, then KTD7's
+        #: session open. Held in its own attribute for the same reason the
+        #: catalogue fetch is — it is not an operator's call, so
+        #: :meth:`settle_live` must not have to outlast it.
+        self._startup_task: asyncio.Task[None] | None = None
+        #: Set once the startup sequence has run to completion. A reconnect
+        #: re-fetches the catalogue but must not re-open the session: the
+        #: gateway keeps the session across a dropped socket, and a second
+        #: ``session.create`` on reconnect would silently abandon the operator's
+        #: conversation for a fresh one.
+        self._startup_done = False
         #: In-flight live calls started from a key binding. Held so teardown can
         #: cancel them and so a test can await them without sleeping.
         self._live_tasks: set[asyncio.Task[None]] = set()
@@ -508,6 +581,13 @@ class TalariaApp(App[None]):
         #: without polling the source's internals.
         self.replay_complete = asyncio.Event()
         self._started_at = 0.0
+        #: Why the frame stream stopped, when it stopped by failing. Empty on an
+        #: ordinary end-of-corpus.
+        self.stream_failure = ""
+        #: Which background task died and why, when one did. Kept separate from
+        #: :attr:`stream_failure` because a dead startup sequence and a dead
+        #: frame stream are different incidents with the same exit code.
+        self.background_failure = ""
 
     # ── layout ───────────────────────────────────────────────────────────
 
@@ -589,32 +669,123 @@ class TalariaApp(App[None]):
             self._pump_task,
             self._status_task,
             self._catalog_task,
+            self._startup_task,
             *self._live_tasks,
         ):
             if task is not None and not task.done():
                 task.cancel()
         self._live_tasks.clear()
         if self.status_runner is not None:
-            # Cancelling the status task is not enough on its own to satisfy
-            # R36. Cancellation unwinds the tick, and the runner's own teardown
-            # is what stops a child that is still running — without this call
-            # nothing in production ever invoked aclose(), so a status command
-            # outliving Talaria depended entirely on the tick happening to be
-            # idle at exit.
+            # What this call is, stated accurately, because an earlier comment
+            # here claimed more than it does and the next reader would have
+            # trusted it. Cancelling ``_status_task`` **is** enough for the tick
+            # that task owns: cancellation unwinds into ``_run_once``'s
+            # ``finally``, which sweeps the child's process group whatever the
+            # leader's state. Removing this line and re-running the pty
+            # teardown tests three times left no status child behind, so it is
+            # not the only thing standing between R36 and a leaked process.
+            #
+            # It is kept for the two things cancellation does not cover. It
+            # sweeps *synchronously*, before the loop ever reschedules the
+            # cancelled task, so teardown does not depend on that task getting
+            # another turn. And it covers a tick this app does not own —
+            # anything that called ``status_runner.tick()`` from a task other
+            # than ``_status_task`` — which is what
+            # ``test_teardown_stops_a_status_child_this_app_does_not_own``
+            # exercises, and which cancelling ``_status_task`` cannot reach.
             await self.status_runner.aclose()
         await self.source.close()
 
     # ── the frame pump ───────────────────────────────────────────────────
 
     async def _pump(self) -> None:
+        """Fold frames until the source ends, and stop the app if it fails.
+
+        **A source that raises has to bring the app down.** Without the clause
+        below, the exception left this task dead and unretrieved while the
+        interface stayed up: the transcript froze at the last frame, every
+        control still worked, and nothing on screen said the stream had ended.
+        An operator has no way to tell that from a quiet session, which makes it
+        strictly worse than a crash — they keep typing into a client that can no
+        longer hear anything. R36 wants teardown to be reachable from an induced
+        failure, and it cannot be if the failure is swallowed by the task that
+        suffered it.
+
+        ``CancelledError`` is re-raised, not reported: teardown itself cancels
+        this task, and reporting that as a transport failure would put a failure
+        line on screen during every orderly exit.
+        """
         try:
             async for record in self.source:
                 self.ingest(record)
         except asyncio.CancelledError:  # pragma: no cover - teardown path
             raise
+        except Exception as exc:  # noqa: BLE001 - reported, then the app stops
+            self._fail_stream(exc)
         finally:
             await self.source.close()
             self.replay_complete.set()
+
+    def _supervise(self, task: asyncio.Task[None], label: str) -> asyncio.Task[None]:
+        """Make a fire-and-forget task's failure visible instead of silent.
+
+        Every background task this class starts is created with
+        ``asyncio.create_task`` and awaited by nobody outside teardown, so an
+        exception inside one lands in a future nothing retrieves. asyncio prints
+        "Task exception was never retrieved" to stderr — under a full-screen
+        Textual app that goes nowhere a person will look — and the interface
+        stays up. :meth:`_pump` had exactly this defect and it was fixed there;
+        the startup sequence and the catalogue fetch had it too, one function
+        away, and this is the shared fix rather than a third copy.
+
+        **Why it exits rather than only reporting.** The two supervised tasks
+        are the ones that make a live client usable: without the startup
+        sequence the compatibility check never ran and no session was ever
+        opened, so the operator is looking at a connected client attached to
+        nothing. Neither coroutine is *supposed* to be able to raise — every
+        dispatcher call below them returns an
+        :class:`~talaria.transport.rpc.RpcOutcome` on every exit rather than
+        raising — so an exception here is a defect, and a defect that leaves the
+        interface looking healthy is the worst shape it can take.
+        """
+
+        def _done(finished: asyncio.Task[None]) -> None:
+            if finished.cancelled():
+                return
+            exc = finished.exception()
+            if exc is not None:
+                self._fail_background(label, exc)
+
+        task.add_done_callback(_done)
+        return task
+
+    def _fail_background(self, label: str, exc: BaseException) -> None:
+        """Name a dead background task and bring the app down (R36)."""
+        detail = scrub_urls(str(exc)) or type(exc).__name__
+        self.background_failure = f"{label}: {detail}"
+        self.state = record_local_note(
+            self.state,
+            f"{BACKGROUND_FAILED} {self.background_failure}",
+            at=self.state.last_observed_at,
+        )
+        self._dirty = True
+        self.exit(return_code=STREAM_FAILURE_EXIT_CODE)
+
+    def _fail_stream(self, exc: BaseException) -> None:
+        """Name a frame-source failure and ask Textual to shut down.
+
+        The detail goes through :func:`~talaria.transport.attach.scrub_urls` for
+        the same reason every other operator-facing exception string does: the
+        one string the dialler is handed is the credentialed URL, and an
+        exception that quotes it back would put a live token on screen.
+        """
+        detail = scrub_urls(str(exc)) or type(exc).__name__
+        self.stream_failure = detail
+        self.state = record_local_note(
+            self.state, f"{STREAM_FAILED} {detail}", at=self.state.last_observed_at
+        )
+        self._dirty = True
+        self.exit(return_code=STREAM_FAILURE_EXIT_CODE)
 
     def ingest(self, record: FrameRecord) -> None:
         """Fold one frame into domain state. Pure except for the dirty flag.
@@ -843,6 +1014,7 @@ class TalariaApp(App[None]):
         self._notice(line)
         if state == "connected":
             self.fetch_catalog()
+            self.begin_live_startup()
 
     def note_reconnect(self, epoch: int) -> None:
         """Mark a successful reconnect in the transcript, once (F6).
@@ -1528,10 +1700,181 @@ class TalariaApp(App[None]):
             return
         if self._catalog_task is not None and not self._catalog_task.done():
             return
-        self._catalog_task = asyncio.create_task(self._load_catalog_and_discard())
+        self._catalog_task = self._supervise(
+            asyncio.create_task(self._load_catalog_and_discard()), "the catalogue fetch"
+        )
 
     async def _load_catalog_and_discard(self) -> None:
         await self.load_catalog()
+
+    # ── the live startup sequence (R2, R34, AE7) ─────────────────────────
+
+    def begin_live_startup(self) -> None:
+        """Start the compatibility check and KTD7's session open, once.
+
+        Driven from the ``connected`` callback rather than from ``on_mount``,
+        and that is not a stylistic choice. ``LiveSource`` dials asynchronously
+        and only :meth:`~talaria.transport.source.LiveSource.start` knows when
+        the handshake finished; a sequence kicked off at mount would find itself
+        racing the dial, and every probe would resolve *not connected* and be
+        graded ``unproved`` — a clean gateway reported as an unverifiable one,
+        every single run.
+
+        Guarded on :attr:`_startup_done` rather than on connection count, so a
+        reconnect re-fetches the catalogue (which is cheap and may have changed)
+        and does **not** re-open the session (which would abandon the operator's
+        conversation for a new one).
+
+        **A live app with no** :attr:`startup` **selection runs no sequence at
+        all.** That is the signal that this app owns a session rather than being
+        pointed at one — the launcher supplies a selection, the framework gate
+        and every dispatcher-double test do not, and neither of those wants a
+        ``session.create`` fired at whatever is on the other end.
+        """
+        if self.mode != "live" or self.dispatcher is None or self._teardown_started:
+            return
+        if self.startup is None or self._startup_done:
+            return
+        if self._startup_task is not None and not self._startup_task.done():
+            return
+        self._startup_task = self._supervise(
+            asyncio.create_task(self._run_live_startup()), "the live startup sequence"
+        )
+
+    async def _run_live_startup(self) -> None:
+        """Verify first, then open. Order matters, in one direction only.
+
+        The check runs before the session exists, so ``spawn_tree.list`` is
+        probed with an empty session id and may come back ``refused`` — which is
+        reported and does not block. Running the check *after* the open would
+        give it a real id, and would also mean creating a session before finding
+        out whether this gateway is one Talaria understands.
+        """
+        await self.verify_gateway()
+        if self.startup is not None:
+            await self.open_session(self.startup)
+        self._startup_done = True
+
+    async def verify_gateway(self) -> CompatReport | None:
+        """Probe KTD9's read-only set and name every gap on screen (R34, AE7).
+
+        What lands in the transcript is only the blocking rows. A clean check
+        says nothing, because a line reading "17 methods verified" would be
+        false — five were verified and twelve were not probed at all — and a
+        line that told the truth about that would be an operator-facing
+        paragraph on every launch about a thing that is fine.
+
+        The gaps do not stop the launch. AE7 blocks the *daily-driver verdict*
+        on any gap, and that verdict lives in
+        ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md``. A client that
+        refused to start because one response grew a key would be less useful
+        than one that starts and says which surface it could not verify.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded by every caller
+            return None
+        report = await check_compatibility(
+            dispatcher,
+            session_id=self.state.focused_session_id or "",
+            timeout=self.call_timeout,
+        )
+        self.compat = report
+        if report.blocking:
+            for verdict in report.blocking:
+                self.state = record_local_note(
+                    self.state,
+                    f"{COMPAT_BLOCKED} {verdict.describe()}",
+                    at=self.state.last_observed_at,
+                )
+            self._dirty = True
+            self._notice(report.lines()[0])
+        return report
+
+    async def open_session(self, selection: StartupSelection) -> RpcOutcome | None:
+        """Resolve KTD7's selection into one focused session (R2).
+
+        Three paths and no switcher afterwards, which is what
+        :class:`~talaria.domain.startup.StartupSelection` already guarantees.
+        ``--resume`` is two calls rather than one: ``session.most_recent`` is the
+        read-only method that names the target, and ``session.resume`` is the
+        mutating one that opens it. Splitting them is what lets the "no previous
+        session" case be *reported* instead of quietly turning into a new
+        conversation.
+
+        **This is not covered by any live evidence.** It has never run against a
+        Hermes gateway — see R2 in
+        ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md``, which records
+        it as unmet. What is proved here is the call sequence, the precedence,
+        and what the interface does with each outcome, all against a stub.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded by every caller
+            return None
+
+        cols = max(self.size.width or DEFAULT_SESSION_COLS, 1)
+
+        if selection.mode == "new":
+            return self._land_session(
+                await dispatcher.call(CREATE_METHOD, {"cols": cols}, timeout=self.call_timeout)
+            )
+
+        target = selection.session_id
+        if selection.mode == "resume":
+            found = await dispatcher.call(MOST_RECENT_METHOD, {}, timeout=self.call_timeout)
+            if not found.confirmed:
+                self._report_startup_failure(found)
+                return found
+            raw = (found.result or {}).get("session_id")
+            target = raw if isinstance(raw, str) and raw else None
+            if target is None:
+                self._notice(NO_SESSION_TO_RESUME)
+                self.state = record_local_note(
+                    self.state, NO_SESSION_TO_RESUME, at=self.state.last_observed_at
+                )
+                self._dirty = True
+                return found
+
+        return self._land_session(
+            await dispatcher.call(
+                RESUME_METHOD,
+                {"session_id": target or "", "cols": cols},
+                timeout=self.call_timeout,
+            )
+        )
+
+    def _land_session(self, outcome: RpcOutcome) -> RpcOutcome:
+        """Focus the session the gateway just handed back, or say why not.
+
+        Reads the id out of the reply rather than reusing the one that was
+        asked for. ``session.resume`` answers with the id it actually resumed
+        (``tui_gateway/methods_session.py:306-699``), and those differ whenever
+        the gateway maps a stored id onto a live one — focusing the id Talaria
+        sent would then point the whole interface at a session the gateway is
+        not streaming.
+        """
+        if not outcome.confirmed:
+            self._report_startup_failure(outcome)
+            return outcome
+        raw = (outcome.result or {}).get("session_id")
+        if not isinstance(raw, str) or not raw:
+            self._notice(f"{SESSION_START_FAILED} the reply named no session")
+            return outcome
+        self.state = focus_session(self.state, raw)
+        self._dirty = True
+        return outcome
+
+    def _report_startup_failure(self, outcome: RpcOutcome) -> None:
+        """Put a failed session open in front of the operator, and in the log.
+
+        Both, not either. The notice is what they see now; the transcript line
+        is what survives the next notice overwriting the bar — and a launch that
+        silently landed in no session at all is the state in which every
+        subsequent action fails for a reason that is no longer on screen.
+        """
+        line = f"{SESSION_START_FAILED} {outcome.notice}"
+        self._notice(line)
+        self.state = record_local_note(self.state, line, at=self.state.last_observed_at)
+        self._dirty = True
 
     async def load_catalog(self) -> CommandCatalog:
         """Read the gateway's slash inventory once, and never guess at it.

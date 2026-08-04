@@ -4,6 +4,113 @@
 
 ## 2026-08-03
 
+### A background task that dies takes the client down, rather than being reported and left running
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Decision.** `TalariaApp._supervise` attaches a done-callback to every fire-and-forget task the app starts — today the live startup sequence and the catalogue fetch. A non-cancellation exception is written into the transcript as a named local note and the app exits 70, the same code a failed frame stream uses.
+
+**Why.** These two tasks are what make a live client usable. Without the startup sequence the compatibility check never ran and no session was ever opened, so the operator faces a connected client attached to nothing, with every control live. Neither coroutine is supposed to be able to raise — `LiveSource.call` returns an `RpcOutcome` on every exit rather than raising — so an exception here is a defect, and a defect that leaves the interface looking healthy is the worst shape it can take.
+
+**Rejected alternative — report the failure and keep running.** Attractive for the catalogue fetch, whose absence only costs slash completions. Rejected because it makes the supervisor's behaviour depend on which task failed, and because the interface's own model of "the catalogue failed" (`CommandCatalog.available`) is set by `load_catalog` from an `RpcOutcome`; an exception means that path did not run, so the interface would render a state nothing had computed.
+
+**Rejected alternative — let asyncio's "Task exception was never retrieved" warning serve.** That warning goes to stderr, underneath a full-screen Textual application. It is the status quo that produced this defect.
+
+**Revisit when.** A third supervised task appears whose failure genuinely is survivable, or an operator reports Talaria exiting 70 for something they consider cosmetic. At that point the supervisor should take a per-task severity rather than growing a special case.
+
+### `--record` belongs on the bare launcher, not only on `talaria record`
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Decision.** `talaria --record [PATH]` records every frame of a live session to a frame log while the interface runs. `LiveSource` already accepted a recorder; the launcher now passes one.
+
+**Why.** R3 — one live turn streamed to completion and its transcript compared against a replay of the same frames — is what this build's verdict names as the thing that would move it. That run has to be recorded *while somebody is driving the client*. `talaria record` attaches and dumps frames with no interface, so recording a session and using one were mutually exclusive, and the verdict document's own remediation step named something the shipped client could not do. This is the same defect shape as the paste threshold that was configurable only in the mode that ignored it, one level up.
+
+**Rejected alternative — leave it to `talaria record` and tell the operator to run two clients.** Two clients means two sessions; a recording of a *different* session proves nothing about the one whose transcript is being compared.
+
+**Rejected alternative — always record.** Every live session would write a frame log holding the whole conversation. R29 keeps corpora out of version control precisely because they carry session content; writing one unasked is the wrong default.
+
+**Revisit when.** R2 and R3 have been run. If the recording turns out to be something every first attach wants, an opt-out is a better default than an opt-in.
+
+### Malformed configuration disables its own feature; it never stops the client from starting
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Decision.** A setting whose value is the wrong type falls back — `parse_command` returns `None` for a non-string `status.command`, `_build_paste_threshold` returns the documented defaults for a non-integer bound — and the client starts. A malformed *integer* still raises `ConfigError` from `config.py`, because that path names the variable and happens before any interface exists.
+
+**Why.** `status.command = ["sh", "-c", "date"]` is the obvious operator guess for an argv array, and it used to produce a raw `AttributeError` traceback out of `shlex` and exit 1 — a whole terminal client refusing to start over an optional status line, once U10 put that call on the bare-`talaria` path.
+
+**Rejected alternative — validate types at the config layer and raise.** Consistent, and it turns every future typo into an outage for a feature the operator may not even use. The asymmetry is deliberate: `config.py` raises for a value it cannot coerce *within* a setting's own type, and consumers fall back for a value of the wrong type entirely.
+
+**Cost, stated plainly.** The fallback is silent. An operator whose status line stopped appearing has nothing to read. That is filed in `QUEUED.md` with the shape of the fix (startup notes carried into the transcript), and it is a real cost, not a rounding error.
+
+**Revisit when.** The startup-notes mechanism exists — at that point the fallback should announce itself and this decision keeps its behaviour while losing its downside.
+
+
+### A compatibility gap blocks the daily-driver verdict, not the launch
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure)
+
+**Decision.** The startup compatibility check names every gap it finds — in the composer notice and as one transcript line per blocking method — and then the client carries on and opens the session. AE7's "blocks ready" is enforced in `docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`, which is where the ready verdict lives.
+
+**Why.** The alternative reading is that a client which cannot verify its gateway should refuse to start. Applied to the actual failure modes, that is worse for the operator in every case: a response that grew a key, a method renamed in a Hermes upgrade, or a probe that timed out on a busy machine would each cost the operator their session, at the moment they were trying to start work, for a condition they can neither diagnose from a refusal nor fix in the next five minutes. Naming the gap gives them the diagnosis *and* the session.
+
+**Rejected alternative — refuse to start on any blocking verdict.** Rejected on the reasoning above. Also rejected because it makes the check's own correctness safety-critical: a false positive in drift detection would become an outage rather than a wrong sentence.
+
+**Rejected alternative — a `--force` flag to start anyway.** A flag operators would learn to always pass carries no information and adds a second code path.
+
+**Revisit when.** A real gateway has been attached (R2) and the check's false-positive rate against real responses is known. If drift detection proves precise, refusing on a *missing method* specifically — as opposed to a drifted shape — becomes defensible.
+
+### `unproved` blocks the verdict; `not-probed` does not
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Decision.** In `talaria/transport/compat_check.py`, a probe whose outcome is unknown (no reply, lost transport, not connected) grades `unproved` and blocks. A method that was deliberately never probed grades `not-probed` and does not block, but is counted in the report's first line on every run — including a clean one.
+
+**Why.** These are different facts and collapsing them loses whichever one matters. "We asked and heard nothing" is a gap in evidence and AE7 says the verdict is blocked on any gap; a check that read silence as a pass would report a compatible gateway for a socket that answered nothing at all. "We deliberately did not ask, because asking would create a session" is R34 working as designed — but if that also blocked, twelve of the seventeen methods would block every run forever and the flag would carry no information.
+
+**What stops the second one becoming a quiet pass.** The report's summary line always states the unverified count: `gateway compatibility: 0 blocking, 12 unverified at runtime (evidence-only, R34), baseline 7f4d15515`. A summary reading "compatible" after probing five of seventeen would be a claim about twelve it never touched.
+
+**Revisit when.** The evidence-only set shrinks — every method a live acceptance run exercises moves from inference to measurement, and the count in that line should fall.
+
+### Sweep the status child's process group whatever the leader's reap state
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Decision.** `StatusRunner._run_once`'s `finally` calls `_kill_process_group` unconditionally. The earlier guard — sweep only while `process.returncode is None` — is removed.
+
+**Why.** The guard was written against pid recycling: once a child is reaped its pid is free, so signalling its group could in principle reach an unrelated one. That risk is real and it is *bounded* — this runs inside one tick, at most `timeout_seconds` after the leader exited, and `self._process` is cleared immediately afterwards so nothing signals a group whose tick has ended. For the pid to be recycled inside that window the machine would have to allocate its entire pid range in about two seconds. The leak the guard caused is *certain*: one surviving process per tick, for the whole life of the client, measured.
+
+**Rejected alternative — keep the guard and sweep at teardown instead.** Tried, and it does stop the process outliving Talaria. It does not stop the accumulation while Talaria runs, which is the larger problem, and it made the teardown path the only thing standing between an operator and a growing process table.
+
+**Rejected alternative — capture the pgid at spawn and verify group membership before signalling.** There is no portable way to ask "does this group still contain only my descendants", and a partial answer would be more confusing than the accepted bound.
+
+**Revisit when.** A platform is added where pid recycling is fast (some containers reuse aggressively), or if `asyncio` gains a way to defer reaping.
+
+### `--resume` with nothing to resume reports; it does not create
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Decision.** When `session.most_recent` answers `{"session_id": null}` — its documented answer on a machine with no prior session (`tui_gateway/methods_session.py:234`) — Talaria says so in the notice and the transcript and opens nothing.
+
+**Why.** The alternative is a silent substitution: the operator asked to return to their last conversation and is placed in a brand-new one that looks identical until they refer to something they said yesterday. The cost of the chosen behaviour is one extra command; the cost of the other is a confusing session and, potentially, work redone.
+
+**Rejected alternative — fall back to `session.create` with a notice.** The notice is on the bar and is overwritten by the next thing that happens; the substitution is not.
+
+**Revisit when.** Operators report the extra step as friction, at which point a `--resume-or-new` flag makes the intent explicit rather than assumed.
+
+### The live startup sequence runs only for an app that was given a startup selection
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Decision.** `TalariaApp.begin_live_startup` returns immediately unless `self.startup` is a `StartupSelection`. The launcher supplies one; the framework validation gate and every dispatcher-double test do not.
+
+**Why.** The sequence's second half calls `session.create` or `session.resume`. Making it fire for any live-mode app would mean a test double, or a gate run pointed at a socket, opening a session on whatever is on the other end. Gating on the selection makes "this app owns a session" an explicit statement by the caller rather than an inference from `mode == "live"`.
+
+**Rejected alternative — a separate `open_session: bool` flag.** Two parameters that must agree, where one already implies the other.
+
+**Revisit when.** A second caller needs the compatibility check without the session open — at which point `verify_gateway()` is already a public method and can be called directly.
+
 ### Send an ordinary command through `slash.exec`, and keep `command.dispatch` as the fallback
 
 **Author.** v0.1 milestone-2, unit U9 (slash commands and paste collapse), adversarial closing round

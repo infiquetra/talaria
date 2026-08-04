@@ -209,7 +209,7 @@ def assert_frozen_shape(document: Mapping[str, Any]) -> None:
         raise AssertionError(f"status payload version drift: {document['version']!r} != 1")
 
 
-def parse_command(command: str | None) -> tuple[str, ...] | None:
+def parse_command(command: object) -> tuple[str, ...] | None:
     """Split ``status.command`` (KTD15) into an argv array. No shell involved.
 
     ``config.py`` stores ``status.command`` as the plain command-line string an
@@ -220,8 +220,23 @@ def parse_command(command: str | None) -> tuple[str, ...] | None:
     ``/bin/sh``. ``None`` or an all-whitespace string means "disabled" — no
     child is ever spawned, matching KTD5's "an absent ``status.command``
     disables the runner."
+
+    **Anything that is not a string also means disabled.** The argument is typed
+    ``object`` rather than ``str | None`` because the value arrives straight out
+    of the operator's TOML, where ``command = ["sh", "-c", "date"]`` is the
+    obvious guess for an argv array and is a list, which ``config.py`` freezes
+    to a tuple. Handing that to
+    ``shlex.split`` raises ``AttributeError`` from inside ``shlex``, and once
+    U10 put this call on the bare-``talaria`` launch path that became a raw
+    traceback and exit 1 with no interface at all — a whole client refusing to
+    start over an optional status line. The policy here is the one
+    ``cli._build_paste_threshold`` already documents for its own malformed
+    input: a bad setting turns its own feature off and does not stop the client.
+    Surfacing the bad setting to the operator is filed in
+    ``docs/engineering-journal/QUEUED.md``; today it is silent, which is a real
+    cost and is why that item exists.
     """
-    if command is None:
+    if not isinstance(command, str):
         return None
     parts = shlex.split(command)
     return tuple(parts) if parts else None

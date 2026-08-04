@@ -206,16 +206,28 @@ class StatusRunner:
             # start_new_session=True at spawn is what makes the group the right
             # unit to kill: the child leads it, so this reaches its descendants.
             #
-            # Guarded on returncode, and the guard is load bearing rather than
-            # an optimisation. Once the child has been reaped its pid is free
-            # for the kernel to reuse, so signalling it here could deliver
-            # SIGKILL to an unrelated process group that happens to have
-            # inherited the number. The normal paths already swept the group
-            # while the child was still unreaped; this is the cancellation and
-            # early-return backstop, and it only fires when the child is
-            # demonstrably still ours.
+            # **Not guarded on returncode**, and that is a correction. The guard
+            # that used to be here — sweep only while the leader is unreaped —
+            # was written against pid recycling, and it silently disabled the
+            # sweep for the one command shape the paragraph above says it exists
+            # for. ``worker & echo ok`` exits the *leader* immediately while the
+            # worker keeps the pipes open, so asyncio's child watcher reaps the
+            # leader within milliseconds and the reads then block until the
+            # timeout. By the time this block runs, ``returncode`` is 0 and the
+            # sweep was skipped: measured at one surviving ``sleep`` per tick,
+            # exactly the leak the comment claimed to have fixed.
+            #
+            # The recycling risk the guard was written for is real and is
+            # accepted here, because it is bounded and the leak was not. This
+            # runs inside one tick — at most ``timeout_seconds`` after the
+            # leader exited — and ``self._process`` is cleared below, so
+            # :meth:`aclose` can only ever signal a group whose tick is still in
+            # flight. For the pid to have been recycled inside that window the
+            # machine would have to allocate every pid in its range within a
+            # couple of seconds, and the *certain* alternative is a leaked
+            # process on every tick for as long as Talaria runs.
+            self._kill_process_group(process)
             if process.returncode is None:
-                self._kill_process_group(process)
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(process.wait(), timeout=self._limits.timeout_seconds)
             self._release_pipes(process)
@@ -409,6 +421,16 @@ class StatusRunner:
         Safe to call whether or not a tick is in flight, and safe to call more
         than once. Talaria's own teardown path calls this unconditionally so a
         status child is never left running after Talaria exits.
+
+        **This handles the still-running child only, and that is deliberate.**
+        The reaped-leader case — a command that backgrounds a worker, exits at
+        once, and leaves the worker holding the pipes — belongs to
+        :meth:`_run_once`'s ``finally``, which sweeps the group whatever the
+        leader's state. Widening this method to cover it as well was measured to
+        add a branch nothing in the suite could reach: cancelling the status task
+        runs that ``finally`` before this coroutine's first ``await`` returns, so
+        the group is already gone by the time control arrives here. A guard
+        nothing can exercise is a guard nobody can trust, so it is not here.
         """
         process = self._process
         if process is None or process.returncode is not None:

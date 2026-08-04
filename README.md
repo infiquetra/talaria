@@ -43,13 +43,32 @@ anything render. See [ADR-0002](platform-specs/04-architecture/adrs/0002-the-dom
 
 ## Quick start
 
-The Python implementation has started. There is no live gateway transport yet — milestone 1 drives
-the entire interface from a recorded frame log, with no socket open anywhere in the process.
+The Python implementation is at v0.1. A bare `talaria` dials a running Hermes gateway and opens a
+session; `talaria replay` drives the entire interface from a recorded frame log with no socket open
+anywhere in the process.
+
+**Read the verdict before you rely on it.** Talaria has never been connected to a Hermes gateway:
+every transport test in this repository dials a loopback stub built from a reading of Hermes's own
+source at a pinned revision. The v0.1 daily-driver verdict is therefore **not ready**, and
+[docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md](docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md)
+sets out what is measured, what is inferred, and what is unmet. Treat a first attach as an
+experiment, in a throwaway session, with the recorder on.
 
 ```bash
 uv sync --all-groups
 
-# Record a session from a running Hermes gateway.
+# Attach to a running gateway. `--resume` returns to the most recent session;
+# `--session <id>` opens an explicit one; the two are mutually exclusive.
+uv run talaria
+uv run talaria --resume
+
+# Attach and record the session while you drive it. `--record` on its own writes
+# a timestamped log under <config_dir>/recordings/; give it a path to choose one.
+# This is what an R2/R3 first attach needs: a usable client and a recording.
+uv run talaria --record
+uv run talaria --record ./first-attach.jsonl
+
+# Record with no interface, from a running Hermes gateway.
 uv run talaria record ws://127.0.0.1:9119/api/ws?token=<token>
 
 # Replay that recording through the full interface. F8 pauses, F9/F10 change
@@ -61,12 +80,26 @@ uv run talaria replay <recording.jsonl>
 uv run talaria gate --corpus <recording.jsonl> --deltas 50000
 ```
 
-When the live transport lands, Talaria installs as an ordinary command:
+Talaria also installs as an ordinary command:
 
 ```bash
 uv tool install talaria
 talaria
 ```
+
+### Supplying the gateway credential
+
+The credential is acquired once per dial and rides the WebSocket URL's `?token=` query parameter,
+never the command line. Precedence, highest first: `HERMES_DASHBOARD_SESSION_TOKEN`, a `token`
+already on `TALARIA_GATEWAY_URL`, a `token` key in `<config_dir>/credentials` (refused unless its
+mode is `0600` or stricter), then an interactive hidden prompt.
+
+**Prefer the credential file if anyone else can read your process list.** A credential supplied
+through the environment is inherited by Talaria and stays visible in the process environment for the
+life of the process — on Linux through `/proc/<pid>/environ`, on macOS through `ps -E` to the owning
+user — and no client can remove what the kernel captured at `exec`. Talaria itself never adds the
+credential to its own command line or environment; that half is asserted against a running process
+in `tests/transport/test_process_surface.py`.
 
 ### The superseded TypeScript bootstrap
 

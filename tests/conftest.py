@@ -28,11 +28,12 @@ reopens a real hole and the suite starts passing or failing on machine state.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
-from talaria import config as config_module
+from talaria.transport import credentials as credentials_module
 
 
 @pytest.fixture(autouse=True)
@@ -49,18 +50,42 @@ def isolated_global_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
       read the repository's own git-ignored ``.talaria/`` — and KTD15 designs
       that file for per-project status commands, so an operator having a real
       one is the expected state, not an exotic one.
-    * Every ``TALARIA_*`` variable is cleared so the environment level cannot
-      leak in from the operator's shell.
+    * Every name beginning ``TALARIA_`` is cleared so the environment level
+      cannot leak in from the operator's shell. Swept by prefix over
+      ``os.environ``, **not** by iterating ``config._ENV_KEY_MAP``. That map
+      holds only the four settings ``config.py`` overlays; it does not hold
+      ``TALARIA_GATEWAY_URL``, which is read by
+      :func:`~talaria.transport.attach.AttachTarget.from_environment` and is the
+      variable that decides *what the suite would dial*, nor the three
+      (``TALARIA_PROFILE``, ``TALARIA_LOG_LEVEL``, ``TALARIA_STATUS_INTERVAL``)
+      that :mod:`talaria.status.contract` forwards into the status child. An
+      earlier version of this docstring claimed the map cleared everything; it
+      did not, and the half it missed was the endpoint half of the near-miss
+      described below.
+    * ``HERMES_DASHBOARD_SESSION_TOKEN`` is cleared with them, and that one is
+      not about configuration at all — it is KTD11's highest-precedence
+      credential source. Left in place, any test that reaches
+      :class:`~talaria.transport.credentials.LoopbackTokenProvider` on a
+      developer machine acquires the operator's **real** gateway token, and a
+      default Hermes listens on the default endpoint, so the next dial attaches
+      the suite to a live gateway and starts a real session. U10 found this the
+      near-miss way: enabling the live launcher made ``main([])`` in
+      ``tests/test_cli.py`` walk the credential chain on a machine with a Hermes
+      dashboard running on ``127.0.0.1:9119``. It stopped at the interactive
+      prompt because that machine had no token exported — which is luck, not a
+      control, and this line is the control.
 
     Autouse and repository-wide because later units (U3's startup-precedence
     tests, U6's status runner) call into config without knowing this exists.
     """
     global_dir = tmp_path / "global-talaria"
     global_dir.mkdir()
+    # Swept before TALARIA_CONFIG_DIR is set, or the sweep would undo it.
+    for env_name in [name for name in os.environ if name.startswith("TALARIA_")]:
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.delenv(credentials_module.TOKEN_ENV_VAR, raising=False)
     monkeypatch.setenv("TALARIA_CONFIG_DIR", str(global_dir))
     monkeypatch.chdir(tmp_path)
-    for env_name in config_module._ENV_KEY_MAP:
-        monkeypatch.delenv(env_name, raising=False)
     return global_dir
 
 

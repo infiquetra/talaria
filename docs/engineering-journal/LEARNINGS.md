@@ -4,6 +4,123 @@
 
 ## 2026-08-03
 
+### A fire-and-forget task that dies leaves an interface that looks perfectly healthy — and there were three of them, not one
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Evidence.** U10 fixed exactly this defect in `TalariaApp._pump`, wrote it up, and shipped the same defect one function away in `begin_live_startup` and `fetch_catalog`. Measured on the real app with a dispatcher whose `call` raises: the startup task finished with a `RuntimeError`, `app.return_code` was `None`, `app.compat` was `None`, `_startup_done` was `False`, the transcript contained no line mentioning any failure, and the app kept running. asyncio printed `Task exception was never retrieved` to stderr, which under a full-screen Textual application goes somewhere nobody is looking. The client was connected, had never run its compatibility check, had never opened a session, and said nothing. Fixed with one shared supervisor, `TalariaApp._supervise`, which reports the failure into the transcript and exits 70; pinned by `tests/transport/test_session_startup.py::test_a_startup_sequence_that_raises_is_named_and_brings_the_app_down` and `::test_a_catalogue_fetch_that_raises_is_named_too`, mutated separately because one fix with two call sites is two mutations (the shared-path rule).
+
+**Mechanism.** `asyncio.create_task` returns a future, and an exception inside the coroutine is stored on that future rather than raised anywhere. If nobody calls `result()` or `exception()` the exception surfaces only in asyncio's garbage-collection warning, on stderr. Every one of these three tasks is held in an attribute and awaited by nothing outside teardown, so all three had the same shape. The reason it was fixed in one and missed in two is that `_pump` failed *visibly* during development — the pseudo-terminal test hung to its timeout — while the other two fail invisibly by construction, which is the whole point.
+
+**Generalizable rule.** After fixing a defect, grep for the *construct* rather than the symptom: every `create_task` whose result nobody awaits is the same bug, and the copies that were never noticed are the ones that fail silently.
+
+### A test whose docstring names four things and collects three is worse than a test that names three
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Evidence.** `tests/ui/test_teardown.py::test_teardown_stops_every_task_talaria_started` opened "The pump, the status loop, the catalogue fetch and the startup sequence." Its task list was `(_pump_task, _status_task, _catalog_task)`. The app it built was given no `StartupSelection`, so `begin_live_startup` returned at its first guard and `_startup_task` was permanently `None` — meaning removing `self._startup_task` from `shutdown_sources`' cancel set left the entire suite green. Three other lines were unpinned the same way and each survived deletion with 858 tests still passing: `status_runner=` in `build_live_app`, `status_interval=` beside it, and `return app.return_code or 0` in `run_live`. All four now have tests, each watched to fail with the line removed.
+
+**Mechanism.** Two separate mistakes reinforce each other. A `for … if task is not None` filter silently accepts a `None`, so a task that never started reads as a task that started and finished. And a docstring is the only place the *intent* is written down, so once it overstates the collection nobody re-derives what is actually covered. The filter now collects by name into a dict and asserts none is missing, so a task that fails to start is a failure rather than a shrug.
+
+**Generalizable rule.** When a test collects a set of things, assert the set is the size you meant — a filter that drops absent members converts "this never ran" into "this passed".
+
+### Two comments about the same teardown line contradicted each other, and the one in the file that owns the behaviour was right
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Evidence.** `TalariaApp.shutdown_sources` said cancelling the status task "is not enough on its own to satisfy R36 … a status command outliving Talaria depended entirely on the tick happening to be idle at exit". `StatusRunner.aclose`'s own docstring, forty lines away in another file, said the opposite: the tick's `finally` runs on cancellation, "so Talaria's own shutdown cannot leave a status child behind even if nothing calls `aclose()`". Measured by removing the `aclose()` call and re-running the pseudo-terminal teardown tests: no status child, no backgrounded grandchild, three times out of three. The runner's docstring was right; the app's comment overstated the line above it.
+
+**Mechanism.** `task.cancel()` schedules a `CancelledError` into the coroutine, and the coroutine's `finally` blocks run as it unwinds. `_run_once`'s `finally` calls `_kill_process_group` *synchronously* before its first `await`, so the group is gone whether or not anything else asks. What `aclose()` actually adds is narrower and worth keeping: it sweeps before the loop reschedules anything, and it covers a tick driven by a task the app does not hold. That is now what the comment says, and `test_teardown_stops_a_status_child_this_app_does_not_own` is the case only `aclose()` can pass.
+
+**Generalizable rule.** When two files comment on the same behaviour, believe the one that owns it — and when you cannot make a line's claim fail, either narrow the claim to what you *can* demonstrate or delete the line.
+
+### A negative assertion with no positive in the same observation is one platform quirk away from vacuous
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Evidence.** `test_talaria_adds_no_credential_of_its_own_to_its_environment` ended in `assert carrying <= launched_with`, where `carrying` is the set of environment variable names that hold the credential. An empty `carrying` satisfies it, so a platform whose environment read came back blind — a truncating `ps`, a hardened kernel, a container without `/proc` — would have passed the test while measuring nothing. Its only safety net was a *different* test in the same file proving the reader works at all. Changed to `assert carrying == launched_with`, which holds on this platform (measured: exactly `HERMES_DASHBOARD_SESSION_TOKEN` and `TALARIA_GATEWAY_URL`) and carries the positive half — the reader saw both names — in the same observation.
+
+**Generalizable rule.** Write set assertions as equality, not containment, whenever the empty set would be a lie: `<=` is the shape an unmeasured measurement passes.
+
+### A test that asserts against an environment block publishes that block to a public CI log the first time it fails
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Evidence.** Two tests in `tests/transport/test_process_surface.py` wrote `assert CANARY_TOKEN in surface.environ` and `assert surface.environ.strip()`. pytest prints the operands of a failing assertion, truncating a long string to its leading characters — so the first red run on a shared machine would put an arbitrary slice of the developer's real environment into the output. This repository is public and its CI logs are public. Fixed by making the raw block private (`Surface._environ`) and exposing `carries()` (a bool), `names_carrying()` (variable *names*, never values), and `environ_is_readable` (a bool); a leaked name is a fact about Talaria, a leaked value is a fact about the machine.
+
+**Generalizable rule.** Whatever a test puts inside an `assert` expression, assume it will one day be printed into a public log — reduce secrets to booleans and identifiers *before* the assertion, not inside its message.
+
+### The verdict document understated its own evidence: two of the twelve "never called" methods had real Hermes answers on disk
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+
+**Evidence.** The daily-driver verdict said "Twelve of seventeen required methods have never been called against Hermes" and marked `session.create` and `prompt.submit` "not verified at runtime". Unit U2's live capture — taken by the TypeScript reference recorder against a real Hermes dashboard on loopback, 46 frames, sha256 `04c556ac…` — contains two JSON-RPC responses. Run through the repository's own `compare_shape` against U3's pins: the first (`session_id`, `stored_session_id`, `message_count`, `messages`, `info`) matches `session.create` with **no drift** and mismatches `session.resume` on seven keys; the second (`status`) matches `prompt.submit` with no drift. The document now says so, with the two qualifications that make it honest — the capture recorded server-to-client frames only, so the method names are read off the shapes and the sequence rather than off a recorded request, and the client that made those calls was not Talaria.
+
+**Mechanism.** The sentence was true of *Talaria* and false as written, and the difference is one word. "Talaria has never connected to a Hermes gateway" survived scrutiny intact; "these methods have never been called against Hermes" did not, because a different client in an earlier unit had called two of them. An under-claim is safer than an over-claim and it is still an inaccuracy, and an inaccuracy in the direction of pessimism is the kind nobody checks.
+
+**Generalizable rule.** Before writing "this has never been done", search the repository for the artefact that would prove otherwise — evidence collected by an earlier unit for a different purpose does not announce itself.
+
+
+### The status runner leaked one process per tick, for exactly the shape its own comment claimed to have fixed
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure)
+
+**Evidence.** `StatusRunner._run_once`'s `finally` swept the status child's process group only `if process.returncode is None`, under a comment reading *"A command that backgrounds a worker with its pipes redirected (`worker & echo ok`) exits 0 immediately, so every non-timeout path used to return leaving that worker running — one leaked process per tick, forever"*. Measured against that exact shape with the pipes **not** redirected — `sh -c 'sleep 941 & echo marker'`, one `runner.tick()`, no teardown — the worker was still alive after the tick returned. The guard was skipping the sweep every time. Fixed by sweeping unconditionally in that `finally`; pinned by `tests/status/test_process_contract.py::test_a_backgrounded_worker_that_keeps_the_pipes_also_does_not_outlive_the_tick`, watched to fail with the `returncode is None` guard restored (1 failed, and 3 failed with the two pseudo-terminal teardown tests included).
+
+**Mechanism.** Two facts had to be held at once and were not. `sh -c 'worker & echo ok'` exits its *leader* immediately, and asyncio's child watcher reaps that leader within milliseconds — so `returncode` is `0` long before the `finally` runs. Meanwhile the worker inherited the pipes, so `read_capped` never sees EOF and the tick blocks until its timeout. By the time the sweep was reached, its own guard was false. The one existing test that looked at this shape (`test_a_backgrounded_worker_does_not_outlive_the_tick`) wrote `sleep 937 >/dev/null 2>&1 &` — with the pipes redirected away, stdout reaches EOF at once, the tick ends normally, and the sweep that runs *before* the leader is reaped catches the worker. The redirection in the fixture was the difference between the covered case and the leaking one.
+
+**Generalizable rule.** When a guard exists to make a fix safe, write the test for the case the guard *excludes*, not only the case the fix was written for — and if a fixture contains a detail that makes the scenario easier (a redirection, a short timeout, a flush), ask what the same scenario does without it.
+
+### An interpretive comment is evidence about intent, never about behaviour
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Evidence.** The leak above sat under nineteen lines of comment that described the leak accurately, named the command shape that causes it, and then guarded the fix in a way that disabled it for that shape. Nothing in the suite disagreed, because the only test aimed at the shape had redirected the pipes.
+
+**Mechanism.** A comment is written when the author understands the problem, which is usually *before* the last edit. This one survived a later correctness edit — the pid-recycling guard — that silently negated it. A reader auditing this file for R36 would have read the comment, agreed with it, and moved on.
+
+**Generalizable rule.** Treat a comment that claims a behaviour as a claim to be measured, not as a claim already measured. This repository has now had three of these; the rule is cheap and the alternative is auditing by reading.
+
+### A frame source that raises left the interface running over a stream that had ended
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Evidence.** `TalariaApp._pump` re-raised `CancelledError` and let every other exception escape into an `asyncio.create_task` nobody awaits. The task died, Python logged *Task exception was never retrieved*, and the app kept running: transcript frozen at the last frame, every control still live, nothing on screen saying the stream was gone. Reproduced on a real pseudo-terminal with a source that yields two frames and raises; before the fix the run hung until the harness's own 40-second timeout. Fixed by reporting the failure into the transcript and calling `App.exit(70)`; pinned by `tests/ui/test_teardown.py::test_a_failed_stream_is_named_and_closes_the_source` and `::test_an_induced_mid_stream_failure_still_restores_the_terminal`, both watched to fail with the clause reverted to a bare `pass`.
+
+**Mechanism.** The `finally` closed the source and set `replay_complete`, so everything that *inspects* teardown state looked correct. What no observer had was the difference between "the corpus ended" and "the source broke" — one is the ordinary end of a replay and the other is a client that can no longer hear anything. R36 asks that teardown be reachable from an induced failure, and it was not reachable from this one at all.
+
+**Generalizable rule.** A background task that owns the only path for data into the interface must not be allowed to die quietly; either its failure reaches the screen or the process ends. Silent is the one option that looks identical to working.
+
+### The test suite could have attached to the operator's real Hermes gateway, and stopped only by luck
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Evidence.** Wiring the live launcher made `tests/test_cli.py::test_main_exits_zero_on_a_well_formed_invocation` — a test written in U1 that simply asserted `main([]) == 0` — walk KTD11's credential chain and, had it found a credential, dial `DEFAULT_GATEWAY_URL`. On the machine running it, `hermes dashboard` was listening on `127.0.0.1:9119` at that moment (confirmed with `lsof -nP -iTCP:9119 -sTCP:LISTEN`). The run stopped at the interactive prompt because that shell had `HERMES_DASHBOARD_SESSION_TOKEN` unset and no `~/.talaria/credentials` file — verified after the fact, not before. Two fixes: the CLI test now replaces `run_live` with a double, and `tests/conftest.py`'s autouse fixture clears `HERMES_DASHBOARD_SESSION_TOKEN` for every test in the suite.
+
+**Mechanism.** The repository-wide isolation fixture cleared every `TALARIA_*` variable, because it was written to isolate *configuration*. The credential variable is not a `TALARIA_*` variable and is not configuration, so it was never in scope — and it did not matter until a unit turned a previously inert code path into one that dials. The dangerous property of this class of near-miss is that nothing failed: a green suite that attached to a live gateway and created a session would look exactly like a green suite that did not.
+
+**Generalizable rule.** When a unit makes a previously inert path live, re-ask what the *existing* tests now do — the new tests were written with the new behaviour in mind and the old ones were not. And isolate credentials by name, not by the namespace the configuration happens to use.
+
+### R1's environment clause cannot be met by any change to Talaria, and the honest scope is narrower than the requirement
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Evidence.** Measured on a running process built by the real launcher and holding a live credential: argv carries no token, no `?token=` URL and no endpoint (`ps -ww` on macOS, `/proc/<pid>/cmdline` on Linux), and every environment entry carrying the credential is one the process was launched with. The inherited `HERMES_DASHBOARD_SESSION_TOKEN` is visible for the process's whole life. Both halves are pinned in `tests/transport/test_process_surface.py`, including a test that asserts the *failure* so it cannot quietly become true.
+
+**Mechanism.** The kernel snapshots the environment block at `exec`; `/proc/<pid>/environ` serves that snapshot regardless of what the process later does to `os.environ`, and macOS exposes the same through `ps -E` to the owning user. KTD13's rule — credential in the query string, never argv — is about the half a client controls, and R1's wording extended it to a half no client controls.
+
+**Generalizable rule.** When a requirement cannot be met in full, split it at the boundary of what the code controls, prove that half, and file the other half against the operator's procedure — never widen the passing half's wording until it covers both.
+
+### A mutant that survives because a second code path did the work is a redundancy report, not a coverage report
+
+**Author.** v0.1 milestone-2, unit U10
+
+**Evidence.** Reverting the status runner's per-tick group sweep left both pseudo-terminal teardown tests green, because `StatusRunner.aclose` had been widened in the same change and was doing the same job at teardown. Splitting the mutation — tick-only, teardown-only, both — showed the teardown half was reachable from no test the suite could construct: cancelling the status task runs the tick's `finally` before `aclose`'s first `await` returns, so the group is already gone by the time control arrives. The widened branch was removed rather than kept, and the per-tick sweep was pinned by a new unit test that kills its own mutant.
+
+**Mechanism.** Two paths to one effect make each other's tests pass. The mutation table read as "well covered" until the paths were separated, at which point one of them turned out to be code nothing could exercise — this repository's own standing rule against exactly that.
+
+**Generalizable rule.** When a fix touches more than one path to the same effect, mutate each path alone before mutating them together; a mutant that survives alone is either an untested path or an unreachable one, and those need opposite responses.
+
 ### A working call is not a working feature: `command.dispatch` serves about a seventh of the catalogue
 
 **Author.** v0.1 milestone-2, unit U9 (slash commands and paste collapse), adversarial closing round

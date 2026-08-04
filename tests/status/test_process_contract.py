@@ -374,6 +374,55 @@ def test_a_backgrounded_worker_does_not_outlive_the_tick(
     asyncio.run(scenario())
 
 
+def test_a_backgrounded_worker_that_keeps_the_pipes_also_does_not_outlive_the_tick(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """The same leak, one redirection away — and this is the shape that leaked.
+
+    The test above redirects the worker's output to ``/dev/null``, so stdout
+    reaches EOF the moment the leader exits, the tick finishes normally, and the
+    sweep that runs *before* the leader is reaped catches the worker. Take the
+    redirection away and none of that holds: the worker keeps the pipes open, so
+    the reads block until the timeout, and by then asyncio's child watcher has
+    reaped the leader. The sweep in the ``finally`` was guarded on
+    ``returncode is None`` and therefore skipped, leaving one ``sleep`` per tick
+    running for as long as Talaria did.
+
+    Measured at U10 against the U6 code: one surviving process per tick. Nothing
+    else in the suite covered it, because the one test that looked was looking
+    at the redirected shape.
+    """
+    marker = "talaria-status-inherited-pipe-probe"
+
+    async def scenario() -> None:
+        runner = StatusRunner(
+            argv=("/bin/sh", "-c", f"sleep 941 & echo {marker}"),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(timeout_seconds=1.0),
+        )
+        result = await runner.tick(sample_payload)
+        # A bounded outcome either way: the worker holding the pipes is what
+        # makes this a timeout rather than an ``ok``. Asserting the outcome
+        # keeps the test honest about which path it exercised.
+        assert result.outcome == "timeout"
+
+        await asyncio.sleep(0.5)
+        survivors = subprocess.run(  # noqa: S603
+            ["/usr/bin/pgrep", "-f", "sleep 941"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.split()
+        for pid in survivors:  # pragma: no cover - only runs on regression
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(int(pid), signal.SIGKILL)
+        assert survivors == [], (
+            "a worker that inherited the status child's pipes outlived the tick"
+        )
+
+    asyncio.run(scenario())
+
+
 def test_repeated_timeouts_do_not_leak_file_descriptors(
     tmp_path: Path, sample_payload: StatusPayload
 ) -> None:

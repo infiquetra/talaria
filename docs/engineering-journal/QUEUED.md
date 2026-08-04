@@ -96,6 +96,58 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 
 **Do, additionally.** With the session from the smoke-attach: fetch the catalogue and record its entry count and category names; dispatch one command of each shape the catalogue actually offers; paste 400 lines and confirm the placeholder and the file it names.
 
+### R1's environment clause is unmet, and no change to Talaria can meet it
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure)
+**Priority.** P0 — it is a security requirement recorded as met nowhere, and the mitigation is an operator procedure that is not yet written down outside this journal and the verdict document.
+**Effort.** Small (a documentation decision), or Medium (removing the environment credential source entirely).
+**Worth it when.** Before Talaria is used by anyone other than its author on a shared machine.
+
+**Context.** R1 asks that a running Talaria's command line **and environment** carry no credential. The argv half holds and is measured: a running process built by the real launcher and holding a live credential shows no token, no `?token=` URL and no endpoint in `ps -ww` / `/proc/<pid>/cmdline`, and every environment entry carrying the credential is one the process was launched with (`tests/transport/test_process_surface.py`). The environment half cannot hold when the operator uses KTD11's highest-precedence source, `HERMES_DASHBOARD_SESSION_TOKEN`: the kernel snapshots the environment block at `exec` and `/proc/<pid>/environ` serves that snapshot for the life of the process, so `os.environ.pop` changes nothing a reader can see; macOS exposes the same to the owning user through `ps -E`.
+
+The mitigation exists and is measured: KTD11's third level, a `0600` file at `<config_dir>/credentials`, leaves the process environment clean (`::test_the_credential_file_route_keeps_the_environment_clean`).
+
+**Do.** Decide one of two things and write it into the README rather than only here. Either (a) document the credential file as the supported route whenever the process surface matters, and keep the environment variable as a convenience with a stated caveat; or (b) drop the environment variable from the precedence chain, accepting that it is the variable Hermes's own dashboard publishes and that dropping it costs every operator a setup step.
+
+**Do not.** Widen R1's wording so the argv half satisfies it. The failing half is asserted by a test that asserts the *failure*, so if Talaria ever does scrub its inherited environment that test goes red and somebody has to remove it on purpose.
+
+### R2, R3 and the F1/F7 live demonstrations are unmet — the whole live acceptance run
+
+**Author.** v0.1 milestone-2, unit U10
+**Priority.** P0 — this is the gap that makes the daily-driver verdict *not ready*.
+**Effort.** Medium.
+**Worth it when.** Immediately; it is the first thing that should happen after this branch lands.
+
+**Context.** U7's queued smoke-attach item above names the transport half. U10's own verification clause names three more, and none of them happened: **R2** (a real attach resolving KTD7's precedence chain against a running gateway and landing in the expected session), **R3** (one prompt streamed to completion through the live path, its transcript compared against replay from the same recorded frames), and the origin's **F1** and **F7** flows demonstrated live in an isolated session.
+
+What U10 *did* build is the path they would exercise. `talaria/cli.py:build_live_app` assembles the live shell, and `TalariaApp.open_session` resolves the selection into `session.create`, or `session.most_recent` followed by `session.resume`, or a direct `session.resume` — all proved against the loopback stub in `tests/transport/test_session_startup.py`, including the order (compatibility probes before the open) and the parameters as the *server* received them. Nothing in it has been answered by Hermes.
+
+**Do.** Run the smoke-attach above and, in the same isolated session: (1) launch bare, with `--resume`, and with `--session <id>`, and record which session each lands in; (2) submit one prompt and let it stream to completion with `--record` on, then run `talaria replay` over that recording and diff the two transcripts; (3) record the compatibility check's real output — how many of the five read-only probes come back `present`, and whether `spawn_tree.list` refuses the fixture. Then update the evidence table and the verdict in `docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`.
+
+**Recording this is now possible from the client, which it was not when this item was written.** `LiveSource` accepted a recorder and `build_live_app` never passed one, and `talaria record` draws no interface — so step (2)'s "with the recorder on" named something the shipped client could not do. U10's closeout added `talaria --record [PATH]`. Use it; the frame log's header carries the credential-stripped endpoint, and every frame passes the U2 redaction boundary before it is written.
+
+### The install job and the CI matrix are declared but have never run
+
+**Author.** v0.1 milestone-2, unit U10
+**Priority.** P1
+**Effort.** Small — it is a push.
+**Worth it when.** As soon as this branch is pushed.
+
+**Context.** `.github/workflows/validate.yml` gained an `install` job that installs the wheel with `uv tool install` into a fresh prefix and runs the console script under `env -i`. AE10 asks that this pass in CI. It has not, because this work is uncommitted. The same is true of the two existing Python legs for this change. The equivalent was run by hand on macOS and passed; the verdict document's platform matrix marks the CI rows *declared, not observed* and must be corrected once they have run.
+
+**Do.** Push, read the run, and correct the matrix rows in the verdict document from the actual result — including a failure, if that is what happens.
+
+### The platform matrix is one operating system and two terminal hosts
+
+**Author.** v0.1 milestone-2, unit U10
+**Priority.** P2
+**Effort.** Medium.
+**Worth it when.** Before claiming support for anything the matrix does not list.
+
+**Context.** R39 says the recorded matrix lists exactly what was exercised. What was exercised is macOS arm64, Python 3.12.11 and 3.13, a bare pseudo-terminal at 100×30, a tmux 3.7b pane at 100×30, and a clean `uv tool install`. Not exercised, and therefore claimed nowhere: Linux as a daily driver (the CI leg is informational and runs the test suite, not the interface), Windows, any real terminal emulator, screen, mosh, any remote session, any narrow terminal under a real emulator, and Python 3.14.
+
+**Do.** Add one real terminal emulator and one Linux desktop run to the matrix before the next verdict revision, and re-run the pseudo-terminal teardown tests at a narrow width (80×24 and below) — U8's height-zero failure family lived exactly there.
+
 ### Audit the egress surfaces as a set, rather than the redactor's call sites
 
 **Author.** v0.1 milestone-2, unit U7 — proposed by the milestone-1 review agent
@@ -266,6 +318,19 @@ Every round-5 test that resizes uses approval cards, whose command body posts `R
 
 **Suggested framing.** One test: several clarify cards, resize the terminal narrower, assert every card whose control leaves `scrollable_content_region` is retitled. Closing this also closes the mount-path item below, which is the same hole from the other direction. This is the repository's own "a guard nothing can exercise is a guard nobody can trust" rule applied to round 5's own new code.
 
+### `test_a_card_mounting_into_a_full_region_is_still_recomputed` fails intermittently across full runs
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Priority.** P1 — not because the product symptom is severe, but because a suite that fails intermittently cannot be used as a gate, and this unit's definition of done is a green `uv run pytest`.
+**Effort.** Small to make the test deterministic; medium to answer the question underneath it.
+**Worth it when.** Before anyone treats a single green `pytest` run as evidence, and before the next unit inherits the habit of re-running until it passes.
+
+**Reproduction.** `uv run pytest -q` from the repository root, repeated. Measured on the U10 closeout tree, macOS 26.5.2 arm64, Python 3.12.11: **thirteen consecutive full runs, twelve green and one with `tests/ui/test_prompts.py::test_a_card_mounting_into_a_full_region_is_still_recomputed` failed** — eight runs during closeout (one red) and five more afterwards during commit verification (all green), so the observed post-closeout rate is roughly one in thirteen and a handful of green runs says very little. The adversarial review measured two failures in five on the pre-closeout tree, with the assertion `assert 'waiting for you' == 'answer below — scroll'` — the border-title assertion at the end of that test, not the geometry assertion before it. It is **not** reproducible in isolation: 20 consecutive runs of that test alone, with four busy loops saturating the machine, all passed. Something about the full-suite ordering is required.
+
+**What is and is not known.** The failing assertion says the card's control is off screen (that assertion passes) and the card is still titled "waiting for you". The marking is reached through two chained deferrals — `CommandPanel.Rewrapped` → `call_after_refresh(reveal_actions)` → `call_after_refresh(mark_unreachable_controls)` — while the test's `settle()` helper awaits two `pilot.pause()` cycles. **Hypothesis, not a measurement:** the test observes the arrangement one refresh before the marking lands. If that is right this is a test-synchronization defect and the product is correct. If it is wrong, it is a third face of the two items below and the product intermittently never marks at all.
+
+**Deliberately not "fixed" at closeout.** The obvious change — poll for the title with a deadline instead of asserting it once — makes the red run green without settling which of those two it is. A red test whose cause is unknown is worth more than a green one that was adjusted until it passed. Resolve the hypothesis first: instrument `mark_unreachable_controls` to record when it runs, run the full suite until it fails, and read whether it ran at all.
+
 ### A control-only card mounting into a full prompt region is never recomputed
 
 **Author.** v0.1 milestone-2, unit U8 (blocking prompts), fifth adversarial round — found while fixing the multi-card reveal, queued rather than fixed. Re-priced from P2 to P1 by the round's verification, which disproved the mitigation this item originally claimed.
@@ -282,6 +347,33 @@ So the operator types a password into a focused control that draws nothing, with
 **Suggested framing.** Schedule the recomputation from `apply` whenever it mounted or removed a card. Note that doing so makes the `Rewrapped` channel redundant for the mount case — check, by deleting it and running `test_a_card_mounting_into_a_full_region_is_still_recomputed`, whether it still has a case of its own before keeping both.
 
 ## P2
+
+### `compare_shape` compares the top level only, so a wholly restructured payload reads as "present"
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Priority.** P2
+**Effort.** Medium — the comparison is easy; deciding how deep to go and what an *acceptable* nested change looks like is the work.
+**Worth it when.** A real gateway has been attached (R2) and the check has been run against at least one Hermes upgrade, so the false-positive cost of going deeper is knowable rather than guessed.
+
+**Context.** The startup compatibility check grades a method `present` when the response's own key set and each value's *kind* match U3's pin. Nothing below that is looked at. Measured: a gateway answering `commands.catalog` with `{"pairs": [{"name": "/status", "desc": "renamed field layout"}]}`, `agents.list` with `{"processes": ["not-an-object-at-all"]}` and `spawn_tree.list` with `{"entries": [{"totally": "different", "from": "the pin"}]}` produced `ready: True`, `0 blocking`, and `commands.catalog: present, top-level response shape matches 7f4d15515`.
+
+This is U3's deliberate v0.1 scope and `talaria/domain/compat.py:343` says so. It is queued rather than left implicit because the word an operator reads is `present`, which sounds like a broader statement than the one being made — every entry in `commands.catalog` could have been restructured and the check would say the catalogue was fine, while the parser that consumes it fell over. The wording now says "top-level response shape" in the code, the report line and the verdict document; the *coverage* is unchanged.
+
+**Suggested framing.** One level deeper for the three methods whose payload Talaria actually parses element by element (`commands.catalog`, `agents.list`, `spawn_tree.list`): compare the kind of the first element of each recorded list. Do not recurse generally — the maintenance cost is what U3 rejected, and that judgement still holds.
+
+### R1's Linux half has never executed — the `/proc` branch is unmeasured
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Priority.** P2
+**Effort.** Small, and it needs a Linux machine or a Linux CI runner.
+**Worth it when.** The CI matrix runs the process-surface tests on Linux, or anybody proposes to run Talaria on Linux as a daily driver.
+
+**Context.** `tests/transport/test_process_surface.py::read_surface` has two branches: `/proc/<pid>/cmdline` and `/proc/<pid>/environ` on Linux, `ps -ww` / `ps -Eww` on macOS. Only the macOS branch has ever run. The Linux branch is marked `# pragma: no cover - exercised on Linux only` and is exactly that — never exercised. Every R1 measurement in this build is a macOS measurement.
+
+That matters more than a coverage gap usually would, because the *argument* for R1's unmet half is a Linux argument: the kernel snapshots the environment block at `exec` and serves it from `/proc/<pid>/environ` for the life of the process, which is why scrubbing cannot work. The claim is right, and it is reasoned from documentation rather than measured here.
+
+**Suggested framing.** The existing `python-check-linux` job runs the suite on Ubuntu with `continue-on-error: true`. Read its output for these five tests specifically before trusting anything in the R1 section on Linux; a `continue-on-error` job that is never read is not evidence.
+
 
 ### Command entry is a listing, not completion — three catalogue fields go unread
 
@@ -396,7 +488,7 @@ Deliberately not fixed in the scaffold. The bound is a semantic property of the 
 
 **Half-resolved by U9, 2026-08-03 — the paste half only.** The consuming unit arrived and answered its own question: `PasteThreshold` treats a non-positive bound as "this half is off", re-encoding the shipping client's `pasteCollapseLines > 0 && …` guard (`ui-tui/src/app/useComposerState.ts:277-280` at `7f4d15515`). So `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES=0` no longer collapses every one-word paste; it disables the line bound and leaves the byte bound working. `talaria/cli.py:_build_paste_threshold` also falls back to the KTD16 defaults for a non-integer value rather than raising, because a malformed paste setting should not stop the client from starting. Pinned by `tests/domain/test_commands.py::test_a_non_positive_line_bound_switches_that_half_off` and `::test_both_bounds_off_collapses_nothing`, both watched to fail with the `> 0` clause removed.
 
-**Not yet reachable end to end.** `talaria/cli.py` builds a `TalariaApp` in exactly one place — `run_replay`, at line 200 — and that is where `_build_paste_threshold(cfg)` is passed. There is no live launcher yet; a bare `talaria` run prints that session startup is not wired, which is U10's work. So the configuration path above is proved by its unit tests and by the replay construction, and is unexercised in the only mode where a paste is ever collapsed. U10 wiring the live launcher closes that, and until it does this item is half-resolved in semantics rather than in reach.
+**Reach closed by U10, 2026-08-03.** `talaria/cli.py:build_live_app` now assembles the live shell — transport, credential provider, status runner, startup selection — and passes `_build_paste_threshold(cfg)` into it, so a bare `talaria` run reaches the configured thresholds in the one mode where a paste is ever collapsed. Pinned by `tests/test_cli.py::test_the_configured_paste_thresholds_reach_the_live_app`, which compares a configured launcher against a default one so it asserts the configuration was *read* rather than that a threshold exists, and was watched to fail with the `paste_threshold=` argument removed from `build_live_app`. **Reach is not the same as live proof:** no paste has been collapsed by a Hermes gateway, because none has been attached — see the daily-driver verdict, `docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`.
 
 **Still open: `status.interval_seconds`.** `TALARIA_STATUS_INTERVAL_SECONDS=-5` still resolves to `-5` and still hands U6's status runner a negative sleep. There is no equivalent Hermes reading of a negative interval to re-encode, so the bound is a decision the status runner has to make, and it was out of U9's scope. Nothing in this update changes that path.
 
@@ -506,6 +598,20 @@ No individual line grows — that was round 3's defect. But the buffer accumulat
 
 
 ## P3
+
+### A malformed `status.command` turns the status line off without saying so
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Priority.** P3
+**Effort.** Small for a stderr line; medium for an in-interface notice, which is the version worth having.
+**Worth it when.** A second configuration setting acquires the same silent-fallback behaviour, or an operator reports that their status line "just stopped working".
+
+**Context.** `status.command = ["sh", "-c", "date"]` in `config.toml` — a TOML array, the obvious guess for an argv — used to raise `AttributeError` out of `shlex.split`. Once U10 put `_build_status_runner` on the bare-`talaria` launch path that became a full traceback and exit 1 with no interface at all: a whole client refusing to start over an optional status line. `parse_command` now returns `None` for any non-string, matching the policy `cli._build_paste_threshold` already documents for its own malformed input.
+
+The client starts, and nothing tells the operator why their status line is missing. That is the right trade against crashing and the wrong end state.
+
+**Suggested framing.** `build_live_app` and `run_replay` both already assemble configuration before the app exists. Collect the settings that fell back, hand them to `TalariaApp` as startup notes, and record them as local transcript entries at mount — the same surface the compatibility check's blocking rows use, which exists and is already read by tests.
+
 ### Four guards inside round 5's reachability code have no test that can fail
 
 **Author.** v0.1 milestone-2, unit U8 (blocking prompts), verification of the fifth adversarial round

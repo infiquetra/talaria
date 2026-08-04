@@ -566,6 +566,43 @@ async def test_with_no_source_and_no_prompt_the_failure_says_what_to_do(
     assert TOKEN_ENV_VAR in str(caught.value)
 
 
+@pytest.mark.asyncio
+async def test_a_prompt_with_no_terminal_is_a_named_credential_failure(
+    tmp_path: Path,
+) -> None:
+    """The launcher path found this one (U10). ``getpass`` falls back to reading
+    stdin when there is no terminal, and a closed stdin makes that an
+    ``EOFError`` — which is not a :class:`CredentialError` and used to escape
+    this module entirely. Three layers up it surfaced as "the frame stream
+    failed", which tells an operator running Talaria under a supervisor nothing
+    about the credential they have not supplied.
+
+    The message has to name a way out, so both routes are asserted."""
+
+    def _no_terminal(label: str) -> str:
+        raise EOFError("EOF when reading a line")
+
+    provider = LoopbackTokenProvider(
+        credentials_path=tmp_path / "absent", environ={}, prompt=_no_terminal
+    )
+    with pytest.raises(CredentialError) as caught:
+        await provider.acquire()
+    message = str(caught.value)
+    assert TOKEN_ENV_VAR in message
+    assert str(tmp_path / "absent") in message
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_that_answers_is_still_accepted(tmp_path: Path) -> None:
+    """Pairs the test above: turning a broken prompt into a named failure must
+    not turn a working one into one."""
+    provider = LoopbackTokenProvider(
+        credentials_path=tmp_path / "absent", environ={}, prompt=lambda label: "typed"
+    )
+    credential = await provider.acquire()
+    assert (credential.value, credential.source) == ("typed", "prompt")
+
+
 # ── per-dial acquisition and prompt caching (KTD11) ──────────────────────
 
 

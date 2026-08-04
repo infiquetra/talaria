@@ -26,6 +26,8 @@ from talaria.domain.startup import (
 
 if TYPE_CHECKING:
     from talaria.status.runner import StatusRunner
+    from talaria.transport.source import LiveSource
+    from talaria.ui.app import TalariaApp
 
 __all__ = [
     "StartupConflictError",
@@ -52,6 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume",
         action="store_true",
         help="resume the most recently used session (session.most_recent)",
+    )
+    parser.add_argument(
+        "--record",
+        nargs="?",
+        const="",
+        metavar="PATH",
+        help="record every frame of this live session to a frame log "
+        "(default: a timestamped file under <config_dir>/recordings/, KTD15)",
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -154,17 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "command", None) == "gate":
         return run_gate_command(args)
 
-    selection_from_args(args)
-    # The live transport exists as of U7 (`talaria.transport.source.LiveSource`),
-    # but the startup path that turns a KTD7 selection into a focused session —
-    # create, resume, or an explicit id — is U10's. A bare `talaria` run
-    # therefore resolves the startup precedence and exits rather than dialling
-    # into a session it cannot yet choose.
-    print(
-        "talaria: the live transport has landed, but session startup is not wired "
-        "yet — run `talaria replay <corpus>`."
-    )
-    return 0
+    return run_live(args)
 
 
 def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
@@ -207,6 +207,99 @@ def run_replay(args: argparse.Namespace) -> int:
     )
     app.run()
     return 0
+
+
+def build_live_app(
+    args: argparse.Namespace, cfg: config_module.Config
+) -> tuple[TalariaApp, LiveSource]:
+    """Assemble the live shell: transport, credential provider, app, callbacks.
+
+    Split out from :func:`run_live` so the assembly is testable without opening
+    a socket or a screen. Everything that decides behaviour is decided here —
+    which endpoint, which credential chain, which startup path, which paste
+    thresholds — and :func:`run_live` only starts it.
+
+    The credential provider is *constructed* here and acquires nothing: KTD11
+    calls it once per dial, inside :class:`~talaria.transport.source.LiveSource`,
+    so building the app never touches the operator's terminal or their
+    credential file.
+
+    ``--record`` is wired here for a reason worth stating. R3 — one live turn
+    streamed to completion and its transcript compared against a replay of the
+    same frames — is the requirement that would move this build's verdict, and
+    it cannot be attempted without a recording of a live turn.
+    :class:`~talaria.transport.source.LiveSource` has always accepted a recorder
+    and the launcher never passed one, so the only way to record a session was
+    ``talaria record``, which has no interface: an operator could have a usable
+    client or a recording, never both. That is the same defect shape as the
+    paste threshold that was configurable in the mode that ignored it, one level
+    up.
+    """
+    from talaria.recorder.framelog import FrameRecorder, default_log_path
+    from talaria.transport.attach import AttachTarget
+    from talaria.transport.credentials import LoopbackTokenProvider
+    from talaria.transport.source import LiveSource
+    from talaria.ui.app import TalariaApp
+
+    credentials = config_module.credentials_path(cfg.config_dir)
+    target = AttachTarget.from_environment(credentials_path=credentials)
+
+    recorder: FrameRecorder | None = None
+    requested = getattr(args, "record", None)
+    if requested is not None:
+        recordings = config_module.recordings_dir(cfg.config_dir)
+        if not requested:
+            recordings.mkdir(parents=True, exist_ok=True)
+        # ``target.url`` and not the dialled URL: the endpoint written into the
+        # frame log's header has already had every credential query parameter
+        # stripped by ``AttachTarget`` (R1, KTD13). The recorder redacts as well,
+        # but handing it a credential and trusting the redaction would make the
+        # log's safety depend on one boundary instead of two.
+        recorder = FrameRecorder(
+            Path(requested) if requested else default_log_path(recordings),
+            target.url,
+        )
+
+    source = LiveSource(
+        target,
+        LoopbackTokenProvider(credentials_path=credentials),
+        recorder=recorder,
+    )
+    app = TalariaApp(
+        source,
+        mode="live",
+        dispatcher=source,
+        status_runner=_build_status_runner(cfg),
+        status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
+        paste_threshold=_build_paste_threshold(cfg),
+        startup=selection_from_args(args),
+    )
+    # Bound after construction rather than passed in: the app is built *from*
+    # the source, so wiring the source's callbacks to the app's methods at
+    # construction time would be circular (see ``LiveSource.bind``).
+    source.bind(on_connection=app.note_connection_state, on_reconnect=app.note_reconnect)
+    return app, source
+
+
+def run_live(args: argparse.Namespace) -> int:
+    """Launch the live shell against a running Hermes gateway (R2, R31).
+
+    **This path has never been run against a real Hermes gateway.** Every
+    transport test in this repository dials a loopback stub. The unmet
+    requirements that follow from that — live startup acceptance (R2) and a live
+    turn (R3) — are recorded in
+    ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md``, and they are why
+    that document's verdict is *not ready*.
+
+    ``--session`` and ``--resume`` are resolved before anything is dialled
+    (KTD7): the conflicting pair is already a usage error out of
+    :func:`parse_args`, so by the time a socket exists exactly one path has been
+    selected and nothing can switch it afterwards.
+    """
+    cfg = config_module.load_config()
+    app, _source = build_live_app(args, cfg)
+    app.run()
+    return app.return_code or 0
 
 
 def _build_paste_threshold(cfg: config_module.Config) -> PasteThreshold:
