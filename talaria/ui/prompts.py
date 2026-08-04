@@ -420,6 +420,18 @@ def activity_line(turn: TurnStatus, view: PromptView) -> str:
     something the operator can act on, and an idle turn is not claiming
     anything that needs correcting — the withdrawal's permanent record is in
     the transcript either way.
+
+    **The gateway's own wait note takes the same slot, below the withdrawal.**
+    ``thinking.delta`` exists because a reasoning model can stall for minutes
+    with nothing on the wire, and Hermes wrote it to replace a bare spinner with
+    an account of what the stall is (``run_agent._emit_wait_notice``). That is
+    strictly more than ``working…`` says, so it wins that slot — but only that
+    one. It loses to the withdrawal line, which is not information but a
+    correction: the withdrawal case is the one where ``working…`` may be
+    *false*, and a note saying the gateway is indexing does nothing to stop an
+    operator believing a session Talaria can no longer unblock is progressing.
+    Losing to ``waiting for you`` needs no separate rule — the precedence above
+    already decided it.
     """
     attended = attended_rows(view)
     if turn == "waiting" and attended:
@@ -429,7 +441,7 @@ def activity_line(turn: TurnStatus, view: PromptView) -> str:
     if turn == "streaming":
         if view.withdrawn:
             return withdrawn_activity_line(view.withdrawn)
-        return "working…"
+        return view.notice or "working…"
     if turn == "cancelled":
         return "interrupted"
     return ""

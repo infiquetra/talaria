@@ -250,6 +250,38 @@ def test_the_activity_line_counts_the_prompts_it_is_not_naming() -> None:
     assert "(+1 more)" in activity_line("waiting", view)
 
 
+def test_the_gateway_wait_note_replaces_working_and_nothing_else() -> None:
+    """``thinking.delta`` is the live spinner text, and it is more informative
+    than ``working…`` — so it takes that slot, and only while there is a turn
+    for it to describe."""
+    view = PromptView(notice="(◐) indexing...")
+    assert activity_line("streaming", view) == "(◐) indexing..."
+    assert activity_line("idle", view) == ""
+    assert activity_line("cancelled", view) == "interrupted"
+
+
+def test_a_withdrawal_outranks_the_gateway_wait_note() -> None:
+    """Both want the ``streaming`` slot and only one is a correction.
+
+    The withdrawal line is on screen because ``working…`` may be *false* — the
+    gateway may still be holding an approval Talaria stopped offering any way to
+    answer. A note saying the gateway is indexing is true and beside the point:
+    it leaves the operator believing a session that may never move is moving.
+    """
+    view = PromptView(withdrawn=1, notice="(◐) indexing...")
+    assert activity_line("streaming", view) == withdrawn_activity_line(1)
+
+
+def test_a_prompt_outranks_the_gateway_wait_note() -> None:
+    """R8 again. A note about the gateway's own wait must not sit where the line
+    saying a human is being waited on would go."""
+    view = PromptView(
+        rows=(PromptRow(request_id="r1", kind="sudo", summary="sudo password required"),),
+        notice="(◐) indexing...",
+    )
+    assert "waiting for you" in activity_line("waiting", view)
+
+
 # ── the controls themselves ──────────────────────────────────────────────
 
 

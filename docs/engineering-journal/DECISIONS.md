@@ -4,6 +4,24 @@
 
 ## 2026-08-04
 
+### `thinking.delta` is the activity line; `reasoning.delta` is the transcript
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Decision.** `thinking.delta` writes `SessionState.thinking_notice` — one string, replaced not appended, cleared at every turn boundary, clipped to one row — which `prompt_view` projects and `activity_line` shows in place of `working…`. It never reaches the transcript and never opens a turn. `reasoning.delta` and `reasoning.available` are untouched and still carry the reasoning block in full.
+
+**Why.** The two events are not two names for one thing. `thinking.delta` is Hermes's live spinner text, written by `run_agent._emit_wait_notice` so a stalled provider can say what it is waiting on, and Hermes documents it as rendering "as the live spinner/status line" (`run_agent.py:1047`). The model's reasoning arrives on `reasoning.delta` instead. Appending a status line to an append-only transcript is the same mistake `_ignore` already avoids for `tool.progress`, and it produced both a glued line (`· (◐) indexing...The user wants…`) and, through `reasoning.available`'s already-have-deltas guard, the wholesale loss of reasoning blocks.
+
+**R6 is not weakened.** Its obligation is that reasoning-block content is never dropped, and the reasoning block is on the channel this leaves alone. The note is not dropped either — it moves to the region that matches what it is: one row, overwritten, describing right now.
+
+**Rejected alternative — ignore `thinking.delta` outright**, as `tool.progress` and `tool.generating` are ignored. Cheapest, and defensible on the same argument. Rejected because the event exists precisely to answer "why has nothing happened for two minutes", and a client that shows `working…` through a ten-minute provider stall is throwing away the one signal that explains it.
+
+**Rejected alternative — commit it to the transcript on its own line** rather than gluing it. Fixes the reported line and keeps every byte. Rejected because it is the same spam one row down: the gateway sends a frame per animation step, so a long turn writes a column of spinner frames through the middle of the conversation.
+
+**Rejected alternative — let the note outrank the withdrawn-approval line.** Rejected: the withdrawal line is not information but a correction, on the one case where `working…` may be false. A true note about the gateway indexing does nothing to stop an operator believing a session Talaria can no longer unblock is progressing.
+
+**Revisit when.** A gateway is seen sending reasoning prose on `thinking.delta` — which would mean a different agent runtime behind the same protocol, and would make this a content channel after all. `tests/domain/test_thinking_status.py` is where that evidence should land.
+
 ### When Talaria takes a control away, the caret goes back to the composer
 
 **Author.** post-v0.1, second operator session against a live gateway
