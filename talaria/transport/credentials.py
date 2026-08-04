@@ -38,6 +38,18 @@ prompt-sourced credential is held in memory for the process lifetime and never
 re-prompted, because re-prompting mid-stream would block reconnection on
 operator presence.
 
+**Level 4 is reachable only before the interface takes the terminal.** A dial
+happens inside a running Textual application, which owns the screen and is
+reading stdin; a :func:`getpass.getpass` issued from there writes its prompt
+where nothing can display it and then blocks a worker thread on a read that
+competes with the UI's own input driver. The observable result is a client that
+appears hung at "connecting" while it is in fact waiting, invisibly, for typing
+that cannot reach it. So the launcher calls :meth:`LoopbackTokenProvider.prime`
+**before** the interface starts and that call seals the prompt for the rest of
+the process: every later dial resolves from levels 1–3 or from the primed value,
+and a dial that can find none of those fails with :class:`CredentialError`
+rather than asking a question nobody can see.
+
 **Nothing here logs, prints, or reprs a credential value.** :class:`Credential`
 overrides ``__repr__`` for that reason — a dataclass's generated repr would put
 the token into any traceback, any ``logging`` call with ``%r``, and any pytest
@@ -66,6 +78,7 @@ __all__ = [
     "CredentialProvider",
     "CredentialSource",
     "LoopbackTokenProvider",
+    "PrimingProvider",
     "resolve_endpoint",
 ]
 
@@ -153,15 +166,57 @@ class CredentialProvider(Protocol):
         ...
 
 
+@runtime_checkable
+class PrimingProvider(Protocol):
+    """A provider that can resolve once *before* the interface owns the terminal.
+
+    Deliberately **not** folded into :class:`CredentialProvider`. That protocol
+    is satisfied by any object with an ``acquire``, which is what lets a test
+    double be a provider without inheriting anything; requiring a second method
+    would break every such double for the benefit of one caller. So the launcher
+    asks structurally — ``isinstance(provider, PrimingProvider)`` — and a
+    provider that has nothing to prime is simply not primed.
+    """
+
+    async def prime(self) -> Credential:
+        """Resolve a credential now, and forbid interactive prompting after."""
+        ...
+
+
+def _has_controlling_terminal() -> bool:
+    """Whether there is a terminal to ask on *and* to turn echo off on.
+
+    Separate function so the refusal below is testable without a subprocess and
+    without taking away the terminal the test suite is running on.
+    """
+    try:
+        with open("/dev/tty"):
+            return True
+    except OSError:
+        return False
+
+
 async def _hidden_prompt(label: str) -> str:
-    """Read a credential without echoing it.
+    """Read a credential without echoing it, or refuse to read it at all.
 
     :func:`getpass.getpass` turns off terminal echo through ``termios`` for the
-    duration of the read, and falls back to a warned plain read when there is no
-    terminal. It runs in a worker thread because it blocks on the operator, and
-    blocking the event loop here would freeze the interface that is about to
-    show the connection state.
+    duration of the read. When it cannot find a terminal it does **not** give
+    up: it warns ``Password input may be echoed`` and falls back to a plain
+    :func:`input`. That fallback is refused here rather than used. A credential
+    read with echo on is a credential written to the scrollback of whatever
+    launched Talaria, and this module's contract is that nothing in it prints,
+    logs or reprs a credential value (R9) — a contract the standard library's
+    fallback would quietly break on exactly the unattended launches least likely
+    to be watched.
+
+    Refusing raises :class:`EOFError`, which :meth:`LoopbackTokenProvider.acquire`
+    already turns into a :class:`CredentialError` naming both non-interactive
+    ways to supply the credential.
+
+    The read runs in a worker thread because it blocks on the operator.
     """
+    if not _has_controlling_terminal():
+        raise EOFError("no controlling terminal to prompt on without echoing")
     return await asyncio.to_thread(getpass.getpass, label)
 
 
@@ -205,7 +260,38 @@ class LoopbackTokenProvider:
     async def acquire(self) -> Credential:
         """Walk the precedence chain and return a credential. Never logs it."""
         self.acquisitions += 1
+        return await self._resolve()
 
+    async def prime(self) -> Credential:
+        """Resolve once *before* the interface starts, then seal the prompt.
+
+        Two things happen here, and the second is the one that matters. The
+        first is ordinary: walk the same chain :meth:`acquire` walks, at a moment
+        when the terminal is still an ordinary terminal, so level 4 can actually
+        ask the operator a question and be answered.
+
+        The second is that the prompt is sealed **whichever level answered**, and
+        sealed even when this call raises. After this returns, no dial can reach
+        :func:`getpass.getpass`, so the failure mode this method exists to
+        prevent — a hidden prompt underneath a running full-screen interface,
+        indistinguishable from a hung connection — is unreachable rather than
+        merely unlikely. A credential that disappears mid-session (a file
+        deleted, an environment rotated to empty) therefore surfaces on the next
+        reconnect as :class:`CredentialError`, which
+        :meth:`~talaria.transport.source.LiveSource._dial` already reports as
+        ``credential_unavailable`` with the reason on screen.
+
+        Not counted in :attr:`acquisitions`: that counter measures dials, and
+        priming is not one. Counting it here would make the KTD11 per-dial
+        evidence read one high forever, which is worse than not counting at all —
+        a number that is always wrong by one is a number nobody can use.
+        """
+        try:
+            return await self._resolve()
+        finally:
+            self._allow_prompt = False
+
+    async def _resolve(self) -> Credential:
         env = self.environ
 
         value = _clean(env.get(TOKEN_ENV_VAR))

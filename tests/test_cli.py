@@ -16,6 +16,7 @@ import pytest
 import talaria.cli as cli_module
 from talaria import config as config_module
 from talaria.cli import main, parse_args, selection_from_args
+from talaria.transport.credentials import LoopbackTokenProvider
 
 
 def test_explicit_session_beats_resume_and_default() -> None:
@@ -288,7 +289,9 @@ def test_run_live_propagates_the_apps_exit_code(monkeypatch: pytest.MonkeyPatch)
     def fake_build(args: object, cfg: object) -> tuple[FakeApp, object]:
         app = FakeApp(codes.pop(0))
         built.append(app)
-        return app, object()
+        # A source whose provider has no ``prime``: nothing to resolve up front,
+        # so the launch proceeds straight to the interface.
+        return app, _FakeSource(object())
 
     monkeypatch.setattr(cli_module, "build_live_app", fake_build)
 
@@ -339,3 +342,101 @@ def test_main_dispatches_record_subcommand_to_run_record(
     assert exit_code == 0
     assert len(calls) == 1
     assert calls[0]["url"] == "ws://127.0.0.1:9119/api/ws?token=abc"
+
+
+# ── the credential is resolved before the interface takes the terminal ───
+
+
+class _RecordingApp:
+    """Stands in for the Textual app, recording only whether it was started."""
+
+    def __init__(self, order: list[str]) -> None:
+        self._order = order
+        self.return_code = 0
+
+    def run(self) -> None:
+        self._order.append("interface-started")
+
+
+class _FakeSource:
+    """Carries a provider and nothing else; ``run_live`` needs no more."""
+
+    def __init__(self, provider: object) -> None:
+        self.provider = provider
+
+
+def test_the_credential_is_resolved_before_the_interface_starts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The ordering defect this test exists for, stated plainly.
+
+    Acquisition used to happen on the first dial, which happens in ``on_mount``
+    -- inside a running Textual app that owns the screen and reads stdin. The
+    hidden prompt was written where nothing could show it and blocked on a read
+    racing the UI's input driver, so the client sat on "connecting to gateway"
+    with no socket ever opened. Asserting the *order* is the only way to pin
+    this: both calls happen either way, and only their sequence was ever wrong.
+    """
+    order: list[str] = []
+
+    def _prompt(label: str) -> str:
+        order.append("prompted")
+        return "typed-at-launch"
+
+    provider = LoopbackTokenProvider(
+        credentials_path=tmp_path / "absent", environ={}, prompt=_prompt
+    )
+    app = _RecordingApp(order)
+    monkeypatch.setattr(
+        cli_module, "build_live_app", lambda args, cfg: (app, _FakeSource(provider))
+    )
+
+    assert cli_module.run_live(parse_args([])) == 0
+    assert order == ["prompted", "interface-started"]
+
+
+def test_the_interface_never_starts_without_a_credential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing credential must be a printed remedy, not a screen that hangs."""
+    order: list[str] = []
+    missing = tmp_path / "absent"
+    provider = LoopbackTokenProvider(
+        credentials_path=missing, environ={}, allow_prompt=False
+    )
+    app = _RecordingApp(order)
+    monkeypatch.setattr(
+        cli_module, "build_live_app", lambda args, cfg: (app, _FakeSource(provider))
+    )
+
+    exit_code = cli_module.run_live(parse_args([]))
+
+    assert order == [], "the interface started with no credential to dial with"
+    assert exit_code == 2
+    message = capsys.readouterr().err
+    assert "credential" in message
+    assert str(missing) in message, "the remedy has to name the file the operator should write"
+
+
+def test_cancelling_at_the_credential_prompt_stops_before_the_interface(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl-C at the prompt is an answer, and it is not a traceback."""
+    order: list[str] = []
+
+    def _cancelled(label: str) -> str:
+        raise KeyboardInterrupt
+
+    provider = LoopbackTokenProvider(
+        credentials_path=tmp_path / "absent", environ={}, prompt=_cancelled
+    )
+    app = _RecordingApp(order)
+    monkeypatch.setattr(
+        cli_module, "build_live_app", lambda args, cfg: (app, _FakeSource(provider))
+    )
+
+    exit_code = cli_module.run_live(parse_args([]))
+
+    assert exit_code == 130
+    assert order == []
+    assert "cancelled" in capsys.readouterr().err

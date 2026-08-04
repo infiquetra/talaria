@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import getpass
 import json
 import os
 import signal
@@ -23,6 +24,7 @@ import pytest
 
 from talaria.recorder.framelog import FrameRecorder
 from talaria.status.contract import build_child_env
+from talaria.transport import credentials as credentials_module
 from talaria.transport.attach import (
     AUTH_CLOSE_CODES,
     AttachFailure,
@@ -697,7 +699,187 @@ async def test_an_environment_credential_outranks_a_cached_prompt(
     )
 
 
+# ── priming: the prompt happens before the interface, or not at all ──────
+
+
+@pytest.mark.asyncio
+async def test_priming_resolves_without_asking_when_a_file_answers(
+    tmp_path: Path,
+) -> None:
+    """Priming is not "always prompt"; it is "prompt now if at all"."""
+    path = tmp_path / "credentials"
+    path.write_text('token = "from-the-file"\n', encoding="utf-8")
+    path.chmod(0o600)
+
+    asked: list[str] = []
+
+    def _prompt(label: str) -> str:
+        asked.append(label)
+        return "typed"
+
+    provider = LoopbackTokenProvider(credentials_path=path, environ={}, prompt=_prompt)
+
+    credential = await provider.prime()
+
+    assert (credential.source, credential.value) == ("file", "from-the-file")
+    assert asked == [], "the operator was asked for a credential they had already written"
+
+
+@pytest.mark.asyncio
+async def test_priming_seals_the_prompt_so_no_later_dial_can_ask(tmp_path: Path) -> None:
+    """The regression this whole mechanism exists for.
+
+    A dial reaching :func:`getpass.getpass` under a running Textual app writes a
+    prompt nowhere visible and blocks on a read that fights the UI for stdin.
+    The operator sees "connecting to gateway" forever. After priming, that path
+    must be unreachable — not unlikely, unreachable — so the same situation
+    surfaces as a named failure instead.
+    """
+    path = tmp_path / "credentials"
+    path.write_text('token = "from-the-file"\n', encoding="utf-8")
+    path.chmod(0o600)
+
+    asked: list[str] = []
+
+    def _prompt(label: str) -> str:
+        asked.append(label)
+        return "typed"
+
+    provider = LoopbackTokenProvider(credentials_path=path, environ={}, prompt=_prompt)
+    assert (await provider.prime()).source == "file"
+
+    # The credential goes away mid-session, which is what a dashboard restart
+    # does: the token is minted per server start and dies with the process.
+    path.unlink()
+
+    with pytest.raises(CredentialError):
+        await provider.acquire()
+    assert asked == [], "a dial reached the interactive prompt"
+
+
+@pytest.mark.asyncio
+async def test_priming_seals_the_prompt_even_when_priming_itself_failed(
+    tmp_path: Path,
+) -> None:
+    """Otherwise the one launch with no terminal leaves the prompt armed."""
+
+    asked: list[str] = []
+
+    def _no_terminal(label: str) -> str:
+        asked.append(label)
+        raise EOFError("not a terminal")
+
+    provider = LoopbackTokenProvider(
+        credentials_path=tmp_path / "absent", environ={}, prompt=_no_terminal
+    )
+
+    with pytest.raises(CredentialError):
+        await provider.prime()
+    assert len(asked) == 1
+
+    with pytest.raises(CredentialError):
+        await provider.acquire()
+    assert len(asked) == 1, "the prompt was still armed after a failed prime"
+
+
+@pytest.mark.asyncio
+async def test_a_primed_answer_serves_every_later_dial(tmp_path: Path) -> None:
+    """The operator types once, at launch, and never again."""
+    asked: list[str] = []
+
+    def _prompt(label: str) -> str:
+        asked.append(label)
+        return "typed-at-launch"
+
+    provider = LoopbackTokenProvider(
+        credentials_path=tmp_path / "absent", environ={}, prompt=_prompt
+    )
+
+    primed = await provider.prime()
+    first = await provider.acquire()
+    second = await provider.acquire()
+
+    assert len(asked) == 1
+    assert primed.source == "prompt"
+    assert first.source == second.source == "prompt-cached"
+    assert first.value == second.value == "typed-at-launch"
+
+
+@pytest.mark.asyncio
+async def test_priming_is_not_counted_as_a_dial(tmp_path: Path) -> None:
+    """``acquisitions`` is KTD11's per-dial evidence, and priming is not a dial.
+
+    A counter that is reliably wrong by one is worse than no counter: the whole
+    point of the number is that "called once per dial" is otherwise invisible.
+    """
+    path = tmp_path / "credentials"
+    path.write_text('token = "from-the-file"\n', encoding="utf-8")
+    path.chmod(0o600)
+    provider = LoopbackTokenProvider(credentials_path=path, environ={})
+
+    await provider.prime()
+    assert provider.acquisitions == 0
+
+    await provider.acquire()
+    await provider.acquire()
+    assert provider.acquisitions == 2
+
+
+@pytest.mark.asyncio
+async def test_priming_still_re_reads_the_rotating_levels_on_every_dial(
+    tmp_path: Path,
+) -> None:
+    """Sealing the prompt must not freeze levels 1-3 into a cached value."""
+    environ: dict[str, str] = {TOKEN_ENV_VAR: "first"}
+    provider = LoopbackTokenProvider(
+        credentials_path=tmp_path / "absent", environ=environ, allow_prompt=False
+    )
+
+    assert (await provider.prime()).value == "first"
+
+    environ[TOKEN_ENV_VAR] = "rotated-after-priming"
+    credential = await provider.acquire()
+    assert (credential.value, credential.source) == ("rotated-after-priming", "environment")
+
+
 # ── the interactive prompt does not echo (R9) ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_with_no_terminal_refuses_rather_than_echoing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """:func:`getpass.getpass` falls back to an echoing read; that is refused.
+
+    Without the refusal an unattended launch — a supervisor, a CI job, a shell
+    with stdin redirected — reads the token through :func:`input` and leaves it
+    in that process's scrollback and logs, which is exactly where R9 says a
+    credential must never appear. The standard library announces this with a
+    warning and proceeds; announcing it is not the same as preventing it.
+
+    What is asserted is that :func:`getpass.getpass` is never *reached*, not
+    merely that the call fails. Asserting only the failure proved nothing: under
+    pytest stdin is captured, so the fallback hits ``EOFError`` and raises
+    ``CredentialError`` whether the guard is there or not — a test that passed
+    identically with the guard deleted.
+    """
+    reached: list[str] = []
+
+    def _echoing_fallback(label: str) -> str:
+        reached.append(label)
+        return "read-with-echo-on"
+
+    monkeypatch.setattr(getpass, "getpass", _echoing_fallback)
+    monkeypatch.setattr(credentials_module, "_has_controlling_terminal", lambda: False)
+    provider = LoopbackTokenProvider(credentials_path=tmp_path / "absent", environ={})
+
+    with pytest.raises(CredentialError) as excinfo:
+        await provider.acquire()
+
+    assert reached == [], "the echoing fallback was reached"
+    message = str(excinfo.value)
+    assert "terminal" in message
+    assert TOKEN_ENV_VAR in message, "a refusal that names no way forward is a dead end"
 
 
 PTY_PROBE = """
