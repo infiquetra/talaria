@@ -14,6 +14,16 @@
 
 **Generalizable rule.** A test double for a human is not a human. Any code path whose contract is "ask the operator" is untested by construction, however green the branch coverage: what is being asserted is the answer, never the asking. Locate every such path and pin its *ordering* against the thing that owns the terminal — priming before the interface starts, and sealing the prompt afterwards, are both assertions about sequence, which is the one property the doubles were silent about.
 
+### The secure route lost to the insecure one on ergonomics, so the fix was ergonomic
+
+**Author.** post-v0.1, after the first operator attach
+
+**Evidence.** R1 asks that a running Talaria's environment carry no credential, and that half cannot hold when the token arrives through `HERMES_DASHBOARD_SESSION_TOKEN`: the kernel snapshots the environment at `exec` and serves it for the process's life. The mitigation — a `0600` file at `<config_dir>/credentials` — existed, was measured, and was still the route nobody used, because Hermes mints the dashboard session token with `secrets.token_urlsafe(32)` at server start and holds it in memory only (`hermes_cli/web_server.py:300`). Every dashboard restart therefore invalidated the file, and refreshing it meant reading the token out of the served page by hand and pasting it at a shell prompt — into shell history, on the way to a file whose whole purpose was keeping it off the process surface. `talaria refresh-credential` now does it in one command that prints nothing secret.
+
+**Mechanism.** The insecure option was not winning because operators disagreed about the risk. It was winning because it was the one that survived a restart without work. A security control whose recurring cost is higher than the alternative's is a control that degrades to advice, and advice loses to a working shortcut every time — especially under the conditions where it matters most, which are the tired, unattended, restart-at-midnight ones.
+
+**Generalizable rule.** When the documented-safe path keeps losing to the unsafe one, measure the *recurring* cost of each, not the one-time setup. If the safe path costs something every restart and the unsafe one costs nothing, the fix is to build the missing tool, not to write a firmer warning. Then say so in the queued decision, because "we removed the practical objection" is a real change to a trade-off that was previously balanced.
+
 ### `getpass` does not fail when it cannot hide input — it warns and echoes
 
 **Author.** post-v0.1, found while verifying the fix above

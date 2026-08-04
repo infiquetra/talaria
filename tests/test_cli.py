@@ -344,6 +344,63 @@ def test_main_dispatches_record_subcommand_to_run_record(
     assert calls[0]["url"] == "ws://127.0.0.1:9119/api/ws?token=abc"
 
 
+# ── refreshing the credential from a running dashboard ───────────────────
+
+
+def test_main_routes_refresh_credential_to_its_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[object] = []
+
+    def fake_refresh_command(args: object) -> int:
+        seen.append(args)
+        return 0
+
+    monkeypatch.setattr(cli_module, "run_refresh_credential", fake_refresh_command)
+
+    assert cli_module.main(["refresh-credential"]) == 0
+    assert len(seen) == 1
+
+
+def test_refresh_credential_derives_the_dashboard_from_the_gateway_endpoint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With no ``--from``, the dashboard is the host and port Talaria already dials.
+
+    Deriving it means an operator cannot refresh the credential for one gateway
+    into the file another gateway will be dialled with.
+    """
+    import talaria.transport.refresh as refresh_module
+
+    seen: list[str] = []
+
+    def fake_refresh(origin: str, path: Path, *, timeout: float) -> object:
+        seen.append(origin)
+        return refresh_module.RefreshReport(
+            path=path, origin=origin, created=True, tightened=False, preserved_keys=("url",)
+        )
+
+    monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:9119/api/ws")
+    monkeypatch.setattr(refresh_module, "refresh_credential", fake_refresh)
+
+    assert cli_module.main(["refresh-credential"]) == 0
+    assert seen == ["http://127.0.0.1:9119/"]
+
+    printed = capsys.readouterr().out
+    assert "created" in printed
+    assert "kept: url" in printed
+
+
+def test_refresh_credential_reports_a_missing_dashboard_and_exits_two(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Port 1 on loopback is reserved and nothing listens there."""
+    monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:1/api/ws")
+
+    assert cli_module.main(["refresh-credential", "--timeout", "5"]) == 2
+    assert "no dashboard answered" in capsys.readouterr().err
+
+
 # ── the credential is resolved before the interface takes the terminal ───
 
 

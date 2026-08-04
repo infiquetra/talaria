@@ -109,6 +109,10 @@ The mitigation exists and is measured: KTD11's third level, a `0600` file at `<c
 
 **Do.** Decide one of two things and write it into the README rather than only here. Either (a) document the credential file as the supported route whenever the process surface matters, and keep the environment variable as a convenience with a stated caveat; or (b) drop the environment variable from the precedence chain, accepting that it is the variable Hermes's own dashboard publishes and that dropping it costs every operator a setup step.
 
+**The cost of option (b) fell sharply on 2026-08-04.** The argument for keeping the environment variable was that the file route costs "every operator a setup step" — and that step was the awkward part, because the dashboard mints its session token at server start and keeps it in memory only, so the file had to be rewritten by hand after every dashboard restart, with the token passing through a shell prompt and into shell history on the way. `talaria refresh-credential` (`talaria/transport/refresh.py`) now writes that file from the page the dashboard already serves its own web UI, at `0600`, preserving the file's other keys, without the value ever reaching a terminal. The recurring step is now one command that prints nothing secret. That does not decide the question — it removes the practical objection to the answer that is better for R1.
+
+**Also relevant:** the environment variable is no longer the only route that survives a restart unattended, which was the other implicit argument for it.
+
 **Do not.** Widen R1's wording so the argv half satisfies it. The failing half is asserted by a test that asserts the *failure*, so if Talaria ever does scrub its inherited environment that test goes red and somebody has to remove it on purpose.
 
 ### R2, R3 and the F1/F7 live demonstrations are unmet — the whole live acceptance run

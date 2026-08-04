@@ -97,6 +97,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="start paused",
     )
 
+    refresh_parser = subparsers.add_parser(
+        "refresh-credential",
+        help="rewrite the credential file from a running Hermes dashboard's session token",
+    )
+    refresh_parser.add_argument(
+        "--from",
+        dest="dashboard",
+        metavar="URL",
+        help="dashboard http URL (default: derived from the configured gateway endpoint)",
+    )
+    refresh_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        metavar="SECONDS",
+        help="how long to wait for the dashboard to answer (default: 10)",
+    )
+
     gate_parser = subparsers.add_parser(
         "gate",
         help="run the framework validation gate and print its measurements as JSON",
@@ -160,6 +178,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if getattr(args, "command", None) == "replay":
         return run_replay(args)
+
+    if getattr(args, "command", None) == "refresh-credential":
+        return run_refresh_credential(args)
 
     if getattr(args, "command", None) == "gate":
         return run_gate_command(args)
@@ -368,6 +389,52 @@ def _build_paste_threshold(cfg: config_module.Config) -> PasteThreshold:
         lines=_bound("paste_collapse_lines", DEFAULT_COLLAPSE_LINES),
         byte_limit=_bound("paste_collapse_bytes", DEFAULT_COLLAPSE_BYTES),
     )
+
+
+def run_refresh_credential(args: argparse.Namespace) -> int:
+    """Rewrite the credential file from a running dashboard's session token.
+
+    The dashboard mints its session token at server start and keeps it in
+    memory, so every dashboard restart leaves ``<config_dir>/credentials``
+    holding a value that will be refused. Before this command the remedy was to
+    read the token out of the served page by hand, which is a thing an operator
+    should not be doing with a credential at a shell prompt where it lands in
+    shell history.
+
+    The token is never printed here. What is printed is which file was written,
+    which dashboard it came from, and which of the file's other keys survived —
+    enough to confirm the command did what was intended without putting the
+    value on a screen or into a scrollback.
+    """
+    from talaria.transport.attach import AttachTarget
+    from talaria.transport.refresh import (
+        RefreshError,
+        dashboard_origin_for,
+        refresh_credential,
+    )
+
+    cfg = config_module.load_config()
+    credentials = config_module.credentials_path(cfg.config_dir)
+
+    try:
+        origin = args.dashboard
+        if not origin:
+            target = AttachTarget.from_environment(credentials_path=credentials)
+            if target.problem:
+                raise RefreshError(target.problem)
+            origin = dashboard_origin_for(target.url)
+        report = refresh_credential(origin, credentials, timeout=args.timeout)
+    except RefreshError as exc:
+        print(f"talaria: {exc}", file=sys.stderr)
+        return 2
+
+    action = "created" if report.created else "updated"
+    print(f"{action} {report.path} (mode 0600) from {report.origin}")
+    if report.tightened:
+        print("  permissions tightened to 0600; the previous file was readable by others")
+    if report.preserved_keys:
+        print(f"  kept: {', '.join(report.preserved_keys)}")
+    return 0
 
 
 def run_gate_command(args: argparse.Namespace) -> int:
