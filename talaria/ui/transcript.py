@@ -41,8 +41,10 @@ from typing import Final
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
+from talaria.domain.models import TranscriptKind
 from talaria.domain.projection import TranscriptView
 from talaria.ui.literal import literal_text
+from talaria.ui.markdown import inline_markdown
 
 #: KTD14's default. Overridable per-app so the gate can measure a smaller cap
 #: without editing the source, but the shipped default is the number the
@@ -52,6 +54,37 @@ DEFAULT_MOUNT_CAP: Final[int] = 500
 #: Rendered in place of everything that has been unmounted. One widget, always,
 #: so the collapse cannot itself grow the mount count.
 CONDENSED_TEMPLATE: Final[str] = "── {count} earlier lines condensed (still readable by the agent)"
+
+#: The entry kinds whose lines get inline markdown, and the only ones.
+#:
+#: Both are agent prose, which is the whole argument for styling them: a model
+#: writes ``**like this**`` and means emphasis. The kinds left out are left out
+#: for a reason each time. ``user`` is the operator's own typed text, and
+#: echoing back something other than what they typed is its own small betrayal.
+#: ``tool`` is program output — file contents, a directory listing, a diff —
+#: where an asterisk is far more likely to be a glob or a C comment than a
+#: request for italics, and restyling it would make the screen disagree with the
+#: program that produced it. Everything else is Talaria's own wording.
+MARKDOWN_KINDS: Final[frozenset[TranscriptKind]] = frozenset({"assistant", "reasoning"})
+
+
+class TranscriptLine(Static):
+    """One projected line, keeping the projection's text beside the drawn text.
+
+    The two are no longer the same string. Inline markdown removes the
+    delimiters of whatever it styles, so a line projected as ``**done**`` is
+    drawn as ``done`` in bold — and every existing check that compares the pane
+    against the projection means the *projected* string. Rather than weaken
+    those checks to whatever survives rendering, each widget carries the line it
+    was built from, so "is the pane showing the right line" and "what does the
+    terminal actually paint" stay two separate, separately answerable questions.
+    """
+
+    def __init__(self, source: str, *, kind: TranscriptKind | None = None) -> None:
+        renderable = inline_markdown(source) if kind in MARKDOWN_KINDS else literal_text(source)
+        super().__init__(renderable, markup=False)
+        #: The projection line, verbatim — not the text that ends up on screen.
+        self.source = source
 
 
 class TranscriptPane(VerticalScroll):
@@ -78,7 +111,7 @@ class TranscriptPane(VerticalScroll):
         self.follow = True
         self._lines: tuple[str, ...] = ()
         self._stable = 0
-        self._widgets: deque[Static] = deque()
+        self._widgets: deque[TranscriptLine] = deque()
         #: Absolute index of the first mounted line, tracked directly rather
         #: than inferred from how many times a trim has run. It used to be
         #: inferred: a counter incremented on every left-hand eviction served as
@@ -129,7 +162,32 @@ class TranscriptPane(VerticalScroll):
 
     @property
     def rendered_lines(self) -> tuple[str, ...]:
-        """The text actually on screen, in order — what a snapshot test reads."""
+        """The projection lines this pane currently holds, in order.
+
+        Read from the mounted widgets rather than from the pane's own index
+        arithmetic, for the reason :attr:`mounted_count` gives: a number the
+        measured object computes about itself is not a measurement. Each widget
+        reports the line it was built from, so a pane that mounted the wrong
+        slice still fails the comparison.
+
+        This is the projection's text, not the terminal's. The two differ
+        wherever inline markdown consumed a delimiter, and the checks that use
+        this property — ``interface_shows_everything`` in the replay gate, the
+        window assertions in the bounds suite — are asking whether the pane
+        holds the right *content*, which is the projected string. For the drawn
+        characters, read :attr:`drawn_lines`.
+        """
+        return tuple(widget.source for widget in self._widgets)
+
+    @property
+    def drawn_lines(self) -> tuple[str, ...]:
+        """The characters the terminal actually paints, in order.
+
+        Equal to :attr:`rendered_lines` except on agent prose carrying inline
+        markdown, where the delimiters of a styled construct are gone. Nothing
+        else is ever removed, and the suite asserts that as a property of the
+        renderer rather than as a claim in a docstring.
+        """
         return tuple(str(widget.content) for widget in self._widgets)
 
     # ── update ───────────────────────────────────────────────────────────
@@ -177,7 +235,10 @@ class TranscriptPane(VerticalScroll):
         start = self._top + len(self._widgets)
         pending = list(current[start:])
         if pending:
-            new_widgets = [Static(literal_text(line), markup=False) for line in pending]
+            new_widgets = [
+                TranscriptLine(line, kind=view.kind_at(start + offset))
+                for offset, line in enumerate(pending)
+            ]
             self._widgets.extend(new_widgets)
             await self.mount_all(new_widgets)
             # Sampled at the moment of maximum mount, which is now also the end

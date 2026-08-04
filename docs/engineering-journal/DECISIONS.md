@@ -20,6 +20,28 @@
 
 **Revisit when.** A fourth site needs to raise this, or a control appears that should legitimately keep the caret after the operator answers it. Either is a sign the rule wants to be "hand back to whatever last had it" rather than "hand back to the composer" — which needs a focus history the app does not keep today.
 
+### Inline markdown is rendered on agent prose; block markdown stays out of scope
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Decision.** `talaria/ui/markdown.py` renders `**strong**`, `*emphasis*`, and backtick code spans on transcript lines whose entry kind is `assistant` or `reasoning`, consuming the delimiters. Everything else — headings, fenced blocks, lists, tables, links, block quotes — stays literal, and so does every other entry kind. Block-level rendering is queued as its own piece of work at the operator's request.
+
+**This amends R6, deliberately.** R6 reads: *"Transcript content renders as readable plain text. Markdown, diff, and reasoning-block presentation are out of scope, but their content is never dropped."* The first clause is presentational and is what changes. The second is an obligation and does not: nothing here runs before the projection, so `TranscriptView` still publishes the agent's bytes verbatim, `terminal_read` still serves them (KTD10), and the recording still holds them. `tests/domain/test_projection.py::test_every_transcript_entry_survives_into_the_line_buffer` continues to enforce that half untouched.
+
+**Why inline and not the rest.** `TranscriptPane` mounts one widget per line, and four separate mechanisms are stated in those terms: KTD14's cap counts widgets, the stable-prefix diff indexes lines, `_top` plus the condensed banner is a line position, and the scroll anchor subtracts evicted widget heights. Every inline construct is resolvable from one line in isolation, so it costs none of that. A heading or a fenced block is one renderable spanning many lines and breaks all four at once — plus it has a streaming problem inline rendering does not, since a code fence is ambiguous until its closer arrives.
+
+**Why only two entry kinds.** `user` is the operator's own typed text, and echoing back something other than what they typed is its own small deceit. `tool` is program output — file contents, listings, diffs — where an asterisk is far more likely to be a glob or a C comment than a request for italics, and restyling it makes the screen disagree with the program that produced it. Both were confirmed on a live gateway: the operator's `**Judgment**` stayed literal on the `›` line in the same screen where the agent's reply rendered it bold.
+
+**Rejected alternative — hand the line to `rich.markdown.Markdown` or any real parser.** Enormously more capable and roughly one line of code. Rejected on two counts. It emits block renderables, so it breaks the mount model above. And every renderer in this package builds a `Text` explicitly so that Rich's console markup is never parsed over gateway-supplied bytes; a parser that takes a `str` is exactly how that guarantee gets lost by accident later.
+
+**Rejected alternative — support `_emphasis_` and `__strong__` as well.** It is valid CommonMark, and leaving it out means some agent prose renders half-styled. Rejected because CommonMark renders `__init__.py` as a bold `init`, and quietly rewriting a Python identifier is a worse defect than the asterisks this feature removes — on a client whose stated posture is that the rendered path is the executed path. Underscores are left alone entirely; `tests/ui/test_markdown.py::UNTOUCHED` pins it.
+
+**Rejected alternative — strip markdown markers without styling them.** Cheapest possible fix for the visible complaint. Rejected because it deletes characters and puts nothing in their place, which is content loss on the surface the operator reads, and R6's surviving clause is precisely about not doing that.
+
+**Rejected alternative — match emphasis before extracting code spans.** Simpler control flow. Rejected because asterisks inside a code span would then be styled and consumed: `` `f(**opts)` `` would render as `f(opts)` in bold, which is a wrong rendering of code rather than a cosmetic gap. Code spans are extracted first and emphasis is matched over a skeleton in which each span is a single placeholder — NUL, which is safe only because defanging removes NUL first, and a test pins that rather than trusting the comment.
+
+**Revisit when.** Block-level rendering is taken up (see `QUEUED.md`, P2), or an operator reports prose that renders half-styled often enough to reopen the underscore decision. If the second happens, the fix is a narrower rule — underscores only when the run is not adjacent to a word character on the outside — not CommonMark's full flanking algorithm.
+
 ## 2026-08-03
 
 ### A background task that dies takes the client down, rather than being reported and left running
