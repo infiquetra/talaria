@@ -22,7 +22,10 @@ one is a way for content Talaria did not author to change the screen:
    friends) is the same attack with the opposite move: it occupies no cells, so
    ``rm -rf /home/build`` with one hidden inside is byte-for-byte a different
    command from the one the operator reads and is pixel-for-pixel the same
-   picture. **The bidirectional set is the smaller half of this.** Unicode's
+   picture. *Pixel-for-pixel the same picture* is the operative half, and it is
+   what the emoji presentation selectors do not do — see
+   :data:`PRESENTATION_SELECTORS`. **The bidirectional set is the smaller half
+   of this.** Unicode's
    whole ``Cf`` category draws nothing, and the part of it that matters here is
    the Tag block (U+E0020–U+E007F): a full invisible copy of ASCII, and the
    current standard carrier for text hidden inside a string meant for a
@@ -84,7 +87,8 @@ INVISIBLE_MARK: Final[str] = "�"
 #: is the small set of characters that are *not* ``Cf`` and share the effect
 #: anyway: the variation selectors, which render as nothing and change the
 #: glyph beside them, and the Hangul fillers, which are ordinary letters
-#: (``Lo``) that occupy no ink.
+#: (``Lo``) that occupy no ink. Two variation selectors are held out of that
+#: half; :data:`PRESENTATION_SELECTORS` below names them and says why.
 #:
 #: Ranges rather than a derivation from ``unicodedata`` at import, for round
 #: 4's reason, which still holds: deriving means either a per-character Python
@@ -123,10 +127,36 @@ _INVISIBLE_RANGES: Final[tuple[tuple[int, int], ...]] = (
     # ── not Cf, same effect ──────────────────────────────────────────────
     (0x115F, 0x1160),  # HANGUL CHOSEONG/JUNGSEONG FILLER — Lo, no ink
     (0x3164, 0x3164),  # HANGUL FILLER
-    (0xFE00, 0xFE0F),  # VARIATION SELECTOR-1 … -16
+    (0xFE00, 0xFE0D),  # VARIATION SELECTOR-1 … -14 — glyph variants, no ink
     (0xFFA0, 0xFFA0),  # HALFWIDTH HANGUL FILLER
     (0xE0100, 0xE01EF),  # VARIATION SELECTOR-17 … -256
 )
+
+#: The two variation selectors that are deliberately **not** in the table.
+#:
+#: U+FE0E and U+FE0F are the presentation selectors: they ask for the
+#: monochrome text glyph or the coloured emoji one. They are the reason ``⚠️``,
+#: ``ℹ️`` and ``❤️`` used to arrive on screen as a bare symbol with a marker
+#: stuck to it, which is the defect this exemption fixes.
+#:
+#: **The line is drawn at whether the picture changes, and it is measurable.**
+#: Everything else in this table draws nothing *and changes nothing visible* —
+#: which is precisely what makes it dangerous, because two different byte
+#: strings then produce one picture and approving a picture no longer says
+#: which bytes run. A presentation selector fails that test: ``⚠`` is one cell
+#: and ``⚠️`` is two, so the byte difference is on screen. The contrast with
+#: U+200D ZERO WIDTH JOINER, which stays in the table, is the whole argument —
+#: ``rm`` and ``r<ZWJ>m`` are the same picture and different commands.
+#:
+#: Two consequences are accepted rather than overlooked. Emoji built from ZWJ
+#: sequences — a multi-person family — are still marked, because the joiner is
+#: the hazard and its emoji use does not make it less of one. And a presentation
+#: selector still changes a character's *width*, which is why
+#: :func:`~talaria.ui.prompts.wrap_command` measures cells rather than
+#: characters; ``tests/ui/test_prompts.py`` asserts the wrap agrees with the
+#: rendered width on an emoji command, because a column count that disagrees
+#: with the terminal is its own way of showing the wrong command.
+PRESENTATION_SELECTORS: Final[tuple[int, ...]] = (0xFE0E, 0xFE0F)
 
 _TRANSLATION = {
     codepoint: replacement for codepoint, replacement in _CONTROL_PICTURES.items()
@@ -145,11 +175,19 @@ for _first, _last in _INVISIBLE_RANGES:
 def defang(value: str) -> str:
     """Replace obeyable and invisible characters with visible stand-ins.
 
-    **The cost is taken deliberately, and emoji pay the most visible part of
-    it.** U+200D ZERO WIDTH JOINER is how a sequence such as a multi-person
-    family is built, and U+FE0F VARIATION SELECTOR-16 is what asks for the
-    coloured picture rather than the monochrome glyph — so agent prose carrying
-    either renders as its component parts with a marker between them.
+    **The test is whether the character changes the picture, not whether it
+    draws one.** A character that draws nothing *and leaves the picture the
+    same* is the hazard: two different byte strings then render identically, and
+    an approval that was given to a picture no longer says which bytes run. That
+    is why U+200D ZERO WIDTH JOINER is marked — ``rm`` and ``r<ZWJ>m`` are one
+    picture and two commands — and why the presentation selectors U+FE0E and
+    U+FE0F are not, since ``⚠`` is one cell and ``⚠️`` is two.
+
+    **The cost is taken deliberately, and emoji still pay part of it.** The
+    joiner is how a sequence such as a multi-person family is built, so those
+    arrive as their component parts with a marker between them. A single emoji
+    asking for its coloured form does not, which is the common case in agent
+    prose and the one the exemption above is for.
 
     **Emoji are not the only payers, and an earlier version of this docstring
     said they were.** The table covers every general-category ``Cf`` codepoint,

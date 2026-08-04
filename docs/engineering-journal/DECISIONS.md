@@ -4,6 +4,24 @@
 
 ## 2026-08-04
 
+### The invisible-character table holds characters that leave the picture unchanged, which lets the emoji presentation selectors out
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Decision.** U+FE0E and U+FE0F — VARIATION SELECTOR-15 and -16, the text and emoji presentation selectors — are removed from `defang`'s table and named in `talaria/ui/literal.PRESENTATION_SELECTORS`. Everything else stays, including U+200D ZERO WIDTH JOINER, VARIATION SELECTOR-1 through -14, and VARIATION SELECTOR-17 through -256. `defang` remains one function applied to every string; this narrows the single rule rather than splitting it.
+
+**Why, and what the rule actually is.** The table's purpose is that the rendered path is the executed path: an operator approves a *picture*, so no two byte strings may produce one picture. Read that way the criterion is not "draws nothing" but "draws nothing **and changes nothing visible**" — which is what makes a zero-width joiner dangerous, since `rm` and `r<ZWJ>m` are one picture and two commands. A presentation selector fails that criterion and is measurably not in the class: `⚠` is one cell and `⚠️` is two, so the extra bytes are on screen. `tests/ui/test_prompts.py::test_a_presentation_selector_changes_the_picture_and_a_joiner_does_not` measures it rather than asserting it, and fails if a Rich or terminal change ever makes the two render alike.
+
+**What it does not fix, deliberately.** Emoji assembled from ZWJ sequences — a multi-person family — still arrive as their component parts with a marker between them. The joiner is the hazard; that it is also emoji syntax does not make it less of one.
+
+**Rejected alternative — a strict `defang` for commands and a lenient one for prose.** The original module docstring rejected this and it is still rejected: two rules means one of them is eventually applied to the wrong string, and the string it would be applied to wrongly is the command.
+
+**Rejected alternative — exempt the whole U+FE00–U+FE0F block.** Simpler as a range edit. Rejected because VS-1 through VS-14 select CJK and mathematical glyph variants a reader cannot reliably tell apart, so they fail the same picture-changes test the presentation selectors pass.
+
+**Rejected alternative — exempt U+200D as well, so emoji work completely.** Rejected on the criterion above. It is also the case Rich itself measures wrong: `cell_len("r<ZWJ>m")` returns 1 where a terminal draws 2, so exempting it would put `wrap_command`'s column arithmetic out of step with the screen — the second way to show a command that is not the one that runs.
+
+**Revisit when.** A terminal stack renders `⚠` and `⚠️` at the same width, which would put the presentation selectors back in the class this exempts them from — the measuring test is where that shows up. Or a reason appears to treat emoji-sequence joiners differently from bare ones, which would need a grapheme-cluster pass this deliberately does not have.
+
 ### `thinking.delta` is the activity line; `reasoning.delta` is the transcript
 
 **Author.** post-v0.1, second operator session against a live gateway
