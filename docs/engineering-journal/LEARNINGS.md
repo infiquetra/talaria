@@ -2,6 +2,38 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-04
+
+### The first real launch failed on the one interaction no test could have had — asking a human a question
+
+**Author.** post-v0.1, first operator attach against a live Hermes gateway
+
+**Evidence.** The first `talaria --record` against a real gateway appeared to hang on "connecting to gateway" and went half-deaf to typing. It was not a network problem: the process had **no TCP socket open at all**, the frame log's header recorded `ws://127.0.0.1:9119/api/ws` with no token, and a `sample` of the process showed a thread parked in a `read()` syscall. The credential chain (`talaria/transport/credentials.py`) had fallen through all four non-interactive levels — no `HERMES_DASHBOARD_SESSION_TOKEN`, no token in the URL, no `~/.talaria/credentials`, nothing remembered — and reached level 5, `getpass.getpass()`. That call happens inside the dial; the dial happens in `on_mount`; `on_mount` runs inside a Textual app that already owns the screen and is reading stdin. The prompt was painted where nothing could show it and blocked a worker thread on a read racing the UI's input driver.
+
+**Mechanism.** KTD11 puts credential acquisition inside the dial for a good reason — a gated `?ticket=` must be minted fresh on every reconnect — and that reasoning is about *frequency*, which is orthogonal to *when the first one happens*. Every test in the repository supplies the credential from an environment mapping, a file, or an injected prompt double, so the suite exercised all five levels and could never once observe that level 5 needs a terminal a running TUI has already taken. The defect lived in the seam between two correct components, and the only witness able to see it was an operator at a real terminal.
+
+**Generalizable rule.** A test double for a human is not a human. Any code path whose contract is "ask the operator" is untested by construction, however green the branch coverage: what is being asserted is the answer, never the asking. Locate every such path and pin its *ordering* against the thing that owns the terminal — priming before the interface starts, and sealing the prompt afterwards, are both assertions about sequence, which is the one property the doubles were silent about.
+
+### The secure route lost to the insecure one on ergonomics, so the fix was ergonomic
+
+**Author.** post-v0.1, after the first operator attach
+
+**Evidence.** R1 asks that a running Talaria's environment carry no credential, and that half cannot hold when the token arrives through `HERMES_DASHBOARD_SESSION_TOKEN`: the kernel snapshots the environment at `exec` and serves it for the process's life. The mitigation — a `0600` file at `<config_dir>/credentials` — existed, was measured, and was still the route nobody used, because Hermes mints the dashboard session token with `secrets.token_urlsafe(32)` at server start and holds it in memory only (`hermes_cli/web_server.py:300`). Every dashboard restart therefore invalidated the file, and refreshing it meant reading the token out of the served page by hand and pasting it at a shell prompt — into shell history, on the way to a file whose whole purpose was keeping it off the process surface. `talaria refresh-credential` now does it in one command that prints nothing secret.
+
+**Mechanism.** The insecure option was not winning because operators disagreed about the risk. It was winning because it was the one that survived a restart without work. A security control whose recurring cost is higher than the alternative's is a control that degrades to advice, and advice loses to a working shortcut every time — especially under the conditions where it matters most, which are the tired, unattended, restart-at-midnight ones.
+
+**Generalizable rule.** When the documented-safe path keeps losing to the unsafe one, measure the *recurring* cost of each, not the one-time setup. If the safe path costs something every restart and the unsafe one costs nothing, the fix is to build the missing tool, not to write a firmer warning. Then say so in the queued decision, because "we removed the practical objection" is a real change to a trade-off that was previously balanced.
+
+### `getpass` does not fail when it cannot hide input — it warns and echoes
+
+**Author.** post-v0.1, found while verifying the fix above
+
+**Evidence.** Running the launcher with no credential and no controlling terminal printed `GetPassWarning: Can not control echo on the terminal`, then `Warning: Password input may be echoed`, then prompted anyway. `getpass.getpass` falls back to `fallback_getpass`, which reads through plain `input()`. On an unattended launch with a token on stdin, that writes the credential into the launching process's scrollback and logs — the exact surface R9 exists to keep it off. Now refused outright via `_has_controlling_terminal()`, which raises `EOFError` and becomes the existing `CredentialError` naming both non-interactive routes.
+
+**Mechanism.** The standard library treats "hide this input" as best-effort and degrades to a visible read rather than failing. That is a defensible default for a password an interactive user retypes; it is the wrong default for a credential a supervisor pipes in, because the degradation is silent to everything except a warning nobody reads.
+
+**Generalizable rule.** When a library's failure mode is "warn and continue" and the thing being continued with is a secret, the warning is not the safeguard — check the precondition yourself and refuse. Then assert the dangerous call was *not reached*, not merely that the operation failed: the first version of this test asserted only that a `CredentialError` was raised, and passed identically with the guard deleted, because pytest's captured stdin makes the fallback fail anyway. A test that cannot tell the guarded path from the unguarded one is evidence about neither.
+
 ## 2026-08-03
 
 ### Two intermittent failures, same week, opposite causes — which is why neither was guessed at

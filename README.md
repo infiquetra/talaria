@@ -68,6 +68,12 @@ uv run talaria --resume
 uv run talaria --record
 uv run talaria --record ./first-attach.jsonl
 
+# Write the credential file from a running Hermes dashboard. The dashboard mints
+# its session token at start-up and keeps it in memory, so this is needed again
+# after every dashboard restart. The token is never printed.
+uv run talaria refresh-credential
+uv run talaria refresh-credential --from http://127.0.0.1:9119/
+
 # Record with no interface, from a running Hermes gateway.
 uv run talaria record ws://127.0.0.1:9119/api/ws?token=<token>
 
@@ -93,6 +99,19 @@ The credential is acquired once per dial and rides the WebSocket URL's `?token=`
 never the command line. Precedence, highest first: `HERMES_DASHBOARD_SESSION_TOKEN`, a `token`
 already on `TALARIA_GATEWAY_URL`, a `token` key in `<config_dir>/credentials` (refused unless its
 mode is `0600` or stricter), then an interactive hidden prompt.
+
+`talaria refresh-credential` writes that file for you, reading the session token from the page a
+running dashboard already serves to its own web UI, preserving any other keys in the file, and
+writing at `0600` through a temporary file so the value never exists at a looser mode. It refuses to
+read a credential from another machine over plain HTTP. You will need it again after each dashboard
+restart: Hermes mints the token with `secrets.token_urlsafe(32)` at server start and holds it only in
+memory, so a restart invalidates whatever the file holds. A stale token is reported as a named
+authentication failure, not a hang.
+
+**The prompt only happens before the interface starts.** A credential cannot be requested once the
+terminal belongs to the full-screen interface — the question would be painted where nothing can show
+it. If no non-interactive source can supply one and there is no terminal to ask on, Talaria prints
+what to do and exits `2` rather than opening a client that cannot dial.
 
 **Prefer the credential file if anyone else can read your process list.** A credential supplied
 through the environment is inherited by Talaria and stays visible in the process environment for the

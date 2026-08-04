@@ -97,6 +97,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="start paused",
     )
 
+    refresh_parser = subparsers.add_parser(
+        "refresh-credential",
+        help="rewrite the credential file from a running Hermes dashboard's session token",
+    )
+    refresh_parser.add_argument(
+        "--from",
+        dest="dashboard",
+        metavar="URL",
+        help="dashboard http URL (default: derived from the configured gateway endpoint)",
+    )
+    refresh_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        metavar="SECONDS",
+        help="how long to wait for the dashboard to answer (default: 10)",
+    )
+
     gate_parser = subparsers.add_parser(
         "gate",
         help="run the framework validation gate and print its measurements as JSON",
@@ -160,6 +178,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if getattr(args, "command", None) == "replay":
         return run_replay(args)
+
+    if getattr(args, "command", None) == "refresh-credential":
+        return run_refresh_credential(args)
 
     if getattr(args, "command", None) == "gate":
         return run_gate_command(args)
@@ -297,9 +318,57 @@ def run_live(args: argparse.Namespace) -> int:
     selected and nothing can switch it afterwards.
     """
     cfg = config_module.load_config()
-    app, _source = build_live_app(args, cfg)
+    app, source = build_live_app(args, cfg)
+
+    # Before ``app.run()``, and that ordering is the whole point: see
+    # :func:`_prime_credential`.
+    failure = _prime_credential(source)
+    if failure:
+        return failure
+
     app.run()
     return app.return_code or 0
+
+
+def _prime_credential(source: LiveSource) -> int:
+    """Resolve the gateway credential while the terminal is still an ordinary one.
+
+    Returns ``0`` when the launch may proceed, or the exit code to stop with.
+
+    KTD11 puts credential acquisition inside the dial, which is right, and the
+    dial happens in ``on_mount`` — inside a running Textual application that owns
+    the screen and is reading stdin. When the chain fell through to its
+    interactive level there, :func:`getpass.getpass` wrote its prompt where
+    nothing could show it and blocked a worker thread on a read racing the UI's
+    own input driver. What the operator saw was a client stuck on "connecting to
+    gateway" and half-deaf to typing, with no socket ever opened and nothing on
+    screen naming the cause. Diagnosing it took a process sample; it should have
+    taken a sentence on screen.
+
+    Priming here fixes the ordering without weakening KTD11. The provider is
+    still called on every dial, and levels 1–3 are still re-read each time, so a
+    rotated token still lands on the next reconnect. What changes is that the one
+    level requiring a human runs while a human can still see the terminal, and is
+    then sealed for the life of the process.
+    """
+    from talaria.transport.credentials import CredentialError, PrimingProvider
+
+    provider = source.provider
+    if not isinstance(provider, PrimingProvider):
+        return 0
+
+    try:
+        asyncio.run(provider.prime())
+    except CredentialError as exc:
+        # Printed, not raised: the operator needs the remedy, and a traceback
+        # for a missing credential file buries it under frames from three
+        # modules that are working correctly.
+        print(f"talaria: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("talaria: cancelled at the credential prompt", file=sys.stderr)
+        return 130
+    return 0
 
 
 def _build_paste_threshold(cfg: config_module.Config) -> PasteThreshold:
@@ -320,6 +389,52 @@ def _build_paste_threshold(cfg: config_module.Config) -> PasteThreshold:
         lines=_bound("paste_collapse_lines", DEFAULT_COLLAPSE_LINES),
         byte_limit=_bound("paste_collapse_bytes", DEFAULT_COLLAPSE_BYTES),
     )
+
+
+def run_refresh_credential(args: argparse.Namespace) -> int:
+    """Rewrite the credential file from a running dashboard's session token.
+
+    The dashboard mints its session token at server start and keeps it in
+    memory, so every dashboard restart leaves ``<config_dir>/credentials``
+    holding a value that will be refused. Before this command the remedy was to
+    read the token out of the served page by hand, which is a thing an operator
+    should not be doing with a credential at a shell prompt where it lands in
+    shell history.
+
+    The token is never printed here. What is printed is which file was written,
+    which dashboard it came from, and which of the file's other keys survived —
+    enough to confirm the command did what was intended without putting the
+    value on a screen or into a scrollback.
+    """
+    from talaria.transport.attach import AttachTarget
+    from talaria.transport.refresh import (
+        RefreshError,
+        dashboard_origin_for,
+        refresh_credential,
+    )
+
+    cfg = config_module.load_config()
+    credentials = config_module.credentials_path(cfg.config_dir)
+
+    try:
+        origin = args.dashboard
+        if not origin:
+            target = AttachTarget.from_environment(credentials_path=credentials)
+            if target.problem:
+                raise RefreshError(target.problem)
+            origin = dashboard_origin_for(target.url)
+        report = refresh_credential(origin, credentials, timeout=args.timeout)
+    except RefreshError as exc:
+        print(f"talaria: {exc}", file=sys.stderr)
+        return 2
+
+    action = "created" if report.created else "updated"
+    print(f"{action} {report.path} (mode 0600) from {report.origin}")
+    if report.tightened:
+        print("  permissions tightened to 0600; the previous file was readable by others")
+    if report.preserved_keys:
+        print(f"  kept: {', '.join(report.preserved_keys)}")
+    return 0
 
 
 def run_gate_command(args: argparse.Namespace) -> int:
