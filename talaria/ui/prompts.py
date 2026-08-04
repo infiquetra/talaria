@@ -62,6 +62,7 @@ from textual.widgets import Button, Input, Static
 
 from talaria.domain.models import PromptKind, TurnStatus
 from talaria.domain.projection import PromptRow, PromptView
+from talaria.ui.focus import CaretReleased, holds_caret
 from talaria.ui.literal import defang, literal_text
 
 __all__ = [
@@ -896,10 +897,13 @@ class PromptRegion(VerticalScroll):
         """
         wanted = {row.request_id: row for row in attended_rows(view)}
 
+        released = False
         for request_id, card in tuple(self._cards.items()):
             wanted_row = wanted.get(request_id)
             if wanted_row is None or wanted_row != card.row:
-                await self._cards.pop(request_id).remove()
+                doomed = self._cards.pop(request_id)
+                released = released or holds_caret(doomed)
+                await doomed.remove()
 
         # Mounted at an explicit position, because a rebuilt card would
         # otherwise land at the end and silently reorder the queue. Order is the
@@ -923,3 +927,11 @@ class PromptRegion(VerticalScroll):
         self.set_class(waiting, "-waiting")
         if self._activity is not None:
             self._activity.update(literal_text(activity_line(turn, view)))
+
+        # Announced last, so the mount loop above has already had its chance to
+        # claim the caret. A card whose row changed is removed and replaced in
+        # this same pass, and taking the caret out of the replacement would
+        # answer one defect with another: the operator would be typing into the
+        # composer while the question they are being asked sits unanswered.
+        if released and not any(holds_caret(card) for card in self._cards.values()):
+            self.post_message(CaretReleased())

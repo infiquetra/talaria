@@ -2,6 +2,24 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-04
+
+### When Talaria takes a control away, the caret goes back to the composer
+
+**Author.** post-v0.1, second operator session against a live gateway
+
+**Decision.** A region that removes a control holding the caret, or revokes that control's focusability, posts `CaretReleased` (`talaria/ui/focus.py`); `TalariaApp.on_caret_released` focuses the composer. Three sites raise it today: `PromptRegion.apply` when a card is removed, `AgentRows.apply` when rows are removed, and `AgentRow.bind_row` when a finished child makes its own row unfocusable. Focus moves the *operator* makes are never touched.
+
+**Why.** Textual's own answer — `Screen._reset_focus` — hands the caret to the neighbouring entry in the focus chain, and the neighbour above every control Talaria mounts is the `VerticalScroll` region containing it. A scroll container is focusable so arrow keys scroll it, and it discards every printable key it is given, so the interface silently stops accepting text with nothing on screen to say why. The composer is the answer for the same reason it is focused at mount: it is the only widget whose whole job is to accept typing, and it is what the operator is reaching for in every case that raises this.
+
+**Rejected alternative — assert the invariant in the render pass.** Simpler, and it would need no message: check at the end of each render that the caret is somewhere sensible and move it if not. Rejected because the render pass runs on the coalescing timer, so it would drag the caret back roughly twenty times a second from anywhere the operator deliberately put it — making the transcript impossible to focus and scroll. The defect is specifically *the caret moving without the operator*, so the fix belongs at those transitions and nowhere else. `tests/ui/test_focus_returns.py::test_a_deliberate_focus_move_is_left_alone` fails if this is ever reintroduced.
+
+**Rejected alternative — make `PromptRegion` unfocusable while it holds no cards.** Fixes the two prompt paths cheaply and truthfully (an empty scroll region has nothing to scroll). Rejected because the caret then falls to `TranscriptPane`, which is also a `VerticalScroll` and swallows keys identically, and because it does nothing at all for the sub-agent row — whose caret is lost without any widget being removed.
+
+**Rejected alternative — have the regions focus the composer themselves.** Fewer moving parts than a message. Rejected on ADR-0002's grain: a widget that reaches across the tree for a named sibling can only be mounted in a screen that has one, and these regions are otherwise self-contained.
+
+**Revisit when.** A fourth site needs to raise this, or a control appears that should legitimately keep the caret after the operator answers it. Either is a sign the rule wants to be "hand back to whatever last had it" rather than "hand back to the composer" — which needs a focus history the app does not keep today.
+
 ## 2026-08-03
 
 ### A background task that dies takes the client down, rather than being reported and left running

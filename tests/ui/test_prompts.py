@@ -77,7 +77,15 @@ from talaria.ui.prompts import (
     withdrawn_activity_line,
     wrap_command,
 )
-from tests.ui.conftest import event, records, screen_text
+from tests.ui.conftest import (
+    RecordingDispatcher,
+    event,
+    feed,
+    live_app,
+    records,
+    screen_text,
+    settle,
+)
 
 #: A value distinctive enough that a sweep over a screen, a transcript, or a
 #: status document can prove it is absent.
@@ -88,38 +96,6 @@ CANARY = "canary-Wq8xTLmv-never-echoed"
 #: changed the glyph would fail this suite instead of silently making its
 #: mask assertions unfalsifiable.
 MASK_GLYPH = "\u2022"
-
-
-class RecordingDispatcher:
-    """A dispatcher double that records calls and returns a chosen outcome."""
-
-    def __init__(self, outcome: RpcOutcome | None = None) -> None:
-        self.outcome = outcome
-        self.calls: list[tuple[str, Mapping[str, Any]]] = []
-
-    async def call(
-        self,
-        method: str,
-        params: Mapping[str, Any] | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> RpcOutcome:
-        self.calls.append((method, dict(params or {})))
-        if self.outcome is not None:
-            return self.outcome
-        return RpcOutcome(status="ok", method=method, request_id="1", epoch=1, result={})
-
-    @property
-    def operator_calls(self) -> list[tuple[str, Mapping[str, Any]]]:
-        """Every call except the startup catalogue fetch.
-
-        ``TalariaApp`` reads ``commands.catalog`` once when it mounts in live
-        mode (U9), so a raw ``calls`` list starts with a call no operator made.
-        These tests are about what one operator action sent, so they read this;
-        ``calls`` stays raw, and the fetch itself is asserted over a real socket
-        in ``tests/transport/test_commands.py``.
-        """
-        return [call for call in self.calls if call[0] != CATALOG_METHOD]
 
 
 class ExpiringDispatcher(RecordingDispatcher):
@@ -182,51 +158,6 @@ class HoldingDispatcher(RecordingDispatcher):
         if self.outcome is not None:
             return self.outcome
         return RpcOutcome(status="ok", method=method, request_id="1", epoch=1, result={})
-
-
-def live_app(
-    dispatcher: RecordingDispatcher, *, coalesce_interval: float = 3600.0
-) -> TalariaApp:
-    """A live-mode app whose only renders are the ones a test asks for.
-
-    ``coalesce_interval`` is parked beyond any test's lifetime by default, on
-    purpose. Every assertion here is about what is on screen *after* a specific
-    state change, and leaving the 50ms tick armed makes each of those a bet on
-    whether the timer fired inside ``pilot.pause()`` — a passing test today and
-    a flake under whole-suite load, which is the shape DECISIONS.md already
-    records three instances of. :func:`settle` renders explicitly instead.
-
-    **The parameter exists because parking the timer also parks a whole class
-    of defect.** Anything that re-arms itself from inside the render pass is
-    invisible to a suite that only ever renders on demand: a terminal-read that
-    put itself back in the registry ran once per test here and 136 times in
-    400ms with the timer live. A test about a loop has to let the loop turn.
-    """
-    controls = ReplayControls(paused=True)
-    source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
-    return TalariaApp(
-        source,
-        mode="live",
-        controls=controls,
-        dispatcher=dispatcher,
-        coalesce_interval=coalesce_interval,
-    )
-
-
-def feed(app: TalariaApp, frame: dict[str, Any], *, seq: int = 100) -> None:
-    """Fold one frame the way the pump would, without running the pump."""
-    app.ingest(
-        FrameRecord(seq=seq, at=1_785_000_000.0 + seq, direction="in", frame=frame)
-    )
-
-
-async def settle(app: TalariaApp, pilot: Any) -> None:
-    """Render once, drain any live call it started, and render the result."""
-    await app.render_snapshot()
-    await pilot.pause()
-    await app.settle_live()
-    await app.render_snapshot()
-    await pilot.pause()
 
 
 # ── the wire contract, checked without a wire ────────────────────────────

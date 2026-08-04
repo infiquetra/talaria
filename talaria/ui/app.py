@@ -115,6 +115,7 @@ from talaria.transport.rpc import (
 from talaria.transport.source import FrameRecord, FrameSource
 from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
+from talaria.ui.focus import CaretReleased
 from talaria.ui.palette import PaletteRegion
 from talaria.ui.prompts import (
     DENY_ALL_CHOICE,
@@ -2158,6 +2159,25 @@ class TalariaApp(App[None]):
             )
             self._notice(note)
         self._dirty = True
+
+    # ── the caret comes home ─────────────────────────────────────────────
+
+    def on_caret_released(self, message: CaretReleased) -> None:
+        """Put the caret back in the composer when a control is taken away.
+
+        The composer is the answer for the same reason it is focused at mount:
+        it is the only widget in the interface whose whole job is to accept
+        typing, and it is what the operator is reaching for in every case that
+        raises this. Textual's own answer — the enclosing scroll region — is a
+        widget that takes the caret and then discards every printable key,
+        which is indistinguishable on screen from the app having hung.
+
+        See :mod:`talaria.ui.focus` for why the regions announce this rather
+        than focusing the composer themselves: a widget that reaches across the
+        tree for a sibling is a widget that cannot be mounted anywhere else.
+        """
+        message.stop()
+        self.composer.text_area.focus()
 
     # ── U9: one sub-agent's interrupt, from its own row (R15, AE14) ──────
 

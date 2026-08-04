@@ -638,6 +638,21 @@ No individual line grows — that was round 3's defect. But the buffer accumulat
 
 **Recommendation on file.** Do the diagnosis half whenever the connection path is next touched; open the launch half as its own ADR conversation. The incident is an argument for better error reporting, and only weakly an argument for changing who owns the gateway's lifetime.
 
+### Nothing on screen says where the caret is when it is not in the composer
+
+**Author.** First operator-supervised live run, 2026-08-04.
+**Priority.** P2
+**Effort.** Small, but it reopens a settled layout decision.
+**Worth it when.** The next time the composer's border or the focus styling is touched, or the first time an operator reports typing into a dead interface after the `CaretReleased` fix has shipped.
+
+**Context.** Talaria silently stopped accepting typed text mid-session. The root cause — the caret landing on a scroll region that discards keys — is fixed (`talaria/ui/focus.py`, and the decision beside it in `DECISIONS.md`). This item is the *second* half of what made that defect so hard to see, and it survives the fix.
+
+When the caret is not in the composer, the interface looks exactly the same as when it is. The composer shows its placeholder whenever it is empty, focused or not, so the one widget an operator would check reports nothing. `AgentRow.-interruptible:focus` has a background tint, but the two scroll regions and the composer have no focus styling at all, deliberately: `talaria/ui/composer.py:181-189` records that a `&:focus` border made the composer one row taller while focused, so the whole interface above it jumped by two rows every time the caret moved — including on a mouse press on a prompt button. The fix was to stop depending on focus for styling entirely.
+
+So the requirement is narrow and real: **an indication of where the caret is that does not change any widget's height.** Candidates that satisfy it — a border *colour* change with the border always present, a caret glyph or colour shift in the placeholder row, or a marker in the status line. What must not come back is anything that adds or removes a row.
+
+**Why it is still worth doing with the bug fixed.** The `CaretReleased` rule covers the three transitions known today, and its own `DECISIONS.md` entry names the condition under which a fourth appears. A focus indicator is the thing that would let an operator *see* the fourth one in the second it happens, rather than reporting it as "the app stopped responding" a session later.
+
 
 ## P3
 
