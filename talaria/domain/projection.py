@@ -28,6 +28,7 @@ from talaria.domain.models import (
     RunMode,
     SubagentRow,
     TranscriptEntry,
+    TranscriptKind,
     TurnStatus,
 )
 from talaria.domain.state import UNCORRELATED_APPROVAL, SessionState
@@ -72,11 +73,30 @@ class TranscriptView:
 
     The default is ``0`` — "assume nothing is settled" — so a hand-built view
     that omits it makes a consumer do more work rather than less.
+
+    ``kinds`` names the entry each line came from, one member per line. It
+    exists because a renderer that treats every line alike has no way to tell
+    agent prose from a tool's output, and the two want different presentation:
+    inline markdown belongs on the first and would silently restyle the second.
+    Deciding it here rather than in the widget keeps the rule testable without a
+    screen (ADR-0002) and stops the flattening in :func:`transcript_view` from
+    being the only place that knows.
+
+    It defaults to empty rather than to a guess, and empty means "unknown" — a
+    consumer that cannot identify a line must fall back to the plainest
+    rendering it has, which is the same thing R6 already asks for.
     """
 
     lines: tuple[str, ...]
     entry_count: int
     committed_lines: int = 0
+    kinds: tuple[TranscriptKind, ...] = ()
+
+    def kind_at(self, index: int) -> TranscriptKind | None:
+        """The entry kind behind line ``index``, or ``None`` when unknown."""
+        if index < 0 or index >= len(self.kinds):
+            return None
+        return self.kinds[index]
 
     @property
     def total_lines(self) -> int:
@@ -237,15 +257,25 @@ def transcript_view(state: SessionState) -> TranscriptView:
     entries — would answer with a screen that is visibly not the one on display.
     """
     lines: list[str] = []
+    kinds: list[TranscriptKind] = []
     for entry in state.transcript:
-        lines.extend(_entry_lines(entry))
+        entry_lines = _entry_lines(entry)
+        lines.extend(entry_lines)
+        kinds.extend([entry.kind] * len(entry_lines))
     committed = len(lines)
     if state.streaming_text:
-        lines.extend(state.streaming_text.splitlines() or [""])
+        streamed = state.streaming_text.splitlines() or [""]
+        lines.extend(streamed)
+        # The in-flight block is the assistant's reply being written. It has no
+        # entry yet — that is what "provisional" means — so the kind is stated
+        # here rather than read off one, and it is the kind the same text will
+        # carry the moment ``message.complete`` commits it.
+        kinds.extend(["assistant"] * len(streamed))
     return TranscriptView(
         lines=tuple(lines),
         entry_count=len(state.transcript),
         committed_lines=committed,
+        kinds=tuple(kinds),
     )
 
 

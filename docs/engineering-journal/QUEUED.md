@@ -653,6 +653,32 @@ So the requirement is narrow and real: **an indication of where the caret is tha
 
 **Why it is still worth doing with the bug fixed.** The `CaretReleased` rule covers the three transitions known today, and its own `DECISIONS.md` entry names the condition under which a fourth appears. A focus indicator is the thing that would let an operator *see* the fourth one in the second it happens, rather than reporting it as "the app stopped responding" a session later.
 
+### Block-level markdown: headings, fenced code, lists, tables, block quotes
+
+**Author.** First operator-supervised live run, 2026-08-04.
+**Priority.** P2 — **operator has asked for this explicitly**, to be taken up once the defects found in the core build are cleared.
+**Effort.** Large, and it reopens U5's measured gate results.
+**Worth it when.** The core-build defect list is empty. That is the operator's stated sequencing, recorded here so the next session does not have to re-derive it.
+
+**What already exists.** The *inline* half shipped on 2026-08-04: `talaria/ui/markdown.py` renders emphasis (`**strong**`, `*emphasis*`) and backtick code spans on assistant and reasoning lines, and the decision beside it in `DECISIONS.md` explains why it stops there. This item is the rest: constructs whose unit is a **block** rather than a line.
+
+**Why this is not simply "more of the same".** [R6](../brainstorms/2026-08-02-talaria-v0-1-prototype-requirements.md) puts markdown presentation out of scope for v0.1 while requiring that content is never dropped, so implementing this is a **requirement change**, not a bug fix. The obligation R6 does impose is enforced by `tests/domain/test_projection.py::test_every_transcript_entry_survives_into_the_line_buffer`, and it must keep passing.
+
+**The architectural collision, concretely.** `TranscriptPane` is line-indexed by construction, and four separate mechanisms depend on one line meaning one widget:
+
+- `_lines: tuple[str, ...]` with a stable-prefix diff (`_common_prefix`), so a streaming delta churns one widget rather than the whole block.
+- `DEFAULT_MOUNT_CAP = 500` — KTD14's ceiling is stated in *widgets*, and `mounted_count` reads `len(self.children)` precisely so the pane cannot self-report.
+- `_top` as an absolute line index, plus `CONDENSED_TEMPLATE`'s "N earlier lines condensed" and the `condensed_count + mounted == total` identity the gate checks.
+- `_restore_anchor`, which subtracts the *measured height* of evicted widgets to hold a reader's scroll position.
+
+A fenced code block or a table is one renderable spanning many lines. Every one of those four has to be restated in terms a variable-height widget can satisfy, and `interface_shows_everything` in `talaria/replay/gate.py` — which compares the pane's mounted lines against the projection window position by position — needs a replacement claim before it can be trusted again.
+
+**The streaming problem, which is separate and harder.** A code fence arrives one delta at a time, so for as long as the closing fence is missing the correct rendering is genuinely ambiguous: render eagerly and the screen flickers between "literal text" and "code block" on every delta; wait for the closer and a truncated turn never renders at all. Hermes's own controller carries markdown and diff de-duplication machinery for exactly this class of problem — that machinery is worth reading before designing, not after.
+
+**Suggested shape, not a decision.** Render blocks only on **committed** entries (the projection already publishes `committed_lines`, and committed entries are immutable), leaving the provisional streaming tail as inline-rendered lines. That confines variable-height widgets to the region that never changes, which is also the region the diff already skips. It does not solve the mount-cap accounting; it makes it tractable.
+
+**Do not start by writing widgets.** Start by deciding what replaces "one line, one widget" as the bounded-rendering claim, and get that into an ADR. The rest follows from it.
+
 
 ## P3
 
