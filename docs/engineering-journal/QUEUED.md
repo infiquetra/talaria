@@ -318,7 +318,18 @@ Every round-5 test that resizes uses approval cards, whose command body posts `R
 
 **Suggested framing.** One test: several clarify cards, resize the terminal narrower, assert every card whose control leaves `scrollable_content_region` is retitled. Closing this also closes the mount-path item below, which is the same hole from the other direction. This is the repository's own "a guard nothing can exercise is a guard nobody can trust" rule applied to round 5's own new code.
 
-### `test_a_card_mounting_into_a_full_region_is_still_recomputed` fails intermittently across full runs
+### ~~`test_a_card_mounting_into_a_full_region_is_still_recomputed` fails intermittently across full runs~~ — CLOSED 2026-08-03
+
+**Closed by.** Reading the chain rather than re-running until it broke. The marking is **two chained `call_after_refresh` calls** deep — `CommandPanel.Rewrapped` → `reveal_actions` (`talaria/ui/prompts.py:802`) → `mark_unreachable_controls` (`:852`) — while the test's `settle()` helper pumps exactly **two** refresh cycles. That is a margin with no slack, and a machine slow enough to lose one cycle samples the border title before the second deferral lands. The hypothesis recorded below was the right one; this is its confirmation, plus the specific arithmetic that makes it true.
+
+The test now waits for the marking with a bounded budget instead of sampling at a fixed refresh depth. **That is not the "obvious change" this item declined to make.** Polling *the same assertion* with a deadline still fails when the marking never lands — which is exactly what the defect this test exists for produces — and that was verified rather than assumed: deleting `call_after_refresh(self.reveal_actions)` from the `Rewrapped` handler still fails the test with the wait in place. What the wait removes is only the assertion that the marking arrives within a particular number of refresh cycles, which was never the behaviour under test.
+
+**Not reproducible locally, and that stayed true to the end** — 20 runs of the test alone and 6 full-suite runs under six busy loops, all green, all reporting zero extra cycles needed. Both observed failures were on GitHub runners. So the fix rests on the mechanism being legible in the code and on the mutation still killing the test, not on a red run turning green.
+
+**The two P1 items below are untouched by this.** They are about cards that are *never* recomputed, which is a product defect; this was about when a test looked.
+
+### The original entry
+
 
 **Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
 **Priority.** P1 — not because the product symptom is severe, but because a suite that fails intermittently cannot be used as a gate, and this unit's definition of done is a green `uv run pytest`.

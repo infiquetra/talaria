@@ -4,6 +4,16 @@
 
 ## 2026-08-03
 
+### Two intermittent failures, same week, opposite causes — which is why neither was guessed at
+
+**Author.** v0.1 milestone-2, unit U10 (daily-driver closure), found by CI
+
+**Evidence.** `test_teardown_stops_a_status_child_this_app_does_not_own` and `test_a_card_mounting_into_a_full_region_is_still_recomputed` both failed intermittently on GitHub runners and neither reproduced locally. They look identical from the outside — a slow machine, a timing-sensitive UI-adjacent test, a green developer machine. The first was a **real R36 process leak** in shipped code. The second was a **test sampling one refresh cycle too early** against correct code. The same diagnostic settled both: stop re-running, find the window in the source, and make it deterministic. For the leak, widening the window with `await asyncio.sleep(0.5)` turned a 1-in-13 failure into a 13-in-13 one. For the geometry test, counting the deferrals — two chained `call_after_refresh` calls against a helper that pumps two refresh cycles — showed a margin with no slack, and instrumenting it showed the marking always *does* land.
+
+**Mechanism.** "Flaky test" is a description of a symptom and it silently proposes a cause. Both of these were timing-sensitive; only one was a defect. The tell is not the failure rate, it is what the code does in the window: `aclose` read a field that had not been written yet and concluded there was nothing to clean up, which is wrong at any speed and merely improbable at speed. The prompt test asserted a specific number of refresh cycles, which was never the behaviour under test.
+
+**Generalizable rule.** Never let "it's flaky" stand as the diagnosis. Find the window in the source, widen it deliberately, and see which way it breaks — a real defect becomes deterministic, and a sampling problem stays green with the assertion given more room. Fixing before that measurement is a coin flip between hiding a bug and hardening a test.
+
 ### A child is alive before the parent has recorded it, so teardown found nothing to kill
 
 **Author.** v0.1 milestone-2, unit U10 (daily-driver closure), found by CI

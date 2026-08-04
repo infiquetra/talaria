@@ -2335,6 +2335,27 @@ async def test_a_card_mounting_into_a_full_region_is_still_recomputed() -> None:
         target = newest.action_widget
         assert target is not None
         assert not region.scrollable_content_region.contains_region(target.region)
+
+        # Wait for the marking rather than sampling at a fixed refresh depth.
+        #
+        # The marking is two chained ``call_after_refresh`` calls deep —
+        # ``Rewrapped`` → ``reveal_actions`` → ``mark_unreachable_controls`` —
+        # while ``settle`` pumps exactly two refresh cycles. That is a margin
+        # with no slack, and on a slower machine the assertion below sampled the
+        # arrangement before the second deferral landed: this test failed twice
+        # on GitHub runners, always on this assertion, and never reproducibly
+        # here (20 runs alone and 6 full-suite runs under six busy loops, all
+        # green, all needing zero extra cycles).
+        #
+        # **This does not weaken the test.** If the marking never lands — which
+        # is exactly what deleting the ``post_message`` or the handler causes,
+        # the defect this test exists for — the budget runs out and the
+        # assertion still fails. What it stops asserting is a particular
+        # *number of refresh cycles*, which was never the behaviour under test.
+        for _ in range(40):
+            if str(newest.border_title) == CONTROL_OFFSCREEN_TITLE:
+                break
+            await pilot.pause()
         assert str(newest.border_title) == CONTROL_OFFSCREEN_TITLE
         # Positive, from the screen: the region is showing cards, and one of
         # them carries the marker.

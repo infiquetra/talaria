@@ -183,7 +183,7 @@ the result of the run that opened its pull request.
 
 | Operating system | Arch | Python | Terminal host | Multiplexer | What ran | Result |
 |---|---|---|---|---|---|---|
-| macOS 26.5.2 (build 25F84) | arm64 | 3.12.11 | headless (no tty) | none | `ruff`, `mypy --strict`, `pytest` (×13), `bandit`, `git diff --check` | `ruff`/`mypy`/`bandit`/`git diff --check` clean; `pytest` **12 of 13 runs** `874 passed, 1 skipped`, 1 run one test failed — see §Test-suite honesty |
+| macOS 26.5.2 (build 25F84) | arm64 | 3.12.11 | headless (no tty) | none | `ruff`, `mypy --strict`, `pytest` (×19), `bandit`, `git diff --check` | `ruff`/`mypy`/`bandit`/`git diff --check` clean; `pytest` `875 passed, 1 skipped`. One run of thirteen failed before the prompt-geometry synchronization was fixed; the six runs since, under six busy loops, are green — see §Test-suite honesty |
 | macOS 26.5.2 (build 25F84) | arm64 | 3.13 | headless (no tty) | none | `pytest` | `874 passed, 1 skipped` — one run only, so it says nothing about the intermittent failure above |
 | macOS 26.5.2 (build 25F84) | arm64 | 3.12.11 | pseudo-terminal, `TERM=xterm-256color`, 100×30 | none | the real client, replay mode, normal exit and induced failure | pass — terminal restored in both, no surviving children |
 | macOS 26.5.2 (build 25F84) | arm64 | 3.12.11 | tmux 3.7b pane, 100×30 | tmux 3.7b | `talaria replay`, rendered transcript read back from the pane, `ctrl+q` | pass — 28 non-blank rendered lines, exit 0 |
@@ -312,21 +312,23 @@ argument for the verdict this document already reaches, not against it.
 
 ## Test-suite honesty
 
-- **The suite is not reliably green, and that is a finding rather than a
-  footnote.** Eight consecutive full runs on Python 3.12 during closeout: seven
-  green, one red. The failure is always the same test —
-  `tests/ui/test_prompts.py::test_a_card_mounting_into_a_full_region_is_still_recomputed`,
-  a U8-era prompt-geometry test that this unit did not touch — and it is not
-  reproducible in isolation: 20 consecutive runs of that test alone, on a
-  deliberately saturated machine, all passed. The adversarial review measured two
-  failures in five on the pre-closeout tree, so this is not a one-off. Five
-  further full runs after closeout were all green, which neither confirms nor
-  refutes a failure at that rate — at roughly one in eight, five clean runs are
-  the more likely outcome. **Thirteen post-closeout runs are on record: twelve
-  green, one red.** Filed as a P1 in `docs/engineering-journal/QUEUED.md` with the
-  reproduction and with the mechanism labelled as the hypothesis it is. It was
-  **not** adjusted until it passed; a red test whose cause is unknown is worth
-  more than a green one that was tuned.
+- **The suite was not reliably green, and the cause turned out to be arithmetic
+  rather than mystery.** `tests/ui/test_prompts.py::test_a_card_mounting_into_a_full_region_is_still_recomputed`
+  — a U8-era prompt-geometry test this unit did not touch — failed about one full
+  run in eight locally and twice on GitHub runners. It was never reproducible on
+  demand: 20 runs of it alone and 6 full-suite runs under six busy loops all
+  passed. **Resolved by reading the chain instead of re-running until it broke.**
+  The marking is two chained `call_after_refresh` calls deep
+  (`Rewrapped` → `reveal_actions` → `mark_unreachable_controls`) while the test's
+  `settle()` helper pumps exactly two refresh cycles — a margin with no slack, so
+  a machine that loses one cycle samples the title too early. The test now waits
+  for the marking with a bounded budget. That is weaker than the old assertion in
+  exactly one respect — it no longer asserts *how many refresh cycles* the marking
+  takes — and unchanged in the respect that matters: with the trigger deleted, the
+  defect the test exists for, it still fails. Verified, not assumed.
+- **This was the second intermittent failure in this unit and the first one was a
+  real defect**, so neither was dismissed as a test race without evidence. See
+  §A leak this document originally missed.
 - A green run prints `874 passed, 1 skipped` on Python 3.12.11 and on 3.13 (the
   skip is the TypeScript equivalence bridge, when `node_modules` is absent).
   That is the number a *passing* run prints, not the number the command reliably
