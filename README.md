@@ -74,8 +74,12 @@ uv run talaria --record ./first-attach.jsonl
 uv run talaria refresh-credential
 uv run talaria refresh-credential --from http://127.0.0.1:9119/
 
-# Record with no interface, from a running Hermes gateway.
-uv run talaria record ws://127.0.0.1:9119/api/ws?token=<token>
+# Record with no interface, from a running Hermes gateway. The credential comes
+# from the same chain the launcher uses -- the environment, then the credential
+# file written above -- and never from the command line: an endpoint carrying a
+# credential in its query string or its userinfo is refused, and exits 2.
+uv run talaria record
+uv run talaria record ws://127.0.0.1:9119/api/ws   # endpoint override, no credential
 
 # Replay that recording through the full interface. F8 pauses, F9/F10 change
 # speed, F2 folds the sub-agent rows, F5 re-follows the newest line. Controls

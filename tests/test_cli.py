@@ -16,6 +16,7 @@ import pytest
 import talaria.cli as cli_module
 from talaria import config as config_module
 from talaria.cli import main, parse_args, selection_from_args
+from talaria.recorder.command import RecordTarget
 from talaria.transport.credentials import LoopbackTokenProvider
 
 
@@ -302,10 +303,10 @@ def test_run_live_propagates_the_apps_exit_code(monkeypatch: pytest.MonkeyPatch)
     assert [app.ran for app in built] == [True, True], "run_live never started the app"
 
 
-def test_record_subcommand_parses_url_and_default_out() -> None:
-    args = parse_args(["record", "ws://127.0.0.1:9119/api/ws?token=abc"])
+def test_record_subcommand_parses_endpoint_and_default_out() -> None:
+    args = parse_args(["record", "ws://127.0.0.1:9119/api/ws"])
     assert args.command == "record"
-    assert args.url == "ws://127.0.0.1:9119/api/ws?token=abc"
+    assert args.url == "ws://127.0.0.1:9119/api/ws"
     assert args.out is None
 
 
@@ -314,34 +315,206 @@ def test_record_subcommand_parses_explicit_out_path() -> None:
     assert args.out == "/tmp/x.jsonl"
 
 
-def test_record_subcommand_requires_a_url() -> None:
-    with pytest.raises(SystemExit) as excinfo:
-        parse_args(["record"])
-    assert excinfo.value.code == 2
+def test_record_subcommand_takes_no_endpoint_at_all() -> None:
+    """R3: the positional is optional, so nothing forces a URL onto the command
+    line -- and a URL is where the credential used to ride."""
+    args = parse_args(["record"])
+    assert args.command == "record"
+    assert args.url is None
 
 
-def test_main_dispatches_record_subcommand_to_run_record(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """U2 wiring: `main()` routes a `record` invocation to
-    `talaria.recorder.command.run_record` rather than the default startup
-    path -- proved with a fake `run_record` so this test never opens a
-    socket."""
-    calls: list[dict[str, object]] = []
+# ── `record` and the credential (R3-R6) ──────────────────────────────────
+#
+# The canary below is a made-up string that has never authenticated anything. It
+# is written as one literal per test rather than a shared constant so that a
+# reader checking R10 -- no credential value anywhere in this work -- can see at
+# the point of use that the value is synthetic.
 
-    async def fake_run_record(url: str, **kwargs: object) -> int:
-        calls.append({"url": url, **kwargs})
+
+def _fake_record_capture(monkeypatch: pytest.MonkeyPatch) -> list[RecordTarget]:
+    """Replace `run_record` with a recorder of the target it was handed.
+
+    `main()` imports `run_record` from the module inside the dispatch function,
+    so patching the module attribute is enough and no socket is ever opened.
+    """
+    calls: list[RecordTarget] = []
+
+    async def fake_run_record(target: RecordTarget, **kwargs: object) -> int:
+        calls.append(target)
         return 0
 
     import talaria.recorder.command as command_module
 
     monkeypatch.setattr(command_module, "run_record", fake_run_record)
+    return calls
 
-    exit_code = cli_module.main(["record", "ws://127.0.0.1:9119/api/ws?token=abc"])
 
-    assert exit_code == 0
+@pytest.mark.parametrize(
+    ("label", "url"),
+    [
+        ("query string", "ws://127.0.0.1:9119/api/ws?token=NOT-A-REAL-CANARY-4f2b91"),
+        ("userinfo", "ws://operator:NOT-A-REAL-CANARY-4f2b91@127.0.0.1:9119/api/ws"),
+    ],
+)
+def test_record_refuses_a_credential_on_the_command_line(
+    label: str,
+    url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R5: both credential-bearing shapes are refused, and the exit code is 2.
+
+    Query parameters are the form Hermes actually reads. Userinfo would never
+    have authenticated -- Hermes reads the upgrade credential only from
+    `ws.query_params` -- but it still put a secret in the process table and the
+    shell history, which is the thing KTD1 exists to tell the operator about.
+    """
+    calls = _fake_record_capture(monkeypatch)
+
+    assert cli_module.main(["record", url]) == 2, label
+    assert calls == [], f"{label}: a refused invocation still reached run_record"
+
+
+@pytest.mark.parametrize(
+    ("label", "url"),
+    [
+        ("query string", "ws://127.0.0.1:9119/api/ws?token=NOT-A-REAL-CANARY-4f2b91"),
+        ("userinfo", "ws://operator:NOT-A-REAL-CANARY-4f2b91@127.0.0.1:9119/api/ws"),
+    ],
+)
+def test_the_record_refusal_reproduces_nothing_it_was_given(
+    label: str,
+    url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R6: the refusal echoes neither the credential nor the URL that carried it.
+
+    The value is already in the process table and in the shell history by the
+    time the refusal is printed. Writing it to stderr would add a third copy, and
+    in continuous integration stderr is a log file -- in a public repository.
+
+    Fragments are checked, not just the whole value: a message that printed half
+    a credential would still have leaked half a credential. Every four-character
+    window of the canary is searched for case-insensitively, which is the
+    strongest form of this assertion that does not start flagging ordinary
+    English.
+    """
+    _fake_record_capture(monkeypatch)
+    credential = "NOT-A-REAL-CANARY-4f2b91"
+
+    assert cli_module.main(["record", url]) == 2
+
+    message = capsys.readouterr().err
+    assert message.strip(), f"{label}: the refusal printed nothing"
+
+    haystack = message.lower()
+    assert url not in message, f"{label}: the refusal echoed the URL it refused"
+    assert "127.0.0.1:9119" not in message, f"{label}: the refusal echoed the endpoint"
+    for start in range(len(credential) - 3):
+        window = credential[start : start + 4].lower()
+        assert window not in haystack, (
+            f"{label}: the refusal contains a fragment of the credential it was given"
+        )
+
+
+def test_the_record_refusal_names_both_supported_routes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refusal that only says no teaches the operator nothing (KTD1).
+
+    It must also say that the value they passed is now exposed, which is the part
+    a silent strip would never have told them.
+    """
+    from talaria.transport.credentials import TOKEN_ENV_VAR
+
+    _fake_record_capture(monkeypatch)
+
+    assert cli_module.main(["record", "ws://127.0.0.1:9119/api/ws?token=NOT-REAL-9zq"]) == 2
+
+    message = capsys.readouterr().err
+    assert "talaria refresh-credential" in message
+    assert TOKEN_ENV_VAR in message
+    assert "rotate" in message.lower()
+
+
+def test_record_with_no_endpoint_resolves_the_one_the_launcher_would(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3/R4: a bare `talaria record` resolves both halves through the chain.
+
+    The endpoint comes from `TALARIA_GATEWAY_URL` and the credential from
+    `HERMES_DASHBOARD_SESSION_TOKEN`, which is exactly what
+    `AttachTarget.from_environment` and `LoopbackTokenProvider` do for the live
+    launcher. Nothing is on the command line.
+    """
+    from talaria.transport.credentials import TOKEN_ENV_VAR
+
+    calls = _fake_record_capture(monkeypatch)
+    monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws")
+    monkeypatch.setenv(TOKEN_ENV_VAR, "NOT-A-REAL-CANARY-7c40de")
+
+    assert cli_module.main(["record"]) == 0
     assert len(calls) == 1
-    assert calls[0]["url"] == "ws://127.0.0.1:9119/api/ws?token=abc"
+
+    assert calls[0].endpoint == "ws://127.0.0.1:9911/api/ws"
+    assert calls[0].credential.source == "environment"
+    assert calls[0].credential.value == "NOT-A-REAL-CANARY-7c40de"
+
+
+def test_record_takes_a_credential_free_endpoint_as_an_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KTD2: the positional means the endpoint, and only the endpoint.
+
+    It overrides `TALARIA_GATEWAY_URL` the same way the launcher's `override=`
+    does, while the credential still comes from the chain.
+    """
+    from talaria.transport.credentials import TOKEN_ENV_VAR
+
+    calls = _fake_record_capture(monkeypatch)
+    monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws")
+    monkeypatch.setenv(TOKEN_ENV_VAR, "NOT-A-REAL-CANARY-7c40de")
+
+    assert cli_module.main(["record", "ws://127.0.0.1:9222/api/ws"]) == 0
+
+    assert calls[0].endpoint == "ws://127.0.0.1:9222/api/ws"
+    assert calls[0].credential.value == "NOT-A-REAL-CANARY-7c40de"
+
+
+def test_record_reports_a_credential_the_chain_cannot_supply_and_exits_two(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other operator error on this path exits 2 as well (KTD7).
+
+    With no environment variable, no credential file and the prompt refused,
+    `LoopbackTokenProvider` raises `CredentialError`. That is neither of
+    `run_record`'s two documented outcomes, so it is handled in the dispatch and
+    `run_record` is never reached.
+    """
+    calls = _fake_record_capture(monkeypatch)
+
+    import talaria.transport.credentials as credentials_module
+
+    monkeypatch.setattr(credentials_module, "_has_controlling_terminal", lambda: False)
+
+    assert cli_module.main(["record"]) == 2
+    assert calls == []
+    assert "talaria:" in capsys.readouterr().err
+
+
+def test_an_unparseable_record_endpoint_is_refused_rather_than_parsed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A string `urlsplit` cannot read cannot be shown to be credential-free.
+
+    It is also exactly what an operator produces by pasting a credential into a
+    URL by hand, so it is refused on the credential path rather than allowed
+    through to fail later as a bad endpoint.
+    """
+    calls = _fake_record_capture(monkeypatch)
+
+    assert cli_module.main(["record", "ws://[bad::/api/ws"]) == 2
+    assert calls == []
 
 
 # ── refreshing the credential from a running dashboard ───────────────────

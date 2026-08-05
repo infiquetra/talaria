@@ -23,11 +23,15 @@ inspected. That is a protocol fact, not a preference — which is why
 **Acquisition precedence, highest first.**
 
 1. ``HERMES_DASHBOARD_SESSION_TOKEN`` in the environment.
-2. A ``token`` query parameter already present on ``TALARIA_GATEWAY_URL``. The
-   documented endpoint form carries one (``talaria record 'ws://…?token=…'``),
-   and an operator who has exported that URL has already supplied the
-   credential; making them export it twice would be a papercut with no security
-   benefit, since the value is in the same environment either way.
+2. A ``token`` query parameter already present on ``TALARIA_GATEWAY_URL``. An
+   operator who has exported that variable with a credential on it has already
+   supplied the credential; making them export it twice would be a papercut with
+   no security benefit, since the value is in the same environment either way.
+   This level is about the *environment*, and only the environment. The command
+   line is not an equivalent place to put the same string, and ``talaria record``
+   now refuses an endpoint argument carrying a credential rather than accepting
+   one (``talaria/cli.py``): an exported variable is not in the process table of
+   every process that reads it, and a command line is.
 3. ``<config_dir>/credentials``, rejected unless its mode is no looser than
    ``0600``.
 4. An interactive hidden prompt, via :func:`getpass.getpass`.

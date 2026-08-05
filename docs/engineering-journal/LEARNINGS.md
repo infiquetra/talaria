@@ -2,6 +2,26 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-05
+
+### A subcommand can require the exact thing the rest of the module forbids, and every test still passes
+
+**Author.** post-v0.1 conformance audit, DRIFT-01 remediation (plan `docs/plans/2026-08-05-credential-and-bridge-drift-remediation-plan.md`, unit U2)
+
+**Evidence.** `talaria/cli.py` — `record`'s positional argument was required and its own help text read `ws://127.0.0.1:9119/api/ws?token=<token>`; `README.md:78` printed that command for operators to copy. `talaria/recorder/command.py` took the URL string and handed it straight to the connector. R9 forbids exactly this: attach credentials must stay out of command-line arguments, shell history, and process listings. The audit found it by running the command with a canary value and reading the value back out of `ps -ww -Ao pid,command` from a separate process — not by reading the code.
+
+**Mechanism, and it is a coverage shape rather than a coding mistake.** Every control R9 needs was already built and working. `LoopbackTokenProvider` walks an environment-then-file-then-prompt chain that never touches argv. `AttachTarget` strips credential query parameters at construction, so the object the rest of the system holds is credential-free by invariant. `redact_url` withholds both the query credential and URL userinfo. `talaria refresh-credential` exists so the file route is one command that prints nothing secret. What was missing was a route from `talaria record` into any of it: the subcommand predates the transport module and was never rewired when the chain arrived, so it kept its own URL-shaped door while the building around it got locks.
+
+The reason nothing caught it is narrower and more useful than "no test covered it". The process-surface sweep that measures R9 does exist, and it does launch a real process holding a real credential and search its argv — but it builds its probe with `parse_args([])` (`tests/transport/test_process_surface.py:79`), the bare launcher with no subcommand. It measured one entry point and the journal reported the result as a property of the program: `QUEUED.md:106` said "the argv half holds and is measured" and `DECISIONS.md:406` said attach credentials "never appear in argv". Both sentences were written about the acquisition chain, both were true of it, and both were read afterwards as covering every way the program can be started. The audit's own independent static reviewer read one of them and graded R9 as an accepted divergence.
+
+**The fix, and the one design choice inside it worth keeping.** `record`'s positional is now optional and means the endpoint, never the credential; when present it is passed as `override=` to `AttachTarget.from_environment`, which is the same call the live launcher makes, so the two entry points are one code path instead of two that have to be kept in agreement. Resolution moved out of the dial loop into `resolve_record_target`, which returns an endpoint and a credential as separate halves.
+
+The choice worth keeping is that a credential-bearing URL is **refused**, not silently stripped. `AttachTarget.from_url` would have stripped it happily and the recording would have worked. But by the time `argparse` sees the argument the leak has already happened — the value is in the process table and in the shell history — so stripping it preserves the exact habit that leaked it and teaches the operator nothing. The refusal exits 2, names the two routes that do not involve a command line, and tells the operator to treat the value they just passed as exposed. Userinfo (`ws://user:pass@host/api/ws`) is refused on the same terms even though Hermes would never have authenticated it, because what it did do is put a secret in two places it does not belong.
+
+The refusal reproduces nothing it was given — not the value, not the URL, not a fragment of either. Adding a third copy in stderr, which in continuous integration is a log file in a public repository, would be a strange way to warn someone about the first two.
+
+**Generalizable rule.** A guarantee measured at one entry point is a guarantee about that entry point. Before writing "X never happens" in a journal, name the entry points the measurement actually covers and say so in the sentence — and when a shared control (a credential chain, a redaction boundary, an allowlist) lands, audit every existing caller for one that predates it and still has its own door.
+
 ## 2026-08-04
 
 ### Prior art: Qwen Code, a mature terminal agent that answers four of Talaria's open questions in the opposite direction
