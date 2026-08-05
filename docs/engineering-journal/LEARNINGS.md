@@ -36,6 +36,20 @@ Three documents repeated the overclaim in different registers: `QUEUED.md` state
 
 **Generalizable rule.** When a probe, sweep, or test is scoped to one code path, the sentence that reports its result must name that path, every time it is repeated — "the launcher's argv" is a different claim from "argv," and only the narrower one was paid for. And a claim that a sweep covers "every X" is itself a testable claim: pin it with a guard that enumerates the live X (a parser's subcommands, a bridge's methods, a module's public functions) and fails when the enumeration grows past what the sweep or the classification list was told about, rather than leaving completeness to be re-asserted by hand each time something is added.
 
+### A refusal's exit code proves nothing when the fallback path exits the same way
+
+**Author.** code-review gate on the credential-and-bridge-drift remediation (plan `docs/plans/2026-08-05-credential-and-bridge-drift-remediation-plan.md`, gate on U2)
+
+**Evidence.** U2 added the control this whole plan exists to ship: `talaria record` refuses an endpoint carrying a credential and exits 2. It arrived with eight tests. Deleting the refusal outright — replacing its condition with `if False:` — left **seven of the eight still passing**. Only `test_the_record_refusal_names_both_supported_routes`, which asserts on the message text, went red.
+
+**Mechanism, and it is a two-exits-one-code problem.** `run_record_command` returns 2 for two unrelated reasons, which KTD7 chose deliberately: the refusal, and a credential the chain could not supply. Under pytest the chain supplies nothing and has no terminal to prompt on, so it raises `CredentialError` and returns 2 by the *other* route. Every assertion the tests made was satisfied by that route too: the exit code was 2, `run_record` was never reached because the failure happened earlier, and the canary was absent from the message because an unrelated error message does not contain it either. The R6 tests were the worst affected — "the refusal does not echo the credential" is vacuously true of any output that is not the refusal.
+
+The tell was available and unread: the refusal path and the failure path are distinguishable only by what they *say*, and exactly one of the eight tests read that. The `pre_existing` shape here is worth naming too — the fragment gap the same gate found was a missing branch, a thing not written; this was eight things written that did not test what they claimed. The second is harder to see, because the suite is green either way and the count went up.
+
+**Fixed** by giving the refusal a signature the other exit cannot produce — `REFUSAL_SIGNATURE = "refusing to record"` — and asserting it in every refusal test before any other assertion. Re-run of the same deletion now fails 7 of 8, exactly inverting the original result; removing only the fragment branch fails exactly the 2 fragment rows. The one test that still passes under a fully deleted refusal, `test_an_unparseable_record_endpoint_is_refused_rather_than_parsed`, is correct to: it exercises `resolve_endpoint`'s own refusal, a different control.
+
+**Generalizable rule.** When a function has more than one route to the same exit code, an exit-code assertion is not a test of any one of them. Before trusting a test of a new guard, ask what *else* produces the value being asserted, and under a test harness ask it twice — a harness with no credential, no terminal, no network and no config reaches error paths that a real run rarely does, and those paths are exactly the ones that mimic a refusal. The cheap check is mechanical and should be routine for any security control: delete the control, run its tests, and count. If the number that go red is not the number that claim to cover it, the difference is the measure of how much of that suite was decoration.
+
 ## 2026-08-04
 
 ### Prior art: Qwen Code, a mature terminal agent that answers four of Talaria's open questions in the opposite direction

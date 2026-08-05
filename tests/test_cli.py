@@ -349,29 +349,61 @@ def _fake_record_capture(monkeypatch: pytest.MonkeyPatch) -> list[RecordTarget]:
     return calls
 
 
+#: The one phrase only the credential refusal emits.
+#:
+#: `run_record_command` exits 2 for two unrelated reasons (KTD7): the refusal,
+#: and a credential the chain could not supply. Under pytest the chain supplies
+#: nothing and has no terminal to prompt on, so it raises `CredentialError` and
+#: exits 2 as well -- which means an exit-code assertion on its own cannot tell
+#: a working refusal from a deleted one. Every refusal test asserts this string
+#: so that it can.
+REFUSAL_SIGNATURE = "refusing to record"
+
+
 @pytest.mark.parametrize(
     ("label", "url"),
     [
         ("query string", "ws://127.0.0.1:9119/api/ws?token=NOT-A-REAL-CANARY-4f2b91"),
         ("userinfo", "ws://operator:NOT-A-REAL-CANARY-4f2b91@127.0.0.1:9119/api/ws"),
+        ("fragment", "ws://127.0.0.1:9119/api/ws#token=NOT-A-REAL-CANARY-4f2b91"),
     ],
 )
 def test_record_refuses_a_credential_on_the_command_line(
     label: str,
     url: str,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """R5: both credential-bearing shapes are refused, and the exit code is 2.
+    """R5: every credential-bearing shape is refused, and the exit code is 2.
 
     Query parameters are the form Hermes actually reads. Userinfo would never
     have authenticated -- Hermes reads the upgrade credential only from
     `ws.query_params` -- but it still put a secret in the process table and the
     shell history, which is the thing KTD1 exists to tell the operator about.
+
+    The fragment is the same argument again, and it is the case that made this
+    parametrize list grow: it cannot authenticate either, and unlike the other
+    two nothing downstream withholds it. `strip_credential_query` drops
+    credential query keys and `redact_url` withholds userinfo; neither touches a
+    fragment. Before this row existed, `record` accepted such a URL, printed it
+    to the terminal, and wrote it into the frame-log header verbatim.
+
+    The exit code alone does not prove the refusal fired, which is why
+    `REFUSAL_SIGNATURE` is asserted as well. `run_record_command` returns 2 for
+    two different reasons -- a credential on the command line, and a credential
+    the chain could not supply -- and under pytest the chain supplies nothing and
+    cannot prompt, so it raises `CredentialError` and returns 2 anyway. Asserting
+    only `== 2` and `calls == []` passes with the refusal deleted outright:
+    verified by deleting it. The signature is the one string only the refusal
+    emits.
     """
     calls = _fake_record_capture(monkeypatch)
 
     assert cli_module.main(["record", url]) == 2, label
     assert calls == [], f"{label}: a refused invocation still reached run_record"
+    assert REFUSAL_SIGNATURE in capsys.readouterr().err, (
+        f"{label}: exited 2 without refusing -- the credential check did not fire"
+    )
 
 
 @pytest.mark.parametrize(
@@ -379,6 +411,7 @@ def test_record_refuses_a_credential_on_the_command_line(
     [
         ("query string", "ws://127.0.0.1:9119/api/ws?token=NOT-A-REAL-CANARY-4f2b91"),
         ("userinfo", "ws://operator:NOT-A-REAL-CANARY-4f2b91@127.0.0.1:9119/api/ws"),
+        ("fragment", "ws://127.0.0.1:9119/api/ws#token=NOT-A-REAL-CANARY-4f2b91"),
     ],
 )
 def test_the_record_refusal_reproduces_nothing_it_was_given(
@@ -406,6 +439,12 @@ def test_the_record_refusal_reproduces_nothing_it_was_given(
 
     message = capsys.readouterr().err
     assert message.strip(), f"{label}: the refusal printed nothing"
+    # Without this, every assertion below is vacuous: an unrelated error message
+    # also fails to contain the canary. Prove the refusal is what was printed
+    # before proving what the refusal does not say.
+    assert REFUSAL_SIGNATURE in message, (
+        f"{label}: exited 2 without refusing -- the credential check did not fire"
+    )
 
     haystack = message.lower()
     assert url not in message, f"{label}: the refusal echoed the URL it refused"

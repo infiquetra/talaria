@@ -210,7 +210,7 @@ def url_carries_credential(url: str) -> bool:
     be examining a string that can no longer hold the thing being looked for and
     would report "clean" every time.
 
-    Two shapes count, and they count for different reasons.
+    Three shapes count, and they count for different reasons.
 
     A credential *query parameter* — the names in
     :data:`~talaria.transport.attach.CREDENTIAL_QUERY_KEYS` — is the form the
@@ -228,6 +228,20 @@ def url_carries_credential(url: str) -> bool:
     keying the refusal on query parameters alone would leave a hole with exactly
     the shape of the one this closes.
 
+    A *fragment* — ``ws://host/api/ws#token=…`` — is refused whatever it holds,
+    and of the three it is the shape with the worst consequences. Like userinfo
+    it can never authenticate: a fragment is by definition not sent to a server,
+    and ``websockets`` rejects such a URI outright ("fragment identifier is
+    meaningless"). Unlike userinfo it is withheld by *nothing* downstream —
+    :func:`~talaria.transport.attach.strip_credential_query` drops credential
+    query keys and :func:`~talaria.recorder.redact.redact_url` withholds
+    userinfo, but neither touches a fragment, so a credential in one reached the
+    printed endpoint and the frame-log header verbatim. Because a WebSocket
+    endpoint has no legitimate use for a fragment at all, any fragment is
+    refused rather than sniffed for credential-shaped keys: guessing at the
+    contents of a component that should not be there is a worse boundary than
+    rejecting the component.
+
     A URL that :func:`~urllib.parse.urlsplit` cannot read is treated as carrying
     one. It cannot be shown to be credential-free, and a string malformed enough
     to defeat ``urlsplit`` is exactly what an operator produces by pasting a
@@ -240,6 +254,8 @@ def url_carries_credential(url: str) -> bool:
     except ValueError:
         return True
     if "@" in parts.netloc:
+        return True
+    if parts.fragment:
         return True
     return any(
         name.lower() in CREDENTIAL_QUERY_KEYS
