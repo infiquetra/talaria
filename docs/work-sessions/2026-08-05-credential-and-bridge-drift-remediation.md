@@ -96,6 +96,43 @@ reading the expected host from the environment instead of hard-coding literals �
 and it is why a crude "does the string appear anywhere in `ps`" check is not the
 measurement, attribution to a PID is.
 
+## Code-review gate
+
+Ran programmatically at `23ee6ac`. **One P1, now fixed** in `572990e`; re-gated clean.
+
+**The finding.** A credential in the endpoint's URL *fragment* was refused by
+nothing. `url_carries_credential` read `netloc` for userinfo and
+`parse_qsl(query)` for credential keys, and `urlsplit` puts everything after `#`
+in `fragment`. Reproduced end to end before fixing: the command was accepted, the
+canary was echoed to the terminal twice, and it was written into the frame-log
+header verbatim.
+
+Of the three shapes a credential can ride in on, the fragment was the only one
+caught by nothing — `strip_credential_query` drops credential query keys,
+`redact_url` withholds userinfo, neither touches a fragment — so it was also the
+only one that reached disk. Any fragment is now refused outright; a WebSocket
+endpoint has no legitimate use for one and `websockets` rejects such a URI
+anyway. The redactor's own fragment blindness is pre-existing and reaches
+`AttachTarget.url` from the environment and credential file too, so it is filed
+as P2 in `QUEUED.md` rather than widened here — that change alters what the
+frame-log format promises, which is a decision rather than a fix.
+
+**The finding underneath the finding, which matters more.** Writing the test for
+the fix exposed that the refusal's existing tests did not test the refusal.
+Replacing the check's condition with `if False:` left **seven of its eight tests
+passing**. `run_record_command` exits 2 for two unrelated reasons by KTD7's own
+design — the refusal, and a credential the chain cannot supply — and under pytest
+the chain supplies nothing and cannot prompt, so it raised `CredentialError` and
+exited 2 by the other route. The R6 tests were worst affected: "the refusal does
+not echo the credential" is vacuously true of any output that is not the refusal.
+
+Every refusal test now asserts `REFUSAL_SIGNATURE` before anything else. The same
+deletion now fails 7 of 8, exactly inverting the original result; removing only
+the fragment branch fails exactly the 2 fragment rows. Recorded in `LEARNINGS.md`
+— the generalizable rule is that an exit-code assertion tests nothing when more
+than one route reaches that exit, and a test harness with no credential, no
+terminal and no network reaches precisely the routes that mimic a refusal.
+
 ## Files modified
 
 `talaria/cli.py`, `talaria/recorder/command.py`, `talaria/transport/credentials.py`,
@@ -106,7 +143,7 @@ measurement, attribution to a PID is.
 ## Checks run
 
 Against the committed tree, all green: `ruff` clean; `mypy` 106 source files, no
-issues; `pytest` **1071 passed, 1 skipped** (up from 1046 passed, 1 skipped);
+issues; `pytest` **1073 passed, 1 skipped** (up from 1046 passed, 1 skipped);
 `bandit` exit 0; `git diff --check` clean.
 
 R10 was verified directly rather than assumed: the developer's real credential
@@ -125,4 +162,4 @@ make the plan's sequencing claim retroactively true.
 
 ## Next step
 
-Code-review gate, then offer the PR.
+Open the PR. The gate is clean and the review is fresh at `572990e`.
