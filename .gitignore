@@ -35,3 +35,6 @@ __pycache__/
 # whole corpora.
 corpora/
 tests/**/corpora/
+
+# Machine-local Qwen CLI preferences, written when an external agent runs here.
+.qwen/
