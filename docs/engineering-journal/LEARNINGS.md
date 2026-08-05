@@ -6,7 +6,7 @@
 
 ### A subcommand can require the exact thing the rest of the module forbids, and every test still passes
 
-**Author.** post-v0.1 conformance audit, DRIFT-01 remediation (plan `docs/plans/2026-08-05-credential-and-bridge-drift-remediation-plan.md`, unit U2)
+**Author.** post-v0.1 conformance audit, DRIFT-03 remediation (plan `docs/plans/2026-08-05-credential-and-bridge-drift-remediation-plan.md`, unit U2)
 
 **Evidence.** `talaria/cli.py` — `record`'s positional argument was required and its own help text read `ws://127.0.0.1:9119/api/ws?token=<token>`; `README.md:78` printed that command for operators to copy. `talaria/recorder/command.py` took the URL string and handed it straight to the connector. R9 forbids exactly this: attach credentials must stay out of command-line arguments, shell history, and process listings. The audit found it by running the command with a canary value and reading the value back out of `ps -ww -Ao pid,command` from a separate process — not by reading the code.
 
@@ -21,6 +21,20 @@ The choice worth keeping is that a credential-bearing URL is **refused**, not si
 The refusal reproduces nothing it was given — not the value, not the URL, not a fragment of either. Adding a third copy in stderr, which in continuous integration is a log file in a public repository, would be a strange way to warn someone about the first two.
 
 **Generalizable rule.** A guarantee measured at one entry point is a guarantee about that entry point. Before writing "X never happens" in a journal, name the entry points the measurement actually covers and say so in the sentence — and when a shared control (a credential chain, a redaction boundary, an allowlist) lands, audit every existing caller for one that predates it and still has its own door.
+
+### A sweep parametrized over one entry point measures one entry point, no matter how broadly the surrounding prose describes it
+
+**Author.** post-v0.1 conformance audit, DRIFT-03 remediation (plan `docs/plans/2026-08-05-credential-and-bridge-drift-remediation-plan.md`, unit U3)
+
+**Evidence.** `tests/transport/test_process_surface.py`'s R1 (the requirement that a running Talaria's command line never carries a credential) built exactly one probe, from `parse_args([])` — the bare `talaria` launcher, no subcommand. `docs/engineering-journal/QUEUED.md:106` then reported the result as "The argv half holds and is measured," unqualified. `talaria record` is a second, separate entry point into the same process image, and at the time it took its gateway URL — credential included, as `?token=` — as a required positional command-line argument (`talaria/cli.py:68-75`, before the 2026-08-05 credential-and-bridge-drift remediation). Nothing in the sweep ever launched it, so nothing could have caught it. Confirmed by running the command against a dead port with a canary value and reading it back out of `ps -ww -Ao pid,command` from a separate process — the same falsification the sweep itself performs, just done once by hand instead of continuously in the suite.
+
+Three documents repeated the overclaim in different registers: `QUEUED.md` stated the measurement as complete, `docs/engineering-journal/DECISIONS.md:406` generalized "never appear in argv" from the `CredentialProvider` acquisition chain (true) to the whole program (not measured), and `README.md:78` printed the leaking command as the documented way to run `talaria record`. An independent static reviewer read one of the three, took it as settled, and graded the requirement an accepted divergence rather than an open defect.
+
+**Fixed** by parametrizing the sweep over every shipped entry point that can hold a credential — the launcher, `record`, `refresh-credential` — and adding a guard, `test_the_subcommand_set_is_exactly_the_classified_set`, that reads the live subparser choices off `talaria.cli.build_parser` and fails when a subcommand exists that nobody has classified as credential-holding or not. Demonstrated red: a throwaway subcommand added to the parser failed the guard with `unclassified=['throwaway-red-demo']`; removing the subcommand restored green. Both journal entries above are corrected in place to say what is now measured and to record that the earlier wording was an overclaim, rather than being left to quietly become true once `record` was fixed — a true sentence with a false history reads exactly like a true sentence, and the only way to know it once covered a real gap is to have written that down.
+
+**Mechanism.** The sweep's own docstring named its narrow scope accurately — "a running process built by the real launcher" — but the journal entry summarizing it dropped the qualifier "built by the real launcher" and kept only "a running process," which is a claim about the whole program. The gap opened at the point of *summarization*, not at the point of measurement: the test was honest about what it covered, and the sentence describing the test to a future reader was not. This is the same shape as the six remediated earlier in this file — an assertion, or here a claim, that is a consequence of something already established (one probe ran clean) rather than an independent check of the thing actually asserted (every entry point runs clean) — except one level up, in prose rather than in a `assert` statement.
+
+**Generalizable rule.** When a probe, sweep, or test is scoped to one code path, the sentence that reports its result must name that path, every time it is repeated — "the launcher's argv" is a different claim from "argv," and only the narrower one was paid for. And a claim that a sweep covers "every X" is itself a testable claim: pin it with a guard that enumerates the live X (a parser's subcommands, a bridge's methods, a module's public functions) and fails when the enumeration grows past what the sweep or the classification list was told about, rather than leaving completeness to be re-asserted by hand each time something is added.
 
 ## 2026-08-04
 
