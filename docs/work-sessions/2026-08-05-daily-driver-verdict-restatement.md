@@ -184,8 +184,10 @@ than asserting it.
 
 ## Still open
 
-DRIFT-04's register entry does not yet carry the closing reference the resolved
-entries use — "Fixed and merged: pull request #N, merged as `<sha>`" — because
-neither the pull request number nor the merge commit exists while this branch is
-unmerged. DRIFT-01 and DRIFT-03 got theirs the same way, after the fact. It needs
-one follow-up commit once this merges.
+Nothing. The one item that outlived the pull request was DRIFT-04's closing
+reference — the "Fixed and merged: pull request #N, merged as `<sha>`" line the
+other resolved entries carry — which could not be written while neither the pull
+request number nor the merge commit existed. DRIFT-01 and DRIFT-03 got theirs the
+same way, after the fact. This work merged as pull request #27, commit `ae76a39`,
+and the reference was added in the follow-up commit that also replaced this
+paragraph.

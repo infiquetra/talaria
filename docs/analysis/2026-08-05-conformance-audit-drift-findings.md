@@ -134,9 +134,10 @@ where nothing would find it again.
 quality: the project carried a NOT READY verdict whose two stated reasons were both obsolete, so
 neither "we are ready" nor "we are not ready" could be said on evidence.
 
-**Resolution.** Rows 17 and 18 (R2, R3) were re-graded `met` against the live recordings, each
-citing the specific frames that settle it. Rows 6, 13 and 19, and the five "What would change this
-verdict" items, were independently re-read and their present state recorded — row 6 had **not**
+**Resolution.** Fixed and merged: pull request #27, merged as `ae76a39`. Rows 17 and 18 (R2, R3)
+were re-graded `met` against the live recordings, each citing the specific frames that settle it.
+Rows 6, 13 and 19, and the five "What would change this verdict" items, were independently re-read
+and their present state recorded — row 6 had **not**
 moved (still ten of eighteen required methods with no runtime evidence, the deliberate
 falsifiability control), row 13 stays partially unmet by design (the environment-credential
 precedence decision recorded as open in `QUEUED.md`), row 19 stays unmet (F7, the gateway surviving
