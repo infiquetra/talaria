@@ -371,7 +371,35 @@ So the operator types a password into a focused control that draws nothing, with
 
 **Suggested framing.** Schedule the recomputation from `apply` whenever it mounted or removed a card. Note that doing so makes the `Rewrapped` channel redundant for the mount case — check, by deleting it and running `test_a_card_mounting_into_a_full_region_is_still_recomputed`, whether it still has a case of its own before keeping both.
 
+### The daily-driver verdict is stale, and holds NOT READY on two blockers that have since cleared
+
+**Author.** Conformance audit of R1–R40, batch 4, 2026-08-05 — recorded as DRIFT-04 in [the audit's finding register](../analysis/2026-08-05-conformance-audit-drift-findings.md)
+**Priority.** P1
+**Effort.** Small for the two rows; moderate for restating the verdict on current evidence
+**Worth it when.** Before anyone cites the v0.1 verdict to decide whether Talaria is usable — which is the only thing that document is for.
+
+**Context.** `docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md:428` reads "Talaria v0.1 is **NOT READY** as a daily driver", and `:447-452` names exactly two things that would change it: one real attach (R2) and one real turn (R3). Both happened on 2026-08-04 and are recorded in `LEARNINGS.md`. The verdict still grades both `unmet` at `:85-86`, giving as reasons "No Hermes gateway has answered one" and "Nothing was submitted to a Hermes session". Across the 17 live recordings then available, a real gateway answered `session.most_recent` in 15 and `session.create` in 15, both replies carrying a `session_id`; twelve recordings contain a `prompt.submit` followed immediately by `message.start`, then `message.delta`, then `message.complete`. Nothing links the live-attach work back to the verdict's rows, so no mechanism re-opens a verdict when its blockers clear.
+
+**This is an under-claim, and the direction matters.** It cannot mislead anyone into trusting something unproven. The cost is that neither "we are ready" nor "we are not ready" can currently be said on evidence.
+
+**Suggested framing.** Re-run the verdict's own R2 and R3 rows against the recordings, citing corpora by digest and count under R29 rather than by local path, and update them in place. Correct the matching stale sentence in `open_session`'s docstring at `talaria/ui/app.py:1839` — "It has never run against a Hermes gateway" — which was true when written. Then restate the verdict on current evidence. **Do not simply flip two rows to `met`:** the failure being fixed is a verdict whose reasons outlived the facts, and an unsourced revision repeats that mistake in the other direction. Each updated row should name the recording and the frames that settle it.
+
 ## P2
+
+### R28's equivalence proof leaves the repository with the TypeScript tree
+
+**Author.** Conformance audit of R1–R40, batch 2, 2026-08-05 — recorded as DRIFT-02 in [the audit's finding register](../analysis/2026-08-05-conformance-audit-drift-findings.md). Found by the independent static pass. Filing this entry *is* that finding's resolution: the defect was a scheduled consequence with no record attached.
+**Priority.** P2
+**Effort.** Small if the choice is made deliberately; the cost is entirely in making it under time pressure instead
+**Worth it when.** The moment anyone proposes removing `src/`. This entry exists to be found then.
+
+**Context.** R28 requires that the TypeScript and Python recorders produce contract-equivalent frame logs. The test proving it runs the **real** TypeScript recorder as a subprocess: `tests/recorder/ts_bridge/run_ts_recorder.mjs` imports `FrameRecorder` directly from `src/record/recorder.js`. That is a direct file import, so deleting `src/` breaks the proof immediately rather than degrading it.
+
+**The existing records anticipate the wrong casualty.** `CLAUDE.md`, this file, and `DECISIONS.md` all reason about `src/` removal in terms of the Node `check` job that runs `npm run check` — correctly predicting that Prettier and that job leave with the tree. R28's harness does not live there. It is a pytest test in the `python-check` job that spawns `tsx`, so it leaves too, and nothing said so.
+
+**Severity is low today and moderate at removal time.** The failure is loud — the bridge import breaks and the test errors — so this cannot leak a credential or pass a false proof. The risk is that the decision gets made by deleting a red test under deadline, which retires R28's evidence without a decision record.
+
+**The choice to make, when the time comes.** Either vendor a frozen copy of the TypeScript reference recorder purely as a test fixture, keeping the equivalence executable; or accept that R28 becomes historical, and record in `DECISIONS.md` that the equivalence relation was proven at a named commit and is no longer re-verified. Either is defensible. Making the choice implicitly, by deleting a failing test, is not.
 
 ### The URL redactor does not touch fragments, so a credential in one reaches the frame log from any source
 

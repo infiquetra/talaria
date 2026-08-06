@@ -2,6 +2,26 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-05
+
+### An audit's findings graduate to a dated register in `docs/analysis/`, and every open one is mirrored into `QUEUED.md`
+
+**Author.** post-v0.1, conformance audit, at the point the last in-scope finding was remediated
+
+**Decision.** A finding register lives at `docs/analysis/<date>-<audit>-findings.md` and holds every finding the audit produced — resolved ones included, with the commit or pull request that closed them. Any finding still open is *also* written as a `QUEUED.md` entry that names the register as its source. The register is the narrative and the evidence; `QUEUED.md` is the worklist. Neither is a substitute for the other.
+
+**Why the register, rather than only `QUEUED.md` entries.** A finding carries three things the worklist has no place for: how it was found, why the records that should have caught it did not, and what its existence says about the method that produced it. The R1 grading disagreement is the example — the reading pass produced a confident wrong grade sourced from a false sentence in this project's own journal, and that result is the audit's most useful output. It is not deferred work, so it would have no home in `QUEUED.md` and would be lost.
+
+**Why also mirror into `QUEUED.md`, rather than only the register.** Nobody consults a dated analysis document at the moment they need it. DRIFT-02 is the proof: its whole defect was that removing the TypeScript tree under `src/` would silently retire R28's proof, and its resolution is a record placed where the person doing the removal will actually hit it. A register entry alone would have reproduced the original failure in a new location.
+
+**Why an audit's working notes stay out of the repository until the remediation decision is made.** Partial grades read exactly like findings. While grading is in progress the list lives in session scratch, and it graduates once the decision about what to fix has been taken — which is what happened here.
+
+**Rejected alternative — file each finding as a GitHub issue and keep no register.** Issues are good at assignment and bad at standing evidence: they close, they are not read in the tree, and a reader auditing the auditor cannot diff them against the code at a commit. The two are not exclusive, but the tree is the authority.
+
+**Rejected alternative — fold everything into `LEARNINGS.md`.** That file records what was learned from work that was done. Most of an audit's value is findings *not yet* acted on, which is a different lifecycle and would swamp it.
+
+**Revisit when.** A second audit runs. Two dated registers with overlapping requirement coverage will need a rule for which one is current — most likely that the newer supersedes the older per requirement, stated in the newer — and that rule does not exist yet because there has only ever been one.
+
 ## 2026-08-04
 
 ### Every gateway method Talaria names must be pinned in the compatibility baseline, and a scan enforces it
