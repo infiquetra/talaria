@@ -12,12 +12,14 @@ prove what Talaria does with the answer.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
 from talaria.domain.commands import CATALOG_METHOD, SLASH_EXEC_METHOD
 from talaria.domain.models_catalog import (
+    ModelAssignmentResult,
     ModelProvider,
     ProfileDirectory,
     ProfileEntry,
@@ -29,6 +31,10 @@ from talaria.transport.admin import AdminError
 from talaria.transport.rpc import RpcOutcome
 from talaria.transport.source import SwitchReport
 from talaria.ui.app import (
+    MODEL_DEFAULT_FAILED,
+    MODEL_DEFAULT_NEW_SESSIONS_ONLY,
+    MODEL_DEFAULT_NO_PROFILE,
+    MODEL_DEFAULT_UNAVAILABLE,
     MODELS_NOT_FETCHED,
     MODELS_STALE_EPOCH,
     PROFILE_SWITCH_FAILED,
@@ -38,6 +44,7 @@ from talaria.ui.app import (
     PROFILES_UNAVAILABLE,
     EndpointSwitcher,
     ModelAdmin,
+    ModelDefaultWriter,
     ProfileAdmin,
     TalariaApp,
 )
@@ -891,3 +898,324 @@ def test_no_fixture_in_this_module_names_a_real_profile() -> None:
     assert all(name.endswith("-fixture") for name in names)
     # And no endpoint in the fixtures leaves loopback.
     assert all(url.startswith("ws://127.0.0.1:") for url in FIXTURE_ENDPOINTS.values())
+
+
+# ── U5: the default-model write and its two-act confirmation (KTD7) ────────
+#
+# ``delta-fixture`` is invented (R12), the same discipline the U4 section
+# above follows.
+
+DELTA_FIXTURE_PROFILE = "delta-fixture"
+
+
+def assignment_ok(**overrides: Any) -> ModelAssignmentResult:
+    fields: dict[str, Any] = {"ok": True, "scope": "main"}
+    fields.update(overrides)
+    return ModelAssignmentResult(**fields)
+
+
+def assignment_confirm_required(message: str = "example-large costs real money") -> (
+    ModelAssignmentResult
+):
+    return ModelAssignmentResult(
+        ok=False, scope="main", confirm_required=True, confirm_message=message
+    )
+
+
+@dataclass
+class FakeModelWriter:
+    """A ``ModelAdmin`` *and* ``ModelDefaultWriter`` double (U5).
+
+    ``results`` is consumed one call at a time — the confirmation round trip
+    needs the *second* call to answer differently from the first, which a
+    single fixed return value cannot express. Running past the end repeats
+    the last entry, so a test that only cares about the first call need not
+    pad the list.
+    """
+
+    catalog: ProviderCatalog = field(default_factory=lambda: TWO_PROVIDER_CATALOG)
+    results: list[ModelAssignmentResult | AdminError] = field(default_factory=list)
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def model_options(self, *, profile: str | None = None) -> ProviderCatalog:
+        return self.catalog
+
+    async def set_default_model(
+        self,
+        *,
+        profile: str,
+        provider: str,
+        model: str,
+        confirm_expensive_model: bool,
+    ) -> ModelAssignmentResult:
+        self.calls.append(
+            {
+                "profile": profile,
+                "provider": provider,
+                "model": model,
+                "confirm_expensive_model": confirm_expensive_model,
+            }
+        )
+        index = min(len(self.calls) - 1, len(self.results) - 1)
+        outcome = self.results[index]
+        if isinstance(outcome, AdminError):
+            raise outcome
+        return outcome
+
+
+def test_the_model_writer_double_satisfies_both_protocols() -> None:
+    """Guard the guard: a double outside the protocols proves nothing."""
+    writer = FakeModelWriter(results=[assignment_ok()])
+    assert isinstance(writer, ModelAdmin)
+    assert isinstance(writer, ModelDefaultWriter)
+    # And the U2-era double is deliberately *not* a writer — that is the
+    # "this admin client cannot write a default" state, not a broken double.
+    assert not isinstance(FakeAdminClient(catalog()), ModelDefaultWriter)
+
+
+def default_app(
+    writer: object, *, current_profile: str = DELTA_FIXTURE_PROFILE
+) -> TalariaApp:
+    controls = ReplayControls(paused=True)
+    source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
+    return TalariaApp(
+        source,
+        mode="live",
+        controls=controls,
+        dispatcher=RecordingDispatcher(),
+        admin_client=writer,  # type: ignore[arg-type]
+        current_profile=current_profile,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_bare_default_write_succeeds_and_states_new_sessions_only() -> None:
+    writer = FakeModelWriter(results=[assignment_ok(provider="anthropic", model="sonnet")])
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        # Row 1 is anthropic's "sonnet" — authenticated, not the current model.
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert writer.calls == [
+            {
+                "profile": DELTA_FIXTURE_PROFILE,
+                "provider": "anthropic",
+                "model": "sonnet",
+                "confirm_expensive_model": False,
+            }
+        ]
+        notice = app.composer.notice
+        assert DELTA_FIXTURE_PROFILE in notice
+        assert "sonnet" in notice
+        # R4: the on-screen note that this affects new sessions only.
+        assert MODEL_DEFAULT_NEW_SESSIONS_ONLY in notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_confirm_required_shows_the_message_and_the_first_call_never_confirms() -> None:
+    writer = FakeModelWriter(results=[assignment_confirm_required("sonnet costs real money")])
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert len(writer.calls) == 1
+        assert writer.calls[0]["confirm_expensive_model"] is False
+
+        notice = app.composer.notice
+        assert "sonnet costs real money" in notice
+        assert MODEL_DEFAULT_NEW_SESSIONS_ONLY in notice
+        assert "/models 1 default confirm" in notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_the_second_distinct_act_resends_confirmed_and_completes() -> None:
+    """KTD7's whole point: two textually distinct commands, not one call twice."""
+    writer = FakeModelWriter(
+        results=[
+            assignment_confirm_required("sonnet costs real money"),
+            assignment_ok(provider="anthropic", model="sonnet"),
+        ]
+    )
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        app.composer.text = "/models 1 default confirm"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert [call["confirm_expensive_model"] for call in writer.calls] == [False, True]
+        assert MODEL_DEFAULT_NEW_SESSIONS_ONLY in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_400_is_shown_on_screen_rather_than_raised() -> None:
+    error = AdminError(
+        "invalid_request", "the gateway refused the request as malformed (HTTP 400)"
+    )
+    writer = FakeModelWriter(results=[error])
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        notice = app.composer.notice
+        assert notice.startswith(MODEL_DEFAULT_FAILED)
+        assert "malformed" in notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_default_write_before_any_fetch_is_refused_and_named() -> None:
+    writer = FakeModelWriter(results=[assignment_ok()])
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert writer.calls == []
+        assert MODELS_NOT_FETCHED in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_default_write_against_a_stale_epoch_is_refused_rather_than_sent() -> None:
+    writer = FakeModelWriter(results=[assignment_ok()])
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        app._connection_epoch += 1
+
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert writer.calls == []
+        assert MODELS_STALE_EPOCH in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_default_write_with_no_connected_profile_is_refused() -> None:
+    writer = FakeModelWriter(results=[assignment_ok()])
+    app = default_app(writer, current_profile="")
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert writer.calls == []
+        assert app.composer.notice == MODEL_DEFAULT_NO_PROFILE
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_admin_client_that_cannot_write_a_default_says_so() -> None:
+    """A U2-era admin client has no ``set_default_model``; that is a state,
+    not a bug — the same structural refusal ``PROFILES_UNAVAILABLE`` gives a
+    ``ModelAdmin`` that is not also a ``ProfileAdmin``."""
+    admin = FakeAdminClient(TWO_PROVIDER_CATALOG)
+    app = default_app(admin)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.composer.notice == MODEL_DEFAULT_UNAVAILABLE
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_unauthenticated_row_is_refused_before_any_write() -> None:
+    writer = FakeModelWriter(results=[assignment_ok()])
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        # Row 3 is "cold" provider's one model, marked unauthenticated.
+        app.composer.text = "/models 3 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert writer.calls == []
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_unrecognized_default_syntax_is_refused_and_explained() -> None:
+    writer = FakeModelWriter(results=[assignment_ok()])
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        app.composer.text = "/models 1 default extra-word"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert writer.calls == []
+        assert "is not understood" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_the_composer_keeps_focus_through_a_default_write() -> None:
+    writer = FakeModelWriter(results=[assignment_ok(provider="anthropic", model="sonnet")])
+    app = default_app(writer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        app.composer.text = "/models 1 default"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.focused is app.composer.text_area
+        await app.shutdown_sources()

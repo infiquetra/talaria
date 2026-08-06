@@ -88,6 +88,27 @@ messages name a status code, a path, or a host — never a URL that arrived from
 configuration, and never a header value. This mirrors :class:`RefreshError`'s
 rule for the same reason: an endpoint is exactly the string an operator pastes a
 token into.
+
+**``POST /api/model/set`` is the one write this module makes, and it is
+deliberate (U5).** Unlike ``/api/profiles/active`` above, Hermes's own docstring
+for this endpoint states plainly what it changes: "applies to new sessions
+only. The currently running chat PTY (if any) is not affected"
+(``hermes_cli/web_server.py``, ``set_model_assignment``, confirmed live on
+2026-08-06). That is a real write to a real setting an operator asked for —
+"set this profile's default model" — not a machine-wide preference switch with
+no visible effect, which is the distinction KTD5 draws against calling
+``/api/profiles/active``. ``profile`` rides the query string; ``scope``,
+``provider``, ``model`` and ``confirm_expensive_model`` are body fields on
+Hermes's ``ModelAssignment`` (``hermes_cli/web_models.py``). This plan writes
+``scope="main"`` only — ``auxiliary`` is Scope Boundaries' non-goal, and
+:meth:`AdminClient.set_default_model` has no parameter that could reach it.
+
+**KTD7's guard is enforced by call shape, not by trusting a caller.**
+:meth:`AdminClient.set_default_model` takes ``confirm_expensive_model`` as a
+required keyword with no default, so a call site cannot omit it and land on a
+silently-false first attempt by accident — the caller in ``talaria/ui/app.py``
+must name the value explicitly at both the first call and the resend, and the
+UI-level test asserts the first is always ``False``.
 """
 
 from __future__ import annotations
@@ -96,14 +117,17 @@ import asyncio
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from typing import Any, Literal
 from urllib.parse import urlencode, urljoin, urlsplit
 
 from talaria.domain.models_catalog import (
     CatalogError,
+    ModelAssignmentResult,
     ModelSelection,
     ProfileDirectory,
     ProviderCatalog,
+    decode_model_assignment_result,
     decode_model_selection,
     decode_profile_directory,
     decode_provider_catalog,
@@ -121,12 +145,14 @@ __all__ = [
     "MAX_RESPONSE_BYTES",
     "MODEL_INFO_PATH",
     "MODEL_OPTIONS_PATH",
+    "MODEL_SET_PATH",
     "PROFILES_PATH",
     "AdminClient",
     "AdminError",
     "AdminFailure",
     "admin_origin_for",
     "fetch_admin_json",
+    "post_admin_json",
 ]
 
 #: Every header name the credential is written into. Named once so the tests
@@ -142,6 +168,11 @@ MAX_RESPONSE_BYTES = MAX_INDEX_BYTES
 
 MODEL_OPTIONS_PATH = "/api/model/options"
 MODEL_INFO_PATH = "/api/model/info"
+
+#: The profile-scoped default-model write (U5). The only path this module
+#: builds a POST for — see the module docstring on why that write is made and
+#: ``/api/profiles/active`` never is.
+MODEL_SET_PATH = "/api/model/set"
 
 #: The endpoint directory (U4). Read-only, and the *only* profiles path this
 #: module names — see the module docstring on why ``/api/profiles/active`` has
@@ -160,6 +191,7 @@ AdminFailure = Literal[
     "oversized_response",
     "malformed_response",
     "credential_unavailable",
+    "invalid_request",
     "http_error",
 ]
 
@@ -244,7 +276,8 @@ def fetch_admin_json(
     ``unauthorized``, 404 is ``absent_capability`` (the gateway is too old to
     carry the endpoint — R8's absent-capability branch), a refused connection is
     ``unreachable``, a body that is not JSON is ``malformed_response``, and a
-    body that hits the cap is ``oversized_response``.
+    body that hits the cap is ``oversized_response``. See :func:`_perform_admin_request`
+    for the shared read/decode path a POST takes too.
     """
     try:
         require_fetchable_origin(origin)
@@ -257,11 +290,67 @@ def fetch_admin_json(
         headers={"Accept": "application/json", **_credential_headers(token)},
         method="GET",
     )
+    return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
 
+
+def post_admin_json(
+    origin: str,
+    path: str,
+    *,
+    token: str,
+    params: dict[str, str] | None = None,
+    body: Mapping[str, Any] | None = None,
+    timeout: float = 15.0,
+) -> Any:
+    """POST one admin endpoint and return its decoded JSON, or raise :class:`AdminError`.
+
+    The write counterpart to :func:`fetch_admin_json` (U5): same origin
+    discipline, same size cap, same failure vocabulary — including the 400
+    Hermes raises for a malformed ``ModelAssignment``, which lands here as
+    ``invalid_request`` rather than reaching the caller as an unhandled
+    ``urllib.error.HTTPError``. Only the verb and the JSON-encoded ``body``
+    differ from a GET. ``MODEL_SET_PATH`` is the one path this module ever
+    calls this with; see the module docstring for why.
+    """
     try:
-        # nosec B310 - require_fetchable_origin above allowlists the scheme to
-        # http/https and _build_url forbids the join from leaving that origin,
-        # which together are what B310 asks to be audited.
+        require_fetchable_origin(origin)
+    except RefreshError as exc:
+        raise AdminError("refused_origin", str(exc)) from exc
+
+    url = _build_url(origin, path, params)
+    payload = json.dumps(body if body is not None else {}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **_credential_headers(token),
+        },
+        method="POST",
+    )
+    return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
+
+
+def _perform_admin_request(
+    request: urllib.request.Request,
+    *,
+    path: str,
+    host: str,
+    timeout: float,
+) -> Any:
+    """Send an already-built request and decode its JSON body.
+
+    The one place the urlopen/read/decode sequence lives, so
+    :func:`fetch_admin_json` and :func:`post_admin_json` cannot drift on how a
+    401, a 404, a 400, an oversized body or a non-JSON body becomes a
+    ``reason`` — only how the request itself is built differs between them.
+    """
+    try:
+        # nosec B310 - both callers already ran require_fetchable_origin and
+        # _build_url, which together allowlist the scheme to http/https and
+        # forbid the join from leaving that origin — which is what B310 asks
+        # to be audited.
         with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
             # One byte past the cap, so a body sitting exactly at the limit is
             # accepted and one over it is detected. Reading exactly the cap
@@ -270,8 +359,8 @@ def fetch_admin_json(
             charset = response.headers.get_content_charset() or "utf-8"
     except urllib.error.HTTPError as exc:
         # Read and discard: an unread HTTPError body holds the socket open.
-        # The body is never surfaced — Hermes's 401 detail is fixed text, but a
-        # 500 handler's detail can quote request state.
+        # The body is never surfaced — Hermes's 400/401 detail is fixed text,
+        # but a 500 handler's detail can quote request state.
         try:
             exc.read(MAX_RESPONSE_BYTES)
         except OSError:
@@ -280,7 +369,7 @@ def fetch_admin_json(
     except OSError as exc:
         raise AdminError(
             "unreachable",
-            f"no gateway answered at {_host_of(origin)} for {path} ({exc})",
+            f"no gateway answered at {host} for {path} ({exc})",
         ) from exc
 
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -309,6 +398,11 @@ def _http_error(code: int, path: str) -> AdminError:
         return AdminError(
             "absent_capability",
             f"this gateway does not serve {path}; it predates the admin model API",
+        )
+    if code == 400:
+        return AdminError(
+            "invalid_request",
+            f"the gateway refused the request to {path} as malformed (HTTP 400)",
         )
     return AdminError("http_error", f"the gateway answered HTTP {code} at {path}")
 
@@ -382,6 +476,25 @@ class AdminClient:
             timeout=self._timeout,
         )
 
+    async def _post(
+        self,
+        path: str,
+        *,
+        params: dict[str, str] | None = None,
+        body: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """The write counterpart to :meth:`_get` (U5). Same offload, same reasons."""
+        credential = await self._credential()
+        return await asyncio.to_thread(
+            post_admin_json,
+            self.origin,
+            path,
+            token=credential.value,
+            params=params,
+            body=body,
+            timeout=self._timeout,
+        )
+
     async def model_options(self, *, profile: str | None = None) -> ProviderCatalog:
         """``GET /api/model/options`` decoded into a :class:`ProviderCatalog`."""
         params = {"profile": profile} if profile else None
@@ -412,5 +525,48 @@ class AdminClient:
         """
         try:
             return decode_profile_directory(await self._get(PROFILES_PATH))
+        except CatalogError as exc:
+            raise AdminError("malformed_response", str(exc)) from exc
+
+    async def set_default_model(
+        self,
+        *,
+        profile: str,
+        provider: str,
+        model: str,
+        confirm_expensive_model: bool,
+    ) -> ModelAssignmentResult:
+        """``POST /api/model/set?profile=<profile>`` — the default-model write (U5).
+
+        Always ``scope="main"``; there is no parameter through which a caller
+        could reach ``auxiliary``, which Scope Boundaries names out of scope.
+        ``profile`` rides the query string and ``provider``/``model``/
+        ``confirm_expensive_model`` are body fields on Hermes's
+        ``ModelAssignment`` — see the module docstring for the citation.
+
+        ``confirm_expensive_model`` has **no default**, deliberately (KTD7).
+        A caller must name it at every call site, which is what keeps a first
+        attempt from silently carrying ``True``: the value written here is
+        exactly the value the caller passed, not a value this method invents
+        on the caller's behalf.
+
+        A ``confirm_required: true`` answer is **not** raised as an error — it
+        is Hermes saying the write did not happen and why, which is data a
+        caller renders, not a transport failure. A 400 (an invalid ``scope``,
+        or a missing ``provider``/``model`` for ``scope="main"``) *is* raised,
+        as ``AdminError(reason="invalid_request", ...)``, the same as every
+        other HTTP failure this module names rather than lets propagate as a
+        raw ``urllib`` exception.
+        """
+        body = {
+            "scope": "main",
+            "provider": provider,
+            "model": model,
+            "confirm_expensive_model": confirm_expensive_model,
+        }
+        try:
+            return decode_model_assignment_result(
+                await self._post(MODEL_SET_PATH, params={"profile": profile}, body=body)
+            )
         except CatalogError as exc:
             raise AdminError("malformed_response", str(exc)) from exc

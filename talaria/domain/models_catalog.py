@@ -43,6 +43,15 @@ the cheapest way to keep a value out of a fixture is for the type the fixture is
 built from to have nowhere to put it. Talaria has no use for the path either:
 it dials a URL, and Hermes publishes no per-profile URL at all — see
 ``talaria/transport/admin.py`` for where the endpoint actually comes from.
+
+**``POST /api/model/set`` decodes here too (U5), and it is the one write in
+this module's whole wire.** Every other type above decodes a ``GET``; this one
+decodes the body Hermes answers a *write* with, which is why
+:class:`ModelAssignmentResult` carries ``ok`` and KTD7's ``confirm_required``/
+``confirm_message`` pair rather than a catalogue. The decoder does not know
+and does not need to know that the write only ever happens for ``scope="main"``
+in this plan (Scope Boundaries) — it decodes whatever Hermes answers with, the
+same tolerant-of-extra-keys rule as everywhere else in this module.
 """
 
 from __future__ import annotations
@@ -53,11 +62,13 @@ from typing import Any
 
 __all__ = [
     "CatalogError",
+    "ModelAssignmentResult",
     "ModelProvider",
     "ModelSelection",
     "ProfileDirectory",
     "ProfileEntry",
     "ProviderCatalog",
+    "decode_model_assignment_result",
     "decode_model_selection",
     "decode_profile_directory",
     "decode_provider_catalog",
@@ -187,6 +198,29 @@ class ProfileDirectory:
         test on the dataclass is the easy thing to get wrong.
         """
         return not self.profiles
+
+
+@dataclass(frozen=True)
+class ModelAssignmentResult:
+    """``POST /api/model/set`` decoded (U5, KTD7).
+
+    ``confirm_required`` is the guard's own refusal: Hermes's cost guard
+    objected to the model, the write did **not** happen, and
+    ``confirm_message`` is what an operator must be shown before the second,
+    explicit act that resends with ``confirm_expensive_model=True``. ``ok`` is
+    the write's own success flag and is checked on its own rather than
+    inferred from the absence of ``confirm_required`` — a body that is
+    neither is not a shape this plan's live probe produced, but a caller that
+    assumed one implied the other would be guessing at a response Hermes never
+    promised to send.
+    """
+
+    ok: bool
+    scope: str = ""
+    provider: str = ""
+    model: str = ""
+    confirm_required: bool = False
+    confirm_message: str = ""
 
 
 def _decode_profile(entry: object, index: int) -> ProfileEntry:
@@ -350,4 +384,27 @@ def decode_model_selection(payload: object) -> ModelSelection:
         ),
         effective_context_length=_as_int(body.get("effective_context_length")),
         capabilities=_as_mapping(body.get("capabilities")),
+    )
+
+
+def decode_model_assignment_result(payload: object) -> ModelAssignmentResult:
+    """Decode a ``POST /api/model/set`` body, or raise :class:`CatalogError`.
+
+    Only ``ok`` is required. It is the one field every shape Hermes answers
+    this write with carries — the confirmation-required refusal
+    (``{"ok": false, "confirm_required": true, ...}``) and the success record
+    (``{"ok": true, "scope": "main", ...}``) both set it, so its absence means
+    the body is not this endpoint's answer at all.
+    """
+    body = _require_mapping(payload, "the model-set response")
+    if "ok" not in body:
+        raise CatalogError("the model-set response carries no 'ok' field")
+
+    return ModelAssignmentResult(
+        ok=_as_bool(body.get("ok")),
+        scope=_as_str(body.get("scope")),
+        provider=_as_str(body.get("provider")),
+        model=_as_str(body.get("model")),
+        confirm_required=_as_bool(body.get("confirm_required")),
+        confirm_message=_as_str(body.get("confirm_message")),
     )

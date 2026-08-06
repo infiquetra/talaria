@@ -27,8 +27,8 @@ import contextlib
 import json
 import logging
 import threading
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -41,11 +41,13 @@ from talaria.transport.admin import (
     MAX_RESPONSE_BYTES,
     MODEL_INFO_PATH,
     MODEL_OPTIONS_PATH,
+    MODEL_SET_PATH,
     PROFILES_PATH,
     AdminClient,
     AdminError,
     admin_origin_for,
     fetch_admin_json,
+    post_admin_json,
 )
 from talaria.transport.credentials import (
     Credential,
@@ -122,21 +124,36 @@ class StubProvider:
 
 @dataclass
 class Recorded:
-    """What one served request looked like from the server's side."""
+    """What one served request looked like from the server's side.
+
+    ``body`` is the parsed JSON a POST carried, empty for a GET — U5 is the
+    first thing in this module to write, so it is the first thing that needs
+    the request body recorded rather than just the path and headers.
+    """
 
     path: str
     headers: dict[str, str]
+    body: dict[str, Any] = field(default_factory=dict)
+
+
+#: A POST route answers from the parsed request body, so a scenario can
+#: change its response between one call and the next — KTD7's confirmation
+#: round trip is exactly that: the same path answers differently once the
+#: body carries ``confirm_expensive_model: true``.
+PostRoute = Callable[[dict[str, Any]], tuple[int, bytes, str]]
 
 
 @contextlib.contextmanager
 def gateway_serving(
     routes: dict[str, tuple[int, bytes, str]],
     recorder: list[Recorded] | None = None,
+    post_routes: dict[str, PostRoute] | None = None,
 ) -> Iterator[str]:
     """A loopback server mapping ``path -> (status, body, content-type)``.
 
-    Any path not in ``routes`` answers 404, which is what makes the
-    absent-capability test a real HTTP round trip rather than a mocked one.
+    Any path not in ``routes`` (or, for a POST, not in ``post_routes``)
+    answers 404, which is what makes the absent-capability test a real HTTP
+    round trip rather than a mocked one.
     """
 
     class Handler(BaseHTTPRequestHandler):
@@ -147,6 +164,32 @@ def gateway_serving(
             status, payload, content_type = routes.get(
                 path, (404, b'{"detail":"Not Found"}', "application/json")
             )
+            self._respond(status, payload, content_type)
+
+        def do_POST(self) -> None:
+            path = self.path.split("?", 1)[0]
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw_body = self.rfile.read(length) if length else b""
+            try:
+                parsed = json.loads(raw_body) if raw_body else {}
+            except json.JSONDecodeError:
+                parsed = {}
+            if recorder is not None:
+                recorder.append(
+                    Recorded(path=self.path, headers=dict(self.headers), body=parsed)
+                )
+            handler = (post_routes or {}).get(path)
+            if handler is None:
+                status, payload, content_type = (
+                    404,
+                    b'{"detail":"Not Found"}',
+                    "application/json",
+                )
+            else:
+                status, payload, content_type = handler(parsed)
+            self._respond(status, payload, content_type)
+
+        def _respond(self, status: int, payload: bytes, content_type: str) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
@@ -857,23 +900,268 @@ def test_the_admin_client_has_no_way_to_set_the_active_profile() -> None:
     ``POST /api/profiles/active`` sets a sticky preference for subsequent CLI
     invocations and does not retarget the running dashboard, so calling it
     would change a machine setting and nothing the operator can see. There is
-    no constant for the path, no method that could reach it, and no non-GET
-    request anywhere in the module.
+    no constant for the path and no method that could reach it.
 
-    The module *docstring* names the path — that is where the decision is
-    recorded, and a check that forbade documenting it would forbid explaining
-    it. So the docstrings are stripped with :mod:`ast` first and the assertion
-    runs against what is left, which is the code.
+    **U5 adds a real write elsewhere in this module** — ``POST
+    /api/model/set``, whose own docstring names the effect it has and the
+    session it does not touch — so this test can no longer assert "no POST
+    anywhere in the module" the way it did before U5 existed; KTD5 never made
+    that the guarantee, only the one path. What survives, checked
+    structurally with :mod:`ast` rather than trusted to review: the literal
+    path is absent, :meth:`~talaria.transport.admin.AdminClient.list_profiles`
+    never calls the module's POST helper, and the module's one method that
+    does (:meth:`~talaria.transport.admin.AdminClient.set_default_model`)
+    always targets ``MODEL_SET_PATH`` and nothing else.
     """
+    import ast
+
     path = Path(__file__).parents[2] / "talaria" / "transport" / "admin.py"
     source = path.read_text(encoding="utf-8")
     code = _without_docstrings(source)
 
     assert "/api/profiles/active" not in code
-    assert "POST" not in code
     assert not [name for name in dir(AdminClient) if "active" in name.lower()]
-    # Every request this module builds is a GET.
-    assert code.count("urllib.request.Request(") == code.count('method="GET"') == 1
+
+    tree = ast.parse(source)
+    admin_client = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "AdminClient"
+    )
+    methods = {
+        node.name: node for node in admin_client.body if isinstance(node, ast.AsyncFunctionDef)
+    }
+
+    def calls_post(node: ast.AST) -> bool:
+        return any(
+            isinstance(call.func, ast.Attribute) and call.func.attr == "_post"
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+        )
+
+    assert not calls_post(methods["list_profiles"])
+    assert not calls_post(methods["model_options"])
+    assert not calls_post(methods["model_info"])
+    post_callers = sorted(name for name, node in methods.items() if calls_post(node))
+    assert post_callers == ["set_default_model"]
+
+    post_call = next(
+        call
+        for call in ast.walk(methods["set_default_model"])
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_post"
+    )
+    target_path = post_call.args[0]
+    assert isinstance(target_path, ast.Name) and target_path.id == "MODEL_SET_PATH"
+
+
+# ── U5: the default-model write, and its two-act confirmation (KTD7) ──────
+
+
+def ok_route(**overrides: Any) -> PostRoute:
+    """A ``POST /api/model/set`` route that always answers success."""
+    body: dict[str, Any] = {"ok": True, "scope": "main"}
+    body.update(overrides)
+    return lambda _request_body: json_route(body)
+
+
+def confirm_required_route(message: str = "gpt-5.5 costs real money") -> PostRoute:
+    """A route that refuses on the first call and succeeds once the request
+    body carries ``confirm_expensive_model: true`` — the shape Hermes's own
+    cost guard answers with (KTD7)."""
+
+    def respond(request_body: dict[str, Any]) -> tuple[int, bytes, str]:
+        if request_body.get("confirm_expensive_model") is True:
+            return json_route({"ok": True, "scope": "main"})
+        return json_route(
+            {
+                "ok": False,
+                "scope": "main",
+                "confirm_required": True,
+                "confirm_message": message,
+            }
+        )
+
+    return respond
+
+
+def bad_scope_route() -> PostRoute:
+    """The 400 Hermes raises for an invalid ``scope`` (``web_server.py``,
+    ``set_model_assignment``): ``detail="scope must be 'main' or 'auxiliary'"``."""
+    return lambda _request_body: (
+        400,
+        b'{"detail":"scope must be \'main\' or \'auxiliary\'"}',
+        "application/json",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_successful_default_write_decodes_ok() -> None:
+    routes = {MODEL_SET_PATH: ok_route(provider="p", model="m")}
+    with gateway_serving({}, post_routes=routes) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        result = await client.set_default_model(
+            profile="fixture-profile",
+            provider="p",
+            model="m",
+            confirm_expensive_model=False,
+        )
+
+    assert result.ok is True
+    assert result.confirm_required is False
+
+
+@pytest.mark.asyncio
+async def test_the_profile_rides_the_query_string_and_the_rest_ride_the_body() -> None:
+    """R4: ``profile`` is a query parameter; ``scope``/``provider``/``model``/
+    ``confirm_expensive_model`` are body fields on Hermes's ``ModelAssignment``."""
+    seen: list[Recorded] = []
+    with gateway_serving({}, seen, post_routes={MODEL_SET_PATH: ok_route()}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        await client.set_default_model(
+            profile="fixture-profile",
+            provider="p",
+            model="m",
+            confirm_expensive_model=False,
+        )
+
+    assert "profile=fixture-profile" in seen[0].path
+    assert seen[0].body == {
+        "scope": "main",
+        "provider": "p",
+        "model": "m",
+        "confirm_expensive_model": False,
+    }
+    assert CANARY not in seen[0].path
+
+
+@pytest.mark.asyncio
+async def test_the_confirmation_round_trip_requires_two_distinct_acts() -> None:
+    """KTD7: the guard is not auto-confirmed. A caller that never issues a
+    second, separate call never gets past ``confirm_required``, and the first
+    call this test makes never carries ``confirm_expensive_model``."""
+    seen: list[Recorded] = []
+    route = confirm_required_route("gpt-5.5 costs real money")
+    with gateway_serving({}, seen, post_routes={MODEL_SET_PATH: route}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+
+        first = await client.set_default_model(
+            profile="fixture-profile",
+            provider="openai-codex",
+            model="gpt-5.5",
+            confirm_expensive_model=False,
+        )
+        assert first.ok is False
+        assert first.confirm_required is True
+        assert first.confirm_message == "gpt-5.5 costs real money"
+
+        # A repeat of the identical first call changes nothing — the guard is
+        # not bypassed by asking again the same way.
+        second = await client.set_default_model(
+            profile="fixture-profile",
+            provider="openai-codex",
+            model="gpt-5.5",
+            confirm_expensive_model=False,
+        )
+        assert second.confirm_required is True
+
+        # Only the second, textually distinct act — a call that actually
+        # carries the flag — completes the write.
+        third = await client.set_default_model(
+            profile="fixture-profile",
+            provider="openai-codex",
+            model="gpt-5.5",
+            confirm_expensive_model=True,
+        )
+        assert third.ok is True
+        assert third.confirm_required is False
+
+    assert [call.body["confirm_expensive_model"] for call in seen] == [False, False, True]
+
+
+def test_set_default_model_has_no_default_for_confirm_expensive_model() -> None:
+    """The transport-level half of KTD7's guarantee: a call site cannot omit
+    the flag and land on a silently-false first attempt — it must be named
+    every time, which is what makes "the first call never carries it" a
+    property of the call site rather than of this method's judgement."""
+    import inspect
+
+    signature = inspect.signature(AdminClient.set_default_model)
+    parameter = signature.parameters["confirm_expensive_model"]
+    assert parameter.default is inspect.Parameter.empty
+
+
+@pytest.mark.asyncio
+async def test_a_400_for_an_invalid_scope_becomes_a_named_error_not_raised_urllib() -> None:
+    import urllib.error
+
+    with gateway_serving({}, post_routes={MODEL_SET_PATH: bad_scope_route()}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        with pytest.raises(AdminError) as caught:
+            await client.set_default_model(
+                profile="fixture-profile",
+                provider="p",
+                model="m",
+                confirm_expensive_model=False,
+            )
+
+    assert caught.value.reason == "invalid_request"
+    assert not isinstance(caught.value, urllib.error.HTTPError)
+
+
+@pytest.mark.asyncio
+async def test_the_credential_is_attached_to_the_default_write_and_never_leaks() -> None:
+    seen: list[Recorded] = []
+    with gateway_serving({}, seen, post_routes={MODEL_SET_PATH: ok_route()}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        await client.set_default_model(
+            profile="fixture-profile",
+            provider="p",
+            model="m",
+            confirm_expensive_model=False,
+        )
+
+    assert seen[0].headers["Authorization"] == f"Bearer {CANARY}"
+    assert seen[0].headers["X-Hermes-Session-Token"] == CANARY
+    assert CANARY not in json.dumps(seen[0].body)
+
+
+@pytest.mark.asyncio
+async def test_an_unrecognized_profile_surfaces_the_gateways_own_answer() -> None:
+    """A profile that does not exist is not a shape this module invents a
+    reason for — whatever Hermes answers with is decoded and returned as-is,
+    the same as any other non-``ok`` response."""
+
+    def route(_request_body: dict[str, Any]) -> tuple[int, bytes, str]:
+        return json_route({"ok": False, "scope": "main"})
+
+    with gateway_serving({}, post_routes={MODEL_SET_PATH: route}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        result = await client.set_default_model(
+            profile="no-such-fixture-profile",
+            provider="p",
+            model="m",
+            confirm_expensive_model=False,
+        )
+
+    assert result.ok is False
+    assert result.confirm_required is False
+
+
+@pytest.mark.asyncio
+async def test_post_admin_json_is_the_generic_write_fetch_admin_json_is_the_read() -> None:
+    """The two share the origin/size/error discipline (:func:`_perform_admin_request`);
+    this proves the write path directly, the way :func:`fetch_admin_json` is
+    proven directly above."""
+    with gateway_serving(
+        {}, post_routes={MODEL_SET_PATH: ok_route(provider="p", model="m")}
+    ) as origin:
+        decoded = post_admin_json(
+            origin, MODEL_SET_PATH, token=CANARY, body={"scope": "main"}
+        )
+
+    assert decoded["ok"] is True
 
 
 def _without_docstrings(source: str) -> str:

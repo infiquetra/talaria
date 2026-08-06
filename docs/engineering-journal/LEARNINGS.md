@@ -4,6 +4,30 @@
 
 ## 2026-08-06
 
+### Six units of work landed and the release gate's live-evidence row did not move, because the only unit whose product was evidence produced a checklist instead
+
+**Author.** unit U7 of the model-picker plan, re-grading rows 6, 13 and 19 of `docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`
+
+**Evidence.** The plan ran six units — the admin HTTP surface, the model picker, the credential decision, the profile picker, the default-model picker, and the scripted live acceptance run. Re-grading row 6 by enumerating outbound `method` fields across every frame log in `~/.talaria/recordings` found **eight distinct methods of the required eighteen**, identical to the set the row already named on 2026-08-05. The corpus had gained nothing: its newest header reads `2026-08-04T19:43:17.075Z`, and re-deriving the aggregate sha256 over the directory still yields the `bd69e537f1d9…` prefix the document was written against two days earlier. Unit U6's deliverable, `docs/plans/2026-08-06-u6-row19-operator-checklist.md`, is a well-specified six-step checklist still carrying `status: ready-for-operator`.
+
+**Mechanism.** Units whose product is code close themselves — the tests either pass or they do not, and merging is the completion signal. A unit whose product is *evidence from a live system a person must drive* has no such signal, so the agent-executable part of it (write down precisely what to run) completes and looks like completion, while the part that actually moves the gate waits on a human sitting down at a terminal. Both halves ship in the same commit, under the same unit number, and a status roll-up that counts finished units cannot tell them apart. The gate is only protected from this because row 6 is graded by counting frames rather than by reasoning about which units ran: had it been re-graded on "six units of picker work happened, so live coverage widened", it would have improved on nothing.
+
+**The re-grade's actual outcome, so the record is unambiguous.** Row 6 stays `inferred` (ten of thirteen evidence-only methods have zero runtime evidence, named individually now rather than counted). Row 19 stays `unmet` (no checklist step executed). Row 13 stays `partially unmet` — its open precedence question *was* decided by unit U3, which narrows the reason without clearing the row, and U3's own decision record forbids grading it `met`. The verdict stays **NOT READY** on all three.
+
+**Generalizable rule.** Grade an evidence row by re-deriving the measurement, never by reasoning about which work has since happened — and when a plan contains a unit whose deliverable requires a human at a live system, track "checklist written" and "checklist executed" as two separate states, because the first is what an agent can finish and the second is the only one a gate may read.
+
+### A structural absence test written for one decision quietly encoded a broader one, and the next legitimate feature that needed the broader thing tripped it
+
+**Author.** unit U5 of the model-picker plan, adding `POST /api/model/set` to `talaria/transport/admin.py`
+
+**Evidence.** U4's `test_the_admin_client_has_no_way_to_set_the_active_profile` (`tests/transport/test_admin.py`) asserted `assert code.count("urllib.request.Request(") == code.count('method="GET"') == 1` against the module with docstrings and comments stripped. Its docstring named the guarantee as KTD5 — "Talaria never calls `POST /api/profiles/active`" — but the assertion it wrote checks something strictly larger: that no request in the entire module is ever anything but a GET. U5 needed a real POST for an unrelated, sanctioned write (`POST /api/model/set`, whose own effect and non-effect Hermes's docstring names explicitly), and the test failed on the first run — not because KTD5 was violated, but because the test's literal assertion outran the decision it was written to protect.
+
+**Mechanism.** A source-level absence check is easy to write more strongly than the decision requires, because "no POST in this module" is a simpler sentence to encode than "no POST reaches this one path" — counting `method="GET"` occurrences is one line; proving a specific call site's path argument is a different call site's constant takes an AST walk. The simpler assertion was correct at the moment it was written, since KTD5 and "no POST at all" happened to coincide when the module had exactly one write it refused to make. They stopped coinciding the moment a second, legitimate write joined the module, and nothing about the test's own text said which half of "no POST anywhere" — the part that mattered (no `/api/profiles/active`) or the part that was incidental (no POST, full stop) — was the actual guarantee.
+
+**How it was repaired rather than deleted.** The fix re-derived the check from the decision's actual words: parse `AdminClient` with `ast`, confirm `list_profiles` never calls the module's POST helper, confirm exactly one method (`set_default_model`) does, and confirm that method's POST always targets the `MODEL_SET_PATH` constant by name. The literal-path absence check (`"/api/profiles/active" not in code`) survived unchanged — it was never over-broad, only the verb-count check next to it was.
+
+**Generalizable rule.** When a test's assertion is stronger than the sentence its docstring uses to justify it — "no X anywhere" standing in for "no X *reaching this one place*" — treat the gap as latent breakage waiting on the next legitimate X, not as extra safety margin. Write the assertion at the same granularity as the decision it protects, even when that costs an AST walk instead of a substring count; the substring count is the version that fails for the wrong reason later.
+
 ### A 65-character return key passes `execution_spec.py validate` and then kills the run four units in, because the limit belongs to the API and the validator does not know it
 
 **Author.** driving `/work` for the model-picker plan; the workflow halted at U4 after U1, U3 and U2 had completed

@@ -362,12 +362,16 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     # gap. With no argument this opens or closes the picker; with one, it
     # selects the row that index names (``talaria/ui/picker.py``) and sends
     # it down the same ``/model <name> --provider <slug>`` path an operator
-    # typing that line by hand would take (R2).
+    # typing that line by hand would take (R2). A third shape, ``<n> default``
+    # (and its confirmation resend ``<n> default confirm``), writes that row
+    # as the connected profile's default model instead of switching the
+    # running session (U5, KTD7) — still no new command name, per the plan's
+    # "U5 adds no command" design note.
     LocalCommand(
         "/models",
         "models",
-        "Open the model picker, or select a listed row by its number",
-        argument_hint="[index]",
+        "Open the model picker, select a row, or set a row as the profile's default",
+        argument_hint="[index [default [confirm]]]",
     ),
     # Plural for the same reason and with the same hazard (U4). The gateway
     # owns the singular ``/profile``; ``/profiles`` is free and is Talaria's.

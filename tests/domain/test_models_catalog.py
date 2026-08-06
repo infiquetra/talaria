@@ -20,8 +20,10 @@ import pytest
 
 from talaria.domain.models_catalog import (
     CatalogError,
+    ModelAssignmentResult,
     ModelProvider,
     ProviderCatalog,
+    decode_model_assignment_result,
     decode_model_selection,
     decode_profile_directory,
     decode_provider_catalog,
@@ -416,3 +418,94 @@ def test_a_profiles_field_that_is_not_a_list_is_refused() -> None:
         decode_profile_directory({"profiles": "alpha-fixture"})
     with pytest.raises(CatalogError):
         decode_profile_directory(["alpha-fixture"])
+
+
+# ── U5: POST /api/model/set, the one write this module decodes ────────────
+
+
+def test_a_successful_write_decodes_ok_true_with_no_confirmation_pending() -> None:
+    result = decode_model_assignment_result(
+        {
+            "ok": True,
+            "scope": "main",
+            "provider": "example-provider",
+            "model": "example-large",
+            "base_url": "",
+            "gateway_tools": [],
+            "stale_aux": [],
+        }
+    )
+    assert result.ok is True
+    assert (result.scope, result.provider, result.model) == (
+        "main",
+        "example-provider",
+        "example-large",
+    )
+    assert result.confirm_required is False
+    assert result.confirm_message == ""
+
+
+def test_a_confirm_required_refusal_decodes_distinctly_from_a_success() -> None:
+    """KTD7's shape: the write did not happen, and the message is what an
+    operator must see before the second, explicit act."""
+    result = decode_model_assignment_result(
+        {
+            "ok": False,
+            "scope": "main",
+            "provider": "openai-codex",
+            "model": "gpt-5.5",
+            "confirm_required": True,
+            "confirm_message": "gpt-5.5 costs real money",
+        }
+    )
+    assert result.ok is False
+    assert result.confirm_required is True
+    assert result.confirm_message == "gpt-5.5 costs real money"
+
+
+def test_an_unknown_extra_field_on_the_assignment_result_is_ignored() -> None:
+    """The same tolerance every decoder in this module extends to new keys."""
+    result = decode_model_assignment_result(
+        {"ok": True, "invented_next_release": {"anything": "at all"}}
+    )
+    assert result.ok is True
+
+
+def test_the_assignment_result_carries_no_credential_shaped_field() -> None:
+    """Nothing in ``ModelAssignmentResult`` could ever hold a credential —
+    checked structurally so a future field addition cannot introduce one."""
+    from dataclasses import fields
+
+    names = {f.name for f in fields(ModelAssignmentResult)}
+    assert not any("token" in name or "credential" in name or "auth" in name for name in names)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"scope": "main", "provider": "p", "model": "m"},
+    ],
+)
+def test_a_response_missing_ok_is_refused(payload: dict[str, Any]) -> None:
+    with pytest.raises(CatalogError):
+        decode_model_assignment_result(payload)
+
+
+def test_a_response_that_is_not_a_json_object_is_refused() -> None:
+    with pytest.raises(CatalogError):
+        decode_model_assignment_result(["ok"])
+
+
+def test_a_wrong_typed_ok_field_reads_as_false_rather_than_raising() -> None:
+    """The same cosmetic-field tolerance ``_as_bool`` applies everywhere else
+    in this module — a malformed ``ok`` is not the same defect as a missing
+    one, and only the latter is refused."""
+    result = decode_model_assignment_result({"ok": "yes"})
+    assert result.ok is False
+
+
+def test_the_decoded_result_is_frozen() -> None:
+    result = decode_model_assignment_result({"ok": True})
+    with pytest.raises(FrozenInstanceError):
+        result.ok = False  # type: ignore[misc]

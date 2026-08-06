@@ -71,7 +71,11 @@ from talaria.domain.decode import (
     decode_dispatch_result,
 )
 from talaria.domain.models import ConnectionStatus, PendingPrompt, PromptKind, RunMode
-from talaria.domain.models_catalog import ProfileDirectory, ProviderCatalog
+from talaria.domain.models_catalog import (
+    ModelAssignmentResult,
+    ProfileDirectory,
+    ProviderCatalog,
+)
 from talaria.domain.normalize import normalize_frame
 from talaria.domain.projection import (
     DEFAULT_VIEWPORT_ROWS,
@@ -124,7 +128,12 @@ from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
 from talaria.ui.focus import CaretReleased
 from talaria.ui.palette import PaletteRegion
-from talaria.ui.picker import PickerRegion, flatten_profiles, flatten_selectable
+from talaria.ui.picker import (
+    PickerRegion,
+    SelectableRow,
+    flatten_profiles,
+    flatten_selectable,
+)
 from talaria.ui.prompts import (
     DENY_ALL_CHOICE,
     RESPOND_METHODS,
@@ -349,6 +358,43 @@ PROFILE_SWITCH_UNAVAILABLE: Final[str] = (
 #: making the new one. The report's own reason and detail follow.
 PROFILE_SWITCH_FAILED: Final[str] = "profile switch failed:"
 
+# ── U5: the default-model write and its two-act confirmation (KTD7) ────────
+
+#: Said when ``/models <n> default`` is asked before Talaria knows which
+#: profile it is connected to — no ``switcher.switch_to_endpoint`` has ever
+#: run, or the session was started without one named. There is no profile to
+#: scope the write to, so nothing is sent.
+MODEL_DEFAULT_NO_PROFILE: Final[str] = (
+    "no profile is selected for this session — the default model has nowhere to write to"
+)
+
+#: Said when the assembled session has no way to write a default at all — a
+#: replay, or an admin client that predates U5's write. Distinct from a write
+#: that was attempted and failed, the same distinction ``PROFILES_UNAVAILABLE``
+#: draws for the read side.
+MODEL_DEFAULT_UNAVAILABLE: Final[str] = (
+    "this session cannot set a default model: no admin connection to the gateway"
+)
+
+#: The suffix every successful or confirm-required default-model notice
+#: carries. R4: this affects **new sessions only**, not the one on screen —
+#: stated here once so the two call sites that need it cannot say it
+#: differently. Hermes's own docstring for ``POST /api/model/set`` names this
+#: as the mistake operators make ("the currently running chat PTY … is not
+#: affected"), which is exactly why it is said rather than assumed obvious.
+MODEL_DEFAULT_NEW_SESSIONS_ONLY: Final[str] = (
+    "this changes new sessions only — the running session keeps its current model"
+)
+
+#: How the transcript names a default-model write the gateway refused for a
+#: reason other than the expensive-model guard (a 400, an unreachable
+#: profile, or any other :class:`~talaria.transport.admin.AdminError`).
+MODEL_DEFAULT_FAILED: Final[str] = "could not set the default model:"
+
+#: How the transcript names the second act ``/models <n> default confirm``
+#: takes once KTD7's guard has already been shown once.
+MODEL_DEFAULT_CONFIRM_HINT: Final[str] = "confirm"
+
 #: How the transcript names the compatibility check's blocking rows. The verdict
 #: document is where "not ready" is decided; this is the operator's copy of the
 #: same evidence, at the moment it is discovered.
@@ -556,6 +602,28 @@ class EndpointSwitcher(Protocol):
     """
 
     async def switch_to_endpoint(self, endpoint: str) -> SwitchReport: ...
+
+
+@runtime_checkable
+class ModelDefaultWriter(Protocol):
+    """The one thing the picker's "set as default" act needs (U5, KTD1).
+
+    Kept separate from :class:`ModelAdmin` for the same structural reason
+    :class:`ProfileAdmin` is kept separate from it: a client that can read the
+    catalogue but not write a default is a real state — every U2-era test
+    double already is exactly that — and the app asks structurally
+    (``isinstance(client, ModelDefaultWriter)``) so that case renders
+    "cannot set a default" instead of raising ``AttributeError``.
+    """
+
+    async def set_default_model(
+        self,
+        *,
+        profile: str,
+        provider: str,
+        model: str,
+        confirm_expensive_model: bool,
+    ) -> ModelAssignmentResult: ...
 
 
 class TalariaApp(App[None]):
@@ -2369,16 +2437,40 @@ class TalariaApp(App[None]):
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.
 
-        The composer is cleared immediately either way — the argument, if any,
-        was consumed by Talaria and never meant for the gateway, the same rule
-        the other three PC6 controls follow.
+        A **third** shape joins the two PC6-era ones (U5): ``<n> default``
+        writes the row as the connected profile's default model, and
+        ``<n> default confirm`` is the second, textually distinct act KTD7's
+        guard requires when the first came back ``confirm_required``. This is
+        the one place that decides which of the three an operator typed, so
+        it is also the one place that can guarantee ``confirm_expensive_model``
+        is ``True`` only for a line that spells the word ``confirm`` — see
+        :meth:`set_model_default` for how that guarantee is carried through.
+
+        The composer is cleared immediately in every case — the argument, if
+        any, was consumed by Talaria and never meant for the gateway, the same
+        rule the other three PC6 controls follow.
         """
         self.composer.clear()
         stripped = argument.strip()
         if not stripped:
             self._spawn_live(self._toggle_picker_and_discard())
             return
-        self._spawn_live(self._select_model_and_discard(stripped))
+        words = stripped.split()
+        if len(words) == 1:
+            self._spawn_live(self._select_model_and_discard(words[0]))
+            return
+        index_text, verb, *rest = words
+        if verb.lower() != "default" or len(rest) > 1 or (
+            rest and rest[0].lower() != MODEL_DEFAULT_CONFIRM_HINT
+        ):
+            self._notice(
+                f"/models {stripped!r} is not understood — "
+                f"try /models <n>, /models <n> default, or "
+                f"/models <n> default {MODEL_DEFAULT_CONFIRM_HINT}"
+            )
+            return
+        confirm = bool(rest)
+        self._spawn_live(self._set_model_default_and_discard(index_text, confirm=confirm))
 
     async def _toggle_picker_and_discard(self) -> None:
         await self.action_toggle_picker()
@@ -2478,26 +2570,17 @@ class TalariaApp(App[None]):
             )
         return report
 
-    async def _select_model_and_discard(self, argument: str) -> None:
-        await self.select_model(argument)
+    def _lookup_model_row(self, argument: str) -> SelectableRow | None:
+        """Resolve a ``/models`` row number into its catalogue row, or notice why not.
 
-    async def select_model(self, argument: str) -> RpcOutcome | None:
-        """Resolve ``/models <n>`` into ``/model <name> --provider <slug>``.
-
-        ``argument`` is a 1-based row number, never a model name typed by
-        hand — :func:`~talaria.ui.picker.flatten_selectable` is the one place
-        that numbering is assigned, and this looks a row up in it rather than
-        re-deriving the number.
-
-        Refuses, and sends nothing, in four cases: nothing has been fetched;
+        Shared by :meth:`select_model` (U2) and :meth:`set_model_default`
+        (U5): both start from the identical contract — nothing fetched yet;
         the list that *was* fetched belongs to a connection epoch that is no
         longer current (KTD4); the number does not name a listed row; the
         row's provider is not authenticated, which R7's marker already told
-        the operator would fail before they typed it. Every other case
-        composes the same text an operator typing the working ``/model``
-        command by hand would submit, and sends it down the identical path
-        (R2) — so what reaches the transcript is the gateway's own answer,
-        not a paraphrase of it.
+        the operator would fail before they typed it — and diverge only in
+        what they do with the row once it resolves. Keeping the four checks
+        in one place means they cannot drift apart between the two acts.
         """
         catalog = self.model_catalog
         if catalog is None:
@@ -2517,8 +2600,28 @@ class TalariaApp(App[None]):
         if not row.authenticated:
             self._notice(
                 f"{row.provider_name} ({row.provider_slug}) is not authenticated — "
-                "selecting a model there is a guaranteed failure; nothing sent"
+                "a model there is a guaranteed failure; nothing sent"
             )
+            return None
+        return row
+
+    async def _select_model_and_discard(self, argument: str) -> None:
+        await self.select_model(argument)
+
+    async def select_model(self, argument: str) -> RpcOutcome | None:
+        """Resolve ``/models <n>`` into ``/model <name> --provider <slug>``.
+
+        ``argument`` is a 1-based row number, never a model name typed by
+        hand — :func:`~talaria.ui.picker.flatten_selectable` is the one place
+        that numbering is assigned, and :meth:`_lookup_model_row` looks a row
+        up in it rather than re-deriving the number. Every case that method
+        refuses sends nothing; every other case composes the same text an
+        operator typing the working ``/model`` command by hand would submit,
+        and sends it down the identical path (R2) — so what reaches the
+        transcript is the gateway's own answer, not a paraphrase of it.
+        """
+        row = self._lookup_model_row(argument)
+        if row is None:
             return None
 
         text = f"/model {row.model} --provider {row.provider_slug}"
@@ -2540,6 +2643,84 @@ class TalariaApp(App[None]):
             return None
         self._notice("could not build the /model command")  # pragma: no cover - defensive
         return None
+
+    # ── U5: the default-model write, and its two-act confirmation ──────────
+
+    async def _set_model_default_and_discard(self, argument: str, *, confirm: bool) -> None:
+        await self.set_model_default(argument, confirm=confirm)
+
+    async def set_model_default(
+        self, argument: str, *, confirm: bool = False
+    ) -> ModelAssignmentResult | None:
+        """Resolve ``/models <n> default`` into a profile-scoped default write.
+
+        Writes through ``POST /api/model/set?profile=<name>`` (KTD1) for
+        ``self.current_profile`` — the profile this session already switched
+        to (U4) — because "a selected profile" is that one, not a profile
+        named on the command line the operator would have to spell correctly.
+        A session that has never switched, or was never told which profile it
+        started on, has no profile to scope the write to and the write is
+        refused before anything is sent.
+
+        ``argument`` resolves through :meth:`_lookup_model_row`, the identical
+        row lookup :meth:`select_model` uses, so a row that would fail to
+        *select* (unauthenticated, unfetched, a stale epoch) fails to become
+        a default for the same reason before either reaches the socket.
+
+        **KTD7's two-act rule.** ``confirm`` defaults to ``False`` and this
+        method's *only* caller with ``confirm=True`` is the second, textually
+        distinct command ``/models <n> default confirm`` — see
+        :meth:`_perform_models`, the one place that decides which act an
+        operator typed. The value is passed straight through to
+        :meth:`~talaria.transport.admin.AdminClient.set_default_model`, whose
+        own required keyword (no default) is the second, transport-level
+        guarantee that a caller cannot let it default to ``True`` by omission.
+        A response carrying ``confirm_required`` shows the gateway's message
+        and instructs the operator to type the second act; nothing is resent
+        automatically. R4's on-screen note — that this affects new sessions
+        only, never the one running — is said on both the confirmation
+        request and the eventual success, because Hermes's own docstring
+        names getting that backwards as the mistake operators make.
+        """
+        row = self._lookup_model_row(argument)
+        if row is None:
+            return None
+        if not self.current_profile:
+            self._notice(MODEL_DEFAULT_NO_PROFILE)
+            return None
+        writer = self.admin_client
+        if not isinstance(writer, ModelDefaultWriter):
+            self._notice(MODEL_DEFAULT_UNAVAILABLE)
+            return None
+
+        try:
+            result = await writer.set_default_model(
+                profile=self.current_profile,
+                provider=row.provider_slug,
+                model=row.model,
+                confirm_expensive_model=confirm,
+            )
+        except AdminError as exc:
+            self._notice(f"{MODEL_DEFAULT_FAILED} {exc}")
+            return None
+
+        if result.confirm_required:
+            self._notice(
+                f"{result.confirm_message} — {MODEL_DEFAULT_NEW_SESSIONS_ONLY}; "
+                f"type /models {row.index} default confirm to proceed"
+            )
+            return result
+        if result.ok:
+            self._notice(
+                f"set {row.model} as {self.current_profile}'s default model — "
+                f"{MODEL_DEFAULT_NEW_SESSIONS_ONLY}"
+            )
+        else:
+            self._notice(
+                f"{MODEL_DEFAULT_FAILED} the gateway did not confirm the write "
+                f"for {self.current_profile}"
+            )
+        return result
 
     async def _dispatch_and_discard(self, invocation: GatewayInvocation) -> None:
         await self.dispatch_command_live(invocation)

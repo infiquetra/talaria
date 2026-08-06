@@ -88,6 +88,34 @@ U7 owns the verdict document and grades row 13 against this section; U3 delibera
 
 **Revisit when.** Hermes gains an HTTP or file-based way to hand a client its session token directly, which would make the endpoint-URL route unnecessary and let route 1 go too — the one change that would let row 13 move again; or a gated (non-loopback) deployment arrives and `GatedTicketProvider` rewrites the chain wholesale.
 
+### The default-model write extends `/models`'s own grammar; it does not add a fourth local command, and the profile it writes is the connected one, not a typed one
+
+**Author.** v0.1 model-picker plan, unit U5 (`POST /api/model/set`)
+
+**Decision.** `/models <n> default` writes catalogue row `<n>` as the default model for `self.current_profile` — the profile this session is already connected to (U4) — and `/models <n> default confirm` is the second act KTD7's expensive-model guard requires when the first comes back `confirm_required`. Neither is a new `LocalCommand`; both are argument shapes `_perform_models` parses off the existing `/models` entry, matching the plan's own design note that "U5 adds no command; setting a default is an act inside the picker." The profile the write targets is never typed on the command line — a session with no connected profile (`current_profile == ""`) refuses the write with `MODEL_DEFAULT_NO_PROFILE` rather than asking which profile was meant.
+
+**Evidence.** Hermes's `POST /api/model/set?profile=<name>` accepts any profile name in the query string, including one the connected dashboard is not itself running (`_apply_model_assignment_sync` opens `_profile_scope(profile)` around the write) — so *architecturally* Talaria could let an operator type an arbitrary profile name. It does not, because U4 already gives the operator a way to name a profile: switch to it. A second way to name one on this command line would be two spellings of the same fact that can silently disagree.
+
+**Rejected alternatives.** *A fourth `LocalCommand`, `/model-default` or similar* — the plan's summary explicitly rules this out, and a fourth plural/singular-shadowing name is one more collision an operator has to learn (`/models` vs. Hermes's `/model` is already one). *Accept a profile name as a third argument, `/models <n> default <profile>`* — lets a mistyped profile name write a default to a profile the operator did not mean to touch, silently, with no dial and no confirmation of *which* profile beyond the string typed; scoping to the connected profile makes "which profile" a fact the operator already established by connecting to it.
+
+**Cost.** An operator who wants to set a default for a profile other than the one they are on must switch to it first (`/profiles <n>`), then write the default. Two acts instead of one, but each is legible on its own and neither can target the wrong profile by typo.
+
+**Revisit when.** The picker's profile mode grows a per-row "set as default without switching" act — at which point the profile becomes an explicit selection from the profile listing rather than an implicit one from `current_profile`, and the two mechanisms should be reconciled rather than left to diverge.
+
+### KTD7's two-act confirmation is enforced by call shape at every layer, not by trusting a caller to remember
+
+**Author.** v0.1 model-picker plan, unit U5, implementing KTD7 ("the expensive-model confirmation is surfaced, never auto-confirmed")
+
+**Decision.** `confirm_expensive_model` has no default anywhere it is threaded through: `AdminClient.set_default_model` declares it a required keyword, and `TalariaApp.set_model_default` takes `confirm: bool = False` but the *only* call site that ever passes `confirm=True` is the branch of `_perform_models` that matched the literal second word `confirm` in `/models <n> default confirm`. A bare `/models <n> default`, typed any number of times, always resolves to `confirm=False` — repeating it is not the second act, because nothing about repeating the same line changes what is passed.
+
+**Evidence.** `tests/transport/test_admin.py::test_set_default_model_has_no_default_for_confirm_expensive_model` asserts the transport-level guarantee via `inspect.signature`. `tests/ui/test_picker.py::test_confirm_required_shows_the_message_and_the_first_call_never_confirms` and `test_the_second_distinct_act_resends_confirmed_and_completes` assert the UI-level guarantee behaviourally: two separate `pilot.press("enter")` submissions, the first of which the double records with `confirm_expensive_model: False` regardless of how many times it is sent.
+
+**Rejected alternatives.** *A confirmation flag on the picker widget's own state, toggled by a keypress* — would satisfy KTD3's "no captured caret" rule poorly, since a stateful toggle the operator cannot see the value of is exactly the kind of hidden mode KTD3's "selection by command" was chosen to avoid. *Auto-resend with `confirm_expensive_model=True` after showing the message once* — is the literal failure KTD7 exists to prevent: the entire feature's motivation is not spending money by accident, and an automatic second call defeats the one guard already protecting against that.
+
+**Cost.** An operator who intends to accept an expensive-model default must type two lines instead of one. That friction is the point, not a side effect.
+
+**Revisit when.** Hermes's cost guard grows a per-session "always confirm for me" preference that this plan did not anticipate — at which point the guard, not Talaria, would be deciding whether a second act is required, and this decision would need to say how Talaria surfaces that preference rather than assume the guard always fires.
+
 ## 2026-08-05
 
 ### When the deliverable is evidence rather than code, a reproducible measurement stands in for a test gate — and the measuring script stays out of the repository
