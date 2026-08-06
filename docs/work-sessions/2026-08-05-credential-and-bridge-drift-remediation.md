@@ -117,6 +117,13 @@ anyway. The redactor's own fragment blindness is pre-existing and reaches
 as P2 in `QUEUED.md` rather than widened here — that change alters what the
 frame-log format promises, which is a decision rather than a fix.
 
+> **Closed 2026-08-05, after this session.** That P2 was taken and the entry has
+> left `QUEUED.md`. `strip_credential_query` now drops the fragment and
+> `redact_url` withholds it, making the frame log cover all three positions a
+> credential can ride a URL in. The format promise and the reasoning are in
+> `DECISIONS.md`, "A URL fragment is withheld whole in a recording and dropped
+> outright from a dialled endpoint".
+
 **The finding underneath the finding, which matters more.** Writing the test for
 the fix exposed that the refusal's existing tests did not test the refusal.
 Replacing the check's condition with `if False:` left **seven of its eight tests

@@ -4,6 +4,29 @@
 
 ## 2026-08-05
 
+### A URL fragment is withheld whole in a recording and dropped outright from a dialled endpoint
+
+**Author.** closing the P2 left open by the code-review gate on the credential-and-bridge-drift remediation
+
+**Decision.** A URL can carry a credential in three positions, and the frame log now withholds all three: a credential-shaped query parameter, the userinfo ahead of the host, and the fragment. The fragment is taken **whole and unread** — every fragment, not only ones that look credential-bearing. The two code paths treat it differently on purpose:
+
+| path | function | treatment | why |
+| --- | --- | --- | --- |
+| the URL that is *recorded* | `redact_url` | replaced by `%5Bredacted%5D` | a reader must see a marked hole, not a URL that looks like it never had a fragment |
+| the URL that is *dialled* | `strip_credential_query` | removed | this URL is used, not read; a marker on it would be junk sent to a gateway |
+
+**Why withhold the whole component instead of filtering inside it.** A fragment is one opaque string. `#token=v` and `#v` are equally ordinary ways to write one, so there is no key to match against `CREDENTIAL_QUERY_KEYS` and no structure to filter. That leaves only "take every fragment" or "take none", and none was the state this replaced. It is the same reasoning that already takes the whole userinfo rather than the half after the colon: guessing which part of an opaque component is the secret leaks exactly the case worth catching.
+
+**The cost, accepted knowingly.** This is the widest of the redactor's five deliberate divergences from the TypeScript reference, and the only one that fires on a value plainly holding no credential — a document anchor on an unrelated `https` URL quoted inside a frame body is now withheld. Over-redaction is a real failure here, not the safe direction; the corpus exists to be studied. It is accepted because the loss is one anchor, it is recorded as a `url-credential` redaction rather than applied silently, and Talaria's own `ws`/`wss` endpoints lose nothing at all: a fragment is a client-side selector that is never sent on the wire.
+
+**Why this was a format decision and not a bug fix.** `endpoint` is a documented field of a format other tools read, so widening what it withholds changes a promise rather than correcting a mistake. `docs/formats/frame-log.md` now states the promise and the date it changed, because a recording made before 2026-08-05 may carry a fragment verbatim and a reader has no other way to know.
+
+**Rejected alternative — parse the fragment as a query string and redact credential-shaped keys.** It preserves the most information and is wrong: a fragment has no defined syntax, so `#section-token-handling` parses as a key and `#eyJhbGci…` parses as one too. The rule would be a guess dressed as a filter, and its failures would be silent.
+
+**Rejected alternative — drop the fragment in the recorder as well, for one rule everywhere.** Simpler to describe, but it makes the two cases indistinguishable on disk: a URL that never had a fragment and a URL whose fragment was removed would read identically. This module's standing rule is that withholding is recorded rather than silent.
+
+**Revisit when.** The path becomes coverable. The path is the one remaining position a credential can ride in — the `ws://host:9222/devtools/browser/<GUID>` shape Chrome hands out is a live example — and it is left uncovered because every available rule over-redacts worse than it protects. That was also described as blocked on the KTD6 comparator, which could express an authorized divergence in query keys but not elsewhere; this change widened the comparator by exactly the move a path rule would need, so the comparator is no longer the obstacle and only the over-redaction question is.
+
 ### An audit's findings graduate to a dated register in `docs/analysis/`, and every open one is mirrored into `QUEUED.md`
 
 **Author.** post-v0.1, conformance audit, at the point the last in-scope finding was remediated

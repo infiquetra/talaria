@@ -184,7 +184,21 @@ def _scrub_credential(text: str, credential: Credential | None) -> str:
 
 
 def strip_credential_query(url: str) -> str:
-    """Return ``url`` with every credential-bearing query parameter removed.
+    """Return ``url`` with every credential-bearing query parameter, and any
+    fragment at all, removed.
+
+    The fragment goes whole rather than by pattern, because there is no pattern
+    to apply: a fragment is one opaque string with no key/value structure, so
+    ``#token=v`` and ``#v`` are equally ordinary and neither can be matched
+    against :data:`CREDENTIAL_QUERY_KEYS`. Nothing is lost by dropping it — a
+    fragment is a client-side selector that is never sent on the wire, so a
+    gateway endpoint has no use for one.
+
+    Until 2026-08-05 the fragment was carried through here, which made
+    :class:`AttachTarget`'s credential-free invariant false for any endpoint
+    configured through ``TALARIA_GATEWAY_URL`` or the credential file's ``url``
+    key. The command line refuses such an endpoint outright (``talaria/cli.py``);
+    this is the invariant underneath that refusal.
 
     Byte-preserving when there is nothing to remove: rebuilding a URL through
     ``urlencode`` normalizes percent-escapes, and a normalized endpoint would
@@ -192,15 +206,18 @@ def strip_credential_query(url: str) -> str:
     explain.
     """
     parts = urlsplit(url)
-    if not parts.query:
+    if not parts.query and not parts.fragment:
         return url
     pairs = parse_qsl(parts.query, keep_blank_values=True)
     kept = [(name, value) for name, value in pairs if name.lower() not in CREDENTIAL_QUERY_KEYS]
-    if len(kept) == len(pairs):
+    if len(kept) == len(pairs) and not parts.fragment:
         return url
-    return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment)
-    )
+    # Re-encode the query only when a parameter actually left it. Dropping a
+    # fragment must not normalize percent-escapes in a query that had nothing
+    # wrong with it — that is the byte-preservation rule above, and a URL
+    # carrying only a fragment is exactly the case that would break it.
+    query = parts.query if len(kept) == len(pairs) else urlencode(kept)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
 
 @dataclass(frozen=True)
@@ -273,9 +290,11 @@ class AttachTarget:
             if name.lower() not in CREDENTIAL_QUERY_KEYS
         ]
         pairs.append((credential.parameter, credential.value))
-        return urlunsplit(
-            (parts.scheme, parts.netloc, parts.path, urlencode(pairs), parts.fragment)
-        )
+        # No fragment, unconditionally. ``url`` is fragment-free by construction
+        # when it came through ``from_url``/``from_environment``, but this class
+        # can also be constructed directly, and re-emitting a fragment here would
+        # put the one component nothing filters onto the one URL that is dialled.
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(pairs), ""))
 
 
 @dataclass(frozen=True)

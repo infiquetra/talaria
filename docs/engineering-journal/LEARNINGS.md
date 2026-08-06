@@ -4,6 +4,20 @@
 
 ## 2026-08-05
 
+### Widening a redactor is a three-file change, and a unit test of the redactor reports success after only one of them
+
+**Author.** closing the P2 URL-fragment gap left open by the code-review gate on the credential-and-bridge-drift remediation
+
+**Evidence.** `talaria/recorder/redact.py` — `redact_url` now withholds URL fragments (divergence 5). Making only that change, and testing it only through `redact_url`, would have left credentials in fragments reaching disk from frame bodies while the suite stayed green. Verified by deleting each branch in turn and counting the red across `tests/recorder/test_redact.py` and `tests/transport/test_attach.py`: the gate branch in `_redact_credential_url` fails **exactly one** test out of 149, `test_a_credential_in_a_frames_url_fragment_is_withheld_too`, and that test exists only because the hazard was anticipated.
+
+**Mechanism.** `redact_url` is not applied to every string in a frame. `_redact_credential_url` gates it, and the gate is deliberately narrow so the corpus keeps its harmless URLs: it returns early unless the value has userinfo, or a query parameter with a denied name. `ws://h/api/ws#token=…` has neither. So the redactor and its gate disagree about what counts as a credential-bearing URL, and the gate wins — silently, because a value that never reaches `redact_url` is never compared before and after. The frame-log *header* goes through `redact_url` directly and would have been fixed; every URL in a frame *body* would not have been; and a unit test of `redact_url` cannot tell those two apart.
+
+The third file is the test harness, for the opposite reason. `tests/recorder/test_equivalence.py`'s `_is_authorized_url_divergence` pinned `ts.fragment == py.fragment` as a component that must survive untouched, so a Python redactor withholding more than the TypeScript reference reported as `parsed frame value differs` — which reads as a port bug, not as the intended divergence. A security widening in this module therefore lands in three places at once: the redactor, the gate that decides whether to call it, and the comparator that decides whether the difference is authorized.
+
+Adding the comparator branch is not enough on its own either. The fixture corpus had no URL with a fragment in it, so the new branch was unreachable and untested until `tests/recorder/fixtures/equivalence_corpus.json` gained one — the same gap the module docstring already records for divergences 2 and 4, repeated because the fixture is where it hides. Confirmed by reverting the comparator with the fixture frame in place and watching the harness fail on `seq 22`.
+
+**Generalizable rule.** When a function is reached through a gate that re-decides the same question, changing the function changes nothing the gate excludes — so pin the change through the *outermost* caller (`redact_frame`, not `redact_url`), and count which tests go red when each branch is deleted. If deleting a branch turns nothing red, the branch is either dead or the test is passing for another reason; both are worth knowing before the commit, not after.
+
 ### A subcommand can require the exact thing the rest of the module forbids, and every test still passes
 
 **Author.** post-v0.1 conformance audit, DRIFT-03 remediation (plan `docs/plans/2026-08-05-credential-and-bridge-drift-remediation-plan.md`, unit U2)
