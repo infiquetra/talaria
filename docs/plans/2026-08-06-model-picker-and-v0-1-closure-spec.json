@@ -1,0 +1,169 @@
+{
+  "name": "talaria-model-picker-and-v0-1-closure",
+  "description": "Add a model picker in three steps (session model, profile, that profile's default model) built on the Hermes HTTP API Talaria's existing credential already reaches, and close the v0.1 daily-driver gate with the observed live evidence that building it produces. Settles the one blocking row no test run can settle.",
+  "repo": "infiquetra/talaria",
+  "concurrency": {
+    "max_concurrent": 3,
+    "readonly_max_concurrent": 3,
+    "aggregate_max_concurrent": 3
+  },
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "The admin HTTP client, and the credential form settled against Hermes source",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "The unit decides how Talaria authenticates on a second transport surface and every later unit depends on that answer; a form adopted because it happened to work, rather than because the source says it is supported, is a security decision made by accident.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U1: Build talaria/transport/admin.py and its pure decode, after first reading Hermes source to establish which credential form the HTTP surface supports and citing it. Read docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md (unit U1, and KTD1/KTD2) as your authoritative spec. CONCURRENCY CONSTRAINT: U3 runs in the same wave and is deleting HERMES_DASHBOARD_SESSION_TOKEN as a credential source — no fixture, test or docstring you write may supply a credential through that variable. Use the credential file route or an injected provider.",
+      "files": [
+        "talaria/transport/admin.py",
+        "talaria/domain/models_catalog.py",
+        "tests/transport/test_admin.py",
+        "tests/domain/test_models_catalog.py",
+        "docs/engineering-journal/LEARNINGS.md"
+      ],
+      "returns": [
+        "credential_form_decided_and_source_cited",
+        "origin_derived_from_gateway_url_not_configured_separately",
+        "credential_absent_from_logs_reprs_and_exceptions",
+        "http_401_404_refused_and_non_json_each_named",
+        "oversized_body_refused_at_cap",
+        "ktd2_confirmed_or_revised_in_journal"
+      ],
+      "depends_on": []
+    },
+    {
+      "unit_id": "U3",
+      "label": "Remove the environment credential source and re-grade row 13",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "This is a security requirement that no code change can fully satisfy, carrying an explicit trap the queued item names: widening R1's wording so the argv half satisfies it would close the row by redefining it. It also deletes a credential source threaded through seven test modules, where a deleted rotation test silently costs a real guarantee.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U3: Execute option (b) — remove HERMES_DASHBOARD_SESSION_TOKEN from the credential precedence chain, write the remaining supported routes into README.md, re-express every affected test (rotation guarantees against the file, not deleted), and record in DECISIONS.md exactly how far option (b) lets row 13 be re-graded — U7 owns the verdict document and grades against what you record; do not edit it yourself. Read docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md (unit U3, KTD8) and docs/engineering-journal/QUEUED.md's entry 'R1's environment clause is unmet, and no change to Talaria can meet it' as your authoritative spec. Do not write that R1's environment clause is now technically met: an inherited variable stays visible in /proc/<pid>/environ and no code change touches that.",
+      "files": [
+        "README.md",
+        "docs/engineering-journal/DECISIONS.md",
+        "talaria/transport/credentials.py",
+        "talaria/cli.py",
+        "tests/conftest.py",
+        "tests/transport/test_attach.py",
+        "tests/transport/test_process_surface.py",
+        "tests/transport/test_reconnect.py",
+        "tests/recorder/test_command.py",
+        "tests/test_cli.py",
+        "tests/test_config.py"
+      ],
+      "returns": [
+        "environment_no_longer_consulted_for_a_credential",
+        "refusal_messages_name_only_surviving_routes",
+        "rotation_guarantee_re_expressed_against_the_file",
+        "decision_written_into_readme",
+        "r1_wording_not_widened",
+        "environment_half_failure_assertion_still_asserts_failure",
+        "row_13_grading_limit_recorded_for_u7"
+      ],
+      "depends_on": []
+    },
+    {
+      "unit_id": "U2",
+      "label": "The session model picker",
+      "tier": { "model": "sonnet", "effort": "high" },
+      "prompt": "U2: Build the foldable model-picker region and the /models local command that opens it, dispatching selection through the existing slash path. Read docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md (unit U2, KTD3/KTD4) as your authoritative spec — it names the six wiring points in talaria/ui/app.py and two hazards there (perform_local_command is synchronous while action_toggle_palette is async; PaletteRegion is opened by a key binding and no slash command). The command name is /models, plural: the gateway already owns singular /model.",
+      "files": [
+        "talaria/ui/picker.py",
+        "talaria/ui/app.py",
+        "talaria/domain/commands.py",
+        "tests/ui/test_picker.py"
+      ],
+      "returns": [
+        "providers_and_models_listed_with_current_marked",
+        "unauthenticated_provider_visibly_distinguished",
+        "selection_emits_exact_model_command_string",
+        "composer_keeps_focus",
+        "unfetched_failed_and_warning_states_each_distinguishable",
+        "stale_epoch_selection_refused"
+      ],
+      "depends_on": ["U1"]
+    },
+    {
+      "unit_id": "U4",
+      "label": "The profile picker, and one credential per endpoint",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "Switching profiles drives the reconnect path, which the transport's own documentation calls the subtlest concurrency work in the module, and it changes which credential is required mid-flight. A switch that half-completes leaves Talaria disconnected with no named state, which is the failure the transport was built to make impossible.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U4: Add profile listing to the admin client and a profile mode to the picker behind the /profiles local command (plural: the gateway already owns singular /profile), where selection resolves a new endpoint, re-resolves the credential for it, and reconnects. Read docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md (unit U4, KTD5/KTD6) as your authoritative spec. Use synthetic profile names in every fixture: this is a public repository.",
+      "files": [
+        "talaria/transport/admin.py",
+        "talaria/ui/picker.py",
+        "talaria/domain/commands.py",
+        "tests/transport/test_admin.py",
+        "tests/ui/test_picker.py"
+      ],
+      "returns": [
+        "profiles_listed_with_dialability_marked",
+        "non_running_profile_refused_before_dial",
+        "credential_refusal_surfaces_as_credential_unavailable_with_reason",
+        "failed_switch_leaves_a_named_state",
+        "profiles_active_post_never_called",
+        "fixtures_use_synthetic_profile_names"
+      ],
+      "depends_on": ["U1", "U2"]
+    },
+    {
+      "unit_id": "U5",
+      "label": "The default-model picker, with the expensive-model confirmation surfaced",
+      "tier": { "model": "sonnet", "effort": "high" },
+      "prompt": "U5: Add the profile-scoped default-model write and its two-act confirmation flow. Read docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md (unit U5, KTD7) as your authoritative spec.",
+      "files": [
+        "talaria/transport/admin.py",
+        "talaria/ui/picker.py",
+        "tests/transport/test_admin.py",
+        "tests/ui/test_picker.py"
+      ],
+      "returns": [
+        "confirmation_requires_two_distinct_acts",
+        "first_call_never_carries_confirm_expensive_model",
+        "new_sessions_only_stated_on_screen",
+        "http_400_named_rather_than_raised"
+      ],
+      "depends_on": ["U4"]
+    },
+    {
+      "unit_id": "U6",
+      "label": "Collate the scripted live acceptance run",
+      "tier": { "model": "sonnet", "effort": "low" },
+      "prompt": "U6: Prepare the row-19 checklist for the operator to execute, then collate the recordings they produce into digests and counts. The runs themselves are the operator's; F7 and the isolated-session observation cannot be automated. Read docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md (unit U6, KTD9) as your authoritative spec.",
+      "files": ["docs/work-sessions/2026-08-06-live-acceptance-run.md"],
+      "returns": [
+        "checklist_prepared_for_operator",
+        "resume_and_session_paths_recorded",
+        "compatibility_check_output_captured",
+        "authentication_failure_branch_observed",
+        "absent_capability_branch_observed",
+        "f1_and_f7_observed_by_a_person",
+        "corpora_cited_by_digest_and_count_only"
+      ],
+      "depends_on": ["U5", "U3"]
+    },
+    {
+      "unit_id": "U7",
+      "label": "Re-grade the gate on what was actually measured",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "This is the unit most likely to close the release gate dishonestly, and the project has already been burned that way twice. Grading row 6 by enumerating the methods a recording proves were called, rather than by the fact that live runs happened, is exactly the judgment a cheaper tier tends to skip.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U7: Re-grade rows 6, 13 and 19 against what was measured, restate the evidence table and the gate block together, and leave the verdict NOT READY on any reason that did not clear. Read docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md (unit U7, R10/R13) as your authoritative spec.",
+      "files": [
+        "docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md",
+        "docs/engineering-journal/QUEUED.md",
+        "docs/engineering-journal/LEARNINGS.md"
+      ],
+      "returns": [
+        "row_6_graded_by_enumerated_methods_from_recordings",
+        "rows_that_did_not_clear_stated_as_still_blocking",
+        "evidence_table_and_gate_block_restated_together",
+        "backlinks_name_only_cleared_conditions",
+        "gating_document_tests_pass"
+      ],
+      "depends_on": ["U6", "U3"]
+    }
+  ]
+}

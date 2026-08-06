@@ -4,6 +4,22 @@
 
 ## 2026-08-06
 
+### The model picker reads the gateway's HTTP API, folds like the command listing, and switches profiles by reconnecting
+
+**Author.** planning the model picker and the closure of v0.1 (`docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md`)
+
+**Decision.** Model and profile discovery goes over the transport, against the HTTP API Hermes serves on the same origin as the gateway WebSocket (`GET /api/model/options`, `GET /api/profiles`), reusing the origin derivation `talaria/transport/refresh.py` already established. The picker is a foldable region in the existing layout, not a modal overlay. Switching profiles means dialing a different gateway, not asking the running one to change.
+
+**Why not read Hermes's own cache file.** `~/.hermes/provider_models_cache.json` holds exactly the list a picker wants, and reading it would be one line. ADR-0001 makes Talaria a client that dials a gateway **it did not launch**, potentially on another host — so a local file read does not fail when the gateway is remote, it silently returns *this* machine's model list for *that* machine's gateway. A wrong answer that looks like a right one is the failure mode this repository keeps paying for.
+
+**Why a foldable region rather than an overlay.** `talaria/ui/palette.py:1-22` already rejected a modal search box for the command listing, on the grounds that it "would put a second focus owner in front of the composer, which is the one widget the interface is built around." The picker faces the identical tradeoff. Taking the opposite answer for the same tradeoff, in the same interface, would leave two contradictory precedents and no recorded reason — so the picker follows the standing decision, and reopening it stays available as its own change with its own argument.
+
+**Why switching profiles is a reconnect.** `POST /api/profiles/active` sets a sticky preference for subsequent CLI commands and gateways and, in its own words, "does not retarget the already-running dashboard process" (`hermes_cli/web_routers/profiles.py:489`). A profile is a separate Hermes home with its own gateway, so `GET /api/profiles` is an endpoint directory — its `gateway_running` field says which entries are dialable — and Talaria never calls the POST. This also means each endpoint has its own credential, since every dashboard mints its own; the provider already resolves per dial, so the switch re-resolves rather than carrying one across.
+
+**Deliberately left open.** Which credential form the HTTP surface officially uses. The WebSocket credential is a query parameter because Hermes reads `ws.query_params` only, a fact `talaria/transport/credentials.py` pins to source. An `Authorization: Bearer` header was observed working over HTTP on 2026-08-06, but observing a form work is not the same as establishing it is the supported one — the plan's first unit reads the Hermes source and cites it before any code depends on the answer.
+
+**Revisit when.** The gateway grows a JSON-RPC method advertising models, which would make the HTTP surface unnecessary; or a second region wants the same list-and-select shape, at which point the picker's region is a widget rather than a feature.
+
 ### A document that gates a decision declares its blocking conditions in a form a test can read, and the test — not a convention — is what closes the loop
 
 **Author.** closing the deferred item DRIFT-04 left behind: "A gating document has no inbound link from the work that clears it, so nothing re-opens it when it goes stale"
