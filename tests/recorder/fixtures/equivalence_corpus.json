@@ -21,6 +21,7 @@
     "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"type\":\"subagent.start\",\"payload\":{\"id\":\"sa-1\",\"name\":\"researcher\",\"status\":\"running\"}}}",
     "{\"jsonrpc\":\"2.0\",\"method\":\"event\",\"params\":{\"type\":\"subagent.complete\",\"payload\":{\"id\":\"sa-1\",\"name\":\"researcher\",\"status\":\"completed\"}}}",
     "{\"jsonrpc\":\"2.0\",\"id\":901,\"result\":{\"connected\":true,\"url\":\"ws://127.0.0.1:9222/api/ws?token=fixture-url-secret&session=s-1\"}}",
-    "{\"jsonrpc\":\"2.0\",\"id\":902,\"result\":{\"connected\":true,\"url\":\"http://operator:fixture-basic-secret@cdp.example/\"}}"
+    "{\"jsonrpc\":\"2.0\",\"id\":902,\"result\":{\"connected\":true,\"url\":\"http://operator:fixture-basic-secret@cdp.example/\"}}",
+    "{\"jsonrpc\":\"2.0\",\"id\":903,\"result\":{\"connected\":true,\"url\":\"ws://127.0.0.1:9222/api/ws#token=fixture-fragment-secret\"}}"
   ]
 }

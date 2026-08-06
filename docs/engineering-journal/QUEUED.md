@@ -401,29 +401,6 @@ So the operator types a password into a focused control that draws nothing, with
 
 **The choice to make, when the time comes.** Either vendor a frozen copy of the TypeScript reference recorder purely as a test fixture, keeping the equivalence executable; or accept that R28 becomes historical, and record in `DECISIONS.md` that the equivalence relation was proven at a named commit and is no longer re-verified. Either is defensible. Making the choice implicitly, by deleting a failing test, is not.
 
-### The URL redactor does not touch fragments, so a credential in one reaches the frame log from any source
-
-**Author.** code-review gate on the credential-and-bridge-drift remediation, 2026-08-05
-**Priority.** P2
-**Effort.** Small (one component added to `strip_credential_query` and `redact_url`), plus deciding what the frame-log format promises about endpoints.
-**Worth it when.** Before Talaria reads its endpoint from anything an operator does not hand-write, or before recordings are shared outside the machine that made them.
-
-**Context.** `talaria record` now refuses a command-line endpoint carrying a credential in its query string, its userinfo, **or** its fragment. The fragment case was found by the code-review gate on this work: it was accepted, echoed to the terminal, and written into the frame-log header verbatim. That entry point is closed.
-
-What is not closed is the redactor underneath it. The two components are handled and the third is not:
-
-| shape | `strip_credential_query` / `redact_url` |
-| --- | --- |
-| `?token=…` | stripped |
-| `user:pass@host` | withheld as `[redacted]@host` |
-| `#token=…` | **passes through verbatim** |
-
-So an endpoint carrying a credential in a fragment still reaches `AttachTarget.url` — which is what the frame-log header records — when it arrives from any source other than the command line: `TALARIA_GATEWAY_URL`, or the `url` key in the credential file. Measured on 2026-08-05: `AttachTarget.from_url("ws://h/api/ws#token=<v>").safe_url` returns the value unchanged, while the userinfo and query forms of the same URL are both withheld.
-
-The command-line refusal is a boundary at one entry point; this is the invariant underneath it, and only the first was in scope for that plan.
-
-**Why it was left open rather than fixed alongside the refusal.** Changing the redactor changes what the frame-log format guarantees about its `endpoint` field, and the Python redactor's divergence from the TypeScript reference is enumerated in a test on purpose (`DECISIONS.md`). Widening it is a format decision, not a bug fix, and it wants deciding rather than slipping in. A WebSocket URL has no legitimate use for a fragment at all, so dropping the component outright is the likely answer.
-
 ### A replay cannot reconstruct Talaria's own delivery notes, so an unacknowledged submit replays as a clean one
 
 **Author.** post-v0.1, second operator session against a live gateway

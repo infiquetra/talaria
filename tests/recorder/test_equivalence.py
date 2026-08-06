@@ -195,8 +195,15 @@ def _is_authorized_url_divergence(ts_value: object, py_value: object) -> bool:
     asking the implementation under test whether its own output is correct is
     the self-comparison this harness exists to avoid. Scheme, host, port and
     path must survive untouched; every query key must survive with its value
-    either unchanged or replaced by the redaction marker; and userinfo may
-    disappear but must never appear where it was previously absent.
+    either unchanged or replaced by the redaction marker; and userinfo and the
+    fragment may disappear but must never appear where they were previously
+    absent.
+
+    The fragment moved out of the "must survive untouched" group on 2026-08-05,
+    when divergence 5 gave the Python redactor a fragment rule the TypeScript
+    reference has no equivalent of. Until then this predicate pinned it equal,
+    which is why widening the redactor is a two-file change: a redactor that
+    withholds more than the comparator authorizes reads here as a port bug.
     """
     if not isinstance(ts_value, str) or not isinstance(py_value, str):
         return False
@@ -205,16 +212,24 @@ def _is_authorized_url_divergence(ts_value: object, py_value: object) -> bool:
     ts, py = urlsplit(ts_value), urlsplit(py_value)
     if not ts.scheme or not ts.netloc:
         return False
-    if (ts.scheme, ts.path, ts.fragment) != (py.scheme, py.path, py.fragment):
+    if (ts.scheme, ts.path) != (py.scheme, py.path):
         return False
     if (ts.hostname, ts.port) != (py.hostname, py.port):
         return False
-    # Userinfo may only be removed or masked, never introduced.
-    if (ts.username, ts.password) == (py.username, py.password) and ts.query == py.query:
+    # Userinfo and the fragment may only be removed or masked, never introduced.
+    if (
+        (ts.username, ts.password) == (py.username, py.password)
+        and ts.query == py.query
+        and ts.fragment == py.fragment
+    ):
         return False  # nothing diverged; the caller should have matched on equality
     # `urlsplit` hands back the raw component, so the marker arrives
     # percent-encoded (`%5Bredacted%5D`) exactly as it sits on disk.
     if py.username is not None and unquote(py.username) not in ("[redacted]", ts.username):
+        return False
+    if py.fragment and not ts.fragment:
+        return False
+    if py.fragment and unquote(py.fragment) not in ("[redacted]", ts.fragment):
         return False
 
     ts_query = dict(parse_qsl(ts.query, keep_blank_values=True))

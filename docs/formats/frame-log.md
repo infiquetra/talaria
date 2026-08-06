@@ -29,11 +29,21 @@ The first line is a header. Every subsequent line is a frame.
 }
 ```
 
-| field       | meaning                                                                |
-| ----------- | ---------------------------------------------------------------------- |
-| `version`   | Format version. Bumped when a reader must notice a change.             |
-| `startedAt` | When recording began, ISO-8601.                                        |
-| `endpoint`  | The gateway dialled, with credential-shaped query parameters withheld. |
+| field       | meaning                                                                    |
+| ----------- | -------------------------------------------------------------------------- |
+| `version`   | Format version. Bumped when a reader must notice a change.                 |
+| `startedAt` | When recording began, ISO-8601.                                            |
+| `endpoint`  | The gateway dialled, with every credential-bearing component withheld — see below. |
+
+**What `endpoint` promises.** A URL can carry a credential in three places, and all three are
+withheld: a credential-shaped query parameter (`?token=`, `?ticket=`, `?internal=`, plus the
+key-name net), the userinfo ahead of the host (`user:pass@`), and the fragment. The fragment is
+taken whole and unread — it has no key/value structure to filter, so `#token=v` and `#v` are
+equally ordinary and there is nothing to match a name against. Scheme, host, port and path
+survive; the path is the one component that is **not** covered, and `talaria/recorder/redact.py`
+says why under "Known and deliberately not covered".
+
+Fragment withholding arrived on 2026-08-05. A recording made before then may carry one verbatim.
 
 A log with only a header is a valid, complete recording of a session in which nothing arrived. That
 is deliberately distinguishable from a missing file.

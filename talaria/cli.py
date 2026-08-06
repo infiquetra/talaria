@@ -228,19 +228,28 @@ def url_carries_credential(url: str) -> bool:
     keying the refusal on query parameters alone would leave a hole with exactly
     the shape of the one this closes.
 
-    A *fragment* — ``ws://host/api/ws#token=…`` — is refused whatever it holds,
-    and of the three it is the shape with the worst consequences. Like userinfo
-    it can never authenticate: a fragment is by definition not sent to a server,
-    and ``websockets`` rejects such a URI outright ("fragment identifier is
-    meaningless"). Unlike userinfo it is withheld by *nothing* downstream —
-    :func:`~talaria.transport.attach.strip_credential_query` drops credential
-    query keys and :func:`~talaria.recorder.redact.redact_url` withholds
-    userinfo, but neither touches a fragment, so a credential in one reached the
-    printed endpoint and the frame-log header verbatim. Because a WebSocket
-    endpoint has no legitimate use for a fragment at all, any fragment is
-    refused rather than sniffed for credential-shaped keys: guessing at the
-    contents of a component that should not be there is a worse boundary than
-    rejecting the component.
+    A *fragment* — ``ws://host/api/ws#token=…`` — is refused whatever it holds.
+    Like userinfo it can never authenticate: a fragment is by definition not
+    sent to a server, and ``websockets`` rejects such a URI outright ("fragment
+    identifier is meaningless"). Because a WebSocket endpoint has no legitimate
+    use for one at all, any fragment is refused rather than sniffed for
+    credential-shaped keys: guessing at the contents of a component that should
+    not be there is a worse boundary than rejecting the component.
+
+    **This paragraph said something stronger until 2026-08-05, and it is worth
+    recording what changed rather than quietly restating it.** It read that a
+    fragment was "withheld by *nothing* downstream", which was true when written
+    — :func:`~talaria.transport.attach.strip_credential_query` dropped credential
+    query keys, :func:`~talaria.recorder.redact.redact_url` withheld userinfo,
+    and neither touched a fragment, so a credential in one reached the printed
+    endpoint and the frame-log header verbatim. That gap was filed as a P2 and
+    has since been closed: both functions now handle the fragment, and this
+    refusal is no longer the only thing standing in front of it.
+
+    The refusal stays anyway, for the reason it was written: by the time
+    ``argparse`` has seen the argument the value is already in the process table
+    and the shell history, so stripping it silently would preserve the exact
+    habit that leaked it (KTD1).
 
     A URL that :func:`~urllib.parse.urlsplit` cannot read is treated as carrying
     one. It cannot be shown to be credential-free, and a string malformed enough

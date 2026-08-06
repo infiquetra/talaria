@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 
@@ -558,3 +558,88 @@ def test_an_inner_http_verb_cannot_disarm_the_deny_set() -> None:
     )
 
     assert "LEAK" not in json.dumps(result.frame)
+
+
+# ── The URL fragment, 2026-08-05 (divergence 5) ────────────────────────
+#
+# Of the three positions a URL can carry a credential in, the fragment was the
+# one nothing covered: `strip_credential_query` reads query keys, `redact_url`
+# read userinfo and query, and `urlunsplit` wrote whatever followed `#` back
+# out verbatim. Found by the code-review gate on the credential-and-bridge
+# drift remediation, filed as P2, closed here.
+
+
+def test_a_credential_in_a_url_fragment_is_withheld() -> None:
+    """``urlsplit`` puts everything after ``#`` in ``fragment`` and ``urlunsplit``
+    wrote it back unread, so this shape reached the frame-log header intact."""
+    cleaned = redact_url("ws://127.0.0.1:8799/api/ws#token=SECRET")
+
+    assert "SECRET" not in cleaned
+    assert "127.0.0.1:8799" in cleaned
+    assert "/api/ws" in cleaned
+
+
+def test_a_fragment_is_withheld_without_being_read() -> None:
+    """Deliberate over-redaction, pinned so it stays a decision rather than an
+    accident.
+
+    A fragment has no key/value structure to filter — ``#token=v`` and ``#v``
+    are equally ordinary — so there is no way to withhold the credential-bearing
+    ones and keep the rest. The alternative to taking every fragment is taking
+    none, which is the state this replaced.
+    """
+    assert redact_url("https://example.com/guide#installation") == (
+        "https://example.com/guide#%5Bredacted%5D"
+    )
+
+
+def test_a_withheld_fragment_leaves_a_marked_hole_not_a_silent_one() -> None:
+    """The module's standing rule: a reader of the corpus must see that something
+    was removed, rather than a URL that looks like it never had a fragment."""
+    cleaned = redact_url("wss://gateway.local/attach#SECRET")
+
+    assert unquote(urlsplit(cleaned).fragment) == REDACTED
+
+
+def test_a_url_with_a_withheld_fragment_can_still_be_parsed() -> None:
+    """A corpus is append-only, so an unparseable URL in it is not a redaction.
+
+    Same hazard the userinfo marker hit: the bare ``[redacted]`` broke every
+    later ``urlsplit``. The fragment is percent-encoded for the same reason and
+    for on-disk uniformity with the other two positions.
+    """
+    original = "wss://user:pw@[2001:db8::1]:8443/attach?token=S#more"
+    cleaned = redact_url(original)
+    parts = urlsplit(cleaned)
+
+    assert parts.hostname == urlsplit(original).hostname
+    assert parts.port == urlsplit(original).port
+    assert "pw" not in cleaned
+    assert "S" not in parse_qs(parts.query).get("token", [])
+    assert unquote(parts.fragment) == REDACTED
+
+
+def test_a_credential_in_a_frames_url_fragment_is_withheld_too() -> None:
+    """The test that makes the fix real rather than local.
+
+    ``redact_url`` is not reached for every string: ``_redact_credential_url``
+    gates it, and that gate returned early for a URL with no userinfo and no
+    credential-shaped query key — which is exactly the shape of
+    ``ws://h/api/ws#token=...``. Widening ``redact_url`` alone would have closed
+    the frame-log header, left every URL in a frame body leaking, and passed a
+    unit test written against ``redact_url``.
+    """
+    result = redact_frame({"method": "x", "params": {"url": "ws://h/api/ws#token=SECRET"}})
+
+    assert "SECRET" not in json.dumps(result.frame)
+    assert [r.reason for r in result.redactions] == ["url-credential"]
+
+
+def test_a_clean_url_with_no_fragment_is_still_returned_byte_identical() -> None:
+    """Dropping a fragment must not drag a URL that has none through
+    ``urlencode``: KTD6 compares those bytes against the TypeScript reference."""
+    for url in (
+        "https://Example.COM:443/Path?A=1&b=%2Fx",
+        "ws://127.0.0.1:8765/api/ws",
+    ):
+        assert redact_url(url) == url, url

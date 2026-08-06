@@ -1090,3 +1090,99 @@ def test_userinfo_is_withheld_from_a_shown_endpoint() -> None:
     re-deriving it, so the two cannot disagree."""
     target = AttachTarget.from_url(f"ws://user:{CANARY}@host:9119/api/ws")
     assert CANARY not in target.safe_url
+
+
+# ── The endpoint fragment, 2026-08-05 ──────────────────────────────────
+#
+# The command line refuses an endpoint carrying a credential in its fragment
+# (``talaria/cli.py``). These pin the invariant underneath that refusal: every
+# other way an endpoint arrives — ``TALARIA_GATEWAY_URL``, the credential
+# file's ``url`` key, a direct ``from_url`` — went through
+# ``strip_credential_query``, which read query keys and wrote the fragment back
+# out unread.
+
+
+def test_a_fragment_is_dropped_from_a_configured_endpoint() -> None:
+    """Whole, and without being read. A fragment has no key to match against
+    ``CREDENTIAL_QUERY_KEYS``, and a WebSocket endpoint has no use for one."""
+    assert strip_credential_query(f"ws://127.0.0.1:9119/api/ws#token={CANARY}") == (
+        "ws://127.0.0.1:9119/api/ws"
+    )
+
+    target = AttachTarget.from_url(f"ws://127.0.0.1:9119/api/ws#token={CANARY}")
+    assert CANARY not in target.url
+    assert CANARY not in target.safe_url
+    assert CANARY not in repr(target)
+
+
+def test_a_fragment_is_dropped_whatever_it_looks_like() -> None:
+    """``#token=v`` and ``#v`` are equally ordinary ways to write a fragment, so
+    a rule that fired only on the first would miss the second."""
+    for fragment in (f"token={CANARY}", CANARY, f"a=1&ticket={CANARY}"):
+        target = AttachTarget.from_url(f"ws://127.0.0.1:9119/api/ws#{fragment}")
+        assert CANARY not in target.url, fragment
+
+
+def test_the_endpoint_fragment_from_the_environment_reaches_no_surface() -> None:
+    """``TALARIA_GATEWAY_URL`` is one of the two sources the command-line refusal
+    does not stand in front of."""
+    target = AttachTarget.from_environment(
+        environ={GATEWAY_URL_ENV_VAR: f"ws://127.0.0.1:9119/api/ws#token={CANARY}"}
+    )
+
+    assert not target.problem
+    assert CANARY not in target.url
+    assert CANARY not in target.safe_url
+    assert target.url == "ws://127.0.0.1:9119/api/ws"
+
+
+def test_the_endpoint_fragment_from_the_credential_file_reaches_no_surface(
+    tmp_path: Path,
+) -> None:
+    """The other one: the ``url`` key in the credential file."""
+    path = tmp_path / "credentials"
+    path.write_text(f'url = "ws://127.0.0.1:9119/api/ws#token={CANARY}"\n', encoding="utf-8")
+    path.chmod(0o600)
+
+    target = AttachTarget.from_environment(environ={}, credentials_path=path)
+
+    assert not target.problem
+    assert CANARY not in target.url
+    assert CANARY not in target.safe_url
+
+
+def test_a_dialled_url_carries_no_fragment() -> None:
+    """``dial_url`` rebuilt the URL from its own ``urlsplit``, so a fragment on a
+    directly-constructed target would ride onto the one URL that is dialled."""
+    target = AttachTarget(url=f"ws://127.0.0.1:9119/api/ws#{CANARY}")
+    dial = target.dial_url(Credential("token", "fresh", "environment"))
+
+    assert "#" not in dial
+    assert CANARY not in dial
+
+
+def test_dropping_a_fragment_leaves_the_rest_of_the_url_byte_identical() -> None:
+    """The query is re-encoded only when a parameter actually leaves it.
+
+    Routing every fragment-bearing URL through ``urlencode`` would normalize
+    percent-escapes in a query that had nothing wrong with it — the bytes KTD6
+    compares against the TypeScript reference.
+    """
+    assert strip_credential_query("ws://127.0.0.1:9119/api/ws?x=%2Ffoo#frag") == (
+        "ws://127.0.0.1:9119/api/ws?x=%2Ffoo"
+    )
+
+
+def test_the_recorded_endpoint_header_withholds_a_fragment(tmp_path: Path) -> None:
+    """R9 again, through the real recorder rather than the redactor.
+
+    ``FrameRecorder`` is handed the endpoint as a string, so this covers the
+    path where a caller never built an ``AttachTarget`` at all.
+    """
+    log = tmp_path / "frames.jsonl"
+    recorder = FrameRecorder(log, f"ws://127.0.0.1:9119/api/ws#token={CANARY}")
+    recorder.close()
+
+    text = log.read_text(encoding="utf-8")
+    assert CANARY not in text
+    assert "redacted" in json.loads(text.splitlines()[0])["endpoint"]

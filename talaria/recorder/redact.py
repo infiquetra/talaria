@@ -47,9 +47,14 @@ Python output, and every additional Python entry is drawn from this
 enumerated set (``ticket``, ``internal``) -- so the divergence stays pinned by
 a test rather than drifting.
 
-Two further divergences were added on 2026-08-03 after an adversarial probe put
-credentials on disk through this boundary. Both are enumerated here for the
-same reason as the first: an unlisted divergence is what KTD6 forbids.
+Further divergences have been added since, each after something put credentials
+on disk through this boundary -- an adversarial probe on 2026-08-03, a
+code-review gate on 2026-08-05. Each is enumerated here for the same reason as
+the first: an unlisted divergence is what KTD6 forbids. (This paragraph read
+"two further divergences ... both are enumerated" until 2026-08-05. It was
+written when the list below held two entries and was not updated as the list
+grew to five -- the same drift the enumeration exists to prevent, in the prose
+that announces it.)
 
 1. *Key names are matched in a squashed form as well as a camel-normalized one.*
    ``_normalize_key`` alone let ``ApIkEy`` and ``api key`` through -- the first
@@ -79,7 +84,24 @@ same reason as the first: an unlisted divergence is what KTD6 forbids.
    ``methods_tools.py:1349``), so a remote CDP endpoint with basic-auth
    credentials reaches a frame body with no query anywhere in it.
 
-Both make the Python redactor a wider superset; neither withholds anything the
+5. *A URL fragment is withheld whole, whenever there is one.* ``urlsplit`` hands
+   everything after ``#`` back as one opaque string and :func:`urlunsplit` wrote
+   it out verbatim, so an endpoint of the form ``ws://host/api/ws#token=...``
+   reached the frame-log header with the value intact -- the third and last
+   position a URL can carry a credential in, and the only one nothing covered.
+   There is no key to match here as there is in a query, so the choice is
+   all-or-nothing and the security property wins again: any fragment at all is
+   replaced by the marker.
+
+   This is the widest of the five, and knowingly so. Divergences 1 through 4
+   fire only on a credential-shaped name or position; this one fires on a
+   fragment that plainly holds no credential, costing a document anchor on an
+   unrelated ``https`` URL quoted inside a frame body. It is paid as a recorded
+   ``url-credential`` redaction rather than a silent edit, so the corpus shows
+   the hole. Talaria's own ``ws``/``wss`` endpoints lose nothing at all, because
+   a fragment is a client-side selector that is never sent on the wire.
+
+These make the Python redactor a wider superset; none withholds anything the
 TypeScript reference withholds differently, and the usage counters this module
 exists to preserve (``max_tokens`` and its siblings) are unaffected -- pinned by
 the over-redaction controls in ``tests/recorder/test_redact.py``.
@@ -109,8 +131,11 @@ study -- the same over-redaction failure the key-name net is anchored to avoid.
 
 The leading candidate -- withholding the path of non-loopback ``ws``/``wss``
 URLs -- is blocked on the KTD6 comparator, which can express an authorized
-divergence in query-key names but not in paths. Tracked with both revisit
-triggers in ``docs/engineering-journal/QUEUED.md``.
+divergence in userinfo, query-key names and (since divergence 5) the fragment,
+but not in paths. That is now a smaller obstacle than it reads: divergence 5
+widened the comparator by exactly the move a path rule would need, so the
+blocker is the over-redaction question above, not the harness. Tracked with both
+revisit triggers in ``docs/engineering-journal/QUEUED.md``.
 """
 
 from __future__ import annotations
@@ -264,7 +289,17 @@ def _redact_userinfo(parts: SplitResult) -> tuple[str, bool]:
 
 
 def redact_url(url: str) -> str:
-    """Strip credentials from a URL's userinfo and query string so it is safe to record."""
+    """Strip credentials from a URL's userinfo, query string and fragment so it
+    is safe to record.
+
+    The fragment is withheld whenever there is one, without inspecting it. It
+    carries no key/value structure to filter — ``#token=v`` and ``#v`` are both
+    ordinary — so the choice is between withholding every fragment and
+    withholding none, and the same reasoning that takes the whole userinfo
+    applies: guessing which part of an opaque component is the secret leaks
+    exactly the case worth catching. The cost is a document anchor lost from a
+    recorded URL, which is a marked hole rather than missing data.
+    """
     parts = urlsplit(url)
     if not parts.scheme or not parts.netloc:
         # Not a parseable absolute URL. Withhold it rather than record an
@@ -287,7 +322,11 @@ def redact_url(url: str) -> str:
             query_changed = True
         else:
             redacted_pairs.append((key, value))
-    changed = changed or query_changed
+    # Percent-encoded, matching how the marker already appears in a redacted
+    # userinfo and query value, so the on-disk convention stays uniform and a
+    # `jq` search for `%5Bredacted%5D` finds every component it was applied to.
+    fragment = quote(REDACTED, safe="") if parts.fragment else ""
+    changed = changed or query_changed or bool(parts.fragment)
 
     if not changed:
         return url
@@ -302,7 +341,7 @@ def redact_url(url: str) -> str:
     # `urlencode` normalizes percent-escapes, so re-encoding an untouched query
     # would change bytes KTD6 compares for equality.
     new_query = urlencode(redacted_pairs) if query_changed else parts.query
-    return urlunsplit((parts.scheme, netloc, parts.path, new_query, parts.fragment))
+    return urlunsplit((parts.scheme, netloc, parts.path, new_query, fragment))
 
 
 @dataclass(frozen=True)
@@ -341,6 +380,13 @@ def _redact_credential_url(value: str) -> str | None:
     it is a complete credential with no ``?`` anywhere in it, and it is the shape
     an operator's configured CDP override actually takes (see divergence 4 in the
     module docstring).
+
+    A fragment is the third such position, and this gate has to know about it.
+    :func:`redact_url` withholds fragments, but a value that never reaches
+    :func:`redact_url` is never withheld — so widening the redactor alone would
+    have closed the frame-log *header* and left every URL in a frame *body*
+    untouched, while a unit test of :func:`redact_url` reported the fix working
+    (see divergence 5 in the module docstring).
     """
     if "://" not in value:
         return None
@@ -352,7 +398,7 @@ def _redact_credential_url(value: str) -> str | None:
         return None
     if not parts.scheme or not parts.netloc:
         return None
-    if parts.username is None and parts.password is None:
+    if parts.username is None and parts.password is None and not parts.fragment:
         if not parts.query:
             return None
         names = {name.lower() for name, _ in parse_qsl(parts.query, keep_blank_values=True)}
