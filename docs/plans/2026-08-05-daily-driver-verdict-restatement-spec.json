@@ -1,0 +1,127 @@
+{
+  "name": "talaria-daily-driver-verdict-restatement",
+  "description": "Close DRIFT-04, the last open finding of the R1-R40 conformance audit: the v0.1 daily-driver verdict grades R2 and R3 unmet on reasons that stopped being true on 2026-08-04. Re-grade those rows against the live corpus, re-read the rows the finding never mentions, restate the verdict on the corrected table, and close the finding out.",
+  "repo": "infiquetra/talaria",
+  "concurrency": {
+    "max_concurrent": 3,
+    "readonly_max_concurrent": 3,
+    "aggregate_max_concurrent": 3
+  },
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "Re-grade the R2 and R3 rows against the live corpus, with citations",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "These two rows were graded carelessly once already and that is the entire defect; a re-grade that flips them to met on weak citations makes the release gate say something false in the opposite direction, which is the one outcome the plan exists to prevent.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: Re-grade the daily-driver verdict's R2 and R3 rows (evidence-table rows 17 and 18) against the live recordings, updating them in place with citations to the specific frames that settle each. Read docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md (unit U1) as your authoritative spec.",
+      "returns": [
+        "measurement_method_stated",
+        "corpus_digest_and_count",
+        "digest_construction_stated",
+        "r2_row_text_and_evidence_cited",
+        "r3_streaming_evidence_cited",
+        "r3_replay_comparison_evidence_cited",
+        "numbers_reproduced_from_clean_run"
+      ],
+      "depends_on": [],
+      "files": [
+        "docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md"
+      ]
+    },
+    {
+      "unit_id": "U2",
+      "label": "Re-read rows 6, 13 and 19 and the five what-would-change items, reporting what has NOT moved",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "This is the unit that resists confirmation pressure. Four rows were graded against a client that had never attached and it has now attached, so every row reads as improved; establishing that row 6 has not moved, against that pull, is judgment work and is the plan's falsifiability control.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: Re-read evidence-table rows 6, 13 and 19 and the five 'What would change this verdict' items against current evidence, and state the present position of each -- including, explicitly, the ones that have not moved. Do not restate the verdict. Read docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md (unit U2) as your authoritative spec.",
+      "returns": [
+        "row_6_present_state_and_method_counts",
+        "row_13_present_state",
+        "row_19_present_state_and_f7_record_search",
+        "five_items_present_state",
+        "items_reported_as_not_moved",
+        "stale_twelve_count_instances_reported"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md"
+      ]
+    },
+    {
+      "unit_id": "U3",
+      "label": "Restate the verdict on the corrected table, and correct the four stale sentences that cite it",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "The verdict is the artifact that gates the v0.1 release. Applying the document's own any-gap-blocks rule to a table two other units just rewrote, without presupposing the outcome, is the highest-stakes judgment in the plan.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U3: Restate the verdict on the table U1 and U2 produced, applying the document's own rule that any gap blocks a ready verdict, and correct the four now-false sentences that cite it -- README.md's 'Read the verdict before you rely on it' paragraph, run_live's docstring in talaria/cli.py, both stale sentences in talaria/ui/app.py (the twelve-versus-thirteen count and open_session's docstring), and the R2-is-unmet clause in tests/transport/test_session_startup.py. Each records what it used to say. Read docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md (unit U3) as your authoritative spec.",
+      "returns": [
+        "verdict_text_and_whether_it_moved",
+        "blocking_reasons_now_cited",
+        "what_would_change_list_reordered",
+        "stale_sentences_corrected_with_prior_wording",
+        "twelve_to_thirteen_count_corrections",
+        "check_command_output"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md",
+        "README.md",
+        "talaria/cli.py",
+        "talaria/ui/app.py",
+        "tests/transport/test_session_startup.py"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "Close DRIFT-04 out across the register, the worklist and the index",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U4: Close DRIFT-04 out -- move its register entry to Resolved findings with the closing commit, update the register's counts and status header, remove its P1 entry from QUEUED.md, fix the docs/analysis/README.md cross-reference, correct the register's own wrong 'exactly two things' claim in place, file the LEARNINGS.md and DECISIONS.md entries, and file the deferred QUEUED.md entry for the general stale-gating-document problem. Dated plan artifacts are historical record and are left unedited. Read docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md (unit U4) as your authoritative spec.",
+      "returns": [
+        "register_entry_moved_and_counts_updated",
+        "queued_entry_removed",
+        "queued_deferred_entry_filed",
+        "readme_crossreference_updated",
+        "register_self_correction_text",
+        "journal_entries_filed",
+        "drift_04_grep_sweep_results"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [
+        "docs/analysis/2026-08-05-conformance-audit-drift-findings.md",
+        "docs/analysis/README.md",
+        "docs/engineering-journal/QUEUED.md",
+        "docs/engineering-journal/DECISIONS.md",
+        "docs/engineering-journal/LEARNINGS.md"
+      ]
+    }
+  ]
+}
