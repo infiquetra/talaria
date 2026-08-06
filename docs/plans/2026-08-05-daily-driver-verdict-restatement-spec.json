@@ -24,6 +24,7 @@
       "returns": [
         "measurement_method_stated",
         "corpus_digest_and_count",
+        "digest_construction_stated",
         "r2_row_text_and_evidence_cited",
         "r3_streaming_evidence_cited",
         "r3_replay_comparison_evidence_cited",
@@ -52,7 +53,8 @@
         "row_13_present_state",
         "row_19_present_state_and_f7_record_search",
         "five_items_present_state",
-        "items_reported_as_not_moved"
+        "items_reported_as_not_moved",
+        "stale_twelve_count_instances_reported"
       ],
       "depends_on": [
         "U1"
@@ -63,7 +65,7 @@
     },
     {
       "unit_id": "U3",
-      "label": "Restate the verdict on the corrected table, and correct the docstring that cites it",
+      "label": "Restate the verdict on the corrected table, and correct the four stale sentences that cite it",
       "tier": {
         "model": "opus",
         "effort": "high"
@@ -73,12 +75,13 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "U3: Restate the verdict on the table U1 and U2 produced, applying the document's own rule that any gap blocks a ready verdict, and correct the now-false sentence in open_session's docstring at talaria/ui/app.py. Read docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md (unit U3) as your authoritative spec.",
+      "prompt": "U3: Restate the verdict on the table U1 and U2 produced, applying the document's own rule that any gap blocks a ready verdict, and correct the four now-false sentences that cite it -- README.md's 'Read the verdict before you rely on it' paragraph, run_live's docstring in talaria/cli.py, both stale sentences in talaria/ui/app.py (the twelve-versus-thirteen count and open_session's docstring), and the R2-is-unmet clause in tests/transport/test_session_startup.py. Each records what it used to say. Read docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md (unit U3) as your authoritative spec.",
       "returns": [
         "verdict_text_and_whether_it_moved",
         "blocking_reasons_now_cited",
         "what_would_change_list_reordered",
-        "docstring_correction_with_prior_wording_recorded",
+        "stale_sentences_corrected_with_prior_wording",
+        "twelve_to_thirteen_count_corrections",
         "check_command_output"
       ],
       "depends_on": [
@@ -86,7 +89,10 @@
       ],
       "files": [
         "docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md",
-        "talaria/ui/app.py"
+        "README.md",
+        "talaria/cli.py",
+        "talaria/ui/app.py",
+        "tests/transport/test_session_startup.py"
       ]
     },
     {
@@ -96,10 +102,11 @@
         "model": "sonnet",
         "effort": "medium"
       },
-      "prompt": "U4: Close DRIFT-04 out -- move its register entry to Resolved findings with the closing commit, update the register's counts and status header, remove its P1 entry from QUEUED.md, fix the README cross-reference, correct the register's own wrong 'exactly two things' claim in place, and file the journal entries. Read docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md (unit U4) as your authoritative spec.",
+      "prompt": "U4: Close DRIFT-04 out -- move its register entry to Resolved findings with the closing commit, update the register's counts and status header, remove its P1 entry from QUEUED.md, fix the docs/analysis/README.md cross-reference, correct the register's own wrong 'exactly two things' claim in place, file the LEARNINGS.md and DECISIONS.md entries, and file the deferred QUEUED.md entry for the general stale-gating-document problem. Dated plan artifacts are historical record and are left unedited. Read docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md (unit U4) as your authoritative spec.",
       "returns": [
         "register_entry_moved_and_counts_updated",
         "queued_entry_removed",
+        "queued_deferred_entry_filed",
         "readme_crossreference_updated",
         "register_self_correction_text",
         "journal_entries_filed",
