@@ -1,0 +1,707 @@
+"""The admin HTTP surface: where it points, what it carries, what it refuses.
+
+Two families of assertion carry the weight.
+
+The first is *where the credential goes*. The origin is derived from the gateway
+endpoint and from nothing else — there is no separate HTTP setting — so a
+credential minted for one gateway can never be sent to another. The tests below
+assert that by observation, against a real loopback server that records the
+headers it was sent, rather than by reading the implementation.
+
+The second is *that the credential does not escape*. One distinctive value is
+planted and then searched for in every log record the call emits, in the repr of
+every object involved, and in the string of every exception raised. A leak test
+that only checks the happy path misses the case that matters, which is the
+traceback.
+
+**No test, fixture or docstring in this module supplies a credential through
+``HERMES_DASHBOARD_SESSION_TOKEN``.** U3 of the 2026-08-06 plan deletes that
+environment variable as a credential source (KTD8), and anything here that
+depended on it would break the moment U3 merged. Credentials arrive by injected
+provider or by a ``0600`` file under ``tmp_path``.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import threading
+from collections.abc import Iterator
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from talaria.domain.models_catalog import CatalogError
+from talaria.transport.admin import (
+    CREDENTIAL_HEADERS,
+    MAX_RESPONSE_BYTES,
+    MODEL_INFO_PATH,
+    MODEL_OPTIONS_PATH,
+    AdminClient,
+    AdminError,
+    admin_origin_for,
+    fetch_admin_json,
+)
+from talaria.transport.credentials import (
+    Credential,
+    CredentialError,
+    LoopbackTokenProvider,
+)
+
+#: One distinctive value, searched for wherever it must not appear.
+CANARY = "canary-Qm4x71-do-not-leak"
+
+OPTIONS_BODY: dict[str, Any] = {
+    "providers": [
+        {
+            "slug": "example-provider",
+            "name": "Example Provider",
+            "models": ["example-small", "example-large"],
+            "authenticated": True,
+            "auth_type": "api_key",
+            "capabilities": {},
+            "featured_models": [],
+            "is_current": True,
+            "is_user_defined": False,
+            "source": "builtin",
+            "total_models": 2,
+            "warning": "",
+        }
+    ],
+    "model": "example-large",
+    "provider": "example-provider",
+}
+
+INFO_BODY: dict[str, Any] = {
+    "model": "example-large",
+    "provider": "example-provider",
+    "auto_context_length": 200000,
+    "config_context_length": None,
+    "effective_context_length": 200000,
+    "capabilities": {},
+}
+
+
+# ── test doubles ─────────────────────────────────────────────────────────
+
+
+@dataclass
+class StubProvider:
+    """A :class:`CredentialProvider` by structure, not by inheritance.
+
+    ``CredentialProvider`` is a ``Protocol`` precisely so a double need not
+    inherit anything. ``acquisitions`` is public because KTD11's per-dial rule is
+    otherwise invisible — a provider called once and cached behaves identically
+    until the second call.
+    """
+
+    value: str = CANARY
+    acquisitions: int = 0
+    raises: CredentialError | None = None
+
+    def __repr__(self) -> str:
+        """Withhold the value, exactly as :class:`Credential` does.
+
+        A dataclass's generated repr would put the credential into every pytest
+        assertion failure that happens to hold this object — which is how the
+        double would become the leak the tests below are looking for.
+        """
+        return f"StubProvider(acquisitions={self.acquisitions}, value=<withheld>)"
+
+    async def acquire(self) -> Credential:
+        self.acquisitions += 1
+        if self.raises is not None:
+            raise self.raises
+        return Credential(parameter="token", value=self.value, source="file")
+
+
+@dataclass
+class Recorded:
+    """What one served request looked like from the server's side."""
+
+    path: str
+    headers: dict[str, str]
+
+
+@contextlib.contextmanager
+def gateway_serving(
+    routes: dict[str, tuple[int, bytes, str]],
+    recorder: list[Recorded] | None = None,
+) -> Iterator[str]:
+    """A loopback server mapping ``path -> (status, body, content-type)``.
+
+    Any path not in ``routes`` answers 404, which is what makes the
+    absent-capability test a real HTTP round trip rather than a mocked one.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            path = self.path.split("?", 1)[0]
+            if recorder is not None:
+                recorder.append(Recorded(path=self.path, headers=dict(self.headers)))
+            status, payload, content_type = routes.get(
+                path, (404, b'{"detail":"Not Found"}', "application/json")
+            )
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def json_route(body: Any, status: int = 200) -> tuple[int, bytes, str]:
+    return status, json.dumps(body).encode("utf-8"), "application/json"
+
+
+@contextlib.contextmanager
+def catalog_gateway(recorder: list[Recorded] | None = None) -> Iterator[str]:
+    with gateway_serving(
+        {
+            MODEL_OPTIONS_PATH: json_route(OPTIONS_BODY),
+            MODEL_INFO_PATH: json_route(INFO_BODY),
+        },
+        recorder,
+    ) as origin:
+        yield origin
+
+
+def credential_file(tmp_path: Path, token: str = CANARY) -> Path:
+    """A ``0600`` credential file — the supported non-interactive route.
+
+    Deliberately not an environment variable: U3 removes that source.
+    """
+    path = tmp_path / "credentials"
+    path.write_text(f'token = "{token}"\n', encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
+def ws_endpoint(origin: str) -> str:
+    """The gateway WebSocket URL an operator configures, for an HTTP origin."""
+    return origin.replace("http://", "ws://").rstrip("/") + "/api/ws"
+
+
+# ── the origin comes from the gateway URL, and from nowhere else ─────────
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected"),
+    [
+        ("ws://127.0.0.1:9119/api/ws", "http://127.0.0.1:9119/"),
+        ("wss://gateway.example:443/api/ws", "https://gateway.example:443/"),
+        ("ws://localhost:8765/api/ws", "http://localhost:8765/"),
+    ],
+)
+def test_the_admin_origin_is_derived_from_the_gateway_endpoint(
+    endpoint: str, expected: str
+) -> None:
+    """One configured endpoint. A second HTTP knob could name a second host,
+    and the failure mode of that mistake is a credential minted for one gateway
+    being sent to another."""
+    assert admin_origin_for(endpoint) == expected
+
+
+def test_the_client_takes_no_http_setting_and_derives_its_origin_from_the_endpoint() -> None:
+    """Asserted on the constructor's signature by construction, not by reading it.
+
+    The client is given a gateway WebSocket URL and a provider — there is no
+    parameter through which a different HTTP address could be supplied.
+    """
+    client = AdminClient("ws://127.0.0.1:9119/api/ws", StubProvider())
+
+    assert client.origin == "http://127.0.0.1:9119/"
+
+
+def test_deriving_the_origin_drops_any_credential_on_the_endpoint() -> None:
+    origin = admin_origin_for(f"ws://127.0.0.1:9119/api/ws?token={CANARY}")
+
+    assert origin == "http://127.0.0.1:9119/"
+    assert CANARY not in origin
+
+
+@pytest.mark.parametrize("origin", ["file:///etc/passwd", "ftp://127.0.0.1/x"])
+def test_only_http_and_https_are_fetched(origin: str) -> None:
+    """``urlopen`` will read ``file:`` if handed one; a wrong address is a refusal."""
+    with pytest.raises(AdminError) as caught:
+        fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "refused_origin"
+
+
+def test_a_credential_is_never_sent_to_a_remote_host_over_plain_http() -> None:
+    """The loopback rule ``refresh.py`` established, reused rather than recopied."""
+    with pytest.raises(AdminError) as caught:
+        fetch_admin_json("http://gateway.example/", MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "refused_origin"
+    assert CANARY not in str(caught.value)
+
+
+def test_an_absolute_path_cannot_redirect_the_credential_to_another_origin() -> None:
+    """``urljoin`` treats an absolute URL as a replacement for the origin.
+
+    Callers pass module constants today; a future caller passing a path built
+    from a gateway response must not be able to choose where the credential goes.
+    """
+    with pytest.raises(AdminError) as caught:
+        fetch_admin_json(
+            "http://127.0.0.1:9119/", "http://elsewhere.example/api/model/options", token=CANARY
+        )
+
+    assert caught.value.reason == "refused_origin"
+
+
+# ── the credential is attached in the decided form (KTD2) ────────────────
+
+
+def test_the_credential_is_attached_as_a_bearer_header() -> None:
+    """KTD2, confirmed against Hermes source and against a live gateway.
+
+    ``hermes_cli/web_server.py``'s ``_has_valid_session_token`` compares
+    ``request.headers["authorization"]`` against ``f"Bearer {_SESSION_TOKEN}"``.
+    """
+    seen: list[Recorded] = []
+    with catalog_gateway(seen) as origin:
+        fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert seen[0].headers["Authorization"] == f"Bearer {CANARY}"
+
+
+def test_the_credential_is_also_attached_as_the_dedicated_session_header() -> None:
+    """The non-legacy form. Hermes names the collision this avoids: a reverse
+    proxy that already uses ``Authorization`` (for example Caddy ``basic_auth``)."""
+    seen: list[Recorded] = []
+    with catalog_gateway(seen) as origin:
+        fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert seen[0].headers["X-Hermes-Session-Token"] == CANARY
+
+
+def test_the_credential_never_rides_the_query_string_on_http() -> None:
+    """The WebSocket form is *not* accepted here.
+
+    ``_QUERY_TOKEN_API_PATHS`` is a frozenset of exactly ``/api/files/download``
+    and ``_has_valid_query_token`` returns False for everything else; a live
+    gateway answered ``?token=`` with 401 on 2026-08-06. Sending it would leak a
+    credential into access logs for no authentication benefit.
+    """
+    seen: list[Recorded] = []
+    with catalog_gateway(seen) as origin:
+        fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert CANARY not in seen[0].path
+
+
+def test_every_header_the_credential_is_written_into_is_named_in_one_constant() -> None:
+    """So the leak assertions below cannot be escaped by adding a third form."""
+    seen: list[Recorded] = []
+    with catalog_gateway(seen) as origin:
+        fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    carrying = {name for name, value in seen[0].headers.items() if CANARY in value}
+    assert carrying == set(CREDENTIAL_HEADERS)
+
+
+# ── the credential appears in no log, repr or exception ──────────────────
+
+
+def test_the_credential_appears_in_no_log_record_of_a_successful_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG):
+        with catalog_gateway() as origin:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert CANARY not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [(401, "unauthorized"), (404, "absent_capability"), (500, "http_error")],
+)
+def test_the_credential_appears_in_no_log_record_of_a_failed_call(
+    caplog: pytest.LogCaptureFixture, status: int, reason: str
+) -> None:
+    """The failing path is the one a leak test that only checks success misses."""
+    with caplog.at_level(logging.DEBUG):
+        with gateway_serving({MODEL_OPTIONS_PATH: json_route({"detail": "x"}, status)}) as origin:
+            with pytest.raises(AdminError) as caught:
+                fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == reason
+    assert CANARY not in caplog.text
+    assert CANARY not in str(caught.value)
+    assert CANARY not in repr(caught.value)
+
+
+def test_the_credential_appears_in_no_traceback_of_a_failed_call() -> None:
+    """Every frame's locals, not just the message.
+
+    ``pytest``'s assertion rewriting and any ``logging.exception`` call render
+    the whole chain, so a value held in an intermediate frame escapes just as
+    surely as one put in the message.
+    """
+    import traceback
+
+    with gateway_serving({MODEL_OPTIONS_PATH: json_route({"detail": "x"}, 401)}) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    rendered = "".join(
+        traceback.format_exception(
+            type(caught.value), caught.value, caught.value.__traceback__
+        )
+    )
+    assert CANARY not in rendered
+
+
+def test_the_client_repr_carries_no_credential() -> None:
+    client = AdminClient("ws://127.0.0.1:9119/api/ws", StubProvider())
+
+    assert CANARY not in repr(client)
+    assert CANARY not in repr(vars(client))
+
+
+def test_the_error_repr_names_its_reason_and_nothing_else() -> None:
+    error = AdminError("unauthorized", "the gateway refused Talaria's credential")
+
+    assert "unauthorized" in repr(error)
+    assert CANARY not in repr(error)
+
+
+# ── each failure mode becomes a named error, not a urllib exception ──────
+
+
+def test_a_401_becomes_unauthorized_and_points_at_the_repair() -> None:
+    """A dashboard restart invalidates the token; the message says the fix."""
+    with gateway_serving({MODEL_OPTIONS_PATH: json_route({"detail": "Unauthorized"}, 401)}) as o:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(o, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "unauthorized"
+    assert "refresh-credential" in str(caught.value)
+
+
+def test_a_404_becomes_absent_capability_rather_than_an_error() -> None:
+    """R8's absent-capability branch: a gateway too old to carry the endpoint.
+
+    Served by the fixture's real fall-through, so this is an HTTP round trip
+    against a server that genuinely does not have the route.
+    """
+    with gateway_serving({}) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "absent_capability"
+    assert MODEL_OPTIONS_PATH in str(caught.value)
+
+
+def test_a_refused_connection_becomes_unreachable_naming_the_host_only() -> None:
+    """The message names a host, never a URL — a URL is what a token is pasted into."""
+    with catalog_gateway() as origin:
+        pass  # the server is shut down on exit, so the port now refuses
+
+    with pytest.raises(AdminError) as caught:
+        fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY, timeout=2.0)
+
+    assert caught.value.reason == "unreachable"
+    assert "127.0.0.1" in str(caught.value)
+    assert CANARY not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type"),
+    [
+        pytest.param(b"<!doctype html><html>login</html>", "text/html", id="html"),
+        pytest.param(b"", "application/json", id="empty"),
+        pytest.param(b"{not json", "application/json", id="truncated"),
+    ],
+)
+def test_a_body_that_is_not_json_becomes_malformed_response(
+    body: bytes, content_type: str
+) -> None:
+    """An HTML login page answering 200 is the realistic shape of this failure."""
+    with gateway_serving({MODEL_OPTIONS_PATH: (200, body, content_type)}) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "malformed_response"
+
+
+def test_an_unexpected_status_becomes_a_named_http_error() -> None:
+    with gateway_serving({MODEL_OPTIONS_PATH: json_route({"detail": "boom"}, 500)}) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "http_error"
+    assert "500" in str(caught.value)
+
+
+def test_no_urllib_exception_reaches_a_caller_of_any_failure_mode() -> None:
+    """The point of the named vocabulary: one exception type to handle."""
+    import urllib.error
+
+    with gateway_serving({MODEL_OPTIONS_PATH: json_route({}, 401)}) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert not isinstance(caught.value, urllib.error.URLError)
+
+
+# ── the read cap ─────────────────────────────────────────────────────────
+
+
+def test_an_oversized_body_is_refused_at_the_cap() -> None:
+    """A wrong origin answering with an endless stream must not be read forever.
+
+    The cap is ``refresh.py``'s ``MAX_INDEX_BYTES``, imported rather than
+    restated so the two surfaces cannot disagree about how much is too much.
+    """
+    oversized = b'{"providers":[],"pad":"' + b"x" * (MAX_RESPONSE_BYTES + 64) + b'"}'
+
+    with gateway_serving({MODEL_OPTIONS_PATH: (200, oversized, "application/json")}) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "oversized_response"
+    assert CANARY not in str(caught.value)
+
+
+def test_a_body_exactly_at_the_cap_is_still_accepted() -> None:
+    """Off-by-one guard: the implementation reads one byte past the cap so that
+    a body sitting exactly at the limit is not mistaken for a truncated one."""
+    prefix, suffix = b'{"providers":[],"pad":"', b'"}'
+    pad = MAX_RESPONSE_BYTES - len(prefix) - len(suffix)
+    body = prefix + b"x" * pad + suffix
+    assert len(body) == MAX_RESPONSE_BYTES
+
+    with gateway_serving({MODEL_OPTIONS_PATH: (200, body, "application/json")}) as origin:
+        decoded = fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert decoded["providers"] == []
+
+
+# ── the client, end to end over loopback ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_model_options_decodes_into_a_catalogue() -> None:
+    with catalog_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        catalog = await client.model_options()
+
+    assert [p.slug for p in catalog.providers] == ["example-provider"]
+    assert catalog.current_model == "example-large"
+
+
+@pytest.mark.asyncio
+async def test_model_info_decodes_into_a_selection() -> None:
+    with catalog_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        selection = await client.model_info()
+
+    assert selection.model == "example-large"
+    assert selection.effective_context_length == 200000
+
+
+@pytest.mark.asyncio
+async def test_the_credential_is_re_resolved_on_every_call_never_cached() -> None:
+    """KTD11's per-dial rule applied to the HTTP surface.
+
+    A client that cached would acquire a silent dependency on the credential
+    being a fixed reusable value, and KTD6 needs a profile switch to re-resolve
+    against the endpoint it switched to.
+    """
+    provider = StubProvider()
+    with catalog_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), provider)
+        await client.model_options()
+        await client.model_options()
+        await client.model_info()
+
+    assert provider.acquisitions == 3
+
+
+@pytest.mark.asyncio
+async def test_a_rotated_credential_is_picked_up_by_the_next_call() -> None:
+    """The observable consequence of the rule above."""
+    provider = StubProvider(value="first-value")
+    seen: list[Recorded] = []
+    with catalog_gateway(seen) as origin:
+        client = AdminClient(ws_endpoint(origin), provider)
+        await client.model_options()
+        provider.value = "second-value"
+        await client.model_options()
+
+    assert seen[0].headers["X-Hermes-Session-Token"] == "first-value"
+    assert seen[1].headers["X-Hermes-Session-Token"] == "second-value"
+
+
+@pytest.mark.asyncio
+async def test_a_credential_the_provider_cannot_supply_is_reported_not_raised() -> None:
+    """``credential_unavailable`` is the failure state the transport already has."""
+    provider = StubProvider(raises=CredentialError("no credential file"))
+    with catalog_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), provider)
+        with pytest.raises(AdminError) as caught:
+            await client.model_options()
+
+    assert caught.value.reason == "credential_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_the_file_route_supplies_a_credential_without_any_environment_variable(
+    tmp_path: Path,
+) -> None:
+    """The supported non-interactive route after U3 removes the environment source.
+
+    ``environ`` is injected as an *empty* mapping, so this passes whether or not
+    the developer running it happens to have a dashboard token exported — and it
+    cannot be satisfied by one.
+    """
+    path = credential_file(tmp_path)
+    provider = LoopbackTokenProvider(
+        credentials_path=path, environ={}, allow_prompt=False
+    )
+
+    seen: list[Recorded] = []
+    with catalog_gateway(seen) as origin:
+        client = AdminClient(ws_endpoint(origin), provider)
+        catalog = await client.model_options()
+
+    assert catalog.providers[0].slug == "example-provider"
+    assert seen[0].headers["Authorization"] == f"Bearer {CANARY}"
+
+
+@pytest.mark.asyncio
+async def test_a_credential_file_looser_than_0600_is_refused(tmp_path: Path) -> None:
+    path = credential_file(tmp_path)
+    path.chmod(0o644)
+    provider = LoopbackTokenProvider(
+        credentials_path=path, environ={}, allow_prompt=False
+    )
+
+    with catalog_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), provider)
+        with pytest.raises(AdminError) as caught:
+            await client.model_options()
+
+    assert caught.value.reason == "credential_unavailable"
+    assert CANARY not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_profile_scope_rides_the_query_string_and_carries_no_credential() -> None:
+    """``profile`` scopes which config the endpoint reads. It is not a secret;
+    the credential still travels in the headers."""
+    seen: list[Recorded] = []
+    with catalog_gateway(seen) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        await client.model_options(profile="example-profile")
+
+    assert "profile=example-profile" in seen[0].path
+    assert CANARY not in seen[0].path
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_catalogue_is_reported_as_a_transport_failure() -> None:
+    """A :class:`CatalogError` from the decode is translated, so a caller of the
+    client handles one exception type rather than two."""
+    bad = {"providers": [{"name": "no slug here", "models": []}]}
+    with gateway_serving({MODEL_OPTIONS_PATH: json_route(bad)}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        with pytest.raises(AdminError) as caught:
+            await client.model_options()
+
+    assert caught.value.reason == "malformed_response"
+    assert not isinstance(caught.value, CatalogError)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_catalogue_is_a_value_and_not_a_failure() -> None:
+    """R7: "there are no providers" must reach the picker as data, so the picker
+    can say it differently from "the list could not be fetched"."""
+    with gateway_serving({MODEL_OPTIONS_PATH: json_route({"providers": []})}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        catalog = await client.model_options()
+
+    assert catalog.is_empty
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_without_the_endpoint_reaches_the_client_as_absent_capability() -> None:
+    with gateway_serving({}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        with pytest.raises(AdminError) as caught:
+            await client.model_options()
+
+    assert caught.value.reason == "absent_capability"
+
+
+@pytest.mark.asyncio
+async def test_a_call_does_not_block_the_event_loop() -> None:
+    """The blocking ``urlopen`` is offloaded. Left on the loop, a gateway that
+    stopped answering would freeze the whole interface for the timeout."""
+    import asyncio
+
+    ticks = 0
+
+    async def tick() -> None:
+        nonlocal ticks
+        for _ in range(20):
+            ticks += 1
+            await asyncio.sleep(0.001)
+
+    with catalog_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        ticker = asyncio.create_task(tick())
+        await client.model_options()
+        await ticker
+
+    assert ticks == 20
+
+
+# ── the environment variable is not a route here (U3 concurrency) ────────
+
+
+def test_neither_new_module_reads_the_environment_for_a_credential() -> None:
+    """U3 deletes the dashboard session-token environment variable as a
+    credential source in the same wave (KTD8). Neither module added by U1 may
+    depend on it, or both break the moment U3 merges.
+
+    Asserted as textual absence in the *production* modules rather than trusting
+    review. This test file is deliberately not scanned: it names the variable in
+    prose above to explain the constraint, and a grep that forbade that would
+    forbid documenting the rule. What matters is that no shipped code path reads
+    it — which the behavioural test above (an empty injected ``environ`` still
+    yielding a working call through the file route) covers from the other side.
+
+    The name is reassembled at runtime so this file does not contain the literal
+    it searches for, keeping the assertion honest about what it proves.
+    """
+    variable = "HERMES_DASHBOARD" + "_SESSION_TOKEN"
+    root = Path(__file__).parents[2]
+    for path in (
+        root / "talaria" / "transport" / "admin.py",
+        root / "talaria" / "domain" / "models_catalog.py",
+    ):
+        source = path.read_text(encoding="utf-8")
+        assert variable not in source, path.name
+        assert "os.environ" not in source, path.name

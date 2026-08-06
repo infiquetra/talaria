@@ -210,7 +210,7 @@ class StubProvider:
     """The loopback token, minted per dial as KTD11 requires."""
 
     async def acquire(self) -> Credential:
-        return Credential("token", STUB_TOKEN, "environment")
+        return Credential("token", STUB_TOKEN, "endpoint-url")
 
 
 def slash_name(params: dict[str, Any]) -> str:

@@ -20,7 +20,7 @@ from talaria.config import (
     load_config,
     recordings_dir,
 )
-from talaria.transport import credentials as credentials_module
+from tests.conftest import HERMES_DASHBOARD_TOKEN_VAR
 
 
 def test_defaults_apply_when_nothing_else_is_set(tmp_path: Path) -> None:
@@ -156,7 +156,7 @@ def test_no_talaria_variable_from_the_shell_is_visible_inside_a_test() -> None:
     # The positive half: the fixture does set the one variable it owns, so a
     # fixture that had simply emptied the environment could not pass this.
     assert os.environ.get("TALARIA_CONFIG_DIR"), "the isolation fixture ran no setup"
-    assert credentials_module.TOKEN_ENV_VAR not in os.environ
+    assert HERMES_DASHBOARD_TOKEN_VAR not in os.environ
 
 
 def test_the_isolation_fixture_clears_variables_the_shell_actually_exported(
@@ -181,11 +181,11 @@ def test_the_isolation_fixture_clears_variables_the_shell_actually_exported(
 
     for name in LEAKABLE_ENV_NAMES:
         monkeypatch.setenv(name, f"shell-value-for-{name}")
-    monkeypatch.setenv(credentials_module.TOKEN_ENV_VAR, "shell-token")
+    monkeypatch.setenv(HERMES_DASHBOARD_TOKEN_VAR, "shell-token")
     # The positive control, in the same observation: the pollution is really
     # there before the fixture runs.
     assert all(name in os.environ for name in LEAKABLE_ENV_NAMES)
-    assert credentials_module.TOKEN_ENV_VAR in os.environ
+    assert HERMES_DASHBOARD_TOKEN_VAR in os.environ
 
     inner_root = tmp_path / "inner"
     inner_root.mkdir()
@@ -199,7 +199,7 @@ def test_the_isolation_fixture_clears_variables_the_shell_actually_exported(
         global_dir = fixture_body(inner_root, inner)
         leaked = [name for name in LEAKABLE_ENV_NAMES if name in os.environ]
         assert not leaked, f"the isolation fixture left these set: {leaked}"
-        assert credentials_module.TOKEN_ENV_VAR not in os.environ
+        assert HERMES_DASHBOARD_TOKEN_VAR not in os.environ
         assert os.environ["TALARIA_CONFIG_DIR"] == str(global_dir)
     finally:
         inner.undo()

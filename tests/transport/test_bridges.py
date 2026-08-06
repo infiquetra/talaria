@@ -58,7 +58,7 @@ class StubProvider:
     """The loopback token, minted per dial as KTD11 requires."""
 
     async def acquire(self) -> Credential:
-        return Credential("token", STUB_TOKEN, "environment")
+        return Credential("token", STUB_TOKEN, "endpoint-url")
 
 
 def bridge_responder(message: dict[str, Any], stub: StubGateway) -> dict[str, Any] | None:

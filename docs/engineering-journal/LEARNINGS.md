@@ -4,6 +4,32 @@
 
 ## 2026-08-06
 
+### Removing the top level of a precedence chain silently promotes the level beneath it, and the tests that could tell two credentials apart were the first casualty
+
+**Author.** unit U3 of the model-picker and v0.1-closure plan, removing `HERMES_DASHBOARD_SESSION_TOKEN` from the credential chain (KTD8)
+
+**Evidence.** `talaria/transport/credentials.py`'s `_resolve` had four levels; deleting the first left `TALARIA_GATEWAY_URL`'s `token` query parameter at the top. `tests/recorder/test_command.py::test_the_dialled_url_carries_the_credential_exactly_once` then failed with `['NOT-A-REAL-STALE-0000'] != ['NOT-A-REAL-CANARY-8ae13c']` — not because the "exactly once" property broke, but because the test's whole setup depended on the endpoint's token and the real credential being *different values from different levels*, which the removal made impossible to arrange that way.
+
+**Mechanism.** A test that distinguishes two sources needs two sources. That test put a deliberately stale token on the endpoint URL and the real one in the environment variable, so a dial URL carrying the stale value proved the strip-then-append in `AttachTarget.dial_url` had failed. With the environment variable gone, the endpoint's token *is* the credential, and the two strings collapse into one — at which point the assertion compares a value against itself and the defect it guarded becomes invisible. The failure was loud only because the two literals happened to differ; a test written with one literal would have gone green and stopped guarding anything.
+
+**The operator-visible half, worth saying out loud.** A stale `?token=` left on an exported `TALARIA_GATEWAY_URL` now outranks a credential file that `talaria refresh-credential` has just rewritten. That ordering is unchanged — the endpoint URL always outranked the file — but it used to sit two levels down and now sits at the top, so the number of ways an operator can be quietly served a stale credential went up by removing a route rather than adding one. `README.md` names the file as the route to prefer.
+
+**How it was re-expressed rather than weakened.** The two values were separated through the *other* seam that still holds them apart: the stale token rides the command-line endpoint override, which `AttachTarget` strips, and the real one rides the exported endpoint. Same two literals, same assertion, same defect guarded.
+
+**Generalizable rule.** When you delete a level from a precedence chain, grep the tests for every pair of literals that existed only to tell that level apart from another one. Each pair is either re-expressed against two surviving sources or it silently degrades into a tautology — and a tautological assertion is worse than a deleted one, because it still reports green.
+
+### `git log -S` on a shallow checkout dates every line to the single commit it has, and answers with total confidence
+
+**Author.** pinning the HTTP credential form against Hermes source (unit U1 of the model-picker plan)
+
+**Evidence.** Deciding whether Talaria could send only Hermes's newer `X-Hermes-Session-Token` header turned on one question: how old is that header? `git log --oneline -S'X-Hermes-Session-Token' -- hermes_cli/web_server.py` in the installed checkout at `~/.hermes/hermes-agent` returned exactly one commit — `863e31318`, dated today, which is also `HEAD`. Read at face value that says the header shipped hours ago, which would have made "send only the new header" an obvious mistake and "send only Bearer" the obvious answer. `git rev-list --count HEAD` returns **1** and `.git/shallow` exists: the clone has no history. The pickaxe had reported the only commit it could see, for every line in the repository.
+
+**Mechanism.** `-S` counts occurrences of a string across a diff and reports commits where the count changed. Against a shallow clone, `HEAD` has no parent, so every file reads as wholly added in that one commit and every string in the repository "first appears" there. The result is indistinguishable in form from a real answer: same output shape, same plausible date, no warning, exit status zero. A tool that cannot know is not silent — it is confidently wrong, and it is wrong in the direction of "this is brand new", which is the direction that most changes a compatibility decision.
+
+**What made it survivable.** The claim was load-bearing enough to be worth a second source, and the second source contradicted the first by being unable to confirm it. Two cheap probes — `test -f .git/shallow` and `git rev-list --count HEAD` — cost seconds and turned a hard finding into a known unknown. The decision was then made on evidence that did exist: Hermes's own docstring calls the Bearer path "legacy… for backward compatibility with older dashboard bundles", which establishes the ordering of the two headers without needing either one's date. Talaria sends both.
+
+**Generalizable rule.** Before believing any `git log`, `git blame`, `-S` or `-G` result about *when* something appeared, establish that the repository has the history to answer — `git rev-list --count HEAD` and `.git/shallow`, or `git log --oneline | wc -l`. Shallow clones, squashed imports, and vendored snapshots all produce archaeology that is fluent and false. More generally: when a history query returns a date equal to `HEAD`'s, treat that as a symptom of a truncated repository until proven otherwise, not as a finding. And when the history genuinely cannot answer, look for a claim in the *source text* — a docstring saying "legacy" ordered the two headers here without any dates at all.
+
 ### The check that was supposed to catch an inverted verdict passed when the verdict was inverted
 
 **Author.** building the gating-document check that closes DRIFT-04's general case

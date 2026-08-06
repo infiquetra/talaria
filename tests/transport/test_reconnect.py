@@ -46,7 +46,7 @@ class ScriptedProvider:
     async def acquire(self) -> Credential:
         value = self.values[min(self.calls, len(self.values) - 1)]
         self.calls += 1
-        return Credential("token", value, "environment")
+        return Credential("token", value, "endpoint-url")
 
 
 def live_source(gateway: StubGateway, provider: Any = None, **kwargs: Any) -> LiveSource:
@@ -252,7 +252,16 @@ async def test_a_local_credential_problem_is_not_reported_as_a_gateway_rejection
     gateway rejected the credential". For a local ``chmod`` problem that sends the
     operator to rotate a token no gateway ever saw. The branch had no test at all.
     """
-    provider = BrokenProvider("no gateway credential: set HERMES_DASHBOARD_SESSION_TOKEN")
+    # The real refusal's opening words, since KTD8 retired the environment
+    # variable this message used to advertise. Kept in step with
+    # ``LoopbackTokenProvider._resolve`` deliberately: what this test proves is
+    # that the *actionable* part of a credential refusal survives the trip to
+    # the notice bar, and a stale stand-in would prove that about text no
+    # operator ever sees.
+    provider = BrokenProvider(
+        "no gateway credential: run `talaria refresh-credential` to write "
+        "/tmp/credentials at mode 0600"
+    )
     source = live_source(gateway, provider)
     app = live_app(source)
 
@@ -269,7 +278,8 @@ async def test_a_local_credential_problem_is_not_reported_as_a_gateway_rejection
         assert "rejected the credential" not in app.composer.notice
         assert "authentication failed" not in app.composer.notice
         # And the actionable part survives.
-        assert "HERMES_DASHBOARD_SESSION_TOKEN" in app.composer.notice
+        assert "talaria refresh-credential" in app.composer.notice
+        assert "HERMES_DASHBOARD_SESSION_TOKEN" not in app.composer.notice
         await app.shutdown_sources()
 
 

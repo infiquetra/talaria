@@ -19,9 +19,15 @@ than perpetually one command behind.
 Three things do get names, and each is a closed set with evidence behind it:
 
 * **The Talaria-local control set** — ``/quit``, ``/pause``, ``/resume``,
-  ``/speed`` (PC6). These are Talaria's own, they never reach a socket, and
-  they are parsed *before* the catalogue so a gateway that later ships its own
-  ``/pause`` cannot take the operator's exit key away from them.
+  ``/speed`` (PC6), plus ``/models`` (U2, 2026-08-06 model-picker plan). Every
+  name in this set is resolved *before* the catalogue, so a gateway command
+  that later ships one of these names cannot take it away (PC6) — but only the
+  first four never touch a socket at all. ``/models`` with no argument only
+  opens or closes a local region; given a row number it composes and sends
+  ``/model <name> --provider <slug>`` down the ordinary ``slash.exec`` path, the
+  same one a typed ``/model`` line takes. What makes ``/models`` local is that
+  the name ``/models`` itself is never dispatched to the gateway — the
+  singular ``/model`` it composes is a real, separately-catalogued command.
 * **The official-client-local entries** — ``/density``, ``/logs``, ``/mouse``,
   ``/sessions``, the four ``_TUI_EXTRA`` rows at ``tui_gateway/server.py:11514``
   (``7f4d15515``). The gateway advertises them in ``commands.catalog`` and
@@ -317,7 +323,7 @@ def _is_client_local(name: str, category: str) -> bool:
 
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
-LocalAction = Literal["quit", "pause", "resume", "speed"]
+LocalAction = Literal["quit", "pause", "resume", "speed", "models"]
 
 
 @dataclass(frozen=True)
@@ -345,6 +351,20 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "Set the replay rate",
         argument_hint="<multiplier|max>",
         replay_only=True,
+    ),
+    # Plural, and deliberately so (U2, 2026-08-06 model-picker plan): the
+    # gateway's own registry already owns the singular ``/model`` — probed
+    # live on 2026-08-06, one of 114 catalogue names — so a Talaria-local
+    # ``/model`` would shadow a working gateway command instead of filling a
+    # gap. With no argument this opens or closes the picker; with one, it
+    # selects the row that index names (``talaria/ui/picker.py``) and sends
+    # it down the same ``/model <name> --provider <slug>`` path an operator
+    # typing that line by hand would take (R2).
+    LocalCommand(
+        "/models",
+        "models",
+        "Open the model picker, or select a listed row by its number",
+        argument_hint="[index]",
     ),
 )
 

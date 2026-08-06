@@ -190,13 +190,15 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
     assert catalog.available is False
     assert "refused" in catalog.failure
     assert catalog.gateway_entries == ()
-    # The four that never needed a gateway are still there, so an operator
-    # whose gateway is down can still leave.
+    # The five that never needed a gateway to be *listed* are still there
+    # (``/models`` still needs one to actually select — see U2), so an
+    # operator whose gateway is down can still leave.
     assert {entry.name for entry in catalog.local_entries} == {
         "/quit",
         "/pause",
         "/resume",
         "/speed",
+        "/models",
     }
 
 
@@ -356,18 +358,19 @@ def test_dispatch_has_exactly_one_method_and_it_is_the_pinned_one() -> None:
 # ── the local control set ────────────────────────────────────────────────
 
 
-def test_the_local_set_is_exactly_pc6s_four() -> None:
+def test_the_local_set_is_pc6s_four_plus_u2s_models() -> None:
     assert {command.name for command in TALARIA_LOCAL_COMMANDS} == {
         "/quit",
         "/pause",
         "/resume",
         "/speed",
+        "/models",
     }
 
 
 def test_only_the_pacing_three_are_replay_only() -> None:
-    """``/quit`` works in both modes; the other three scale a recorded clock a
-    live session does not have."""
+    """``/quit`` and ``/models`` work in both modes; the pacing three scale a
+    recorded clock a live session does not have."""
     replay_only = {
         command.name for command in TALARIA_LOCAL_COMMANDS if command.replay_only
     }

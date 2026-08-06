@@ -4,6 +4,26 @@
 
 ## 2026-08-06
 
+### The admin HTTP credential rides two headers: `Authorization: Bearer` as decided, plus Hermes's dedicated session header
+
+**Author.** building the admin HTTP client and its pure decode (unit U1 of `docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md`)
+
+**Decision.** KTD2 of that plan — "the credential rides an `Authorization: Bearer` header on HTTP" — is **confirmed, not revised**. The plan named one contingency that would have overturned it (source showing a query parameter is the supported HTTP form); that contingency did not fire. `talaria/transport/admin.py` additionally sends the same value in `X-Hermes-Session-Token`, which is a refinement of the decision rather than a departure from it.
+
+This closes the item the entry below leaves under **"Deliberately left open."**
+
+**The citation.** At Hermes `863e31318`, `hermes_cli/web_server.py`'s `_has_valid_session_token` accepts exactly two header forms and its own docstring ranks them: "The dedicated session header avoids collisions with reverse proxies that already use `Authorization` (for example Caddy `basic_auth`). We still accept the legacy Bearer path for backward compatibility with older dashboard bundles." The check is an `or`, so either header alone authenticates.
+
+**Why the query-parameter form is not available here, stated so nobody re-tries it.** The WebSocket credential is a query parameter because Hermes reads `ws.query_params` only — the fact `talaria/transport/credentials.py` pins. The HTTP reader is different code: `_QUERY_TOKEN_API_PATHS` in the same module is a frozenset of exactly one path, `/api/files/download`, and `_has_valid_query_token` returns `False` for everything else. Confirmed live: `GET /api/model/options?token=<token>` answers **401**.
+
+**Why both headers rather than either alone.** Bearer alone is the version-compatible choice — Hermes documents it as the form older bundles use, and ADR-0001 makes Talaria a client of a gateway it did not launch, so version skew is a real condition rather than a hypothetical. The dedicated header alone is the correct choice behind a reverse proxy that consumes `Authorization`, which is the exact collision Hermes names. Sending both is right in both directions. The cost is that the credential now has two header names, which is why `CREDENTIAL_HEADERS` is a named constant the leak tests iterate rather than two literals at the call site — a third form cannot be added without the absence assertions following it.
+
+**Rejected: the dedicated header alone.** Cleaner, and it is the form Hermes prefers. Rejected because the installed checkout is shallow (one commit), so nothing available locally can date when that header was introduced — choosing it alone would have been a bet on gateway versions with no evidence behind it.
+
+**A second finding, recorded because it will look like a bug later.** `GET /api/model/info` is in `hermes_cli/dashboard_auth/public_paths.py`'s `PUBLIC_API_PATHS` and needs **no** credential (confirmed live: no credential → 200), while `GET /api/model/options` is gated (no credential → 401). Talaria authenticates both uniformly anyway: the allowlist is Hermes's to revisit, and a client that only authenticated the endpoints currently requiring it would break silently on the release that gates one more.
+
+**Revisit when.** Hermes drops the legacy Bearer path — its docstring already calls it legacy, so this is a question of when and not whether. At that point the Bearer header becomes dead weight and should be removed in the same change that raises Talaria's minimum supported gateway. Also revisit if Talaria ever needs a *gated* (OAuth) dashboard, where neither header applies and the SPA authenticates by cookie.
+
 ### The model picker reads the gateway's HTTP API, folds like the command listing, and switches profiles by reconnecting
 
 **Author.** planning the model picker and the closure of v0.1 (`docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md`)
@@ -41,6 +61,32 @@
 **Rejected alternative — parse the conditions out of the prose and skip the block.** No parser can read "row 19 stays unmet, on a narrower reason than it used to carry" reliably, and one that half-works fails open. The block is redundant with the prose on purpose, and the redundancy is what is being checked.
 
 **Revisit when.** A second gating document is written, which is the first real test of whether the block generalizes past an evidence-table-shaped document; or the horizon fires twice in a row and is bumped both times without anything moving, which would mean it is measuring the calendar rather than staleness.
+
+### `HERMES_DASHBOARD_SESSION_TOKEN` leaves the credential chain, and row 13 may be re-graded exactly one step — not to *met*
+
+**Author.** unit U3 of `docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md`, executing KTD8 — option (b) of `QUEUED.md`'s entry "R1's environment clause is unmet, and no change to Talaria can meet it"
+
+**Decision.** Talaria no longer reads a credential from `HERMES_DASHBOARD_SESSION_TOKEN`. The constant that named it (`TOKEN_ENV_VAR`) and the `_resolve` branch that read it are deleted from `talaria/transport/credentials.py`, and `"environment"` is removed from the `CredentialSource` type. Three routes remain, highest precedence first: a `token` query parameter on `TALARIA_GATEWAY_URL`; a `token` key in `<config_dir>/credentials` at mode `0600` or stricter, which `talaria refresh-credential` writes; and the interactive hidden prompt. Both refusal messages in `credentials.py` and the `talaria record` refusal in `talaria/cli.py` were rewritten to name only those three. `README.md` carries the decision and the caveat below.
+
+#### How far this lets the v0.1 daily-driver verdict's row 13 be re-graded — the whole point of writing this down
+
+U7 owns the verdict document and grades row 13 against this section; U3 deliberately does not touch it. What (b) supports, and nothing beyond it:
+
+**Supported — the true claim, stated narrowly.** No credential route Talaria supports *requires* a credential in the process environment, and the operator who unsets `HERMES_DASHBOARD_SESSION_TOKEN` loses nothing: the credential file is a complete, first-class route with no environment footprint at all, and `talaria refresh-credential` removes the setup cost that was the original argument for the variable. R1's environment clause is therefore **satisfiable by operator procedure** rather than impossible, which it was not before.
+
+**Not supported — do not write this anywhere.** That R1's environment clause is now met, technically or otherwise. An inherited variable stays visible in `/proc/<pid>/environ` for the life of the process; the kernel snapshots the environment block at `exec` and no code change touches that snapshot. Talaria not *reading* a variable does not make it unreadable to anyone else. `tests/transport/test_process_surface.py::test_the_inherited_credential_is_visible_in_the_process_environment` still asserts that failure, unchanged, and is meant to go red only if some future Talaria genuinely scrubs its inherited environment — at which point someone deletes it on purpose.
+
+**Also not supported, and this one is easy to overclaim.** That no supported route puts a credential in the environment. Route 1 — a `token` on `TALARIA_GATEWAY_URL` — is an environment variable carrying a credential, and KTD8 explicitly keeps it. So the sentence "the environment is no longer a credential source" is false as written; the accurate sentence is "the environment is no longer a *required* credential source, and the dedicated credential variable is gone." Row 13 may be re-graded to reflect that a documented, measured, environment-free route exists and is the recommended one. It may not be graded *met*, and it may not be graded on the strength of a claim that Talaria reads nothing from the environment.
+
+**Rejected alternative — option (a), keep the variable with a documented caveat.** `QUEUED.md` sized it Small against (b)'s Medium and it was the standing default. Rejected by the operator on 2026-08-06 because a caveat leaves the highest-precedence route being the one that cannot satisfy the requirement, so the safe path is the one the operator has to know to opt into. The recurring-setup objection that made (a) attractive was removed on 2026-08-04 by `talaria refresh-credential`.
+
+**Rejected alternative — remove route 1 as well, so no environment-borne route survives.** This is the only change that would make "no supported route puts a credential in the environment" true, and it is tempting for exactly that reason. Rejected as out of scope: KTD8 names the three surviving routes explicitly and route 1 is one of them, and `talaria record`'s design leans on `TALARIA_GATEWAY_URL` resolving both halves. Recorded here rather than dropped, because the residual is precisely what limits row 13's re-grade.
+
+**Rejected alternative — keep `TOKEN_ENV_VAR` and `"environment"` as public names.** The plan permitted keeping the constant if anything still needed it; nothing in production did. A source label nothing can produce is a precedence chain a test can still claim to have observed, and it is the seam a reintroduction slips back through. Deleting both cost seven test files a one-line change and made `mypy --strict` the thing that catches a stale label at merge — the cheapest possible place for that failure to land.
+
+**Cost, stated plainly.** Every operator whose shell exports the dashboard variable and nothing else must run `talaria refresh-credential` once, or put a `token` on `TALARIA_GATEWAY_URL`. Eight test modules changed. Two rotation tests that proved KTD11's "a rotated credential is picked up without a restart" through the environment variable were re-expressed against the credential file and the endpoint URL rather than deleted — deleting a rotation test along with its variable would have taken a live guarantee with it and left no red anywhere.
+
+**Revisit when.** Hermes gains an HTTP or file-based way to hand a client its session token directly, which would make the endpoint-URL route unnecessary and let route 1 go too — the one change that would let row 13 move again; or a gated (non-loopback) deployment arrives and `GatedTicketProvider` rewrites the chain wholesale.
 
 ## 2026-08-05
 

@@ -22,27 +22,48 @@ inspected. That is a protocol fact, not a preference — which is why
 
 **Acquisition precedence, highest first.**
 
-1. ``HERMES_DASHBOARD_SESSION_TOKEN`` in the environment.
-2. A ``token`` query parameter already present on ``TALARIA_GATEWAY_URL``. An
+1. A ``token`` query parameter already present on ``TALARIA_GATEWAY_URL``. An
    operator who has exported that variable with a credential on it has already
-   supplied the credential; making them export it twice would be a papercut with
-   no security benefit, since the value is in the same environment either way.
+   supplied the credential, and Talaria reads the endpoint from it either way.
    This level is about the *environment*, and only the environment. The command
    line is not an equivalent place to put the same string, and ``talaria record``
    now refuses an endpoint argument carrying a credential rather than accepting
    one (``talaria/cli.py``): an exported variable is not in the process table of
    every process that reads it, and a command line is.
-3. ``<config_dir>/credentials``, rejected unless its mode is no looser than
-   ``0600``.
-4. An interactive hidden prompt, via :func:`getpass.getpass`.
+2. ``<config_dir>/credentials``, rejected unless its mode is no looser than
+   ``0600``. ``talaria refresh-credential`` writes this file, so the operator
+   never has to hold the value themselves.
+3. An interactive hidden prompt, via :func:`getpass.getpass`.
 
-Levels 1–3 are re-read on **every** call, so a rotated token is picked up by the
-next reconnect without restarting Talaria. Level 4 is different on purpose: a
-prompt-sourced credential is held in memory for the process lifetime and never
-re-prompted, because re-prompting mid-stream would block reconnection on
-operator presence.
+**``HERMES_DASHBOARD_SESSION_TOKEN`` is not a level, and that is a decision.**
+It used to be the highest one. It was removed on 2026-08-06 — KTD8 of
+``docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md``, option (b) of
+``QUEUED.md``'s entry *"R1's environment clause is unmet, and no change to
+Talaria can meet it"*. Read the module's own claim narrowly, because the narrow
+claim is the true one:
 
-**Level 4 is reachable only before the interface takes the terminal.** A dial
+* **True.** Talaria no longer reads a dedicated credential variable, so an
+  operator who unsets ``HERMES_DASHBOARD_SESSION_TOKEN`` loses no supported way
+  of supplying a credential. Level 2 is a route with no environment footprint
+  at all.
+* **Not true, and not claimed anywhere.** That R1's environment clause is now
+  met. An inherited variable stays visible in ``/proc/<pid>/environ`` for the
+  life of the process — the kernel snapshots the block at ``exec`` and no code
+  change touches that. ``tests/transport/test_process_surface.py`` asserts that
+  *failure* and is meant to keep asserting it.
+* **Also not true.** That no supported route puts a credential in the
+  environment. Level 1 still does, by the operator's own choice, and the README
+  says so plainly. What changed is that a credential-free environment is now
+  reachable without giving anything up.
+
+Levels 1–2 are re-read on **every** call, so a rotated token is picked up by the
+next reconnect without restarting Talaria — the guarantee KTD11 exists for, now
+carried by the credential file rather than by a variable. Level 3 is different
+on purpose: a prompt-sourced credential is held in memory for the process
+lifetime and never re-prompted, because re-prompting mid-stream would block
+reconnection on operator presence.
+
+**Level 3 is reachable only before the interface takes the terminal.** A dial
 happens inside a running Textual application, which owns the screen and is
 reading stdin; a :func:`getpass.getpass` issued from there writes its prompt
 where nothing can display it and then blocks a worker thread on a read that
@@ -50,7 +71,7 @@ competes with the UI's own input driver. The observable result is a client that
 appears hung at "connecting" while it is in fact waiting, invisibly, for typing
 that cannot reach it. So the launcher calls :meth:`LoopbackTokenProvider.prime`
 **before** the interface starts and that call seals the prompt for the rest of
-the process: every later dial resolves from levels 1–3 or from the primed value,
+the process: every later dial resolves from levels 1–2 or from the primed value,
 and a dial that can find none of those fails with :class:`CredentialError`
 rather than asking a question nobody can see.
 
@@ -76,7 +97,6 @@ __all__ = [
     "CREDENTIAL_FILE_MODE",
     "DEFAULT_GATEWAY_URL",
     "GATEWAY_URL_ENV_VAR",
-    "TOKEN_ENV_VAR",
     "Credential",
     "CredentialError",
     "CredentialProvider",
@@ -85,15 +105,6 @@ __all__ = [
     "PrimingProvider",
     "resolve_endpoint",
 ]
-
-#: The environment variable holding the loopback session token. Named by KTD11
-#: and matching the variable Hermes's own dashboard publishes.
-#:
-#: The value is a variable *name*, not a credential — bandit's B105 heuristic
-#: reads any string constant assigned to a token-shaped identifier as a
-#: hard-coded secret, and it is right to ask. This module is where the real
-#: credential lives, and it never appears as a literal anywhere in it.
-TOKEN_ENV_VAR = "HERMES_DASHBOARD_SESSION_TOKEN"  # nosec B105
 
 #: The environment variable holding the gateway endpoint. Also forwarded to the
 #: status child with its query string removed (KTD5), which is why this module
@@ -117,7 +128,14 @@ _TOO_LOOSE_MASK = 0o077
 
 #: Where a value came from. Carried on the credential so a test can assert the
 #: precedence chain by observation rather than by reconstructing it.
-CredentialSource = Literal["environment", "endpoint-url", "file", "prompt", "prompt-cached"]
+#:
+#: ``"environment"`` was this list's first member and named the
+#: ``HERMES_DASHBOARD_SESSION_TOKEN`` level. It is gone with that level (KTD8):
+#: a label nothing can produce is a precedence chain a test can still claim to
+#: have observed, and it is the shape a reintroduction would slip back in
+#: through. ``"endpoint-url"`` is the surviving environment-borne source and
+#: says which variable it means.
+CredentialSource = Literal["endpoint-url", "file", "prompt", "prompt-cached"]
 
 
 class CredentialError(Exception):
@@ -280,7 +298,8 @@ class LoopbackTokenProvider:
         prevent — a hidden prompt underneath a running full-screen interface,
         indistinguishable from a hung connection — is unreachable rather than
         merely unlikely. A credential that disappears mid-session (a file
-        deleted, an environment rotated to empty) therefore surfaces on the next
+        deleted, an endpoint variable rotated to one carrying no token)
+        therefore surfaces on the next
         reconnect as :class:`CredentialError`, which
         :meth:`~talaria.transport.source.LiveSource._dial` already reports as
         ``credential_unavailable`` with the reason on screen.
@@ -298,10 +317,6 @@ class LoopbackTokenProvider:
     async def _resolve(self) -> Credential:
         env = self.environ
 
-        value = _clean(env.get(TOKEN_ENV_VAR))
-        if value:
-            return Credential(parameter="token", value=value, source="environment")
-
         value = _token_in_url(env.get(GATEWAY_URL_ENV_VAR))
         if value:
             return Credential(parameter="token", value=value, source="endpoint-url")
@@ -318,8 +333,9 @@ class LoopbackTokenProvider:
 
         if not self._allow_prompt:
             raise CredentialError(
-                f"no gateway credential: set {TOKEN_ENV_VAR}, or write "
-                f"{self._describe_path()}, or allow the interactive prompt"
+                "no gateway credential: run `talaria refresh-credential` to write "
+                f"{self._describe_path()} at mode 0600, or put a token query "
+                f"parameter on {GATEWAY_URL_ENV_VAR}, or allow the interactive prompt"
             )
 
         prompt = self._prompt if self._prompt is not None else _hidden_prompt
@@ -333,8 +349,9 @@ class LoopbackTokenProvider:
             # stream failed" and telling an operator running Talaria under a
             # supervisor nothing about the credential they need to supply.
             raise CredentialError(
-                f"no terminal to prompt for a gateway credential ({exc}); set "
-                f"{TOKEN_ENV_VAR} or write {self._describe_path()}"
+                f"no terminal to prompt for a gateway credential ({exc}); run "
+                f"`talaria refresh-credential` to write {self._describe_path()} at "
+                f"mode 0600, or put a token query parameter on {GATEWAY_URL_ENV_VAR}"
             ) from exc
         value = _clean(typed)
         if not value:
