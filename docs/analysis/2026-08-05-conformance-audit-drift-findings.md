@@ -52,21 +52,31 @@ defect, not two.
 ### DRIFT-04 — the daily-driver verdict was stale, and held NOT READY on two cleared blockers
 
 **Plain statement.** [`docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`](2026-08-02-v0-1-daily-driver-verdict.md)
-is the document that gates the v0.1 release. At `:428` it read "Talaria v0.1 is **NOT READY** as a
-daily driver", and at `:447-452` it named two of the five items on the "What would change this
-verdict" list (see the correction below): one real attach to a Hermes gateway (R2) and one real
+is the document that gates the v0.1 release. In its `## Verdict` section it read "Talaria v0.1 is
+**NOT READY** as a daily driver", and in its "What would change this verdict" list it named two of
+the five items (see the correction below): one real attach to a Hermes gateway (R2) and one real
 conversational turn (R3). Both happened on 2026-08-04. The document had not been updated, so the
 project's own release gate was blocked on grounds that were no longer true.
 
+**A note on how that document is cited here.** This entry originally pointed at the verdict by line
+number. Those numbers were correct when it was written and stopped resolving the moment the
+restatement rewrote the document — the same failure mode, one level out, in the entry certifying
+that the failure mode was fixed. Every citation here now names a section or an evidence-table row
+instead, because those survive a rewrite and a line number does not. The restated verdict follows
+the same rule internally, and it is worth generalizing: a document cited by line number by anything
+it does not control is one edit away from lying about itself.
+
 **Correction, 2026-08-05 — this entry's own "exactly two things" claim was wrong.** The original
-text above read "`:447-452` names exactly two things that would change that verdict." That
-understates the document it is describing, and it was wrong the day this entry was written, not
-made stale by later work. `:443-472` names **five** items, not two: (1) R2, (2) R3, (3) R1's
+text above read "it names exactly two things that would change that verdict", citing the two lines
+that hold items (1) and (2). That understates the document it is describing, and it was wrong the
+day this entry was written, not made stale by later work. The "What would change this verdict" list
+named **five** items, not two: (1) R2, (2) R3, (3) R1's
 remaining half — the environment-inherited credential decision, (4) the platform matrix, marked
-"partly done" at the time, (5) CI, marked done. The verdict's own closing line reads "Until **at
+"partly done" at the time, (5) CI, marked done. The verdict's own closing line read "Until **at
 least** (1) and (2) are done and recorded here, this document's verdict does not move" — the words
 "at least" make (1) and (2) necessary, not sufficient, and this entry read them as the whole list.
-The cause is visible in the citation: `:447-452` is exactly items (1) and (2) and nothing else, so
+The cause is visible in the original citation: the line range it gave is exactly items (1) and (2)
+and nothing else, so
 this entry did not misread the five-item list — it read part of the list and reported the part as
 the whole. Rows 13 and 19 of the evidence table (row 13 is item (3); row 19 is F1/F7) were gaps this
 entry never named, and by the document's own rule either one alone blocks READY. This was caught
@@ -87,11 +97,11 @@ could not tell what it had actually achieved and kept paying for a blocker it ha
 
 **Evidence.**
 
-- The verdict at `:85` graded R2 **unmet**, reason given: "No Hermes gateway has answered one."
+- The verdict's evidence-table row 17 graded R2 **unmet**, reason given: "No Hermes gateway has answered one."
   Across the 17 live recordings then available, a real Hermes gateway answered `session.most_recent`
   in 15 and `session.create` in 15 — and both replies carry a `session_id`. Checking for *replies*
   rather than for *calls* is the point: a call going out is not evidence of an outcome.
-- The verdict at `:86` graded R3 **unmet**, reason given: "Nothing was submitted to a Hermes
+- The verdict's evidence-table row 18 graded R3 **unmet**, reason given: "Nothing was submitted to a Hermes
   session." Twelve of those 17 recordings contain a `prompt.submit` followed immediately by
   `message.start`, then `message.delta` frames, then `message.complete`. Delta counts range from 2
   to 944, and in every one of the twelve the first event after the submit is `message.start`, so
@@ -133,10 +143,11 @@ precedence decision recorded as open in `QUEUED.md`), row 19 stays unmet (F7, th
 Talaria's exit, still has no isolated recording proving it). The verdict was then restated on the
 corrected table: it still reads **NOT READY**, but its reasons are now rows 6, 13 and 19 rather than
 the two obsolete ones this finding was about. Four sentences elsewhere that the 2026-08-04 attach had
-falsified were corrected in place, each recording what it used to say:
-`README.md:50-55`, `talaria/cli.py:465`, `talaria/ui/app.py:1839`, and
-`tests/transport/test_session_startup.py:9-13`. A fifth sentence,
-`talaria/ui/app.py:1798`, was corrected in the same pass for an unrelated reason — commit `ec861fa`
+falsified were corrected in place, each recording what it used to say: `README.md`'s "Read the
+verdict before you rely on it" paragraph, `run_live`'s docstring in `talaria/cli.py`,
+`open_session`'s docstring in `talaria/ui/app.py`, and the R2-is-unmet clause in the module
+docstring of `tests/transport/test_session_startup.py`. A fifth sentence, the method-count claim in
+`verify_gateway`'s docstring in `talaria/ui/app.py`, was corrected in the same pass for an unrelated reason — commit `ec861fa`
 took the required-method count from seventeen to eighteen, not the live attach — and is not counted
 among the four. See
 [`docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`](2026-08-02-v0-1-daily-driver-verdict.md)

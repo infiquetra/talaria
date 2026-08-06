@@ -155,6 +155,33 @@ queue empty. Evidence receipts were built from the workflow journal and mapped t
 units by exact return-key-set match against the settlement descriptor rather than
 by position. Lease released.
 
+## Code-review gate
+
+One P1, fixed before the pull request rather than filed: the finding register's
+DRIFT-04 entry cited the verdict by line number in five places, and this change
+moved the verdict's content by about two hundred lines. `:85` had pointed at the
+R2 row and landed on row 6a; `:86` at R3 and landed on row 7; `:428` at the NOT
+READY heading and landed on the restatement preamble. "`:443-472` names **five**
+items, not two" is present tense, so it did not merely dangle — it asserted
+something false about the current file. `talaria/ui/app.py:1839` had the same
+fault, the corrected docstring having moved to `:1845`.
+
+Worth stating plainly because of where it was found: the change exists to correct
+a document whose claims outlived the facts, and it would have shipped that exact
+defect one level out, inside the entry certifying the fix. Every citation in the
+DRIFT-04 entry now names a section or an evidence-table row instead. The restated
+verdict itself was already clean — it used row numbers throughout — so the habit
+existed inside the file being edited and had simply not been generalized across
+files. Filed as a `LEARNINGS.md` entry in the same commit.
+
+The gate also verified, from current sources rather than from unit reports: the
+verdict did not move to READY; row 6's control held (`compat.py` confirms 5 / 13
+/ 18, and the row still reads "Three of the thirteen"); the delta ranges
+re-derived independently under `env -i` to exactly 12 of 17, 2,659 frames, 18
+turns, 1–616 per turn, 2–716 per recording; and the four code files are
+AST-identical after stripping docstrings, which proves zero logic change rather
+than asserting it.
+
 ## Still open
 
 DRIFT-04's register entry does not yet carry the closing reference the resolved
