@@ -32,6 +32,17 @@ entirely — not empty, absent. Those are the two keys every Hermes code path th
 builds a row sets, so their absence means the body is not the payload this
 decoder was pinned against, and guessing a slug would put an unselectable row on
 screen that looks selectable.
+
+**``GET /api/profiles`` decodes here too (U4), and drops two keys on purpose.**
+Hermes's row builder (``_profile_to_dict`` in ``hermes_cli/web_server.py``,
+confirmed live on 2026-08-06 against the running gateway) sends fourteen keys.
+:class:`ProfileEntry` keeps five of them and **discards ``path``**, which is an
+absolute filesystem path naming the operator's own directory layout. R12 forbids
+that inventory from reaching a committed fixture in this public repository, and
+the cheapest way to keep a value out of a fixture is for the type the fixture is
+built from to have nowhere to put it. Talaria has no use for the path either:
+it dials a URL, and Hermes publishes no per-profile URL at all — see
+``talaria/transport/admin.py`` for where the endpoint actually comes from.
 """
 
 from __future__ import annotations
@@ -44,8 +55,11 @@ __all__ = [
     "CatalogError",
     "ModelProvider",
     "ModelSelection",
+    "ProfileDirectory",
+    "ProfileEntry",
     "ProviderCatalog",
     "decode_model_selection",
+    "decode_profile_directory",
     "decode_provider_catalog",
 ]
 
@@ -128,6 +142,97 @@ class ModelSelection:
     config_context_length: int | None = None
     effective_context_length: int = 0
     capabilities: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ProfileEntry:
+    """One row of ``GET /api/profiles`` — an *endpoint directory* entry (KTD5).
+
+    Not a thing Talaria can activate. ``POST /api/profiles/active`` sets a
+    sticky preference for later CLI invocations and explicitly "does not
+    retarget the already-running dashboard process"
+    (``hermes_cli/web_routers/profiles.py``, ``set_active_profile_endpoint``),
+    so switching profile in Talaria means dialling a different gateway, and
+    this type exists to tell the operator which ones are worth dialling.
+
+    ``gateway_running`` is the gateway's own answer to that question and is the
+    only half of it Hermes knows. The other half — *where* that gateway is
+    listening — Hermes does not publish on this endpoint at all, so it is not a
+    field here; see :class:`~talaria.ui.picker.ProfileRow`.
+
+    ``path`` is deliberately absent. See the module docstring (R12).
+    """
+
+    name: str
+    model: str = ""
+    provider: str = ""
+    gateway_running: bool = False
+    is_default: bool = False
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class ProfileDirectory:
+    """``GET /api/profiles`` decoded: the profiles this Hermes knows about."""
+
+    profiles: tuple[ProfileEntry, ...]
+
+    @property
+    def is_empty(self) -> bool:
+        """True when the gateway answered with no profiles at all.
+
+        A named property for the same reason :attr:`ProviderCatalog.is_empty`
+        is one: "there are no profiles" is a state the picker must render
+        distinctly from "the list could not be read" (R7), and a truthiness
+        test on the dataclass is the easy thing to get wrong.
+        """
+        return not self.profiles
+
+
+def _decode_profile(entry: object, index: int) -> ProfileEntry:
+    row = _require_mapping(entry, f"profiles[{index}]")
+
+    name = row.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise CatalogError(f"profiles[{index}] carries no usable 'name'")
+
+    return ProfileEntry(
+        name=name,
+        # ``model`` and ``provider`` are ``None`` for a profile that has
+        # configured neither — Hermes sends the key with a null rather than
+        # omitting it — so the cosmetic-field rule applies and they read as
+        # absent rather than as the string "None".
+        model=_as_str(row.get("model")),
+        provider=_as_str(row.get("provider")),
+        gateway_running=_as_bool(row.get("gateway_running")),
+        is_default=_as_bool(row.get("is_default")),
+        description=_as_str(row.get("description")),
+    )
+
+
+def decode_profile_directory(payload: object) -> ProfileDirectory:
+    """Decode a ``GET /api/profiles`` body, or raise :class:`CatalogError`.
+
+    Only ``name`` is required, and the asymmetry is the same one
+    :func:`decode_provider_catalog` draws: an empty list is a state the gateway
+    really reports, while a row with no identifier is a shape mismatch — and a
+    profile row without a name is a row nothing could ever select.
+
+    ``gateway_running`` **absent** decodes to ``False``, which reads as "not
+    dialable". That is the safe direction: the alternative default would offer
+    a dial against a gateway the payload never claimed was up.
+    """
+    body = _require_mapping(payload, "the profiles response")
+
+    raw = body.get("profiles", ())
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+        raise CatalogError(
+            f"'profiles' is {type(raw).__name__}, not a list of profile objects"
+        )
+
+    return ProfileDirectory(
+        profiles=tuple(_decode_profile(entry, i) for i, entry in enumerate(raw))
+    )
 
 
 def _require_mapping(payload: object, what: str) -> Mapping[str, Any]:

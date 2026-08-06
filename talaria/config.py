@@ -54,6 +54,13 @@ DEFAULTS: dict[str, Any] = {
     "status": {"command": None, "interval_seconds": 5},
     "environment": {"allowlist": []},
     "composer": {"paste_collapse_lines": 6, "paste_collapse_bytes": 512},
+    # U4's profile endpoints: a name-to-gateway-URL map the operator writes.
+    # It has no environment-variable override and never will — a map cannot be
+    # expressed as one ``TALARIA_*`` scalar, and inventing an encoding for it
+    # would be a second config syntax. Empty by default, which means every
+    # listed profile renders as "no endpoint configured" until the operator
+    # says otherwise; that is the honest starting state rather than a guess.
+    "profiles": {"endpoints": {}},
 }
 
 #: Maps a TALARIA_* environment variable to its (section, key) location in the
@@ -185,6 +192,29 @@ class Config:
                 return default
             node = node[part]
         return node
+
+
+def profile_endpoints(cfg: Config) -> Mapping[str, str]:
+    """The operator's ``[profiles.endpoints]`` map, with non-string rows dropped.
+
+    ``GET /api/profiles`` publishes no address for a profile's gateway — see
+    ``talaria/transport/admin.py``'s docstring for the measured key list — so
+    this is where a profile's endpoint actually comes from (U4). A row whose
+    value is not a string is skipped rather than coerced: the value is a URL
+    that will be dialled, and ``str(7)`` is not one.
+
+    Returns a plain ``dict``, not the frozen section, because callers pass it
+    into pure functions that only read it and a ``MappingProxyType`` in that
+    position is a type puzzle for no gain.
+    """
+    section = cfg.get("profiles", "endpoints", default={})
+    if not isinstance(section, Mapping):
+        return {}
+    return {
+        name: value
+        for name, value in section.items()
+        if isinstance(name, str) and isinstance(value, str) and value.strip()
+    }
 
 
 def load_config(

@@ -57,6 +57,32 @@ is attached uniformly regardless, because the allowlist is Hermes's decision to
 revisit and a Talaria that only authenticated the endpoints that currently need it
 would break silently on the release that gates one more.
 
+**``GET /api/profiles`` is read; ``POST /api/profiles/active`` is not written,
+ever (KTD5, U4).** There is no constant for that path in this module and no
+method that could reach it, and ``tests/transport/test_admin.py`` asserts the
+absence rather than trusting it. The POST sets a sticky preference for
+*subsequent* CLI invocations and, in Hermes's own words, "does not retarget the
+already-running dashboard process" — so calling it would change a setting on a
+machine while changing nothing about the session in front of the operator.
+Switching profile in Talaria means dialling a different gateway instead.
+
+**Hermes publishes no per-profile endpoint, and that is a measured fact.** The
+row builder ``_profile_to_dict`` (``hermes_cli/web_server.py``) sends fourteen
+keys and none of them is a URL, a host or a port; confirmed against the running
+gateway on 2026-08-06, whose 37-row answer carried exactly ``description``,
+``description_auto``, ``distribution_name``, ``distribution_source``,
+``distribution_version``, ``gateway_running``, ``has_alias``, ``has_env``,
+``is_default``, ``model``, ``name``, ``path``, ``provider`` and ``skill_count``.
+``path`` is a filesystem directory, not an endpoint, and the profile's listening
+port is not recorded in it either — a profile's ``gateway_state.json`` carries a
+pid and no port. So the endpoint a profile is dialled at comes from **Talaria's
+own configuration** (``[profiles.endpoints]`` in ``config.toml``), and a profile
+with no configured endpoint is listed and marked not dialable rather than
+guessed at. The rejected alternative was deriving a port from the profile's
+directory: it would make Talaria depend on Hermes's on-disk layout, which
+ADR-0001 and this repository's standing preference for transport interfaces over
+Hermes internals both refuse.
+
 **Nothing here logs, reprs or prints the credential.** :class:`AdminError`
 messages name a status code, a path, or a host — never a URL that arrived from
 configuration, and never a header value. This mirrors :class:`RefreshError`'s
@@ -76,8 +102,10 @@ from urllib.parse import urlencode, urljoin, urlsplit
 from talaria.domain.models_catalog import (
     CatalogError,
     ModelSelection,
+    ProfileDirectory,
     ProviderCatalog,
     decode_model_selection,
+    decode_profile_directory,
     decode_provider_catalog,
 )
 from talaria.transport.credentials import Credential, CredentialError, CredentialProvider
@@ -93,6 +121,7 @@ __all__ = [
     "MAX_RESPONSE_BYTES",
     "MODEL_INFO_PATH",
     "MODEL_OPTIONS_PATH",
+    "PROFILES_PATH",
     "AdminClient",
     "AdminError",
     "AdminFailure",
@@ -113,6 +142,11 @@ MAX_RESPONSE_BYTES = MAX_INDEX_BYTES
 
 MODEL_OPTIONS_PATH = "/api/model/options"
 MODEL_INFO_PATH = "/api/model/info"
+
+#: The endpoint directory (U4). Read-only, and the *only* profiles path this
+#: module names — see the module docstring on why ``/api/profiles/active`` has
+#: no constant here.
+PROFILES_PATH = "/api/profiles"
 
 #: What went wrong, as a value a caller can branch on without parsing prose.
 #: R7 requires a picker to distinguish "could not fetch" from "nothing here",
@@ -361,5 +395,22 @@ class AdminClient:
         params = {"profile": profile} if profile else None
         try:
             return decode_model_selection(await self._get(MODEL_INFO_PATH, params))
+        except CatalogError as exc:
+            raise AdminError("malformed_response", str(exc)) from exc
+
+    async def list_profiles(self) -> ProfileDirectory:
+        """``GET /api/profiles`` decoded into a :class:`ProfileDirectory` (U4).
+
+        Named ``list_profiles`` rather than ``profiles`` so it cannot be
+        mistaken for a property holding a cached directory. It is a live read
+        every time, for the same reason :meth:`model_options` is: the answer
+        includes ``gateway_running``, which is a fact about right now, and a
+        cached "running" is exactly the claim that sends an operator into a
+        dial against a gateway that has since stopped.
+
+        There is no write counterpart on this class, deliberately (KTD5).
+        """
+        try:
+            return decode_profile_directory(await self._get(PROFILES_PATH))
         except CatalogError as exc:
             raise AdminError("malformed_response", str(exc)) from exc

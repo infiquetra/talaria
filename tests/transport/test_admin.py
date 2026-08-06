@@ -41,6 +41,7 @@ from talaria.transport.admin import (
     MAX_RESPONSE_BYTES,
     MODEL_INFO_PATH,
     MODEL_OPTIONS_PATH,
+    PROFILES_PATH,
     AdminClient,
     AdminError,
     admin_origin_for,
@@ -705,3 +706,210 @@ def test_neither_new_module_reads_the_environment_for_a_credential() -> None:
         source = path.read_text(encoding="utf-8")
         assert variable not in source, path.name
         assert "os.environ" not in source, path.name
+
+
+# ── U4: the endpoint directory, and the write that never happens ─────────
+
+#: Every profile name below is invented for this file. R12 forbids the
+#: operator's real profile inventory from reaching a committed fixture in this
+#: public repository, and the live gateway this surface was probed against on
+#: 2026-08-06 answered with 37 rows of exactly that inventory. The names here
+#: are chosen to be obviously synthetic and to sort in the order the assertions
+#: read.
+SYNTHETIC_PROFILES: dict[str, Any] = {
+    "profiles": [
+        {
+            "name": "alpha-fixture",
+            "path": "/nonexistent/fixture/alpha",
+            "is_default": True,
+            "model": "example-large",
+            "provider": "example-provider",
+            "has_env": False,
+            "skill_count": 3,
+            "gateway_running": True,
+            "description": "a synthetic profile",
+            "description_auto": False,
+            "distribution_name": None,
+            "distribution_version": None,
+            "distribution_source": None,
+            "has_alias": False,
+        },
+        {
+            "name": "beta-fixture",
+            "path": "/nonexistent/fixture/beta",
+            "is_default": False,
+            "model": None,
+            "provider": None,
+            "has_env": False,
+            "skill_count": 0,
+            "gateway_running": False,
+            "description": "",
+            "description_auto": False,
+        },
+    ]
+}
+
+
+@contextlib.contextmanager
+def profiles_gateway(
+    body: Any = SYNTHETIC_PROFILES, recorder: list[Recorded] | None = None
+) -> Iterator[str]:
+    with gateway_serving({PROFILES_PATH: json_route(body)}, recorder) as origin:
+        yield origin
+
+
+@pytest.mark.asyncio
+async def test_profiles_are_listed_with_the_gateways_own_dialability_flag() -> None:
+    provider = StubProvider()
+    with profiles_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), provider)
+        directory = await client.list_profiles()
+
+    assert [(p.name, p.gateway_running) for p in directory.profiles] == [
+        ("alpha-fixture", True),
+        ("beta-fixture", False),
+    ]
+    # The configured model rides along, because the picker shows it.
+    assert directory.profiles[0].model == "example-large"
+    assert directory.profiles[0].provider == "example-provider"
+    # A profile that has configured neither reads as absent, not as "None".
+    assert directory.profiles[1].model == ""
+    assert directory.profiles[1].provider == ""
+
+
+@pytest.mark.asyncio
+async def test_the_operators_filesystem_layout_is_dropped_at_the_decode(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """R12: no profile path can reach a fixture, because nothing holds one."""
+    with profiles_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        directory = await client.list_profiles()
+
+    entry = directory.profiles[0]
+    assert not hasattr(entry, "path")
+    assert "/nonexistent/fixture" not in repr(directory)
+    assert "/nonexistent/fixture" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_profile_credential_is_re_resolved_on_every_listing() -> None:
+    """KTD6/KTD11 on the HTTP surface: never held, always re-acquired."""
+    provider = StubProvider()
+    with profiles_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), provider)
+        await client.list_profiles()
+        await client.list_profiles()
+    assert provider.acquisitions == 2
+
+
+@pytest.mark.asyncio
+async def test_an_empty_profile_list_is_a_directory_and_not_a_failure() -> None:
+    with profiles_gateway({"profiles": []}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        directory = await client.list_profiles()
+    assert directory.is_empty
+    assert directory.profiles == ()
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_too_old_for_the_profiles_path_is_an_absent_capability() -> None:
+    with gateway_serving({MODEL_OPTIONS_PATH: json_route(OPTIONS_BODY)}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        with pytest.raises(AdminError) as caught:
+            await client.list_profiles()
+    assert caught.value.reason == "absent_capability"
+
+
+@pytest.mark.asyncio
+async def test_a_credential_the_profiles_endpoint_refuses_is_named_unauthorized() -> None:
+    with gateway_serving({PROFILES_PATH: (401, b'{"detail":"no"}', "application/json")}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        with pytest.raises(AdminError) as caught:
+            await client.list_profiles()
+    assert caught.value.reason == "unauthorized"
+    assert CANARY not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_credential_that_cannot_be_produced_is_credential_unavailable() -> None:
+    """KTD6's named failure, at the HTTP surface: nothing was asked of anyone."""
+    provider = StubProvider(raises=CredentialError("no gateway credential"))
+    with profiles_gateway() as origin:
+        client = AdminClient(ws_endpoint(origin), provider)
+        with pytest.raises(AdminError) as caught:
+            await client.list_profiles()
+    assert caught.value.reason == "credential_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_profiles_body_that_is_not_the_pinned_shape_is_malformed() -> None:
+    with profiles_gateway({"profiles": "alpha-fixture"}) as origin:
+        client = AdminClient(ws_endpoint(origin), StubProvider())
+        with pytest.raises(AdminError) as caught:
+            await client.list_profiles()
+    assert caught.value.reason == "malformed_response"
+
+
+def test_the_admin_client_has_no_way_to_set_the_active_profile() -> None:
+    """KTD5, asserted as absence rather than trusted to review.
+
+    ``POST /api/profiles/active`` sets a sticky preference for subsequent CLI
+    invocations and does not retarget the running dashboard, so calling it
+    would change a machine setting and nothing the operator can see. There is
+    no constant for the path, no method that could reach it, and no non-GET
+    request anywhere in the module.
+
+    The module *docstring* names the path — that is where the decision is
+    recorded, and a check that forbade documenting it would forbid explaining
+    it. So the docstrings are stripped with :mod:`ast` first and the assertion
+    runs against what is left, which is the code.
+    """
+    path = Path(__file__).parents[2] / "talaria" / "transport" / "admin.py"
+    source = path.read_text(encoding="utf-8")
+    code = _without_docstrings(source)
+
+    assert "/api/profiles/active" not in code
+    assert "POST" not in code
+    assert not [name for name in dir(AdminClient) if "active" in name.lower()]
+    # Every request this module builds is a GET.
+    assert code.count("urllib.request.Request(") == code.count('method="GET"') == 1
+
+
+def _without_docstrings(source: str) -> str:
+    """The module's code with every docstring and comment removed.
+
+    Comments go too: the decision not to call the POST is explained in prose in
+    several places, and prose is not a call.
+    """
+    import ast
+    import io
+    import tokenize
+
+    tree = ast.parse(source)
+    spans: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            continue
+        body = getattr(node, "body", [])
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            spans.append((body[0].lineno, body[0].end_lineno or body[0].lineno))
+
+    lines = source.splitlines()
+    keep = [
+        line
+        for number, line in enumerate(lines, start=1)
+        if not any(start <= number <= end for start, end in spans)
+    ]
+    stripped = "\n".join(keep)
+    return "".join(
+        token.string if token.type != tokenize.COMMENT else ""
+        for token in tokenize.generate_tokens(io.StringIO(stripped).readline)
+    )

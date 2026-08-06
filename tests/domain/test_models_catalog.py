@@ -23,6 +23,7 @@ from talaria.domain.models_catalog import (
     ModelProvider,
     ProviderCatalog,
     decode_model_selection,
+    decode_profile_directory,
     decode_provider_catalog,
 )
 
@@ -328,3 +329,90 @@ def test_a_configured_context_override_is_distinguishable_from_no_override() -> 
 def test_model_info_refuses_a_body_that_is_not_a_json_object() -> None:
     with pytest.raises(CatalogError):
         decode_model_selection(["model"])
+
+
+# ── U4: the endpoint directory ────────────────────────────────────────────
+#
+# Every profile name in this section is invented. R12 keeps the operator's real
+# inventory out of this public repository, and the surest way to keep a value
+# out of a fixture is for the fixture never to have held one.
+
+
+def test_a_profile_row_decodes_its_name_model_provider_and_dialability() -> None:
+    directory = decode_profile_directory(
+        {
+            "profiles": [
+                {
+                    "name": "alpha-fixture",
+                    "model": "example-large",
+                    "provider": "example-provider",
+                    "gateway_running": True,
+                    "is_default": True,
+                    "description": "a synthetic profile",
+                }
+            ]
+        }
+    )
+    entry = directory.profiles[0]
+    assert (entry.name, entry.model, entry.provider) == (
+        "alpha-fixture",
+        "example-large",
+        "example-provider",
+    )
+    assert entry.gateway_running is True
+    assert entry.is_default is True
+
+
+def test_a_missing_gateway_running_reads_as_not_dialable() -> None:
+    """The safe direction: the alternative offers a dial nothing claimed."""
+    directory = decode_profile_directory({"profiles": [{"name": "beta-fixture"}]})
+    assert directory.profiles[0].gateway_running is False
+
+
+def test_a_null_model_or_provider_reads_as_absent_rather_than_the_string_none() -> None:
+    directory = decode_profile_directory(
+        {"profiles": [{"name": "beta-fixture", "model": None, "provider": None}]}
+    )
+    assert directory.profiles[0].model == ""
+    assert directory.profiles[0].provider == ""
+
+
+def test_the_operators_filesystem_path_has_nowhere_to_land(
+) -> None:
+    """R12 made structural: ``ProfileEntry`` has no ``path`` field at all."""
+    directory = decode_profile_directory(
+        {"profiles": [{"name": "alpha-fixture", "path": "/nonexistent/fixture/alpha"}]}
+    )
+    entry = directory.profiles[0]
+    assert not hasattr(entry, "path")
+    assert "/nonexistent" not in repr(entry)
+
+
+def test_an_unknown_profile_key_decodes_without_raising() -> None:
+    directory = decode_profile_directory(
+        {"profiles": [{"name": "alpha-fixture", "invented_next_release": True}]}
+    )
+    assert directory.profiles[0].name == "alpha-fixture"
+
+
+def test_an_empty_or_absent_profile_list_is_an_empty_directory() -> None:
+    assert decode_profile_directory({"profiles": []}).is_empty
+    assert decode_profile_directory({}).is_empty
+
+
+def test_a_profile_row_with_no_usable_name_is_refused() -> None:
+    bodies: list[Any] = [
+        {"profiles": [{}]},
+        {"profiles": [{"name": "  "}]},
+        {"profiles": [{"name": 7}]},
+    ]
+    for body in bodies:
+        with pytest.raises(CatalogError):
+            decode_profile_directory(body)
+
+
+def test_a_profiles_field_that_is_not_a_list_is_refused() -> None:
+    with pytest.raises(CatalogError):
+        decode_profile_directory({"profiles": "alpha-fixture"})
+    with pytest.raises(CatalogError):
+        decode_profile_directory(["alpha-fixture"])

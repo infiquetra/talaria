@@ -1040,3 +1040,43 @@ Two things generalize past the incident. First, **an agent's model of "who else 
 **Cost, stated plainly.** A dataclass and a function in `talaria/ui/app.py` that a reader must follow to see what a branch does, instead of four visible branches per path. Bought back by twenty-two mutations, five of which classify an outcome differently and turn both paths red at once.
 
 **Revisit when.** A third answer path appears (a bulk answer for another bridge), or the gateway starts distinguishing "discarded" in the envelope rather than the body, which would collapse `gateway_refusal` into `delivery_of`.
+
+### A profile's gateway address comes from Talaria's own config, because Hermes does not publish one
+
+**Author.** v0.1 model-picker plan, unit U4 (the profile picker)
+
+**Decision.** `GET /api/profiles` is treated as a *name and liveness* directory only. The endpoint each profile is dialled at comes from a new `[profiles.endpoints]` table in Talaria's `config.toml`, read by `config.profile_endpoints`. A profile is dialable only when the gateway's own `gateway_running` is true **and** Talaria has a configured address for it, and the picker marks those two failures with two different messages because they have two different fixes: start the gateway, or add a line to the config file.
+
+**Evidence.** Measured against the running gateway on 2026-08-06, not read alone. `GET /api/profiles` answered with 37 rows carrying exactly fourteen keys — `description`, `description_auto`, `distribution_name`, `distribution_source`, `distribution_version`, `gateway_running`, `has_alias`, `has_env`, `is_default`, `model`, `name`, `path`, `provider`, `skill_count`. None of them is a URL, a host, or a port. Hermes's own row builder (`_profile_to_dict`, `hermes_cli/web_server.py`) sets exactly that set. The one location-shaped key, `path`, is a filesystem directory; a profile's `gateway_state.json` under it records a pid and no port either.
+
+**Rejected alternatives.** *Derive a port from the profile directory* — makes Talaria depend on Hermes's on-disk layout, which ADR-0001 (Talaria is a client of a gateway it did not launch) and this repository's standing preference for transport interfaces over Hermes internals both refuse; and the port is not recorded there anyway, so the derivation would have to be a guess. *Probe a range of loopback ports and match profiles by asking each* — turns opening a picker into a port scan and would still need a rule for two gateways answering. *Refuse to ship the profile picker until Hermes publishes an endpoint* — the useful half (see which profiles exist and which are live) works today, and the configuration file is a route the operator already has.
+
+**Cost, stated plainly.** An operator with several profiles must write their addresses down once. That is real setup friction and there is no way to remove it that does not invent an address.
+
+**Revisit when.** Hermes publishes a per-profile endpoint on `GET /api/profiles`, or anywhere else; at that point the configured map becomes an override rather than the only source.
+
+### The profile picker reconnects and never writes; `POST /api/profiles/active` has no code path
+
+**Author.** v0.1 model-picker plan, unit U4 (KTD5)
+
+**Decision.** Switching profile means dialling a different gateway. Talaria never calls `POST /api/profiles/active`. There is no constant for that path in `talaria/transport/admin.py`, no method that could reach it, and two tests assert the absence structurally rather than trusting review — `tests/transport/test_admin.py` scans the admin module with docstrings and comments stripped by `ast`, and `tests/transport/test_profile_switch.py` does the same to `talaria/transport/source.py`, which is where an implementer would most plausibly reach for "and tell the gateway".
+
+**Evidence.** Hermes's own handler says it: `set_active_profile_endpoint` in `hermes_cli/web_routers/profiles.py` documents that the write "does not retarget the already-running dashboard process — it changes which profile subsequent CLI commands and gateways use."
+
+**Rejected alternatives.** *Call the POST as well as reconnecting, to keep the machine consistent* — it changes a sticky preference for every later CLI invocation on that machine as a side effect of one operator switching view in one client, which is a larger blast radius than the act they asked for.
+
+**Cost.** A test that scans source text is a test that can be defeated by an indirection. It is a backstop for a decision, not a proof, and is written as one.
+
+**Revisit when.** Hermes grows an endpoint that retargets a running dashboard, which would make the write and the switch the same act.
+
+### A failed profile switch names its state instead of restoring the old connection
+
+**Author.** v0.1 model-picker plan, unit U4
+
+**Decision.** `LiveSource.switch_to_endpoint` returns a `SwitchReport` — a reason, the transport state left behind, and a detail. Refusals decidable without a socket (closed source, no per-endpoint credential resolver, an endpoint that will not parse) happen *before* the existing connection is touched, so they cost the operator nothing; `SwitchReport.left_disconnected` is what separates those from the three that drop the old connection first (`credential_unavailable`, `auth_failed`, `connect_failed`). A switch that fails after dropping does **not** re-dial the previous endpoint.
+
+**Rejected alternatives.** *Roll back to the previous gateway on failure* — the rollback is a second dial that can fail on its own, turning one legible failure into two, and it silently undoes what the operator asked for. *Report the failure as `auth_failed` whenever no connection results* — collapses "this machine could not produce a credential" into "that gateway refused one", which sends the operator to rotate a token that was never presented to anything; the transport already draws that distinction for the initial dial (`credential_unavailable`) and the switch reuses it rather than inventing a parallel vocabulary.
+
+**Cost.** The operator can be left disconnected with nothing dialled. That is a real state and the decision is to *name* it, not to prevent it: the alternative hides the same state behind a second failure.
+
+**Revisit when.** The transport grows a way to hold two connections at once, which would let the new one be proved before the old one is dropped.

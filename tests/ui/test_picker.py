@@ -17,26 +17,48 @@ from typing import Any
 import pytest
 
 from talaria.domain.commands import CATALOG_METHOD, SLASH_EXEC_METHOD
-from talaria.domain.models_catalog import ModelProvider, ProviderCatalog
+from talaria.domain.models_catalog import (
+    ModelProvider,
+    ProfileDirectory,
+    ProfileEntry,
+    ProviderCatalog,
+)
 from talaria.replay.controls import ReplayControls
 from talaria.replay.source import ReplaySource
 from talaria.transport.admin import AdminError
 from talaria.transport.rpc import RpcOutcome
+from talaria.transport.source import SwitchReport
 from talaria.ui.app import (
     MODELS_NOT_FETCHED,
     MODELS_STALE_EPOCH,
+    PROFILE_SWITCH_FAILED,
+    PROFILE_SWITCH_UNAVAILABLE,
+    PROFILES_NOT_FETCHED,
+    PROFILES_STALE_EPOCH,
+    PROFILES_UNAVAILABLE,
+    EndpointSwitcher,
     ModelAdmin,
+    ProfileAdmin,
     TalariaApp,
 )
 from talaria.ui.picker import (
     CATALOG_FAILURE_PREFIX,
+    CURRENT_PROFILE_MARKER,
+    NO_ENDPOINT_SUFFIX,
+    NO_PROFILES,
     NO_PROVIDERS,
+    NOT_RUNNING_SUFFIX,
     NOT_YET_FETCHED,
+    PROFILES_FAILURE_PREFIX,
+    PROFILES_NOT_YET_FETCHED,
     PROVIDER_WARNING_PREFIX,
     UNAUTHENTICATED_SUFFIX,
+    flatten_profiles,
     flatten_selectable,
+    format_profile_row,
     format_provider_header,
     header_line,
+    profiles_header_line,
     warning_line,
 )
 from tests.ui.conftest import event, records
@@ -366,3 +388,506 @@ async def test_a_selection_against_a_stale_epoch_is_refused_rather_than_sent() -
         assert dispatcher.operator_calls == []
         assert MODELS_STALE_EPOCH in app.composer.notice
         await app.shutdown_sources()
+
+
+# ── U4: the profile picker ────────────────────────────────────────────────
+#
+# **Every profile name below is invented (R12).** This is a public repository
+# and ``GET /api/profiles`` answers with the operator's own inventory — 37 rows
+# of it against the gateway this surface was probed on. No name, path, or other
+# operator-specific value from that answer appears here.
+
+
+def profile(**overrides: Any) -> ProfileEntry:
+    fields: dict[str, Any] = {
+        "name": "alpha-fixture",
+        "model": "example-large",
+        "provider": "example-provider",
+        "gateway_running": True,
+    }
+    fields.update(overrides)
+    return ProfileEntry(**fields)
+
+
+def directory(*entries: ProfileEntry) -> ProfileDirectory:
+    return ProfileDirectory(profiles=tuple(entries))
+
+
+#: Three synthetic profiles covering the three dialability outcomes: dialable,
+#: gateway down, and running-but-unaddressable.
+THREE_PROFILES = directory(
+    profile(name="alpha-fixture"),
+    profile(name="beta-fixture", gateway_running=False, model="", provider=""),
+    profile(name="gamma-fixture"),
+)
+
+#: Talaria's own endpoint map. ``gamma-fixture`` is deliberately absent: a
+#: profile whose gateway is up but whose address Talaria does not know.
+FIXTURE_ENDPOINTS = {
+    "alpha-fixture": "ws://127.0.0.1:9119/api/ws",
+    "beta-fixture": "ws://127.0.0.1:9120/api/ws",
+}
+
+
+# ── pure functions (no screen) ─────────────────────────────────────────────
+
+
+def test_profiles_are_numbered_from_one_in_listing_order() -> None:
+    rows = flatten_profiles(THREE_PROFILES, FIXTURE_ENDPOINTS)
+    assert [(r.index, r.name) for r in rows] == [
+        (1, "alpha-fixture"),
+        (2, "beta-fixture"),
+        (3, "gamma-fixture"),
+    ]
+
+
+def test_dialability_needs_both_a_running_gateway_and_a_known_endpoint() -> None:
+    alpha, beta, gamma = flatten_profiles(THREE_PROFILES, FIXTURE_ENDPOINTS)
+    assert alpha.dialable is True
+    assert alpha.undialable_reason == ""
+    # Gateway down, address known.
+    assert beta.dialable is False
+    assert "not running" in beta.undialable_reason
+    # Gateway up, address unknown — a different problem with a different fix.
+    assert gamma.dialable is False
+    assert "endpoint" in gamma.undialable_reason
+    assert beta.undialable_reason != gamma.undialable_reason
+
+
+def test_every_rendered_row_marks_whether_it_can_be_dialled() -> None:
+    rendered = [
+        format_profile_row(row) for row in flatten_profiles(THREE_PROFILES, FIXTURE_ENDPOINTS)
+    ]
+    assert NOT_RUNNING_SUFFIX not in rendered[0]
+    assert NO_ENDPOINT_SUFFIX not in rendered[0]
+    assert NOT_RUNNING_SUFFIX in rendered[1]
+    assert NO_ENDPOINT_SUFFIX in rendered[2]
+    # The configured model is shown; the endpoint never is.
+    assert "example-large" in rendered[0]
+    assert "9119" not in "".join(rendered)
+
+
+def test_the_current_profile_is_marked_and_no_other_row_is() -> None:
+    rows = flatten_profiles(THREE_PROFILES, FIXTURE_ENDPOINTS, current="beta-fixture")
+    assert [r.name for r in rows if r.is_current] == ["beta-fixture"]
+    assert format_profile_row(rows[1]).startswith(CURRENT_PROFILE_MARKER)
+
+
+def test_profiles_header_distinguishes_not_fetched_failed_and_empty() -> None:
+    assert profiles_header_line(None, "") == PROFILES_NOT_YET_FETCHED
+    assert profiles_header_line(None, "refused").startswith(PROFILES_FAILURE_PREFIX)
+    assert profiles_header_line(directory(), "") == NO_PROFILES
+    populated = profiles_header_line(THREE_PROFILES, "")
+    assert populated not in {PROFILES_NOT_YET_FETCHED, NO_PROFILES}
+    # A listing held from an earlier read must not paper over a failed one.
+    assert profiles_header_line(THREE_PROFILES, "refused").startswith(PROFILES_FAILURE_PREFIX)
+
+
+# ── the assembled app ───────────────────────────────────────────────────────
+
+
+class FakeProfileAdmin:
+    """A ``ModelAdmin`` *and* ``ProfileAdmin`` double."""
+
+    def __init__(
+        self,
+        catalog: ProviderCatalog | None = None,
+        profiles: ProfileDirectory | None = None,
+        error: AdminError | None = None,
+    ) -> None:
+        self._catalog = catalog if catalog is not None else TWO_PROVIDER_CATALOG
+        self._profiles = profiles
+        self._error = error
+        self.listings = 0
+
+    async def model_options(self, *, profile: str | None = None) -> ProviderCatalog:
+        return self._catalog
+
+    async def list_profiles(self) -> ProfileDirectory:
+        self.listings += 1
+        if self._error is not None:
+            raise self._error
+        assert self._profiles is not None
+        return self._profiles
+
+
+class RecordingSwitcher:
+    """An ``EndpointSwitcher`` double: one chosen report, every endpoint recorded."""
+
+    def __init__(self, report: SwitchReport | None = None) -> None:
+        self.report = report if report is not None else SwitchReport("switched", "connected")
+        self.dialled: list[str] = []
+
+    async def switch_to_endpoint(self, endpoint: str) -> SwitchReport:
+        self.dialled.append(endpoint)
+        return self.report
+
+
+def test_the_profile_doubles_satisfy_their_protocols() -> None:
+    """Guard the guards: a double outside the protocol proves nothing."""
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    assert isinstance(admin, ProfileAdmin)
+    assert isinstance(admin, ModelAdmin)
+    assert isinstance(RecordingSwitcher(), EndpointSwitcher)
+    # And the U2-era double is deliberately *not* a ProfileAdmin — that is the
+    # "this gateway cannot list profiles" state, not a broken double.
+    assert not isinstance(FakeAdminClient(catalog()), ProfileAdmin)
+
+
+def profile_app(
+    admin: object,
+    switcher: RecordingSwitcher | None = None,
+    *,
+    endpoints: Mapping[str, str] | None = None,
+    current: str = "",
+) -> TalariaApp:
+    controls = ReplayControls(paused=True)
+    source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
+    return TalariaApp(
+        source,
+        mode="live",
+        controls=controls,
+        dispatcher=RecordingDispatcher(),
+        admin_client=admin,  # type: ignore[arg-type]
+        switcher=switcher,
+        profile_endpoints=FIXTURE_ENDPOINTS if endpoints is None else endpoints,
+        current_profile=current,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_picker_lists_profiles_with_dialability_marked() -> None:
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    app = profile_app(admin, RecordingSwitcher())
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        rows = app.picker.row_texts
+        assert len(rows) == 3
+        assert "alpha-fixture" in rows[0] and NOT_RUNNING_SUFFIX not in rows[0]
+        assert "beta-fixture" in rows[1] and NOT_RUNNING_SUFFIX in rows[1]
+        assert "gamma-fixture" in rows[2] and NO_ENDPOINT_SUFFIX in rows[2]
+        assert app.focused is app.composer.text_area
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_profile_whose_gateway_is_not_running_is_refused_before_any_dial() -> None:
+    """The property that matters: the operator stays connected."""
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    switcher = RecordingSwitcher()
+    app = profile_app(admin, switcher)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        # Row 2 is ``beta-fixture``: address known, gateway down.
+        app.composer.text = "/profiles 2"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert switcher.dialled == []
+        assert "beta-fixture" in app.composer.notice
+        assert "not running" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_running_profile_talaria_has_no_address_for_is_also_refused_first() -> None:
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    switcher = RecordingSwitcher()
+    app = profile_app(admin, switcher)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 3"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert switcher.dialled == []
+        assert "endpoint" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_dialable_profile_switches_to_its_configured_endpoint() -> None:
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    switcher = RecordingSwitcher()
+    app = profile_app(admin, switcher)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert switcher.dialled == [FIXTURE_ENDPOINTS["alpha-fixture"]]
+        assert app.current_profile == "alpha-fixture"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_credential_refusal_on_the_new_endpoint_names_it_and_says_why() -> None:
+    """KTD6's common case: each profile's dashboard mints its own token."""
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    switcher = RecordingSwitcher(
+        SwitchReport(
+            "credential_unavailable",
+            "disconnected",
+            "no gateway credential: run `talaria refresh-credential`",
+        )
+    )
+    app = profile_app(admin, switcher)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        notice = app.composer.notice
+        assert "credential_unavailable" in notice
+        assert "refresh-credential" in notice
+        # And the operator is told where they now are, not left guessing.
+        assert "disconnected" in notice
+        assert app.current_profile == ""
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("report", "expects_disconnected"),
+    [
+        (SwitchReport("credential_unavailable", "disconnected", "no credential"), True),
+        (SwitchReport("auth_failed", "auth_failed", "the gateway said no"), True),
+        (SwitchReport("connect_failed", "disconnected", "nothing answered"), True),
+        (SwitchReport("refused_endpoint", "connected", "not a valid URL"), False),
+        (SwitchReport("unsupported", "connected", "no resolver"), False),
+    ],
+)
+async def test_every_failed_switch_leaves_a_named_state_on_screen(
+    report: SwitchReport, expects_disconnected: bool
+) -> None:
+    """A half-completed switch must never be silent (U4's fourth failure mode)."""
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    app = profile_app(admin, RecordingSwitcher(report))
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        notice = app.composer.notice
+        assert notice.startswith(PROFILE_SWITCH_FAILED)
+        assert report.reason in notice
+        assert report.detail in notice
+        if expects_disconnected:
+            assert report.state in notice
+            assert "previous gateway is closed" in notice
+        else:
+            assert "still connected" in notice
+        # A failed switch never claims the profile was taken.
+        assert app.current_profile == ""
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_cannot_switch_says_so_and_stays_connected() -> None:
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    app = profile_app(admin, switcher=None)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.composer.notice == PROFILE_SWITCH_UNAVAILABLE
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_empty_profile_list_renders_as_a_claim_the_gateway_made() -> None:
+    admin = FakeProfileAdmin(profiles=directory())
+    app = profile_app(admin, RecordingSwitcher())
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.picker.header_text == NO_PROFILES
+        assert app.picker.row_texts == ()
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_listing_is_distinguishable_from_an_empty_one() -> None:
+    admin = FakeProfileAdmin(error=AdminError("unauthorized", "the gateway refused it"))
+    app = profile_app(admin, RecordingSwitcher())
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.picker.header_text.startswith(PROFILES_FAILURE_PREFIX)
+        assert app.picker.header_text != NO_PROFILES
+        assert app.profiles is None
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_that_cannot_list_profiles_says_so_rather_than_raising() -> None:
+    """A U2-era admin client has no ``list_profiles``; that is a state, not a bug."""
+    app = profile_app(FakeAdminClient(TWO_PROVIDER_CATALOG), RecordingSwitcher())
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        assert app.profiles is None
+        assert app.profiles_failure == PROFILES_UNAVAILABLE
+
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        assert app.composer.notice == PROFILES_UNAVAILABLE
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_selection_before_any_listing_is_refused_and_named() -> None:
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    switcher = RecordingSwitcher()
+    app = profile_app(admin, switcher)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert switcher.dialled == []
+        assert PROFILES_NOT_FETCHED in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_selection_against_a_stale_epoch_is_refused_rather_than_dialled() -> None:
+    """KTD4 for profiles: a switch lands on a different gateway by design."""
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    switcher = RecordingSwitcher()
+    app = profile_app(admin, switcher)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app._connection_epoch += 1
+
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert switcher.dialled == []
+        assert PROFILES_STALE_EPOCH in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_switching_to_the_profile_already_connected_is_refused() -> None:
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    switcher = RecordingSwitcher()
+    app = profile_app(admin, switcher, current="alpha-fixture")
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert switcher.dialled == []
+        assert "already connected" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_the_two_modes_share_one_region_and_replace_each_other() -> None:
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    app = profile_app(admin, RecordingSwitcher())
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_model_catalog()
+        await app.load_profiles()
+
+        app.composer.text = "/models"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        assert app.picker.mode == "models"
+        models_rows = app.picker.row_texts
+        assert any("Anthropic" in row for row in models_rows)
+
+        # Asking for the other mode while open switches to it rather than
+        # folding the region away and making the operator type it twice.
+        app.composer.text = "/profiles"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        assert str(app.picker.mode) == "profiles"
+        assert app.picker.showing is True
+        profile_rows = app.picker.row_texts
+        assert any("alpha-fixture" in row for row in profile_rows)
+        assert not any("Anthropic" in row for row in profile_rows)
+        assert profile_rows != models_rows
+
+        # Asking again for the mode already showing is the ordinary fold.
+        app.composer.text = "/profiles"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        assert app.picker.showing is False
+        await app.shutdown_sources()
+
+
+def test_no_fixture_in_this_module_names_a_real_profile() -> None:
+    """R12, asserted rather than promised.
+
+    Every profile name this file uses is one of the three synthetic ones, and
+    each carries the ``-fixture`` suffix so a real name copied in from a live
+    probe cannot pass unnoticed.
+    """
+    names = {entry.name for entry in THREE_PROFILES.profiles} | set(FIXTURE_ENDPOINTS)
+    assert names == {"alpha-fixture", "beta-fixture", "gamma-fixture"}
+    assert all(name.endswith("-fixture") for name in names)
+    # And no endpoint in the fixtures leaves loopback.
+    assert all(url.startswith("ws://127.0.0.1:") for url in FIXTURE_ENDPOINTS.values())

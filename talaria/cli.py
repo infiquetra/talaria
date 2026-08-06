@@ -443,11 +443,39 @@ def build_live_app(
     # e.g. a scheme neither surface actually reaches) — that failure belongs to
     # the picker alone and must not take the whole launch down with it, so it
     # is caught here and the picker instead renders "unavailable" (R7).
-    admin_client: AdminClient | None
-    try:
-        admin_client = AdminClient(target.url, credential_provider)
-    except AdminError:
-        admin_client = None
+    def admin_for(endpoint: str) -> AdminClient | None:
+        try:
+            return AdminClient(endpoint, credential_for(endpoint))
+        except AdminError:
+            return None
+
+    def credential_for(endpoint: str) -> LoopbackTokenProvider:
+        """KTD6: a fresh provider bound to the endpoint about to be dialled.
+
+        Fresh, and never the one already in hand. Each profile's dashboard
+        mints its own token, and a provider that has cached a prompt-typed
+        value would carry the previous gateway's credential to the next one —
+        where the refusal would read as an authentication problem rather than
+        as "that credential was never for this gateway".
+
+        ``allow_prompt=False`` for the same reason
+        :func:`_prime_credential` seals the prompt before the interface starts:
+        a switch happens inside a running Textual application that owns the
+        screen, so a hidden prompt issued from here would be invisible and
+        would present as a hung switch. A profile whose credential is not in
+        the file therefore surfaces as ``credential_unavailable`` with the
+        reason on screen, which is the named state U4 requires.
+
+        ``endpoint`` is unused today and named anyway: the moment the
+        credential file grows a per-endpoint form (explicitly out of scope,
+        Scope Boundaries), this is the one signature that has to change, and a
+        parameter that is already there makes that a body edit instead of a
+        call-site hunt.
+        """
+        del endpoint
+        return LoopbackTokenProvider(credentials_path=credentials, allow_prompt=False)
+
+    admin_client: AdminClient | None = admin_for(target.url)
 
     recorder: FrameRecorder | None = None
     requested = getattr(args, "record", None)
@@ -469,12 +497,16 @@ def build_live_app(
         target,
         credential_provider,
         recorder=recorder,
+        credential_factory=credential_for,
     )
     app = TalariaApp(
         source,
         mode="live",
         dispatcher=source,
         admin_client=admin_client,
+        admin_factory=admin_for,
+        switcher=source,
+        profile_endpoints=config_module.profile_endpoints(cfg),
         status_runner=_build_status_runner(cfg),
         status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
         paste_threshold=_build_paste_threshold(cfg),

@@ -107,6 +107,38 @@ uv tool install talaria
 talaria
 ```
 
+### Switching Hermes profile
+
+`/profiles` opens a picker listing the profiles the connected Hermes knows about, with each one's
+configured model and whether its gateway is running. Selecting a row **dials that profile's gateway**
+and re-resolves the credential for it — Talaria never writes Hermes's own active-profile setting,
+which by Hermes's own documentation "does not retarget the already-running dashboard process" and so
+would change a machine-wide preference without moving the session in front of you.
+
+The singular `/profile` is a Hermes command and still reaches Hermes; the plural is Talaria's. Both
+Talaria-local names are marked `local` in the command listing.
+
+Hermes publishes no address for a profile's gateway — measured on 2026-08-06, `GET /api/profiles`
+returns names, paths, models and liveness, and no host or port — so Talaria needs to be told where
+each one listens:
+
+```toml
+# ~/.talaria/config.toml
+[profiles.endpoints]
+work = "ws://127.0.0.1:9119/api/ws"
+lab  = "ws://127.0.0.1:9219/api/ws"
+```
+
+A profile with no entry here is still listed, marked `[no endpoint configured]`, and selecting it is
+refused before anything is dialled — as is a profile whose gateway is not running, marked
+`[gateway not running]`. Those are two different problems with two different fixes, so they are two
+different messages.
+
+Each profile's dashboard mints its own session token, and `<config_dir>/credentials` holds exactly
+one. A switch to a profile whose token you do not currently hold therefore fails with
+`credential_unavailable` and the reason on screen — nothing was dialled, so no gateway refused
+anything. Run `talaria refresh-credential` against the profile you want and try again.
+
 ### Supplying the gateway credential
 
 The credential is acquired once per dial and rides the WebSocket URL's `?token=` query parameter,

@@ -1,4 +1,4 @@
-"""The model picker — U2's foldable region (KTD3, 2026-08-06 model-picker plan).
+"""The picker — U2's models region and U4's profiles region (KTD3, 2026-08-06 plan).
 
 **Same shape as :class:`~talaria.ui.palette.PaletteRegion`, and for the same
 reason.** ``talaria/ui/palette.py:1-22`` rejected a modal search box because it
@@ -30,18 +30,46 @@ and a model name (in ``talaria/ui/app.py``). :meth:`PickerRegion.apply` builds
 its on-screen rows from that same function rather than walking the catalogue a
 second time, so the numbers on screen and the numbers the app resolves against
 cannot drift apart from each other.
+
+**One region, two modes, and why it is not two regions (U4).** The profile
+picker is the same foldable region in a different mode rather than a second
+widget. Two regions would need two toggles, two places to keep the KTD3 rule
+that neither captures the caret, and — since only one can usefully be open at a
+time — a rule about what happens when both are. A mode is that rule, expressed
+as data: opening one closes the other by construction.
+
+**Dialability is a *pair* of facts, and only one of them comes from Hermes.**
+``gateway_running`` says a gateway for that profile is up. It does not say
+where: ``GET /api/profiles`` publishes no host, port or URL at all (measured —
+see ``talaria/transport/admin.py``'s docstring for the fourteen keys it does
+publish). The endpoint comes from Talaria's own ``[profiles.endpoints]``
+configuration, so a row is dialable only when the gateway is running **and**
+Talaria knows an address for it, and :class:`ProfileRow` carries the two
+reasons separately because they need different fixes: start the gateway, or add
+a line to ``config.toml``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from talaria.domain.models_catalog import ModelProvider, ProviderCatalog
+from talaria.domain.models_catalog import (
+    ModelProvider,
+    ProfileDirectory,
+    ProviderCatalog,
+)
 from talaria.ui.literal import literal_text
+
+#: Which listing the region is showing. ``"models"`` is U2's and stays the
+#: default, so nothing about the model picker changes for an operator who never
+#: types ``/profiles``.
+PickerMode = Literal["models", "profiles"]
 
 #: What the header says when nothing has been fetched yet — distinct from "the
 #: gateway has no providers", which is a claim, and from a fetch that failed,
@@ -68,6 +96,25 @@ UNAUTHENTICATED_SUFFIX = " [unauthenticated]"
 
 #: Said in place of a provider's model list when the gateway sent none.
 NO_MODELS_LINE = "    (no models)"
+
+# ── U4's profile mode ─────────────────────────────────────────────────────
+
+#: Header before any profile listing has been read.
+PROFILES_NOT_YET_FETCHED = "profiles: not fetched yet"
+
+#: Prefix for the line naming a profile listing Talaria could not read.
+PROFILES_FAILURE_PREFIX = "profiles unavailable — "
+
+#: Said for an empty, but successfully fetched, directory.
+NO_PROFILES = "profiles: the gateway reports no profiles"
+
+#: Marks the profile this session is already connected to.
+CURRENT_PROFILE_MARKER = "* "
+
+#: Why a listed profile cannot be dialled. Two reasons, kept apart because they
+#: have two different fixes — start the gateway, or tell Talaria its address.
+NOT_RUNNING_SUFFIX = " [gateway not running]"
+NO_ENDPOINT_SUFFIX = " [no endpoint configured]"
 
 
 @dataclass(frozen=True)
@@ -163,6 +210,107 @@ def warning_line(catalog: ProviderCatalog | None) -> str:
     return f"{PROVIDER_WARNING_PREFIX}{'; '.join(warnings)}"
 
 
+@dataclass(frozen=True)
+class ProfileRow:
+    """One profile, addressable by the index ``/profiles <n>`` selects.
+
+    ``dialable`` is the conjunction the app checks before anything is dialled,
+    and ``undialable_reason`` is the half of it that failed, so the refusal on
+    screen names the fix rather than restating the refusal.
+
+    ``endpoint`` is Talaria's own configured address for this profile and is
+    ``""`` when there is none — never a guess. Nothing renders it: the listing
+    shows the profile's name, and an endpoint is exactly the string an operator
+    pastes a token into.
+    """
+
+    index: int
+    name: str
+    model: str
+    provider: str
+    gateway_running: bool
+    endpoint: str
+    is_current: bool
+
+    @property
+    def dialable(self) -> bool:
+        return self.gateway_running and bool(self.endpoint)
+
+    @property
+    def undialable_reason(self) -> str:
+        """Why this row cannot be dialled, or ``""`` when it can be.
+
+        The gateway's own answer is checked first. When both are missing that
+        is the one to say: a configured endpoint for a gateway that is not
+        running would still fail, so "start it" is the first step either way.
+        """
+        if not self.gateway_running:
+            return "its gateway is not running"
+        if not self.endpoint:
+            return "Talaria has no configured endpoint for it"
+        return ""
+
+
+def flatten_profiles(
+    directory: ProfileDirectory,
+    endpoints: Mapping[str, str],
+    *,
+    current: str = "",
+) -> tuple[ProfileRow, ...]:
+    """Every profile, in listing order, numbered from 1 and marked for dialability.
+
+    Pure, and the single place the numbering is assigned — the widget renders
+    from it and the app resolves ``/profiles <n>`` against it, so the number on
+    screen and the number the app looks up cannot drift (the same contract
+    :func:`flatten_selectable` holds for models).
+    """
+    return tuple(
+        ProfileRow(
+            index=index,
+            name=entry.name,
+            model=entry.model,
+            provider=entry.provider,
+            gateway_running=entry.gateway_running,
+            endpoint=endpoints.get(entry.name, ""),
+            is_current=bool(current) and entry.name == current,
+        )
+        for index, entry in enumerate(directory.profiles, start=1)
+    )
+
+
+def format_profile_row(row: ProfileRow) -> str:
+    """One profile's row: number, name, its configured model, dialability."""
+    marker = CURRENT_PROFILE_MARKER if row.is_current else "  "
+    described = row.name
+    if row.model:
+        described = f"{described} — {row.model}"
+        if row.provider:
+            described = f"{described} ({row.provider})"
+    elif row.provider:
+        described = f"{described} ({row.provider})"
+    if row.gateway_running and not row.endpoint:
+        described += NO_ENDPOINT_SUFFIX
+    elif not row.gateway_running:
+        described += NOT_RUNNING_SUFFIX
+    return f"{marker}{row.index:>3}. {described}"
+
+
+def profiles_header_line(directory: ProfileDirectory | None, failure: str) -> str:
+    """The count that stays on screen when the profile rows are folded away.
+
+    ``failure`` outranks ``directory`` for the reason :func:`header_line`
+    documents: a listing held from an earlier read must not paper over a read
+    that just failed.
+    """
+    if failure:
+        return f"{PROFILES_FAILURE_PREFIX}{failure}"
+    if directory is None:
+        return PROFILES_NOT_YET_FETCHED
+    if directory.is_empty:
+        return NO_PROFILES
+    return f"profiles: {len(directory.profiles)} listed"
+
+
 class PickerRegion(Vertical):
     """The foldable model picker: providers, their models, current marked.
 
@@ -196,11 +344,18 @@ class PickerRegion(Vertical):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.showing = False
+        #: Which listing is on screen (U4). One region, two modes — see the
+        #: module docstring.
+        self.mode: PickerMode = "models"
         self._header: Static | None = None
         self._warning: Static | None = None
         self._rows: list[Static] = []
         self._catalog: ProviderCatalog | None = None
         self._failure = ""
+        self._profiles: ProfileDirectory | None = None
+        self._profiles_failure = ""
+        self._endpoints: Mapping[str, str] = {}
+        self._current_profile = ""
 
     def compose(self) -> ComposeResult:
         self._header = Static(
@@ -232,18 +387,70 @@ class PickerRegion(Vertical):
     def failure(self) -> str:
         return self._failure
 
+    @property
+    def profiles(self) -> ProfileDirectory | None:
+        return self._profiles
+
+    @property
+    def profiles_failure(self) -> str:
+        return self._profiles_failure
+
     # ── rendering ────────────────────────────────────────────────────────
 
     async def apply(self, catalog: ProviderCatalog | None, *, failure: str = "") -> None:
-        """Render the listing. Safe to call before anything has been fetched."""
+        """Render the model listing. Safe to call before anything is fetched.
+
+        Rendering is skipped while the region is showing *profiles*: a model
+        catalogue arriving from a background fetch must not silently replace
+        the listing the operator is currently reading. The value is still
+        stored, so switching back shows the newer one.
+        """
         self._catalog = catalog
         self._failure = failure
+        if self.mode != "models":
+            return
+        await self._repaint()
+
+    async def apply_profiles(
+        self,
+        directory: ProfileDirectory | None,
+        *,
+        failure: str = "",
+        endpoints: Mapping[str, str] | None = None,
+        current: str = "",
+    ) -> None:
+        """Render the profile listing (U4). Safe to call before any fetch.
+
+        ``endpoints`` is Talaria's own name-to-address map and decides the
+        second half of dialability; ``current`` names the profile this session
+        is already on, so the operator is not offered a switch to where they
+        already are as though it were a move.
+        """
+        self._profiles = directory
+        self._profiles_failure = failure
+        if endpoints is not None:
+            self._endpoints = endpoints
+        self._current_profile = current
+        if self.mode != "profiles":
+            return
+        await self._repaint()
+
+    async def _repaint(self) -> None:
+        """Draw whichever mode is current, from whatever is already held."""
         self.set_class(self.showing, "-showing")
 
-        if self._header is not None:
-            self._header.update(literal_text(header_line(catalog, failure)))
-        if self._warning is not None:
+        if self.mode == "profiles":
+            catalog = None
+            head = profiles_header_line(self._profiles, self._profiles_failure)
+            said = ""
+        else:
+            catalog = self._catalog
+            head = header_line(catalog, self._failure)
             said = warning_line(catalog)
+
+        if self._header is not None:
+            self._header.update(literal_text(head))
+        if self._warning is not None:
             self._warning.update(literal_text(said))
             # Hidden rather than blank when there is nothing to say — the same
             # reason ``PaletteRegion._degraded`` does this: an empty
@@ -251,7 +458,9 @@ class PickerRegion(Vertical):
             # render, which is worse than showing nothing at all.
             self._warning.set_class(bool(said), "-said")
 
-        wanted = self._wanted_lines(catalog)
+        wanted = self._wanted_profile_lines() if self.mode == "profiles" else (
+            self._wanted_lines(catalog)
+        )
         while len(self._rows) > len(wanted):
             await self._rows.pop().remove()
         for index, text in enumerate(wanted):
@@ -277,14 +486,33 @@ class PickerRegion(Vertical):
                 lines.append(format_model_row(next(rows)))
         return lines
 
-    async def toggle(self) -> bool:
-        """Show or hide the whole region. Renders whatever is already held.
+    def _wanted_profile_lines(self) -> list[str]:
+        if not self.showing or self._profiles is None:
+            return []
+        return [
+            format_profile_row(row)
+            for row in flatten_profiles(
+                self._profiles, self._endpoints, current=self._current_profile
+            )
+        ]
 
-        Fetching is not this method's job — the app fetches the model
-        catalogue once per connection epoch (KTD4), the same way it fetches
-        the command catalogue, and this only ever renders what that fetch
-        already produced.
+    async def toggle(self, mode: PickerMode = "models") -> bool:
+        """Show or hide the region in ``mode``. Renders whatever is held.
+
+        Asking for a mode the region is not showing **switches to it and shows
+        it**, rather than toggling: an operator who has ``/models`` open and
+        types ``/profiles`` means "show me profiles", and a literal toggle
+        would close the region and leave them typing it a second time. Asking
+        for the mode already on screen is the ordinary fold.
+
+        Fetching is not this method's job — the app fetches both listings once
+        per connection epoch (KTD4), the same way it fetches the command
+        catalogue, and this only ever renders what those fetches produced.
         """
-        self.showing = not self.showing
-        await self.apply(self._catalog, failure=self._failure)
+        if self.showing and self.mode != mode:
+            self.mode = mode
+        else:
+            self.mode = mode
+            self.showing = not self.showing
+        await self._repaint()
         return self.showing

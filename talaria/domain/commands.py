@@ -28,6 +28,9 @@ Three things do get names, and each is a closed set with evidence behind it:
   same one a typed ``/model`` line takes. What makes ``/models`` local is that
   the name ``/models`` itself is never dispatched to the gateway — the
   singular ``/model`` it composes is a real, separately-catalogued command.
+  ``/profiles`` (U4) joins the set on the same terms: the gateway owns the
+  singular ``/profile``, and the plural opens a local region whose selection
+  dials a different gateway rather than sending anything to this one.
 * **The official-client-local entries** — ``/density``, ``/logs``, ``/mouse``,
   ``/sessions``, the four ``_TUI_EXTRA`` rows at ``tui_gateway/server.py:11514``
   (``7f4d15515``). The gateway advertises them in ``commands.catalog`` and
@@ -323,7 +326,7 @@ def _is_client_local(name: str, category: str) -> bool:
 
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
-LocalAction = Literal["quit", "pause", "resume", "speed", "models"]
+LocalAction = Literal["quit", "pause", "resume", "speed", "models", "profiles"]
 
 
 @dataclass(frozen=True)
@@ -364,6 +367,21 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "/models",
         "models",
         "Open the model picker, or select a listed row by its number",
+        argument_hint="[index]",
+    ),
+    # Plural for the same reason and with the same hazard (U4). The gateway
+    # owns the singular ``/profile``; ``/profiles`` is free and is Talaria's.
+    # An operator who types ``/profile`` reaches Hermes and one who types
+    # ``/profiles`` reaches this picker — a one-character difference between
+    # two different destinations, which is why both names carry the ``local``
+    # availability marker in the listing.
+    #
+    # Selecting a profile here never mutates the gateway's own active-profile
+    # setting (KTD5): it dials that profile's gateway instead.
+    LocalCommand(
+        "/profiles",
+        "profiles",
+        "Open the profile picker, or switch to a listed profile by its number",
         argument_hint="[index]",
     ),
 )

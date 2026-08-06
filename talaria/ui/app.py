@@ -31,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
@@ -71,7 +71,7 @@ from talaria.domain.decode import (
     decode_dispatch_result,
 )
 from talaria.domain.models import ConnectionStatus, PendingPrompt, PromptKind, RunMode
-from talaria.domain.models_catalog import ProviderCatalog
+from talaria.domain.models_catalog import ProfileDirectory, ProviderCatalog
 from talaria.domain.normalize import normalize_frame
 from talaria.domain.projection import (
     DEFAULT_VIEWPORT_ROWS,
@@ -119,12 +119,12 @@ from talaria.transport.rpc import (
     NOT_CONNECTED,
     RpcOutcome,
 )
-from talaria.transport.source import FrameRecord, FrameSource
+from talaria.transport.source import FrameRecord, FrameSource, SwitchReport
 from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
 from talaria.ui.focus import CaretReleased
 from talaria.ui.palette import PaletteRegion
-from talaria.ui.picker import PickerRegion, flatten_selectable
+from talaria.ui.picker import PickerRegion, flatten_profiles, flatten_selectable
 from talaria.ui.prompts import (
     DENY_ALL_CHOICE,
     RESPOND_METHODS,
@@ -319,6 +319,36 @@ MODELS_STALE_EPOCH: Final[str] = (
     "the connection changed since this list was fetched — reopen /models to refresh"
 )
 
+#: Said when ``/profiles <n>`` is typed before anything has been fetched (U4).
+PROFILES_NOT_FETCHED: Final[str] = (
+    "no profile list fetched yet — open the picker with a bare /profiles first"
+)
+
+#: The profile listing is epoch-scoped for the same reason the model list is
+#: (KTD4): a switch or a reconnect may have landed on a different gateway, whose
+#: profile inventory is its own.
+PROFILES_STALE_EPOCH: Final[str] = (
+    "the connection changed since this list was fetched — reopen /profiles to refresh"
+)
+
+#: Said when the assembled session has no way to list profiles at all — a
+#: replay, or a gateway whose admin surface could not be reached. Distinct from
+#: "the fetch failed", which names a gateway that was asked.
+PROFILES_UNAVAILABLE: Final[str] = (
+    "this session cannot list profiles: no admin connection to the gateway"
+)
+
+#: Said when a switch is asked of a session that cannot make one — no
+#: per-endpoint credential resolver, so KTD6 cannot be honoured. Nothing is
+#: dropped, and saying so is the point: the operator is still connected.
+PROFILE_SWITCH_UNAVAILABLE: Final[str] = (
+    "this session cannot switch gateways — still connected to the current one"
+)
+
+#: How the transcript names a switch that closed the old connection without
+#: making the new one. The report's own reason and detail follow.
+PROFILE_SWITCH_FAILED: Final[str] = "profile switch failed:"
+
 #: How the transcript names the compatibility check's blocking rows. The verdict
 #: document is where "not ready" is decided; this is the operator's copy of the
 #: same evidence, at the moment it is discovered.
@@ -495,6 +525,39 @@ class ModelAdmin(Protocol):
     async def model_options(self, *, profile: str | None = None) -> ProviderCatalog: ...
 
 
+@runtime_checkable
+class ProfileAdmin(Protocol):
+    """The one thing the profile picker needs from the admin transport (U4).
+
+    Kept separate from :class:`ModelAdmin` rather than folded into it, and the
+    reason is a real state and not tidiness: an admin client that can read
+    models but not profiles is what a gateway too old to serve
+    ``GET /api/profiles`` produces, and it is what every U2-era test double
+    already is. The app asks structurally — ``isinstance(client, ProfileAdmin)``
+    — so that case renders "profiles unavailable" instead of raising
+    ``AttributeError`` three layers down.
+
+    There is deliberately no write method here. KTD5: Talaria never calls
+    ``POST /api/profiles/active``, and a protocol that named such a method
+    would be the seam through which one arrives.
+    """
+
+    async def list_profiles(self) -> ProfileDirectory: ...
+
+
+@runtime_checkable
+class EndpointSwitcher(Protocol):
+    """Retargets the live transport at a different gateway (U4, KTD5/KTD6).
+
+    Satisfied by :class:`~talaria.transport.source.LiveSource`. Declared as a
+    shape for the same reason :class:`LiveDispatcher` is: a test proves what
+    Talaria does with each outcome by choosing the outcome, not by standing up
+    a second gateway to provoke it.
+    """
+
+    async def switch_to_endpoint(self, endpoint: str) -> SwitchReport: ...
+
+
 class TalariaApp(App[None]):
     """The replay-driven shell: transcript, sub-agent rows, status region, composer."""
 
@@ -525,6 +588,11 @@ class TalariaApp(App[None]):
         # model catalogue is read once per connection epoch (KTD4), tied to
         # ``connected`` rather than to being asked for.
         Binding("f6", "toggle_picker", "models", priority=True),
+        # ``/profiles`` is the way in (U4); f7 is the same symmetry argument as
+        # f6 one line up. Neither key fetches: both listings are read once per
+        # connection epoch (KTD4), tied to ``connected`` rather than to being
+        # asked for.
+        Binding("f7", "toggle_profiles", "profiles", priority=True),
     ]
 
     def __init__(
@@ -539,6 +607,10 @@ class TalariaApp(App[None]):
         mount_cap: int = DEFAULT_MOUNT_CAP,
         dispatcher: LiveDispatcher | None = None,
         admin_client: ModelAdmin | None = None,
+        admin_factory: Callable[[str], ModelAdmin | None] | None = None,
+        switcher: EndpointSwitcher | None = None,
+        profile_endpoints: Mapping[str, str] | None = None,
+        current_profile: str = "",
         call_timeout: float | None = 30.0,
         paste_threshold: PasteThreshold | None = None,
         startup: StartupSelection | None = None,
@@ -556,6 +628,23 @@ class TalariaApp(App[None]):
         #: every test that does not care about the picker, the same shape
         #: :attr:`dispatcher` already takes.
         self.admin_client = admin_client
+        #: Builds the admin client for a *different* endpoint (U4). Called
+        #: after a successful switch, because :class:`AdminClient` derives its
+        #: origin once at construction: without this the picker would keep
+        #: reading the gateway Talaria has just stopped talking to, and would
+        #: do it silently — the worst shape of wrong, since the listing still
+        #: renders and still looks current.
+        self.admin_factory = admin_factory
+        #: The live transport, when it can be retargeted (U4). ``None`` in
+        #: replay and in every test that has no second gateway to reach.
+        self.switcher = switcher
+        #: Talaria's own name-to-gateway-URL map for profiles. Hermes publishes
+        #: no endpoint for a profile, so this is the only source of one — see
+        #: ``talaria/transport/admin.py``'s docstring.
+        self.profile_endpoints: Mapping[str, str] = dict(profile_endpoints or {})
+        #: Which profile this session believes it is connected to, or ``""``
+        #: when nothing said. Used only to mark a row, never to decide one.
+        self.current_profile = current_profile
         #: KTD16's bounds, resolved from configuration by the caller.
         self.paste_threshold = (
             paste_threshold if paste_threshold is not None else PasteThreshold()
@@ -577,6 +666,16 @@ class TalariaApp(App[None]):
         #: vocabulary lives in :class:`~talaria.transport.admin.AdminError`, one
         #: layer below the decode (R7).
         self.model_catalog_failure = ""
+        #: The gateway's profile directory (U4), or ``None`` until it has been
+        #: read for this connection epoch. Re-read on every ``connected``
+        #: transition for the same KTD4 reason the model catalogue is, and
+        #: with more force: a switch is *by definition* a landing on a
+        #: different gateway, whose profile inventory is its own.
+        self.profiles: ProfileDirectory | None = None
+        #: Why the last profile read failed, or ``""``. Held beside
+        #: :attr:`profiles` for the same R7 reason :attr:`model_catalog_failure`
+        #: is held beside :attr:`model_catalog`.
+        self.profiles_failure = ""
         #: KTD7's resolved startup path, or ``None`` when the caller does not
         #: want a session opened — which is every test that drives the app with
         #: a dispatcher double, and replay, where there is nothing to open.
@@ -610,6 +709,8 @@ class TalariaApp(App[None]):
         #: The model catalogue's own fetch task, held separately from
         #: :attr:`_catalog_task` for the same "not an operator's call" reason.
         self._model_catalog_task: asyncio.Task[None] | None = None
+        #: The profile listing's own fetch task, for the same reason.
+        self._profiles_task: asyncio.Task[None] | None = None
         #: The one-shot live startup sequence: compatibility check, then KTD7's
         #: session open. Held in its own attribute for the same reason the
         #: catalogue fetch is — it is not an operator's call, so
@@ -641,6 +742,8 @@ class TalariaApp(App[None]):
         #: fetched, or the fetch that ran failed" — indistinguishable from each
         #: other here on purpose, since both refuse a selection the same way.
         self._model_catalog_epoch = 0
+        #: The same stamp for :attr:`profiles`.
+        self._profiles_epoch = 0
         #: Request ids whose respond is already in flight. The render tick fires
         #: every 50ms and a terminal-read answer is dispatched from it, so
         #: without this the same read is answered once per tick until the reply
@@ -1126,6 +1229,7 @@ class TalariaApp(App[None]):
             self._connection_epoch += 1
             self.fetch_catalog()
             self.fetch_model_catalog()
+            self.fetch_profiles()
             self.begin_live_startup()
 
     def note_reconnect(self, epoch: int) -> None:
@@ -1788,7 +1892,10 @@ class TalariaApp(App[None]):
     # ── U2: the model picker ──────────────────────────────────────────────
 
     async def action_toggle_picker(self) -> None:
-        await self.picker.toggle()
+        await self.picker.toggle("models")
+
+    async def action_toggle_profiles(self) -> None:
+        await self.picker.toggle("profiles")
 
     def fetch_model_catalog(self) -> None:
         """Start the admin catalogue read, once per connection epoch (KTD4).
@@ -1863,6 +1970,79 @@ class TalariaApp(App[None]):
         except NoMatches:  # pragma: no cover - teardown ordering
             return
         await picker.apply(self.model_catalog, failure=self.model_catalog_failure)
+
+    # ── U4: the profile picker ────────────────────────────────────────────
+
+    def fetch_profiles(self) -> None:
+        """Start the profile-directory read, once per connection epoch (KTD4).
+
+        Wired to the same ``connected`` transition as
+        :meth:`fetch_model_catalog` and re-read as unconditionally, for a
+        sharper version of the same reason: ``gateway_running`` is a fact about
+        the moment it was read, and a switch is precisely the case where the
+        previous gateway's answer is about a machine Talaria is no longer
+        talking to.
+        """
+        if self.mode != "live" or self._teardown_started:
+            return
+        if not isinstance(self.admin_client, ProfileAdmin):
+            # Not an error and not a failed fetch: no gateway was asked. The
+            # picker says so in its own words rather than showing an empty
+            # list, which would be a claim about the gateway's inventory.
+            self.profiles = None
+            self.profiles_failure = PROFILES_UNAVAILABLE
+            return
+        if self._profiles_task is not None and not self._profiles_task.done():
+            return
+        self._profiles_task = self._supervise(
+            asyncio.create_task(self._load_profiles_and_discard()),
+            "the profile listing fetch",
+        )
+
+    async def _load_profiles_and_discard(self) -> None:
+        await self.load_profiles()
+
+    async def load_profiles(self) -> ProfileDirectory | None:
+        """Read the profile directory, or record why it could not be read.
+
+        A failure leaves :attr:`profiles` at ``None`` rather than an empty
+        directory — AE9's honesty clause again: an empty listing says the
+        gateway knows of no profiles, which is a claim, while ``None`` plus
+        :attr:`profiles_failure` says Talaria could not read the list (R7).
+        """
+        client = self.admin_client
+        if not isinstance(client, ProfileAdmin):
+            self.profiles = None
+            self.profiles_failure = PROFILES_UNAVAILABLE
+            await self.render_profiles()
+            return None
+        epoch = self._connection_epoch
+        try:
+            directory = await client.list_profiles()
+        except AdminError as exc:
+            self.profiles = None
+            self.profiles_failure = str(exc)
+            self._profiles_epoch = 0
+            await self.render_profiles()
+            return None
+        self.profiles = directory
+        self.profiles_failure = ""
+        self._profiles_epoch = epoch
+        await self.render_profiles()
+        return directory
+
+    async def render_profiles(self) -> None:
+        """Push the held directory at the picker, unless the screen is gone."""
+        try:
+            picker = self.picker
+        except NoMatches:  # pragma: no cover - teardown ordering
+            return
+        await picker.apply_profiles(
+            self.profiles,
+            failure=self.profiles_failure,
+            endpoints=self.profile_endpoints,
+            current=self.current_profile,
+        )
 
     def fetch_catalog(self) -> None:
         """Start the catalogue read, if one is wanted and none is running.
@@ -2164,6 +2344,11 @@ class TalariaApp(App[None]):
             # itself uses two paragraphs down for ``GatewayInvocation``.
             self._perform_models(invocation.argument)
             return
+        if command.action == "profiles":
+            # Scheduled for the same reason ``models`` is: opening the region
+            # is instant, but selecting a row drops a socket and dials another.
+            self._perform_profiles(invocation.argument)
+            return
         if command.action == "pause":
             self.controls.pause()
         elif command.action == "resume":
@@ -2197,6 +2382,101 @@ class TalariaApp(App[None]):
 
     async def _toggle_picker_and_discard(self) -> None:
         await self.action_toggle_picker()
+
+    def _perform_profiles(self, argument: str) -> None:
+        """Route ``/profiles``: no argument opens or closes it, one switches."""
+        self.composer.clear()
+        stripped = argument.strip()
+        if not stripped:
+            self._spawn_live(self._toggle_profiles_and_discard())
+            return
+        self._spawn_live(self._switch_profile_and_discard(stripped))
+
+    async def _toggle_profiles_and_discard(self) -> None:
+        await self.action_toggle_profiles()
+
+    async def _switch_profile_and_discard(self, argument: str) -> None:
+        await self.select_profile(argument)
+
+    async def select_profile(self, argument: str) -> SwitchReport | None:
+        """Resolve ``/profiles <n>`` into a switch to that profile's gateway.
+
+        Every refusal below happens **before anything is dialled and before the
+        current connection is touched**, which is the property that matters:
+        the operator who picks a profile whose gateway is not running stays
+        exactly where they were and is told why, rather than being disconnected
+        into a wait for a machine that is not listening.
+
+        The order is: nothing fetched; a listing belonging to a connection
+        epoch that is no longer current (KTD4); an argument that is not a row
+        number; a number naming no row; a row already current; a row whose
+        gateway the *gateway itself* reports as not running; a row Talaria has
+        no configured endpoint for; and a session with no way to switch at all.
+
+        Past those, :meth:`~talaria.transport.source.LiveSource.switch_to_endpoint`
+        re-resolves the credential for the new endpoint (KTD6) and dials. Its
+        report is rendered rather than interpreted: a credential the new
+        gateway's dashboard did not mint comes back as ``credential_unavailable``
+        with its reason, and a switch that closed the old connection without
+        making a new one says so and names the state Talaria is now in.
+
+        ``POST /api/profiles/active`` is not called here or anywhere (KTD5).
+        """
+        directory = self.profiles
+        if directory is None:
+            self._notice(self.profiles_failure or PROFILES_NOT_FETCHED)
+            return None
+        if self._profiles_epoch != self._connection_epoch:
+            self._notice(PROFILES_STALE_EPOCH)
+            return None
+        if not argument.isdigit():
+            self._notice(f"/profiles wants a row number — {argument!r} is not one")
+            return None
+        index = int(argument)
+        rows = flatten_profiles(
+            directory, self.profile_endpoints, current=self.current_profile
+        )
+        row = next((r for r in rows if r.index == index), None)
+        if row is None:
+            self._notice(f"/profiles has no row {index}")
+            return None
+        if row.is_current:
+            self._notice(f"already connected to {row.name} — nothing to switch")
+            return None
+        if not row.dialable:
+            # The listing already marked this row. Saying it again on selection
+            # is deliberate: the marker is what the operator should have read,
+            # and this is what they get for not having read it — a refusal that
+            # costs nothing, rather than a dropped connection.
+            self._notice(
+                f"{row.name} cannot be dialled: {row.undialable_reason}; nothing changed"
+            )
+            return None
+        switcher = self.switcher
+        if switcher is None:
+            self._notice(PROFILE_SWITCH_UNAVAILABLE)
+            return None
+
+        report = await switcher.switch_to_endpoint(row.endpoint)
+        if report.ok:
+            self.current_profile = row.name
+            if self.admin_factory is not None:
+                # The admin surface follows the socket. See ``admin_factory``.
+                self.admin_client = self.admin_factory(row.endpoint)
+            self._notice(f"switched to {row.name}")
+            return report
+        if report.left_disconnected:
+            self._notice(
+                f"{PROFILE_SWITCH_FAILED} {report.reason} · {report.detail} "
+                f"— the connection to the previous gateway is closed "
+                f"(state: {report.state})"
+            )
+        else:
+            self._notice(
+                f"{PROFILE_SWITCH_FAILED} {report.reason} · {report.detail} "
+                f"— still connected to the previous gateway"
+            )
+        return report
 
     async def _select_model_and_discard(self, argument: str) -> None:
         await self.select_model(argument)

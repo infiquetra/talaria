@@ -190,8 +190,9 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
     assert catalog.available is False
     assert "refused" in catalog.failure
     assert catalog.gateway_entries == ()
-    # The five that never needed a gateway to be *listed* are still there
-    # (``/models`` still needs one to actually select — see U2), so an
+    # The six that never needed a gateway to be *listed* are still there
+    # (``/models`` still needs one to actually select — see U2 — and
+    # ``/profiles`` needs one to have listed anything at all, see U4), so an
     # operator whose gateway is down can still leave.
     assert {entry.name for entry in catalog.local_entries} == {
         "/quit",
@@ -199,6 +200,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
         "/resume",
         "/speed",
         "/models",
+        "/profiles",
     }
 
 
@@ -358,19 +360,32 @@ def test_dispatch_has_exactly_one_method_and_it_is_the_pinned_one() -> None:
 # ── the local control set ────────────────────────────────────────────────
 
 
-def test_the_local_set_is_pc6s_four_plus_u2s_models() -> None:
+def test_the_local_set_is_pc6s_four_plus_u2s_models_and_u4s_profiles() -> None:
     assert {command.name for command in TALARIA_LOCAL_COMMANDS} == {
         "/quit",
         "/pause",
         "/resume",
         "/speed",
         "/models",
+        "/profiles",
     }
 
 
+def test_both_picker_commands_are_plural_and_the_gateway_owns_the_singulars() -> None:
+    """The one-character difference between two destinations, pinned (U2, U4).
+
+    ``/model`` and ``/profile`` are gateway commands — probed live on
+    2026-08-06 among the catalogue's 114 names. Talaria takes only the plurals,
+    so neither local command can shadow a working gateway one.
+    """
+    names = {command.name for command in TALARIA_LOCAL_COMMANDS}
+    assert {"/models", "/profiles"} <= names
+    assert not ({"/model", "/profile"} & names)
+
+
 def test_only_the_pacing_three_are_replay_only() -> None:
-    """``/quit`` and ``/models`` work in both modes; the pacing three scale a
-    recorded clock a live session does not have."""
+    """``/quit``, ``/models`` and ``/profiles`` work in both modes; the pacing
+    three scale a recorded clock a live session does not have."""
     replay_only = {
         command.name for command in TALARIA_LOCAL_COMMANDS if command.replay_only
     }

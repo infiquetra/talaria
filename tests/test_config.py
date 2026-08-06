@@ -264,3 +264,57 @@ def test_resolved_config_is_deeply_immutable(tmp_path: Path) -> None:
 
     assert cfg.get("status", "interval_seconds") == 5
     assert DEFAULTS["status"]["interval_seconds"] == 5
+
+
+# ── U4: the profile endpoint map ──────────────────────────────────────────
+#
+# Hermes publishes no address for a profile's gateway, so this is where one
+# comes from. Every profile name below is synthetic (R12): this is a public
+# repository and the real inventory is the operator's.
+
+
+def test_no_profile_endpoint_is_configured_by_default(tmp_path: Path) -> None:
+    """The honest starting state: every profile reads as unaddressable."""
+    cfg = load_config(cwd=tmp_path)
+    assert config_module.profile_endpoints(cfg) == {}
+
+
+def test_the_operator_supplies_profile_endpoints_in_config_toml(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[profiles.endpoints]\n"
+        'alpha-fixture = "ws://127.0.0.1:9119/api/ws"\n'
+        'beta-fixture = "ws://127.0.0.1:9120/api/ws"\n'
+    )
+    cfg = load_config(cwd=tmp_path)
+    assert config_module.profile_endpoints(cfg) == {
+        "alpha-fixture": "ws://127.0.0.1:9119/api/ws",
+        "beta-fixture": "ws://127.0.0.1:9120/api/ws",
+    }
+
+
+def test_a_non_string_or_blank_endpoint_is_dropped_rather_than_coerced(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    """The value is a URL that will be dialled; ``str(7)`` is not one."""
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[profiles.endpoints]\n"
+        'alpha-fixture = "ws://127.0.0.1:9119/api/ws"\n'
+        "beta-fixture = 9120\n"
+        'gamma-fixture = "   "\n'
+    )
+    cfg = load_config(cwd=tmp_path)
+    assert config_module.profile_endpoints(cfg) == {
+        "alpha-fixture": "ws://127.0.0.1:9119/api/ws"
+    }
+
+
+def test_a_profiles_section_of_the_wrong_shape_yields_no_endpoints(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[profiles]\nendpoints = 7\n"
+    )
+    cfg = load_config(cwd=tmp_path)
+    assert config_module.profile_endpoints(cfg) == {}
