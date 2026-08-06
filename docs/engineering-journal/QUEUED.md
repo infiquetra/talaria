@@ -103,7 +103,7 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 **Effort.** Small (a documentation decision), or Medium (removing the environment credential source entirely).
 **Worth it when.** Before Talaria is used by anyone other than its author on a shared machine.
 
-**Context.** R1 asks that a running Talaria's command line **and environment** carry no credential. The argv half holds and is measured: a running process built by the real launcher and holding a live credential shows no token, no `?token=` URL and no endpoint in `ps -ww` / `/proc/<pid>/cmdline`, and every environment entry carrying the credential is one the process was launched with (`tests/transport/test_process_surface.py`). The environment half cannot hold when the operator uses KTD11's highest-precedence source, `HERMES_DASHBOARD_SESSION_TOKEN`: the kernel snapshots the environment block at `exec` and `/proc/<pid>/environ` serves that snapshot for the life of the process, so `os.environ.pop` changes nothing a reader can see; macOS exposes the same to the owning user through `ps -E`.
+**Context.** R1 asks that a running Talaria's command line **and environment** carry no credential. The argv half holds and is now measured across every shipped entry point that can hold a credential — the bare launcher, `talaria record`, and `talaria refresh-credential` — each launched as a real subprocess holding a live credential, showing no token, no `?token=` URL and no endpoint in `ps -ww` / `/proc/<pid>/cmdline`, with every environment entry carrying the credential one the process was launched with, and a classification guard that fails a new subcommand until someone declares whether it belongs on this list (`tests/transport/test_process_surface.py`). **This sentence previously read "The argv half holds and is measured" citing only the bare launcher.** That was an overclaim: the cited test built the launcher alone (`parse_args([])`), so it said nothing about `talaria record`, which at the time took its credential as a `?token=` on its own command line — the exact leak this file's environment half describes, just reached through argv instead. The 2026-08-05 credential-and-bridge-drift remediation plan (`docs/plans/2026-08-05-credential-and-bridge-drift-remediation-plan.md`, units U2–U3) closed both the leak and the narrow probe; this paragraph is corrected rather than left to quietly become true on its own. The environment half cannot hold when the operator uses KTD11's highest-precedence source, `HERMES_DASHBOARD_SESSION_TOKEN`: the kernel snapshots the environment block at `exec` and `/proc/<pid>/environ` serves that snapshot for the life of the process, so `os.environ.pop` changes nothing a reader can see; macOS exposes the same to the owning user through `ps -E`.
 
 The mitigation exists and is measured: KTD11's third level, a `0600` file at `<config_dir>/credentials`, leaves the process environment clean (`::test_the_credential_file_route_keeps_the_environment_clean`).
 
@@ -372,6 +372,29 @@ So the operator types a password into a focused control that draws nothing, with
 **Suggested framing.** Schedule the recomputation from `apply` whenever it mounted or removed a card. Note that doing so makes the `Rewrapped` channel redundant for the mount case — check, by deleting it and running `test_a_card_mounting_into_a_full_region_is_still_recomputed`, whether it still has a case of its own before keeping both.
 
 ## P2
+
+### The URL redactor does not touch fragments, so a credential in one reaches the frame log from any source
+
+**Author.** code-review gate on the credential-and-bridge-drift remediation, 2026-08-05
+**Priority.** P2
+**Effort.** Small (one component added to `strip_credential_query` and `redact_url`), plus deciding what the frame-log format promises about endpoints.
+**Worth it when.** Before Talaria reads its endpoint from anything an operator does not hand-write, or before recordings are shared outside the machine that made them.
+
+**Context.** `talaria record` now refuses a command-line endpoint carrying a credential in its query string, its userinfo, **or** its fragment. The fragment case was found by the code-review gate on this work: it was accepted, echoed to the terminal, and written into the frame-log header verbatim. That entry point is closed.
+
+What is not closed is the redactor underneath it. The two components are handled and the third is not:
+
+| shape | `strip_credential_query` / `redact_url` |
+| --- | --- |
+| `?token=…` | stripped |
+| `user:pass@host` | withheld as `[redacted]@host` |
+| `#token=…` | **passes through verbatim** |
+
+So an endpoint carrying a credential in a fragment still reaches `AttachTarget.url` — which is what the frame-log header records — when it arrives from any source other than the command line: `TALARIA_GATEWAY_URL`, or the `url` key in the credential file. Measured on 2026-08-05: `AttachTarget.from_url("ws://h/api/ws#token=<v>").safe_url` returns the value unchanged, while the userinfo and query forms of the same URL are both withheld.
+
+The command-line refusal is a boundary at one entry point; this is the invariant underneath it, and only the first was in scope for that plan.
+
+**Why it was left open rather than fixed alongside the refusal.** Changing the redactor changes what the frame-log format guarantees about its `endpoint` field, and the Python redactor's divergence from the TypeScript reference is enumerated in a test on purpose (`DECISIONS.md`). Widening it is a format decision, not a bug fix, and it wants deciding rather than slipping in. A WebSocket URL has no legitimate use for a fragment at all, so dropping the component outright is the likely answer.
 
 ### A replay cannot reconstruct Talaria's own delivery notes, so an unacknowledged submit replays as a clean one
 

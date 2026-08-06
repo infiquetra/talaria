@@ -14,6 +14,7 @@ import asyncio
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qsl, urlsplit
 
 from talaria import config as config_module
 from talaria.domain.commands import PasteThreshold
@@ -71,7 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     record_parser.add_argument(
         "url",
-        help="gateway websocket URL, e.g. ws://127.0.0.1:9119/api/ws?token=<token>",
+        nargs="?",
+        metavar="ENDPOINT",
+        help="gateway websocket endpoint, overriding the configured one, e.g. "
+        "ws://127.0.0.1:9119/api/ws. Optional: with no argument the endpoint is "
+        "resolved exactly as a bare `talaria` launch resolves it. An endpoint "
+        "carrying a credential is refused (R9)",
     )
     record_parser.add_argument(
         "--out",
@@ -161,20 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     if getattr(args, "command", None) == "record":
-        # Imported here, not at module top level: `talaria.recorder.command`
-        # pulls in `websockets`, and the default (no-subcommand) launch path
-        # has no business paying for that import.
-        from talaria.recorder.command import run_record
-
-        cfg = config_module.load_config()
-        out_path = Path(args.out) if args.out else None
-        return asyncio.run(
-            run_record(
-                args.url,
-                out=out_path,
-                recordings_dir=None if out_path else config_module.recordings_dir(cfg.config_dir),
-            )
-        )
+        return run_record_command(args)
 
     if getattr(args, "command", None) == "replay":
         return run_replay(args)
@@ -205,6 +198,161 @@ def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
         argv=argv,
         launch_cwd=Path.cwd(),
         allowlist=tuple(str(name) for name in allowlist),
+    )
+
+
+def url_carries_credential(url: str) -> bool:
+    """Whether the operator's raw ``record`` argument carries a credential (R5).
+
+    Inspects the **raw** argument, before anything strips it (KTD3).
+    :meth:`~talaria.transport.attach.AttachTarget.from_url` removes credential
+    query parameters as an invariant, so a check placed downstream of it would
+    be examining a string that can no longer hold the thing being looked for and
+    would report "clean" every time.
+
+    Three shapes count, and they count for different reasons.
+
+    A credential *query parameter* — the names in
+    :data:`~talaria.transport.attach.CREDENTIAL_QUERY_KEYS` — is the form the
+    Hermes upgrade path actually reads, so this is the URL that used to work and
+    that leaked while it worked. The constant is imported rather than restated:
+    the refusal and the stripping must not disagree the first time one of them
+    gains a key.
+
+    *Userinfo* — ``ws://user:pass@host/api/ws`` — would never have authenticated,
+    because Hermes reads the upgrade credential only from query parameters. What
+    it did do is put a secret into the process table and the shell history, which
+    is the entire thing KTD1 exists to tell the operator about. This repository
+    already treats userinfo as a credential everywhere else
+    (:func:`~talaria.recorder.redact.redact_url` withholds it deliberately), so
+    keying the refusal on query parameters alone would leave a hole with exactly
+    the shape of the one this closes.
+
+    A *fragment* — ``ws://host/api/ws#token=…`` — is refused whatever it holds,
+    and of the three it is the shape with the worst consequences. Like userinfo
+    it can never authenticate: a fragment is by definition not sent to a server,
+    and ``websockets`` rejects such a URI outright ("fragment identifier is
+    meaningless"). Unlike userinfo it is withheld by *nothing* downstream —
+    :func:`~talaria.transport.attach.strip_credential_query` drops credential
+    query keys and :func:`~talaria.recorder.redact.redact_url` withholds
+    userinfo, but neither touches a fragment, so a credential in one reached the
+    printed endpoint and the frame-log header verbatim. Because a WebSocket
+    endpoint has no legitimate use for a fragment at all, any fragment is
+    refused rather than sniffed for credential-shaped keys: guessing at the
+    contents of a component that should not be there is a worse boundary than
+    rejecting the component.
+
+    A URL that :func:`~urllib.parse.urlsplit` cannot read is treated as carrying
+    one. It cannot be shown to be credential-free, and a string malformed enough
+    to defeat ``urlsplit`` is exactly what an operator produces by pasting a
+    credential into a URL by hand.
+    """
+    from talaria.transport.attach import CREDENTIAL_QUERY_KEYS
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return True
+    if "@" in parts.netloc:
+        return True
+    if parts.fragment:
+        return True
+    return any(
+        name.lower() in CREDENTIAL_QUERY_KEYS
+        for name, _value in parse_qsl(parts.query, keep_blank_values=True)
+    )
+
+
+def _record_credential_refusal() -> str:
+    """The refusal ``talaria record`` prints, which reproduces nothing (R6).
+
+    Not one character of the operator's argument appears here — not the value,
+    not the URL that carried it, not a fragment of either. By the time this runs
+    the string is already in two places it should not be, the process table and
+    the shell history; writing it to stderr would add a third, and stderr is a
+    log file in continuous integration. The existing
+    :func:`~talaria.transport.credentials.resolve_endpoint` makes the same choice
+    for the same reason.
+
+    Built by a function rather than held as a module constant so the environment
+    variable's name comes from the one place that defines it.
+    """
+    from talaria.transport.credentials import TOKEN_ENV_VAR
+
+    return "\n".join(
+        (
+            "talaria: refusing to record: that endpoint carries a credential.",
+            "",
+            "  A credential on a command line is readable by anyone who can run `ps`"
+            " while the",
+            "  command runs, and your shell has already written it to history."
+            " Treat the value",
+            "  you just passed as exposed, and rotate it now.",
+            "",
+            "  Two routes supply a credential without putting it on a command line:",
+            "    talaria refresh-credential"
+            "   — rewrites the credential file at mode 0600, printing nothing secret",
+            f"    {TOKEN_ENV_VAR}"
+            "   — read from the environment, ahead of the file",
+            "",
+            "  Then record with no argument, or with an endpoint that carries no"
+            " credential:",
+            "    talaria record",
+            "    talaria record ws://<host>:<port>/api/ws",
+        )
+    )
+
+
+def run_record_command(args: argparse.Namespace) -> int:
+    """Dispatch ``talaria record`` (KTD7).
+
+    Two operator errors exit 2 here rather than inside
+    :func:`~talaria.recorder.command.run_record`: a credential on the command
+    line, and a credential the chain could not supply. ``run_record``'s
+    documented contract is 0 for a normal close and 1 for never-attached or a
+    write failure, mirroring the TypeScript reference; a refusal is neither, and
+    2 is what the sibling operator-error path (:func:`run_refresh_credential`)
+    already returns.
+
+    The refusal is checked before anything else is constructed, because
+    construction is where the stripping lives and stripping is the silent
+    behaviour KTD1 rejects.
+    """
+    # Imported here, not at module top level: `talaria.recorder.command` pulls in
+    # `websockets`, and the default (no-subcommand) launch path has no business
+    # paying for that import.
+    from talaria.recorder.command import resolve_record_target, run_record
+    from talaria.transport.credentials import CredentialError
+
+    if args.url is not None and url_carries_credential(args.url):
+        print(_record_credential_refusal(), file=sys.stderr)
+        return 2
+
+    cfg = config_module.load_config()
+    credentials = config_module.credentials_path(cfg.config_dir)
+
+    try:
+        # Resolved before the recorder exists and before a socket is opened. The
+        # interactive level of the chain can therefore reach a terminal that is
+        # still an ordinary terminal — the same ordering, and the same reason, as
+        # :func:`_prime_credential` on the live path.
+        target = asyncio.run(
+            resolve_record_target(credentials_path=credentials, override=args.url)
+        )
+    except CredentialError as exc:
+        print(f"talaria: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("talaria: cancelled at the credential prompt", file=sys.stderr)
+        return 130
+
+    out_path = Path(args.out) if args.out else None
+    return asyncio.run(
+        run_record(
+            target,
+            out=out_path,
+            recordings_dir=None if out_path else config_module.recordings_dir(cfg.config_dir),
+        )
     )
 
 

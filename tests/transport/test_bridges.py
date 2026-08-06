@@ -24,6 +24,7 @@ import pytest_asyncio
 
 from talaria.domain.models import PromptKind
 from talaria.domain.projection import PromptRow, terminal_read, transcript_view
+from talaria.domain.state import record_local_note
 from talaria.recorder.framelog import FrameRecorder
 from talaria.recorder.redact import is_suspicious_key
 from talaria.transport.attach import AttachTarget
@@ -300,6 +301,64 @@ async def test_a_respond_value_is_withheld_from_the_recording(
     # The rest of the frame survived, or the recording is useless as evidence
     # that the answer was sent at all.
     assert respond["frame"]["method"] == method
+    assert respond["dir"] == "out"
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_read_value_is_withheld_from_the_recording(
+    bridge_gateway: StubGateway,
+    tmp_path: Path,
+) -> None:
+    """The fourth blocking bridge, over a real socket (U1).
+
+    ``terminal.read.respond`` carries the serialized terminal buffer rather
+    than an operator's typed answer, so the canary has to reach the buffer a
+    different way than the other three tests use: :func:`record_local_note`,
+    the same function the app itself calls for reconnect and command-output
+    lines, appends a system entry that is "locally authored and never crossed
+    the wire" (its own docstring). That is exactly the property this test
+    needs — the canary must be *absent* from every incoming frame the
+    recorder wrote, so its only path onto disk is the outbound respond this
+    deny-set entry exists to catch.
+    """
+    log = tmp_path / "frames.jsonl"
+    recorder = FrameRecorder(log, bridge_gateway.url)
+    app, source = live_app(bridge_gateway, recorder=recorder)
+
+    async with app.run_test():
+        await until(lambda: source.state == "connected")
+        app.state = record_local_note(app.state, CANARY, at=app.state.last_observed_at)
+        await app.render_snapshot()
+        await push(
+            bridge_gateway,
+            app,
+            event("terminal.read.request", {"request_id": "t-redact"}),
+        )
+        await app.render_snapshot()
+        await app.settle_live()
+        await app.shutdown_sources()
+
+    raw = log.read_bytes()
+    assert CANARY.encode() not in raw
+
+    records = [json.loads(line) for line in raw.decode().splitlines()]
+    respond = next(
+        r for r in records if (r.get("frame") or {}).get("method") == "terminal.read.respond"
+    )
+    # Withheld, and *marked* as withheld: a reader must see a hole rather than
+    # clean-looking data (``docs/formats/frame-log.md``).
+    assert respond["frame"]["params"]["text"] == "[redacted]"
+    # The *reason*, not just the path. ``text`` is one of the two fields the
+    # key-name net does not catch (``talaria/recorder/redact.py:396``), so the
+    # explicit deny-set entry is the sole control — an assertion that accepted
+    # either mechanism could not tell a working rule from a deleted one. See
+    # ``test_only_one_of_the_four_fields_has_a_second_layer``.
+    assert [r["reason"] for r in respond["redactions"] if r["path"] == "params.text"] == [
+        "deny-set:terminal.read.respond"
+    ]
+    # The rest of the frame survived, or the recording is useless as evidence
+    # that the answer was sent at all.
+    assert respond["frame"]["method"] == "terminal.read.respond"
     assert respond["dir"] == "out"
 
 
