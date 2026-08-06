@@ -1794,10 +1794,16 @@ class TalariaApp(App[None]):
         """Probe KTD9's read-only set and name every gap on screen (R34, AE7).
 
         What lands in the transcript is only the blocking rows. A clean check
-        says nothing, because a line reading "17 methods verified" would be
-        false — five were verified and twelve were not probed at all — and a
+        says nothing, because a line reading "18 methods verified" would be
+        false — five were verified and thirteen were not probed at all — and a
         line that told the truth about that would be an operator-facing
         paragraph on every launch about a thing that is fine.
+
+        These counts used to read "a line reading '17 methods verified' … five
+        were verified and twelve were not probed at all". Five plus twelve is
+        seventeen, and ``REQUIRED_METHODS`` holds eighteen: commit ``ec861fa``
+        pinned ``slash.exec``, taking ``EVIDENCE_ONLY_METHODS`` from twelve to
+        thirteen, and never touched this file.
 
         The gaps do not stop the launch. AE7 blocks the *daily-driver verdict*
         on any gap, and that verdict lives in
@@ -1836,11 +1842,19 @@ class TalariaApp(App[None]):
         session" case be *reported* instead of quietly turning into a new
         conversation.
 
-        **This is not covered by any live evidence.** It has never run against a
-        Hermes gateway — see R2 in
-        ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md``, which records
-        it as unmet. What is proved here is the call sequence, the precedence,
-        and what the interface does with each outcome, all against a stub.
+        **This has run against a real Hermes gateway**, first on 2026-08-04. R2
+        is graded *measured* in
+        ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`` (evidence-table
+        row 17): across 15 of the 17 recordings in the cited corpus, a gateway
+        reply carrying a ``session_id`` came back from ``session.create`` or
+        ``session.most_recent``. The live evidence is those recordings; what the
+        *tests* prove is the call sequence, the precedence, and what the
+        interface does with each outcome, all against a stub.
+
+        This paragraph used to read: "**This is not covered by any live
+        evidence.** It has never run against a Hermes gateway — see R2 in [the
+        verdict], which records it as unmet." Both halves were true when written
+        and both stopped being true on 2026-08-04.
         """
         dispatcher = self.dispatcher
         if dispatcher is None:  # pragma: no cover - guarded by every caller

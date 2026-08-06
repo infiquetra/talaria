@@ -47,12 +47,22 @@ The Python implementation is at v0.1. A bare `talaria` dials a running Hermes ga
 session; `talaria replay` drives the entire interface from a recorded frame log with no socket open
 anywhere in the process.
 
-**Read the verdict before you rely on it.** Talaria has never been connected to a Hermes gateway:
-every transport test in this repository dials a loopback stub built from a reading of Hermes's own
-source at a pinned revision. The v0.1 daily-driver verdict is therefore **not ready**, and
+**Read the verdict before you rely on it.** Talaria has attached to a real Hermes gateway and
+streamed turns to completion — first on 2026-08-04, and the recordings are cited by digest in the
+verdict's evidence table. Every _test_ in this repository still dials a loopback stub built from a
+reading of Hermes's own source at a pinned revision, so the live evidence is a set of recordings, not
+a suite. The v0.1 daily-driver verdict is still **not ready**, and the reasons are now narrower and
+specific: F1 and F7 have not been demonstrated in an isolated live session, the
+credential-file-versus-environment-variable precedence question is deliberately undecided, and ten of
+the eighteen required gateway methods have no runtime evidence of any kind.
 [docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md](docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md)
-sets out what is measured, what is inferred, and what is unmet. Treat a first attach as an
-experiment, in a throwaway session, with the recorder on.
+sets out what is measured, what is inferred, and what is unmet, row by row. Run it in a session you
+would not mind losing, with the recorder on.
+
+_This paragraph used to open "Talaria has never been connected to a Hermes gateway: every transport
+test in this repository dials a loopback stub", and reasoned from that premise. It was true when it
+was written and stopped being true on 2026-08-04; nothing linked the attach back to this page, so it
+went stale silently. The verdict's `What would change this verdict` section records that mechanism._
 
 ```bash
 uv sync --all-groups

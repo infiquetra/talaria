@@ -239,7 +239,7 @@ async def test_probing_an_evidence_only_method_raises_before_any_call(method: st
 async def test_the_guard_lets_a_read_only_method_through() -> None:
     """Pairs the refusals above with the case that must still work.
 
-    A guard that refused everything would satisfy all twelve cases above and
+    A guard that refused everything would satisfy all thirteen cases above and
     break the product entirely.
     """
 

@@ -462,12 +462,21 @@ def build_live_app(
 def run_live(args: argparse.Namespace) -> int:
     """Launch the live shell against a running Hermes gateway (R2, R31).
 
-    **This path has never been run against a real Hermes gateway.** Every
-    transport test in this repository dials a loopback stub. The unmet
-    requirements that follow from that — live startup acceptance (R2) and a live
-    turn (R3) — are recorded in
-    ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md``, and they are why
-    that document's verdict is *not ready*.
+    **This path has been run against a real Hermes gateway**, first on
+    2026-08-04. Live startup acceptance (R2) and a live turn compared against
+    replay (R3) are both graded *measured* in
+    ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`` (evidence-table rows
+    17 and 18), cited by frame-log digest. Every automated *test* in this
+    repository still dials a loopback stub, so the live evidence is a set of
+    recordings rather than a suite, and that document's verdict is still *not
+    ready* — on three other gaps now, not on this one.
+
+    This docstring used to read: "**This path has never been run against a real
+    Hermes gateway.** Every transport test in this repository dials a loopback
+    stub. The unmet requirements that follow from that — live startup acceptance
+    (R2) and a live turn (R3) — are recorded in [the verdict], and they are why
+    that document's verdict is *not ready*." It was true when written and stopped
+    being true on 2026-08-04.
 
     ``--session`` and ``--resume`` are resolved before anything is dialled
     (KTD7): the conflicting pair is already a usage error out of

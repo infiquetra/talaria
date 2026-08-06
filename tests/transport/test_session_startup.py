@@ -8,9 +8,16 @@ in which order, with which parameters.
 
 **No Hermes gateway was attached at any point in this run.** R2 — a real attach
 resolving the precedence chain against a running gateway and landing in the
-expected session — is therefore *not* proved here and is recorded as unmet in
-``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md``. What is proved is the
+expected session — is therefore *not* proved here. It is proved elsewhere: R2 is
+graded *measured* in ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md``
+(evidence-table row 17) on live frame-log recordings cited by digest, which is
+evidence this module neither produces nor can produce. What is proved here is the
 call sequence and what the interface does with each outcome.
+
+The clause "and is recorded as unmet in [the verdict]" used to close that first
+paragraph. It was true when written and stopped being true on 2026-08-04, when
+Talaria attached to a real gateway; the sentence before it — that no gateway was
+attached in *this* run — was and remains true, and is unchanged.
 """
 
 from __future__ import annotations
