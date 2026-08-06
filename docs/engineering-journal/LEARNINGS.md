@@ -2,6 +2,22 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-06
+
+### The check that was supposed to catch an inverted verdict passed when the verdict was inverted
+
+**Author.** building the gating-document check that closes DRIFT-04's general case
+
+**Evidence.** `tests/docs/test_gating_documents.py` asserts that a gating document's machine-readable block states the same verdict the document itself does. Written the obvious way, it asked whether the declared verdict appeared in any heading — `assert any(gate.verdict in heading for heading in headings)`. Six mutations were run against the finished module to check each assertion could fail. Five fired the intended test and only that one. The sixth — flipping the block's `verdict: NOT READY` to `verdict: READY` while the document still read "Talaria v0.1 is **NOT READY** as a daily driver" — stayed green: nine passed. `"READY" in "Talaria v0.1 is NOT READY as a daily driver"` is `True`, because the wrong verdict is a substring of the right one. The check now compares the declared verdict against the heading's emphasized span exactly, and the same mutation fails.
+
+**Mechanism.** Negation in English is usually a *prefix*, so the false claim is a substring of the true one — `READY`/`NOT READY`, `met`/`unmet`, `supported`/`unsupported`. Any containment test over prose therefore passes for the inverted claim as readily as for the correct one, and it passes *more* readily the more emphatic the document is, because a longer, more explicit heading contains more substrings. The failure is invisible from the passing side: a green containment assertion looks identical whether it matched the claim or matched the negation of the claim.
+
+**Why it survived writing and would have survived review.** The assertion reads correctly in English — "the verdict the block declares appears in a heading" is exactly the intent, and the code says that. Nothing about the line looks wrong; the defect lives in the gap between `in` and *is*. It was caught only because the module was mutation-tested before being trusted, which took about five minutes and was the whole reason the sixth case existed.
+
+**The part worth keeping is where it was found.** The module's entire purpose is to stop a gating document from asserting something the evidence contradicts. Shipped as first written, its verdict check would have permitted a block claiming READY on a document that says NOT READY — the strongest possible version of the failure it exists to prevent, in the test written to prevent it. That is the second time in two changes on this thread that the defect being fixed reappeared one level out, inside the artifact certifying the fix.
+
+**Generalizable rule.** When a test compares a claim against prose, never use containment for a value whose negation contains it — compare against a delimited span exactly. More generally: a new check is not evidence until each of its assertions has been observed failing for the reason it exists. Write the mutation for the case where the check is *inverted*, not only where it is absent; absence is the easy half, and the inverted case is the one containment silently permits.
+
 ## 2026-08-05
 
 ### Widening a redactor is a three-file change, and a unit test of the redactor reports success after only one of them
@@ -126,7 +142,9 @@ Its row budget is also much tighter than Talaria's: one line by default, an opti
 
 **The direction of the resulting error is the reason it went unnoticed for a day.** DRIFT-04 was an *under*-claim — the document was more pessimistic than the evidence supported — which cannot mislead anyone into relying on something unproven. An over-claim (the shape DRIFT-03 was) gets noticed because someone trusts it and is burned; an under-claim just sits there being needlessly conservative, and nothing forces a second look.
 
-**Generalizable rule.** A document that names the specific conditions under which its own verdict would change is making a promise it cannot keep unaddressed: something has to point *back* at it from the work that satisfies those conditions, or the verdict silently outlives the facts it rests on. Filed as the deferred general problem in [`QUEUED.md`](QUEUED.md) — "A gating document has no inbound link from the work that clears it, so nothing re-opens it when it goes stale" — because this project has no established convention yet for which of the two candidate fixes (a backlink convention, or a periodic re-read sweep) is worth the cost, and the next gating document that gets written should not repeat the omission while that question sits open.
+**Generalizable rule.** A document that names the specific conditions under which its own verdict would change is making a promise it cannot keep unaddressed: something has to point *back* at it from the work that satisfies those conditions, or the verdict silently outlives the facts it rests on.
+
+**Closed 2026-08-06, and neither of the two candidate fixes was the answer on its own.** This was filed as a deferred general problem because the project had no convention for choosing between a backlink convention and a periodic re-read sweep. The choice, recorded in [`DECISIONS.md`](DECISIONS.md), is that the backlink is the *notation* and a test is the *mechanism*: a gating document declares its blocking conditions in a fenced `gate` block, and `tests/docs/test_gating_documents.py` holds the block to the evidence table it summarizes. A convention alone would have depended on the same act of remembering that failed here; see the 2026-08-06 entry "The check that was supposed to catch an inverted verdict passed when the verdict was inverted" for what building it turned up.
 
 ### Fixing a stale document broke the citations pointing at it, in the entry certifying the fix
 

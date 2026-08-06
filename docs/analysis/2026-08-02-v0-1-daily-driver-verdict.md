@@ -564,6 +564,31 @@ ready** under AE7 and R39. Where the conditions above get recorded when they are
 met is this document's evidence table — items (1) and (2) went stale for three
 days precisely because nothing pointed the work that cleared them back here.
 
+## Gate record
+
+This block restates the verdict above in a form a test can read.
+`tests/docs/test_gating_documents.py` checks it against the prose: the verdict
+must appear in a heading of this document, each `blocks-on` line must name a real
+evidence-table row whose grade it quotes correctly, and no condition may still be
+listed once its row grades it settled. It exists because the three-day staleness
+described in the paragraph above had nothing that could notice it — see
+[`DECISIONS.md`](../engineering-journal/DECISIONS.md) for the convention and the
+alternatives it was chosen over.
+
+`review-by` is the part that fires on its own. Every other check needs somebody to
+edit something; a document left alone while the evidence moves trips none of them,
+which is precisely what happened here. Re-read the conditions against current
+evidence, restate whatever moved, then set a new date.
+
+```gate
+id: v0-1-daily-driver
+verdict: NOT READY
+review-by: 2026-09-05
+blocks-on: row-19 unmet
+blocks-on: row-13 partially unmet
+blocks-on: row-6 inferred
+```
+
 ## Related
 
 - Plan: `docs/plans/2026-08-02-talaria-v0-1-prototype-plan.md`, unit U10

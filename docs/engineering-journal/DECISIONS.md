@@ -2,6 +2,30 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-06
+
+### A document that gates a decision declares its blocking conditions in a form a test can read, and the test — not a convention — is what closes the loop
+
+**Author.** closing the deferred item DRIFT-04 left behind: "A gating document has no inbound link from the work that clears it, so nothing re-opens it when it goes stale"
+
+**Decision.** A document whose verdict gates a release, a merge, or a go/no-go call carries a fenced `gate` block stating its identifier, the verdict it currently holds, a `review-by` date, and one `blocks-on` line per condition holding that verdict in place, each naming an evidence-table row. `tests/docs/test_gating_documents.py` reads that block against the document's own prose. Work elsewhere that clears a condition records it as `Clears: <gate-id>#<condition-id>`. The first gate is the v0.1 daily-driver verdict, `v0-1-daily-driver`.
+
+**Why a test and not a convention, when the deferred item proposed a convention.** DRIFT-04 did not happen because somebody forgot to write a backlink. It happened because the author of the clearing work had no reason to think about the verdict at all, and nothing in the repository could see that `LEARNINGS.md` and the verdict now asserted opposite things. A convention that depends on remembering is the mechanism that already failed, written down — so the deferred item's own first option was rejected as the fix and kept only as the notation the check reads.
+
+**What makes the loop close without anybody remembering.** Editing the evidence-table row is what an author naturally does when a condition clears. One test then requires the gate block to quote the row's grade correctly, so the block cannot stay behind; a second refuses a block that still blocks on a condition the table now grades settled. Following the natural edit therefore forces the verdict to be restated. Both directions are pinned: flipping row 6's grade with the block left alone fails the first test and nothing else, and flipping both fails the second and nothing else.
+
+**Why `review-by` exists even though it makes a test fail on the calendar.** Every other check needs somebody to edit something. A gating document that simply sits while the evidence moves — exactly what happened for three days — trips none of them. The horizon is the one assertion that fires on its own, and the cost is a red build on a day nobody changed code, landing on whoever is passing. That cost was weighed and accepted: moving the date is a visible act in a diff that a reviewer can question, and silence was not.
+
+**Rejected alternative — the backlink convention alone.** Precise, cheap, and it fires only if the person who has already failed to think about the gating document remembers to write a line about it. Kept as the notation, rejected as the mechanism.
+
+**Rejected alternative — a periodic re-read sweep.** It works: an audit found DRIFT-04. It cost a forty-requirement sweep to catch one stale paragraph, and it is late by up to one interval. `review-by` is that shape reduced to a single assertion, which is the affordable part of it.
+
+**Rejected alternative — fire whenever the journal gains an entry since the gate was last reconciled.** Event-driven rather than calendar-driven, which is the better trigger in principle: it fires because work happened. Rejected on noise. `LEARNINGS.md` gains entries constantly, so it would fire almost every commit and be bumped without a re-read — a check that is always rubber-stamped is worse than no check, because the bump looks like reconciliation in the history.
+
+**Rejected alternative — parse the conditions out of the prose and skip the block.** No parser can read "row 19 stays unmet, on a narrower reason than it used to carry" reliably, and one that half-works fails open. The block is redundant with the prose on purpose, and the redundancy is what is being checked.
+
+**Revisit when.** A second gating document is written, which is the first real test of whether the block generalizes past an evidence-table-shaped document; or the horizon fires twice in a row and is bumped both times without anything moving, which would mean it is measuring the calendar rather than staleness.
+
 ## 2026-08-05
 
 ### When the deliverable is evidence rather than code, a reproducible measurement stands in for a test gate — and the measuring script stays out of the repository
