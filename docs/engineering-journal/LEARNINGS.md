@@ -4,6 +4,18 @@
 
 ## 2026-08-06
 
+### A 65-character return key passes `execution_spec.py validate` and then kills the run four units in, because the limit belongs to the API and the validator does not know it
+
+**Author.** driving `/work` for the model-picker plan; the workflow halted at U4 after U1, U3 and U2 had completed
+
+**Evidence.** `Workflow` returned `API Error: 400 tools.20.custom.input_schema.properties: Property keys should match pattern '^[a-zA-Z0-9_.-]{1,64}$'`. The offending key was U4's return `credential_refusal_surfaces_as_credential_unavailable_with_reason` — 65 characters against a 64-character ceiling, one over. The same spec had passed `execution_spec.py validate --require-receipts` three times, including immediately before launch, and passed again after the rename. The next-longest key in the spec is 57 characters, so nothing else was near the edge.
+
+**Mechanism.** A unit's `returns` list is compiled into a JSON Schema whose *property keys* are those strings, and that schema is submitted as a `StructuredOutput` tool definition. The constraint is therefore the API's tool-schema property-key pattern, which the local validator has no reason to model — it checks the spec's own grammar, not the wire format of an artifact derived from it two steps later. Nothing catches the key between authoring and dispatch, so the first observer is the model API, at the moment that unit is spawned.
+
+**Why the failure shape is the expensive part.** It is not a fast failure. Cost admission had narrowed the run to one agent at a time, so U1, U3 and U2 ran to completion first — roughly 52 minutes and 503k subagent tokens — before U4 was spawned and rejected. A schema-shaped defect surfaced as a mid-run halt with three units of uncommitted work in the tree. The `resumeFromRunId` cache made the recovery cheap (the three completed units replay from cache; only the edited call onward re-runs), but that is a property of the runtime, not of the spec being safe.
+
+**Generalizable rule.** Descriptive `returns` keys drift long — every one of this spec's reads like a sentence, which is the point. Before dispatch, assert every return key against `^[a-zA-Z0-9_.-]{1,64}$` directly; `validate` passing is not evidence the keys will survive contact with the API. The check is one regex over a list and it belongs next to the emit step, not in a postmortem.
+
 ### Removing the top level of a precedence chain silently promotes the level beneath it, and the tests that could tell two credentials apart were the first casualty
 
 **Author.** unit U3 of the model-picker and v0.1-closure plan, removing `HERMES_DASHBOARD_SESSION_TOKEN` from the credential chain (KTD8)
