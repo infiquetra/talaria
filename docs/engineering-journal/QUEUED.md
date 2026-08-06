@@ -388,21 +388,6 @@ So the operator types a password into a focused control that draws nothing, with
 
 **The choice to make, when the time comes.** Either vendor a frozen copy of the TypeScript reference recorder purely as a test fixture, keeping the equivalence executable; or accept that R28 becomes historical, and record in `DECISIONS.md` that the equivalence relation was proven at a named commit and is no longer re-verified. Either is defensible. Making the choice implicitly, by deleting a failing test, is not.
 
-### A gating document has no inbound link from the work that clears it, so nothing re-opens it when it goes stale
-
-**Author.** Closing DRIFT-04, 2026-08-05 — generalized from the daily-driver verdict's specific case, [the audit's finding register](../analysis/2026-08-05-conformance-audit-drift-findings.md)
-**Priority.** P2
-**Effort.** Small to define a convention; ongoing discipline to apply it
-**Worth it when.** Before the next document is written whose verdict blocks a release, a merge, or a go/no-go decision on named, falsifiable conditions.
-
-**Context.** DRIFT-04 was not a defect in the daily-driver verdict's reasoning — the verdict was correct when written. It was a defect in the *lack of a mechanism*: the verdict named two specific conditions that would change it (a real gateway attach, a real streamed turn), both conditions were met by later work, and nothing about that later work pointed back at the verdict to say so. The work that cleared the blocker was recorded correctly in `LEARNINGS.md`; the gating document one directory over kept asserting the opposite for a day, and the two documents contradicted each other with nothing to notice.
-
-**The general shape.** Any document that (a) states a verdict, (b) names the specific conditions that would change it, and (c) is not itself re-read every time related work lands, will go stale the moment one of those conditions clears elsewhere. The gap is not "someone forgot" — it is that no artifact in the repository treats "this closes a condition named in document X" as a fact worth recording at the point the condition clears, rather than only at the point someone happens to re-read document X.
-
-**Suggested framing, not a decision.** Two shapes are worth weighing against each other, not a recommendation to build either without discussion: a lightweight backlink convention — a work session or `LEARNINGS.md` entry that clears a condition named in a gating document says so and names the document and row it clears, so a reader of the gating document who greps for its own filename finds the update; or a periodic sweep, similar in spirit to this conformance audit, that specifically re-reads every "verdict" document's named conditions against current evidence on a cadence, rather than waiting for an audit to notice by accident. The audit that found DRIFT-04 is itself evidence that the second shape works but is expensive — it took a forty-requirement sweep to catch one stale paragraph.
-
-**Not fixed here.** This entry exists to surface the general problem at the point it was noticed, not to design or implement the mechanism. DRIFT-04 itself is closed by restating the one document affected; this is about the next one.
-
 ### A replay cannot reconstruct Talaria's own delivery notes, so an unacknowledged submit replays as a clean one
 
 **Author.** post-v0.1, second operator session against a live gateway

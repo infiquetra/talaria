@@ -127,8 +127,16 @@ its blockers clear. The verdict is dated 2026-08-02 and reads as a snapshot; the
 happened on 2026-08-04 and was recorded in `LEARNINGS.md`, which is the correct place for it, but
 nothing linked the two. A search for any entry tying the live-attach work back to the verdict's R2
 and R3 rows returned nothing. The general shape of that gap — a gating document with no inbound link
-from the work that clears it — is filed as a deferred item in `QUEUED.md` rather than left here,
+from the work that clears it — was filed as a deferred item in `QUEUED.md` rather than left here,
 where nothing would find it again.
+
+**That general gap is now closed too, 2026-08-06.** The deferred item has left `QUEUED.md` under
+that file's convention for resolved entries. The verdict declares its blocking conditions in a
+`gate` block that `tests/docs/test_gating_documents.py` holds to the evidence table it summarizes,
+so a row flipping to a settled grade now forces the verdict to be restated rather than allowing it
+to sit and contradict its own table. See
+[`DECISIONS.md`](../engineering-journal/DECISIONS.md) for why a test rather than the backlink
+convention the deferred item originally proposed.
 
 **Severity.** Moderate. Nothing was unsafe and nothing was over-claimed. The cost was decision
 quality: the project carried a NOT READY verdict whose two stated reasons were both obsolete, so
