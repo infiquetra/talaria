@@ -22,6 +22,21 @@
 
 **Revisit when.** A second artifact needs the same treatment. One instance is a decision; two make it a convention worth a shared helper, and at that point the "do not commit the script" call is worth re-testing against whatever the second case needs.
 
+### A corpus citation names its scope in its label, because "the corpus" is not one thing
+
+**Author.** restating the v0.1 daily-driver verdict (DRIFT-04), KTD4 of the restatement plan
+
+**Decision.** A citation of recorded evidence states which of two different constructions produced it, and the label carries that distinction rather than leaving it to be inferred:
+
+- **One recording.** `live_corpus_identity` (`talaria/replay/gate.py:317-328`), the repository's existing helper: `sha256` over one file's raw bytes, labelled `talaria-live-v1-<frames>f-<sha256[:12]>`. Both citations already in the repository before this restatement are this form — `talaria-live-v1-32f-5f477fa24fa5` (the 32-frame recording behind R3's replay comparison) and `talaria-live-v1-5773f-88a3604c34b7` (the Textual gate results).
+- **The whole corpus.** An aggregate this helper cannot produce and whose label must not borrow the single-recording form: `talaria-live-corpus-v1-<total frames>f-<sha256[:12]>`, hashing each recording's raw bytes concatenated in filename-sorted order, with the frame count summed across the corpus. `talaria-live-corpus-v1-2659f-bd69e537f1d9` is the first use, behind the verdict's restated row 6 and row 2.
+
+**Why the label has to carry the distinction rather than the surrounding prose.** A reader who reaches for `live_corpus_identity` to check an aggregate figure gets a different hash back — not because the number is wrong, but because the label gave no signal that a different construction produced it. That is exactly the failure KTD1 names: a number nobody can re-derive is not evidence. The `-corpus-` segment is what lets a reader tell, from the label alone and before recomputing anything, which construction to reproduce.
+
+**Rejected alternative.** Reuse `live_corpus_identity`'s label form for the aggregate and rely on the citing sentence to say "aggregate" in prose. Rejected because a label is copied and pasted more often than the sentence around it is read; the distinction has to survive that.
+
+**Revisit when.** A third construction is needed — a windowed or filtered subset of the corpus, say — at which point this becomes a small family of scoped label prefixes rather than two, and the naming rule should be written once rather than per-construction.
+
 ### A URL fragment is withheld whole in a recording and dropped outright from a dialled endpoint
 
 **Author.** closing the P2 left open by the code-review gate on the credential-and-bridge-drift remediation
@@ -238,9 +253,11 @@
 
 **Decision.** In `talaria/transport/compat_check.py`, a probe whose outcome is unknown (no reply, lost transport, not connected) grades `unproved` and blocks. A method that was deliberately never probed grades `not-probed` and does not block, but is counted in the report's first line on every run — including a clean one.
 
-**Why.** These are different facts and collapsing them loses whichever one matters. "We asked and heard nothing" is a gap in evidence and AE7 says the verdict is blocked on any gap; a check that read silence as a pass would report a compatible gateway for a socket that answered nothing at all. "We deliberately did not ask, because asking would create a session" is R34 working as designed — but if that also blocked, twelve of the seventeen methods would block every run forever and the flag would carry no information.
+**Why.** These are different facts and collapsing them loses whichever one matters. "We asked and heard nothing" is a gap in evidence and AE7 says the verdict is blocked on any gap; a check that read silence as a pass would report a compatible gateway for a socket that answered nothing at all. "We deliberately did not ask, because asking would create a session" is R34 working as designed — but if that also blocked, thirteen of the eighteen methods would block every run forever and the flag would carry no information.
 
-**What stops the second one becoming a quiet pass.** The report's summary line always states the unverified count: `gateway compatibility: 0 blocking, 12 unverified at runtime (evidence-only, R34), baseline 7f4d15515`. A summary reading "compatible" after probing five of seventeen would be a claim about twelve it never touched.
+**What stops the second one becoming a quiet pass.** The report's summary line always states the unverified count: `gateway compatibility: 0 blocking, 13 unverified at runtime (evidence-only, R34), baseline 7f4d15515`. A summary reading "compatible" after probing five of eighteen would be a claim about thirteen it never touched.
+
+**Correction, 2026-08-05.** The two paragraphs above said "twelve of the seventeen methods", quoted the summary line as `12 unverified at runtime`, and closed "probing five of seventeen would be a claim about twelve it never touched". All three counts were stale, not wrong when written. Commit `ec861fa` pinned `slash.exec` and took the evidence-only set from twelve to thirteen — counted directly as `classification="evidence-only"` in `talaria/domain/compat.py` at `ec861fa~1` (twelve) and at `ec861fa` (thirteen) — which also takes the required set from seventeen to eighteen. That sweep updated `tests/transport/test_compat_baseline.py` but not this entry. The corrected numbers are measured, not inferred: `tests/transport/test_compat_baseline.py:205` asserts `len(FORBIDDEN_AT_STARTUP) == 13`, and `:553` asserts the live summary line reads `13 unverified at runtime`. The decision itself is unchanged; only its arithmetic moved.
 
 **Revisit when.** The evidence-only set shrinks — every method a live acceptance run exercises moves from inference to measurement, and the count in that line should fall.
 

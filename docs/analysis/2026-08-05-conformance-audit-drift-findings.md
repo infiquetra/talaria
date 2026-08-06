@@ -1,6 +1,6 @@
 # Talaria conformance audit: drift findings
 
-Status: `living` — one finding remains open
+Status: `living` — all five findings resolved
 Authority: `evidence`
 Date: 2026-08-05
 
@@ -20,11 +20,17 @@ Severity below is about consequence if the finding is left alone, not about effo
 
 Grading is complete: all forty requirements were graded twice, across four batches, once by a pass
 that ran the program and once by an independent pass that read the source. Five findings were
-produced. Four are resolved. One is open.
+produced. All five are resolved.
 
 Note what "resolved" means for DRIFT-02: that finding was a *missing record*, not a defect, so writing
 the record closes it. The engineering choice it describes is still ahead of the project, and the
 `QUEUED.md` entry now exists to surface it at the moment it has to be made.
+
+Note what "resolved" means for DRIFT-04 as well: that finding was a stale document, not a code
+defect, so restating the verdict on current evidence — which stays **NOT READY**, on different and
+narrower grounds — closes it. See
+[`docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`](2026-08-02-v0-1-daily-driver-verdict.md)
+for the corrected table.
 
 ## The register
 
@@ -34,81 +40,124 @@ the record closes it. The engineering choice it describes is still ahead of the 
 | DRIFT-01 | The fourth blocking bridge had no live-socket test proving its answer never reached disk | R26 | Low (evidence quality) | **Resolved** 2026-08-05 |
 | DRIFT-02 | Removing the superseded TypeScript tree silently deletes the proof that R28 holds | R28 | Low now, moderate at removal | **Resolved** 2026-08-05 (as a recorded consequence) |
 | DRIFT-03 | `talaria record` could only authenticate by putting the credential on the command line | R9, restated as R1 | Moderate | **Resolved** 2026-08-05 |
-| DRIFT-04 | The daily-driver verdict is stale and holds **NOT READY** on two blockers that have since cleared | R2, R3 | Moderate (decision quality) | **Open** |
+| DRIFT-04 | The daily-driver verdict was stale and held **NOT READY** on two blockers that had since cleared | R2, R3 | Moderate (decision quality) | **Resolved** 2026-08-05 |
 
 DRIFT-03 was counted under two requirement numbers — R9 in batch 3, R1 in batch 4 — but it is one
 defect, not two.
 
 ---
 
-## Open findings
+## Resolved findings
 
-### DRIFT-04 — the daily-driver verdict is stale, and holds NOT READY on two cleared blockers
+### DRIFT-04 — the daily-driver verdict was stale, and held NOT READY on two cleared blockers
 
 **Plain statement.** [`docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`](2026-08-02-v0-1-daily-driver-verdict.md)
-is the document that gates the v0.1 release. At `:428` it reads "Talaria v0.1 is **NOT READY** as a
-daily driver", and at `:447-452` it names exactly two things that would change that verdict: one
-real attach to a Hermes gateway (R2) and one real conversational turn (R3). Both happened on
-2026-08-04. The document has not been updated, so the project's own release gate is blocked on
-grounds that are no longer true.
+is the document that gates the v0.1 release. At `:428` it read "Talaria v0.1 is **NOT READY** as a
+daily driver", and at `:447-452` it named two of the five items on the "What would change this
+verdict" list (see the correction below): one real attach to a Hermes gateway (R2) and one real
+conversational turn (R3). Both happened on 2026-08-04. The document had not been updated, so the
+project's own release gate was blocked on grounds that were no longer true.
+
+**Correction, 2026-08-05 — this entry's own "exactly two things" claim was wrong.** The original
+text above read "`:447-452` names exactly two things that would change that verdict." That
+understates the document it is describing, and it was wrong the day this entry was written, not
+made stale by later work. `:443-472` names **five** items, not two: (1) R2, (2) R3, (3) R1's
+remaining half — the environment-inherited credential decision, (4) the platform matrix, marked
+"partly done" at the time, (5) CI, marked done. The verdict's own closing line reads "Until **at
+least** (1) and (2) are done and recorded here, this document's verdict does not move" — the words
+"at least" make (1) and (2) necessary, not sufficient, and this entry read them as the whole list.
+The cause is visible in the citation: `:447-452` is exactly items (1) and (2) and nothing else, so
+this entry did not misread the five-item list — it read part of the list and reported the part as
+the whole. Rows 13 and 19 of the evidence table (row 13 is item (3); row 19 is F1/F7) were gaps this
+entry never named, and by the document's own rule either one alone blocks READY. This was caught
+before the restatement below began, in
+[`docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md`](../plans/2026-08-05-daily-driver-verdict-restatement-plan.md),
+whose Problem Frame states the correction and requires rows 6, 13 and 19 to be re-read alongside R2
+and R3, not just the two rows this entry originally pointed at.
 
 **Requirements.** R2 — "At startup Talaria can create a new session, resume a stored human-facing
 session, or honour an explicit session target." R3 — "The operator can submit a prompt and watch the
 response stream into the transcript." Both were graded `met` by the observed-behaviour pass in
-batch 4. The defect is not in the code; it is that the artifact deciding the release still grades
+batch 4. The defect was not in the code; it was that the artifact deciding the release still graded
 them `unmet`.
 
-**The direction of the error matters.** Unlike DRIFT-03 this is an **under**-claim. It cannot
-mislead anyone into trusting something unproven; the risk is the opposite one, that the project
-cannot tell what it has actually achieved and keeps paying for a blocker it has cleared.
+**The direction of the error matters.** Unlike DRIFT-03 this was an **under**-claim. It could not
+mislead anyone into trusting something unproven; the risk was the opposite one, that the project
+could not tell what it had actually achieved and kept paying for a blocker it had cleared.
 
 **Evidence.**
 
-- The verdict at `:85` grades R2 **unmet**, reason given: "No Hermes gateway has answered one."
+- The verdict at `:85` graded R2 **unmet**, reason given: "No Hermes gateway has answered one."
   Across the 17 live recordings then available, a real Hermes gateway answered `session.most_recent`
   in 15 and `session.create` in 15 — and both replies carry a `session_id`. Checking for *replies*
   rather than for *calls* is the point: a call going out is not evidence of an outcome.
-- The verdict at `:86` grades R3 **unmet**, reason given: "Nothing was submitted to a Hermes
+- The verdict at `:86` graded R3 **unmet**, reason given: "Nothing was submitted to a Hermes
   session." Twelve of those 17 recordings contain a `prompt.submit` followed immediately by
   `message.start`, then `message.delta` frames, then `message.complete`. Delta counts range from 2
   to 944, and in every one of the twelve the first event after the submit is `message.start`, so
   the ordering is the real streaming sequence rather than a coincidence of counts.
-- [`docs/engineering-journal/LEARNINGS.md`](../engineering-journal/LEARNINGS.md) already records R3
+  **Note on that range, added 2026-08-05.** "2 to 944" is a per-*recording* total: every
+  `message.delta` in the file, including deltas belonging to a `message.start` that no
+  `prompt.submit` preceded, which is what a session-resume replay produces. The restatement measured
+  the narrower thing the verdict's row 18 actually claims — deltas between a submit's own
+  `message.start` and its `message.complete` — and that range is **1 to 616 per turn**, with
+  per-recording sums over submit-initiated turns running 2 to 716. Neither number is wrong; they
+  count different things, and the two documents are recorded here as agreeing rather than left to
+  look like a contradiction. The "twelve of seventeen" figure is identical under both rules.
+- [`docs/engineering-journal/LEARNINGS.md`](../engineering-journal/LEARNINGS.md) already recorded R3
   as done on 2026-08-04, verified by a byte-identical replay comparison against corpus
-  `talaria-live-v1-32f-5f477fa24fa5`. The journal and the verdict now contradict each other, and
-  nothing reconciles them.
-- `talaria/ui/app.py` carries the same stale claim inside `open_session`'s docstring: "**This is not
+  `talaria-live-v1-32f-5f477fa24fa5`. The journal and the verdict contradicted each other, and
+  nothing reconciled them.
+- `talaria/ui/app.py` carried the same stale claim inside `open_session`'s docstring: "**This is not
   covered by any live evidence.** It has never run against a Hermes gateway." That sentence was true
-  when written and is false now.
+  when written and had become false.
 
-**Why the existing records do not cover it.** There is no mechanism that re-opens a verdict when its
-blockers clear. The verdict is dated 2026-08-02 and reads as a snapshot; the live attach happened on
-2026-08-04 and was recorded in `LEARNINGS.md`, which is the correct place for it, but nothing links
-the two. A search for any entry tying the live-attach work back to the verdict's R2 and R3 rows
-returns nothing.
+**Why the existing records did not cover it.** There was no mechanism that re-opens a verdict when
+its blockers clear. The verdict is dated 2026-08-02 and reads as a snapshot; the live attach
+happened on 2026-08-04 and was recorded in `LEARNINGS.md`, which is the correct place for it, but
+nothing linked the two. A search for any entry tying the live-attach work back to the verdict's R2
+and R3 rows returned nothing. The general shape of that gap — a gating document with no inbound link
+from the work that clears it — is filed as a deferred item in `QUEUED.md` rather than left here,
+where nothing would find it again.
 
-**Severity.** Moderate. Nothing is unsafe and nothing is over-claimed. The cost is decision quality:
-the project carries a NOT READY verdict whose two stated reasons are both obsolete, so neither "we
-are ready" nor "we are not ready" can currently be said on evidence.
+**Severity.** Moderate. Nothing was unsafe and nothing was over-claimed. The cost was decision
+quality: the project carried a NOT READY verdict whose two stated reasons were both obsolete, so
+neither "we are ready" nor "we are not ready" could be said on evidence.
 
-**Proposed resolution.** Re-run the verdict's own R2 and R3 rows against the recordings and update
-them in place, citing corpora by digest and count under R29 rather than by local path. Delete or
-correct the "never run against a Hermes gateway" sentence in `open_session`'s docstring. Then
-restate the verdict on current evidence.
+**Resolution.** Rows 17 and 18 (R2, R3) were re-graded `met` against the live recordings, each
+citing the specific frames that settle it. Rows 6, 13 and 19, and the five "What would change this
+verdict" items, were independently re-read and their present state recorded — row 6 had **not**
+moved (still ten of eighteen required methods with no runtime evidence, the deliberate
+falsifiability control), row 13 stays partially unmet by design (the environment-credential
+precedence decision recorded as open in `QUEUED.md`), row 19 stays unmet (F7, the gateway surviving
+Talaria's exit, still has no isolated recording proving it). The verdict was then restated on the
+corrected table: it still reads **NOT READY**, but its reasons are now rows 6, 13 and 19 rather than
+the two obsolete ones this finding was about. Four sentences elsewhere that the 2026-08-04 attach had
+falsified were corrected in place, each recording what it used to say:
+`README.md:50-55`, `talaria/cli.py:465`, `talaria/ui/app.py:1839`, and
+`tests/transport/test_session_startup.py:9-13`. A fifth sentence,
+`talaria/ui/app.py:1798`, was corrected in the same pass for an unrelated reason — commit `ec861fa`
+took the required-method count from seventeen to eighteen, not the live attach — and is not counted
+among the four. See
+[`docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`](2026-08-02-v0-1-daily-driver-verdict.md)
+for the restated verdict and
+[`docs/plans/2026-08-05-daily-driver-verdict-restatement-plan.md`](../plans/2026-08-05-daily-driver-verdict-restatement-plan.md)
+for the plan that carried it out.
 
-**Confirm the reasons before trusting the new verdict.** The failure that produced this finding was
-a verdict whose reasons outlived the facts, so a revision that simply flips two rows to `met`
-repeats the mistake in the other direction. Each updated row should name the recording and the
-frames that settle it, so the next reader can re-check the claim rather than inherit it.
+**The reasons were confirmed, not assumed, before the new verdict was trusted.** The failure that
+produced this finding was a verdict whose reasons outlived the facts, so a revision that simply
+flipped two rows to `met` would have repeated the mistake in the other direction. Each re-graded row
+names the recording and the frames that settle it, and rows 6, 13 and 19 were re-read independently
+rather than folded into the same pass that restated the verdict (KTD3 in the plan above) — row 6
+coming back "not moved" is the control that shows the pass measured rather than agreed.
 
-**Note on the likely outcome.** Clearing this does not automatically make Talaria ready. It removes
-two obsolete reasons; whether others remain is what the re-run decides.
+**Clearing this did not make Talaria ready.** It removed two obsolete reasons; three others
+(rows 6, 13 and 19) remained, which is what kept the restated verdict at NOT READY.
 
-**Status.** Open, not started. Found during batch 4 by reading recordings rather than prose.
+**Found by** batch 4 of the audit, by reading recordings rather than prose. Closed 2026-08-05 by the
+restatement plan above.
 
 ---
-
-## Resolved findings
 
 ### DRIFT-03 — `talaria record` could only authenticate by putting the credential on the command line
 

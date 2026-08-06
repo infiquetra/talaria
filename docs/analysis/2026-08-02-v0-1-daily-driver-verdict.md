@@ -17,10 +17,19 @@ Three words are used precisely and never interchangeably:
 - **Inferred** — read from the pinned Hermes source, not run.
 - **Unmet** — the verification the plan asked for has not happened.
 
-## The finding that decides this document
+## The finding that decided this document
 
-**Talaria has never connected to a Hermes gateway.** Not once, in any unit of
-this build. Every transport test in the repository dials a stub WebSocket
+**Superseded 2026-08-05, and kept because it is the record of what this document
+originally rested on.** This section used to open: "**Talaria has never connected
+to a Hermes gateway.** Not once, in any unit of this build." That was true when
+it was written on 2026-08-02 and stopped being true on 2026-08-04, when Talaria
+attached to a real Hermes dashboard and streamed turns to completion — see
+evidence-table rows 17 and 18, which cite the recordings by digest. Read the rest
+of this section as history: its argument about the stub still holds for
+everything the recordings do not cover, which is most of the method table.
+
+**Talaria had never connected to a Hermes gateway when this document was first
+written.** Every automated test in the repository still dials a stub WebSocket
 server on loopback that this repository wrote, answering with bodies transcribed
 by hand from Hermes's handlers at `7f4d15515`.
 
@@ -57,7 +66,9 @@ followed immediately by a streamed turn. And it says nothing about the other ten
 evidence-only methods, nothing about request parameters, and nothing about
 Talaria's own transport, which is what actually has to work.
 
-Everything below follows from that.
+Everything below followed from that when this document was written. It no longer
+does: rows 17 and 18 rest on Talaria's own live recordings from 2026-08-04, and
+the verdict is restated on the table rather than on this section.
 
 ## Evidence table
 
@@ -82,9 +93,9 @@ Status values: **measured**, **inferred**, **unmet**.
 | 14 | **AE10** — a clean-environment install produces a working `talaria` | measured locally **and in CI** | `uv tool install .` into a fresh prefix, then the console script invoked by absolute path under `env -i`: `talaria --help` works. The CI `install` job ran for the first time on this branch's pull request and passed on Python 3.12 and 3.13 (run `30865814553`) | this document, §Install |
 | 15 | **R39** — the platform matrix records exactly what was exercised | measured | See §Platform matrix. One operating system, two Python versions, two terminal hosts, one multiplexer | §Platform matrix |
 | 16 | The launcher runs end to end — attach, probe, open, render, exit | measured *against the stub* | The real console script (`python -m talaria.cli`, no arguments) on a pseudo-terminal against the loopback stub: one connection accepted, the five read-only probes and no mutating method among them, exactly one `session.create`, tens of kilobytes of interface drawn, `ctrl+q` → exit 0, terminal restored | §Launcher run |
-| 17 | **R2** — live startup acceptance against a running gateway | **unmet** | The KTD7 precedence chain resolves into a real `session.create` / `session.resume` call and the launcher completes that sequence — against the stub. No Hermes gateway has answered one | `tests/transport/test_session_startup.py` |
-| 18 | **R3** — one live turn streamed to completion, compared against replay | **unmet** | Nothing was submitted to a Hermes session. The replay-versus-live equivalence claim rests on the shared frame-source seam, not on a compared transcript | — |
-| 19 | **F1, F7** demonstrated live in an isolated session | **unmet** | No isolated live session has been run | — |
+| 17 | **R2** — live startup acceptance against a running gateway | measured | The KTD7 precedence chain resolves into a real `session.create` / `session.resume` call and the launcher completes that sequence — now against a running Hermes gateway and not only against the stub. Measured over the live frame-log corpus, cited by digest and count rather than by path (R29): `talaria-live-corpus-v1-2659f-bd69e537f1d9`, 17 recordings, 2,659 frames. **How that digest is built**, so it can be re-derived: `sha256` over each recording's raw bytes concatenated in filename-sorted order, and the count is lines whose `kind` is `frame` summed across the corpus. It is an aggregate over many recordings, so it deliberately does *not* wear `live_corpus_identity`'s single-recording `talaria-live-v1-…` label. **What was counted:** gateway *replies*, not Talaria's calls — a call going out only proves Talaria tried — with each reply matched to the call that produced it by JSON-RPC `id`. 15 of the 17 recordings carry a reply whose result holds a `session_id`, from `session.create` and from `session.most_recent`; in all 15 the five read-only startup probes of row 1 were each answered as well. The remaining 2 are header-only recordings holding zero frames, and they answer nothing — the check does come back false where there is nothing to find. **This row previously read `unmet`**, on the reason "No Hermes gateway has answered one", which was true when it was written on 2026-08-02 and stopped being true on 2026-08-04 | corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9`; `tests/transport/test_session_startup.py` for the stub half |
+| 18 | **R3** — one live turn streamed to completion, compared against replay | measured | The row asks for two things, and each is cited separately because citing only the first would leave the row true-sounding and under-evidenced. **Streamed to completion:** over the same corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9` (17 recordings, 2,659 frames, construction stated in row 17), the sequence an outbound `prompt.submit`, then an inbound `message.start` with no other `message.*` event in between, then one or more `message.delta`, then `message.complete`, occurs in 12 of the 17 recordings — 18 completed turns in total, one for every `prompt.submit` the corpus contains, carrying 1 to 616 `message.delta` frames per turn. **Compared against replay:** `docs/engineering-journal/LEARNINGS.md:111` records the comparison `talaria/cli.py` specifies — one live turn streamed to completion and its transcript compared against a replay of the same frames — passing on the 32-frame recording `talaria-live-v1-32f-5f477fa24fa5`: three live rows, three replayed lines, byte-identical, `interface_shows_everything` true. That label is `live_corpus_identity`'s single-recording form and re-derives from the corpus as `sha256` `5f477fa24fa50b391d73eee6f455190000281980a8db33c17f4130208d997549` over 32 frames, frame-log v1 recorded 2026-08-04T19:37:35.709Z. **This row previously read `unmet`**, on the reason "Nothing was submitted to a Hermes session. The replay-versus-live equivalence claim rests on the shared frame-source seam, not on a compared transcript." The first sentence stopped being true on 2026-08-04; the second is answered by the byte-identical comparison above | corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9` for the streaming half, recording `talaria-live-v1-32f-5f477fa24fa5` and `docs/engineering-journal/LEARNINGS.md:111` for the replay half |
+| 19 | **F1, F7** demonstrated live in an isolated session | **unmet** | The row stays unmet, on a narrower reason than it used to carry. **F1 (first run)** has been exercised live, though not in the form this row asks for: over the corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9` (17 recordings, 2,659 frames, construction stated in row 17), 15 of the 17 recordings authenticate against a real Hermes dashboard, have all five read-only startup probes of row 1 answered, and land in a session — the F1 sequence end to end. What is still missing for F1 is an isolated throwaway session run by somebody watching; the authentication-failure and absent-capability branches, which no recording exercises; and the compatibility check's real on-screen output, which was never captured. Only the bare startup path ran — neither `--resume` nor `--session` appears anywhere in the corpus and `session.resume` was never called, so KTD7's precedence chain is unverified live. **F7 (the gateway survives Talaria's exit)** cannot be settled by any frame log, because the log ends at the exit F7 needs somebody to observe; the only F7 evidence in this document is row 11's, against the loopback stub. The corpus does hold something adjacent that stops short of settling it: in ten pairs of adjacent recordings against the same loopback endpoint, the later run's `session.most_recent` returned the exact session identifier the earlier run's `session.create` had produced, eight of them forming one unbroken chain spanning roughly two hours twenty minutes. That proves the endpoint answered again after each Talaria process exited and still held the session — it does not prove Talaria did not stop it, because Hermes persists sessions to disk, so a gateway that died at exit and was restarted by the operator would leave an identical signature. What would settle F7 is one observation taken outside the frame log: the gateway process's PID or start time sampled before Talaria attaches and again after it exits. **This row previously read** "No isolated live session has been run", which was true when written on 2026-08-02 and stopped being an accurate description of what is missing on 2026-08-04 | corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9`; row 11 for the stub-only F7 evidence |
 
 ## The method table
 
@@ -414,62 +425,144 @@ rather than by any change to the code.
 
 ## Verdict
 
-Reading the table: rows 17, 18 and 19 are **unmet**, row 13 is **partially
-unmet**, and row 6 covers thirteen of eighteen required gateway methods as
-**inferred rather than measured** (three of those thirteen since called by
-Talaria against a real gateway and answered, ten with nothing). Rows 12 and 14 were the two weakest
-*measured* rows in earlier drafts — macOS-only, and a CI job that had never run —
-and both were closed by pushing this branch; that is worth noting because it is
-the only kind of gap on this list that closes without a Hermes gateway. The suite
-itself fails intermittently, twelve runs green in thirteen.
+**Restated 2026-08-05 on a corrected table.** Rows 17 and 18 read `unmet` until
+that date on reasons that stopped being true on 2026-08-04; both rows now record
+what they used to say and why. This section is rewritten on the table as it now
+stands, and what it used to say is set out at the end of it.
+
+Reading the table: rows 17 and 18 are **measured**, row 19 is **unmet**, row 13
+is **partially unmet**, and row 6 covers thirteen of the eighteen required
+gateway methods as **inferred rather than measured** (three of those thirteen —
+`session.create`, `prompt.submit` and `slash.exec` — have since been called by
+Talaria against a real gateway and answered; the other ten have no runtime
+evidence of any kind). Rows 12 and 14 were the two weakest *measured* rows in
+earlier drafts — macOS-only, and a CI job that had never run — and both were
+closed by pushing this branch. The suite itself fails intermittently, twelve runs
+green in thirteen.
 
 AE7 and R39 say the ready verdict is blocked on any gap.
 
 ### Talaria v0.1 is **NOT READY** as a daily driver.
 
-The blocking gap is not subtle and it is not a matter of polish. This is a
-client for one gateway, and it has never spoken to that gateway. The compatibility
-baseline, the six dispatch result shapes, the reconciliation rules, the frame
-contract, the credential handshake — with the two exceptions named at the top of
-this document, all of it is a careful reading of a source tree, checked against a
-stub built from the same reading. Two response shapes out of seventeen methods,
-observed by a different client in an earlier unit, is the whole of the live
-evidence. That is a good position from which to attach for the first time. It is
-not evidence that attaching works.
+**The verdict has not moved. Its reasons have moved entirely.** That distinction
+is the point of this restatement: three words that used to rest on "this client
+has never attached" now rest on three specific, much narrower gaps, and a reader
+who acts on the old reasons would be acting on a fact that expired on 2026-08-04.
 
-What the build **is** ready for: an isolated first attach against a throwaway
-Hermes session, run by somebody watching it, with `--record` on.
+The three gaps, in the order the table grades them:
+
+- **Row 19 — F1 and F7 have not been demonstrated live in an isolated session.**
+  The table grades this **unmet**, and this section reads that grade rather than
+  re-deriving it. What the row asks for is a session run for the purpose, with F7
+  — the gateway still serving after Talaria exits — observed *after* that exit.
+  Row 11 has F7 only against the loopback stub.
+- **Row 13 — R1's environment half is partially unmet.** Talaria adds no
+  credential of its own to its environment, but an inherited
+  `HERMES_DASHBOARD_SESSION_TOKEN` stays readable for the life of the process and
+  Talaria cannot remove it. The credential-file-versus-environment-variable
+  precedence decision that would settle it is recorded in
+  `docs/engineering-journal/QUEUED.md` as deliberately open, so this gap is a
+  decision nobody has taken rather than work nobody has done. It blocks a ready
+  verdict all the same.
+- **Row 6 — thirteen of the eighteen required gateway methods are inferred
+  rather than measured.** Three of the thirteen have now been called live and
+  answered. Ten have no runtime evidence of any kind, and what `present` covers
+  is narrower than it sounds: `compare_shape` compares top-level keys and value
+  kinds only (row 6a).
+
+**What this section used to say.** Before this restatement the paragraph under
+the verdict read:
+
+> The blocking gap is not subtle and it is not a matter of polish. This is a
+> client for one gateway, and it has never spoken to that gateway. The
+> compatibility baseline, the six dispatch result shapes, the reconciliation
+> rules, the frame contract, the credential handshake — with the two exceptions
+> named at the top of this document, all of it is a careful reading of a source
+> tree, checked against a stub built from the same reading. Two response shapes
+> out of seventeen methods, observed by a different client in an earlier unit, is
+> the whole of the live evidence. That is a good position from which to attach
+> for the first time. It is not evidence that attaching works.
+
+Every sentence of it was true when it was written on 2026-08-02. The load-bearing
+one — "it has never spoken to that gateway" — stopped being true on 2026-08-04,
+when this client attached to a real Hermes dashboard repeatedly and streamed
+turns to completion; rows 17 and 18 cite the recordings. The paragraph also
+carried a stale denominator, "seventeen methods", where `REQUIRED_METHODS` in
+`talaria/domain/compat.py` holds eighteen.
+
+What the build **is** ready for has narrowed rather than widened. It is no longer
+"a first attach": the attach has happened and is recorded. It is a client whose
+remaining gaps are one demonstration nobody has run, one credential question
+nobody has decided, and ten method surfaces nobody has exercised — so a session
+you would mind losing is still not what this table supports.
 
 ### What would change this verdict
 
-In order, because each depends on the one before it:
+**Re-ordered 2026-08-05 by what is actually left.** The list used to run (1) R2,
+(2) R3, (3) R1's remaining half, (4) the matrix, (5) CI, ordered "because each
+depends on the one before it", and closed: "Until at least (1) and (2) are done
+and recorded here, this document's verdict does not move." Items (1), (2) and (5)
+are now done and recorded, and the verdict did not move — because the words "at
+least" made (1) and (2) necessary, not sufficient, and rows 13 and 19 are gaps
+this list never named. Both facts are kept here on purpose: a list of unblocking
+conditions that quietly drops the ones it satisfied is how a reader loses the
+ability to tell an item that was met from an item that was never on the list.
 
-1. **R2 — one real attach.** Start a Hermes dashboard on loopback, run
-   `talaria --record`, and land in a session. This exercises the credential
-   chain, the handshake, the greeting frame, the compatibility check against the
-   real dispatcher, and `session.create` — five of the twelve inferred surfaces
-   in one step, with the frames on disk.
-2. **R3 — one real turn.** Submit one prompt, let it stream to completion, then
-   `talaria replay` the recording and compare the two transcripts. This is what
-   turns the shared-seam argument into a measured equivalence.
+**Still open, in the order they now block the verdict:**
 
-   Both of those steps are executable with the client as it stands, which they
-   were not when this document was first drafted: `LiveSource` accepted a
-   recorder, the launcher never passed one, and `talaria record` draws no
-   interface — so recording a session and *using* it were mutually exclusive.
-   `--record` on the bare launcher is what closed that.
-3. **R1's remaining half** — either accept the environment-inherited credential
-   as an operator-side choice and document the credential-file route as the
-   supported one, or stop supporting the environment variable.
-4. **The matrix** — **partly done.** A second operating system now runs the full
-   suite in CI, including the pseudo-terminal and process-surface tests. What is
-   still missing is a person driving the interface on Linux, and at least one real
-   terminal emulator rather than a bare pseudo-terminal on either platform.
-5. **CI** — **done.** The branch was pushed, and all seven checks passed on the
+1. **Row 19 — F1 and F7 in an isolated live session.** Run a session for the
+   purpose, and observe F7 — the gateway still serving — *after* Talaria exits.
+   The frame log alone cannot settle it: the log ends when Talaria exits, and the
+   observation F7 needs happens after that. Row 11 has F7 against the loopback
+   stub only.
+2. **Row 13 — R1's remaining half.** Either accept the environment-inherited
+   credential as an operator-side choice and document the credential-file route
+   as the supported one, or stop supporting the environment variable. Unchanged
+   from the old item (3), and unchanged on purpose: `QUEUED.md` records it as
+   deliberately open. An under-claim that is recorded as a decision is not drift,
+   but it is still a gap under AE7.
+3. **Row 6 — the ten evidence-only methods with no runtime evidence.** Closing
+   them needs live traffic that exercises them; it is work, not re-grading. This
+   is the item the old list never had.
+4. **The matrix** — **partly done**, and unchanged since the list was written. A
+   second operating system runs the full suite in CI, including the
+   pseudo-terminal and process-surface tests. Still missing: a person driving the
+   interface on Linux, and at least one real terminal emulator rather than a bare
+   pseudo-terminal on either platform (§Platform matrix).
+
+**Done and recorded:**
+
+5. **R2 — one real attach.** **Done 2026-08-04, recorded in row 17.** A Hermes
+   dashboard on loopback, `talaria --record`, landing in a session — the
+   credential chain, the handshake, the greeting frame, the compatibility check
+   against the real dispatcher, and `session.create`, with the frames on disk.
+
+   **This item carried a wrong count and a prediction the measurement has since
+   falsified, and marking it done is not a reason to carry either forward.** It
+   used to close: "and `session.create` — **five of the twelve inferred surfaces**
+   in one step, with the frames on disk." Two errors in one clause. The
+   evidence-only set is **thirteen**, not twelve — commit `ec861fa` pinned
+   `slash.exec` and took it from twelve to thirteen, sweeping this document's
+   counts but missing this sentence. And the attach exercised **three** of those
+   thirteen, not the five it predicted: `session.create`, `prompt.submit` and
+   `slash.exec` (row 6).
+6. **R3 — one real turn.** **Done 2026-08-04, recorded in row 18.** One prompt
+   submitted, streamed to completion, and the transcript compared against a
+   `talaria replay` of the same frames — byte-identical, which is what turned the
+   shared-seam argument into a measured equivalence.
+
+   Both steps were executable with the client as it stood, which they were not
+   when this document was first drafted: `LiveSource` accepted a recorder, the
+   launcher never passed one, and `talaria record` draws no interface — so
+   recording a session and *using* it were mutually exclusive. `--record` on the
+   bare launcher is what closed that.
+7. **CI** — **done.** The branch was pushed, and all seven checks passed on the
    pull request that carries this document, `install` and Linux among them.
 
-Until at least (1) and (2) are done and recorded here, this document's verdict
-does not move.
+Rows 19, 13 and 6 are each on their own sufficient to hold the verdict at **not
+ready** under AE7 and R39. Where the conditions above get recorded when they are
+met is this document's evidence table — items (1) and (2) went stale for three
+days precisely because nothing pointed the work that cleared them back here.
 
 ## Related
 
