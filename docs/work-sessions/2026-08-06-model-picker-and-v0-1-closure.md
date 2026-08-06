@@ -111,10 +111,29 @@ run on this branch and none will until it recovers.
 
 ## Deviations from the plan's file lists
 
-Recorded rather than absorbed. `talaria/transport/refresh.py` (U1, for KTD1 — see above) and
-`tests/domain/test_commands.py` plus four `tests/transport/` modules carrying a local-command count
-that U2's fifth entry changed. All are consequential edits the units could not avoid; none of them
-touches a file another unit owned.
+Recorded rather than absorbed.
+
+- `talaria/transport/refresh.py` (U1, for KTD1 — see above).
+- `tests/domain/test_commands.py` plus four `tests/transport/` modules, carrying a local-command count
+  that U2's new entry changed.
+- **U6 wrote its checklist to `docs/plans/2026-08-06-u6-row19-operator-checklist.md`, not to the
+  spec's declared `docs/work-sessions/2026-08-06-live-acceptance-run.md`, which does not exist.** The
+  content is complete; only the location diverges. Anything citing U6's output must use the actual
+  path. This matters more than a normal path quibble because the checklist is the *entire* product of
+  U6 — its other six returns are all "pending operator execution" — and the operator work it describes
+  is the only thing that can clear row 19.
+
+None of these touches a file another unit owned.
+
+## One finding from the pre-PR review, fixed here
+
+The plan's own KTD8 contradicted itself and the shipped code: it claimed option (b) means "no supported
+route puts one there", two lines after listing `a token on TALARIA_GATEWAY_URL` among the surviving
+routes. `credentials.py` now resolves that route *first*. The plan is what every unit is told to read
+as its authority, and after U3's work it was the only document in the repository still asserting the
+false version — `DECISIONS.md` carries an explicit "Not supported — do not write this anywhere" block,
+and the verdict's row 13 names the route as an environment variable and the highest-precedence one.
+KTD8 has been rewritten to state the accurate claim and to name the false one as false.
 
 ## Next step
 

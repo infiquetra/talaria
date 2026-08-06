@@ -156,12 +156,21 @@ options in its **Do.** paragraph and does not choose. The operator chose **(b)**
 `HERMES_DASHBOARD_SESSION_TOKEN` is dropped as a credential source, leaving the `0600` file at
 `<config_dir>/credentials`, a `token` on `TALARIA_GATEWAY_URL`, and the interactive prompt.
 
-*What (b) buys, stated exactly.* Talaria stops reading a credential from its environment, so no
-supported route puts one there. It does **not** make an inherited variable invisible: the kernel
-snapshots the environment block at `exec` and `/proc/<pid>/environ` serves that snapshot for the
-process's life, whatever Talaria does. What changes is that the variable is no longer a route Talaria
-documents, depends on, or requires — an operator who unsets it loses nothing, which is what makes R1
-satisfiable by operator action rather than impossible. Row 13 may be re-graded only that far; see U3.
+*What (b) buys, stated exactly.* The **dedicated** credential variable stops being a route: Talaria no
+longer reads `HERMES_DASHBOARD_SESSION_TOKEN` at all, and an operator who unsets it loses nothing.
+
+Two things (b) does **not** buy, both of which the first draft of this section wrongly claimed and U3
+refused to write. It does not make an inherited variable invisible: the kernel snapshots the
+environment block at `exec` and `/proc/<pid>/environ` serves that snapshot for the process's life,
+whatever Talaria does. And it does **not** leave Talaria reading no credential from its environment —
+route 1 above, a `token` on `TALARIA_GATEWAY_URL`, is an environment variable and, once the dedicated
+variable is deleted, it becomes the **highest-precedence** route (`talaria/transport/credentials.py`,
+the first branch of `_resolve`). Anyone writing "no supported route puts a credential in the
+environment" is writing something false.
+
+The accurate sentence, and the only one to use: **no supported route *requires* a credential in the
+process environment, and the dedicated credential variable is gone.** That is what makes R1 satisfiable
+by operator procedure rather than impossible, and row 13 may be re-graded only that far; see U3.
 
 *The constraint, unchanged.* R1's wording is not widened (`QUEUED.md`, "Do not"). The test asserting
 the environment half fails measures a kernel fact, not the precedence chain, so it stays and stays
