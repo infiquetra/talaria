@@ -4,6 +4,24 @@
 
 ## 2026-08-05
 
+### When the deliverable is evidence rather than code, a reproducible measurement stands in for a test gate — and the measuring script stays out of the repository
+
+**Author.** planning the restatement of the v0.1 daily-driver verdict (DRIFT-04), where the only code change is one docstring
+
+**Decision.** Work whose product is a graded claim — an audit row, a verdict, a requirement marked met — is gated by a **measurement anyone can re-run**, not by the suite. The document states the method precisely enough that a reader holding a corpus reproduces the number, and the number written into the document is the one the measurement printed. The script that produced it is **not** committed.
+
+**Why not commit the script.** It can only run on a machine holding recordings, and R29 keeps corpora out of version control permanently. A committed grader would therefore be a check that never executes in CI and sits skipped on every machine that matters — worse than no check, because a permanently-skipped test reads as coverage. Describing the method in the artifact costs a reader more effort and cannot rot into a false green.
+
+**Why a stated method rather than a stated number.** A number with no method behind it is exactly what DRIFT-04 is: the verdict's R2 and R3 rows carried confident reasons that nobody could re-derive, so nothing caught them when they stopped being true. A method survives the corpus growing; a number does not.
+
+**The control that makes it a measurement and not an agreement.** A re-grading pass that confirms everything it examined has not measured anything. At least one claim must come back **false** — for this work, row 6 of the verdict, which planning measured and found unchanged: exactly three of the thirteen evidence-only gateway methods have live evidence and ten still have none, unchanged since 2026-08-02 despite a client that has since attached repeatedly. A pass reporting universal improvement is re-run rather than believed.
+
+**Rejected alternative — commit the grader with a skip-if-no-corpus guard.** It buys a green tick that measures nothing wherever it runs, and it puts the thing that decides whether a release gate opens behind a check that is structurally incapable of failing in CI.
+
+**Rejected alternative — treat the project check as the gate.** `ruff`/`mypy`/`pytest`/`bandit` running green says nothing about whether a verdict row is true. Using it as the gate here would be the same category error as an exit-code assertion that more than one route can satisfy (see the 2026-08-05 LEARNINGS entry on vacuous refusal tests).
+
+**Revisit when.** A second artifact needs the same treatment. One instance is a decision; two make it a convention worth a shared helper, and at that point the "do not commit the script" call is worth re-testing against whatever the second case needs.
+
 ### A URL fragment is withheld whole in a recording and dropped outright from a dialled endpoint
 
 **Author.** closing the P2 left open by the code-review gate on the credential-and-bridge-drift remediation
