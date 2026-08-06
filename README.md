@@ -160,7 +160,7 @@ the credential through one of the three routes above instead.
 
 Removing it buys one specific thing, stated narrowly because the narrow claim is the true one:
 **Talaria no longer requires a credential in your environment, so unsetting that variable costs you
-nothing.** Route 2 has no environment footprint at all. What it does *not* buy is a clean process
+nothing.** Route 2 has no environment footprint at all. What it does _not_ buy is a clean process
 environment on its own — see the caveat below.
 
 `talaria refresh-credential` writes that file for you, reading the session token from the page a
@@ -188,7 +188,7 @@ whether or not Talaria consults it. Route 2 is the one route with no environment
 
 Talaria itself never adds the credential to its own command line or environment; that half is
 asserted against a running process in `tests/transport/test_process_surface.py`, and the same file
-asserts the *failure* of the inherited half rather than defining it away.
+asserts the _failure_ of the inherited half rather than defining it away.
 
 ### The superseded TypeScript bootstrap
 
