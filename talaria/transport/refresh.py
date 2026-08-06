@@ -53,6 +53,7 @@ __all__ = [
     "extract_session_token",
     "fetch_dashboard_index",
     "refresh_credential",
+    "require_fetchable_origin",
     "write_token",
 ]
 
@@ -116,7 +117,7 @@ def dashboard_origin_for(endpoint: str) -> str:
     return urlunsplit((scheme, parts.netloc, "/", "", ""))
 
 
-def _require_fetchable_origin(origin: str) -> None:
+def require_fetchable_origin(origin: str) -> None:
     """Refuse anything but https, or http to a host on this machine.
 
     Two separate refusals share one function because they guard one call. The
@@ -124,6 +125,12 @@ def _require_fetchable_origin(origin: str) -> None:
     :func:`urllib.request.urlopen`, which will happily open them and would turn
     a wrong ``--from`` into an arbitrary-file read. The loopback rule then keeps
     a cleartext credential fetch on the machine it started on.
+
+    **Public because ``talaria/transport/admin.py`` calls it too** (KTD1 of the
+    2026-08-06 model-picker plan). The admin API is a second surface on the same
+    HTTP seam, and both surfaces carry the same credential to the same origin —
+    so a second copy of these two refusals would be a second place for them to
+    drift, and the copy that drifted would be the one that stopped refusing.
     """
     parts = urlsplit(origin)
     scheme = parts.scheme.lower()
@@ -148,11 +155,11 @@ def _require_fetchable_origin(origin: str) -> None:
 
 def fetch_dashboard_index(origin: str, *, timeout: float = 10.0) -> str:
     """GET the dashboard's index page, or raise :class:`RefreshError`."""
-    _require_fetchable_origin(origin)
+    require_fetchable_origin(origin)
     request = urllib.request.Request(origin, headers={"Accept": "text/html"})
     try:
         # nosec B310 - the scheme is allowlisted to http/https immediately above,
-        # in _require_fetchable_origin, which is what B310 asks to be audited.
+        # in require_fetchable_origin, which is what B310 asks to be audited.
         with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
             charset = response.headers.get_content_charset() or "utf-8"
             return str(response.read(MAX_INDEX_BYTES).decode(charset, "replace"))

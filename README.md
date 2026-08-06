@@ -107,12 +107,61 @@ uv tool install talaria
 talaria
 ```
 
+### Switching Hermes profile
+
+`/profiles` opens a picker listing the profiles the connected Hermes knows about, with each one's
+configured model and whether its gateway is running. Selecting a row **dials that profile's gateway**
+and re-resolves the credential for it — Talaria never writes Hermes's own active-profile setting,
+which by Hermes's own documentation "does not retarget the already-running dashboard process" and so
+would change a machine-wide preference without moving the session in front of you.
+
+The singular `/profile` is a Hermes command and still reaches Hermes; the plural is Talaria's. Both
+Talaria-local names are marked `local` in the command listing.
+
+Hermes publishes no address for a profile's gateway — measured on 2026-08-06, `GET /api/profiles`
+returns names, paths, models and liveness, and no host or port — so Talaria needs to be told where
+each one listens:
+
+```toml
+# ~/.talaria/config.toml
+[profiles.endpoints]
+work = "ws://127.0.0.1:9119/api/ws"
+lab  = "ws://127.0.0.1:9219/api/ws"
+```
+
+A profile with no entry here is still listed, marked `[no endpoint configured]`, and selecting it is
+refused before anything is dialled — as is a profile whose gateway is not running, marked
+`[gateway not running]`. Those are two different problems with two different fixes, so they are two
+different messages.
+
+Each profile's dashboard mints its own session token, and `<config_dir>/credentials` holds exactly
+one. A switch to a profile whose token you do not currently hold therefore fails with
+`credential_unavailable` and the reason on screen — nothing was dialled, so no gateway refused
+anything. Run `talaria refresh-credential` against the profile you want and try again.
+
 ### Supplying the gateway credential
 
 The credential is acquired once per dial and rides the WebSocket URL's `?token=` query parameter,
-never the command line. Precedence, highest first: `HERMES_DASHBOARD_SESSION_TOKEN`, a `token`
-already on `TALARIA_GATEWAY_URL`, a `token` key in `<config_dir>/credentials` (refused unless its
-mode is `0600` or stricter), then an interactive hidden prompt.
+never the command line. **Three routes supply it**, in precedence order, highest first:
+
+1. A `token` query parameter already on `TALARIA_GATEWAY_URL`.
+2. A `token` key in `<config_dir>/credentials`, refused unless the file's mode is `0600` or
+   stricter. `talaria refresh-credential` writes this file for you.
+3. An interactive hidden prompt, asked once before the interface starts.
+
+Route 1 outranks route 2, so a stale `?token=` left on an exported `TALARIA_GATEWAY_URL` wins over a
+credential file `talaria refresh-credential` has just rewritten. Export the endpoint without a
+credential on it if you use the file.
+
+**`HERMES_DASHBOARD_SESSION_TOKEN` is not one of them, and that is deliberate.** Talaria read that
+variable — the one Hermes's own dashboard publishes — as its highest-precedence source until
+2026-08-06, when it was removed from the chain. If you have it exported, Talaria ignores it; supply
+the credential through one of the three routes above instead.
+
+Removing it buys one specific thing, stated narrowly because the narrow claim is the true one:
+**Talaria no longer requires a credential in your environment, so unsetting that variable costs you
+nothing.** Route 2 has no environment footprint at all. What it does _not_ buy is a clean process
+environment on its own — see the caveat below.
 
 `talaria refresh-credential` writes that file for you, reading the session token from the page a
 running dashboard already serves to its own web UI, preserving any other keys in the file, and
@@ -128,11 +177,18 @@ it. If no non-interactive source can supply one and there is no terminal to ask 
 what to do and exits `2` rather than opening a client that cannot dial.
 
 **Prefer the credential file if anyone else can read your process list.** A credential supplied
-through the environment is inherited by Talaria and stays visible in the process environment for the
-life of the process — on Linux through `/proc/<pid>/environ`, on macOS through `ps -E` to the owning
-user — and no client can remove what the kernel captured at `exec`. Talaria itself never adds the
-credential to its own command line or environment; that half is asserted against a running process
-in `tests/transport/test_process_surface.py`.
+through the environment — including route 1, a `token` on `TALARIA_GATEWAY_URL` — is inherited by
+Talaria and stays visible in the process environment for the life of the process, on Linux through
+`/proc/<pid>/environ` and on macOS through `ps -E` to the owning user. No client can remove what
+the kernel captured at `exec`, and dropping `HERMES_DASHBOARD_SESSION_TOKEN` from the chain did not
+change that; it only made a credential-free environment reachable without giving anything up. The
+same applies to a variable Talaria never reads: an exported
+`HERMES_DASHBOARD_SESSION_TOKEN` is still visible to anyone who can read that process's environment,
+whether or not Talaria consults it. Route 2 is the one route with no environment footprint.
+
+Talaria itself never adds the credential to its own command line or environment; that half is
+asserted against a running process in `tests/transport/test_process_surface.py`, and the same file
+asserts the _failure_ of the inherited half rather than defining it away.
 
 ### The superseded TypeScript bootstrap
 

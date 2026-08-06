@@ -8,11 +8,11 @@ both platforms Talaria targets. R1 asks for that to be *measured* on a running
 process rather than reasoned about.
 
 **The finding is narrower than R1's wording, and it is stated narrowly on
-purpose.** The operator supplies the credential through
-``HERMES_DASHBOARD_SESSION_TOKEN``, and Talaria inherits it. A process cannot
-remove what ``/proc/<pid>/environ`` captured at ``exec`` time — that snapshot is
-taken by the kernel before any Python runs, and ``os.environ.pop`` does not
-change it. So the two halves are measured separately:
+purpose.** A credential reaches this process through the environment and Talaria
+inherits it. A process cannot remove what ``/proc/<pid>/environ`` captured at
+``exec`` time — that snapshot is taken by the kernel before any Python runs, and
+``os.environ.pop`` does not change it. So the two halves are measured
+separately:
 
 * **Holds, and is checked here.** Talaria's own command line carries neither the
   credential nor any ``?token=``-bearing URL, and Talaria adds nothing
@@ -22,6 +22,19 @@ change it. So the two halves are measured separately:
   ``HERMES_DASHBOARD_SESSION_TOKEN`` is visible in the process environment for
   the process's whole life, on Linux by kernel snapshot and on macOS through
   ``ps -E`` to the owning user.
+
+**KTD8 removed that variable from the credential chain on 2026-08-06, and this
+file's measurement is unchanged by that.** Talaria no longer *reads*
+``HERMES_DASHBOARD_SESSION_TOKEN``; the probes below now resolve their
+credential through the surviving environment level, a ``token`` query parameter
+on ``TALARIA_GATEWAY_URL``. What the removal cannot do is make an inherited
+variable invisible, because visibility is a kernel property of the ``exec``
+snapshot and not a property of which variables Talaria consults. So
+``test_the_inherited_credential_is_visible_in_the_process_environment`` still
+asserts the *failure*, unchanged, and still names
+``HERMES_DASHBOARD_SESSION_TOKEN`` — an operator whose shell exports it is a
+realistic operator, and a credential Talaria ignores is exactly as readable in
+``/proc/<pid>/environ`` as one it reads.
 
 The one environment Talaria *does* control is its status child's, and that one
 is checked in full: KTD5's ``build_child_env`` is what makes it so, and
@@ -59,9 +72,17 @@ from typing import Any
 
 import pytest
 
-from talaria.transport.credentials import GATEWAY_URL_ENV_VAR, TOKEN_ENV_VAR
+from talaria.transport.credentials import GATEWAY_URL_ENV_VAR
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: The variable Hermes's own dashboard publishes, held as a literal because
+#: :mod:`talaria.transport.credentials` no longer defines it — KTD8 removed the
+#: level and the constant with it on 2026-08-06. **This file still needs the
+#: name**, and that is the point: the measurement below is about a variable an
+#: operator's shell may still export, not about a route Talaria supports. A
+#: variable name, not a credential (bandit B105).
+TOKEN_ENV_VAR = "HERMES_DASHBOARD_SESSION_TOKEN"  # nosec B105
 
 #: The dashboard-stub origin the ``refresh-credential`` probe fetches from,
 #: read back out of the environment at runtime for the same reason
@@ -75,7 +96,8 @@ REFRESH_ORIGIN_ENV_VAR = "TALARIA_TEST_REFRESH_ORIGIN"
 CANARY_TOKEN = "R1-CANARY-TOKEN-8Kd3nQ7wPz"
 
 #: An endpoint carrying the canary the way an operator's exported
-#: ``TALARIA_GATEWAY_URL`` would (KTD11's second precedence level).
+#: ``TALARIA_GATEWAY_URL`` would. Since KTD8 this is the **highest** remaining
+#: precedence level, and the one every probe below actually resolves through.
 CANARY_URL = f"ws://127.0.0.1:19119/api/ws?token={CANARY_TOKEN}"
 
 #: What the launcher probe subprocess runs. It builds the live launcher exactly
@@ -401,6 +423,13 @@ def _stub_dashboard(token: str) -> Iterator[str]:
 def probe_environment(tmp_path: Path) -> Iterator[dict[str, str]]:
     """The operator's environment, credential included, as KTD11 expects it.
 
+    ``HERMES_DASHBOARD_SESSION_TOKEN`` is set here and **is not what supplies
+    the credential** — since KTD8 nothing reads it. It stands for the realistic
+    case this file is about: a shell that exported it before launching Talaria,
+    leaving a credential in an environment block the kernel has already
+    snapshotted. The credential the probes resolve comes from the ``token`` on
+    :data:`CANARY_URL`.
+
     Also stands up the ``refresh-credential`` probe's loopback dashboard stub
     and publishes its origin (R7), so every entry point in :data:`ENTRY_POINTS`
     can be launched from one shared environment.
@@ -586,8 +615,14 @@ def test_the_inherited_credential_is_visible_in_the_process_environment(
     snapshot for the life of the process, so ``os.environ.pop`` changes nothing
     a reader can see. The mitigation is on the operator's side — supply the
     credential through the ``0600`` credential file
-    (``<config_dir>/credentials``) instead of the environment, which is KTD11's
-    third precedence level and is exactly why that level exists.
+    (``<config_dir>/credentials``) instead of the environment, which is exactly
+    why that level exists.
+
+    **KTD8 did not change what this test measures.** Talaria stopped reading
+    ``HERMES_DASHBOARD_SESSION_TOKEN`` on 2026-08-06, and an exported one is
+    still right here in the environment block. Not consulting a variable is not
+    the same as the variable not being there, so this stays a red-when-fixed
+    assertion of the failure rather than becoming a clause somebody widened.
     """
     probe = start_probe(PROBE_LAUNCHER, probe_environment)
     try:

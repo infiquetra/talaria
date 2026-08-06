@@ -58,7 +58,7 @@ PASTE_PATH = "/tmp/hermes/pastes/paste_1_101530.txt"
 
 class StubProvider:
     async def acquire(self) -> Credential:
-        return Credential("token", STUB_TOKEN, "environment")
+        return Credential("token", STUB_TOKEN, "endpoint-url")
 
 
 def collapsing_responder(

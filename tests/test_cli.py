@@ -456,15 +456,21 @@ def test_the_record_refusal_reproduces_nothing_it_was_given(
         )
 
 
-def test_the_record_refusal_names_both_supported_routes(
+def test_the_record_refusal_names_only_the_surviving_routes(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A refusal that only says no teaches the operator nothing (KTD1).
 
     It must also say that the value they passed is now exposed, which is the part
     a silent strip would never have told them.
+
+    **And every route it names has to work.** This message advertised
+    ``HERMES_DASHBOARD_SESSION_TOKEN`` until KTD8 removed that level on
+    2026-08-06. Sending an operator who has just leaked a credential to a route
+    that silently resolves nothing is the worst available failure, so the
+    absence is asserted alongside the presences.
     """
-    from talaria.transport.credentials import TOKEN_ENV_VAR
+    from talaria.transport.credentials import GATEWAY_URL_ENV_VAR
 
     _fake_record_capture(monkeypatch)
 
@@ -472,7 +478,9 @@ def test_the_record_refusal_names_both_supported_routes(
 
     message = capsys.readouterr().err
     assert "talaria refresh-credential" in message
-    assert TOKEN_ENV_VAR in message
+    assert GATEWAY_URL_ENV_VAR in message
+    assert "interactive prompt" in message
+    assert "HERMES_DASHBOARD_SESSION_TOKEN" not in message
     assert "rotate" in message.lower()
 
 
@@ -481,22 +489,23 @@ def test_record_with_no_endpoint_resolves_the_one_the_launcher_would(
 ) -> None:
     """R3/R4: a bare `talaria record` resolves both halves through the chain.
 
-    The endpoint comes from `TALARIA_GATEWAY_URL` and the credential from
-    `HERMES_DASHBOARD_SESSION_TOKEN`, which is exactly what
-    `AttachTarget.from_environment` and `LoopbackTokenProvider` do for the live
-    launcher. Nothing is on the command line.
+    Both halves come from `TALARIA_GATEWAY_URL` — the endpoint from the variable
+    and the credential from its `token` query parameter, which since KTD8
+    (2026-08-06) is the environment's only credential route. That is exactly
+    what `AttachTarget.from_environment` and `LoopbackTokenProvider` do for the
+    live launcher. Nothing is on the command line, and the endpoint the recorder
+    is handed has had the credential stripped back off it.
     """
-    from talaria.transport.credentials import TOKEN_ENV_VAR
-
     calls = _fake_record_capture(monkeypatch)
-    monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws")
-    monkeypatch.setenv(TOKEN_ENV_VAR, "NOT-A-REAL-CANARY-7c40de")
+    monkeypatch.setenv(
+        "TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-7c40de"
+    )
 
     assert cli_module.main(["record"]) == 0
     assert len(calls) == 1
 
     assert calls[0].endpoint == "ws://127.0.0.1:9911/api/ws"
-    assert calls[0].credential.source == "environment"
+    assert calls[0].credential.source == "endpoint-url"
     assert calls[0].credential.value == "NOT-A-REAL-CANARY-7c40de"
 
 
@@ -508,11 +517,10 @@ def test_record_takes_a_credential_free_endpoint_as_an_override(
     It overrides `TALARIA_GATEWAY_URL` the same way the launcher's `override=`
     does, while the credential still comes from the chain.
     """
-    from talaria.transport.credentials import TOKEN_ENV_VAR
-
     calls = _fake_record_capture(monkeypatch)
-    monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws")
-    monkeypatch.setenv(TOKEN_ENV_VAR, "NOT-A-REAL-CANARY-7c40de")
+    monkeypatch.setenv(
+        "TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-7c40de"
+    )
 
     assert cli_module.main(["record", "ws://127.0.0.1:9222/api/ws"]) == 0
 

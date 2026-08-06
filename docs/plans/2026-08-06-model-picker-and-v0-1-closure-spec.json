@@ -101,7 +101,7 @@
       "returns": [
         "profiles_listed_with_dialability_marked",
         "non_running_profile_refused_before_dial",
-        "credential_refusal_surfaces_as_credential_unavailable_with_reason",
+        "credential_refusal_surfaces_as_unavailable_with_reason",
         "failed_switch_leaves_a_named_state",
         "profiles_active_post_never_called",
         "fixtures_use_synthetic_profile_names"

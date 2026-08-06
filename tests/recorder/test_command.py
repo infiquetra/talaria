@@ -37,7 +37,11 @@ from talaria.transport.credentials import (
 )
 
 GATEWAY_URL_ENV_VAR = "TALARIA_GATEWAY_URL"
-TOKEN_ENV_VAR = "HERMES_DASHBOARD_SESSION_TOKEN"  # nosec B105 - a variable name, not a value
+
+#: The variable KTD8 removed from the credential chain on 2026-08-06. Kept here
+#: only to prove ``talaria record`` ignores it — nothing in this file may use it
+#: to *supply* a credential. A variable name, not a value (bandit B105).
+RETIRED_TOKEN_ENV_VAR = "HERMES_DASHBOARD_SESSION_TOKEN"  # nosec B105
 
 
 class _StubSocket:
@@ -81,9 +85,15 @@ def _resolve(
     endpoint: str,
     credential: str,
 ) -> RecordTarget:
-    """Resolve a target the way ``talaria record`` resolves one: from the environment."""
-    monkeypatch.setenv(GATEWAY_URL_ENV_VAR, endpoint)
-    monkeypatch.setenv(TOKEN_ENV_VAR, credential)
+    """Resolve a target the way ``talaria record`` resolves one: from the environment.
+
+    Since KTD8 the environment's only credential route is a ``token`` query
+    parameter on ``TALARIA_GATEWAY_URL``, so that is what this sets. The
+    endpoint the caller asked for still comes back credential-free, because
+    ``AttachTarget`` strips the query and the provider re-attaches the value for
+    exactly one dial — which is the property the tests below measure.
+    """
+    monkeypatch.setenv(GATEWAY_URL_ENV_VAR, f"{endpoint}?token={credential}")
     return asyncio.run(resolve_record_target())
 
 
@@ -106,12 +116,24 @@ def test_the_dialled_url_carries_the_credential_exactly_once(
     second one — two values on one URL, with the gateway free to read either.
     ``AttachTarget.dial_url`` drops the existing credential keys before appending,
     and this is what pins that.
+
+    **Re-expressed for KTD8, keeping the two values distinct.** The stale token
+    used to ride ``TALARIA_GATEWAY_URL`` while the real credential came from
+    ``HERMES_DASHBOARD_SESSION_TOKEN``. With that variable removed from the chain
+    the endpoint variable's own token *is* the credential, so a stale-versus-real
+    pair can no longer be built that way. They are separated through the other
+    seam instead: the stale one rides the endpoint override, which
+    ``AttachTarget`` strips, and the real one rides the exported endpoint. Same
+    two values, same assertion, same defect guarded — an endpoint that already
+    carried a ``token`` picking up a second one.
     """
-    target = _resolve(
-        monkeypatch,
-        endpoint="ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-STALE-0000",
-        credential="NOT-A-REAL-CANARY-8ae13c",
+    monkeypatch.setenv(
+        GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-8ae13c"
     )
+    target = asyncio.run(
+        resolve_record_target(override="ws://127.0.0.1:9222/api/ws?token=NOT-A-REAL-STALE-0000")
+    )
+    assert target.endpoint == "ws://127.0.0.1:9222/api/ws"
     connector = _RecordingConnector(messages=[json.dumps({"method": "ping"})])
 
     code, _printed = _run(target, tmp_path / "log.jsonl", connector)
@@ -228,10 +250,15 @@ def test_the_failure_hint_no_longer_teaches_the_command_line_form(
 def test_resolution_walks_the_same_chain_the_launcher_walks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """R4: environment first, then the credential file — KTD11's order, unchanged.
+    """R4: the endpoint's token first, then the credential file — KTD11's order.
 
     ``record`` gets the chain rather than a copy of it, so the open question about
     file-versus-environment precedence stays one question with one answer.
+
+    **The order shrank on 2026-08-06 (KTD8) and this test tracks it rather than
+    preserving it.** ``HERMES_DASHBOARD_SESSION_TOKEN`` used to sit above both
+    levels below; it now resolves nothing, and the third block asserts exactly
+    that — setting it leaves the file's answer standing.
     """
     credentials = tmp_path / "credentials"
     credentials.write_text('token = "NOT-A-REAL-FILE-CANARY-33"\n', encoding="utf-8")
@@ -242,10 +269,18 @@ def test_resolution_walks_the_same_chain_the_launcher_walks(
     assert from_file.credential.source == "file"
     assert from_file.credential.value == "NOT-A-REAL-FILE-CANARY-33"
 
-    monkeypatch.setenv(TOKEN_ENV_VAR, "NOT-A-REAL-ENV-CANARY-77")
-    from_env = asyncio.run(resolve_record_target(credentials_path=credentials))
-    assert from_env.credential.source == "environment"
-    assert from_env.credential.value == "NOT-A-REAL-ENV-CANARY-77"
+    monkeypatch.setenv(
+        GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-URL-CANARY-77"
+    )
+    from_url = asyncio.run(resolve_record_target(credentials_path=credentials))
+    assert from_url.credential.source == "endpoint-url"
+    assert from_url.credential.value == "NOT-A-REAL-URL-CANARY-77"
+
+    monkeypatch.setenv(GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws")
+    monkeypatch.setenv(RETIRED_TOKEN_ENV_VAR, "NOT-A-REAL-ENV-CANARY-77")
+    ignored = asyncio.run(resolve_record_target(credentials_path=credentials))
+    assert ignored.credential.source == "file"
+    assert ignored.credential.value == "NOT-A-REAL-FILE-CANARY-33"
 
 
 def test_an_endpoint_override_is_an_endpoint_and_not_a_credential(
@@ -258,8 +293,9 @@ def test_an_endpoint_override_is_an_endpoint_and_not_a_credential(
     the operator's raw argument first (KTD3) — by the time a target exists there
     is nothing left to detect.
     """
-    monkeypatch.setenv(GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws")
-    monkeypatch.setenv(TOKEN_ENV_VAR, "NOT-A-REAL-CANARY-8ae13c")
+    monkeypatch.setenv(
+        GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-8ae13c"
+    )
 
     target = asyncio.run(resolve_record_target(override="ws://127.0.0.1:9222/api/ws"))
 
@@ -275,7 +311,6 @@ def test_resolution_refuses_an_endpoint_that_will_not_parse(
     to have pasted a credential into, so the message names the source and not the
     value.
     """
-    monkeypatch.setenv(TOKEN_ENV_VAR, "NOT-A-REAL-CANARY-8ae13c")
     monkeypatch.setenv(GATEWAY_URL_ENV_VAR, "ws://[bad::/api/ws")
 
     with pytest.raises(CredentialError) as excinfo:
@@ -318,7 +353,7 @@ def test_a_provider_that_is_not_a_priming_provider_is_merely_acquired(
 
     class _Double:
         async def acquire(self) -> Credential:
-            return Credential(parameter="token", value="NOT-A-REAL-DOUBLE-1", source="environment")
+            return Credential(parameter="token", value="NOT-A-REAL-DOUBLE-1", source="endpoint-url")
 
     monkeypatch.setenv(GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws")
 

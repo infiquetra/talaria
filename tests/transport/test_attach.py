@@ -38,7 +38,6 @@ from talaria.transport.attach import (
 )
 from talaria.transport.credentials import (
     GATEWAY_URL_ENV_VAR,
-    TOKEN_ENV_VAR,
     Credential,
     CredentialError,
     CredentialProvider,
@@ -49,6 +48,23 @@ from tests.transport.conftest import STUB_TOKEN, StubGateway
 
 #: One distinctive value, searched for across every surface below.
 CANARY = "canary-Ttbdq2Rk-do-not-leak"
+
+#: The variable Hermes's dashboard publishes and Talaria **no longer reads**.
+#: KTD8 (2026-08-06) deleted it from the precedence chain and deleted the
+#: production constant that named it, so this file holds the literal. It is used
+#: two ways below and only two: to prove the chain ignores it, and to prove
+#: KTD5's child-environment deny still refuses to forward it. A variable name,
+#: not a credential (bandit B105).
+RETIRED_TOKEN_ENV_VAR = "HERMES_DASHBOARD_SESSION_TOKEN"  # nosec B105
+
+
+def endpoint_with_token(value: str, *, host: str = "ws://127.0.0.1:9119/api/ws") -> str:
+    """An exported ``TALARIA_GATEWAY_URL`` carrying ``value`` as its credential.
+
+    The highest remaining precedence level since KTD8, and therefore the one a
+    test reaches for when it needs the *environment* to answer the chain.
+    """
+    return f"{host}?token={value}"
 
 
 def reachable_strings(value: Any, *, depth: int = 6) -> list[str]:
@@ -119,7 +135,7 @@ async def test_the_credential_arrives_as_the_token_query_parameter(
 ) -> None:
     """KTD13's loopback pin: ``ws.query_params['token']``, never a header."""
     target = AttachTarget.from_url(gateway.url)
-    outcome = await attach(target, Credential("token", STUB_TOKEN, "environment"))
+    outcome = await attach(target, Credential("token", STUB_TOKEN, "endpoint-url"))
 
     assert isinstance(outcome, AttachSuccess)
     await outcome.connection.close()
@@ -148,7 +164,7 @@ async def test_the_credential_arrives_in_the_query_and_in_no_header(
     """
     gateway.token = CANARY
     target = AttachTarget.from_url(gateway.url)
-    outcome = await attach(target, Credential("token", CANARY, "environment"))
+    outcome = await attach(target, Credential("token", CANARY, "endpoint-url"))
 
     assert isinstance(outcome, AttachSuccess)
     await outcome.connection.close()
@@ -168,7 +184,7 @@ async def test_a_wrong_credential_yields_the_named_authentication_failed_state(
 ) -> None:
     """F1/R35: the failure is named, not a generic connection error."""
     target = AttachTarget.from_url(gateway.url)
-    outcome = await attach(target, Credential("token", "the-wrong-token", "environment"))
+    outcome = await attach(target, Credential("token", "the-wrong-token", "endpoint-url"))
 
     assert isinstance(outcome, AttachFailure)
     assert outcome.kind == "auth_failed"
@@ -185,7 +201,7 @@ async def test_an_unreachable_gateway_is_connect_failed_not_auth_failed() -> Non
     """R35 keeps the two apart; conflating them sends the operator to the wrong fix."""
     # Port 1 on loopback: reserved, and nothing listens there.
     target = AttachTarget.from_url("ws://127.0.0.1:1/api/ws")
-    outcome = await attach(target, Credential("token", STUB_TOKEN, "environment"))
+    outcome = await attach(target, Credential("token", STUB_TOKEN, "endpoint-url"))
 
     assert isinstance(outcome, AttachFailure)
     assert outcome.kind == "connect_failed"
@@ -257,7 +273,7 @@ async def test_a_dial_error_never_puts_the_credential_in_the_failure_detail(
     ``LiveSource.last_failure`` and the composer notice.
     """
     target = AttachTarget.from_url(endpoint)
-    outcome = await attach(target, Credential("token", CANARY, "environment"))
+    outcome = await attach(target, Credential("token", CANARY, "endpoint-url"))
 
     assert isinstance(outcome, AttachFailure)
     assert CANARY not in outcome.detail
@@ -273,7 +289,7 @@ async def test_a_dial_error_never_puts_the_credential_in_the_failure_detail(
 async def test_a_dial_error_still_says_what_went_wrong() -> None:
     """Over-redaction is a different failure: the detail has to stay useful."""
     target = AttachTarget.from_url("ws://127.0.0.1:1/api/ws")
-    outcome = await attach(target, Credential("token", CANARY, "environment"))
+    outcome = await attach(target, Credential("token", CANARY, "endpoint-url"))
 
     assert isinstance(outcome, AttachFailure)
     assert outcome.kind == "connect_failed"
@@ -297,7 +313,7 @@ async def test_a_cancelled_dial_unwinds_rather_than_becoming_a_failure() -> None
 
     target = AttachTarget.from_url("ws://127.0.0.1:9119/api/ws")
     task = asyncio.ensure_future(
-        attach(target, Credential("token", CANARY, "environment"), dialer=_never_finishes)
+        attach(target, Credential("token", CANARY, "endpoint-url"), dialer=_never_finishes)
     )
     await asyncio.sleep(0.01)
     task.cancel()
@@ -332,7 +348,7 @@ def test_stripping_leaves_a_credential_free_url_byte_identical() -> None:
 
 def test_the_dial_url_is_the_only_place_the_credential_appears() -> None:
     target = AttachTarget.from_url("ws://127.0.0.1:9119/api/ws")
-    dial = target.dial_url(Credential("token", CANARY, "environment"))
+    dial = target.dial_url(Credential("token", CANARY, "endpoint-url"))
 
     assert f"token={CANARY}" in dial
     assert CANARY not in target.url
@@ -343,7 +359,7 @@ def test_the_dial_url_is_the_only_place_the_credential_appears() -> None:
 def test_a_credential_on_the_endpoint_is_replaced_not_duplicated() -> None:
     """Otherwise a stale pasted token would ride alongside the live one."""
     target = AttachTarget.from_url(f"ws://127.0.0.1:9119/api/ws?token={CANARY}")
-    dial = target.dial_url(Credential("token", "fresh", "environment"))
+    dial = target.dial_url(Credential("token", "fresh", "endpoint-url"))
     assert dial.count("token=") == 1
     assert CANARY not in dial
 
@@ -368,21 +384,29 @@ def test_the_recorded_endpoint_header_withholds_a_credential(tmp_path: Path) -> 
 
 
 def test_the_status_child_environment_carries_no_credential() -> None:
-    """KTD5's canary: the whole query is dropped, not pattern-filtered."""
+    """KTD5's canary: the whole query is dropped, not pattern-filtered.
+
+    Deliberately still exercised with :data:`RETIRED_TOKEN_ENV_VAR` in the parent
+    environment. KTD8 removed that variable from Talaria's credential chain, not
+    from operators' shells, and ``talaria/status/contract.py``'s deny is what
+    stops an inherited one from being handed to a status child. Dropping it from
+    this fixture because "Talaria does not read it any more" would retire the
+    coverage of the boundary that still has to hold.
+    """
     parent = {
         "PATH": "/usr/bin",
         "HOME": "/home/op",
-        GATEWAY_URL_ENV_VAR: f"ws://127.0.0.1:9119/api/ws?token={CANARY}",
-        TOKEN_ENV_VAR: CANARY,
+        GATEWAY_URL_ENV_VAR: endpoint_with_token(CANARY),
+        RETIRED_TOKEN_ENV_VAR: CANARY,
         "TALARIA_PROFILE": "default",
     }
-    child = build_child_env(parent_env=parent, allowlist=(TOKEN_ENV_VAR,))
+    child = build_child_env(parent_env=parent, allowlist=(RETIRED_TOKEN_ENV_VAR,))
 
     assert CANARY not in "\n".join(f"{k}={v}" for k, v in child.items())
     assert child[GATEWAY_URL_ENV_VAR] == "ws://127.0.0.1:9119/api/ws"
     # Even an operator who explicitly allowlists the token variable does not get
     # it forwarded: the credential-shaped-name deny is non-overridable (KTD5).
-    assert TOKEN_ENV_VAR not in child
+    assert RETIRED_TOKEN_ENV_VAR not in child
 
 
 @pytest.mark.asyncio
@@ -403,7 +427,7 @@ async def test_the_attach_outcome_carries_no_credential_anywhere(
     ``sys.argv`` is still checked, because "no child process was spawned to hold
     it" is a genuine part of the claim — it is just not the load-bearing part.
     """
-    provider = LoopbackTokenProvider(environ={TOKEN_ENV_VAR: CANARY})
+    provider = LoopbackTokenProvider(environ={GATEWAY_URL_ENV_VAR: endpoint_with_token(CANARY)})
     target = AttachTarget.from_url(gateway.url)
     gateway.token = CANARY
 
@@ -452,36 +476,74 @@ def test_the_credential_object_withholds_its_value_from_every_repr() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_environment_variable_wins_over_the_file(
-    credentials_file: Path,
+async def test_the_retired_environment_variable_is_not_a_credential_source(
+    tmp_path: Path,
 ) -> None:
+    """KTD8, option (b): the highest precedence level is gone, not demoted.
+
+    This test replaces ``test_the_environment_variable_wins_over_the_file``,
+    which asserted the precedence this unit removed. A token present *only* in
+    ``HERMES_DASHBOARD_SESSION_TOKEN`` no longer resolves at all — it raises,
+    the same as an empty environment would, and the value never appears in the
+    refusal.
+
+    What this does **not** assert, because it is not true: that the variable has
+    become invisible. It is right there in the environment mapping the provider
+    was handed. It is simply not read.
+    """
     provider = LoopbackTokenProvider(
-        credentials_path=credentials_file,
-        environ={TOKEN_ENV_VAR: "from-environment"},
+        credentials_path=tmp_path / "absent",
+        environ={RETIRED_TOKEN_ENV_VAR: CANARY},
+        allow_prompt=False,
     )
-    credential = await provider.acquire()
-    assert (credential.value, credential.source) == ("from-environment", "environment")
+    with pytest.raises(CredentialError) as caught:
+        await provider.acquire()
+
+    message = str(caught.value)
+    assert CANARY not in message
+    assert RETIRED_TOKEN_ENV_VAR not in message, (
+        "the refusal advertises a route that no longer resolves anything"
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_token_on_the_endpoint_url_ranks_below_the_token_variable(
+async def test_the_retired_environment_variable_does_not_outrank_the_file(
     credentials_file: Path,
 ) -> None:
+    """The other half of the removal: it does not merely fail, it does not win.
+
+    A level that raised when alone but still shadowed the file when both were
+    present would be the same defect wearing a different failure mode.
+    """
     provider = LoopbackTokenProvider(
         credentials_path=credentials_file,
+        environ={RETIRED_TOKEN_ENV_VAR: "from-the-retired-variable"},
+    )
+    credential = await provider.acquire()
+    assert (credential.value, credential.source) == (STUB_TOKEN, "file")
+
+
+@pytest.mark.asyncio
+async def test_a_token_on_the_endpoint_url_is_the_highest_remaining_level(
+    credentials_file: Path,
+) -> None:
+    """With the token variable gone, ``TALARIA_GATEWAY_URL`` tops the chain."""
+    provider = LoopbackTokenProvider(
+        credentials_path=credentials_file,
+        environ={GATEWAY_URL_ENV_VAR: endpoint_with_token("from-url")},
+    )
+    credential = await provider.acquire()
+    assert (credential.value, credential.source) == ("from-url", "endpoint-url")
+
+    # And the retired variable does not reclaim the top by being present.
+    with_retired = LoopbackTokenProvider(
+        credentials_path=credentials_file,
         environ={
-            TOKEN_ENV_VAR: "from-environment",
-            GATEWAY_URL_ENV_VAR: "ws://127.0.0.1:9119/api/ws?token=from-url",
+            RETIRED_TOKEN_ENV_VAR: "from-the-retired-variable",
+            GATEWAY_URL_ENV_VAR: endpoint_with_token("from-url"),
         },
     )
-    assert (await provider.acquire()).value == "from-environment"
-
-    without = LoopbackTokenProvider(
-        credentials_path=credentials_file,
-        environ={GATEWAY_URL_ENV_VAR: "ws://127.0.0.1:9119/api/ws?token=from-url"},
-    )
-    credential = await without.acquire()
-    assert (credential.value, credential.source) == ("from-url", "endpoint-url")
+    assert (await with_retired.acquire()).value == "from-url"
 
 
 @pytest.mark.asyncio
@@ -560,12 +622,22 @@ async def test_a_trailing_newline_in_the_credential_file_is_stripped(
 async def test_with_no_source_and_no_prompt_the_failure_says_what_to_do(
     tmp_path: Path,
 ) -> None:
+    """And what it says must be a route that still exists (KTD8).
+
+    A refusal is the one place an operator reads a route list at the moment they
+    need it, so this asserts both halves: every surviving route is named, and the
+    retired variable is not.
+    """
     provider = LoopbackTokenProvider(
         credentials_path=tmp_path / "absent", environ={}, allow_prompt=False
     )
     with pytest.raises(CredentialError) as caught:
         await provider.acquire()
-    assert TOKEN_ENV_VAR in str(caught.value)
+    message = str(caught.value)
+    assert str(tmp_path / "absent") in message
+    assert "talaria refresh-credential" in message
+    assert GATEWAY_URL_ENV_VAR in message
+    assert RETIRED_TOKEN_ENV_VAR not in message
 
 
 @pytest.mark.asyncio
@@ -579,7 +651,8 @@ async def test_a_prompt_with_no_terminal_is_a_named_credential_failure(
     failed", which tells an operator running Talaria under a supervisor nothing
     about the credential they have not supplied.
 
-    The message has to name a way out, so both routes are asserted."""
+    The message has to name a way out, so every surviving route is asserted —
+    and, since KTD8, that the retired variable is not among them."""
 
     def _no_terminal(label: str) -> str:
         raise EOFError("EOF when reading a line")
@@ -590,7 +663,9 @@ async def test_a_prompt_with_no_terminal_is_a_named_credential_failure(
     with pytest.raises(CredentialError) as caught:
         await provider.acquire()
     message = str(caught.value)
-    assert TOKEN_ENV_VAR in message
+    assert "talaria refresh-credential" in message
+    assert GATEWAY_URL_ENV_VAR in message
+    assert RETIRED_TOKEN_ENV_VAR not in message
     assert str(tmp_path / "absent") in message
 
 
@@ -618,7 +693,7 @@ class CountingProvider:
     async def acquire(self) -> Credential:
         value = self.values[min(self.calls, len(self.values) - 1)]
         self.calls += 1
-        return Credential("token", value, "environment")
+        return Credential("token", value, "endpoint-url")
 
 
 def test_the_provider_double_satisfies_the_protocol() -> None:
@@ -628,13 +703,53 @@ def test_the_provider_double_satisfies_the_protocol() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_environment_is_re_read_on_every_acquisition() -> None:
-    """KTD11: a rotated token is picked up without restarting Talaria."""
-    environ: dict[str, str] = {TOKEN_ENV_VAR: "first"}
+async def test_a_rotated_credential_is_picked_up_without_a_restart(
+    tmp_path: Path,
+) -> None:
+    """KTD11's rotation guarantee, re-expressed against the credential file.
+
+    **This test used to rotate ``HERMES_DASHBOARD_SESSION_TOKEN``.** KTD8
+    removed that level, and deleting the test with it would have taken a real
+    guarantee along — the one that says a Hermes dashboard restart does not
+    require a Talaria restart. So the same claim is made against the route that
+    survives: ``talaria refresh-credential`` rewrites
+    ``<config_dir>/credentials`` and the next dial reads it, with no process
+    restart and no re-prompt.
+
+    The dashboard-restart shape is reproduced rather than approximated: the file
+    is rewritten wholesale with a new value at the same ``0600`` mode, exactly
+    as ``talaria/transport/refresh.py`` writes it. ``acquisitions`` is asserted
+    because KTD11's per-dial rule is otherwise invisible — a provider that
+    resolved once and cached would return "first" twice and still look right if
+    only the first value were checked.
+    """
+    path = tmp_path / "credentials"
+    path.write_text('token = "first"\n', encoding="utf-8")
+    path.chmod(0o600)
+    provider = LoopbackTokenProvider(credentials_path=path, environ={})
+
+    assert (await provider.acquire()).value == "first"
+
+    path.write_text('token = "rotated"\n', encoding="utf-8")
+    path.chmod(0o600)
+
+    rotated = await provider.acquire()
+    assert (rotated.value, rotated.source) == ("rotated", "file")
+    assert provider.acquisitions == 2
+
+
+@pytest.mark.asyncio
+async def test_a_rotated_token_on_the_endpoint_url_is_picked_up_too() -> None:
+    """The surviving *environment* level re-reads on every dial as well.
+
+    Paired with the file test above so the removal of the token variable did not
+    quietly narrow KTD11's per-dial rule to one source.
+    """
+    environ: dict[str, str] = {GATEWAY_URL_ENV_VAR: endpoint_with_token("first")}
     provider = LoopbackTokenProvider(environ=environ)
 
     assert (await provider.acquire()).value == "first"
-    environ[TOKEN_ENV_VAR] = "rotated"
+    environ[GATEWAY_URL_ENV_VAR] = endpoint_with_token("rotated")
     assert (await provider.acquire()).value == "rotated"
     assert provider.acquisitions == 2
 
@@ -679,23 +794,31 @@ async def test_a_prompted_credential_is_cached_and_never_re_prompted(
 
 
 @pytest.mark.asyncio
-async def test_an_environment_credential_outranks_a_cached_prompt(
+async def test_a_credential_file_written_later_outranks_a_cached_prompt(
     tmp_path: Path,
 ) -> None:
-    """Otherwise the cache would pin a stale token past a rotation."""
-    environ: dict[str, str] = {}
+    """Otherwise the cache would pin a stale token past a rotation.
+
+    Re-expressed against the file (KTD8): the operator who typed a token at
+    launch and then ran ``talaria refresh-credential`` mid-session must get the
+    fresh value on the next dial, not the one they typed. Previously asserted by
+    rotating ``HERMES_DASHBOARD_SESSION_TOKEN`` into the environment, which is
+    no longer a route — the guarantee is the same one, and it still holds.
+    """
+    path = tmp_path / "credentials"
     provider = LoopbackTokenProvider(
-        credentials_path=tmp_path / "absent",
-        environ=environ,
+        credentials_path=path,
+        environ={},
         prompt=lambda label: "typed",
     )
     assert (await provider.acquire()).value == "typed"
 
-    environ[TOKEN_ENV_VAR] = "rotated-into-the-environment"
+    path.write_text('token = "rotated-into-the-file"\n', encoding="utf-8")
+    path.chmod(0o600)
     credential = await provider.acquire()
     assert (credential.value, credential.source) == (
-        "rotated-into-the-environment",
-        "environment",
+        "rotated-into-the-file",
+        "file",
     )
 
 
@@ -829,17 +952,34 @@ async def test_priming_is_not_counted_as_a_dial(tmp_path: Path) -> None:
 async def test_priming_still_re_reads_the_rotating_levels_on_every_dial(
     tmp_path: Path,
 ) -> None:
-    """Sealing the prompt must not freeze levels 1-3 into a cached value."""
-    environ: dict[str, str] = {TOKEN_ENV_VAR: "first"}
+    """Sealing the prompt must not freeze levels 1-2 into a cached value.
+
+    Both surviving rotating levels are exercised, because the one this test used
+    to use — ``HERMES_DASHBOARD_SESSION_TOKEN`` — was removed by KTD8 and a
+    single-level version of this assertion would leave the other unproven after
+    priming, which is precisely the state ``prime`` changes.
+    """
+    path = tmp_path / "credentials"
+    path.write_text('token = "first"\n', encoding="utf-8")
+    path.chmod(0o600)
+    environ: dict[str, str] = {}
     provider = LoopbackTokenProvider(
-        credentials_path=tmp_path / "absent", environ=environ, allow_prompt=False
+        credentials_path=path, environ=environ, allow_prompt=False
     )
 
     assert (await provider.prime()).value == "first"
 
-    environ[TOKEN_ENV_VAR] = "rotated-after-priming"
+    path.write_text('token = "rotated-after-priming"\n', encoding="utf-8")
+    path.chmod(0o600)
     credential = await provider.acquire()
-    assert (credential.value, credential.source) == ("rotated-after-priming", "environment")
+    assert (credential.value, credential.source) == ("rotated-after-priming", "file")
+
+    environ[GATEWAY_URL_ENV_VAR] = endpoint_with_token("rotated-onto-the-endpoint")
+    credential = await provider.acquire()
+    assert (credential.value, credential.source) == (
+        "rotated-onto-the-endpoint",
+        "endpoint-url",
+    )
 
 
 # ── the interactive prompt does not echo (R9) ────────────────────────────
@@ -879,7 +1019,11 @@ async def test_a_prompt_with_no_terminal_refuses_rather_than_echoing(
     assert reached == [], "the echoing fallback was reached"
     message = str(excinfo.value)
     assert "terminal" in message
-    assert TOKEN_ENV_VAR in message, "a refusal that names no way forward is a dead end"
+    assert "talaria refresh-credential" in message, (
+        "a refusal that names no way forward is a dead end"
+    )
+    assert GATEWAY_URL_ENV_VAR in message
+    assert RETIRED_TOKEN_ENV_VAR not in message
 
 
 PTY_PROBE = """
@@ -1064,7 +1208,7 @@ def test_a_malformed_endpoint_becomes_a_target_problem_not_a_value_error() -> No
 @pytest.mark.asyncio
 async def test_a_malformed_endpoint_reaches_the_caller_as_a_connect_failure() -> None:
     target = AttachTarget.from_url(MALFORMED_ENDPOINT)
-    outcome = await attach(target, Credential("token", CANARY, "environment"))
+    outcome = await attach(target, Credential("token", CANARY, "endpoint-url"))
 
     assert isinstance(outcome, AttachFailure)
     assert outcome.kind == "connect_failed"
@@ -1155,7 +1299,7 @@ def test_a_dialled_url_carries_no_fragment() -> None:
     """``dial_url`` rebuilt the URL from its own ``urlsplit``, so a fragment on a
     directly-constructed target would ride onto the one URL that is dialled."""
     target = AttachTarget(url=f"ws://127.0.0.1:9119/api/ws#{CANARY}")
-    dial = target.dial_url(Credential("token", "fresh", "environment"))
+    dial = target.dial_url(Credential("token", "fresh", "endpoint-url"))
 
     assert "#" not in dial
     assert CANARY not in dial

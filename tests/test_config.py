@@ -20,7 +20,7 @@ from talaria.config import (
     load_config,
     recordings_dir,
 )
-from talaria.transport import credentials as credentials_module
+from tests.conftest import HERMES_DASHBOARD_TOKEN_VAR
 
 
 def test_defaults_apply_when_nothing_else_is_set(tmp_path: Path) -> None:
@@ -156,7 +156,7 @@ def test_no_talaria_variable_from_the_shell_is_visible_inside_a_test() -> None:
     # The positive half: the fixture does set the one variable it owns, so a
     # fixture that had simply emptied the environment could not pass this.
     assert os.environ.get("TALARIA_CONFIG_DIR"), "the isolation fixture ran no setup"
-    assert credentials_module.TOKEN_ENV_VAR not in os.environ
+    assert HERMES_DASHBOARD_TOKEN_VAR not in os.environ
 
 
 def test_the_isolation_fixture_clears_variables_the_shell_actually_exported(
@@ -181,11 +181,11 @@ def test_the_isolation_fixture_clears_variables_the_shell_actually_exported(
 
     for name in LEAKABLE_ENV_NAMES:
         monkeypatch.setenv(name, f"shell-value-for-{name}")
-    monkeypatch.setenv(credentials_module.TOKEN_ENV_VAR, "shell-token")
+    monkeypatch.setenv(HERMES_DASHBOARD_TOKEN_VAR, "shell-token")
     # The positive control, in the same observation: the pollution is really
     # there before the fixture runs.
     assert all(name in os.environ for name in LEAKABLE_ENV_NAMES)
-    assert credentials_module.TOKEN_ENV_VAR in os.environ
+    assert HERMES_DASHBOARD_TOKEN_VAR in os.environ
 
     inner_root = tmp_path / "inner"
     inner_root.mkdir()
@@ -199,7 +199,7 @@ def test_the_isolation_fixture_clears_variables_the_shell_actually_exported(
         global_dir = fixture_body(inner_root, inner)
         leaked = [name for name in LEAKABLE_ENV_NAMES if name in os.environ]
         assert not leaked, f"the isolation fixture left these set: {leaked}"
-        assert credentials_module.TOKEN_ENV_VAR not in os.environ
+        assert HERMES_DASHBOARD_TOKEN_VAR not in os.environ
         assert os.environ["TALARIA_CONFIG_DIR"] == str(global_dir)
     finally:
         inner.undo()
@@ -264,3 +264,57 @@ def test_resolved_config_is_deeply_immutable(tmp_path: Path) -> None:
 
     assert cfg.get("status", "interval_seconds") == 5
     assert DEFAULTS["status"]["interval_seconds"] == 5
+
+
+# ── U4: the profile endpoint map ──────────────────────────────────────────
+#
+# Hermes publishes no address for a profile's gateway, so this is where one
+# comes from. Every profile name below is synthetic (R12): this is a public
+# repository and the real inventory is the operator's.
+
+
+def test_no_profile_endpoint_is_configured_by_default(tmp_path: Path) -> None:
+    """The honest starting state: every profile reads as unaddressable."""
+    cfg = load_config(cwd=tmp_path)
+    assert config_module.profile_endpoints(cfg) == {}
+
+
+def test_the_operator_supplies_profile_endpoints_in_config_toml(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[profiles.endpoints]\n"
+        'alpha-fixture = "ws://127.0.0.1:9119/api/ws"\n'
+        'beta-fixture = "ws://127.0.0.1:9120/api/ws"\n'
+    )
+    cfg = load_config(cwd=tmp_path)
+    assert config_module.profile_endpoints(cfg) == {
+        "alpha-fixture": "ws://127.0.0.1:9119/api/ws",
+        "beta-fixture": "ws://127.0.0.1:9120/api/ws",
+    }
+
+
+def test_a_non_string_or_blank_endpoint_is_dropped_rather_than_coerced(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    """The value is a URL that will be dialled; ``str(7)`` is not one."""
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[profiles.endpoints]\n"
+        'alpha-fixture = "ws://127.0.0.1:9119/api/ws"\n'
+        "beta-fixture = 9120\n"
+        'gamma-fixture = "   "\n'
+    )
+    cfg = load_config(cwd=tmp_path)
+    assert config_module.profile_endpoints(cfg) == {
+        "alpha-fixture": "ws://127.0.0.1:9119/api/ws"
+    }
+
+
+def test_a_profiles_section_of_the_wrong_shape_yields_no_endpoints(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[profiles]\nendpoints = 7\n"
+    )
+    cfg = load_config(cwd=tmp_path)
+    assert config_module.profile_endpoints(cfg) == {}

@@ -31,6 +31,7 @@ interpreter, because it is exactly the kind of claim that decays silently.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
@@ -144,6 +145,66 @@ RECONNECT_DELAYS: Final[tuple[float, ...]] = (0.0, 0.5, 1.0, 2.0, 5.0)
 #: ``None``, because ``None`` is a legal decoded frame body.
 _END = object()
 
+#: How an endpoint switch ended (U4, KTD5/KTD6). Every member is a state the
+#: operator can be told about and act on, which is the whole requirement: a
+#: switch that fails leaves the previous connection closed and the new one
+#: unmade, and the one thing that must never happen is that arrangement being
+#: reported as nothing at all.
+#:
+#: * ``switched`` — the new gateway answered and the reader is running on it.
+#: * ``unsupported`` — this source was built without a per-endpoint credential
+#:   resolver, so KTD6 cannot be honoured and nothing was dropped.
+#: * ``refused_endpoint`` — the endpoint would not parse. Nothing was dropped.
+#: * ``credential_unavailable`` — no credential could be produced *for the new
+#:   endpoint*. Nothing was dialled, so no gateway formed an opinion.
+#: * ``auth_failed`` — the new gateway refused the credential.
+#: * ``connect_failed`` — nothing answered at the new endpoint.
+#: * ``closed`` — the source is shut; a switch is not a way to reopen it.
+SwitchReason = Literal[
+    "switched",
+    "unsupported",
+    "refused_endpoint",
+    "credential_unavailable",
+    "auth_failed",
+    "connect_failed",
+    "closed",
+]
+
+#: The reasons that leave the previous connection closed and no new one made.
+#: Named once so a caller can ask the question without re-deriving the set, and
+#: so adding a reason forces a decision about which side of this line it is on.
+DISCONNECTING_SWITCH_REASONS: Final[frozenset[str]] = frozenset(
+    {"credential_unavailable", "auth_failed", "connect_failed"}
+)
+
+
+@dataclass(frozen=True)
+class SwitchReport:
+    """What an endpoint switch did, in terms a caller can put on screen.
+
+    ``state`` is the transport state left behind, so the report answers "what
+    happened" and "where am I now" together — the second question being the one
+    a half-completed switch makes urgent.
+
+    ``detail`` never carries a whole endpoint: it is either a fixed sentence or
+    a value already routed through
+    :func:`~talaria.transport.attach.scrub_urls`, because an endpoint is exactly
+    the string an operator pastes a token into.
+    """
+
+    reason: SwitchReason
+    state: LiveConnectionState
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.reason == "switched"
+
+    @property
+    def left_disconnected(self) -> bool:
+        """Whether the old connection is gone and no new one replaced it."""
+        return self.reason in DISCONNECTING_SWITCH_REASONS
+
 
 class LiveSource:
     """KTD3's seam over an authenticated socket (R31, R35, AE8, AE16).
@@ -183,9 +244,23 @@ class LiveSource:
         max_queued_bytes: int = MAX_QUEUED_BYTES,
         reconnect_delays: tuple[float, ...] = RECONNECT_DELAYS,
         sleep: Callable[[float], Any] = asyncio.sleep,
+        credential_factory: Callable[[str], CredentialProvider] | None = None,
     ) -> None:
         self.target = target
         self.provider = provider
+        #: KTD6's seam (U4): given an endpoint, produce the credential provider
+        #: for **that** endpoint. Called once per switch and its result is used
+        #: for every dial afterwards, so the credential is re-resolved for the
+        #: gateway it is being sent to and no value survives the switch — each
+        #: profile's dashboard mints its own token, and carrying one across
+        #: would present profile A's credential to profile B and read the
+        #: refusal as an authentication problem.
+        #:
+        #: ``None`` means this source cannot switch endpoints, which is the
+        #: honest default: replay has no endpoints and most tests have no
+        #: second gateway. A switch asked of such a source is refused by name
+        #: rather than performed with the credential it already had.
+        self._credential_factory = credential_factory
         self.correlator = correlator if correlator is not None else RpcCorrelator()
 
         self._dialer = dialer
@@ -216,6 +291,11 @@ class LiveSource:
         self._ended = False
         self._started = False
         self._seq = 0
+        #: Serialises endpoint switches against each other. A switch drops a
+        #: connection and dials a new one across several awaits; two of them
+        #: interleaved would have the second cancel a reader the first is
+        #: about to replace.
+        self._switch_lock = asyncio.Lock()
 
         # ── counters, all public: every one of them is the observable trace
         # of a behaviour that is otherwise invisible from outside.
@@ -226,6 +306,12 @@ class LiveSource:
         self.peak_queued_frames = 0
         self.peak_queued_bytes = 0
         self.close_errors = 0
+        #: How many endpoint switches succeeded (U4). Counted separately from
+        #: :attr:`reconnects`: a reconnect returns to the same gateway and a
+        #: switch deliberately does not, and collapsing them would make the
+        #: only evidence that a switch happened indistinguishable from the
+        #: socket having blinked.
+        self.switches = 0
         self.last_failure: str = ""
         #: Which kind of dial failure was last observed. Kept beside the state
         #: because :data:`LiveConnectionState` deliberately has no
@@ -615,3 +701,113 @@ class LiveSource:
         self._set_state("disconnected")
         self._end()
         return False
+
+    # ── endpoint switching (U4, KTD5/KTD6) ───────────────────────────────
+
+    async def switch_to_endpoint(self, endpoint: str) -> SwitchReport:
+        """Retarget this source at a different gateway, and report what happened.
+
+        This is what "switching profile" means in Talaria. Hermes's
+        ``POST /api/profiles/active`` is never called (KTD5): it sets a sticky
+        preference for later CLI invocations and does not retarget a running
+        dashboard, so it would change a setting on the machine and nothing
+        about the session on screen. Dialling elsewhere is the only act that
+        actually moves the operator.
+
+        **The credential is re-resolved for the new endpoint (KTD6).** The
+        injected factory builds a fresh provider before anything is dropped, so
+        nothing acquired for the old gateway can be presented to the new one.
+        When that provider cannot produce a credential the result is
+        ``credential_unavailable`` with the reason attached — the same named
+        state :meth:`_dial` already reports for a local credential failure, and
+        deliberately *not* ``auth_failed``: no gateway was asked, so no gateway
+        refused anything.
+
+        **The order is: check, then drop.** Every refusal that can be decided
+        without a socket — a closed source, no factory, an endpoint that will
+        not parse — is decided *before* the existing connection is touched, so
+        those three leave the operator exactly where they were.
+        :attr:`SwitchReport.left_disconnected` is what distinguishes them from
+        the three that do not.
+
+        **A failed switch does not crawl back to the old endpoint.** It could:
+        the previous target is still known here. It does not, for two reasons.
+        The retry would be a second dial that can fail on its own, turning one
+        legible failure into two; and the operator asked to be somewhere else,
+        so leaving the source pointed at what they asked for is what makes a
+        second ``/profiles`` selection — or the ordinary reconnect path — retry
+        the thing they wanted rather than silently undo it. What is *not*
+        allowed is silence, which is why every exit is a named reason and a
+        named state.
+        """
+        from talaria.transport.attach import AttachTarget
+
+        if self._closed:
+            return SwitchReport("closed", self._state, "the transport is closed")
+        if self._credential_factory is None:
+            return SwitchReport(
+                "unsupported",
+                self._state,
+                "this session cannot switch gateways: no per-endpoint credential resolver",
+            )
+
+        async with self._switch_lock:
+            target = AttachTarget.from_url(endpoint)
+            if target.problem:
+                # ``target.problem`` never contains the offending URL — see
+                # ``AttachTarget`` — so it is safe to carry onto the screen.
+                return SwitchReport("refused_endpoint", self._state, target.problem)
+
+            provider = self._credential_factory(endpoint)
+
+            # The reader is stopped *before* the socket is dropped. Left
+            # running, its own ``recv`` would raise on the closed connection
+            # and hand the drop to ``_handle_disconnect``, which would start
+            # the reconnect loop against whichever target this method has by
+            # then installed — two dialers racing for one connection slot.
+            await self._stop_reader()
+            self.correlator.abandon(self._connection_epoch, LOST_WITH_TRANSPORT)
+            await self._drop_connection()
+
+            self.target = target
+            self.provider = provider
+            self._set_state("connecting", f"switching to {target.safe_url}")
+
+            if await self._dial():
+                self.switches += 1
+                self._reader = asyncio.create_task(self._read_loop())
+                if self._on_reconnect is not None:
+                    # The consumer's reconnect bookkeeping is epoch-keyed, and a
+                    # switch opens a new epoch exactly as a reconnect does. It
+                    # matters that this fires: the model catalogue is cached per
+                    # epoch (KTD4) and a switch is precisely the case where the
+                    # previous gateway's list must not be reused.
+                    self._on_reconnect(self.correlator.epoch)
+                return SwitchReport("switched", self._state, "")
+
+            # ``_dial`` has already set a named state and a failure kind. The
+            # report restates them rather than inventing a parallel vocabulary.
+            reason: SwitchReason
+            if self.failure_kind == "credential_unavailable":
+                reason = "credential_unavailable"
+            elif self.failure_kind == "auth_failed" or self._state == "auth_failed":
+                reason = "auth_failed"
+            else:
+                reason = "connect_failed"
+            return SwitchReport(reason, self._state, self.last_failure)
+
+    async def _stop_reader(self) -> None:
+        """Cancel the read loop and wait for it to actually be gone.
+
+        Awaiting the cancellation rather than firing and forgetting is the
+        point: a reader still inside ``recv`` when the connection is replaced
+        can ingest a frame from the old gateway and stamp it with the new
+        epoch, which is the one thing epochs exist to prevent.
+        """
+        reader = self._reader
+        self._reader = None
+        if reader is None or reader.done():
+            return
+        reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader

@@ -4,6 +4,26 @@
 
 ## 2026-08-06
 
+### The admin HTTP credential rides two headers: `Authorization: Bearer` as decided, plus Hermes's dedicated session header
+
+**Author.** building the admin HTTP client and its pure decode (unit U1 of `docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md`)
+
+**Decision.** KTD2 of that plan — "the credential rides an `Authorization: Bearer` header on HTTP" — is **confirmed, not revised**. The plan named one contingency that would have overturned it (source showing a query parameter is the supported HTTP form); that contingency did not fire. `talaria/transport/admin.py` additionally sends the same value in `X-Hermes-Session-Token`, which is a refinement of the decision rather than a departure from it.
+
+This closes the item the entry below leaves under **"Deliberately left open."**
+
+**The citation.** At Hermes `863e31318`, `hermes_cli/web_server.py`'s `_has_valid_session_token` accepts exactly two header forms and its own docstring ranks them: "The dedicated session header avoids collisions with reverse proxies that already use `Authorization` (for example Caddy `basic_auth`). We still accept the legacy Bearer path for backward compatibility with older dashboard bundles." The check is an `or`, so either header alone authenticates.
+
+**Why the query-parameter form is not available here, stated so nobody re-tries it.** The WebSocket credential is a query parameter because Hermes reads `ws.query_params` only — the fact `talaria/transport/credentials.py` pins. The HTTP reader is different code: `_QUERY_TOKEN_API_PATHS` in the same module is a frozenset of exactly one path, `/api/files/download`, and `_has_valid_query_token` returns `False` for everything else. Confirmed live: `GET /api/model/options?token=<token>` answers **401**.
+
+**Why both headers rather than either alone.** Bearer alone is the version-compatible choice — Hermes documents it as the form older bundles use, and ADR-0001 makes Talaria a client of a gateway it did not launch, so version skew is a real condition rather than a hypothetical. The dedicated header alone is the correct choice behind a reverse proxy that consumes `Authorization`, which is the exact collision Hermes names. Sending both is right in both directions. The cost is that the credential now has two header names, which is why `CREDENTIAL_HEADERS` is a named constant the leak tests iterate rather than two literals at the call site — a third form cannot be added without the absence assertions following it.
+
+**Rejected: the dedicated header alone.** Cleaner, and it is the form Hermes prefers. Rejected because the installed checkout is shallow (one commit), so nothing available locally can date when that header was introduced — choosing it alone would have been a bet on gateway versions with no evidence behind it.
+
+**A second finding, recorded because it will look like a bug later.** `GET /api/model/info` is in `hermes_cli/dashboard_auth/public_paths.py`'s `PUBLIC_API_PATHS` and needs **no** credential (confirmed live: no credential → 200), while `GET /api/model/options` is gated (no credential → 401). Talaria authenticates both uniformly anyway: the allowlist is Hermes's to revisit, and a client that only authenticated the endpoints currently requiring it would break silently on the release that gates one more.
+
+**Revisit when.** Hermes drops the legacy Bearer path — its docstring already calls it legacy, so this is a question of when and not whether. At that point the Bearer header becomes dead weight and should be removed in the same change that raises Talaria's minimum supported gateway. Also revisit if Talaria ever needs a *gated* (OAuth) dashboard, where neither header applies and the SPA authenticates by cookie.
+
 ### The model picker reads the gateway's HTTP API, folds like the command listing, and switches profiles by reconnecting
 
 **Author.** planning the model picker and the closure of v0.1 (`docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md`)
@@ -41,6 +61,60 @@
 **Rejected alternative — parse the conditions out of the prose and skip the block.** No parser can read "row 19 stays unmet, on a narrower reason than it used to carry" reliably, and one that half-works fails open. The block is redundant with the prose on purpose, and the redundancy is what is being checked.
 
 **Revisit when.** A second gating document is written, which is the first real test of whether the block generalizes past an evidence-table-shaped document; or the horizon fires twice in a row and is bumped both times without anything moving, which would mean it is measuring the calendar rather than staleness.
+
+### `HERMES_DASHBOARD_SESSION_TOKEN` leaves the credential chain, and row 13 may be re-graded exactly one step — not to *met*
+
+**Author.** unit U3 of `docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md`, executing KTD8 — option (b) of `QUEUED.md`'s entry "R1's environment clause is unmet, and no change to Talaria can meet it"
+
+**Decision.** Talaria no longer reads a credential from `HERMES_DASHBOARD_SESSION_TOKEN`. The constant that named it (`TOKEN_ENV_VAR`) and the `_resolve` branch that read it are deleted from `talaria/transport/credentials.py`, and `"environment"` is removed from the `CredentialSource` type. Three routes remain, highest precedence first: a `token` query parameter on `TALARIA_GATEWAY_URL`; a `token` key in `<config_dir>/credentials` at mode `0600` or stricter, which `talaria refresh-credential` writes; and the interactive hidden prompt. Both refusal messages in `credentials.py` and the `talaria record` refusal in `talaria/cli.py` were rewritten to name only those three. `README.md` carries the decision and the caveat below.
+
+#### How far this lets the v0.1 daily-driver verdict's row 13 be re-graded — the whole point of writing this down
+
+U7 owns the verdict document and grades row 13 against this section; U3 deliberately does not touch it. What (b) supports, and nothing beyond it:
+
+**Supported — the true claim, stated narrowly.** No credential route Talaria supports *requires* a credential in the process environment, and the operator who unsets `HERMES_DASHBOARD_SESSION_TOKEN` loses nothing: the credential file is a complete, first-class route with no environment footprint at all, and `talaria refresh-credential` removes the setup cost that was the original argument for the variable. R1's environment clause is therefore **satisfiable by operator procedure** rather than impossible, which it was not before.
+
+**Not supported — do not write this anywhere.** That R1's environment clause is now met, technically or otherwise. An inherited variable stays visible in `/proc/<pid>/environ` for the life of the process; the kernel snapshots the environment block at `exec` and no code change touches that snapshot. Talaria not *reading* a variable does not make it unreadable to anyone else. `tests/transport/test_process_surface.py::test_the_inherited_credential_is_visible_in_the_process_environment` still asserts that failure, unchanged, and is meant to go red only if some future Talaria genuinely scrubs its inherited environment — at which point someone deletes it on purpose.
+
+**Also not supported, and this one is easy to overclaim.** That no supported route puts a credential in the environment. Route 1 — a `token` on `TALARIA_GATEWAY_URL` — is an environment variable carrying a credential, and KTD8 explicitly keeps it. So the sentence "the environment is no longer a credential source" is false as written; the accurate sentence is "the environment is no longer a *required* credential source, and the dedicated credential variable is gone." Row 13 may be re-graded to reflect that a documented, measured, environment-free route exists and is the recommended one. It may not be graded *met*, and it may not be graded on the strength of a claim that Talaria reads nothing from the environment.
+
+**Rejected alternative — option (a), keep the variable with a documented caveat.** `QUEUED.md` sized it Small against (b)'s Medium and it was the standing default. Rejected by the operator on 2026-08-06 because a caveat leaves the highest-precedence route being the one that cannot satisfy the requirement, so the safe path is the one the operator has to know to opt into. The recurring-setup objection that made (a) attractive was removed on 2026-08-04 by `talaria refresh-credential`.
+
+**Rejected alternative — remove route 1 as well, so no environment-borne route survives.** This is the only change that would make "no supported route puts a credential in the environment" true, and it is tempting for exactly that reason. Rejected as out of scope: KTD8 names the three surviving routes explicitly and route 1 is one of them, and `talaria record`'s design leans on `TALARIA_GATEWAY_URL` resolving both halves. Recorded here rather than dropped, because the residual is precisely what limits row 13's re-grade.
+
+**Rejected alternative — keep `TOKEN_ENV_VAR` and `"environment"` as public names.** The plan permitted keeping the constant if anything still needed it; nothing in production did. A source label nothing can produce is a precedence chain a test can still claim to have observed, and it is the seam a reintroduction slips back through. Deleting both cost seven test files a one-line change and made `mypy --strict` the thing that catches a stale label at merge — the cheapest possible place for that failure to land.
+
+**Cost, stated plainly.** Every operator whose shell exports the dashboard variable and nothing else must run `talaria refresh-credential` once, or put a `token` on `TALARIA_GATEWAY_URL`. Eight test modules changed. Two rotation tests that proved KTD11's "a rotated credential is picked up without a restart" through the environment variable were re-expressed against the credential file and the endpoint URL rather than deleted — deleting a rotation test along with its variable would have taken a live guarantee with it and left no red anywhere.
+
+**Revisit when.** Hermes gains an HTTP or file-based way to hand a client its session token directly, which would make the endpoint-URL route unnecessary and let route 1 go too — the one change that would let row 13 move again; or a gated (non-loopback) deployment arrives and `GatedTicketProvider` rewrites the chain wholesale.
+
+### The default-model write extends `/models`'s own grammar; it does not add a fourth local command, and the profile it writes is the connected one, not a typed one
+
+**Author.** v0.1 model-picker plan, unit U5 (`POST /api/model/set`)
+
+**Decision.** `/models <n> default` writes catalogue row `<n>` as the default model for `self.current_profile` — the profile this session is already connected to (U4) — and `/models <n> default confirm` is the second act KTD7's expensive-model guard requires when the first comes back `confirm_required`. Neither is a new `LocalCommand`; both are argument shapes `_perform_models` parses off the existing `/models` entry, matching the plan's own design note that "U5 adds no command; setting a default is an act inside the picker." The profile the write targets is never typed on the command line — a session with no connected profile (`current_profile == ""`) refuses the write with `MODEL_DEFAULT_NO_PROFILE` rather than asking which profile was meant.
+
+**Evidence.** Hermes's `POST /api/model/set?profile=<name>` accepts any profile name in the query string, including one the connected dashboard is not itself running (`_apply_model_assignment_sync` opens `_profile_scope(profile)` around the write) — so *architecturally* Talaria could let an operator type an arbitrary profile name. It does not, because U4 already gives the operator a way to name a profile: switch to it. A second way to name one on this command line would be two spellings of the same fact that can silently disagree.
+
+**Rejected alternatives.** *A fourth `LocalCommand`, `/model-default` or similar* — the plan's summary explicitly rules this out, and a fourth plural/singular-shadowing name is one more collision an operator has to learn (`/models` vs. Hermes's `/model` is already one). *Accept a profile name as a third argument, `/models <n> default <profile>`* — lets a mistyped profile name write a default to a profile the operator did not mean to touch, silently, with no dial and no confirmation of *which* profile beyond the string typed; scoping to the connected profile makes "which profile" a fact the operator already established by connecting to it.
+
+**Cost.** An operator who wants to set a default for a profile other than the one they are on must switch to it first (`/profiles <n>`), then write the default. Two acts instead of one, but each is legible on its own and neither can target the wrong profile by typo.
+
+**Revisit when.** The picker's profile mode grows a per-row "set as default without switching" act — at which point the profile becomes an explicit selection from the profile listing rather than an implicit one from `current_profile`, and the two mechanisms should be reconciled rather than left to diverge.
+
+### KTD7's two-act confirmation is enforced by call shape at every layer, not by trusting a caller to remember
+
+**Author.** v0.1 model-picker plan, unit U5, implementing KTD7 ("the expensive-model confirmation is surfaced, never auto-confirmed")
+
+**Decision.** `confirm_expensive_model` has no default anywhere it is threaded through: `AdminClient.set_default_model` declares it a required keyword, and `TalariaApp.set_model_default` takes `confirm: bool = False` but the *only* call site that ever passes `confirm=True` is the branch of `_perform_models` that matched the literal second word `confirm` in `/models <n> default confirm`. A bare `/models <n> default`, typed any number of times, always resolves to `confirm=False` — repeating it is not the second act, because nothing about repeating the same line changes what is passed.
+
+**Evidence.** `tests/transport/test_admin.py::test_set_default_model_has_no_default_for_confirm_expensive_model` asserts the transport-level guarantee via `inspect.signature`. `tests/ui/test_picker.py::test_confirm_required_shows_the_message_and_the_first_call_never_confirms` and `test_the_second_distinct_act_resends_confirmed_and_completes` assert the UI-level guarantee behaviourally: two separate `pilot.press("enter")` submissions, the first of which the double records with `confirm_expensive_model: False` regardless of how many times it is sent.
+
+**Rejected alternatives.** *A confirmation flag on the picker widget's own state, toggled by a keypress* — would satisfy KTD3's "no captured caret" rule poorly, since a stateful toggle the operator cannot see the value of is exactly the kind of hidden mode KTD3's "selection by command" was chosen to avoid. *Auto-resend with `confirm_expensive_model=True` after showing the message once* — is the literal failure KTD7 exists to prevent: the entire feature's motivation is not spending money by accident, and an automatic second call defeats the one guard already protecting against that.
+
+**Cost.** An operator who intends to accept an expensive-model default must type two lines instead of one. That friction is the point, not a side effect.
+
+**Revisit when.** Hermes's cost guard grows a per-session "always confirm for me" preference that this plan did not anticipate — at which point the guard, not Talaria, would be deciding whether a second act is required, and this decision would need to say how Talaria surfaces that preference rather than assume the guard always fires.
 
 ## 2026-08-05
 
@@ -994,3 +1068,43 @@ Two things generalize past the incident. First, **an agent's model of "who else 
 **Cost, stated plainly.** A dataclass and a function in `talaria/ui/app.py` that a reader must follow to see what a branch does, instead of four visible branches per path. Bought back by twenty-two mutations, five of which classify an outcome differently and turn both paths red at once.
 
 **Revisit when.** A third answer path appears (a bulk answer for another bridge), or the gateway starts distinguishing "discarded" in the envelope rather than the body, which would collapse `gateway_refusal` into `delivery_of`.
+
+### A profile's gateway address comes from Talaria's own config, because Hermes does not publish one
+
+**Author.** v0.1 model-picker plan, unit U4 (the profile picker)
+
+**Decision.** `GET /api/profiles` is treated as a *name and liveness* directory only. The endpoint each profile is dialled at comes from a new `[profiles.endpoints]` table in Talaria's `config.toml`, read by `config.profile_endpoints`. A profile is dialable only when the gateway's own `gateway_running` is true **and** Talaria has a configured address for it, and the picker marks those two failures with two different messages because they have two different fixes: start the gateway, or add a line to the config file.
+
+**Evidence.** Measured against the running gateway on 2026-08-06, not read alone. `GET /api/profiles` answered with 37 rows carrying exactly fourteen keys — `description`, `description_auto`, `distribution_name`, `distribution_source`, `distribution_version`, `gateway_running`, `has_alias`, `has_env`, `is_default`, `model`, `name`, `path`, `provider`, `skill_count`. None of them is a URL, a host, or a port. Hermes's own row builder (`_profile_to_dict`, `hermes_cli/web_server.py`) sets exactly that set. The one location-shaped key, `path`, is a filesystem directory; a profile's `gateway_state.json` under it records a pid and no port either.
+
+**Rejected alternatives.** *Derive a port from the profile directory* — makes Talaria depend on Hermes's on-disk layout, which ADR-0001 (Talaria is a client of a gateway it did not launch) and this repository's standing preference for transport interfaces over Hermes internals both refuse; and the port is not recorded there anyway, so the derivation would have to be a guess. *Probe a range of loopback ports and match profiles by asking each* — turns opening a picker into a port scan and would still need a rule for two gateways answering. *Refuse to ship the profile picker until Hermes publishes an endpoint* — the useful half (see which profiles exist and which are live) works today, and the configuration file is a route the operator already has.
+
+**Cost, stated plainly.** An operator with several profiles must write their addresses down once. That is real setup friction and there is no way to remove it that does not invent an address.
+
+**Revisit when.** Hermes publishes a per-profile endpoint on `GET /api/profiles`, or anywhere else; at that point the configured map becomes an override rather than the only source.
+
+### The profile picker reconnects and never writes; `POST /api/profiles/active` has no code path
+
+**Author.** v0.1 model-picker plan, unit U4 (KTD5)
+
+**Decision.** Switching profile means dialling a different gateway. Talaria never calls `POST /api/profiles/active`. There is no constant for that path in `talaria/transport/admin.py`, no method that could reach it, and two tests assert the absence structurally rather than trusting review — `tests/transport/test_admin.py` scans the admin module with docstrings and comments stripped by `ast`, and `tests/transport/test_profile_switch.py` does the same to `talaria/transport/source.py`, which is where an implementer would most plausibly reach for "and tell the gateway".
+
+**Evidence.** Hermes's own handler says it: `set_active_profile_endpoint` in `hermes_cli/web_routers/profiles.py` documents that the write "does not retarget the already-running dashboard process — it changes which profile subsequent CLI commands and gateways use."
+
+**Rejected alternatives.** *Call the POST as well as reconnecting, to keep the machine consistent* — it changes a sticky preference for every later CLI invocation on that machine as a side effect of one operator switching view in one client, which is a larger blast radius than the act they asked for.
+
+**Cost.** A test that scans source text is a test that can be defeated by an indirection. It is a backstop for a decision, not a proof, and is written as one.
+
+**Revisit when.** Hermes grows an endpoint that retargets a running dashboard, which would make the write and the switch the same act.
+
+### A failed profile switch names its state instead of restoring the old connection
+
+**Author.** v0.1 model-picker plan, unit U4
+
+**Decision.** `LiveSource.switch_to_endpoint` returns a `SwitchReport` — a reason, the transport state left behind, and a detail. Refusals decidable without a socket (closed source, no per-endpoint credential resolver, an endpoint that will not parse) happen *before* the existing connection is touched, so they cost the operator nothing; `SwitchReport.left_disconnected` is what separates those from the three that drop the old connection first (`credential_unavailable`, `auth_failed`, `connect_failed`). A switch that fails after dropping does **not** re-dial the previous endpoint.
+
+**Rejected alternatives.** *Roll back to the previous gateway on failure* — the rollback is a second dial that can fail on its own, turning one legible failure into two, and it silently undoes what the operator asked for. *Report the failure as `auth_failed` whenever no connection results* — collapses "this machine could not produce a credential" into "that gateway refused one", which sends the operator to rotate a token that was never presented to anything; the transport already draws that distinction for the initial dial (`credential_unavailable`) and the switch reuses it rather than inventing a parallel vocabulary.
+
+**Cost.** The operator can be left disconnected with nothing dialled. That is a real state and the decision is to *name* it, not to prevent it: the alternative hides the same state behind a second failure.
+
+**Revisit when.** The transport grows a way to hold two connections at once, which would let the new one be proved before the old one is dropped.

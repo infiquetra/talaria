@@ -285,8 +285,15 @@ def _record_credential_refusal() -> str:
 
     Built by a function rather than held as a module constant so the environment
     variable's name comes from the one place that defines it.
+
+    **The route list shrank on 2026-08-06 and must keep naming only what works.**
+    This message used to advertise ``HERMES_DASHBOARD_SESSION_TOKEN`` as one of
+    "two routes". KTD8 removed that variable from the precedence chain
+    (:mod:`talaria.transport.credentials`), so naming it here would send an
+    operator who has just exposed a credential to a route that silently does
+    nothing — the worst moment to be wrong about what works.
     """
-    from talaria.transport.credentials import TOKEN_ENV_VAR
+    from talaria.transport.credentials import GATEWAY_URL_ENV_VAR
 
     return "\n".join(
         (
@@ -298,11 +305,18 @@ def _record_credential_refusal() -> str:
             " Treat the value",
             "  you just passed as exposed, and rotate it now.",
             "",
-            "  Two routes supply a credential without putting it on a command line:",
+            "  Three routes supply a credential without putting it on a command line:",
             "    talaria refresh-credential"
             "   — rewrites the credential file at mode 0600, printing nothing secret",
-            f"    {TOKEN_ENV_VAR}"
-            "   — read from the environment, ahead of the file",
+            f"    {GATEWAY_URL_ENV_VAR}"
+            "   — an exported endpoint carrying a token query parameter; the value"
+            " stays in this",
+            "                           process's environment for its whole life,"
+            " so prefer the file",
+            "                           whenever anyone else can read your process"
+            " list",
+            "    the interactive prompt"
+            "   — asked once before recording starts, with terminal echo off",
             "",
             "  Then record with no argument, or with an endpoint that carries no"
             " credential:",
@@ -414,6 +428,7 @@ def build_live_app(
     up.
     """
     from talaria.recorder.framelog import FrameRecorder, default_log_path
+    from talaria.transport.admin import AdminClient, AdminError
     from talaria.transport.attach import AttachTarget
     from talaria.transport.credentials import LoopbackTokenProvider
     from talaria.transport.source import LiveSource
@@ -421,6 +436,46 @@ def build_live_app(
 
     credentials = config_module.credentials_path(cfg.config_dir)
     target = AttachTarget.from_environment(credentials_path=credentials)
+    credential_provider = LoopbackTokenProvider(credentials_path=credentials)
+
+    # U2's admin HTTP surface (KTD1). Origin derivation can refuse an endpoint
+    # ``LiveSource`` would happily dial over WebSocket (``refused_origin``,
+    # e.g. a scheme neither surface actually reaches) — that failure belongs to
+    # the picker alone and must not take the whole launch down with it, so it
+    # is caught here and the picker instead renders "unavailable" (R7).
+    def admin_for(endpoint: str) -> AdminClient | None:
+        try:
+            return AdminClient(endpoint, credential_for(endpoint))
+        except AdminError:
+            return None
+
+    def credential_for(endpoint: str) -> LoopbackTokenProvider:
+        """KTD6: a fresh provider bound to the endpoint about to be dialled.
+
+        Fresh, and never the one already in hand. Each profile's dashboard
+        mints its own token, and a provider that has cached a prompt-typed
+        value would carry the previous gateway's credential to the next one —
+        where the refusal would read as an authentication problem rather than
+        as "that credential was never for this gateway".
+
+        ``allow_prompt=False`` for the same reason
+        :func:`_prime_credential` seals the prompt before the interface starts:
+        a switch happens inside a running Textual application that owns the
+        screen, so a hidden prompt issued from here would be invisible and
+        would present as a hung switch. A profile whose credential is not in
+        the file therefore surfaces as ``credential_unavailable`` with the
+        reason on screen, which is the named state U4 requires.
+
+        ``endpoint`` is unused today and named anyway: the moment the
+        credential file grows a per-endpoint form (explicitly out of scope,
+        Scope Boundaries), this is the one signature that has to change, and a
+        parameter that is already there makes that a body edit instead of a
+        call-site hunt.
+        """
+        del endpoint
+        return LoopbackTokenProvider(credentials_path=credentials, allow_prompt=False)
+
+    admin_client: AdminClient | None = admin_for(target.url)
 
     recorder: FrameRecorder | None = None
     requested = getattr(args, "record", None)
@@ -440,13 +495,18 @@ def build_live_app(
 
     source = LiveSource(
         target,
-        LoopbackTokenProvider(credentials_path=credentials),
+        credential_provider,
         recorder=recorder,
+        credential_factory=credential_for,
     )
     app = TalariaApp(
         source,
         mode="live",
         dispatcher=source,
+        admin_client=admin_client,
+        admin_factory=admin_for,
+        switcher=source,
+        profile_endpoints=config_module.profile_endpoints(cfg),
         status_runner=_build_status_runner(cfg),
         status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
         paste_threshold=_build_paste_threshold(cfg),
