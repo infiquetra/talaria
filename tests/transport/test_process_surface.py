@@ -665,6 +665,18 @@ def test_the_inherited_credential_is_visible_in_the_process_environment(
     still right here in the environment block. Not consulting a variable is not
     the same as the variable not being there, so this stays a red-when-fixed
     assertion of the failure rather than becoming a clause somebody widened.
+
+    **Nor did the 2026-08-07 re-scoping of the verdict's row 13, and this is the
+    paragraph to read before touching anything here.** That row now grades what
+    Talaria places in its environment rather than what the environment carries,
+    so the fact measured below is out of scope *for that row*. It is not out of
+    scope for this test, which is deliberately the place the fact keeps living:
+    the exclusion was written on the condition that this measurement stays, so
+    that a future Talaria which does scrub its inherited environment turns this
+    red and forces somebody to remove it on purpose. Deleting it to tidy up
+    after a cleared row would remove the exclusion's own evidence. R1's
+    environment clause remains unmet when an operator exports a credential —
+    unchanged, and not to be written otherwise.
     """
     probe = start_probe(PROBE_LAUNCHER, probe_environment)
     try:

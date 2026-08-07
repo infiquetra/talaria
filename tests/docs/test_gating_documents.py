@@ -17,10 +17,19 @@ row is the natural act when a condition clears;
 :func:`test_every_condition_matches_the_evidence_row_it_names` then forces the gate
 block to follow, and
 :func:`test_no_declared_condition_has_already_been_cleared` refuses the result — so
-the verdict has to be restated rather than left contradicting its own table. The
-backlink and horizon checks below cover the two cases that escape it: work that
-clears a condition without touching the gating document at all, and a gate nobody
-has looked at in a while.
+the verdict has to be restated rather than left contradicting its own table.
+
+Those two read from the block towards the table, so both go quiet for a gate that
+declares no conditions at all — which is what a gate looks like the moment it
+clears. :func:`test_every_uncleared_row_declares_itself_as_a_condition` reads the
+other way, from the table towards the block, and is the only check here that says
+anything about a cleared gate's rows. It was added on 2026-08-07, when
+`v0-1-daily-driver` lost its last condition and a mutation putting an unmet row
+back into a silent gate stayed green.
+
+The backlink and horizon checks below cover the two cases that escape all of them:
+work that clears a condition without touching the gating document at all, and a
+gate nobody has looked at in a while.
 """
 
 from __future__ import annotations
@@ -48,6 +57,8 @@ _EMPHASIZED = re.compile(r"\*\*(.+?)\*\*")
 # (``Clears: <gate-id>#<condition-id>``) deliberately does not match: an example
 # in prose must not read as a live claim.
 _BACKLINK = re.compile(r"Clears:\s*([A-Za-z0-9][\w.-]*)#([A-Za-z0-9][\w.-]*)")
+# An evidence-table row label: ``12``, or ``6a`` for a row that qualifies another.
+_ROW_LABEL = re.compile(r"\d+[a-z]?")
 
 
 @dataclass(frozen=True)
@@ -142,6 +153,39 @@ def _row_status(table: str, row_number: str) -> str | None:
             continue
         return cells[3].strip().strip("*").strip()
     return None
+
+
+def _graded_rows(table: str) -> tuple[tuple[str, str], ...]:
+    """Every evidence-table row as ``(row number, status)``.
+
+    Only rows whose first cell is a row label — ``12``, ``6a`` — are returned, so
+    the header and the alignment rule drop out without needing to be recognised
+    by name.
+    """
+    rows: list[tuple[str, str]] = []
+    for line in table.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = line.split("|")
+        if len(cells) < 4:
+            continue
+        number = cells[1].strip()
+        if not _ROW_LABEL.fullmatch(number):
+            continue
+        rows.append((number, cells[3].strip().strip("*").strip()))
+    return tuple(rows)
+
+
+def _grade_of(status: str) -> str:
+    """The grade word a status cell opens with, lowercased.
+
+    Compared against :data:`_CLEARED_GRADES` by **exact membership**, never by
+    containment, because ``"met" in "partially unmet"`` is ``True``. That is the
+    same substring trap that let a mutation flip this module's verdict check from
+    ``NOT READY`` to ``READY`` and stay green; English negates by prefix, so any
+    containment test over a grade passes for the negation of the grade.
+    """
+    return status.split()[0].strip("*").lower() if status.split() else ""
 
 
 def _backlinks() -> tuple[tuple[Path, str, str], ...]:
@@ -254,6 +298,38 @@ def test_no_declared_condition_has_already_been_cleared(path: Path, body: str) -
             f"{path}: the verdict {gate.verdict!r} still blocks on {condition_id}, but the "
             f"evidence table now grades it {grade!r}. Restate the verdict and drop the "
             f"condition, rather than leaving the gate contradicting its own table."
+        )
+
+
+@_over_each_gate
+def test_every_uncleared_row_declares_itself_as_a_condition(path: Path, body: str) -> None:
+    """The inverse direction, and the one that starts mattering once a gate clears.
+
+    Every other condition check here loops over the block's *declared* conditions,
+    so all of them are vacuous for a gate that declares none. That was harmless
+    while `v0-1-daily-driver` listed three; it stopped being harmless on
+    2026-08-07, when the last condition cleared and the whole condition-checking
+    half of this module began iterating an empty tuple for that document.
+
+    The gap is not theoretical. It was found by mutating the verdict document in
+    the direction the existing checks do not read: putting row 13 back to
+    ``partially unmet`` while leaving the block with no ``blocks-on`` line at all.
+    Nine tests stayed green on a gate that claimed READY over an unmet row --
+    precisely the drift this module exists to refuse, arriving from the side it
+    was not watching.
+
+    So the authority runs both ways. A declared condition must name a row that
+    still blocks (above), and a row that still blocks must be declared (here).
+    """
+    gate = _parse_gate(path, body)
+    declared = {condition_id.removeprefix("row-") for condition_id, _ in gate.conditions}
+    for row_number, status in _graded_rows(_evidence_table(path)):
+        if _grade_of(status) in _CLEARED_GRADES:
+            continue
+        assert row_number in declared, (
+            f"{path}: evidence-table row {row_number} is graded {status!r}, which is not a "
+            f"cleared grade, but the gate block declares no `blocks-on: row-{row_number}` "
+            f"for it. A verdict cannot outrun its own table by staying silent about a row."
         )
 
 

@@ -51,18 +51,25 @@ anywhere in the process.
 streamed turns to completion — first on 2026-08-04, and the recordings are cited by digest in the
 verdict's evidence table. Every _test_ in this repository still dials a loopback stub built from a
 reading of Hermes's own source at a pinned revision, so the live evidence is a set of recordings, not
-a suite. The v0.1 daily-driver verdict is still **not ready**, and the reasons are now narrower and
-specific: F1 and F7 have not been demonstrated in an isolated live session, the
-credential-file-versus-environment-variable precedence question is deliberately undecided, and ten of
-the eighteen required gateway methods have no runtime evidence of any kind.
+a suite. The v0.1 daily-driver verdict reached **ready** on 2026-08-07, when the last three blocking
+rows closed. Read what that word covers before relying on it: it means every row of the verdict's
+evidence table is measured or met across the requirements that document was scoped to check, and it
+means nothing beyond them. Nobody has driven the interface on Linux. No run on either platform has
+used a real terminal emulator rather than a bare pseudo-terminal. Gateway method compatibility is
+compared at the top level of each response only. The suite fails intermittently — twelve runs green
+in thirteen.
 [docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md](docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md)
-sets out what is measured, what is inferred, and what is unmet, row by row. Run it in a session you
-would not mind losing, with the recorder on.
+sets out what is measured, what is inferred, and what is out of scope, row by row, and its
+`What would move this verdict back to not ready` section says what would reverse it. Run it with the
+recorder on.
 
-_This paragraph used to open "Talaria has never been connected to a Hermes gateway: every transport
-test in this repository dials a loopback stub", and reasoned from that premise. It was true when it
-was written and stopped being true on 2026-08-04; nothing linked the attach back to this page, so it
-went stale silently. The verdict's `What would change this verdict` section records that mechanism._
+_This paragraph has now gone stale twice, which is why the note is kept rather than tidied away. It
+first opened "Talaria has never been connected to a Hermes gateway: every transport test in this
+repository dials a loopback stub" and reasoned from that premise; true when written, false from
+2026-08-04. It then carried **not ready** with three reasons — F1 and F7 undemonstrated, the
+credential precedence question undecided, ten methods without runtime evidence — and kept carrying
+them after all three were settled. Nothing links this page to the verdict automatically. The
+verdict's own `Gate record` block is the part a test can read; this paragraph is not._
 
 ```bash
 uv sync --all-groups
