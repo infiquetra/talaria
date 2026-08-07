@@ -4,6 +4,32 @@
 
 ## 2026-08-07
 
+### A baseline read from Hermes source, and a stub built from the same reading, agreed with each other and were both wrong
+
+**Author.** the first reply-side pass ever run over the recording corpus, which found two wrong pins in the thirteen shapes it checked
+
+**Evidence.** `talaria/domain/compat.py` pinned `approval.respond` as returning `{"resolved": "bool"}`. Three live replies in the corpus carried `{"resolved": 0}`, `{"resolved": 1}` and `{"resolved": 0}` — JSON integers, never `true` or `false`. The gateway handler returns `resolve_gateway_approval(...)` verbatim, and that function is typed `-> int` and documented "Returns the number of approvals resolved (0 means nothing was pending)" (`tools/approval.py:2490-2505`). The same pass found `session.resume` returning a `messages_omitted` key the baseline did not record at all, set on all three of that method's success paths (`methods_session.py:466`, `:551`, `:712`). Two wrong pins out of the thirteen evidence-only shapes, neither of which any test had ever contradicted.
+
+**Mechanism.** The baseline was transcribed by reading Hermes's source. The stub gateway that the compatibility tests run against was transcribed from *the same reading*. So the tests asked "does the check behave correctly when a reply matches the pin" and answered yes, with a reply the pin was written to match — a closed loop with no external input. `tests/transport/test_compat_baseline.py` says as much in its own docstring ("a stub answers every name it is asked… that is precisely what it cannot testify about"), and the gap it names is exactly the one that hid these two. The only thing outside the loop is a reply from a real gateway, and nothing had ever compared one against the pin.
+
+**Why nothing misbehaved.** `talaria/ui/app.py:527-529` already read `resolved` with `isinstance(resolved, int) and not isinstance(resolved, bool)` and rendered "*n* resolved". The consuming code had the right model; only the record of what Hermes returns was wrong. That is why five days of live use produced no symptom — and why the error was invisible to every route except comparing a reply to the pin.
+
+**Validation.** Both pins corrected on the source line that confirms them, not on the reply alone. `tests/domain/test_recorded_reply_shapes.py` stores the recorded top-level shape of every evidence-only reply in the corpus — kinds only, never values, because a real `session.resume` reply carries the operator's message text and a real `paste.collapse` reply carries a local path — and runs the production `compare_shape` against each, so reverting either pin fails. Full suite 1332 passed before the new module, 1347 after.
+
+**Generalizable rule.** When a pinned contract and the fixtures that test it come from the same reading of a source you do not control, no test in that set can catch a misreading. The only evidence that counts is a message the other system actually sent — and if you have a recording corpus, comparing it against the pin costs one pass and is worth running before the pin is trusted.
+
+### "Provoking it means installing a credential-capturing skill" overstated the cost by describing the realistic use case instead of the minimum trigger
+
+**Author.** the operator asking what a credential-capturing skill actually is, which turned a deferred decision into a ten-minute run
+
+**Evidence.** `secret.respond` had been the single method blocking row 6, recorded as "not attempted" because provoking it was said to require installing or configuring a credential-capturing skill on the operator's own machine. Reading the trigger instead of paraphrasing it: `tools/skills_tool.py` fires the secret-capture callback for any skill whose frontmatter declares a `required_environment_variables` entry not already persisted in `~/.hermes/.env` — the variable's purpose is never inspected. The gateway's callback branches on the answer first (`val = _block("secret.request", …)` then `if not val:` returns `skipped`) so an empty answer never reaches `save_env_value_secure`, and `save_env_value_secure` itself returns `validated: False` — nothing is checked against any service. The run that closed the row used a throwaway skill declaring one variable nothing reads, answered with an empty field, and deleted afterwards. No credential existed at any point.
+
+**Mechanism.** The description was written from what such a skill is *for* rather than from what the code branches on. Both halves of the overstatement came from that: "credential" is what the variable usually holds, not what the callback requires, and "installing and configuring" is what adopting a real skill costs, not what one file on disk costs. Neither is wrong as a description of the feature; both are wrong as a description of the trigger, and the trigger is what a provocation has to reproduce.
+
+**The cost of the error.** It converted a ten-minute task into a decision requiring the operator's authorisation, and it did so in a document whose whole purpose is to say precisely what remains. The row sat one method short overnight on a sentence.
+
+**Generalizable rule.** State a provocation's cost as the minimum that reaches the branch, not as the realistic use case that would reach it — and derive that minimum from the condition in the code, not from what the feature is for. This is the same failure as the `command.dispatch` entry below, in the opposite direction: that one described a branch in the remote system's vocabulary, this one described it in the feature's.
+
 ### A checklist step marked "provocation not established" was a two-line derivation from source, and the search it recommended would not have found it
 
 **Author.** driving F2 through F6 live to move row 6 of the v0.1 gate

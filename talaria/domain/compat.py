@@ -157,6 +157,14 @@ COMPAT_BASELINE: tuple[MethodBaseline, ...] = (
             "message_count": "int",
             "messages": "list",
             "info": "object",
+            # Recorded from a live reply on 2026-08-07, not read out of the
+            # source: the reply-side pass over the recording corpus reported it
+            # as an unexpected key. All three of ``session.resume``'s success
+            # paths set it (``methods_session.py:466``, ``:551``, ``:712``), so
+            # it is required rather than optional. Talaria reads neither this
+            # key nor ``messages`` — a resume renders an empty transcript
+            # however much history the reply carries, which is queued as P1.
+            "messages_omitted": "bool",
             "inflight": "null|object",
             "running": "bool",
             "session_key": "str",
@@ -237,10 +245,18 @@ COMPAT_BASELINE: tuple[MethodBaseline, ...] = (
     MethodBaseline(
         method="approval.respond",
         classification="evidence-only",
-        evidence="tui_gateway/methods_prompt.py:886-920",
+        evidence="tui_gateway/methods_prompt.py:886-920, tools/approval.py:2490-2505",
         purpose="Answering a dangerous-command approval (R7).",
         request_fixture={"session_id": "", "choice": "deny", "all": False},
-        response_shape={"resolved": "bool"},
+        # ``int``, and it was pinned as ``bool`` until 2026-08-07. The handler
+        # returns ``resolve_gateway_approval(...)`` verbatim, and that function
+        # is typed ``-> int`` and documented "Returns the number of approvals
+        # resolved (0 means nothing was pending)". Three live replies carried
+        # ``0``, ``1`` and ``0`` — JSON integers, never ``true``/``false``.
+        # ``talaria/ui/app.py:527-529`` already read it as a count; only this
+        # record was wrong, which is why nothing misbehaved and nothing caught
+        # it until the replies were compared against the baseline.
+        response_shape={"resolved": "int"},
     ),
     MethodBaseline(
         method="clarify.respond",
