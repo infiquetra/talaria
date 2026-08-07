@@ -146,8 +146,11 @@ confirmed no quit reached the wire.
 
 ## What this does and does not settle
 
-**Row 19.** All six branches now have live evidence, observed by the operator, against a real gateway.
-Whether that clears the row is U7's call on a re-grade, not this document's.
+**Row 19 is graded met**, on the re-grade of 2026-08-07. All six branches have live evidence, observed by
+the operator against a real gateway, including the outside-the-frame-log observation the row itself named
+as the one thing that would settle F7.
+
+Clears: v0-1-daily-driver#row-19
 
 **Row 6 gains exactly one method.** The check enumerated the thirteen evidence-only methods by name.
 Of those, four now have live evidence — `session.create`, `prompt.submit`, `slash.exec`, and
