@@ -33,6 +33,42 @@ not fixed alongside: an outstanding blocking prompt survives `F4`, so the next s
 behind a card the operator may think they cancelled; and nothing on a prompt card names the keys that
 reach it, unlike the picker dialog's hint line, which names every key that does something.
 
+### `--resume` reattaches to the session and throws away its entire conversation
+
+**Priority.** P1 — the flag works and the feature does not. Found 2026-08-07 by the reply-side pass
+that closed row 6, then confirmed on screen rather than left as a code reading.
+
+**Evidence, measured.** `talaria --resume` was run against a session that had just held a real
+exchange. The gateway's `session.resume` reply carried `message_count = 3`, a `messages` array of
+three entries, and `messages_omitted = False` — it withheld nothing. **Talaria rendered an empty
+transcript.** Nothing follows the reply on the wire that could carry the history either: the frames
+after it are `sessions.changed`, `session.info` and `session.reclaimed`, so the reply's `messages`
+array is the history, not a summary of one delivered elsewhere.
+
+**Mechanism.** `TalariaApp._land_session` (`talaria/ui/app.py`) reads exactly one field out of the
+reply, `session_id`, and returns. `messages` and `message_count` appear nowhere in the package outside
+the compatibility baseline — grep finds two hits, both in `talaria/domain/compat.py`. The transcript
+is built from streamed events, and a resume streams no events for messages that already happened.
+
+**Why nothing caught it.** Row 19's acceptance run graded `--resume` **pass** on 2026-08-07, and that
+grade is correct for what it measured: which session each startup path lands in, settling KTD7's
+precedence chain. Nobody asked whether the conversation appeared. A startup path that lands correctly
+and shows nothing passes a landing test.
+
+**The smaller case, worth fixing in the same change.** `messages_omitted` is a `bool` the gateway sets
+on all three `session.resume` success paths (`methods_session.py:466`, `:551`, `:712`). When it is
+true the gateway sends `messages: []` while `message_count` still reports the real length — "there are
+*n* messages and I am not sending them". Talaria reads neither, so once the history renders at all,
+a withheld history would render as a complete short one unless the flag is read too. The key was not
+in `talaria/domain/compat.py` until this pass added it.
+
+**Effort.** Medium. The history has to be projected into the same transcript state the event stream
+feeds, which is where the design question sits — not in the reading of the reply.
+
+**Worth it when.** Before `--resume` or `--session <id>` is recommended to anybody. A resumed session
+is exactly where a reader trusts the transcript to be the whole conversation, and right now it is
+reliably empty.
+
 ### `absent_capability` blames the gateway's version for a mistyped profile name
 
 **Priority.** P1 — the message actively misdiagnoses, and it fires on the most likely operator error.

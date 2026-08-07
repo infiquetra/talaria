@@ -4,6 +4,55 @@
 
 ## 2026-08-07
 
+### Row 6 is graded on matched replies, and a pin the measurement proves wrong gets corrected rather than defended
+
+**Author.** the reply-side pass that closed row 6, which found two of the shapes it was checking against were wrong
+
+**Decision.** Row 6 of the v0.1 gate is graded `measured` on a two-part standard,
+both parts stated so neither can be quietly relaxed. Every evidence-only method
+in scope must have (1) at least one live outbound call in the recording corpus,
+and (2) that call's reply matched back to it on JSON-RPC `id` and compared
+against the pinned `response_shape` using `talaria.domain.compat.compare_shape`
+— the production comparison, not a re-implementation of it. Enumeration alone is
+not enough for the grade.
+
+**Why the second part exists.** Enumeration answers "did Talaria call it". The
+row asks whether these methods are compatible. Those are different questions, and
+on 2026-08-07 they gave different answers: all twelve in-scope methods had live
+calls, and two of the twelve had replies that did not match the pin. A row graded
+on enumeration alone would have cleared clean and been wrong about two methods.
+
+**And when the measurement contradicts the pin, the pin loses.** The baseline is
+a record of what Hermes returns, so a measurement that finds it wrong and
+corrects it on source evidence is the row working, not the row being dodged. Two
+guards keep that from becoming a licence to edit whatever fails: the correction
+must be confirmed against the Hermes source independently of the reply that
+prompted it, and every corrected shape is pinned in
+`tests/domain/test_recorded_reply_shapes.py` so a revert fails. Both corrections
+of 2026-08-07 carry a source line — `approval.respond`'s `resolved` is typed
+`-> int` in `tools/approval.py:2490-2505`, and `session.resume`'s
+`messages_omitted` is set on all three of its success paths.
+
+**Rejected: grade the row on enumeration and treat reply shapes as rows 17/18's
+job.** Those rows do reply-matching only for the methods they cover — startup
+acceptance and one streamed turn — which is five of eighteen. Nothing would have
+covered the bridges, and the two wrong pins would still be in the file.
+
+**Rejected: report the drift and leave row 6 blocking on it.** Defensible on its
+face and wrong on inspection: the drift was in Talaria's record of Hermes, not in
+Talaria's behaviour, and `talaria/ui/app.py` was already reading `resolved` as
+the count it is. Blocking a gate on a stale comment while the code is correct
+grades the documentation, not the client.
+
+**What this does not do.** It does not prove nested compatibility.
+`compare_shape` is top-level only (row 6a), by an explicit v0.1 scope decision,
+and one matched reply per method is not exhaustive traffic. The row is graded on
+the standard it declares.
+
+**Revisit when.** `compare_shape` gains nested comparison, or a third pinned
+shape turns out to be wrong — two corrections found by the first reply-side pass
+ever run is a rate worth re-reading if it continues.
+
 ### `terminal.read.respond` leaves row 6's runtime-evidence requirement, and the exclusion names its own falsifier
 
 **Author.** the operator, after the F2–F6 live-evidence run left row 6 one method short on something no amount of driving Talaria could produce
@@ -52,6 +101,12 @@ a method it still answers.
 **What this does not do.** It does not clear row 6. `secret.respond` remains
 outstanding and the row blocks on it, so the verdict stays **NOT READY** on rows
 6 and 13.
+
+**Followed later the same day.** `secret.respond` was provoked and answered live
+a few hours after this entry was written, and row 6 cleared with
+`terminal.read.respond` still excluded. The sequencing is left visible on
+purpose: this decision did not clear the row, and reading it as though it had
+would credit an exclusion with work a live run did.
 
 **Revisit when.** Anyone runs Talaria against a desktop-spawned gateway — that
 single run settles it either way. Also revisit if Hermes moves the terminal

@@ -99,6 +99,31 @@ operator's own machine. That is a change to their environment rather than a
 throwaway session, so it was left for them to decide. The trigger is known; only
 the decision to fire it is outstanding.
 
+> **Amended 2026-08-07, later the same day — the paragraph above overstates the
+> cost, and the overstatement is what deferred the run.** No credential is
+> involved and no skill has to be adopted. `tools/skills_tool.py` fires the
+> callback for *any* skill declaring a `required_environment_variables` entry
+> not already persisted in `~/.hermes/.env`; what the variable is for is never
+> inspected. The gateway's callback branches on the answer before storing
+> anything — `val = _block("secret.request", …)` then `if not val:` returns
+> `skipped` — so an empty answer never reaches `save_env_value_secure`, and
+> `save_env_value_secure` returns `validated: False` in any case, because
+> nothing is checked against any service.
+>
+> **What actually ran.** A throwaway skill declaring one variable that nothing
+> reads, loaded once with `skill_view`, answered with an empty field, deleted
+> afterwards. The bridge fired, Talaria answered, the gateway replied
+> `{"status": "ok"}`, and the frame log carries
+> `secret.respond {"request_id": "…", "value": "[redacted]"}` with an explicit
+> redaction record — structural, since even an empty value was withheld (R9).
+> Nothing was written to `~/.hermes/.env`, confirmed by grep afterwards.
+>
+> **Why this section is corrected rather than replaced.** "Provoking it changes
+> the operator's machine" was written from what such a skill is *for* rather
+> than from what the code branches on, and that is a repeatable mistake worth
+> leaving legible. It is recorded as a lesson in
+> `docs/engineering-journal/LEARNINGS.md`.
+
 ## R9: verified, and stronger than the requirement
 
 R9 says a credential-bearing answer must never reach a frame log. Reading every
@@ -172,3 +197,35 @@ One decision and one question:
    permanently short on that is not a measurement, it is a stalemate — but
    re-scoping it out has to name the condition, so the exclusion stays
    falsifiable.
+
+## Both were settled on 2026-08-07, and row 6 cleared
+
+Item 2 was re-scoped out with its condition named — the decision is in
+`docs/engineering-journal/DECISIONS.md`. Item 1 turned out to cost a throwaway
+skill file and an empty keypress, per the amendment above, and was run the same
+day. The corpus stands at `talaria-live-corpus-v1-4670f-fc5790017b70`, 30
+recordings, 4,670 frames, and seventeen of the eighteen required methods have
+live traffic.
+
+**What closed the row was not the enumeration, though.** Counting outbound
+methods says Talaria *called* each one; row 6 asks whether they are compatible.
+A reply-side pass matched every evidence-only call in the corpus back to its
+reply on JSON-RPC `id` and compared it against the pinned shape using the
+production `compare_shape`. Twelve of twelve in-scope methods matched — **after
+two pinned shapes were found wrong and corrected**:
+
+- `approval.respond` returns `resolved` as an **int**, a count of approvals
+  resolved, and was pinned as a `bool`. Three live replies carried `0`, `1` and
+  `0`. The gateway handler returns `resolve_gateway_approval(...)` verbatim,
+  typed `-> int` (`tools/approval.py:2490-2505`). `talaria/ui/app.py:527-529`
+  already read it as a count, so nothing misbehaved and nothing caught it.
+- `session.resume` returns a `messages_omitted` key the baseline never recorded.
+
+Chasing the second one found a defect worth more than either correction:
+**Talaria discards the entire conversation history a resume returns.** Verified
+on screen — a reply carrying three messages and `messages_omitted: False`
+rendered an empty transcript. Queued as P1.
+
+Row 6 is now graded `measured` and the gate blocks on row 13 alone. The full
+account is in §The reply side of
+`docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`.

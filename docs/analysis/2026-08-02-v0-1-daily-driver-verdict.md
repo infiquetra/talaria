@@ -81,7 +81,7 @@ Status values: **measured**, **inferred**, **unmet**.
 | 3 | **AE7** — a drifted response shape is flagged | measured | A dropped key, a changed value kind, and an added key each flagged by name against the pinned signature | `test_a_dropped_response_key_is_flagged_by_name` and the two beside it |
 | 4 | A probe that never answers must not read as a pass | measured | An unanswered probe grades `unproved` and blocks; a gateway that drops the socket mid-check leaves one named `unproved` row and two `present` rows | `test_a_probe_that_never_comes_back_blocks_rather_than_passing` |
 | 5 | The startup probe cannot invoke a mutating method by mistake | measured | The guard is called directly with each of the thirteen evidence-only entries and raises before the dispatcher is touched (call count asserted at zero) | `test_probing_an_evidence_only_method_raises_before_any_call` |
-| 6 | The **thirteen** other required methods are compatible | **inferred** | Never probed at startup. Their evidence is the pinned source line plus the recorded request fixture and response shape in `talaria/domain/compat.py`. **Re-graded three times by enumerating methods rather than by counting runs** — 2026-08-06, then after the row-19 acceptance run, then after the F2–F6 live-evidence run of 2026-08-07 — see §The method enumeration. Those passes found **eight**, then **nine**, then **sixteen** distinct methods of the required eighteen. Eleven of the thirteen evidence-only methods now have runtime evidence. **One of the remaining two, `terminal.read.respond`, was taken out of scope for runtime evidence on 2026-08-07** with its condition named below; it stays required for compatibility. The row does not clear, on the one that is left: `secret.respond` has no runtime evidence of any kind | `talaria/domain/compat.py`; §The method enumeration |
+| 6 | The **thirteen** other required methods are compatible | **measured** | Never probed at startup, so this row was `inferred` from 2026-08-02 to 2026-08-07: its evidence was the pinned source line plus the recorded request fixture and response shape in `talaria/domain/compat.py`. **Graded four times by enumerating methods rather than by counting runs** — 2026-08-06, after the row-19 acceptance run, after the F2–F6 live-evidence run, and after the secret-bridge probe of 2026-08-07 — see §The method enumeration. Those passes found **eight**, **nine**, **sixteen**, then **seventeen** distinct methods of the required eighteen. **Twelve of the thirteen evidence-only methods have a live call whose reply was matched to it and compared against the pinned shape**; the thirteenth, `terminal.read.respond`, was taken out of scope for runtime evidence on 2026-08-07 with its condition named below and stays required for compatibility. The comparison found **two pinned shapes wrong**, both corrected on source evidence — see §The reply side. Top-level keys and value kinds only (row 6a) | `talaria/domain/compat.py`; §The method enumeration; §The reply side |
 | 6a | What "shape matches" covers | measured | Top-level only: the response's own key set and each value's kind. A gateway whose every *nested* payload had changed was graded `present` with `0 blocking` — deliberate v0.1 scope (`talaria/domain/compat.py:343`), stated here because `present` sounds broader than it is | `talaria/domain/compat.py::compare_shape` |
 | 7 | **R36** — a normal exit restores the terminal | measured | The real client run on a pseudo-terminal; `termios` snapshotted before, during and after; attributes after are byte-identical to before. The falsifiability control (`SIGKILL` on the same run) leaves the terminal in raw mode, and that is asserted | `tests/ui/test_teardown.py::test_a_normal_exit_restores_the_terminal_modes`, `::test_the_terminal_restore_assertion_can_fail` |
 | 8 | **R36** — an induced mid-stream failure still restores the terminal | measured | A frame source that streams two frames then raises; the app reports it, closes the source and exits 70; the terminal is restored | `::test_an_induced_mid_stream_failure_still_restores_the_terminal` |
@@ -126,18 +126,26 @@ side effects; thirteen cannot, and are not.
 | `paste.collapse` | collapsing a large paste | `methods_complete.py:14-39` | **called by Talaria against a real Hermes** — 2026-08-07 |
 | `approval.respond` | answering an approval | `methods_prompt.py:886-920` | **called by Talaria against a real Hermes** — 2026-08-07 |
 | `clarify.respond` | answering a clarification | `methods_prompt.py:858-864` | **called by Talaria against a real Hermes** — 2026-08-07 |
-| `secret.respond` | answering a secret bridge | `methods_prompt.py:881-883` | **not verified at runtime** |
+| `secret.respond` | answering a secret bridge | `methods_prompt.py:881-883` | **called by Talaria against a real Hermes** — 2026-08-07 |
 | `sudo.respond` | answering a sudo bridge | `methods_prompt.py:876-878` | **called by Talaria against a real Hermes** — 2026-08-07 |
 | `terminal.read.respond` | answering the terminal-read bridge | `methods_prompt.py:867-873` | **out of scope for runtime evidence — see below.** Still required for compatibility; the request is only emitted by a gateway started with `HERMES_DESKTOP` set |
 
 **Thirteen of eighteen required methods are never probed at startup**, and as of
-2026-08-07 **eleven of those thirteen have been called by Talaria itself**
-against a real Hermes dashboard on loopback. Two have not: `secret.respond`, and
+2026-08-07 **twelve of those thirteen have been called by Talaria itself**
+against a real Hermes dashboard on loopback, with each call's reply matched back
+to it and compared against the shape pinned here. One has not:
 `terminal.read.respond`, which is out of scope for runtime evidence for the
 reason set out immediately below. Earlier drafts of this section recorded
 `session.create` and `prompt.submit` as response shapes observed through the
 TypeScript reference recorder, which was true when written; Talaria's own frame
 logs now carry the calls.
+
+**Two of the shapes in this table were wrong, and the comparison is what found
+them.** `approval.respond` was pinned as returning `resolved` as a `bool` when
+the gateway returns a count, and `session.resume` returned a `messages_omitted`
+key this baseline did not record at all. Both are corrected, and §The reply side
+sets out how each was confirmed against the Hermes source rather than against
+the reply alone.
 
 ### `terminal.read.respond` is out of scope for runtime evidence, and here is the condition
 
@@ -175,8 +183,12 @@ does, this exclusion is wrong and the row goes back to requiring it. Until
 somebody runs that, "unreachable" is a claim about one environment variable and
 is written here as one.
 
-**What this does not do.** It does not clear row 6, and it does not reduce the
-eighteen. `secret.respond` is the outstanding method and the row blocks on it.
+**What this does not do.** It does not reduce the eighteen, and — on the day it
+was written — it did not clear row 6 either: `secret.respond` was still
+outstanding and the row blocked on it. `secret.respond` was answered live later
+the same day, so row 6 now clears with this method still excluded. That
+sequencing is worth keeping visible: the exclusion did not clear the row, and a
+reader should not read it as having done so.
 
 The startup check states the gap on every run rather than reporting
 "compatible": its first line reads `gateway compatibility: 0 blocking, 12
@@ -284,14 +296,27 @@ this one moved the row a long way without clearing it. Eleven of the thirteen
 evidence-only methods now have live evidence. Of the two that do not,
 `terminal.read.respond` is out of scope for the `HERMES_DESKTOP` reason set out
 earlier, which leaves **`secret.respond` as the single method row 6 blocks on**.
+*(As this pass left things. The next subsection is where that last method got
+its evidence; row 6 blocks on nothing as of the end of 2026-08-07.)*
 
-**Why `secret.respond` was not attempted rather than attempted and failed.** Its
-bridge is wired to the skills tool's secret-capture callback, so provoking it
-means installing or configuring a credential-capturing skill on the operator's
-own machine. That is a change to their environment rather than a throwaway
-session, and it is theirs to authorise. The trigger is known; only the decision
-is outstanding. Recording it as "not attempted, and why" rather than as
-"unreachable" is the distinction this section exists to keep.
+**Why `secret.respond` was not attempted rather than attempted and failed —
+written before it was attempted, and left standing because the reasoning was
+sound and one of its facts was not.** Its bridge is wired to the skills tool's
+secret-capture callback, so provoking it means installing or configuring a
+credential-capturing skill on the operator's own machine. That is a change to
+their environment rather than a throwaway session, and it is theirs to
+authorise. The trigger is known; only the decision is outstanding. Recording it
+as "not attempted, and why" rather than as "unreachable" is the distinction this
+section exists to keep.
+
+**Corrected 2026-08-07: "a credential-capturing skill" overstated what the
+bridge needs, and the overstatement is what made the decision look expensive.**
+No credential is involved. The callback fires on any skill declaring a
+`required_environment_variables` entry that is not already persisted, whatever
+the variable is for, and an empty answer is a supported response the gateway
+records as skipped without writing anything to disk. The provocation that
+actually ran was a throwaway skill declaring one variable nothing reads. See
+§The reply side.
 
 `session.resume` **left this list on 2026-08-07** — the row-19 acceptance run
 called it live for the first time, in three of the seven recordings of corpus
@@ -310,17 +335,131 @@ evidence — produced a checklist for an operator and stopped there.
 **Amended 2026-08-07.** The operator then ran that checklist, and coverage widened
 by exactly one method. The corpus is no longer the 2026-08-04 one; the acceptance
 run added `talaria-live-corpus-v1-107f-e40d9fd04ec5` (7 recordings, 107 frames),
-and `session.resume` gained live evidence. **Row 6 still stays `inferred`**, now on
-nine methods rather than ten. One method in seven recordings is what a picker
-built and driven by hand actually exercises, which is the honest measure of that
-work rather than the count of units in it.
+and `session.resume` gained live evidence. **Row 6 stayed `inferred` at that
+point**, now on nine methods rather than ten. One method in seven recordings is
+what a picker built and driven by hand actually exercises, which is the honest
+measure of that work rather than the count of units in it. Two further passes on
+2026-08-07 moved it the rest of the way; they are below and in §The reply side.
 
-One caveat on what this section can prove, stated because it is easy to read the
-table above as broader than it is. An outbound frame proves Talaria *sent* a call,
-not that the gateway answered it correctly. Rows 17 and 18 do the reply-side work
-for the methods they cover by matching each reply to its call on JSON-RPC `id`;
-this section deliberately does not repeat that, because its question is narrower —
-*which* methods have any live traffic at all.
+### Re-enumerated 2026-08-07 a third time, after the secret-bridge probe
+
+The last method with no live traffic of any kind was `secret.respond`. It was
+provoked on 2026-08-07 and the corpus now stands at
+`talaria-live-corpus-v1-4670f-fc5790017b70`, **30 recordings, 4,670 frames**.
+
+**Seventeen distinct methods of the required eighteen appear. One does not**, and
+it is `terminal.read.respond`, which is out of scope for runtime evidence.
+
+| Evidence-only method | Calls | Recordings | First live evidence |
+| --- | --- | --- | --- |
+| `secret.respond` | 1 | 1 of 30 | 2026-08-07, secret-bridge probe |
+| `terminal.read.respond` | 0 | 0 of 30 | **none — out of scope, see above** |
+
+Every other evidence-only method is unchanged from the table above. **The change
+is one method**, and it is the one the row had been blocking on.
+
+One caveat on what an enumeration can prove, stated because it is easy to read
+the tables above as broader than they are. An outbound frame proves Talaria
+*sent* a call, not that the gateway answered it correctly. Until 2026-08-07 this
+section deliberately did not do the reply-side work — rows 17 and 18 did it for
+the methods they cover — because its question was narrower: *which* methods have
+any live traffic at all. That is no longer the whole of it. §The reply side does
+the matching for every evidence-only method, and it is where row 6's grade
+actually comes from.
+
+## The reply side
+
+**Added 2026-08-07, and this is the half that changes row 6's grade from
+`inferred` to `measured`.** Enumerating outbound methods answers "did Talaria
+call it". This section answers the question the row actually asks: when Talaria
+called it, did the gateway's reply match the shape pinned in
+`talaria/domain/compat.py`?
+
+**What was counted.** Every outbound frame in the corpus whose method is one of
+the thirteen evidence-only methods, paired with the inbound frame carrying the
+same JSON-RPC `id` in the same recording, and the reply's `result` compared
+against the pinned entry using `talaria.domain.compat.compare_shape` — the same
+function the startup check applies, rather than a re-implementation of it. The
+corpus is `talaria-live-corpus-v1-4670f-fc5790017b70`, 30 recordings, 4,670
+frames.
+
+| Evidence-only method | Calls | Replies matched | Errors | Drift against the pin |
+| --- | --- | --- | --- | --- |
+| `session.create` | 24 | 24 | 0 | none |
+| `session.resume` | 3 | 2 | 1 | **`messages_omitted` unrecorded** |
+| `prompt.submit` | 31 | 31 | 0 | none |
+| `session.interrupt` | 5 | 5 | 0 | none |
+| `subagent.interrupt` | 1 | 1 | 0 | none |
+| `slash.exec` | 18 | 17 | 1 | none |
+| `command.dispatch` | 1 | 1 | 0 | none |
+| `paste.collapse` | 1 | 1 | 0 | none |
+| `approval.respond` | 3 | 3 | 0 | **`resolved` is an int, pinned as bool** |
+| `clarify.respond` | 1 | 1 | 0 | none |
+| `secret.respond` | 1 | 1 | 0 | none |
+| `sudo.respond` | 1 | 1 | 0 | none |
+| `terminal.read.respond` | 0 | 0 | 0 | no live call — out of scope |
+
+The two errors are the point of running this at all, and both were in the
+baseline rather than in Talaria's behaviour.
+
+**`approval.respond` returns a count, and was pinned as a flag.** Three live
+replies carried `{"resolved": 0}`, `{"resolved": 1}` and `{"resolved": 0}` —
+JSON integers, never `true` or `false`. The gateway handler returns
+`resolve_gateway_approval(...)` verbatim, and that function is typed `-> int`
+with the docstring "Returns the number of approvals resolved (0 means nothing
+was pending)" (`tools/approval.py:2490-2505`). So this is not a reading of one
+reply; the source says the same thing. `talaria/ui/app.py:527-529` already read
+the field as a count and rendered "*n* resolved", which is why nothing
+misbehaved and why nothing caught it: the code was right and only the record of
+what Hermes returns was wrong. Corrected to `int`.
+
+**`session.resume` returns a key the baseline never recorded.** Every reply
+carried `messages_omitted`, a `bool`, and all three of the gateway's
+`session.resume` success paths set it (`methods_session.py:466`, `:551`,
+`:712`). Corrected as a required key rather than an optional one.
+
+**And chasing that key found a defect worth more than the correction.** Talaria
+reads neither `messages_omitted` nor `messages`; both appear nowhere in the
+package outside the baseline. Checked on screen rather than left as a code
+reading: `talaria --resume` against a session holding a real exchange got a
+reply carrying `message_count = 3`, three `messages`, and
+`messages_omitted = False` — the gateway withheld nothing — and **Talaria
+rendered an empty transcript**. Nothing on the wire after the reply could carry
+the history either. Row 19 graded `--resume` *pass* on 2026-08-07 and that grade
+stands, because what it measured was which session each startup path lands in;
+nobody asked whether the conversation appeared. Queued as P1 in
+`docs/engineering-journal/QUEUED.md`, not fixed here.
+
+**Why correcting the baseline is not moving the goalposts.** The baseline is a
+record of what Hermes returns, and the row asks whether Talaria's model of these
+methods matches reality. A measurement that finds the model wrong and corrects
+it on source evidence is that row working. What would be dishonest is editing
+the pin and reporting "no drift found" — so both errors are named above, both
+carry the source line that confirms them independently of the reply, and
+`tests/domain/test_recorded_reply_shapes.py` pins every recorded shape so a
+revert fails rather than passes quietly.
+
+**How `secret.respond` was finally provoked, and the correction that made it
+cheap.** The bridge fires from `tools/skills_tool.py`, which subtracts the
+variables already persisted in `~/.hermes/.env` from a skill's
+`required_environment_variables` frontmatter and calls the gateway's
+secret-capture callback once per variable left over. The gateway registers that
+callback for every session (`tui_gateway/server.py`) and `session.create` sets
+the `HERMES_INTERACTIVE` flag the capture path checks — so unlike
+`terminal.read.respond`, nothing here is gated on the desktop application. The
+provocation was a throwaway skill declaring one variable that nothing reads,
+loaded once and deleted afterwards. **No credential was involved**: the answer
+was an empty field, which the gateway's callback records as skipped and returns
+without writing to disk, and the frame log shows the value redacted structurally
+in any case (R9). Describing this as needing "a credential-capturing skill", as
+this document did earlier in the day, overstated the cost by a wide margin and
+is corrected above.
+
+**What this section still does not prove.** `compare_shape` is top-level only —
+key names and value kinds, nested structure deliberately out of scope for v0.1
+(row 6a). A reply whose top-level shape matches but whose nested contents have
+changed passes here. The row is graded on the standard the row declares, and
+that standard is stated rather than assumed.
 
 ## R1 in full: which half holds
 
@@ -617,12 +756,12 @@ that date on reasons that stopped being true on 2026-08-04; both rows now record
 what they used to say and why. This section is rewritten on the table as it now
 stands, and what it used to say is set out at the end of it.
 
-Reading the table: rows 17, 18 and 19 are **measured or met**, row 13
-is **partially unmet**, and row 6 covers thirteen of the eighteen required
-gateway methods as **inferred rather than measured** (four of those thirteen —
-`session.create`, `prompt.submit`, `slash.exec` and, since 2026-08-07,
-`session.resume` — have been called by Talaria against a real gateway and
-answered; the other nine have no runtime evidence of any kind). Rows 12 and 14 were the two weakest *measured* rows in
+Reading the table: rows 6, 17, 18 and 19 are **measured or met** and row 13
+is **partially unmet**. Row 6 covers thirteen of the eighteen required gateway
+methods, and as of 2026-08-07 twelve of those thirteen have been called by
+Talaria against a real gateway, answered, and had the answer compared against
+the pinned shape; the thirteenth, `terminal.read.respond`, is out of scope for
+runtime evidence on a named condition. Rows 12 and 14 were the two weakest *measured* rows in
 earlier drafts — macOS-only, and a CI job that had never run — and both were
 closed by pushing this branch. The suite itself fails intermittently, twelve runs
 green in thirteen.
@@ -640,18 +779,30 @@ evidence in this row could not resolve.
 
 Clears: v0-1-daily-driver#row-19
 
-AE7 and R39 say the ready verdict is blocked on any gap. **Two gaps remain, so
+**Row 6 cleared later the same day**, and what closed it was the last of its
+thirteen evidence-only methods getting live traffic — `secret.respond`, provoked
+by a throwaway skill that declares one environment variable nothing reads. The
+row is graded `measured` rather than `met` because the grade rests on a
+measurement described in §The reply side: every one of the twelve in-scope
+methods now has a live call, a reply matched back to it on JSON-RPC `id`, and
+that reply compared against the pinned shape. The comparison found two pinned
+shapes wrong and both were corrected on Hermes source evidence, which is the
+most useful thing this row has produced.
+
+Clears: v0-1-daily-driver#row-6
+
+AE7 and R39 say the ready verdict is blocked on any gap. **One gap remains, so
 the verdict does not move.**
 
 ### Talaria v0.1 is **NOT READY** as a daily driver.
 
 **The verdict has not moved. Its reasons have moved entirely.** That distinction
 is the point of this restatement: three words that used to rest on "this client
-has never attached" now rest on three specific, much narrower gaps, and a reader
+has never attached" now rest on one specific, much narrower gap, and a reader
 who acts on the old reasons would be acting on a fact that expired on 2026-08-04.
 
-The **two remaining** gaps, in the order the table grades them — row 19, which
-was the third, cleared on 2026-08-07:
+The **one remaining** gap — rows 19 and 6, which were the other two, both cleared
+on 2026-08-07:
 - **Row 13 — R1's environment half is partially unmet.** Talaria adds no
   credential of its own to its environment, but an inherited
   `HERMES_DASHBOARD_SESSION_TOKEN` stays readable for the life of the process and
@@ -668,15 +819,6 @@ was the third, cleared on 2026-08-07:
   The unit that took the decision wrote down in the same breath that this row may
   not be graded *met* on it, and this section obeys that rather than re-deriving a
   friendlier reading.
-- **Row 6 — thirteen of the eighteen required gateway methods are inferred
-  rather than measured.** Three of the thirteen have now been called live and
-  answered. Ten have no runtime evidence of any kind, and what `present` covers
-  is narrower than it sounds: `compare_shape` compares top-level keys and value
-  kinds only (row 6a). **Re-graded 2026-08-06 by enumeration and unchanged.**
-  §The method enumeration counts outbound frames rather than reasoning about
-  which runs happened: eight distinct methods of the eighteen appear anywhere in
-  the corpus, the same eight as on 2026-08-05, because six units of picker work
-  landed without adding one recording to it.
 
 **What this section used to say.** Before this restatement the paragraph under
 the verdict read:
@@ -815,27 +957,34 @@ that would settle F7. Its `blocks-on` line is removed and a
 `Clears: v0-1-daily-driver#row-19` backlink is written — a live claim, which the
 gating check cross-examines against this block rather than taking on trust.
 
-**Two conditions remain and the verdict does not move.** Row 6 was re-enumerated
-a third time on 2026-08-07, over the corpus the F2–F6 live-evidence run produced,
-and gained **seven** methods — eleven of the thirteen evidence-only methods now
-have live evidence. It still does not clear. One of the remaining two,
-`terminal.read.respond`, was taken out of scope for runtime evidence with its
-condition named, which leaves `secret.respond` as the single method row 6 blocks
-on, and that one was not attempted because provoking it changes the operator's
-own machine. Row 13 is untouched by this run. By AE7 and R39 either row alone
-blocks ready, so **NOT READY** stands.
+**Restated a third time on 2026-08-07, same one-edit rule, and row 6 is now
+`measured`.** It went `inferred` → `measured` in two steps on the same day. The
+F2–F6 live-evidence run gained seven methods and left one outstanding; the
+secret-bridge probe then provoked that one, `secret.respond`, and a reply-side
+pass matched every evidence-only call in the corpus to its reply and compared it
+against the pinned shape (§The reply side). Its `blocks-on` line is removed and a
+`Clears: v0-1-daily-driver#row-6` backlink is written.
 
-**Read the shape of that honestly.** Row 6 went from nine outstanding methods to
-one, which is the largest single movement this document has recorded, and it is
-still a blocking row. A gate that reported "substantial progress" here would be
-reporting something true and useless; the row is binary and it is not met.
+**One condition remains and the verdict does not move.** Row 13 is untouched by
+any of this work — R1's environment half is still partially unmet, an inherited
+`HERMES_DASHBOARD_SESSION_TOKEN` is still readable for the life of the process,
+and by AE7 and R39 one gap alone blocks ready. **NOT READY** stands.
+
+**Read the shape of that honestly, because it is easy to misread in two
+directions.** Row 6 was the largest movement this document has recorded — nine
+outstanding methods on the morning of 2026-08-07, zero in scope by the evening —
+and it is now a cleared row rather than a blocking one. That is real. What it
+does not mean is that these methods are proven compatible in full: the grade
+rests on top-level key names and value kinds (row 6a), on one or more live
+replies per method rather than on exhaustive traffic, and the same measurement
+found two of the pinned shapes wrong. A row that clears while its own
+measurement is correcting the record is a row worth reading twice.
 
 ```gate
 id: v0-1-daily-driver
 verdict: NOT READY
 review-by: 2026-09-06
 blocks-on: row-13 partially unmet
-blocks-on: row-6 inferred
 ```
 
 ## Related
