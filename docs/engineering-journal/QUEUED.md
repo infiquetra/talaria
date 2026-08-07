@@ -39,8 +39,13 @@ reasoning is recorded in [DECISIONS.md](DECISIONS.md), "The picker is a modal di
 KTD3 — a listing is read, a picker is operated". `talaria/ui/dialog.py` is the dialog,
 `talaria/domain/selection.py` the pure selection model behind it, and the foldable `PickerRegion` is
 removed rather than kept alongside. Arrows move, `enter` selects, typing filters, `escape` clears the
-filter then pops a stage then closes. 43 new tests; the selection rules are asserted without a
-terminal, the key routing with one.
+filter then pops a stage then closes; `right` and `left` are second names for select and back. 58 new
+tests; the selection rules are asserted without a terminal, the key routing with one.
+
+The operator's first round of feedback landed in the same change: the dialog now opens on the model
+in use, tracked by Talaria itself because the gateway does not publish it (see
+[LEARNINGS.md](LEARNINGS.md), "The picker marked the wrong model after a switch"), and each row shows
+the number `/models <n>` actually takes rather than its position on the stage.
 
 **Two things this closure did not do**, both smaller than the original item and neither blocking:
 the dialog is built from the listing held at the moment it opens and a refetch arriving while it is
