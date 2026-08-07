@@ -2,6 +2,138 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-07
+
+### The picker is a modal dialog, overturning KTD3 — a listing is read, a picker is operated
+
+**Author.** the picker redesign, on the operator's verdict at first live use
+
+**Decision.** `/models` and `/profiles` open a modal dialog
+(`talaria/ui/dialog.py`): arrows move a highlight, `enter` selects, typing
+filters, `escape` backs out. KTD3 of the 2026-08-06 plan — a foldable region
+with no focus and no keys, selected by typing `/models <n>` — is **overturned**.
+The foldable `PickerRegion` is removed rather than kept alongside; both prior
+arts have exactly one surface, and two surfaces showing the same list is worse
+than either.
+
+**Why the original decision was wrong, stated precisely, because it was not
+careless.** KTD3 reasoned from `talaria/ui/palette.py:1-22`, which rejected a
+modal search box for the *command listing* on the grounds that it would put a
+second focus owner in front of the composer. That reasoning is correct and it
+still stands for the palette. What it missed is that a command listing is
+something an operator **reads** and a picker is something an operator
+**operates**, and operating needs keys. The specific collision KTD3 was dodging
+is real: the composer owns `enter` as "send message" while a picker needs
+`enter` as "select the highlighted row". KTD3 avoided it by taking no focus at
+all, and the numbered list was the price of that dodge. A modal does not dodge
+it — while the dialog is up it is the only focus owner, so `enter` is
+unambiguous, and on close the caret returns to the composer under the existing
+rule in `talaria/ui/focus.py`. The operator's words, recorded in `QUEUED.md`:
+"I expected it to work like the Hermes TUI. `/models` would open up a dialog
+picker of some sort, not just a list I now need to pick a number."
+
+**Prior art, read at pins, in ADR-0003's sense — behaviour to learn from, not a
+source tree to translate.** Qwen Code v0.21.5
+(`packages/cli/src/ui/hooks/useSelectionList.ts`) keeps its selection state in a
+pure reducer with the rendering separate, which is why
+`talaria/domain/selection.py` is a pure model this widget merely draws — and why
+every navigation, filter and restock rule is tested with no terminal at all.
+Hermes `ui-tui/src/components/modelPicker.tsx` at `f1470ec76` supplies the
+staged shape (a provider, then that provider's models), type-to-filter, the
+centred scrolling window, and the layered `escape` that clears a filter before
+it pops a stage.
+
+**Two places the prior art was deliberately not followed.**
+
+- *Navigation visits unselectable rows rather than skipping them.* Qwen Code's
+  `findNextValidIndex` steps over disabled entries, which is right for a
+  five-row menu seen whole. Talaria's model list is about a hundred rows behind
+  a window, and a provider is unauthenticated for a reason the operator can act
+  on — skipping would make those rows unreachable *and* unexplained. The
+  highlight lands, and `enter` names the reason it refuses.
+- *Movement is arrows and the page/home/end family only.* Emacs-style `ctrl+p`
+  is taken by Textual's own command palette (`App.COMMAND_PALETTE_BINDING`) and
+  opens over the dialog; vim-style `j`/`k` are printable and belong to the
+  filter, which is the wall Qwen Code's `disableVimNav` flag exists for. Both
+  are asserted in `tests/ui/test_dialog.py` so neither is re-tried from memory.
+
+**What did not change, and it is the reason the blast radius is small.** The
+dialog emits the same 1-based row number `/models <n>` has always taken, and the
+app dispatches it through the identical `select_model` / `select_profile` path.
+Every refusal on that path — stale connection epoch (KTD4), unauthenticated
+provider, undialable profile, already-connected profile — is unchanged and
+untouched, so the surface that carried the row-19 live acceptance evidence is
+the surface still doing the work.
+
+**Rejected: a navigable region with `enter` conditional on an empty composer.**
+The other shape put to the operator. It keeps KTD3 and needs no focus owner, and
+it was rejected because "`enter` means two different things depending on
+whether the composer happens to be empty" is a rule the operator has to learn
+and cannot see. The operator chose the modal.
+
+**Revisit when.** Textual's command palette is disabled or rebound, which frees
+`ctrl+p` and makes emacs-style movement available; or a third surface wants the
+same list-and-select shape, at which point `PickerDialog` is the widget and the
+`PickerSource` protocol is the seam to build against.
+
+### The picker shows two kinds of "current model" and names them apart, rather than picking one
+
+**Author.** the operator's first round of feedback on the modal picker
+
+**Decision.** The model picker marks and opens on the model **this session is
+using**, tracked by Talaria itself (`SessionModel` in `talaria/ui/picker.py`),
+and separately annotates the model the gateway reports as the **profile's
+default**. Both rows render with their own note; only the session's row takes
+the marker and the opening highlight. `SelectableRow.is_current` is renamed
+`is_profile_default`, which is what it always held.
+
+**Why two.** They are two different facts and Hermes keeps them in two
+different places. `slash.exec` with `/model <name> --provider <slug>` changes
+the running session and says so; `GET /api/model/options` builds its `model`
+field from `load_config()` — the profile's `config.yaml` — so it answers for
+the *next* session and never changes in response to a switch. Showing one and
+calling it "current" made the picker mark a row the operator had just moved
+away from. Showing one and suppressing the other would have left them unable to
+see why Talaria disagrees with the Hermes dashboard. The mechanism is written
+up in `LEARNINGS.md` under the same date.
+
+**The honesty clause on the tracked value.** The switch is recorded only when
+`RpcOutcome.confirmed` — a reply the gateway actually sent. An `unknown`
+outcome means the call went out and nothing came back, and marking the row
+there would put a claim on screen that Talaria cannot support. The record also
+carries the session id it was made on and is checked against the focused
+session at every read, so a resume or a profile switch cannot inherit it.
+
+**Rejected: refetch the catalogue when the picker opens.** The obvious fix, and
+it fixes nothing — the store it reads is not the store the switch writes, so
+the refetched answer is identical. It would have cost a round trip per open and
+added a failure path, in exchange for the same wrong marker.
+
+**Revisit when.** Hermes publishes a session's own model over the transport —
+an RPC, or a field on a session frame. That is a better source than Talaria's
+memory of what it sent, and it would also answer for switches made from outside
+Talaria, which nothing here can see.
+
+### Left and right arrows are second names for back and select
+
+**Author.** the operator's first round of feedback on the modal picker
+
+**Decision.** In `PickerDialog`, `right` does exactly what `enter` does and
+`left` does exactly what `escape` does — including `right` dismissing on a
+final row and `left` closing the dialog at the root. Not a subset: `left` is
+the same layered back, clearing a filter before it pops a stage.
+
+**Why both rather than a choice.** The two-level shape (a provider, then that
+provider's models) is spatial, and horizontal arrows are what a hand reaches
+for in a spatial list. `enter`/`escape` stay because they are what the prior
+art uses and what the hint has always named. The hint now names both pairs;
+an affordance an operator has to discover by trying is one they will not find.
+
+**What makes them free to take.** The filter is append-and-backspace with no
+caret in it, so nothing else wants those keys. If the filter ever grows cursor
+movement, `left`/`right` are the first two keys that collide — the note is in
+`PickerDialog.on_key`'s docstring, where somebody adding that will be reading.
+
 ## 2026-08-06
 
 ### The admin HTTP credential rides two headers: `Authorization: Bearer` as decided, plus Hermes's dedicated session header

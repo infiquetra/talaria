@@ -86,6 +86,7 @@ from talaria.domain.projection import (
     project,
     terminal_read,
 )
+from talaria.domain.selection import PickerSource
 from talaria.domain.startup import StartupSelection
 from talaria.domain.state import (
     APPROVAL_COMMAND_LABEL,
@@ -126,11 +127,17 @@ from talaria.transport.rpc import (
 from talaria.transport.source import FrameRecord, FrameSource, SwitchReport
 from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
+from talaria.ui.dialog import PickerDialog
 from talaria.ui.focus import CaretReleased
 from talaria.ui.palette import PaletteRegion
 from talaria.ui.picker import (
-    PickerRegion,
+    NO_PROFILES,
+    NO_PROVIDERS,
+    ModelPickerSource,
+    PickerMode,
+    ProfilePickerSource,
     SelectableRow,
+    SessionModel,
     flatten_profiles,
     flatten_selectable,
 )
@@ -734,6 +741,16 @@ class TalariaApp(App[None]):
         #: vocabulary lives in :class:`~talaria.transport.admin.AdminError`, one
         #: layer below the decode (R7).
         self.model_catalog_failure = ""
+        #: The model switch Talaria last made on a session, or ``None`` when it
+        #: has not made one. This is not redundant with :attr:`model_catalog`
+        #: and cannot be replaced by refetching it: the catalogue's ``model``
+        #: and ``provider`` fields are the *profile's* configured default —
+        #: read off disk by ``load_picker_context()`` — while ``/models``
+        #: switches the running session and nothing else, so the catalogue
+        #: answers identically before and after. :class:`SessionModel` carries
+        #: the session id it belongs to so a switch is never attributed to a
+        #: session that did not receive it.
+        self.session_model: SessionModel | None = None
         #: The gateway's profile directory (U4), or ``None`` until it has been
         #: read for this connection epoch. Re-read on every ``connected``
         #: transition for the same KTD4 reason the model catalogue is, and
@@ -846,7 +863,6 @@ class TalariaApp(App[None]):
             yield AgentRows(id="agents")
             yield PromptRegion(id="prompts")
             yield PaletteRegion(id="palette")
-            yield PickerRegion(id="picker")
             yield StatusRegion(id="status")
         yield Composer(
             notice=self._idle_notice(),
@@ -869,10 +885,6 @@ class TalariaApp(App[None]):
     @property
     def palette(self) -> PaletteRegion:
         return self.query_one("#palette", PaletteRegion)
-
-    @property
-    def picker(self) -> PickerRegion:
-        return self.query_one("#picker", PickerRegion)
 
     @property
     def status_region(self) -> StatusRegion:
@@ -1960,10 +1972,105 @@ class TalariaApp(App[None]):
     # ── U2: the model picker ──────────────────────────────────────────────
 
     async def action_toggle_picker(self) -> None:
-        await self.picker.toggle("models")
+        await self.open_picker("models")
 
     async def action_toggle_profiles(self) -> None:
-        await self.picker.toggle("profiles")
+        await self.open_picker("profiles")
+
+    async def open_picker(self, mode: PickerMode) -> None:
+        """Put the modal picker up, or say why there is nothing to put up.
+
+        The dialog is built from whatever listing the app is holding *at the
+        moment it opens*, rather than being kept in sync with one. A listing
+        that arrives while the dialog is up does not disturb it, which is the
+        behaviour an operator mid-selection wants; a listing that arrives from
+        a *different* gateway is caught on selection instead, by the epoch
+        check in :meth:`select_model` and :meth:`select_profile` that both
+        surfaces already share.
+
+        The dialog opens **on the row already in use** rather than at row one,
+        which is what :meth:`session_model_in_focus` is read for here. An
+        operator who has switched models re-opens ``/models`` to change away
+        from something, and starting them at the top of a hundred-row list
+        makes them find their own position before they can leave it.
+
+        Refusing before opening rather than opening an empty dialog is the same
+        AE9 honesty clause the rest of this module follows, and there are
+        **three** states to keep apart, not two: Talaria never read the list, a
+        read failed and said why, and a read succeeded and the gateway offers
+        nothing. All three would look identical as an empty dialog — a modal
+        with no rows and no explanation is the worst of the three, because the
+        operator has to close it to find out anything. So each says its own
+        sentence in the notice bar and no dialog opens at all.
+        """
+        if mode == "models":
+            catalog = self.model_catalog
+            if catalog is None:
+                self._notice(self.model_catalog_failure or MODELS_NOT_FETCHED)
+                return
+            if catalog.is_empty:
+                self._notice(NO_PROVIDERS)
+                return
+            source: PickerSource = ModelPickerSource(catalog, self.session_model_in_focus)
+        else:
+            directory = self.profiles
+            if directory is None:
+                self._notice(self.profiles_failure or PROFILES_NOT_FETCHED)
+                return
+            if directory.is_empty:
+                self._notice(NO_PROFILES)
+                return
+            source = ProfilePickerSource(
+                directory, self.profile_endpoints, current=self.current_profile
+            )
+
+        self.push_screen(PickerDialog(source), self._picker_dismissed(mode))
+
+    @property
+    def session_model_in_focus(self) -> SessionModel | None:
+        """The remembered switch, but only if it was made on the focused session.
+
+        Checked on every read rather than cleared on every transition that
+        could invalidate it, because the list of such transitions is not one
+        anybody can enumerate once and keep correct — a profile switch, a
+        resume onto a different session, a reconnect that lands somewhere
+        else. Comparing the session id at the point of use cannot fall behind
+        a transition nobody thought of; a clear-on-event scheme silently can,
+        and the failure it produces is a confident claim about the wrong
+        session.
+        """
+        remembered = self.session_model
+        if remembered is None:
+            return None
+        if not remembered.applies_to(self.state.focused_session_id or ""):
+            return None
+        return remembered
+
+    def _picker_dismissed(self, mode: PickerMode) -> Callable[[str | None], None]:
+        """What happens when the dialog closes, as a callback rather than a wait.
+
+        ``push_screen_wait`` reads better and cannot be used here: Textual
+        raises ``NoActiveWorker`` unless it is awaited inside a worker, and the
+        picker is opened from a local command handler running as an ordinary
+        supervised task. The callback form has no such requirement, and routing
+        the selection back through :meth:`_spawn_live` keeps it on the same
+        supervised path every other live action takes — so a failure in a
+        selection is reported the same way, rather than vanishing into a screen
+        callback nobody is watching.
+        """
+
+        def dismissed(chosen: str | None) -> None:
+            # The caret went to the dialog when it opened; the composer is
+            # where it belongs once the dialog is gone (``talaria/ui/focus.py``).
+            self.composer.focus()
+            if chosen is None:
+                return
+            if mode == "models":
+                self._spawn_live(self._select_model_and_discard(chosen))
+            else:
+                self._spawn_live(self._switch_profile_and_discard(chosen))
+
+        return dismissed
 
     def fetch_model_catalog(self) -> None:
         """Start the admin catalogue read, once per connection epoch (KTD4).
@@ -2019,25 +2126,11 @@ class TalariaApp(App[None]):
             self.model_catalog = None
             self.model_catalog_failure = str(exc)
             self._model_catalog_epoch = 0
-            await self.render_model_catalog()
             return None
         self.model_catalog = catalog
         self.model_catalog_failure = ""
         self._model_catalog_epoch = epoch
-        await self.render_model_catalog()
         return catalog
-
-    async def render_model_catalog(self) -> None:
-        """Push the held catalogue at the picker, unless the screen is gone.
-
-        Tolerated for the same reason :meth:`render_catalog` tolerates it —
-        see that method's docstring (R36).
-        """
-        try:
-            picker = self.picker
-        except NoMatches:  # pragma: no cover - teardown ordering
-            return
-        await picker.apply(self.model_catalog, failure=self.model_catalog_failure)
 
     # ── U4: the profile picker ────────────────────────────────────────────
 
@@ -2082,7 +2175,6 @@ class TalariaApp(App[None]):
         if not isinstance(client, ProfileAdmin):
             self.profiles = None
             self.profiles_failure = PROFILES_UNAVAILABLE
-            await self.render_profiles()
             return None
         epoch = self._connection_epoch
         try:
@@ -2091,26 +2183,11 @@ class TalariaApp(App[None]):
             self.profiles = None
             self.profiles_failure = str(exc)
             self._profiles_epoch = 0
-            await self.render_profiles()
             return None
         self.profiles = directory
         self.profiles_failure = ""
         self._profiles_epoch = epoch
-        await self.render_profiles()
         return directory
-
-    async def render_profiles(self) -> None:
-        """Push the held directory at the picker, unless the screen is gone."""
-        try:
-            picker = self.picker
-        except NoMatches:  # pragma: no cover - teardown ordering
-            return
-        await picker.apply_profiles(
-            self.profiles,
-            failure=self.profiles_failure,
-            endpoints=self.profile_endpoints,
-            current=self.current_profile,
-        )
 
     def fetch_catalog(self) -> None:
         """Start the catalogue read, if one is wanted and none is running.
@@ -2453,7 +2530,7 @@ class TalariaApp(App[None]):
         self.composer.clear()
         stripped = argument.strip()
         if not stripped:
-            self._spawn_live(self._toggle_picker_and_discard())
+            self._spawn_live(self._open_picker_and_discard())
             return
         words = stripped.split()
         if len(words) == 1:
@@ -2472,19 +2549,19 @@ class TalariaApp(App[None]):
         confirm = bool(rest)
         self._spawn_live(self._set_model_default_and_discard(index_text, confirm=confirm))
 
-    async def _toggle_picker_and_discard(self) -> None:
+    async def _open_picker_and_discard(self) -> None:
         await self.action_toggle_picker()
 
     def _perform_profiles(self, argument: str) -> None:
-        """Route ``/profiles``: no argument opens or closes it, one switches."""
+        """Route ``/profiles``: no argument opens the dialog, one switches."""
         self.composer.clear()
         stripped = argument.strip()
         if not stripped:
-            self._spawn_live(self._toggle_profiles_and_discard())
+            self._spawn_live(self._open_profiles_and_discard())
             return
         self._spawn_live(self._switch_profile_and_discard(stripped))
 
-    async def _toggle_profiles_and_discard(self) -> None:
+    async def _open_profiles_and_discard(self) -> None:
         await self.action_toggle_profiles()
 
     async def _switch_profile_and_discard(self, argument: str) -> None:
@@ -2630,7 +2707,10 @@ class TalariaApp(App[None]):
             if self.mode == "replay" or self.dispatcher is None:
                 self._refuse_mutation(COMMAND_DISPATCH_CONTROL)
                 return None
-            return await self.dispatch_command_live(invocation)
+            session_id = self.state.focused_session_id or ""
+            outcome = await self.dispatch_command_live(invocation)
+            self._remember_switch(outcome, row, session_id)
+            return outcome
         if isinstance(invocation, UnsupportedInvocation):
             self._refuse_unsupported(invocation)
             return None
@@ -2643,6 +2723,32 @@ class TalariaApp(App[None]):
             return None
         self._notice("could not build the /model command")  # pragma: no cover - defensive
         return None
+
+    def _remember_switch(
+        self, outcome: RpcOutcome | None, row: SelectableRow, session_id: str
+    ) -> None:
+        """Record the switch, but only on a reply the gateway actually sent.
+
+        ``confirmed`` is the gate rather than "not an error" because
+        :class:`~talaria.transport.rpc.RpcOutcome` has a third status and it is
+        the one that matters here: ``unknown`` means the call went out and no
+        answer came back, so whether the model changed is not known. Marking
+        the row anyway would put a claim on screen that Talaria cannot support
+        — the picker would say the operator is on a model they may well not be
+        on, which is worse than the stale marker this method exists to fix.
+
+        ``session_id`` is passed in rather than re-read because it is captured
+        before the await. A reconnect landing mid-call moves the focus, and
+        re-reading it here would file the switch under whichever session
+        happened to be in focus when the reply arrived.
+        """
+        if outcome is None or not outcome.confirmed or not session_id:
+            return
+        self.session_model = SessionModel(
+            session_id=session_id,
+            provider_slug=row.provider_slug,
+            model=row.model,
+        )
 
     # ── U5: the default-model write, and its two-act confirmation ──────────
 
