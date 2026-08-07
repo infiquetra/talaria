@@ -89,7 +89,7 @@ Status values: **measured**, **inferred**, **unmet**.
 | 10 | **R36** — local waiters resolve at teardown | measured | A call in flight against a gateway that never answers resolves `unknown` with reason *the transport was closed*, rather than hanging | `::test_a_call_in_flight_at_teardown_resolves_instead_of_hanging` |
 | 11 | **F7** — the gateway survives Talaria's exit | measured *against the stub* | Two tests. In process: after teardown a second client dials the same server object and receives the greeting. At process granularity: the stub runs as a **separate OS process, left in Talaria's own process group** so a mis-aimed group signal would kill it, and after teardown it is alive, still accepting connections, and still greeting. The server is the loopback stub, not Hermes | `::test_the_gateway_is_still_serving_after_talaria_exits`, `::test_the_gateway_process_survives_a_talaria_that_shares_its_process_group` |
 | 12 | **R1** — argv carries no credential | measured **on macOS and Linux** | A running process built by the real launcher, holding a live credential in memory, inspected through the platform's own facility — `ps -ww` on macOS, `/proc/<pid>/cmdline` on Linux: no token, no `?token=` URL, no endpoint. The Linux half was measured when this branch first reached CI: all five process-surface tests ran and passed on `ubuntu-latest` under Python 3.12 and 3.13 (run `30865814553`). Earlier drafts of this document said the `/proc` branch had never executed, which was true when written | `tests/transport/test_process_surface.py::test_a_running_talarias_command_line_carries_no_credential` |
-| 13 | **R1** — the environment carries no credential | **partially unmet — see below** | Talaria adds nothing credential-shaped to its own environment (set comparison against what it was launched with). An **inherited** `HERMES_DASHBOARD_SESSION_TOKEN` remains visible for the process's life and cannot be removed. **Re-graded exactly one step on 2026-08-06**, and no further, because that is the whole of what the decision supports. The open precedence question this row used to rest on **has been decided**: `HERMES_DASHBOARD_SESSION_TOKEN` was removed from the credential chain (option (b) of `QUEUED.md`'s entry), so the environment-free credential-file route is now documented in `README.md` as the supported one and R1's environment clause became **satisfiable by operator procedure**, which it was not before. It did **not** become met, on two residuals the deciding unit wrote down itself: an inherited variable is still readable from `/proc/<pid>/environ` and `ps -E` whether or not Talaria consults it, and route 1 — a `token` on `TALARIA_GATEWAY_URL` — is a *surviving supported route that is an environment variable*, and is the highest-precedence one. **One of those two residuals was removed on 2026-08-07**: route 1 is gone, the same variable is now *refused* for carrying a credential rather than read, and `LoopbackTokenProvider` has no environment injection point at all, so "no route Talaria supports places a credential in its environment, its command line, or shell history" is true and measured — verified live both ways, an environment-free `talaria record` recording a `gateway.ready` frame under `env -i` and an exported credential-bearing endpoint refused with the value appearing zero times in stderr. **The row still does not reach *met*, and the reason is now a single sentence:** an inherited `HERMES_DASHBOARD_SESSION_TOKEN` stays readable for the life of the process, no code change reaches it, and re-execing with a scrubbed environment narrows nothing because the same-user reader can read the launching shell's environment instead. Whether that residual should be scoped out of this row — as `terminal.read.respond` was scoped out of row 6, with a named falsifiable condition — is a grading decision that has not been taken; until it is, this row blocks the gate | `::test_talaria_adds_no_credential_of_its_own_to_its_environment`, `::test_the_inherited_credential_is_visible_in_the_process_environment`, `tests/transport/test_attach.py::test_a_configured_endpoint_carrying_a_credential_is_refused`, `::test_the_provider_has_no_environment_injection_point`; `docs/engineering-journal/DECISIONS.md`, "The endpoint URL stops being a credential source, and the decision that kept it is reopened because both its premises measured false" |
+| 13 | **R1** — Talaria places no credential in its environment | **met** | **Re-titled and graded *met* on 2026-08-07, and the re-titling is the honest part of it.** This row used to read "the environment carries no credential", which is a claim about the machine; it now grades what Talaria puts there, which is what every other row in this table grades. Two things are measured. Talaria adds nothing credential-shaped to its own environment — the set of environment names carrying the credential is *exactly* the set the process was launched with, asserted as equality rather than as a subset, because a subset assertion is satisfied by an environment read that came back empty. And since 2026-08-07 **no supported route places a credential in the environment at all**: the chain is a `0600` file at `<config_dir>/credentials` then an interactive prompt, `LoopbackTokenProvider` has no environment injection point for `mypy --strict` to find, and a configured endpoint carrying a credential is *refused* rather than stripped — in `TALARIA_GATEWAY_URL`, in the credential file's `url` key, and on the `talaria record` command line alike. Verified against a live Hermes both ways: an environment-free configuration recorded a `gateway.ready` frame under `env -i`, and an exported credential-bearing endpoint was refused with the value appearing zero times in stderr. **One observation is deliberately out of scope, and it is named rather than dropped.** A credential the operator's shell exported *before* Talaria started is inherited and stays readable for the life of the process; no code change reaches it, and re-execing with a scrubbed environment narrows nothing because the same-user reader can read the launching shell's environment instead. **R1's environment clause is still not met when an operator exports a credential** — that sentence is unchanged, lives in §R1 in full, and is not to be softened. What changed is that this row stops grading Talaria for it. The exclusion, its falsifier and the reading ruled out first are in §The inherited variable is out of scope for row 13. The measurement of the excluded fact is **not** deleted: `::test_the_inherited_credential_is_visible_in_the_process_environment` still asserts the failure | `::test_talaria_adds_no_credential_of_its_own_to_its_environment`, `::test_the_inherited_credential_is_visible_in_the_process_environment`, `::test_the_credential_file_route_keeps_the_environment_clean`, `tests/transport/test_attach.py::test_a_configured_endpoint_carrying_a_credential_is_refused`, `::test_the_provider_has_no_environment_injection_point`, `::test_no_credential_source_names_an_environment_variable`; §The inherited variable is out of scope for row 13 |
 | 14 | **AE10** — a clean-environment install produces a working `talaria` | measured locally **and in CI** | `uv tool install .` into a fresh prefix, then the console script invoked by absolute path under `env -i`: `talaria --help` works. The CI `install` job ran for the first time on this branch's pull request and passed on Python 3.12 and 3.13 (run `30865814553`) | this document, §Install |
 | 15 | **R39** — the platform matrix records exactly what was exercised | measured | See §Platform matrix. One operating system, two Python versions, two terminal hosts, one multiplexer | §Platform matrix |
 | 16 | The launcher runs end to end — attach, probe, open, render, exit | measured *against the stub* | The real console script (`python -m talaria.cli`, no arguments) on a pseudo-terminal against the loopback stub: one connection accepted, the five read-only probes and no mutating method among them, exactly one `session.create`, tens of kilobytes of interface drawn, `ctrl+q` → exit 0, terminal restored | §Launcher run |
@@ -525,10 +525,62 @@ environment carries nothing — asserted in
 `test_the_credential_file_route_keeps_the_environment_clean`. The operator's
 remaining job is one line: do not export a gateway credential.
 
-The unmet half is filed in `docs/engineering-journal/QUEUED.md` rather than
-redefined into a pass. The test that measures the failure asserts the failure,
-so if a future Talaria ever does scrub its inherited environment, that test goes
-red and somebody has to delete it deliberately.
+The unmet half is not redefined into a pass. It is measured by a test that
+asserts the failure, so a future Talaria that does scrub its inherited
+environment turns that test red and somebody has to delete it deliberately. What
+changed on 2026-08-07 is narrower than a pass, and it is set out immediately
+below: row 13 stops grading Talaria for it, on a named condition that the suite
+re-checks on every run.
+
+### The inherited variable is out of scope for row 13, and here is the condition
+
+**The decision, taken 2026-08-07.** Row 13 does not grade Talaria on a credential
+that was already in the environment before Talaria started. The fact is
+unchanged, stays measured, and stays written down both here and in the test
+suite. What changed is that this row stops counting it as a gap.
+
+**Why, stated as a condition so it can be falsified.** Every other row of this
+table grades Talaria — what it sends, what it writes, what it leaves behind.
+This row alone graded a variable that Hermes publishes and the operator's shell
+exports, in a process Talaria did not create and cannot alter. Talaria's own
+contribution to its environment is measured and empty, and no route it supports
+adds to it. The inherited value is a property of the process environment Talaria
+is handed, which makes grading Talaria for it a category error rather than a
+finding.
+
+**What was ruled out first**, because it is the obvious answer and it is wrong:
+scrubbing `os.environ` and re-execing. That does hand the child a clean snapshot,
+and it buys nothing. The reader who can see Talaria's environment block is the
+same user who can see the launching shell's, where the exported value still is.
+Removing the value from one process while leaving it in that process's parent is
+not a mitigation; it is a place to look that is one hop further away. Recording
+the wrong mechanism would have left this exclusion unfalsifiable, so the right
+one is written down.
+
+**The falsifier, and it is stronger than the one row 6's exclusion rests on.**
+This exclusion is wrong the moment Talaria itself becomes a route by which a
+credential reaches an environment, and four tests go red if that happens:
+
+| If this changes | This test fails |
+| --- | --- |
+| a member of `CredentialSource` names an environment variable | `test_no_credential_source_names_an_environment_variable` |
+| `LoopbackTokenProvider` regains a constructor parameter through which one could be supplied | `test_the_provider_has_no_environment_injection_point` |
+| a configured endpoint is read for a credential rather than refused | `test_a_configured_endpoint_carrying_a_credential_is_refused` |
+| a running Talaria's environment carries a credential name it was not launched with | `test_talaria_adds_no_credential_of_its_own_to_its_environment` |
+
+Row 6's exclusion for `terminal.read.respond` waits on somebody to run an
+experiment against a gateway configured a particular way. This one is checked on
+every suite run, by tests that already exist and already pass.
+
+**What this does not do.** It does not make R1's environment clause met — that
+clause asks that a running Talaria's environment carry no credential, an operator
+who exports one still defeats it, and the sentence saying so above is unchanged.
+It does not delete
+`test_the_inherited_credential_is_visible_in_the_process_environment`, which still
+asserts the failure precisely so that a future Talaria which does scrub its
+environment turns it red and forces somebody to remove it on purpose. And it does
+not reduce the operator's one remaining job, which `README.md` states plainly: do
+not export a gateway credential.
 
 ## Platform matrix
 
@@ -782,8 +834,8 @@ that date on reasons that stopped being true on 2026-08-04; both rows now record
 what they used to say and why. This section is rewritten on the table as it now
 stands, and what it used to say is set out at the end of it.
 
-Reading the table: rows 6, 17, 18 and 19 are **measured or met** and row 13
-is **partially unmet**. Row 6 covers thirteen of the eighteen required gateway
+Reading the table: **every row is now `measured` or `met`**, and the last three
+to move all moved on 2026-08-07. Row 6 covers thirteen of the eighteen required gateway
 methods, and as of 2026-08-07 twelve of those thirteen have been called by
 Talaria against a real gateway, answered, and had the answer compared against
 the pinned shape; the thirteenth, `terminal.read.respond`, is out of scope for
@@ -817,18 +869,65 @@ most useful thing this row has produced.
 
 Clears: v0-1-daily-driver#row-6
 
-AE7 and R39 say the ready verdict is blocked on any gap. **One gap remains, so
-the verdict does not move.**
+**Row 13 cleared later the same day, and it cleared on a scoping decision rather
+than on a measurement — which is the part to read carefully.** Two residuals had
+held it. The first, a `token` on `TALARIA_GATEWAY_URL`, was Talaria's, and was
+removed earlier on 2026-08-07: that variable now names the endpoint only, and one
+carrying a credential is refused rather than read. The second was never
+Talaria's. A credential the operator's shell exported before Talaria started
+stays readable for the life of the process, no code change reaches it, and
+re-execing with a scrubbed environment narrows nothing. That second residual is
+now **out of scope for this row**, on the reasoning and the falsifier set out in
+§The inherited variable is out of scope for row 13. The row was re-titled in the
+same edit — from "the environment carries no credential" to "Talaria places no
+credential in its environment" — because the old title claimed more than the new
+grade supports. **R1's environment clause is still not met when an operator
+exports a credential.** That has not changed, and this document does not say
+otherwise anywhere.
 
-### Talaria v0.1 is **NOT READY** as a daily driver.
+Clears: v0-1-daily-driver#row-13
 
-**The verdict has not moved. Its reasons have moved entirely.** That distinction
-is the point of this restatement: three words that used to rest on "this client
-has never attached" now rest on one specific, much narrower gap, and a reader
-who acts on the old reasons would be acting on a fact that expired on 2026-08-04.
+AE7 and R39 say the ready verdict is blocked on any gap. **No gap remains, and
+the verdict moves for the first time since this document was written.**
 
-The **one remaining** gap — rows 19 and 6, which were the other two, both cleared
-on 2026-08-07:
+### Talaria v0.1 is **READY** as a daily driver.
+
+**What READY means here, stated narrowly, because the word is broader than the
+evidence behind it.** Every row of the evidence table above is `measured` or
+`met`, across the requirements this document was scoped to cover: R1, R2, R3,
+R34, R36 and R39; AE7 and AE10; F1 and F7. Under AE7 and R39 any single gap
+blocks the verdict, and the last three closed on 2026-08-07 — row 19 on an
+observation the operator took outside the frame log, row 6 on live traffic
+through the final evidence-only method, and row 13 on the scoping decision
+recorded above.
+
+**What READY does not mean. Each of these is true today, and none of them is a
+gap this table was scoped to close:**
+
+- **No person has driven the interface on Linux.** The suite runs there in CI,
+  pseudo-terminal and process-surface tests included. Nobody has used it there.
+- **No run on either platform has used a real terminal emulator.** Every
+  measurement in this document was taken against a bare pseudo-terminal
+  (§Platform matrix).
+- **Method compatibility is proven at the top level only.** Row 6a is explicit:
+  the comparison covers a response's own key set and each value's kind, not
+  nested payloads. The same measurement that cleared row 6 found two pinned
+  shapes wrong.
+- **`terminal.read.respond` has no runtime evidence at all**, and is out of scope
+  for row 6 on its own named condition.
+- **R1's environment clause is still defeated by an operator who exports a
+  credential.** Row 13 is met because it grades Talaria. The machine Talaria runs
+  on is not graded here, by decision.
+- **The suite fails intermittently** — twelve runs green in thirteen
+  (§Test-suite honesty), undiagnosed.
+
+**The honest summary is that the gaps this document was built to find are closed,
+and the ones it was never scoped to look for are open.** A reader deciding
+whether to put Talaria to real work should treat the six items above as the
+actual answer and the word READY as shorthand for the table.
+
+**What this section said while the gap was open**, kept because the reasoning is
+the record of how the row was graded before it was re-scoped:
 - **Row 13 — R1's environment half is partially unmet.** Talaria adds no
   credential of its own to its environment, but an inherited
   `HERMES_DASHBOARD_SESSION_TOKEN` stays readable for the life of the process and
@@ -878,11 +977,14 @@ turns to completion; rows 17 and 18 cite the recordings. The paragraph also
 carried a stale denominator, "seventeen methods", where `REQUIRED_METHODS` in
 `talaria/domain/compat.py` holds eighteen.
 
-What the build **is** ready for has narrowed rather than widened. It is no longer
-"a first attach": the attach has happened and is recorded. It is a client whose
-remaining gaps are one demonstration nobody has run, one credential question
-nobody has decided, and ten method surfaces nobody has exercised — so a session
-you would mind losing is still not what this table supports.
+What the build is ready for has widened, and the direction of travel is worth
+stating exactly. On 2026-08-02 the blocking reason was "this client has never
+attached". On 2026-08-05 it was three rows. On the morning of 2026-08-07 it was
+still three. By that evening it is none — and not because the standard moved: the
+operator ran the checklist row 19 named, the live traffic row 6 needed arrived,
+and the scoping question row 13 had been sitting on was answered. A session you
+would mind losing is now what this table supports, with the six caveats above
+read first.
 
 ### What would change this verdict
 
@@ -896,9 +998,16 @@ this list never named. Both facts are kept here on purpose: a list of unblocking
 conditions that quietly drops the ones it satisfied is how a reader loses the
 ability to tell an item that was met from an item that was never on the list.
 
-**Still open, in the order they now block the verdict:**
+**Nothing on this list still blocks the verdict, and the list is kept rather than
+deleted** — for the same reason the paragraph above gives: a list of unblocking
+conditions that quietly drops the ones it satisfied is how a reader loses the
+ability to tell an item that was met from an item that was never on the list.
 
-1. **Row 19 — F1 and F7 in an isolated live session.** Run a session for the
+**Closed, with the date each closed:**
+
+1. **Row 19 — F1 and F7 in an isolated live session. Closed 2026-08-07** — the
+   operator executed the checklist, including the process sample taken outside
+   the frame log. Run a session for the
    purpose, and observe F7 — the gateway still serving — *after* Talaria exits.
    The frame log alone cannot settle it: the log ends when Talaria exits, and the
    observation F7 needs happens after that. Row 11 has F7 against the loopback
@@ -907,7 +1016,10 @@ ability to tell an item that was met from an item that was never on the list.
    what to record for each, and what to hand back. It cannot be run by an agent —
    step 6 needs somebody watching a process list before and after an exit — which
    is why writing it did not move the row.
-2. **Row 13 — R1's remaining half.** **The decision this item asked for has been
+2. **Row 13 — R1's remaining half. Closed 2026-08-07**, in two moves on the same
+   day: the endpoint-URL credential route was removed, and the inherited variable
+   was scoped out of the row on a named condition (§The inherited variable is out
+   of scope for row 13). **The decision this item asked for has been
    taken (2026-08-06), and the item does not close.** It used to read: accept the
    environment-inherited credential as an operator-side choice and document the
    credential-file route, or stop supporting the environment variable. The second
@@ -929,12 +1041,18 @@ ability to tell an item that was met from an item that was never on the list.
    needs a way for Hermes to hand a client its session token that does not go
    through the endpoint URL. That is work in Hermes, not in Talaria, and it is out
    of this repository's scope by operator decision.
-3. **Row 6 — the ten evidence-only methods with no runtime evidence.** Closing
+3. **Row 6 — the ten evidence-only methods with no runtime evidence. Closed
+   2026-08-07** — eleven gained live evidence across two runs, the twelfth
+   (`secret.respond`) was provoked by a throwaway skill, and the thirteenth is out
+   of scope on its own condition. Closing
    them needs live traffic that exercises them; it is work, not re-grading. This
    is the item the old list never had. **Re-confirmed 2026-08-06 by enumeration
    rather than by memory** (§The method enumeration), and the ten are named there
    individually so the next re-grade compares lists rather than counts.
-4. **The matrix** — **partly done**, and unchanged since the list was written. A
+4. **The matrix — still open, and not blocking.** This is the largest of the
+   caveats listed under the verdict above, and no row of the evidence table grades
+   it: R39 asks that the matrix record what was exercised, and it does. **Partly
+   done**, and unchanged since the list was written. A
    second operating system runs the full suite in CI, including the
    pseudo-terminal and process-surface tests. Still missing: a person driving the
    interface on Linux, and at least one real terminal emulator rather than a bare
@@ -969,10 +1087,29 @@ ability to tell an item that was met from an item that was never on the list.
 7. **CI** — **done.** The branch was pushed, and all seven checks passed on the
    pull request that carries this document, `install` and Linux among them.
 
-Rows 19, 13 and 6 are each on their own sufficient to hold the verdict at **not
-ready** under AE7 and R39. Where the conditions above get recorded when they are
-met is this document's evidence table — items (1) and (2) went stale for three
-days precisely because nothing pointed the work that cleared them back here.
+Rows 19, 13 and 6 were each on their own sufficient to hold the verdict at **not
+ready** under AE7 and R39, and all three are now settled. Where the conditions
+above get recorded when they are met is this document's evidence table — items
+(1) and (2) went stale for three days precisely because nothing pointed the work
+that cleared them back here.
+
+### What would move this verdict back to not ready
+
+A gate that records only how it opened is half a record. Any one of these returns
+the verdict to **NOT READY** under AE7 and R39, and each names what would show it:
+
+- **A credential route into the environment reappears.** Four tests guard this
+  (§The inherited variable is out of scope for row 13). Any of them going red
+  reopens row 13 and, with it, the scoping decision its grade rests on.
+- **A compatibility probe finds drift against a live gateway.** Row 6's grade
+  rests on top-level shapes compared against pins taken at Hermes `7f4d15515`. A
+  Hermes that moves can invalidate it, and the startup check reports that on every
+  run rather than waiting for anyone to re-read this document.
+- **The intermittent suite failure turns out to be a defect rather than a flake.**
+  Twelve runs green in thirteen is recorded in §Test-suite honesty and has never
+  been diagnosed.
+- **`review-by` passes without a re-read.** That is the one check here that fires
+  on the calendar alone and needs nobody to remember anything.
 
 ## Gate record
 
@@ -1026,6 +1163,24 @@ the honest outcome: the half that was Talaria's to fix is fixed, and the half
 that was never Talaria's is still there. **NOT READY** stands on one residual and
 a scoping question nobody has answered.
 
+**Restated a fourth time on 2026-08-07, same one-edit rule, and this is the
+restatement that moves the verdict.** Row 13 is now `met`: re-titled to "Talaria
+places no credential in its environment", graded on what Talaria does, with the
+inherited-variable observation scoped out on a named condition and four existing
+tests standing as its falsifier. Its `blocks-on` line is removed, a
+`Clears: v0-1-daily-driver#row-13` backlink is written, and with no conditions
+left the verdict is restated as **READY**. The heading above moves in the same
+edit, because the check compares the block's verdict against a heading's
+emphasized span *exactly* — a substring match would let `READY` pass against a
+document still reading `NOT READY`, and that precise mutation is on record as one
+this module was rebuilt to catch.
+
+**`review-by` stays 2026-09-06 rather than moving, and that is deliberate.** The
+date moves *by* a re-read, and the re-read that set it happened yesterday;
+today's edit re-grades one row rather than reading the whole table afresh. A
+verdict that has just flipped to READY is also the wrong thing to hand a longer
+leash.
+
 **Read the shape of that honestly, because it is easy to misread in two
 directions.** Row 6 was the largest movement this document has recorded — nine
 outstanding methods on the morning of 2026-08-07, zero in scope by the evening —
@@ -1038,9 +1193,8 @@ measurement is correcting the record is a row worth reading twice.
 
 ```gate
 id: v0-1-daily-driver
-verdict: NOT READY
+verdict: READY
 review-by: 2026-09-06
-blocks-on: row-13 partially unmet
 ```
 
 ## Related

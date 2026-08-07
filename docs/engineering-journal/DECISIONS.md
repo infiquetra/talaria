@@ -4,6 +4,59 @@
 
 ## 2026-08-07
 
+### Row 13 grades Talaria, not the machine Talaria runs on — and that clears the last condition on the v0.1 gate
+
+**Author.** the operator, answering the scoping question the entry below this one left open, in the words "I don't think we should be grading the machine it runs on... we are grading Talaria"
+
+**Decision.** Row 13 of the v0.1 daily-driver verdict is re-titled from "**R1** — the environment carries no credential" to "**R1** — Talaria places no credential in its environment", and graded `met`. One observation is scoped out of it: a credential the operator's shell exported *before* Talaria started, which is inherited and stays readable for the life of the process. The fact is not deleted, disputed or softened — it is named in the row, kept in `§R1 in full`, and still asserted by a test. What changes is that this row stops counting it as a gap.
+
+**Consequence, stated up front because it is larger than the row.** Row 13 was the last condition on the `v0-1-daily-driver` gate — rows 19 and 6 both cleared earlier the same day. Under AE7 and R39 any single gap blocks the ready verdict, so with no gap left the verdict moves from **NOT READY** to **READY**, for the first time since the document was written on 2026-08-02. That was surfaced before the decision was taken rather than discovered after it.
+
+#### Why
+
+Every other row of that evidence table grades Talaria: what it sends, what it writes, what it leaves behind, what it restores. Row 13 alone graded a variable that Hermes publishes and the operator's shell exports, inside a process Talaria did not create and cannot alter. Talaria's own contribution to its environment is measured and empty, and since earlier the same day no route it supports adds to it at all.
+
+Grading Talaria for the contents of the environment block it is handed is a category error rather than a finding, and the practical effect of leaving it in place was a permanently red row: no code change reaches the value, so the row could never move, and a gate held shut by a condition nobody can satisfy stops carrying information.
+
+#### What was ruled out first, because it is the obvious answer and it is wrong
+
+Scrubbing `os.environ` and re-execing. It does hand the child a clean snapshot, and it buys nothing: the reader who can see Talaria's environment block is the same user who can see the launching shell's, where the exported value still is. That moves the value one hop further away rather than removing it. Recording the wrong mechanism would have made this exclusion unfalsifiable, so the right one is written into the verdict document.
+
+#### The falsifier, which is stronger than the precedent's
+
+`terminal.read.respond` was scoped out of row 6 on 2026-08-07 with a falsifier that needs a person to run an experiment against a gateway configured a particular way. This one needs nobody: four tests that already exist and already pass go red if Talaria ever becomes a route by which a credential reaches an environment.
+
+| If this changes | This test fails |
+| --- | --- |
+| a member of `CredentialSource` names an environment variable | `test_no_credential_source_names_an_environment_variable` |
+| `LoopbackTokenProvider` regains a constructor parameter through which one could be supplied | `test_the_provider_has_no_environment_injection_point` |
+| a configured endpoint is read for a credential rather than refused | `test_a_configured_endpoint_carrying_a_credential_is_refused` |
+| a running Talaria's environment carries a credential name it was not launched with | `test_talaria_adds_no_credential_of_its_own_to_its_environment` |
+
+**Revisit when** any of those four goes red, or when Hermes changes how it publishes a session token such that an operator has a reason to export one again.
+
+#### Not supported, and this is unchanged from the entry below
+
+**That R1's environment clause is now met, technically or otherwise.** It is not. R1 asks that a running Talaria's command line *and* environment carry no credential, and an operator who exports one still defeats the second half on both platforms. Row 13 being `met` and R1's environment clause being unmet are consistent statements only because the row's subject is narrower than the requirement's, which is exactly why the row was re-titled in the same edit — the old title claimed the requirement, and the new grade only supports the narrower claim.
+
+`test_the_inherited_credential_is_visible_in_the_process_environment` is untouched and still asserts the failure, so a future Talaria that does scrub its inherited environment turns it red and somebody has to delete it on purpose. `QUEUED.md`'s standing prohibition against widening R1's wording so the argv half satisfies it still stands, and this decision does not widen it: R1's wording is unchanged, and it is the row that narrowed.
+
+#### Rejected alternatives
+
+**Leave row 13 blocking.** Defensible, and it was the status quo for five days. Rejected because the condition is unsatisfiable by anything in this repository, so the row would hold the gate shut permanently while telling a reader nothing about Talaria. A verdict that can never move is not a verdict.
+
+**Keep the verdict at NOT READY by adding a new blocking row for the human-use gap** — no person has driven the interface on Linux, and no run on either platform has used a real terminal emulator rather than a bare pseudo-terminal. Both are true and both are recorded. Rejected because no requirement in this gate's declared coverage (R1, R2, R3, R34, R36, R39, AE7, AE10, F1, F7) asks for either, so promoting them to blocking rows after the fact would be moving the goalposts to keep a preferred answer — the mirror image of the dishonest clearing this document has twice been burned by. They are recorded instead under the verdict as explicit limits on what READY covers, where a reader deciding whether to use Talaria will actually meet them.
+
+**Grade the row `met` without re-titling it.** Rejected: the row would then assert "the environment carries no credential" while the document elsewhere says an exported credential is still visible in it. The re-title is what keeps the grade and the prose from contradicting each other.
+
+#### A hole in the gate contract, found by mutating this change and closed in it
+
+Clearing the last condition exposed a gap in `tests/docs/test_gating_documents.py`. Every condition check in that module loops over the gate block's **declared** conditions, so all of them go vacuous for a gate that declares none — which is exactly what a gate looks like once it clears. Mutating the verdict document to put row 13 back to `partially unmet` while leaving the block with no `blocks-on` line left nine tests green on a gate claiming READY over an unmet row.
+
+`test_every_uncleared_row_declares_itself_as_a_condition` closes it by reading the other way, from the table towards the block: any row whose grade is not `met` or `measured` must appear as a declared condition. The grade is matched by **exact membership on the status cell's first word**, never by containment, because `"met" in "partially unmet"` is true — the same prefix-negation trap that let this module's verdict check pass `READY` against a document reading `NOT READY`, recorded in `LEARNINGS.md` on 2026-08-06.
+
+**Worth noting where this was found.** Not by review, and not by the suite, which was green. By deliberately mutating the document in the direction the checks did not read, as a falsifiability control on a change that had every reason to be scrutinised. A gate contract that has only ever been exercised against a blocking gate has never been exercised against the state it exists to certify.
+
 ### The endpoint URL stops being a credential source, and the decision that kept it is reopened because both its premises measured false
 
 **Author.** the row-13 residual pass, which set out to report what removing the route would cost and found the cost had already been paid

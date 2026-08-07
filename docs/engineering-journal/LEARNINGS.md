@@ -4,6 +4,20 @@
 
 ## 2026-08-07
 
+### A gate row that no action by the graded subject can move is mis-scoped, and that is a diagnosable condition rather than a judgement call
+
+**Author.** the row-13 re-scoping pass, after the operator answered the scoping question with "we are grading Talaria"
+
+**Evidence.** Row 13 of the v0.1 daily-driver verdict read "**R1** — the environment carries no credential" and sat at `partially unmet` for five days. Its final residual was an inherited `HERMES_DASHBOARD_SESSION_TOKEN`: exported by the operator's shell before Talaria starts, snapshotted by the kernel at `exec`, served from `/proc/<pid>/environ` for the life of the process. Two separate attempts to close it — deleting the variable from the credential chain on 2026-08-06, removing the endpoint-URL route on 2026-08-07 — each removed a real thing and moved the row not at all. The row cleared only when it was re-titled to "**R1** — Talaria places no credential in its environment" and the inherited value was scoped out on a named condition.
+
+**Mechanism.** The row's subject and its requirement's subject had drifted apart without anyone noticing, because the row was named after the requirement. R1 grades a *machine state* — a running process's environment. The table grades *Talaria*. As long as the row's title asserted the requirement, no amount of work on Talaria could satisfy it, and each removal produced the demoralising shape of a real security improvement that moved no grade. The tell is mechanical and worth naming: **if you can enumerate the actions available to the graded subject and none of them changes the grade, the row is grading something else.** That is checkable without a judgement about whether the requirement matters.
+
+The correction is not to relax the requirement. R1's environment clause is still not met when an operator exports a credential, that sentence is unchanged in the verdict document, and the test asserting the failure is untouched. The correction is to make the row's title say what the row actually grades, so the grade and the prose stop contradicting each other — and to state the exclusion as a falsifiable condition rather than a convenience.
+
+**What made this one safe to do, where the same move would usually be suspicious.** Re-scoping a row is how a gate gets closed dishonestly, and this repository has been burned that way twice. Three things distinguished it. The exclusion's falsifier is four tests that already exist and run every suite — not an experiment somebody has to remember to perform, which is the weaker form the `terminal.read.respond` exclusion had to settle for. The excluded fact stayed measured and named, in the row, in the prose and in a test that asserts the failure. And the consequence — that this was the last blocking row, so the verdict would flip to READY — was worked out and put in front of the decision-maker *before* the decision, not discovered while writing the diff.
+
+**Generalizable rule.** When a gate row will not move under any action available to the thing it claims to grade, stop trying to satisfy it and check whether the row is named after a requirement whose subject is broader than the table's. Fix the title, scope the excess out with a continuously checked falsifier, and leave the requirement's own wording alone.
+
 ### A "revisit when" condition had already been satisfied for two days by code in this repository, and nobody checked
 
 **Author.** the row-13 residual pass, which set out to report what removing the endpoint-URL credential route would cost
