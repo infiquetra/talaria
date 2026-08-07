@@ -58,18 +58,38 @@ catalogue did not list this command", so `slash.exec` is never reached.
 
 ## What did not land
 
-### `terminal.read.respond` — the tool reports itself unavailable
+### `terminal.read.respond` — gated on a gateway-side environment flag
 
 Asked directly to call `read_terminal`, the agent ran a tool search and reported
-the tool unavailable. The tool's own module says why: it returns "read_terminal
-is only available in the Hermes desktop app" whenever the platform callback is
-absent, and its docstring explains that the terminal buffer "lives in the
-desktop renderer (xterm.js)". A terminal-UI client is not that renderer.
+the tool unavailable. **The first explanation for that was wrong and is worth
+stating, because it is the more obvious one.** The tool returns "read_terminal
+is only available in the Hermes desktop app" when its platform callback is
+absent, so an absent callback looks like the answer — but the callback is *not*
+absent. `tui_gateway/server.py` wires `read_terminal_callback` into the agent
+callbacks for every session, and it reaches the tool through `run_agent.py` →
+`agent_init.py` → `tool_executor.py`. Talaria's session had one.
 
-**This may be unreachable by construction from Talaria**, which would make it
-the wrong thing for row 6 to require of a TUI at all. That is a claim about the
-gate's own list and it is not settled here — what is settled is that the agent
-in this session could not call the tool.
+The actual gate is the tool's **registration** check:
+
+```python
+def check_read_terminal_requirements() -> bool:
+    """Desktop GUI only — HERMES_DESKTOP is set on the gateway the app spawns."""
+    return (os.getenv("HERMES_DESKTOP") or "").strip().lower() in ("1", "true", "yes")
+```
+
+So the tool is only offered to the model when the **gateway process** has
+`HERMES_DESKTOP` set, which happens only on a gateway the Hermes desktop app
+spawned. No tool call means no `terminal.read.request`, and no request means
+`terminal.read.respond` can never be sent — regardless of what the client is.
+
+**This is a condition, not an impossibility, and the distinction decides how
+the gate should treat it.** It is not "a terminal client cannot answer this
+bridge": Talaria implements the bridge, answers it without a human overlay
+(`UNATTENDED_KINDS` is exactly `{"terminal_read"}`), and would answer it if one
+arrived. It is "the request is only emitted by a gateway launched a particular
+way, and ADR-0001 makes the gateway something Talaria dials rather than
+launches." Setting `HERMES_DESKTOP` on a gateway makes it reachable, and that
+is the falsifier for everything in this section.
 
 ### `secret.respond` — not attempted, and deliberately
 
@@ -145,7 +165,10 @@ One decision and one question:
 
 1. **`secret.respond`** — the operator's call on whether to configure a
    credential-capturing skill.
-2. **`terminal.read.respond`** — whether a terminal client can reach it at all.
-   If it cannot, the honest fix is to re-scope row 6's required list rather than
-   to leave the row permanently short by one method that only a desktop
-   renderer can answer.
+2. **`terminal.read.respond`** — whether row 6 should require runtime evidence
+   for a bridge whose request is only emitted by a gateway started with
+   `HERMES_DESKTOP` set. Talaria implements it and would answer it; what is
+   missing is a deployment Talaria does not control. Leaving the row
+   permanently short on that is not a measurement, it is a stalemate — but
+   re-scoping it out has to name the condition, so the exclusion stays
+   falsifiable.
