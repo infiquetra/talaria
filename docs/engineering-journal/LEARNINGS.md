@@ -2,6 +2,34 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-07
+
+### The picker marked the wrong model after a switch, and no amount of refetching could have fixed it — the gateway does not publish the fact at all
+
+**Author.** the operator's first report against the modal picker: "after making the selection and then re-opening the modal with `/models` the current model isn't what is currently selected in the model list"
+
+**Evidence.** `/models <n>` dispatches `/model <name> --provider <slug>` over `slash.exec`, and Hermes's own reply names its scope: "(session only — add `--global` to persist)". The marker that failed to follow it came from `ProviderCatalog.current_model`, decoded from the `model` field of `GET /api/model/options`. That field is built by `build_models_payload(load_picker_context(), …)`, and `load_picker_context()` is sixteen lines of `load_config()` — it reads `config.yaml` off disk (`hermes_cli/inventory.py:79-105` at `f1470ec76`). The endpoint's own docstring says so from the other direction: "`profile` scopes the picker context (current model/provider …) so the Models page reads the SAME profile `/api/model/set` writes."
+
+**Mechanism.** Two different facts were arriving under one name. `GET /api/model/options` reports the model a **new** session on that profile would start with; `slash.exec` changes the model the **running** session uses. Neither writes to the other's store, so after a switch the catalogue returns byte-identical bytes forever. Talaria had named its field `is_current` — the ambiguous word — and the ambiguity is the entire defect: the marker was not stale, it was answering a different question correctly.
+
+**The fix that would not have worked, recorded because it is the obvious one.** Refetching the catalogue on picker open. It costs an HTTP round trip on every open, it adds a failure mode where there was none, and it returns exactly the same answer — the source it reads was never written to. A caching bug and an "asking the wrong store" bug present identically from the outside (a value that will not update), and the first fix anyone reaches for only helps with one of them.
+
+**What was built instead.** `SessionModel` in `talaria/ui/picker.py` records the switch Talaria itself made, keyed by the session id it was made on, and is written only on `RpcOutcome.confirmed` — an `unknown` outcome means the call went out with no reply, so the model may or may not have changed and Talaria will not claim it did. `SelectableRow.is_current` is renamed `is_profile_default`. Both facts render, separately annotated, so a diverged pair reads as two true statements rather than one contradiction.
+
+**Generalizable rule.** When a value that should have changed did not, establish which store the read actually reaches before treating it as staleness. And when a remote publishes a field called `current`, make the local name say *current for what* — `is_current` cost a correct-looking marker on the wrong row, and `is_profile_default` could not have.
+
+### The dialog numbered its rows from the top of each stage while a docstring claimed those numbers were the ones `/models <n>` takes
+
+**Author.** driving the fixed picker against a live gateway before committing it, entirely to confirm an unrelated fix
+
+**Evidence.** Opening `/models`, descending into the third provider, and reading the pane showed its ten models numbered `1.` through `10.`. The listing numbers those same models 14 through 23 — `flatten_selectable` numbers across every provider in one sequence, and that number is what `select_model` resolves. So the screen said `1. gpt-5.6-sol` while `/models 1` selected a model belonging to the first provider. The dialog's own `_row_text` docstring asserted the opposite in as many words: "`/models <n>` still accepts it from the composer, so the two surfaces agreeing is worth the width."
+
+**Mechanism.** The number came from `enumerate` over the window — `offset + position + 1` — which is the row's place on the stage. The listing index it was standing in for lived in `Choice.payload`, one field away, and the two coincide exactly on a flat single-stage listing. Profiles are a flat listing, so profiles were right; the model picker's second level is the only place they diverge, and it diverged silently. The full suite passed: every assertion about numbering had been written against the flat case or against the first provider, where position and index are the same number.
+
+**How it surfaced, which is the part worth keeping.** Not a test — 1,331 of them passed on the defect. It was visible in the first screenful of a live run, in a session opened to check something else entirely. The same run also caught a provider row wrapping to a second line because two annotations had been stacked on it. Both are one-look defects and neither is a plausible unit test to have written in advance.
+
+**Generalizable rule.** A rendered number that stands for an identifier elsewhere must be carried as that identifier, not recomputed from position — they agree in the simple case, which is exactly why the recomputation survives review. And a docstring claiming two surfaces agree is a testable claim: assert it, or the docstring becomes the thing that convinces the next reader not to check.
+
 ## 2026-08-06
 
 ### Six units of work landed and the release gate's live-evidence row did not move, because the only unit whose product was evidence produced a checklist instead

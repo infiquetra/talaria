@@ -12,10 +12,11 @@ prove what Talaria does with the answer.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pytest
+from textual.pilot import Pilot
 
 from talaria.domain.commands import CATALOG_METHOD, SLASH_EXEC_METHOD
 from talaria.domain.models_catalog import (
@@ -48,21 +49,23 @@ from talaria.ui.app import (
     ProfileAdmin,
     TalariaApp,
 )
+from talaria.ui.dialog import PickerDialog
 from talaria.ui.picker import (
     CATALOG_FAILURE_PREFIX,
-    CURRENT_PROFILE_MARKER,
     NO_ENDPOINT_SUFFIX,
     NO_PROFILES,
     NO_PROVIDERS,
     NOT_RUNNING_SUFFIX,
     NOT_YET_FETCHED,
+    PROFILE_DEFAULT_NOTE,
     PROFILES_FAILURE_PREFIX,
     PROFILES_NOT_YET_FETCHED,
     PROVIDER_WARNING_PREFIX,
+    SWITCHED_NOTE,
     UNAUTHENTICATED_SUFFIX,
     flatten_profiles,
     flatten_selectable,
-    format_profile_row,
+    format_profile_label,
     format_provider_header,
     header_line,
     profiles_header_line,
@@ -71,6 +74,34 @@ from talaria.ui.picker import (
 from tests.ui.conftest import event, records
 
 # ── fixtures shared by the pure and the app-level tests ───────────────────
+
+
+def dialog(app: TalariaApp) -> PickerDialog:
+    """The picker dialog, asserted to actually be on screen.
+
+    Asserting the type here rather than at each call site means a test that
+    expected the dialog and got the ordinary screen fails saying so, instead of
+    failing later on a missing attribute.
+    """
+    screen = app.screen
+    assert isinstance(screen, PickerDialog), f"expected the picker, got {type(screen).__name__}"
+    return screen
+
+
+def no_dialog(app: TalariaApp) -> bool:
+    """True when no picker is up — the refusal path opens nothing at all."""
+    return not isinstance(app.screen, PickerDialog)
+
+
+def row_label(row: str) -> str:
+    """The provider or model name in a rendered row, without number or detail.
+
+    A rendered row is ``"* 12. sonnet  (2 models) · profile default"``, so a
+    test that matched on the end of the string was really asserting that no
+    row carries a detail — which several now deliberately do. This takes the
+    name and leaves the annotations to tests that are about the annotations.
+    """
+    return row.split(". ", 1)[-1].split("  ")[0].strip()
 
 
 def provider(**overrides: Any) -> ModelProvider:
@@ -114,10 +145,10 @@ def test_flatten_marks_only_the_row_matching_current_provider_and_model() -> Non
         current_model="a2",
     )
     rows = flatten_selectable(cat)
-    current = [r for r in rows if r.is_current]
-    # Same model name under a different provider is not the current row —
+    default = [r for r in rows if r.is_profile_default]
+    # Same model name under a different provider is not the marked row —
     # only the (provider, model) pair the gateway actually named is.
-    assert [(r.provider_slug, r.model) for r in current] == [("alpha", "a2")]
+    assert [(r.provider_slug, r.model) for r in default] == [("alpha", "a2")]
 
 
 def test_flatten_carries_the_providers_own_authenticated_flag() -> None:
@@ -247,12 +278,21 @@ async def test_opening_the_picker_renders_providers_and_models_current_marked() 
         await app.settle_live()
         await pilot.pause()
 
-        rows = app.picker.row_texts
-        assert any("Anthropic" in row and "anthropic" in row for row in rows)
-        assert any(row.strip().endswith("opus") and row.startswith("*") for row in rows)
-        assert any(row.strip().endswith("sonnet") and not row.startswith("*") for row in rows)
+        # The dialog opens on the providers, with the current one highlighted
+        # rather than merely marked — the highlight is what the operator moves.
+        opened = dialog(app)
+        providers = opened.row_texts
+        assert any("Anthropic" in row and "anthropic" in row for row in providers)
         # The unauthenticated provider is visibly distinguished from the rest.
-        assert any("Cold Provider" in row and UNAUTHENTICATED_SUFFIX in row for row in rows)
+        assert any("Cold Provider" in row and UNAUTHENTICATED_SUFFIX in row for row in providers)
+        assert "Anthropic" in opened.active_row_text
+
+        # Enter descends into that provider's models, current one marked.
+        await pilot.press("enter")
+        await pilot.pause()
+        models = dialog(app).row_texts
+        assert any(row_label(row) == "opus" and row.startswith("*") for row in models)
+        assert any(row_label(row) == "sonnet" and not row.startswith("*") for row in models)
         await app.shutdown_sources()
 
 
@@ -267,23 +307,40 @@ async def test_not_fetched_failed_and_warning_are_each_their_own_distinguishable
         await pilot.press("enter")
         await app.settle_live()
         await pilot.pause()
-        not_fetched = app.picker.header_text
-        assert not_fetched == NOT_YET_FETCHED
+        # Nothing fetched opens no dialog at all. An empty picker would be a
+        # claim that the gateway offers nothing, which is a different statement
+        # with a different fix (AE9) — so the refusal is a notice, not a screen.
+        assert no_dialog(app)
+        not_fetched = app.composer.notice
+        assert MODELS_NOT_FETCHED in not_fetched
 
         app.model_catalog = None
         app.model_catalog_failure = "the gateway refused Talaria's credential"
-        await app.render_model_catalog()
-        failed = app.picker.header_text
-        assert failed.startswith(CATALOG_FAILURE_PREFIX)
+        app.composer.text = "/models"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        assert no_dialog(app)
+        failed = app.composer.notice
+        assert "refused Talaria's credential" in failed
 
+        # A catalogue that *did* arrive, carrying the gateway's own warning,
+        # opens normally — a warning is not a failure and must not read as one.
         app.model_catalog = catalog(provider(warning="skill scan failed"))
         app.model_catalog_failure = ""
-        await app.render_model_catalog()
-        warned = app.picker.warning_text
-        assert warned.startswith(PROVIDER_WARNING_PREFIX)
+        app.composer.text = "/models"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        assert not no_dialog(app)
 
+        # All three states remain distinguishable in the pure renderers, which
+        # is where the header wording is still asserted now that the region is
+        # gone (the dialog opens or refuses; it never renders these lines).
+        assert header_line(None, "") == NOT_YET_FETCHED
+        assert header_line(None, "refused").startswith(CATALOG_FAILURE_PREFIX)
+        assert warning_line(app.model_catalog).startswith(PROVIDER_WARNING_PREFIX)
         assert len({not_fetched, failed}) == 2
-        assert warned not in {not_fetched, failed}
         await app.shutdown_sources()
 
 
@@ -307,6 +364,123 @@ async def test_selection_sends_the_exact_model_command_string() -> None:
         await app.shutdown_sources()
 
 
+# ── the switch Talaria made, which the gateway does not report back ───────
+
+
+async def _switch_to_sonnet(app: TalariaApp, pilot: Pilot[None], session: str = "s1") -> None:
+    """Select row 1 (Anthropic/sonnet) on a named session, as an operator would."""
+    app.state = replace(app.state, focused_session_id=session)
+    await app.load_model_catalog()
+    app.composer.text = "/models 1"
+    await pilot.press("enter")
+    await app.settle_live()
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_reopening_the_picker_lands_on_the_model_just_switched_to() -> None:
+    """The operator's report, end to end.
+
+    Note what is *not* the fix: refetching the catalogue. ``TWO_PROVIDER_CATALOG``
+    still names opus as the profile's current model after the switch, and it
+    always will — a session-scoped ``/model`` never touches the profile config
+    the catalogue is built from. Talaria's own record is the only thing that
+    knows.
+    """
+    dispatcher = RecordingDispatcher()
+    admin = FakeAdminClient(TWO_PROVIDER_CATALOG)
+    app = live_app(dispatcher, admin)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await _switch_to_sonnet(app, pilot)
+
+        app.composer.text = "/models"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        # The provider stage opens on Anthropic, and descending lands on the
+        # switched model rather than on the profile's default.
+        assert "Anthropic" in dialog(app).active_row_text
+        await pilot.press("enter")
+        await pilot.pause()
+        assert row_label(dialog(app).active_row_text) == "sonnet"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_both_kinds_of_current_are_shown_and_named_apart() -> None:
+    """A diverged pair is the case that has to read correctly, not just sort right."""
+    dispatcher = RecordingDispatcher()
+    admin = FakeAdminClient(TWO_PROVIDER_CATALOG)
+    app = live_app(dispatcher, admin)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await _switch_to_sonnet(app, pilot)
+
+        app.composer.text = "/models"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        rows = dialog(app).row_texts
+        switched = next(row for row in rows if "sonnet" in row)
+        default = next(row for row in rows if "opus" in row)
+        assert SWITCHED_NOTE in switched and PROFILE_DEFAULT_NOTE not in switched
+        assert PROFILE_DEFAULT_NOTE in default and SWITCHED_NOTE not in default
+        # Only one row carries the marker, and it is the one in use.
+        assert switched.startswith("*") and not default.startswith("*")
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_switch_the_gateway_never_answered_is_not_remembered() -> None:
+    """``unknown`` means the outcome is not known — which is not the same as done."""
+    unknown = RpcOutcome(status="unknown", method=SLASH_EXEC_METHOD, request_id="1", epoch=1)
+    dispatcher = RecordingDispatcher(outcome=unknown)
+    admin = FakeAdminClient(TWO_PROVIDER_CATALOG)
+    app = live_app(dispatcher, admin)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await _switch_to_sonnet(app, pilot)
+        assert app.session_model is None
+        assert app.session_model_in_focus is None
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_switch_is_not_attributed_to_a_session_that_did_not_receive_it() -> None:
+    """A resume or a profile switch moves the focus; the old record must not follow."""
+    dispatcher = RecordingDispatcher()
+    admin = FakeAdminClient(TWO_PROVIDER_CATALOG)
+    app = live_app(dispatcher, admin)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await _switch_to_sonnet(app, pilot, session="s1")
+        assert app.session_model_in_focus is not None
+
+        app.state = replace(app.state, focused_session_id="s2")
+        # The record is kept, not deleted — it is still true of s1 — and simply
+        # does not answer for the session now in focus.
+        assert app.session_model is not None
+        assert app.session_model_in_focus is None
+
+        app.composer.text = "/models"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        # With nothing known about s2, the picker falls back to the catalogue's
+        # profile default rather than carrying s1's answer across.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert row_label(dialog(app).active_row_text) == "opus"
+        await app.shutdown_sources()
+
+
 @pytest.mark.asyncio
 async def test_the_composer_keeps_focus_through_open_and_select() -> None:
     dispatcher = RecordingDispatcher()
@@ -317,12 +491,25 @@ async def test_the_composer_keeps_focus_through_open_and_select() -> None:
         app.composer.text_area.focus()
         await app.load_model_catalog()
 
+        # While the dialog is up it owns the keyboard — that is the whole point
+        # of making it modal, and it is what lets ``enter`` mean "select this
+        # row" without colliding with the composer's ``enter`` (KTD3 overturned).
         app.composer.text = "/models"
         await pilot.press("enter")
         await app.settle_live()
         await pilot.pause()
+        assert app.focused is not app.composer.text_area
+
+        # Selecting through the dialog hands the caret back.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        assert no_dialog(app)
         assert app.focused is app.composer.text_area
 
+        # And so does the typed form, which never took the caret away.
         app.composer.text = "/models 1"
         await pilot.press("enter")
         await app.settle_live()
@@ -463,7 +650,7 @@ def test_dialability_needs_both_a_running_gateway_and_a_known_endpoint() -> None
 
 def test_every_rendered_row_marks_whether_it_can_be_dialled() -> None:
     rendered = [
-        format_profile_row(row) for row in flatten_profiles(THREE_PROFILES, FIXTURE_ENDPOINTS)
+        format_profile_label(row) for row in flatten_profiles(THREE_PROFILES, FIXTURE_ENDPOINTS)
     ]
     assert NOT_RUNNING_SUFFIX not in rendered[0]
     assert NO_ENDPOINT_SUFFIX not in rendered[0]
@@ -474,10 +661,14 @@ def test_every_rendered_row_marks_whether_it_can_be_dialled() -> None:
     assert "9119" not in "".join(rendered)
 
 
-def test_the_current_profile_is_marked_and_no_other_row_is() -> None:
+def test_the_label_leaves_the_number_and_the_marker_to_the_dialog() -> None:
+    """Both were in the label once, and the dialog drew a second copy of each."""
     rows = flatten_profiles(THREE_PROFILES, FIXTURE_ENDPOINTS, current="beta-fixture")
     assert [r.name for r in rows if r.is_current] == ["beta-fixture"]
-    assert format_profile_row(rows[1]).startswith(CURRENT_PROFILE_MARKER)
+    label = format_profile_label(rows[1])
+    assert label.startswith("beta-fixture")
+    assert "*" not in label
+    assert not label.lstrip().startswith("2")
 
 
 def test_profiles_header_distinguishes_not_fetched_failed_and_empty() -> None:
@@ -575,11 +766,24 @@ async def test_the_picker_lists_profiles_with_dialability_marked() -> None:
         await app.settle_live()
         await pilot.pause()
 
-        rows = app.picker.row_texts
+        rows = dialog(app).row_texts
         assert len(rows) == 3
         assert "alpha-fixture" in rows[0] and NOT_RUNNING_SUFFIX not in rows[0]
         assert "beta-fixture" in rows[1] and NOT_RUNNING_SUFFIX in rows[1]
         assert "gamma-fixture" in rows[2] and NO_ENDPOINT_SUFFIX in rows[2]
+
+        # An undialable profile is listed and highlightable, and says why on
+        # enter rather than silently doing nothing.
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "not running" in dialog(app).refusal_text
+
+        # Backing out of the dialog returns the caret to the composer.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert no_dialog(app)
         assert app.focused is app.composer.text_area
         await app.shutdown_sources()
 
@@ -744,8 +948,10 @@ async def test_an_empty_profile_list_renders_as_a_claim_the_gateway_made() -> No
         await app.settle_live()
         await pilot.pause()
 
-        assert app.picker.header_text == NO_PROFILES
-        assert app.picker.row_texts == ()
+        # An empty-but-successful listing is a claim the gateway made, and the
+        # dialog says it in the operator's words rather than opening blank.
+        assert no_dialog(app)
+        assert profiles_header_line(app.profiles, "") == NO_PROFILES
         await app.shutdown_sources()
 
 
@@ -762,8 +968,10 @@ async def test_a_failed_listing_is_distinguishable_from_an_empty_one() -> None:
         await app.settle_live()
         await pilot.pause()
 
-        assert app.picker.header_text.startswith(PROFILES_FAILURE_PREFIX)
-        assert app.picker.header_text != NO_PROFILES
+        assert no_dialog(app)
+        assert "the gateway refused it" in app.composer.notice
+        assert profiles_header_line(None, "refused").startswith(PROFILES_FAILURE_PREFIX)
+        assert profiles_header_line(None, "refused") != NO_PROFILES
         assert app.profiles is None
         await app.shutdown_sources()
 
@@ -847,7 +1055,16 @@ async def test_switching_to_the_profile_already_connected_is_refused() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_two_modes_share_one_region_and_replace_each_other() -> None:
+async def test_the_two_commands_open_their_own_dialog_and_close_cleanly() -> None:
+    """One dialog class, two sources — and only ever one dialog on screen.
+
+    This replaces a test of the old foldable region's two-mode switching. A
+    modal cannot be asked to change mode while it is up, because it owns the
+    keyboard and the composer cannot be typed into: the operator closes it and
+    asks for the other one. So what is worth asserting is what is left — each
+    command opens its own listing, neither leaks the other's rows, and closing
+    leaves nothing behind.
+    """
     admin = FakeProfileAdmin(profiles=THREE_PROFILES)
     app = profile_app(admin, RecordingSwitcher())
 
@@ -860,29 +1077,27 @@ async def test_the_two_modes_share_one_region_and_replace_each_other() -> None:
         await pilot.press("enter")
         await app.settle_live()
         await pilot.pause()
-        assert app.picker.mode == "models"
-        models_rows = app.picker.row_texts
+        models_rows = dialog(app).row_texts
         assert any("Anthropic" in row for row in models_rows)
+        assert not any("alpha-fixture" in row for row in models_rows)
 
-        # Asking for the other mode while open switches to it rather than
-        # folding the region away and making the operator type it twice.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert no_dialog(app)
+
         app.composer.text = "/profiles"
         await pilot.press("enter")
         await app.settle_live()
         await pilot.pause()
-        assert str(app.picker.mode) == "profiles"
-        assert app.picker.showing is True
-        profile_rows = app.picker.row_texts
+        profile_rows = dialog(app).row_texts
         assert any("alpha-fixture" in row for row in profile_rows)
         assert not any("Anthropic" in row for row in profile_rows)
         assert profile_rows != models_rows
 
-        # Asking again for the mode already showing is the ordinary fold.
-        app.composer.text = "/profiles"
-        await pilot.press("enter")
-        await app.settle_live()
+        await pilot.press("escape")
         await pilot.pause()
-        assert app.picker.showing is False
+        assert no_dialog(app)
+        assert app.focused is app.composer.text_area
         await app.shutdown_sources()
 
 

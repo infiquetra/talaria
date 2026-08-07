@@ -32,10 +32,28 @@ evidence of an absent capability.
 **Worth it when.** Before the profile picker is used by anyone but its author — U4 makes profile-scoped
 requests routine, which makes this the everyday failure rather than a corner case.
 
-### The model picker is a numbered list, not a picker — KTD3's anti-modal decision needs reopening
+### ~~The model picker is a numbered list, not a picker — KTD3's anti-modal decision needs reopening~~ — CLOSED 2026-08-07
 
-**Priority.** P0 — the picker is the headline feature of the 2026-08-06 work and it does not do the
-thing its name promises. Raised by the operator on 2026-08-07, on first live use.
+**Closed by.** The picker redesign. The operator chose the modal shape; KTD3 is overturned and the
+reasoning is recorded in [DECISIONS.md](DECISIONS.md), "The picker is a modal dialog, overturning
+KTD3 — a listing is read, a picker is operated". `talaria/ui/dialog.py` is the dialog,
+`talaria/domain/selection.py` the pure selection model behind it, and the foldable `PickerRegion` is
+removed rather than kept alongside. Arrows move, `enter` selects, typing filters, `escape` clears the
+filter then pops a stage then closes; `right` and `left` are second names for select and back. 58 new
+tests; the selection rules are asserted without a terminal, the key routing with one.
+
+The operator's first round of feedback landed in the same change: the dialog now opens on the model
+in use, tracked by Talaria itself because the gateway does not publish it (see
+[LEARNINGS.md](LEARNINGS.md), "The picker marked the wrong model after a switch"), and each row shows
+the number `/models <n>` actually takes rather than its position on the stage.
+
+**Two things this closure did not do**, both smaller than the original item and neither blocking:
+the dialog is built from the listing held at the moment it opens and a refetch arriving while it is
+up does not restock it (a selection against a stale listing is still refused on the epoch check, so
+this is a display staleness, not a wrong dial); and `ctrl+p` remains Textual's, see the P2 below.
+
+**Priority.** ~~P0 — the picker is the headline feature of the 2026-08-06 work and it does not do the
+thing its name promises. Raised by the operator on 2026-08-07, on first live use.~~
 
 **What was observed.** `/models` renders a read-only list and selection requires typing `/models <n>`.
 `talaria/ui/picker.py` has **no key handling at all** — no highlight, no cursor, no navigation — exactly
@@ -440,6 +458,33 @@ So the operator types a password into a focused control that draws nothing, with
 **Suggested framing.** Schedule the recomputation from `apply` whenever it mounted or removed a card. Note that doing so makes the `Rewrapped` channel redundant for the mount case — check, by deleting it and running `test_a_card_mounting_into_a_full_region_is_still_recomputed`, whether it still has a case of its own before keeping both.
 
 ## P2
+
+### Textual's own command palette is reachable on `ctrl+p` and nothing in Talaria put it there
+
+**Author.** the picker redesign, 2026-08-07 — found by a dialog test, not by looking for it
+**Priority.** P2
+**Effort.** Small
+
+**What is true.** `App.ENABLE_COMMAND_PALETTE` defaults to `True` and `TalariaApp` never sets it, so
+`ctrl+p` opens Textual's built-in palette over whatever is on screen. This is **not** new: it has
+been reachable since the first Textual commit and predates the picker work entirely. It surfaced now
+because binding `ctrl+p` to "move up" in the picker dialog silently did nothing —
+`tests/ui/test_dialog.py::test_ctrl_p_is_not_a_movement_key_because_textual_owns_it` pins the
+collision so nobody re-tries it.
+
+**Why it is worth fixing rather than tolerating.** Talaria has its own command listing (R23/AE9, F3
+and `/commands`), built to show the *gateway's* catalogue with availability markers. Textual's
+palette shows Textual's commands — change theme, save screenshot, toggle dark mode — which are
+framework affordances an operator of a Hermes client has no reason to see, and which are not part of
+any requirement. Two palettes on two keybindings, one of which nobody chose, is the kind of thing an
+operator finds by accident and then has to be told to ignore.
+
+**The fix, and the reason it is not already done here.** `ENABLE_COMMAND_PALETTE = False` on
+`TalariaApp`, which also frees `ctrl+p` for emacs-style movement in the dialog. Left out of the
+picker change deliberately: it changes a global app affordance rather than the picker, and it wants
+its own before/after check that nothing in the test suite was relying on that palette.
+
+**Worth it when.** Anyone touches app-level key bindings, or the dialog wants `ctrl+p`/`ctrl+n`.
 
 ### R28's equivalence proof leaves the repository with the TypeScript tree
 
