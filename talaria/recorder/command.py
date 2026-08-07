@@ -168,7 +168,11 @@ async def resolve_record_target(
     resolver: CredentialProvider = (
         provider
         if provider is not None
-        else LoopbackTokenProvider(credentials_path=credentials_path, environ=environ)
+        # No ``environ``: the provider has no environment injection point since
+        # the last environment-borne level left the chain on 2026-08-07. The
+        # ``environ`` this function takes reaches the *endpoint* resolution
+        # above and nothing else.
+        else LoopbackTokenProvider(credentials_path=credentials_path)
     )
     if isinstance(resolver, PrimingProvider):
         credential = await resolver.prime()

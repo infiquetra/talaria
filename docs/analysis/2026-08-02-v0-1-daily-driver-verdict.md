@@ -89,7 +89,7 @@ Status values: **measured**, **inferred**, **unmet**.
 | 10 | **R36** — local waiters resolve at teardown | measured | A call in flight against a gateway that never answers resolves `unknown` with reason *the transport was closed*, rather than hanging | `::test_a_call_in_flight_at_teardown_resolves_instead_of_hanging` |
 | 11 | **F7** — the gateway survives Talaria's exit | measured *against the stub* | Two tests. In process: after teardown a second client dials the same server object and receives the greeting. At process granularity: the stub runs as a **separate OS process, left in Talaria's own process group** so a mis-aimed group signal would kill it, and after teardown it is alive, still accepting connections, and still greeting. The server is the loopback stub, not Hermes | `::test_the_gateway_is_still_serving_after_talaria_exits`, `::test_the_gateway_process_survives_a_talaria_that_shares_its_process_group` |
 | 12 | **R1** — argv carries no credential | measured **on macOS and Linux** | A running process built by the real launcher, holding a live credential in memory, inspected through the platform's own facility — `ps -ww` on macOS, `/proc/<pid>/cmdline` on Linux: no token, no `?token=` URL, no endpoint. The Linux half was measured when this branch first reached CI: all five process-surface tests ran and passed on `ubuntu-latest` under Python 3.12 and 3.13 (run `30865814553`). Earlier drafts of this document said the `/proc` branch had never executed, which was true when written | `tests/transport/test_process_surface.py::test_a_running_talarias_command_line_carries_no_credential` |
-| 13 | **R1** — the environment carries no credential | **partially unmet — see below** | Talaria adds nothing credential-shaped to its own environment (set comparison against what it was launched with). An **inherited** `HERMES_DASHBOARD_SESSION_TOKEN` remains visible for the process's life and cannot be removed. **Re-graded exactly one step on 2026-08-06**, and no further, because that is the whole of what the decision supports. The open precedence question this row used to rest on **has been decided**: `HERMES_DASHBOARD_SESSION_TOKEN` was removed from the credential chain (option (b) of `QUEUED.md`'s entry), so the environment-free credential-file route is now documented in `README.md` as the supported one and R1's environment clause became **satisfiable by operator procedure**, which it was not before. It did **not** become met, on two residuals the deciding unit wrote down itself: an inherited variable is still readable from `/proc/<pid>/environ` and `ps -E` whether or not Talaria consults it, and route 1 — a `token` on `TALARIA_GATEWAY_URL` — is a *surviving supported route that is an environment variable*, and is the highest-precedence one. So this row moves from "a decision nobody has taken" to "a decision taken, with a residual the decision explicitly refuses to grade away" | `::test_talaria_adds_no_credential_of_its_own_to_its_environment`, `::test_the_inherited_credential_is_visible_in_the_process_environment`; `docs/engineering-journal/DECISIONS.md`, "`HERMES_DASHBOARD_SESSION_TOKEN` leaves the credential chain, and row 13 may be re-graded exactly one step — not to *met*" |
+| 13 | **R1** — the environment carries no credential | **partially unmet — see below** | Talaria adds nothing credential-shaped to its own environment (set comparison against what it was launched with). An **inherited** `HERMES_DASHBOARD_SESSION_TOKEN` remains visible for the process's life and cannot be removed. **Re-graded exactly one step on 2026-08-06**, and no further, because that is the whole of what the decision supports. The open precedence question this row used to rest on **has been decided**: `HERMES_DASHBOARD_SESSION_TOKEN` was removed from the credential chain (option (b) of `QUEUED.md`'s entry), so the environment-free credential-file route is now documented in `README.md` as the supported one and R1's environment clause became **satisfiable by operator procedure**, which it was not before. It did **not** become met, on two residuals the deciding unit wrote down itself: an inherited variable is still readable from `/proc/<pid>/environ` and `ps -E` whether or not Talaria consults it, and route 1 — a `token` on `TALARIA_GATEWAY_URL` — is a *surviving supported route that is an environment variable*, and is the highest-precedence one. **One of those two residuals was removed on 2026-08-07**: route 1 is gone, the same variable is now *refused* for carrying a credential rather than read, and `LoopbackTokenProvider` has no environment injection point at all, so "no route Talaria supports places a credential in its environment, its command line, or shell history" is true and measured — verified live both ways, an environment-free `talaria record` recording a `gateway.ready` frame under `env -i` and an exported credential-bearing endpoint refused with the value appearing zero times in stderr. **The row still does not reach *met*, and the reason is now a single sentence:** an inherited `HERMES_DASHBOARD_SESSION_TOKEN` stays readable for the life of the process, no code change reaches it, and re-execing with a scrubbed environment narrows nothing because the same-user reader can read the launching shell's environment instead. Whether that residual should be scoped out of this row — as `terminal.read.respond` was scoped out of row 6, with a named falsifiable condition — is a grading decision that has not been taken; until it is, this row blocks the gate | `::test_talaria_adds_no_credential_of_its_own_to_its_environment`, `::test_the_inherited_credential_is_visible_in_the_process_environment`, `tests/transport/test_attach.py::test_a_configured_endpoint_carrying_a_credential_is_refused`, `::test_the_provider_has_no_environment_injection_point`; `docs/engineering-journal/DECISIONS.md`, "The endpoint URL stops being a credential source, and the decision that kept it is reopened because both its premises measured false" |
 | 14 | **AE10** — a clean-environment install produces a working `talaria` | measured locally **and in CI** | `uv tool install .` into a fresh prefix, then the console script invoked by absolute path under `env -i`: `talaria --help` works. The CI `install` job ran for the first time on this branch's pull request and passed on Python 3.12 and 3.13 (run `30865814553`) | this document, §Install |
 | 15 | **R39** — the platform matrix records exactly what was exercised | measured | See §Platform matrix. One operating system, two Python versions, two terminal hosts, one multiplexer | §Platform matrix |
 | 16 | The launcher runs end to end — attach, probe, open, render, exit | measured *against the stub* | The real console script (`python -m talaria.cli`, no arguments) on a pseudo-terminal against the loopback stub: one connection accepted, the five read-only probes and no mutating method among them, exactly one `session.create`, tens of kilobytes of interface drawn, `ctrl+q` → exit 0, terminal restored | §Launcher run |
@@ -477,27 +477,53 @@ environment names carrying the credential is **exactly** the set the process was
 launched with — asserted as equality rather than as a subset, because a subset
 assertion is satisfied by an environment read that came back empty.
 
-**Cannot hold.** The operator's highest-precedence credential source is the
-`HERMES_DASHBOARD_SESSION_TOKEN` environment variable (KTD11), which Talaria
-inherits. On macOS the inherited value is readable through `ps -E` **by the
-owning user**, and that was measured on a running process. On Linux the kernel
-snapshots the environment block at `exec` and serves that snapshot from
-`/proc/<pid>/environ` for the life of the process, so `os.environ.pop` changes
-nothing a reader can see — **measured**, when this branch first reached CI: all
-five process-surface tests ran and passed on `ubuntu-latest` under Python 3.12
-and 3.13, exercising the `/proc` branch of the reader against a real running
-process. (Earlier drafts said that sentence was read from documentation rather
-than measured, and filed the unexecuted branch as a P2. It was true when written;
-pushing the branch is what changed it.) **R1's environment clause is therefore
-not met when the credential is supplied through the environment, on either
+**Also holds, since 2026-08-07: no supported route puts a credential in the
+environment at all.** The chain has two levels — a `0600` file at
+`<config_dir>/credentials`, then an interactive hidden prompt — and neither
+touches the environment. `LoopbackTokenProvider` has no environment injection
+point, so this is a property `mypy --strict` checks rather than one a reader has
+to confirm branch by branch. `TALARIA_GATEWAY_URL` names the endpoint only, and a
+configured endpoint carrying a credential is **refused** rather than stripped, in
+the environment variable, in the credential file's `url` key, and on the `talaria
+record` command line alike. Verified against a live Hermes on 2026-08-07 both
+ways: under `env -i` with only `HOME`, `PATH` and `TERM` set, `talaria record`
+authenticated and recorded a `gateway.ready` frame from the credential file
+alone; with a live token exported on `TALARIA_GATEWAY_URL`, it refused, wrote no
+recording, and the value appeared zero times in stderr.
+
+**This paragraph said the opposite until 2026-08-07, and the correction matters
+more than the sentence.** It read: *"The operator's highest-precedence credential
+source is the `HERMES_DASHBOARD_SESSION_TOKEN` environment variable (KTD11),
+which Talaria inherits."* That stopped being true on 2026-08-06, when U3 removed
+the variable from the chain, and this section was not updated — so the gate
+document's own account of R1 was a day stale while row 13 was being graded
+against it. The row's evidence cell was correct throughout; the prose behind it
+was not.
+
+**Cannot hold, and this is the whole of what is left.** A credential the
+operator's shell exported before launching Talaria is inherited, and stays
+readable for the life of the process. On macOS through `ps -E` **by the owning
+user**, measured on a running process. On Linux the kernel snapshots the
+environment block at `exec` and serves that snapshot from `/proc/<pid>/environ`,
+so `os.environ.pop` changes nothing a reader can see — **measured**, when this
+branch first reached CI: all five process-surface tests ran and passed on
+`ubuntu-latest` under Python 3.12 and 3.13, exercising the `/proc` branch of the
+reader against a real running process. (Earlier drafts said that sentence was
+read from documentation rather than measured, and filed the unexecuted branch as
+a P2. It was true when written; pushing the branch is what changed it.)
+
+**No code change reaches it, and re-execing is not the missing idea.** Scrubbing
+`os.environ` and re-execing would give the child a clean snapshot — and buy
+nothing, because the reader who can read Talaria's environment is the same user
+who can read the launching shell's, where the value still is. **R1's environment
+clause is therefore not met when the operator exports a credential, on either
 platform, and no change to Talaria can meet it.**
 
-**The mitigation exists and is measured.** KTD11's third precedence level is a
-`0600` credential file at `<config_dir>/credentials`. With the credential
-supplied that way, the running process's environment carries nothing — asserted
-in `test_the_credential_file_route_keeps_the_environment_clean`. That is why
-that level exists, and an operator who cares about the process surface should
-use it.
+**The mitigation exists, is measured, and is now the only configuration Talaria
+supports.** With the credential in the `0600` file, the running process's
+environment carries nothing — asserted in
+`test_the_credential_file_route_keeps_the_environment_clean`. The operator's
+remaining job is one line: do not export a gateway credential.
 
 The unmet half is filed in `docs/engineering-journal/QUEUED.md` rather than
 redefined into a pass. The test that measures the failure asserts the failure,
@@ -820,6 +846,18 @@ on 2026-08-07:
   not be graded *met* on it, and this section obeys that rather than re-deriving a
   friendlier reading.
 
+  **Updated 2026-08-07: the second of those two residuals is gone.** The
+  `token`-on-`TALARIA_GATEWAY_URL` route was removed and that variable is now
+  refused for carrying a credential, so no supported route places one in the
+  environment, the command line, or shell history — measured live both ways. The
+  row still does not reach *met*, and what blocks it is now exactly one thing that
+  no code change can reach: an inherited variable is visible to anyone who can
+  read the process, and re-execing with a scrubbed environment narrows nothing,
+  because the same reader can read the launching shell's environment instead.
+  Whether that belongs in this row at all is a **scoping** question — every other
+  row grades Talaria; this one grades a variable Hermes publishes and the
+  operator's shell exports — and it has deliberately not been answered here.
+
 **What this section used to say.** Before this restatement the paragraph under
 the verdict read:
 
@@ -877,6 +915,16 @@ ability to tell an item that was met from an item that was never on the list.
    choice explicitly did not remove — an inherited variable is readable from the
    process environment by anyone who can read that process, and one supported
    route (a `token` on `TALARIA_GATEWAY_URL`) is still an environment variable.
+
+   **Half of that residual was removed on 2026-08-07.** The endpoint-URL route is
+   gone and the variable is refused for carrying a credential. What remains is the
+   inherited variable alone, which no code change reaches — so the next move on
+   this row is not implementation but a **scoping decision**: does row 13 grade
+   Talaria, or the machine Talaria runs on? `terminal.read.respond` was scoped out
+   of row 6 on a named, falsifiable condition; the same treatment is available
+   here and is the operator's to choose. Doing nothing is also an answer — it
+   means row 13 never reaches *met* — but it should be a chosen one rather than a
+   stalemate nobody named.
    Closing the row now means removing that last environment-borne route, which
    needs a way for Hermes to hand a client its session token that does not go
    through the endpoint URL. That is work in Hermes, not in Talaria, and it is out
@@ -969,6 +1017,14 @@ against the pinned shape (§The reply side). Its `blocks-on` line is removed and
 any of this work — R1's environment half is still partially unmet, an inherited
 `HERMES_DASHBOARD_SESSION_TOKEN` is still readable for the life of the process,
 and by AE7 and R39 one gap alone blocks ready. **NOT READY** stands.
+
+**Row 13 was then narrowed later the same day, and the verdict still does not
+move.** Removing the `token`-on-`TALARIA_GATEWAY_URL` credential route took away
+one of the row's two residuals, leaving the inherited variable alone. That is a
+real change to what the row measures and no change at all to its grade, which is
+the honest outcome: the half that was Talaria's to fix is fixed, and the half
+that was never Talaria's is still there. **NOT READY** stands on one residual and
+a scoping question nobody has answered.
 
 **Read the shape of that honestly, because it is easy to misread in two
 directions.** Row 6 was the largest movement this document has recorded — nine

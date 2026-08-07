@@ -4,6 +4,18 @@
 
 ## 2026-08-07
 
+### A "revisit when" condition had already been satisfied for two days by code in this repository, and nobody checked
+
+**Author.** the row-13 residual pass, which set out to report what removing the endpoint-URL credential route would cost
+
+**Evidence.** `DECISIONS.md`'s 2026-08-06 entry deferred removing route 1 — a `token` on `TALARIA_GATEWAY_URL` — and filed it under **Revisit when.** *"Hermes gains an HTTP or file-based way to hand a client its session token directly."* `talaria/transport/refresh.py` had shipped on 2026-08-04 and does precisely that: `talaria refresh-credential` fetches the dashboard index over plain HTTP, unauthenticated, and reads the injected session token out of the page — "precisely what the dashboard's own web UI does on every load", in the module's own words. The same entry's rejection also asserted that "`talaria record`'s design leans on `TALARIA_GATEWAY_URL` resolving both halves". Measured on 2026-08-07 with `env -i HOME=$HOME PATH=/usr/bin:/bin TERM=dumb .venv/bin/talaria record --out …` against a live Hermes: it authenticated and recorded a `gateway.ready` frame from the `0600` credential file alone, whose `url` key had supplied endpoints since before the entry was written.
+
+**Mechanism.** Both claims were about the state of the world, and both were written from what the author remembered of the world rather than from a check. Neither is a subtle call: one is a two-command experiment, the other is one file read in this repository. What made them survive is that a deferral produces no failing test, no red CI, and no symptom — it produces a document that reads as considered. The rejection was even *correct in form*: it named a condition, it named a cost, it recorded the residual rather than dropping it. Every quality signal was present except the one that mattered, which is whether the premises were true.
+
+**Cost of the delay.** One day, because the residual came up again quickly. That is luck. The entry's own "Revisit when" was the mechanism meant to catch this, and it would not have fired on its own — it names a condition nobody was watching for, about a capability that already existed.
+
+**Generalizable rule.** A deferral rests on claims about the world, so verify them the way you would verify a bug report: before writing "out of scope" or "blocked on X", run the check that would refute it, and before writing a **Revisit when** condition, confirm it is not already true. A condition that is already satisfied when written does not read as an error — it reads as patience.
+
 ### A baseline read from Hermes source, and a stub built from the same reading, agreed with each other and were both wrong
 
 **Author.** the first reply-side pass ever run over the recording corpus, which found two wrong pins in the thirteen shapes it checked

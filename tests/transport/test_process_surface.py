@@ -23,13 +23,25 @@ separately:
   the process's whole life, on Linux by kernel snapshot and on macOS through
   ``ps -E`` to the owning user.
 
-**KTD8 removed that variable from the credential chain on 2026-08-06, and this
-file's measurement is unchanged by that.** Talaria no longer *reads*
-``HERMES_DASHBOARD_SESSION_TOKEN``; the probes below now resolve their
-credential through the surviving environment level, a ``token`` query parameter
-on ``TALARIA_GATEWAY_URL``. What the removal cannot do is make an inherited
-variable invisible, because visibility is a kernel property of the ``exec``
-snapshot and not a property of which variables Talaria consults. So
+**Two credential routes have left the chain, and this file's measurement is
+unchanged by both.** KTD8 removed ``HERMES_DASHBOARD_SESSION_TOKEN`` on
+2026-08-06; the ``token``-on-``TALARIA_GATEWAY_URL`` route went on 2026-08-07,
+and that variable is now refused for carrying one. Every probe below therefore
+resolves its credential through the ``0600`` credential file, which is the only
+non-interactive route left.
+
+**That makes the two halves cleaner to read than they have ever been.** The
+probes used to *need* a credential in the environment in order to hold one at
+all, so "Talaria adds no credential of its own" and "an inherited credential is
+visible" were measured in the same environment block for different reasons.
+Now the only thing in that block carrying the canary is the variable Talaria has
+never read since KTD8 — put there by
+:func:`probe_environment` precisely so the failure below has something to
+measure.
+
+What no removal can do is make an inherited variable invisible: visibility is a
+kernel property of the ``exec`` snapshot, not a property of which variables
+Talaria consults. So
 ``test_the_inherited_credential_is_visible_in_the_process_environment`` still
 asserts the *failure*, unchanged, and still names
 ``HERMES_DASHBOARD_SESSION_TOKEN`` — an operator whose shell exports it is a
@@ -95,10 +107,12 @@ REFRESH_ORIGIN_ENV_VAR = "TALARIA_TEST_REFRESH_ORIGIN"
 #: accepted by anything.
 CANARY_TOKEN = "R1-CANARY-TOKEN-8Kd3nQ7wPz"
 
-#: An endpoint carrying the canary the way an operator's exported
-#: ``TALARIA_GATEWAY_URL`` would. Since KTD8 this is the **highest** remaining
-#: precedence level, and the one every probe below actually resolves through.
-CANARY_URL = f"ws://127.0.0.1:19119/api/ws?token={CANARY_TOKEN}"
+#: The endpoint every probe is pointed at, and it carries **no credential**.
+#: It carried ``?token=<canary>`` until 2026-08-07, when that stopped being a
+#: credential route and started being refused — a probe configured that way now
+#: fails to start rather than resolving anything. The credential comes from the
+#: ``0600`` file :func:`probe_environment` writes.
+CANARY_URL = "ws://127.0.0.1:19119/api/ws"
 
 #: What the launcher probe subprocess runs. It builds the live launcher exactly
 #: as ``talaria`` does — same :class:`~talaria.transport.attach.AttachTarget`,
@@ -424,23 +438,34 @@ def probe_environment(tmp_path: Path) -> Iterator[dict[str, str]]:
     """The operator's environment, credential included, as KTD11 expects it.
 
     ``HERMES_DASHBOARD_SESSION_TOKEN`` is set here and **is not what supplies
-    the credential** — since KTD8 nothing reads it. It stands for the realistic
-    case this file is about: a shell that exported it before launching Talaria,
-    leaving a credential in an environment block the kernel has already
-    snapshotted. The credential the probes resolve comes from the ``token`` on
-    :data:`CANARY_URL`.
+    the credential** — nothing has read it since KTD8. It stands for the
+    realistic case this file is about: a shell that exported it before launching
+    Talaria, leaving a credential in an environment block the kernel has already
+    snapshotted. It is now the *only* thing in that block carrying the canary,
+    which is what makes the two halves below independent measurements rather
+    than one environment doing two jobs.
+
+    The credential the probes resolve comes from the ``0600`` file written here.
+    It used to come from a ``token`` on :data:`CANARY_URL`; that route was
+    removed on 2026-08-07 and an endpoint carrying one is now refused, so a
+    probe configured the old way would not start at all.
 
     Also stands up the ``refresh-credential`` probe's loopback dashboard stub
     and publishes its origin (R7), so every entry point in :data:`ENTRY_POINTS`
     can be launched from one shared environment.
     """
     with _stub_dashboard(CANARY_TOKEN) as origin:
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        credentials = config_dir / "credentials"
+        credentials.write_text(f'token = "{CANARY_TOKEN}"\n', encoding="utf-8")
+        credentials.chmod(0o600)
+
         env = dict(os.environ)
         env[TOKEN_ENV_VAR] = CANARY_TOKEN
         env[GATEWAY_URL_ENV_VAR] = CANARY_URL
-        env["TALARIA_CONFIG_DIR"] = str(tmp_path / "config")
+        env["TALARIA_CONFIG_DIR"] = str(config_dir)
         env[REFRESH_ORIGIN_ENV_VAR] = origin
-        (tmp_path / "config").mkdir(parents=True, exist_ok=True)
         yield env
 
 
@@ -456,12 +481,23 @@ def _assert_refresh_credential_wrote_only_under_tmp_path(tmp_path: Path) -> None
     landed under ``tmp_path`` — never the developer's real ``~/.talaria`` —
     exactly as the plan requires ("assert the written path is under tmp_path
     before asserting anything else").
+
+    **This is a sandbox check and not a proof that a write happened.** Since
+    2026-08-07 :func:`probe_environment` writes that same file before any probe
+    starts, because the credential file is now the only non-interactive route
+    the reading probes have. That ``refresh-credential`` really rewrites it is
+    proven in ``tests/transport/test_refresh.py``, where the before and after
+    values differ; here the file's existence is a precondition, so asserting it
+    would prove nothing. The mode is checked instead: it is a post-condition
+    ``refresh-credential`` is responsible for preserving.
     """
     written = tmp_path / "config" / "credentials"
     assert written.resolve().is_relative_to(tmp_path.resolve()), (
         f"refresh-credential wrote outside its tmp_path sandbox: {written}"
     )
-    assert written.exists(), "refresh-credential reported success but wrote no file"
+    assert written.stat().st_mode & 0o777 == 0o600, (
+        "refresh-credential left the credential file readable beyond its owner"
+    )
 
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS, ids=lambda entry: entry.name)
@@ -513,8 +549,16 @@ def test_talaria_adds_no_credential_of_its_own_to_its_environment(
     the natural way to write "added nothing", and an empty ``carrying`` satisfies
     it — so a platform whose environment read came back blind would pass this
     test while proving nothing. Equality carries the positive half in the same
-    observation: the reader really did see both names the probe was launched
-    with, *and* Talaria added no third one.
+    observation: the reader really did see the name the probe was launched with,
+    *and* Talaria added no second one.
+
+    **The expected set went from two names to one on 2026-08-07.** The probe used
+    to be launched with the credential on ``TALARIA_GATEWAY_URL`` as well,
+    because that was the route it resolved through. The endpoint is now
+    credential-free and the credential comes from a ``0600`` file, so the claim
+    this test makes is stronger than it was: a Talaria holding a live credential
+    has *nothing* credential-shaped in its own environment beyond what a shell
+    exported before it started.
     """
     probe = start_probe(entry.probe, probe_environment)
     try:
@@ -525,10 +569,8 @@ def test_talaria_adds_no_credential_of_its_own_to_its_environment(
         assert surface.environ_is_readable, "read no environment at all"
 
         carrying = surface.names_carrying(CANARY_TOKEN)
-        launched_with = {
-            name for name, value in probe_environment.items() if CANARY_TOKEN in value
-        }
-        assert launched_with == {TOKEN_ENV_VAR, GATEWAY_URL_ENV_VAR}
+        launched_with = {name for name, value in probe_environment.items() if CANARY_TOKEN in value}
+        assert launched_with == {TOKEN_ENV_VAR}
         assert carrying == launched_with, (
             "the set of environment names carrying the credential is not the set "
             f"the probe was launched with: extra={sorted(carrying - launched_with)} "

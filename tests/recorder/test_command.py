@@ -29,6 +29,7 @@ from urllib.parse import parse_qsl, urlsplit
 import pytest
 
 from talaria.recorder.command import RecordTarget, resolve_record_target, run_record
+from talaria.transport.attach import AttachTarget
 from talaria.transport.credentials import (
     Credential,
     CredentialError,
@@ -80,21 +81,27 @@ class _RecordingConnector:
 
 
 def _resolve(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     *,
     endpoint: str,
     credential: str,
 ) -> RecordTarget:
-    """Resolve a target the way ``talaria record`` resolves one: from the environment.
+    """Resolve a target the way ``talaria record`` resolves one: from the ``0600`` file.
 
-    Since KTD8 the environment's only credential route is a ``token`` query
-    parameter on ``TALARIA_GATEWAY_URL``, so that is what this sets. The
-    endpoint the caller asked for still comes back credential-free, because
-    ``AttachTarget`` strips the query and the provider re-attaches the value for
-    exactly one dial — which is the property the tests below measure.
+    **This used to set ``TALARIA_GATEWAY_URL`` to ``<endpoint>?token=<value>``**,
+    which was the environment's only credential route after KTD8. That route was
+    removed on 2026-08-07 and the same string is now refused, so both halves come
+    from the credential file: ``token`` for the credential and ``url`` for the
+    endpoint. Nothing is exported.
+
+    The endpoint still comes back credential-free and the provider still
+    re-attaches the value for exactly one dial, which is the property the tests
+    below measure — the helper changed, not what it sets up.
     """
-    monkeypatch.setenv(GATEWAY_URL_ENV_VAR, f"{endpoint}?token={credential}")
-    return asyncio.run(resolve_record_target())
+    path = tmp_path / "credentials"
+    path.write_text(f'token = "{credential}"\nurl = "{endpoint}"\n', encoding="utf-8")
+    path.chmod(0o600)
+    return asyncio.run(resolve_record_target(credentials_path=path, environ={}))
 
 
 def _run(target: RecordTarget, out: Path, connector: _RecordingConnector) -> tuple[int, list[str]]:
@@ -117,23 +124,24 @@ def test_the_dialled_url_carries_the_credential_exactly_once(
     ``AttachTarget.dial_url`` drops the existing credential keys before appending,
     and this is what pins that.
 
-    **Re-expressed for KTD8, keeping the two values distinct.** The stale token
-    used to ride ``TALARIA_GATEWAY_URL`` while the real credential came from
-    ``HERMES_DASHBOARD_SESSION_TOKEN``. With that variable removed from the chain
-    the endpoint variable's own token *is* the credential, so a stale-versus-real
-    pair can no longer be built that way. They are separated through the other
-    seam instead: the stale one rides the endpoint override, which
-    ``AttachTarget`` strips, and the real one rides the exported endpoint. Same
-    two values, same assertion, same defect guarded — an endpoint that already
-    carried a ``token`` picking up a second one.
+    **Re-expressed twice, and the second time the setup left configuration
+    entirely.** The stale token first rode ``TALARIA_GATEWAY_URL`` while the real
+    credential came from ``HERMES_DASHBOARD_SESSION_TOKEN``; KTD8 removed that
+    variable, so the pair moved to the endpoint override versus the exported
+    endpoint. On 2026-08-07 *every* configured source began refusing an endpoint
+    that carries a credential, which means a stale token can no longer arrive by
+    configuration at all — the refusal is a stronger guarantee than this test
+    ever was, and ``tests/transport/test_attach.py`` holds it.
+
+    What the refusal does not cover is a directly-constructed
+    :class:`~talaria.transport.attach.AttachTarget`, which is the seam
+    ``dial_url`` actually defends. So the stale token is put there by hand. The
+    same two values, the same assertion, the same defect guarded.
     """
-    monkeypatch.setenv(
-        GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-8ae13c"
+    target = RecordTarget(
+        target=AttachTarget(url="ws://127.0.0.1:9222/api/ws?token=NOT-A-REAL-STALE-0000"),
+        credential=Credential("token", "NOT-A-REAL-CANARY-8ae13c", "file"),
     )
-    target = asyncio.run(
-        resolve_record_target(override="ws://127.0.0.1:9222/api/ws?token=NOT-A-REAL-STALE-0000")
-    )
-    assert target.endpoint == "ws://127.0.0.1:9222/api/ws"
     connector = _RecordingConnector(messages=[json.dumps({"method": "ping"})])
 
     code, _printed = _run(target, tmp_path / "log.jsonl", connector)
@@ -154,7 +162,7 @@ def test_the_printed_endpoint_and_the_frame_log_header_withhold_the_credential(
     of the two halves being separate objects.
     """
     target = _resolve(
-        monkeypatch,
+        tmp_path,
         endpoint="ws://127.0.0.1:9911/api/ws",
         credential="NOT-A-REAL-CANARY-8ae13c",
     )
@@ -173,7 +181,7 @@ def test_the_printed_endpoint_and_the_frame_log_header_withhold_the_credential(
     assert header["endpoint"] == "ws://127.0.0.1:9911/api/ws"
 
 
-def test_userinfo_on_a_configured_endpoint_is_withheld_from_both_surfaces(
+def test_userinfo_on_an_endpoint_is_withheld_from_both_surfaces(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An endpoint may carry a second kind of secret that is not the query token.
@@ -181,13 +189,18 @@ def test_userinfo_on_a_configured_endpoint_is_withheld_from_both_surfaces(
     ``ws://user:password@host/`` survives query-stripping — ``urlsplit`` keeps
     userinfo inside ``netloc`` — so the endpoint object is not credential-free in
     that shape. Both surfaces route through ``redact_url``, which withholds it.
-    (The command line is a different matter: there this shape is refused outright,
-    which ``tests/test_cli.py`` covers.)
+
+    **The word "configured" left this test's name on 2026-08-07.** Every
+    configured source — the command line, ``TALARIA_GATEWAY_URL``, and the
+    credential file's ``url`` key — now refuses userinfo outright, so this shape
+    can only reach a :class:`~talaria.recorder.command.RecordTarget` through a
+    directly-constructed :class:`~talaria.transport.attach.AttachTarget`, which is
+    how it is built here. The redaction is the floor under the refusal rather
+    than the only thing standing in front of the leak.
     """
-    target = _resolve(
-        monkeypatch,
-        endpoint="ws://operator:NOT-A-REAL-CANARY-5b71@127.0.0.1:9911/api/ws",
-        credential="NOT-A-REAL-CANARY-8ae13c",
+    target = RecordTarget(
+        target=AttachTarget.from_url("ws://operator:NOT-A-REAL-CANARY-5b71@127.0.0.1:9911/api/ws"),
+        credential=Credential("token", "NOT-A-REAL-CANARY-8ae13c", "file"),
     )
     out = tmp_path / "log.jsonl"
 
@@ -208,11 +221,13 @@ def test_a_failed_attach_reports_a_cause_that_withholds_the_credential(
     stubs the same shape: an exception whose text is the URL it was given.
     """
     target = _resolve(
-        monkeypatch,
+        tmp_path,
         endpoint="ws://127.0.0.1:9911/api/ws",
         credential="NOT-A-REAL-CANARY-8ae13c",
     )
-    connector = _RecordingConnector(fail=OSError("cannot dial ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-8ae13c"))
+    connector = _RecordingConnector(
+        fail=OSError("cannot dial ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-8ae13c")
+    )
 
     code, printed = _run(target, tmp_path / "log.jsonl", connector)
 
@@ -231,7 +246,7 @@ def test_the_failure_hint_no_longer_teaches_the_command_line_form(
     command that exits 2. A remedy that does not work is worse than no remedy.
     """
     target = _resolve(
-        monkeypatch,
+        tmp_path,
         endpoint="ws://127.0.0.1:9911/api/ws",
         credential="NOT-A-REAL-CANARY-8ae13c",
     )
@@ -250,15 +265,17 @@ def test_the_failure_hint_no_longer_teaches_the_command_line_form(
 def test_resolution_walks_the_same_chain_the_launcher_walks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """R4: the endpoint's token first, then the credential file — KTD11's order.
+    """R4: the credential file, and then nothing — KTD11's order, now one long.
 
     ``record`` gets the chain rather than a copy of it, so the open question about
     file-versus-environment precedence stays one question with one answer.
 
-    **The order shrank on 2026-08-06 (KTD8) and this test tracks it rather than
-    preserving it.** ``HERMES_DASHBOARD_SESSION_TOKEN`` used to sit above both
-    levels below; it now resolves nothing, and the third block asserts exactly
-    that — setting it leaves the file's answer standing.
+    **The order has shrunk twice and this test tracks it rather than preserving
+    it.** ``HERMES_DASHBOARD_SESSION_TOKEN`` sat above everything until KTD8
+    (2026-08-06); a ``token`` on ``TALARIA_GATEWAY_URL`` sat above the file until
+    2026-08-07. Neither resolves anything now, and the two blocks after the first
+    assert exactly that: setting either leaves the file's answer standing, and a
+    credential on the endpoint is refused outright rather than quietly ignored.
     """
     credentials = tmp_path / "credentials"
     credentials.write_text('token = "NOT-A-REAL-FILE-CANARY-33"\n', encoding="utf-8")
@@ -269,37 +286,45 @@ def test_resolution_walks_the_same_chain_the_launcher_walks(
     assert from_file.credential.source == "file"
     assert from_file.credential.value == "NOT-A-REAL-FILE-CANARY-33"
 
-    monkeypatch.setenv(
-        GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-URL-CANARY-77"
-    )
-    from_url = asyncio.run(resolve_record_target(credentials_path=credentials))
-    assert from_url.credential.source == "endpoint-url"
-    assert from_url.credential.value == "NOT-A-REAL-URL-CANARY-77"
-
-    monkeypatch.setenv(GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws")
     monkeypatch.setenv(RETIRED_TOKEN_ENV_VAR, "NOT-A-REAL-ENV-CANARY-77")
     ignored = asyncio.run(resolve_record_target(credentials_path=credentials))
     assert ignored.credential.source == "file"
     assert ignored.credential.value == "NOT-A-REAL-FILE-CANARY-33"
 
+    monkeypatch.setenv(
+        GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-URL-CANARY-77"
+    )
+    with pytest.raises(CredentialError) as caught:
+        asyncio.run(resolve_record_target(credentials_path=credentials))
+    message = str(caught.value)
+    assert GATEWAY_URL_ENV_VAR in message
+    assert "NOT-A-REAL-URL-CANARY-77" not in message
+
 
 def test_an_endpoint_override_is_an_endpoint_and_not_a_credential(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """KTD2: the override goes where the launcher's ``override=`` goes.
 
-    Any credential query key on it is stripped by ``AttachTarget`` rather than
-    honoured. That stripping is why the refusal in ``talaria.cli`` has to inspect
-    the operator's raw argument first (KTD3) — by the time a target exists there
-    is nothing left to detect.
+    A credential query key on the override is refused rather than honoured — and
+    it was *stripped* rather than honoured before 2026-08-07, which is why the
+    refusal in ``talaria.cli`` still has to inspect the operator's raw argument
+    first (KTD3): by the time a target exists there is nothing left to detect,
+    and argv deserves a message about shell history that this layer cannot write.
     """
-    monkeypatch.setenv(
-        GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-8ae13c"
+    credentials = tmp_path / "credentials"
+    credentials.write_text('token = "NOT-A-REAL-FILE-CANARY-33"\n', encoding="utf-8")
+    credentials.chmod(0o600)
+    monkeypatch.setenv(GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws")
+
+    target = asyncio.run(
+        resolve_record_target(
+            credentials_path=credentials, override="ws://127.0.0.1:9222/api/ws"
+        )
     )
 
-    target = asyncio.run(resolve_record_target(override="ws://127.0.0.1:9222/api/ws"))
-
     assert target.endpoint == "ws://127.0.0.1:9222/api/ws"
+    assert target.credential.source == "file"
 
 
 def test_resolution_refuses_an_endpoint_that_will_not_parse(
@@ -353,7 +378,7 @@ def test_a_provider_that_is_not_a_priming_provider_is_merely_acquired(
 
     class _Double:
         async def acquire(self) -> Credential:
-            return Credential(parameter="token", value="NOT-A-REAL-DOUBLE-1", source="endpoint-url")
+            return Credential(parameter="token", value="NOT-A-REAL-DOUBLE-1", source="file")
 
     monkeypatch.setenv(GATEWAY_URL_ENV_VAR, "ws://127.0.0.1:9911/api/ws")
 

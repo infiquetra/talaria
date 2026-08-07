@@ -22,48 +22,51 @@ inspected. That is a protocol fact, not a preference — which is why
 
 **Acquisition precedence, highest first.**
 
-1. A ``token`` query parameter already present on ``TALARIA_GATEWAY_URL``. An
-   operator who has exported that variable with a credential on it has already
-   supplied the credential, and Talaria reads the endpoint from it either way.
-   This level is about the *environment*, and only the environment. The command
-   line is not an equivalent place to put the same string, and ``talaria record``
-   now refuses an endpoint argument carrying a credential rather than accepting
-   one (``talaria/cli.py``): an exported variable is not in the process table of
-   every process that reads it, and a command line is.
-2. ``<config_dir>/credentials``, rejected unless its mode is no looser than
+1. ``<config_dir>/credentials``, rejected unless its mode is no looser than
    ``0600``. ``talaria refresh-credential`` writes this file, so the operator
    never has to hold the value themselves.
-3. An interactive hidden prompt, via :func:`getpass.getpass`.
+2. An interactive hidden prompt, via :func:`getpass.getpass`.
 
-**``HERMES_DASHBOARD_SESSION_TOKEN`` is not a level, and that is a decision.**
-It used to be the highest one. It was removed on 2026-08-06 — KTD8 of
-``docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md``, option (b) of
-``QUEUED.md``'s entry *"R1's environment clause is unmet, and no change to
-Talaria can meet it"*. Read the module's own claim narrowly, because the narrow
-claim is the true one:
+**No environment variable is a level, and neither removal was free.** The chain
+had two environment-borne levels and now has none:
 
-* **True.** Talaria no longer reads a dedicated credential variable, so an
-  operator who unsets ``HERMES_DASHBOARD_SESSION_TOKEN`` loses no supported way
-  of supplying a credential. Level 2 is a route with no environment footprint
-  at all.
-* **Not true, and not claimed anywhere.** That R1's environment clause is now
-  met. An inherited variable stays visible in ``/proc/<pid>/environ`` for the
-  life of the process — the kernel snapshots the block at ``exec`` and no code
-  change touches that. ``tests/transport/test_process_surface.py`` asserts that
-  *failure* and is meant to keep asserting it.
-* **Also not true.** That no supported route puts a credential in the
-  environment. Level 1 still does, by the operator's own choice, and the README
-  says so plainly. What changed is that a credential-free environment is now
-  reachable without giving anything up.
+* ``HERMES_DASHBOARD_SESSION_TOKEN`` went on 2026-08-06 — KTD8 of
+  ``docs/plans/2026-08-06-model-picker-and-v0-1-closure-plan.md``, option (b) of
+  ``QUEUED.md``'s entry *"R1's environment clause is unmet, and no change to
+  Talaria can meet it"*.
+* A ``token`` query parameter on ``TALARIA_GATEWAY_URL`` went on 2026-08-07, and
+  that variable is now **refused** for carrying one rather than quietly stripped
+  (:func:`resolve_endpoint`). It names the endpoint and nothing else.
 
-Levels 1–2 are re-read on **every** call, so a rotated token is picked up by the
-next reconnect without restarting Talaria — the guarantee KTD11 exists for, now
-carried by the credential file rather than by a variable. Level 3 is different
-on purpose: a prompt-sourced credential is held in memory for the process
-lifetime and never re-prompted, because re-prompting mid-stream would block
-reconnection on operator presence.
+The second removal was deferred once, on two premises that were later measured
+and found false: that ``talaria record`` needed the variable to resolve both the
+endpoint and the credential (it does not — the credential file supplies the
+credential and its own ``url`` key supplies the endpoint), and that dropping the
+route needed Hermes to gain some other way of handing a client its session token
+(it already had one, and :mod:`talaria.transport.refresh` already used it). The
+account is in ``docs/engineering-journal/DECISIONS.md``.
 
-**Level 3 is reachable only before the interface takes the terminal.** A dial
+**Read the module's claim narrowly, because the narrow claim is the true one.**
+
+* **True.** No route Talaria supports places a credential in its environment, its
+  command line, or shell history. An operator can now configure Talaria — both
+  halves, endpoint and credential — with nothing exported at all, by giving the
+  credential file a ``url`` key alongside its ``token``.
+* **Not true, and not claimed anywhere.** That R1's environment clause is met. An
+  inherited variable stays visible in ``/proc/<pid>/environ`` for the life of the
+  process — the kernel snapshots the block at ``exec`` and no code change touches
+  that. Talaria not reading a variable does not make it unreadable to anyone
+  else. ``tests/transport/test_process_surface.py`` asserts that *failure* and is
+  meant to keep asserting it.
+
+Level 1 is re-read on **every** call, so a rotated token is picked up by the next
+reconnect without restarting Talaria — the guarantee KTD11 exists for, now
+carried entirely by the credential file. Level 2 is different on purpose: a
+prompt-sourced credential is held in memory for the process lifetime and never
+re-prompted, because re-prompting mid-stream would block reconnection on
+operator presence.
+
+**Level 2 is reachable only before the interface takes the terminal.** A dial
 happens inside a running Textual application, which owns the screen and is
 reading stdin; a :func:`getpass.getpass` issued from there writes its prompt
 where nothing can display it and then blocks a worker thread on a read that
@@ -71,9 +74,9 @@ competes with the UI's own input driver. The observable result is a client that
 appears hung at "connecting" while it is in fact waiting, invisibly, for typing
 that cannot reach it. So the launcher calls :meth:`LoopbackTokenProvider.prime`
 **before** the interface starts and that call seals the prompt for the rest of
-the process: every later dial resolves from levels 1–2 or from the primed value,
-and a dial that can find none of those fails with :class:`CredentialError`
-rather than asking a question nobody can see.
+the process: every later dial resolves from level 1 or from the primed value,
+and a dial that can find neither fails with :class:`CredentialError` rather than
+asking a question nobody can see.
 
 **Nothing here logs, prints, or reprs a credential value.** :class:`Credential`
 overrides ``__repr__`` for that reason — a dataclass's generated repr would put
@@ -91,7 +94,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
-from urllib.parse import parse_qsl, urlsplit
 
 __all__ = [
     "CREDENTIAL_FILE_MODE",
@@ -129,13 +131,16 @@ _TOO_LOOSE_MASK = 0o077
 #: Where a value came from. Carried on the credential so a test can assert the
 #: precedence chain by observation rather than by reconstructing it.
 #:
-#: ``"environment"`` was this list's first member and named the
-#: ``HERMES_DASHBOARD_SESSION_TOKEN`` level. It is gone with that level (KTD8):
-#: a label nothing can produce is a precedence chain a test can still claim to
-#: have observed, and it is the shape a reintroduction would slip back in
-#: through. ``"endpoint-url"`` is the surviving environment-borne source and
-#: says which variable it means.
-CredentialSource = Literal["endpoint-url", "file", "prompt", "prompt-cached"]
+#: Two members have been deleted, both for the same reason: a label nothing can
+#: produce is a precedence chain a test can still claim to have observed, and it
+#: is the shape a reintroduction slips back in through. ``"environment"`` named
+#: the ``HERMES_DASHBOARD_SESSION_TOKEN`` level and went with it (KTD8,
+#: 2026-08-06); ``"endpoint-url"`` named the ``token``-on-``TALARIA_GATEWAY_URL``
+#: level and went with it on 2026-08-07. **No member of this type names an
+#: environment variable, and that is now a property of the whole chain rather
+#: than of one level.** Adding one back means editing this line, which is the
+#: cheapest possible place for that decision to become visible in review.
+CredentialSource = Literal["file", "prompt", "prompt-cached"]
 
 
 class CredentialError(Exception):
@@ -245,9 +250,18 @@ async def _hidden_prompt(label: str) -> str:
 class LoopbackTokenProvider:
     """KTD11's v0.1 provider: the ungated loopback ``?token=`` credential.
 
-    Every dependency is injected — the environment mapping, the credential file
-    path, and the prompt function — so the precedence chain is testable without
-    touching the operator's real environment or terminal.
+    Every dependency is injected — the credential file path and the prompt
+    function — so the precedence chain is testable without touching the
+    operator's real files or terminal.
+
+    **There is deliberately no environment injection point.** This class took an
+    ``environ`` mapping until 2026-08-07, when the last environment-borne level
+    left the chain. Keeping the parameter would have left the provider able to
+    see a variable it must never read, and a test able to pass one in and observe
+    a chain the shipped code cannot walk. The class now has no way to reach the
+    environment at all, which makes "no supported route puts a credential in the
+    environment" a property ``mypy --strict`` checks rather than a property a
+    reader has to confirm by reading every branch.
     """
 
     #: What the operator sees at the interactive level. No default value is
@@ -258,12 +272,10 @@ class LoopbackTokenProvider:
         self,
         *,
         credentials_path: Path | None = None,
-        environ: Mapping[str, str] | None = None,
         prompt: Callable[[str], object] | None = None,
         allow_prompt: bool = True,
     ) -> None:
         self._credentials_path = credentials_path
-        self._environ = environ
         self._prompt = prompt
         self._allow_prompt = allow_prompt
         self._remembered: str | None = None
@@ -271,13 +283,6 @@ class LoopbackTokenProvider:
         #: per-dial rule is otherwise invisible: a provider that were called
         #: once and cached would behave identically until the first reconnect.
         self.acquisitions = 0
-
-    @property
-    def environ(self) -> Mapping[str, str]:
-        # Read late rather than captured at construction, so a rotated
-        # environment variable is picked up by the next dial even when the
-        # provider was built before the rotation.
-        return self._environ if self._environ is not None else os.environ
 
     async def acquire(self) -> Credential:
         """Walk the precedence chain and return a credential. Never logs it."""
@@ -289,7 +294,7 @@ class LoopbackTokenProvider:
 
         Two things happen here, and the second is the one that matters. The
         first is ordinary: walk the same chain :meth:`acquire` walks, at a moment
-        when the terminal is still an ordinary terminal, so level 4 can actually
+        when the terminal is still an ordinary terminal, so level 2 can actually
         ask the operator a question and be answered.
 
         The second is that the prompt is sealed **whichever level answered**, and
@@ -297,9 +302,8 @@ class LoopbackTokenProvider:
         :func:`getpass.getpass`, so the failure mode this method exists to
         prevent — a hidden prompt underneath a running full-screen interface,
         indistinguishable from a hung connection — is unreachable rather than
-        merely unlikely. A credential that disappears mid-session (a file
-        deleted, an endpoint variable rotated to one carrying no token)
-        therefore surfaces on the next
+        merely unlikely. A credential that disappears mid-session — the file
+        deleted, or its ``token`` key removed — therefore surfaces on the next
         reconnect as :class:`CredentialError`, which
         :meth:`~talaria.transport.source.LiveSource._dial` already reports as
         ``credential_unavailable`` with the reason on screen.
@@ -315,12 +319,6 @@ class LoopbackTokenProvider:
             self._allow_prompt = False
 
     async def _resolve(self) -> Credential:
-        env = self.environ
-
-        value = _token_in_url(env.get(GATEWAY_URL_ENV_VAR))
-        if value:
-            return Credential(parameter="token", value=value, source="endpoint-url")
-
         value = self._from_file()
         if value:
             return Credential(parameter="token", value=value, source="file")
@@ -334,8 +332,7 @@ class LoopbackTokenProvider:
         if not self._allow_prompt:
             raise CredentialError(
                 "no gateway credential: run `talaria refresh-credential` to write "
-                f"{self._describe_path()} at mode 0600, or put a token query "
-                f"parameter on {GATEWAY_URL_ENV_VAR}, or allow the interactive prompt"
+                f"{self._describe_path()} at mode 0600, or allow the interactive prompt"
             )
 
         prompt = self._prompt if self._prompt is not None else _hidden_prompt
@@ -351,7 +348,7 @@ class LoopbackTokenProvider:
             raise CredentialError(
                 f"no terminal to prompt for a gateway credential ({exc}); run "
                 f"`talaria refresh-credential` to write {self._describe_path()} at "
-                f"mode 0600, or put a token query parameter on {GATEWAY_URL_ENV_VAR}"
+                "mode 0600"
             ) from exc
         value = _clean(typed)
         if not value:
@@ -417,39 +414,89 @@ def resolve_endpoint(
     credentials_path: Path | None = None,
     override: str | None = None,
 ) -> str:
-    """Resolve the gateway endpoint, **without** its credential query.
+    """Resolve the gateway endpoint, refusing one that carries a credential.
 
     Precedence: an explicit override, ``TALARIA_GATEWAY_URL``, a ``url`` key in
-    the credential file, then :data:`DEFAULT_GATEWAY_URL`. The credential is
-    stripped here rather than downstream, so no caller can accidentally hold a
-    credential-bearing endpoint: the provider is the only thing that carries a
-    value, and :class:`~talaria.transport.attach.AttachTarget` puts it back for
-    exactly one dial.
+    the credential file, then :data:`DEFAULT_GATEWAY_URL`.
 
-    Raises :class:`CredentialError` for a credential file this process will not
-    trust and for an endpoint that will not parse — never a bare ``ValueError``
-    out of ``urlsplit``. :meth:`~talaria.transport.attach.AttachTarget.from_environment`
-    turns both into a named failure state, which is the shape the rest of the
+    **A configured endpoint carrying a credential is refused, not stripped, and
+    that is the change of 2026-08-07.** Until then a ``token`` on
+    ``TALARIA_GATEWAY_URL`` was the *highest-precedence credential source*: this
+    function stripped it off the endpoint while :class:`LoopbackTokenProvider`
+    read it back as a credential, so the value worked and stayed in the
+    operator's environment and shell history for the process's whole life. That
+    route is gone. Stripping silently in its place would have been the worse of
+    the two remaining options — the operator's configuration would keep working,
+    so nothing would ever tell them the credential they exported is exposed and
+    now also useless. The same argument the ``talaria record`` refusal is built
+    on (``talaria/cli.py``), applied to the environment instead of argv.
+
+    :func:`~talaria.transport.attach.url_carries_credential` is the shared
+    predicate, so the command line and the environment cannot come to disagree
+    about what a credential looks like. Stripping still happens after the
+    refusal: it is what keeps :data:`DEFAULT_GATEWAY_URL` and any future
+    caller-supplied endpoint credential-free by construction rather than by
+    habit, and :class:`~talaria.transport.attach.AttachTarget` puts a credential
+    back for exactly one dial.
+
+    Raises :class:`CredentialError` for an endpoint carrying a credential, for a
+    credential file this process will not trust, and for an endpoint that will
+    not parse — never a bare ``ValueError`` out of ``urlsplit``.
+    :meth:`~talaria.transport.attach.AttachTarget.from_environment` turns all
+    three into a named failure state, which is the shape the rest of the
     transport is in.
     """
-    from talaria.transport.attach import strip_credential_query
+    from talaria.transport.attach import strip_credential_query, url_carries_credential
 
     env = environ if environ is not None else os.environ
 
     candidate = _clean(override) or _clean(env.get(GATEWAY_URL_ENV_VAR))
     source = f"{GATEWAY_URL_ENV_VAR}" if candidate and override is None else "the endpoint"
+    #: Whether the endpoint came from somewhere another process can read. The
+    #: credential file is ``0600``, so a credential in its ``url`` key is
+    #: misplaced rather than exposed, and telling its owner to rotate would be
+    #: false. The other two sources are the environment and argv.
+    exposed = True
     if not candidate and credentials_path is not None and credentials_path.exists():
         url = _read_credential_file(credentials_path).get("url")
         candidate = _clean(url) if isinstance(url, str) else None
         source = f"the url key in {credentials_path}"
+        exposed = False
 
     try:
-        return strip_credential_query(candidate or DEFAULT_GATEWAY_URL)
+        stripped = strip_credential_query(candidate or DEFAULT_GATEWAY_URL)
     except ValueError as exc:
         # The value itself is deliberately not echoed: a URL malformed enough to
         # defeat ``urlsplit`` cannot be redacted by parsing it, and it is exactly
         # the kind of string an operator pastes a token into.
+        #
+        # Checked before the credential refusal below, not after, so a mistyped
+        # endpoint is reported as a mistyped endpoint. ``url_carries_credential``
+        # treats an unparseable URL as carrying one — the right conservative
+        # default where it is the only check standing in front of argv, and the
+        # wrong diagnosis here, where a parse has already been attempted.
         raise CredentialError(f"{source} is not a valid URL: {exc}") from exc
+
+    if candidate is not None and url_carries_credential(candidate):
+        # Names the source and nothing else. Not the value, not the URL that
+        # carried it, not the parameter it arrived under: the point of refusing
+        # is that the string is already somewhere it should not be, and an error
+        # message is a third place — one that reaches stderr, and stderr is a log
+        # file under a supervisor or in continuous integration.
+        exposure = (
+            " Treat that value as exposed and rotate it: it is readable to anyone"
+            " who can read this process, and your shell has written it to history."
+            if exposed
+            else ""
+        )
+        raise CredentialError(
+            f"{source} carries a credential, and an endpoint is not a credential "
+            f"source.{exposure} Run `talaria refresh-credential` to write the "
+            "credential file's token key at mode 0600, then supply an endpoint "
+            "that carries no credential"
+        )
+
+    return stripped
 
 
 def _clean(value: object) -> str | None:
@@ -463,20 +510,6 @@ def _clean(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
-
-
-def _token_in_url(url: object) -> str | None:
-    """The ``token`` query parameter of an endpoint URL, if it carries one."""
-    if not isinstance(url, str) or "://" not in url:
-        return None
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return None
-    for name, value in parse_qsl(parts.query, keep_blank_values=True):
-        if name == "token":
-            return _clean(value)
-    return None
 
 
 async def _await_maybe(value: object) -> object:
