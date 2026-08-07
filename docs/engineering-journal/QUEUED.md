@@ -4,6 +4,34 @@
 
 ## P0
 
+### `absent_capability` blames the gateway's version for a mistyped profile name
+
+**Priority.** P1 — the message actively misdiagnoses, and it fires on the most likely operator error.
+Found 2026-08-07 while exercising row 19's absent-capability branch against a live gateway.
+
+**Evidence.** `GET /api/model/options` returns 200; `GET /api/model/options?profile=no-such-profile`
+returns **404**. Talaria's admin client maps any 404 on an admin path to `absent_capability` with the
+message "this gateway does not serve /api/model/options; it predates the admin model API"
+(`talaria/transport/admin.py`, the 404 branch of `_http_error`). Reproduced live: the gateway plainly
+does serve the endpoint, because the unparameterized request to it succeeded moments earlier.
+
+**Mechanism.** The 404 is doing two jobs. Hermes returns it both for "this route does not exist" (a
+genuinely old gateway) and for "this route exists but that profile does not". The client cannot tell
+them apart from the status code alone, and it guessed the rarer one. A version skew is a once-a-release
+event; a mistyped or stale profile name is an everyday one.
+
+**Why it matters more than a wording nit.** The message names a cause the operator cannot act on and
+hides the one they can. Told the gateway predates the API, the reasonable next move is to upgrade
+Hermes — which will not help, because the profile name is still wrong.
+
+**Effort.** Small. The two cases are distinguishable without guessing: a request carrying a `profile`
+parameter that 404s should first re-ask without it (or consult `GET /api/profiles`, which the client
+already calls) and report "no such profile" when the bare path answers. Only a 404 on the bare path is
+evidence of an absent capability.
+
+**Worth it when.** Before the profile picker is used by anyone but its author — U4 makes profile-scoped
+requests routine, which makes this the everyday failure rather than a corner case.
+
 ### The model picker is a numbered list, not a picker — KTD3's anti-modal decision needs reopening
 
 **Priority.** P0 — the picker is the headline feature of the 2026-08-06 work and it does not do the
