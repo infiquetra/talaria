@@ -62,7 +62,7 @@ overstated. The recording captured **server-to-client frames only**, so the
 method *names* above are read off the response shapes and the sequence rather
 than off a recorded request — the first shape fits `session.create`'s pin
 exactly and mismatches `session.resume`'s on seven keys, and the second is
-followed immediately by a streamed turn. And it says nothing about the other ten
+followed immediately by a streamed turn. And it says nothing about the other nine
 evidence-only methods, nothing about request parameters, and nothing about
 Talaria's own transport, which is what actually has to work.
 
@@ -81,7 +81,7 @@ Status values: **measured**, **inferred**, **unmet**.
 | 3 | **AE7** — a drifted response shape is flagged | measured | A dropped key, a changed value kind, and an added key each flagged by name against the pinned signature | `test_a_dropped_response_key_is_flagged_by_name` and the two beside it |
 | 4 | A probe that never answers must not read as a pass | measured | An unanswered probe grades `unproved` and blocks; a gateway that drops the socket mid-check leaves one named `unproved` row and two `present` rows | `test_a_probe_that_never_comes_back_blocks_rather_than_passing` |
 | 5 | The startup probe cannot invoke a mutating method by mistake | measured | The guard is called directly with each of the thirteen evidence-only entries and raises before the dispatcher is touched (call count asserted at zero) | `test_probing_an_evidence_only_method_raises_before_any_call` |
-| 6 | The **thirteen** other required methods are compatible | **inferred** | Never probed at startup. Their evidence is the pinned source line plus the recorded request fixture and response shape in `talaria/domain/compat.py`. Three of the thirteen — `session.create`, `prompt.submit` and `slash.exec` — have been called by Talaria itself against a real Hermes dashboard and answered without error; the other ten have no runtime evidence of any kind. **Re-graded 2026-08-06 by enumerating methods rather than by counting runs** — see §The method enumeration, which reads every outbound frame in the corpus and finds **eight distinct methods of the required eighteen**, unchanged from the 2026-08-05 grade because the model-picker plan's units U1–U6 added no recording to the corpus | `talaria/domain/compat.py`; §The method enumeration |
+| 6 | The **thirteen** other required methods are compatible | **inferred** | Never probed at startup. Their evidence is the pinned source line plus the recorded request fixture and response shape in `talaria/domain/compat.py`. Four of the thirteen — `session.create`, `prompt.submit`, `slash.exec` and `session.resume` — have been called by Talaria itself against a real Hermes dashboard and answered without error; the other nine have no runtime evidence of any kind. **Re-graded 2026-08-06 by enumerating methods rather than by counting runs**, and **re-enumerated 2026-08-07** after the row-19 acceptance run — see §The method enumeration. The 2026-08-06 pass found **eight distinct methods of the required eighteen** and the row did not move; the 2026-08-07 pass finds **nine**, because the acceptance run called `session.resume` live for the first time. The row still does not clear: nine of the thirteen evidence-only methods have no runtime evidence of any kind | `talaria/domain/compat.py`; §The method enumeration |
 | 6a | What "shape matches" covers | measured | Top-level only: the response's own key set and each value's kind. A gateway whose every *nested* payload had changed was graded `present` with `0 blocking` — deliberate v0.1 scope (`talaria/domain/compat.py:343`), stated here because `present` sounds broader than it is | `talaria/domain/compat.py::compare_shape` |
 | 7 | **R36** — a normal exit restores the terminal | measured | The real client run on a pseudo-terminal; `termios` snapshotted before, during and after; attributes after are byte-identical to before. The falsifiability control (`SIGKILL` on the same run) leaves the terminal in raw mode, and that is asserted | `tests/ui/test_teardown.py::test_a_normal_exit_restores_the_terminal_modes`, `::test_the_terminal_restore_assertion_can_fail` |
 | 8 | **R36** — an induced mid-stream failure still restores the terminal | measured | A frame source that streams two frames then raises; the app reports it, closes the source and exits 70; the terminal is restored | `::test_an_induced_mid_stream_failure_still_restores_the_terminal` |
@@ -95,7 +95,7 @@ Status values: **measured**, **inferred**, **unmet**.
 | 16 | The launcher runs end to end — attach, probe, open, render, exit | measured *against the stub* | The real console script (`python -m talaria.cli`, no arguments) on a pseudo-terminal against the loopback stub: one connection accepted, the five read-only probes and no mutating method among them, exactly one `session.create`, tens of kilobytes of interface drawn, `ctrl+q` → exit 0, terminal restored | §Launcher run |
 | 17 | **R2** — live startup acceptance against a running gateway | measured | The KTD7 precedence chain resolves into a real `session.create` / `session.resume` call and the launcher completes that sequence — now against a running Hermes gateway and not only against the stub. Measured over the live frame-log corpus, cited by digest and count rather than by path (R29): `talaria-live-corpus-v1-2659f-bd69e537f1d9`, 17 recordings, 2,659 frames. **How that digest is built**, so it can be re-derived: `sha256` over each recording's raw bytes concatenated in filename-sorted order, and the count is lines whose `kind` is `frame` summed across the corpus. It is an aggregate over many recordings, so it deliberately does *not* wear `live_corpus_identity`'s single-recording `talaria-live-v1-…` label. **What was counted:** gateway *replies*, not Talaria's calls — a call going out only proves Talaria tried — with each reply matched to the call that produced it by JSON-RPC `id`. 15 of the 17 recordings carry a reply whose result holds a `session_id`, from `session.create` and from `session.most_recent`; in all 15 the five read-only startup probes of row 1 were each answered as well. The remaining 2 are header-only recordings holding zero frames, and they answer nothing — the check does come back false where there is nothing to find. **This row previously read `unmet`**, on the reason "No Hermes gateway has answered one", which was true when it was written on 2026-08-02 and stopped being true on 2026-08-04 | corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9`; `tests/transport/test_session_startup.py` for the stub half |
 | 18 | **R3** — one live turn streamed to completion, compared against replay | measured | The row asks for two things, and each is cited separately because citing only the first would leave the row true-sounding and under-evidenced. **Streamed to completion:** over the same corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9` (17 recordings, 2,659 frames, construction stated in row 17), the sequence an outbound `prompt.submit`, then an inbound `message.start` with no other `message.*` event in between, then one or more `message.delta`, then `message.complete`, occurs in 12 of the 17 recordings — 18 completed turns in total, one for every `prompt.submit` the corpus contains, carrying 1 to 616 `message.delta` frames per turn. **Compared against replay:** `docs/engineering-journal/LEARNINGS.md:111` records the comparison `talaria/cli.py` specifies — one live turn streamed to completion and its transcript compared against a replay of the same frames — passing on the 32-frame recording `talaria-live-v1-32f-5f477fa24fa5`: three live rows, three replayed lines, byte-identical, `interface_shows_everything` true. That label is `live_corpus_identity`'s single-recording form and re-derives from the corpus as `sha256` `5f477fa24fa50b391d73eee6f455190000281980a8db33c17f4130208d997549` over 32 frames, frame-log v1 recorded 2026-08-04T19:37:35.709Z. **This row previously read `unmet`**, on the reason "Nothing was submitted to a Hermes session. The replay-versus-live equivalence claim rests on the shared frame-source seam, not on a compared transcript." The first sentence stopped being true on 2026-08-04; the second is answered by the byte-identical comparison above | corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9` for the streaming half, recording `talaria-live-v1-32f-5f477fa24fa5` and `docs/engineering-journal/LEARNINGS.md:111` for the replay half |
-| 19 | **F1, F7** demonstrated live in an isolated session | **unmet** | The row stays unmet, on a narrower reason than it used to carry. **F1 (first run)** has been exercised live, though not in the form this row asks for: over the corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9` (17 recordings, 2,659 frames, construction stated in row 17), 15 of the 17 recordings authenticate against a real Hermes dashboard, have all five read-only startup probes of row 1 answered, and land in a session — the F1 sequence end to end. What is still missing for F1 is an isolated throwaway session run by somebody watching; the authentication-failure and absent-capability branches, which no recording exercises; and the compatibility check's real on-screen output, which was never captured. Only the bare startup path ran — neither `--resume` nor `--session` appears anywhere in the corpus and `session.resume` was never called, so KTD7's precedence chain is unverified live. **F7 (the gateway survives Talaria's exit)** cannot be settled by any frame log, because the log ends at the exit F7 needs somebody to observe; the only F7 evidence in this document is row 11's, against the loopback stub. The corpus does hold something adjacent that stops short of settling it: in ten pairs of adjacent recordings against the same loopback endpoint, the later run's `session.most_recent` returned the exact session identifier the earlier run's `session.create` had produced, eight of them forming one unbroken chain spanning roughly two hours twenty minutes. That proves the endpoint answered again after each Talaria process exited and still held the session — it does not prove Talaria did not stop it, because Hermes persists sessions to disk, so a gateway that died at exit and was restarted by the operator would leave an identical signature. What would settle F7 is one observation taken outside the frame log: the gateway process's PID or start time sampled before Talaria attaches and again after it exits. **This row previously read** "No isolated live session has been run", which was true when written on 2026-08-02 and stopped being an accurate description of what is missing on 2026-08-04. **Re-read 2026-08-06 and unchanged.** The model-picker plan's unit U6 produced the operator checklist that would close this row — `docs/plans/2026-08-06-u6-row19-operator-checklist.md`, six steps, still carrying `status: ready-for-operator` — and no step of it has been run: the recording corpus is byte-for-byte the 2026-08-04 one, its newest frame log started at `2026-08-04T19:43:17.075Z`, and nothing recorded on 2026-08-05 or 2026-08-06 exists. **A checklist written is not a checklist executed**, and grading this row on the existence of the document would be the exact substitution this table's method section exists to refuse | corpus `talaria-live-corpus-v1-2659f-bd69e537f1d9`; row 11 for the stub-only F7 evidence; `docs/plans/2026-08-06-u6-row19-operator-checklist.md` |
+| 19 | **F1, F7** demonstrated live in an isolated session | **met** | **Met on 2026-08-07**, on the observation this row itself named as the one that would settle it. The operator executed `docs/plans/2026-08-06-u6-row19-operator-checklist.md` end to end against a live Hermes dashboard, present at the terminal, producing corpus `talaria-live-corpus-v1-107f-e40d9fd04ec5` (7 recordings, 107 frames). **F7** is settled by the sample this row asked for and no frame log could give: the gateway process's PID and start time taken before Talaria attached and again immediately after it exited, identical across the pair, with Talaria's exit confirmed by its absence from the process table rather than assumed — so the gateway is the same process, not a restart with an identical signature, which is the ambiguity the adjacent-recordings evidence could not resolve. **F1** ran end to end in a throwaway session nobody else was using: all five read-only startup probes answered and `session.create` landed a session. The four remaining branches also cleared. `--resume` and `--session <id>` ran live for the first time, and `session.resume` — never called in any prior corpus — appears in three recordings; a `--session` id the gateway did not know was refused (`code 4007`) with Talaria **failing rather than falling back** to the most-recent session it already held, which a passing run could not have demonstrated. The authentication-failure branch was forced by restarting the dashboard and observed verbatim on screen, then recovered with `talaria refresh-credential`. The absent-capability branch was reached live through a profile the gateway does not recognize, with no stub. The compatibility check reported five probes, five present, zero blocking. Two findings this run produced rather than assumed: `spawn_tree.list` is **present, not refused** against a live gateway (the refusal was fixture behavior), and `absent_capability` misreports a mistyped profile name as a too-old gateway — both queued, neither affecting this grade | corpus `talaria-live-corpus-v1-107f-e40d9fd04ec5`; `docs/work-sessions/2026-08-07-row19-live-acceptance-results.md`; `docs/plans/2026-08-06-u6-row19-operator-checklist.md` |
 
 ## The method table
 
@@ -137,7 +137,7 @@ exceptions, and what makes them exceptions changed on 2026-08-04: `session.creat
 Hermes dashboard on loopback, and every one of those calls was answered without an
 error. Earlier drafts of this section recorded the first two as response shapes
 observed through the TypeScript reference recorder, which was true when written;
-Talaria's own frame logs now carry the calls. The other ten have still never left
+Talaria's own frame logs now carry the calls. The other nine have still never left
 Talaria.
 
 The startup check states the gap on every run rather than reporting
@@ -181,23 +181,62 @@ The only other `method` value anywhere in the corpus is `event`, which appears
 2,393 times and only ever inbound — it is Hermes's notification envelope, not one
 of the eighteen. No outbound frame carries a method outside the required set.
 
-**Never called, by count rather than by recollection — ten of the thirteen:**
-`session.resume`, `session.interrupt`, `subagent.interrupt`, `command.dispatch`,
+### Re-enumerated 2026-08-07, after the row-19 acceptance run
+
+The same count, re-run over the corpus as it now stands —
+`talaria-live-corpus-v1-2766f-5cd2ddb01be3`, **24 recordings, 2,766 frames**,
+the 2026-08-04 corpus plus the seven recordings the acceptance run produced.
+
+**Nine distinct methods of the required eighteen appear. Nine do not.**
+
+| Method called | Required set it belongs to | Calls | Recordings |
+|---|---|---|---|
+| `commands.catalog` | read-only startup probe | 42 | 21 of 24 |
+| `session.most_recent` | read-only startup probe | 22 | 21 of 24 |
+| `spawn_tree.list` | read-only startup probe | 21 | 21 of 24 |
+| `agents.list` | read-only startup probe | 21 | 21 of 24 |
+| `delegation.status` | read-only startup probe | 21 | 21 of 24 |
+| `session.create` | **evidence-only (one of the thirteen)** | 18 | 18 of 24 |
+| `prompt.submit` | **evidence-only (one of the thirteen)** | 18 | 12 of 24 |
+| `slash.exec` | **evidence-only (one of the thirteen)** | 12 | 5 of 24 |
+| `session.resume` | **evidence-only (one of the thirteen)** | 3 | 3 of 24 |
+
+**The change is exactly one method.** `session.resume` moved from never-called to
+called, in three recordings, because the acceptance run exercised `--resume` and
+`--session <id>` — the two startup paths that had never run against a live gateway.
+Nothing else moved: seven live runs driven by hand through a model picker, a
+profile picker and a credential-failure branch added one method to this table.
+
+That number is the point of enumerating rather than reasoning. "The operator ran a
+six-step acceptance checklist end to end" invites the reading that live coverage
+widened substantially. It widened by one of thirteen, and **row 6 does not clear.**
+
+**Never called, by count rather than by recollection — nine of the thirteen:**
+`session.interrupt`, `subagent.interrupt`, `command.dispatch`,
 `paste.collapse`, `approval.respond`, `clarify.respond`, `secret.respond`,
 `sudo.respond`, `terminal.read.respond`.
+
+`session.resume` **left this list on 2026-08-07** — the row-19 acceptance run
+called it live for the first time, in three of the seven recordings of corpus
+`talaria-live-corpus-v1-107f-e40d9fd04ec5`, which is also what settled the
+startup precedence chain of `KTD7 (2026-08-02 prototype plan)`.
 
 **The result of the re-grade is that row 6 does not move, and the reason matters
 more than the result.** The model-picker plan sequenced six units — the admin HTTP
 surface, the model picker, the credential decision, the profile picker, the
 default-model picker, and the scripted live acceptance run — and the natural
-reading of "six units of work happened" is that live coverage widened. It did not.
-The corpus has not gained a recording since 2026-08-04: its newest frame log's
-header reads `2026-08-04T19:43:17.075Z`, and re-deriving the aggregate digest over
-the current directory still yields `bd69e537f1d9…`, the same value rows 17 and 18
-were written against. Units U1–U5 were built and tested against the loopback stub
-and the repository suite; U6, the unit whose product *is* live evidence, produced
-a checklist for an operator and stopped there (row 19). **Row 6 therefore stays
-`inferred` on the same ten methods it named on 2026-08-05.**
+reading of "six units of work happened" is that live coverage widened. When this
+section was written on 2026-08-06 it had not: units U1–U5 were built against the
+loopback stub and the repository suite, and U6 — the unit whose product *is* live
+evidence — produced a checklist for an operator and stopped there.
+
+**Amended 2026-08-07.** The operator then ran that checklist, and coverage widened
+by exactly one method. The corpus is no longer the 2026-08-04 one; the acceptance
+run added `talaria-live-corpus-v1-107f-e40d9fd04ec5` (7 recordings, 107 frames),
+and `session.resume` gained live evidence. **Row 6 still stays `inferred`**, now on
+nine methods rather than ten. One method in seven recordings is what a picker
+built and driven by hand actually exercises, which is the honest measure of that
+work rather than the count of units in it.
 
 One caveat on what this section can prove, stated because it is easy to read the
 table above as broader than it is. An outbound frame proves Talaria *sent* a call,
@@ -501,17 +540,31 @@ that date on reasons that stopped being true on 2026-08-04; both rows now record
 what they used to say and why. This section is rewritten on the table as it now
 stands, and what it used to say is set out at the end of it.
 
-Reading the table: rows 17 and 18 are **measured**, row 19 is **unmet**, row 13
+Reading the table: rows 17, 18 and 19 are **measured or met**, row 13
 is **partially unmet**, and row 6 covers thirteen of the eighteen required
-gateway methods as **inferred rather than measured** (three of those thirteen —
-`session.create`, `prompt.submit` and `slash.exec` — have since been called by
-Talaria against a real gateway and answered; the other ten have no runtime
-evidence of any kind). Rows 12 and 14 were the two weakest *measured* rows in
+gateway methods as **inferred rather than measured** (four of those thirteen —
+`session.create`, `prompt.submit`, `slash.exec` and, since 2026-08-07,
+`session.resume` — have been called by Talaria against a real gateway and
+answered; the other nine have no runtime evidence of any kind). Rows 12 and 14 were the two weakest *measured* rows in
 earlier drafts — macOS-only, and a CI job that had never run — and both were
 closed by pushing this branch. The suite itself fails intermittently, twelve runs
 green in thirteen.
 
-AE7 and R39 say the ready verdict is blocked on any gap.
+**Row 19 cleared on 2026-08-07**, and it is worth saying what closed it, because
+the row had spent five days blocked on something no amount of testing could
+produce. It asked for one observation taken *outside* the frame log — the gateway
+process's PID and start time, sampled before Talaria attached and again after it
+exited — because a frame log ends at the exit being tested and can never settle
+F7. The operator ran the checklist and took that sample. The two readings are
+identical and Talaria's exit was confirmed by its absence from the process table,
+which distinguishes "the gateway survived" from "the gateway died and was
+restarted with an identical signature" — the ambiguity the adjacent-recordings
+evidence in this row could not resolve.
+
+Clears: v0-1-daily-driver#row-19
+
+AE7 and R39 say the ready verdict is blocked on any gap. **Two gaps remain, so
+the verdict does not move.**
 
 ### Talaria v0.1 is **NOT READY** as a daily driver.
 
@@ -520,18 +573,8 @@ is the point of this restatement: three words that used to rest on "this client
 has never attached" now rest on three specific, much narrower gaps, and a reader
 who acts on the old reasons would be acting on a fact that expired on 2026-08-04.
 
-The three gaps, in the order the table grades them:
-
-- **Row 19 — F1 and F7 have not been demonstrated live in an isolated session.**
-  The table grades this **unmet**, and this section reads that grade rather than
-  re-deriving it. What the row asks for is a session run for the purpose, with F7
-  — the gateway still serving after Talaria exits — observed *after* that exit.
-  Row 11 has F7 only against the loopback stub. **Unchanged on 2026-08-06.** The
-  checklist that would close it now exists and is specific
-  (`docs/plans/2026-08-06-u6-row19-operator-checklist.md`, six steps); not one of
-  its steps has been executed, and the recording corpus is unchanged since
-  2026-08-04. This row is now blocked on an operator session nobody has sat down
-  and run, rather than on nobody knowing what to run.
+The **two remaining** gaps, in the order the table grades them — row 19, which
+was the third, cleared on 2026-08-07:
 - **Row 13 — R1's environment half is partially unmet.** Talaria adds no
   credential of its own to its environment, but an inherited
   `HERMES_DASHBOARD_SESSION_TOKEN` stays readable for the life of the process and
@@ -683,16 +726,28 @@ evidence, restate whatever moved, then set a new date.
 **Restated 2026-08-06 together with the evidence table, in one edit, because that
 is the rule.** Rows 6, 13 and 19 were re-graded above and this block is rewritten
 in the same pass; a table restated without its block, or a block moved without its
-table, is the drift the check reads for. All three conditions survive the
-re-grade, so all three `blocks-on` lines stay and the verdict stays **NOT READY**.
-`review-by` moves to 2026-09-06 because the re-read that date exists to force has
-just happened — the date is moved *by* the re-read, never ahead of it.
+table, is the drift the check reads for. All three conditions survived that
+re-grade, so all three `blocks-on` lines stayed and the verdict stayed **NOT
+READY**. `review-by` moves to 2026-09-06 because the re-read that date exists to
+force has just happened — the date is moved *by* the re-read, never ahead of it.
+
+**Restated again 2026-08-07, in the same one-edit rule.** Row 19 is now **met**:
+the operator ran the acceptance checklist end to end, including the
+outside-the-frame-log process sample the row itself named as the one observation
+that would settle F7. Its `blocks-on` line is removed and a
+`Clears: v0-1-daily-driver#row-19` backlink is written — a live claim, which the
+gating check cross-examines against this block rather than taking on trust.
+
+**Two conditions remain and the verdict does not move.** Row 6 was re-enumerated
+over the enlarged corpus and gained exactly one method (`session.resume`), leaving
+nine of thirteen with no runtime evidence. Row 13 is untouched by this run. By AE7
+and R39 either one alone blocks ready, so **NOT READY** stands — this is the
+expected result of a genuine re-grade, not a shortfall of the run that produced it.
 
 ```gate
 id: v0-1-daily-driver
 verdict: NOT READY
 review-by: 2026-09-06
-blocks-on: row-19 unmet
 blocks-on: row-13 partially unmet
 blocks-on: row-6 inferred
 ```

@@ -4,6 +4,70 @@
 
 ## P0
 
+### `absent_capability` blames the gateway's version for a mistyped profile name
+
+**Priority.** P1 — the message actively misdiagnoses, and it fires on the most likely operator error.
+Found 2026-08-07 while exercising row 19's absent-capability branch against a live gateway.
+
+**Evidence.** `GET /api/model/options` returns 200; `GET /api/model/options?profile=no-such-profile`
+returns **404**. Talaria's admin client maps any 404 on an admin path to `absent_capability` with the
+message "this gateway does not serve /api/model/options; it predates the admin model API"
+(`talaria/transport/admin.py`, the 404 branch of `_http_error`). Reproduced live: the gateway plainly
+does serve the endpoint, because the unparameterized request to it succeeded moments earlier.
+
+**Mechanism.** The 404 is doing two jobs. Hermes returns it both for "this route does not exist" (a
+genuinely old gateway) and for "this route exists but that profile does not". The client cannot tell
+them apart from the status code alone, and it guessed the rarer one. A version skew is a once-a-release
+event; a mistyped or stale profile name is an everyday one.
+
+**Why it matters more than a wording nit.** The message names a cause the operator cannot act on and
+hides the one they can. Told the gateway predates the API, the reasonable next move is to upgrade
+Hermes — which will not help, because the profile name is still wrong.
+
+**Effort.** Small. The two cases are distinguishable without guessing: a request carrying a `profile`
+parameter that 404s should first re-ask without it (or consult `GET /api/profiles`, which the client
+already calls) and report "no such profile" when the bare path answers. Only a 404 on the bare path is
+evidence of an absent capability.
+
+**Worth it when.** Before the profile picker is used by anyone but its author — U4 makes profile-scoped
+requests routine, which makes this the everyday failure rather than a corner case.
+
+### The model picker is a numbered list, not a picker — KTD3's anti-modal decision needs reopening
+
+**Priority.** P0 — the picker is the headline feature of the 2026-08-06 work and it does not do the
+thing its name promises. Raised by the operator on 2026-08-07, on first live use.
+
+**What was observed.** `/models` renders a read-only list and selection requires typing `/models <n>`.
+`talaria/ui/picker.py` has **no key handling at all** — no highlight, no cursor, no navigation — exactly
+like `talaria/ui/palette.py`, which it was modelled on. `F6` toggles the region and that is the whole of
+the interaction. The operator's words: "I expected it to work like the Hermes TUI. `/models` would open
+up a dialog picker of some sort, not just a list I now need to pick a number."
+
+**Why it shipped this way.** KTD3 of the 2026-08-06 plan chose a foldable region over a modal overlay,
+citing `talaria/ui/palette.py:1-22`'s rejection of a modal search box on the grounds that it "would put
+a second focus owner in front of the composer." That reasoning is sound as far as it goes and it was
+applied consistently. What it did not weigh is that the command *listing* is something you read, while a
+*picker* is something you operate — the same answer does not serve both.
+
+**The actual obstacle, so nobody re-derives it.** The composer owns `Enter` as "send message"; a picker
+wants `Enter` as "select the highlighted row". KTD3 avoided the collision by giving the picker no focus
+at all, and the numbered list is the price of that dodge. Hermes does not face this because its picker
+is modal — while it is open, nothing else owns the keyboard.
+
+**Two shapes were put to the operator.** A modal dialog (arrows move, `Enter` selects, `Esc` cancels,
+typing filters — overturns KTD3 and needs its own recorded decision), or a navigable region where
+`Enter` selects only when the composer is empty (keeps KTD3, but the conditional `Enter` is a rule the
+operator has to learn). The operator deferred the choice to finish the row-19 acceptance run first, so
+**the shape is still open** — do not treat the modal as decided.
+
+**Effort.** Medium. `PickerRegion` already renders providers, models, the current marking and the
+unauthenticated/warning states; what is missing is a selection model and key routing. The modal shape
+additionally needs a focus owner and a restore-focus-on-close path.
+
+**Worth it when.** Before anyone calls the picker done. Row 19's acceptance run is being completed
+against the shipped interface deliberately, with the operator's agreement, so this does not block the
+gate — but it does block claiming the feature is finished.
+
 ### ~~TranscriptPane.reconcile desynchronizes from the projection~~ — CLOSED 2026-08-03
 
 **Priority.** P0 — this is what the repaired validation gate failed on, 2026-08-03. It blocked ADR-0005 and the milestone-1 merge.
