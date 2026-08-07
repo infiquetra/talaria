@@ -4,6 +4,60 @@
 
 ## 2026-08-07
 
+### `terminal.read.respond` leaves row 6's runtime-evidence requirement, and the exclusion names its own falsifier
+
+**Author.** the operator, after the F2–F6 live-evidence run left row 6 one method short on something no amount of driving Talaria could produce
+
+**Decision.** Row 6 of the v0.1 gate no longer requires runtime evidence for
+`terminal.read.respond`. The method stays in `talaria/domain/compat.py` and stays
+required for compatibility; nothing about what Talaria must support changed. What
+changed is that the gate stops counting its absence as a gap.
+
+**The condition, which is the whole justification.** Talaria answers this bridge
+without a human overlay — `UNATTENDED_KINDS` is exactly `{"terminal_read"}` — so
+the client half exists and would run. The request never arrives because the
+gateway only emits `terminal.read.request` when the agent calls the
+`read_terminal` tool, and that tool is offered to the model only when
+`check_read_terminal_requirements()` passes, which tests the **gateway process's**
+`HERMES_DESKTOP` environment variable. Its own docstring: "Desktop GUI only —
+HERMES_DESKTOP is set on the gateway the app spawns." ADR-0001 makes Talaria a
+client that dials a gateway it did not launch, so whether that variable is set is
+not Talaria's to arrange.
+
+**What was ruled out first, because it was the obvious answer and it was wrong.**
+The tool returns "read_terminal is only available in the Hermes desktop app" when
+its platform callback is absent, so an absent callback looks like the
+explanation. It is not: `tui_gateway/server.py` wires `read_terminal_callback`
+for every session and it reaches the tool through `run_agent.py` →
+`agent_init.py` → `tool_executor.py`. The session that could not call the tool
+had a callback. Recording the wrong mechanism would have made this exclusion
+unfalsifiable, because nobody would have known what to test.
+
+**The falsifier, stated so the exclusion can be undone.** Point Talaria at a
+gateway whose process has `HERMES_DESKTOP` set, ask the agent to read the
+terminal, and the bridge should complete. If it does, this decision is wrong and
+the row goes back to requiring the evidence.
+
+**Rejected: leave it required.** That is the status-quo option and it looks like
+the rigorous one. It is not: it leaves a blocking row permanently short by a
+method whose request is gated on an environment variable of a process Talaria
+does not start, which converts a measurement into a stalemate. A gate condition
+nobody can satisfy or refute stops carrying information.
+
+**Rejected: drop it from `compat.py` as well.** Tempting for symmetry and wrong.
+Talaria implements the bridge and a desktop-spawned gateway can send the request
+at any time; a client that stopped pinning the shape would drift silently against
+a method it still answers.
+
+**What this does not do.** It does not clear row 6. `secret.respond` remains
+outstanding and the row blocks on it, so the verdict stays **NOT READY** on rows
+6 and 13.
+
+**Revisit when.** Anyone runs Talaria against a desktop-spawned gateway — that
+single run settles it either way. Also revisit if Hermes moves the terminal
+buffer out of the desktop renderer, which would remove the environment gate
+along with the reason for this entry.
+
 ### The picker is a modal dialog, overturning KTD3 — a listing is read, a picker is operated
 
 **Author.** the picker redesign, on the operator's verdict at first live use
