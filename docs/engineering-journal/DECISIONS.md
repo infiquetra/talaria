@@ -4,6 +4,44 @@
 
 ## 2026-08-07
 
+### The endpoint URL stops being a credential source, and the decision that kept it is reopened because both its premises measured false
+
+**Author.** the row-13 residual pass, which set out to report what removing the route would cost and found the cost had already been paid
+
+**Decision.** A `token` query parameter on `TALARIA_GATEWAY_URL` is no longer a credential source. `resolve_endpoint` **refuses** a configured endpoint carrying a credential rather than stripping it, `LoopbackTokenProvider` loses its `environ` injection point entirely, and `"endpoint-url"` leaves `CredentialSource`. Two routes remain: a `token` key in `<config_dir>/credentials` at mode `0600` or stricter, and the interactive hidden prompt. The refusal covers all three shapes `url_carries_credential` names — query parameter, userinfo, and fragment — for every configured source, which is the environment variable, the credential file's `url` key, and the `talaria record` endpoint argument.
+
+This makes one sentence true that was false the day before: **no route Talaria supports places a credential in its environment, its command line, or shell history.**
+
+#### Why the entry above this one, from 2026-08-06, said not to do this
+
+That entry — "`HERMES_DASHBOARD_SESSION_TOKEN` leaves the credential chain, and row 13 may be re-graded exactly one step — not to *met*" — carries a rejected alternative reading "remove route 1 as well, so no environment-borne route survives", rejected as out of scope on two stated premises. **Both were measured on 2026-08-07 and neither holds.**
+
+**Premise one: "`talaria record`'s design leans on `TALARIA_GATEWAY_URL` resolving both halves."** Measured false. Under `env -i` with only `HOME`, `PATH` and `TERM` set, `talaria record` authenticated against a live Hermes on `127.0.0.1:9119` and recorded a `gateway.ready` frame using nothing but the `0600` credential file. `resolve_endpoint` has read a `url` key from that same file since before the decision was written, so the file supplies both halves on its own. The premise described a convenience as a dependency.
+
+**Premise two, which appears as the entry's "Revisit when": "Hermes gains an HTTP or file-based way to hand a client its session token directly."** Already satisfied when it was written, by two days. `talaria refresh-credential` (`talaria/transport/refresh.py`, shipped 2026-08-04) fetches the dashboard index over HTTP — unauthenticated, the same request the dashboard's own web UI makes on every load — and reads the injected session token out of the page. The condition named a capability that already existed and was already in use by this repository.
+
+**This is the failure mode worth naming, more than the route removal itself.** A "revisit when" condition is only as good as the check that it is not already true. Neither premise was wrong when reasoned about; both were wrong when measured, and nothing in the intervening day changed the code — only the checking. A deferral rests on a claim about the world, and a claim about the world is a thing to measure before writing "out of scope" next to it.
+
+#### Refused, not stripped — and the reason is the same one `talaria record` was built on
+
+Stripping was the tempting shape: the credential is dropped, the operator's configuration keeps working, nothing breaks. That is precisely the objection. The operator would go on exporting a credential that is readable to anyone who can read their process and is in their shell history, learning nothing, while it silently stopped being the thing that authenticated them. `talaria record` has refused the identical string on argv since 2026-08-05 for the identical reason (`LEARNINGS.md`: "stripping preserves the exact habit that leaked it"), and the two were only ever different in which place the operator had put the value.
+
+The refusal names the source, names `talaria refresh-credential` as the route that works, and reproduces nothing — not the value, not the URL that carried it. It tells the operator to rotate **only** when the source was the environment or argv; a `0600` credential file is not an exposure, and telling its owner to rotate would be false.
+
+#### How far this lets row 13 be re-graded — still not to *met*
+
+Row 13 loses one of its two residuals. The other is unchanged and is not Talaria's to fix: an inherited `HERMES_DASHBOARD_SESSION_TOKEN` stays readable from `/proc/<pid>/environ` and `ps -E` for the life of the process. Scrubbing cannot fix it — the kernel snapshots the block at `exec` — and re-execing narrows nothing, because the same-user reader who can read Talaria's environment can equally read the shell's that launched it. `tests/transport/test_process_surface.py::test_the_inherited_credential_is_visible_in_the_process_environment` still asserts that failure, unchanged, and `QUEUED.md`'s standing prohibition against widening R1's wording still stands.
+
+**Whether row 13 can now reach *met* is a scoping decision about what the row grades, and it has not been made here.** Every other row in that table grades Talaria; row 13 currently grades a variable Hermes publishes and the operator's shell exports. Re-scoping it the way `terminal.read.respond` was re-scoped out of row 6 — with a named, falsifiable condition — is available and is the operator's call. Until then the gate keeps blocking on row 13.
+
+**Cost, stated plainly.** An operator using the removed route runs `talaria refresh-credential` once and unsets the credential from their exported endpoint; if their endpoint is not the default, they add a `url` key to the same file. Eleven test modules changed. One rotation test was deleted rather than re-expressed — `test_a_rotated_token_on_the_endpoint_url_is_picked_up_too` existed to show KTD11's per-dial rule covered *both* rotating levels, and there is now one — with a comment left at its site, because a rotation test vanishing in the same commit as a credential route is exactly the shape of a guarantee dropped by accident.
+
+**Rejected alternative — strip silently and log a warning.** A warning in a full-screen terminal interface is a line that scrolls past during startup. The operator most likely to be affected is the one least likely to be watching, since the whole point of an exported credential is unattended launch.
+
+**Rejected alternative — refuse the query parameter only, and keep dropping userinfo and fragments quietly.** Only the query parameter can actually authenticate against Hermes, so this is the narrowest rule that closes the working leak. It also builds the trap: an operator refused for `?token=` moves the value into `#token=` and is sent away happy with the credential still in their environment. The shared predicate refuses all three.
+
+**Revisit when.** A gated (non-loopback) deployment arrives and `GatedTicketProvider` rewrites the chain wholesale; or an operator reports a launch context where no file can be written and no terminal exists, which is the one shape neither surviving route covers.
+
 ### Row 6 is graded on matched replies, and a pin the measurement proves wrong gets corrected rather than defended
 
 **Author.** the reply-side pass that closed row 6, which found two of the shapes it was checking against were wrong
@@ -321,13 +359,17 @@ U7 owns the verdict document and grades row 13 against this section; U3 delibera
 
 **Rejected alternative — option (a), keep the variable with a documented caveat.** `QUEUED.md` sized it Small against (b)'s Medium and it was the standing default. Rejected by the operator on 2026-08-06 because a caveat leaves the highest-precedence route being the one that cannot satisfy the requirement, so the safe path is the one the operator has to know to opt into. The recurring-setup objection that made (a) attractive was removed on 2026-08-04 by `talaria refresh-credential`.
 
-**Rejected alternative — remove route 1 as well, so no environment-borne route survives.** This is the only change that would make "no supported route puts a credential in the environment" true, and it is tempting for exactly that reason. Rejected as out of scope: KTD8 names the three surviving routes explicitly and route 1 is one of them, and `talaria record`'s design leans on `TALARIA_GATEWAY_URL` resolving both halves. Recorded here rather than dropped, because the residual is precisely what limits row 13's re-grade.
+**Rejected alternative — remove route 1 as well, so no environment-borne route survives.** This is the only change that would make "no supported route puts a credential in the environment" true, and it is tempting for exactly that reason. Rejected as out of scope: KTD8 names the three surviving routes explicitly and route 1 is one of them, and `talaria record`'s design leans on `TALARIA_GATEWAY_URL` resolving both halves.
+
+> **Overturned 2026-08-07, one day later, and the rejection's second premise was false when written.** `talaria record` does not lean on that variable: measured under `env -i`, it authenticates against a live gateway and records from the `0600` credential file alone, whose `url` key already supplied the endpoint half. Route 1 is gone; see "The endpoint URL stops being a credential source, and the decision that kept it is reopened because both its premises measured false" under 2026-08-07. This paragraph is left standing rather than edited, because what it got wrong — asserting a dependency without running the two-command check that would have refuted it — is the more useful record.
 
 **Rejected alternative — keep `TOKEN_ENV_VAR` and `"environment"` as public names.** The plan permitted keeping the constant if anything still needed it; nothing in production did. A source label nothing can produce is a precedence chain a test can still claim to have observed, and it is the seam a reintroduction slips back through. Deleting both cost seven test files a one-line change and made `mypy --strict` the thing that catches a stale label at merge — the cheapest possible place for that failure to land.
 
 **Cost, stated plainly.** Every operator whose shell exports the dashboard variable and nothing else must run `talaria refresh-credential` once, or put a `token` on `TALARIA_GATEWAY_URL`. Eight test modules changed. Two rotation tests that proved KTD11's "a rotated credential is picked up without a restart" through the environment variable were re-expressed against the credential file and the endpoint URL rather than deleted — deleting a rotation test along with its variable would have taken a live guarantee with it and left no red anywhere.
 
 **Revisit when.** Hermes gains an HTTP or file-based way to hand a client its session token directly, which would make the endpoint-URL route unnecessary and let route 1 go too — the one change that would let row 13 move again; or a gated (non-loopback) deployment arrives and `GatedTicketProvider` rewrites the chain wholesale.
+
+> **The first condition was already satisfied when this was written, by two days.** `talaria refresh-credential` shipped 2026-08-04 and does exactly what the condition describes: it fetches the dashboard index over HTTP, unauthenticated, and reads the injected session token out of the page. Nobody checked, so a condition that was already true read as a thing to wait for. Fired 2026-08-07, and route 1 went with it.
 
 ### The default-model write extends `/models`'s own grammar; it does not add a fourth local command, and the profile it writes is the connected one, not a typed one
 

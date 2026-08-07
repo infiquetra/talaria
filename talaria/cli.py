@@ -14,7 +14,6 @@ import asyncio
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qsl, urlsplit
 
 from talaria import config as config_module
 from talaria.domain.commands import PasteThreshold
@@ -201,77 +200,6 @@ def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
     )
 
 
-def url_carries_credential(url: str) -> bool:
-    """Whether the operator's raw ``record`` argument carries a credential (R5).
-
-    Inspects the **raw** argument, before anything strips it (KTD3).
-    :meth:`~talaria.transport.attach.AttachTarget.from_url` removes credential
-    query parameters as an invariant, so a check placed downstream of it would
-    be examining a string that can no longer hold the thing being looked for and
-    would report "clean" every time.
-
-    Three shapes count, and they count for different reasons.
-
-    A credential *query parameter* — the names in
-    :data:`~talaria.transport.attach.CREDENTIAL_QUERY_KEYS` — is the form the
-    Hermes upgrade path actually reads, so this is the URL that used to work and
-    that leaked while it worked. The constant is imported rather than restated:
-    the refusal and the stripping must not disagree the first time one of them
-    gains a key.
-
-    *Userinfo* — ``ws://user:pass@host/api/ws`` — would never have authenticated,
-    because Hermes reads the upgrade credential only from query parameters. What
-    it did do is put a secret into the process table and the shell history, which
-    is the entire thing KTD1 exists to tell the operator about. This repository
-    already treats userinfo as a credential everywhere else
-    (:func:`~talaria.recorder.redact.redact_url` withholds it deliberately), so
-    keying the refusal on query parameters alone would leave a hole with exactly
-    the shape of the one this closes.
-
-    A *fragment* — ``ws://host/api/ws#token=…`` — is refused whatever it holds.
-    Like userinfo it can never authenticate: a fragment is by definition not
-    sent to a server, and ``websockets`` rejects such a URI outright ("fragment
-    identifier is meaningless"). Because a WebSocket endpoint has no legitimate
-    use for one at all, any fragment is refused rather than sniffed for
-    credential-shaped keys: guessing at the contents of a component that should
-    not be there is a worse boundary than rejecting the component.
-
-    **This paragraph said something stronger until 2026-08-05, and it is worth
-    recording what changed rather than quietly restating it.** It read that a
-    fragment was "withheld by *nothing* downstream", which was true when written
-    — :func:`~talaria.transport.attach.strip_credential_query` dropped credential
-    query keys, :func:`~talaria.recorder.redact.redact_url` withheld userinfo,
-    and neither touched a fragment, so a credential in one reached the printed
-    endpoint and the frame-log header verbatim. That gap was filed as a P2 and
-    has since been closed: both functions now handle the fragment, and this
-    refusal is no longer the only thing standing in front of it.
-
-    The refusal stays anyway, for the reason it was written: by the time
-    ``argparse`` has seen the argument the value is already in the process table
-    and the shell history, so stripping it silently would preserve the exact
-    habit that leaked it (KTD1).
-
-    A URL that :func:`~urllib.parse.urlsplit` cannot read is treated as carrying
-    one. It cannot be shown to be credential-free, and a string malformed enough
-    to defeat ``urlsplit`` is exactly what an operator produces by pasting a
-    credential into a URL by hand.
-    """
-    from talaria.transport.attach import CREDENTIAL_QUERY_KEYS
-
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return True
-    if "@" in parts.netloc:
-        return True
-    if parts.fragment:
-        return True
-    return any(
-        name.lower() in CREDENTIAL_QUERY_KEYS
-        for name, _value in parse_qsl(parts.query, keep_blank_values=True)
-    )
-
-
 def _record_credential_refusal() -> str:
     """The refusal ``talaria record`` prints, which reproduces nothing (R6).
 
@@ -286,12 +214,14 @@ def _record_credential_refusal() -> str:
     Built by a function rather than held as a module constant so the environment
     variable's name comes from the one place that defines it.
 
-    **The route list shrank on 2026-08-06 and must keep naming only what works.**
-    This message used to advertise ``HERMES_DASHBOARD_SESSION_TOKEN`` as one of
-    "two routes". KTD8 removed that variable from the precedence chain
-    (:mod:`talaria.transport.credentials`), so naming it here would send an
-    operator who has just exposed a credential to a route that silently does
-    nothing — the worst moment to be wrong about what works.
+    **The route list has shrunk twice, and must keep naming only what works.**
+    It once advertised ``HERMES_DASHBOARD_SESSION_TOKEN`` as one of "two routes";
+    KTD8 removed that variable from the precedence chain on 2026-08-06. It then
+    advertised a ``token`` query parameter on ``TALARIA_GATEWAY_URL`` as one of
+    "three routes"; that route was removed on 2026-08-07 and the same variable is
+    now *refused* for carrying one. Naming a dead route here would send an
+    operator who has just exposed a credential somewhere that silently does
+    nothing — the worst possible moment to be wrong about what works.
     """
     from talaria.transport.credentials import GATEWAY_URL_ENV_VAR
 
@@ -299,29 +229,23 @@ def _record_credential_refusal() -> str:
         (
             "talaria: refusing to record: that endpoint carries a credential.",
             "",
-            "  A credential on a command line is readable by anyone who can run `ps`"
-            " while the",
-            "  command runs, and your shell has already written it to history."
-            " Treat the value",
+            "  A credential on a command line is readable by anyone who can run `ps` while the",
+            "  command runs, and your shell has already written it to history. Treat the value",
             "  you just passed as exposed, and rotate it now.",
             "",
-            "  Three routes supply a credential without putting it on a command line:",
+            "  Two routes supply a credential, and neither puts it on a command line or in an",
+            "  environment variable:",
             "    talaria refresh-credential"
             "   — rewrites the credential file at mode 0600, printing nothing secret",
-            f"    {GATEWAY_URL_ENV_VAR}"
-            "   — an exported endpoint carrying a token query parameter; the value"
-            " stays in this",
-            "                           process's environment for its whole life,"
-            " so prefer the file",
-            "                           whenever anyone else can read your process"
-            " list",
             "    the interactive prompt"
             "   — asked once before recording starts, with terminal echo off",
             "",
-            "  Then record with no argument, or with an endpoint that carries no"
-            " credential:",
+            "  Then record with no argument, or with an endpoint that carries no credential:",
             "    talaria record",
             "    talaria record ws://<host>:<port>/api/ws",
+            "",
+            f"  {GATEWAY_URL_ENV_VAR} names the endpoint only. An exported one carrying a",
+            "  credential is refused for the same reason this argument is.",
         )
     )
 
@@ -339,12 +263,15 @@ def run_record_command(args: argparse.Namespace) -> int:
 
     The refusal is checked before anything else is constructed, because
     construction is where the stripping lives and stripping is the silent
-    behaviour KTD1 rejects.
+    behaviour KTD1 rejects. By the time ``argparse`` has seen the argument the
+    value is already in the process table and the shell history, so stripping it
+    quietly would preserve the exact habit that leaked it.
     """
     # Imported here, not at module top level: `talaria.recorder.command` pulls in
     # `websockets`, and the default (no-subcommand) launch path has no business
     # paying for that import.
     from talaria.recorder.command import resolve_record_target, run_record
+    from talaria.transport.attach import url_carries_credential
     from talaria.transport.credentials import CredentialError
 
     if args.url is not None and url_carries_credential(args.url):
@@ -359,9 +286,7 @@ def run_record_command(args: argparse.Namespace) -> int:
         # interactive level of the chain can therefore reach a terminal that is
         # still an ordinary terminal — the same ordering, and the same reason, as
         # :func:`_prime_credential` on the live path.
-        target = asyncio.run(
-            resolve_record_target(credentials_path=credentials, override=args.url)
-        )
+        target = asyncio.run(resolve_record_target(credentials_path=credentials, override=args.url))
     except CredentialError as exc:
         print(f"talaria: {exc}", file=sys.stderr)
         return 2

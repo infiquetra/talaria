@@ -46,7 +46,7 @@ class ScriptedProvider:
     async def acquire(self) -> Credential:
         value = self.values[min(self.calls, len(self.values) - 1)]
         self.calls += 1
-        return Credential("token", value, "endpoint-url")
+        return Credential("token", value, "file")
 
 
 def live_source(gateway: StubGateway, provider: Any = None, **kwargs: Any) -> LiveSource:
@@ -293,7 +293,7 @@ async def test_a_credential_file_with_the_wrong_mode_stops_before_the_dial(
     path.chmod(0o644)
 
     source = live_source(
-        gateway, LoopbackTokenProvider(credentials_path=path, environ={}, allow_prompt=False)
+        gateway, LoopbackTokenProvider(credentials_path=path, allow_prompt=False)
     )
     assert await source.start() == "disconnected"
     assert source.failure_kind == "credential_unavailable"

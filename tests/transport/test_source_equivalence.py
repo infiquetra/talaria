@@ -48,7 +48,7 @@ from tests.transport.conftest import READY_FRAME, STUB_TOKEN, StubGateway, event
 
 class FixedCredential:
     async def acquire(self) -> Credential:
-        return Credential("token", STUB_TOKEN, "endpoint-url")
+        return Credential("token", STUB_TOKEN, "file")
 
 
 def corpus() -> list[dict[str, Any]]:

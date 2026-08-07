@@ -484,48 +484,99 @@ def test_the_record_refusal_names_only_the_surviving_routes(
     assert "rotate" in message.lower()
 
 
+def _write_credential_file(config_dir: Path, token: str, *, url: str | None = None) -> Path:
+    """The `0600` file `talaria refresh-credential` writes, in a test's config dir.
+
+    The `url` key is the second half of the environment-free configuration: since
+    2026-08-07 it is the only way to name a non-default endpoint without
+    exporting anything.
+    """
+    path = config_dir / "credentials"
+    body = f'token = "{token}"\n' + (f'url = "{url}"\n' if url else "")
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
 def test_record_with_no_endpoint_resolves_the_one_the_launcher_would(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, isolated_global_config_dir: Path
 ) -> None:
     """R3/R4: a bare `talaria record` resolves both halves through the chain.
 
-    Both halves come from `TALARIA_GATEWAY_URL` — the endpoint from the variable
-    and the credential from its `token` query parameter, which since KTD8
-    (2026-08-06) is the environment's only credential route. That is exactly
-    what `AttachTarget.from_environment` and `LoopbackTokenProvider` do for the
-    live launcher. Nothing is on the command line, and the endpoint the recorder
-    is handed has had the credential stripped back off it.
+    **Both halves came from `TALARIA_GATEWAY_URL` until 2026-08-07** — the
+    endpoint from the variable and the credential from its `token` query
+    parameter. That route is gone and the variable is refused for carrying one,
+    so both halves now come from the `0600` credential file: `token` for the
+    credential, `url` for the endpoint. Nothing is exported, nothing is on the
+    command line, and this is what `AttachTarget.from_environment` and
+    `LoopbackTokenProvider` do for the live launcher too.
     """
     calls = _fake_record_capture(monkeypatch)
-    monkeypatch.setenv(
-        "TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-7c40de"
+    _write_credential_file(
+        isolated_global_config_dir,
+        "NOT-A-REAL-CANARY-7c40de",
+        url="ws://127.0.0.1:9911/api/ws",
     )
 
     assert cli_module.main(["record"]) == 0
     assert len(calls) == 1
 
     assert calls[0].endpoint == "ws://127.0.0.1:9911/api/ws"
-    assert calls[0].credential.source == "endpoint-url"
+    assert calls[0].credential.source == "file"
     assert calls[0].credential.value == "NOT-A-REAL-CANARY-7c40de"
 
 
 def test_record_takes_a_credential_free_endpoint_as_an_override(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, isolated_global_config_dir: Path
 ) -> None:
     """KTD2: the positional means the endpoint, and only the endpoint.
 
-    It overrides `TALARIA_GATEWAY_URL` the same way the launcher's `override=`
+    It overrides the configured endpoint the same way the launcher's `override=`
     does, while the credential still comes from the chain.
     """
     calls = _fake_record_capture(monkeypatch)
-    monkeypatch.setenv(
-        "TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-7c40de"
+    _write_credential_file(
+        isolated_global_config_dir,
+        "NOT-A-REAL-CANARY-7c40de",
+        url="ws://127.0.0.1:9911/api/ws",
     )
 
     assert cli_module.main(["record", "ws://127.0.0.1:9222/api/ws"]) == 0
 
     assert calls[0].endpoint == "ws://127.0.0.1:9222/api/ws"
     assert calls[0].credential.value == "NOT-A-REAL-CANARY-7c40de"
+
+
+def test_record_refuses_an_exported_endpoint_that_carries_a_credential(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    isolated_global_config_dir: Path,
+) -> None:
+    """The environment gets the same treatment argv has always had (R1).
+
+    This invocation *worked* until 2026-08-07: the token was stripped off the
+    endpoint and read straight back as the highest-precedence credential. The
+    command line has refused the identical string for far longer, and the two
+    were only ever different in which place the operator had put it.
+
+    Exits 2 through the ordinary credential-failure path rather than the argv
+    refusal, because nothing is wrong with the *argument* here — `record` was
+    given none. What is asserted is that no recording started and that the
+    credential never reaches stderr.
+    """
+    calls = _fake_record_capture(monkeypatch)
+    _write_credential_file(isolated_global_config_dir, "NOT-A-REAL-FILE-CANARY-11")
+    monkeypatch.setenv(
+        "TALARIA_GATEWAY_URL", "ws://127.0.0.1:9911/api/ws?token=NOT-A-REAL-CANARY-7c40de"
+    )
+
+    assert cli_module.main(["record"]) == 2
+    assert calls == [], "a refused endpoint still reached run_record"
+
+    message = capsys.readouterr().err
+    assert "NOT-A-REAL-CANARY-7c40de" not in message
+    assert "TALARIA_GATEWAY_URL" in message
+    assert "refresh-credential" in message
 
 
 def test_record_reports_a_credential_the_chain_cannot_supply_and_exits_two(
@@ -661,7 +712,7 @@ def test_the_credential_is_resolved_before_the_interface_starts(
         return "typed-at-launch"
 
     provider = LoopbackTokenProvider(
-        credentials_path=tmp_path / "absent", environ={}, prompt=_prompt
+        credentials_path=tmp_path / "absent", prompt=_prompt
     )
     app = _RecordingApp(order)
     monkeypatch.setattr(
@@ -678,9 +729,7 @@ def test_the_interface_never_starts_without_a_credential(
     """A missing credential must be a printed remedy, not a screen that hangs."""
     order: list[str] = []
     missing = tmp_path / "absent"
-    provider = LoopbackTokenProvider(
-        credentials_path=missing, environ={}, allow_prompt=False
-    )
+    provider = LoopbackTokenProvider(credentials_path=missing, allow_prompt=False)
     app = _RecordingApp(order)
     monkeypatch.setattr(
         cli_module, "build_live_app", lambda args, cfg: (app, _FakeSource(provider))
@@ -705,7 +754,7 @@ def test_cancelling_at_the_credential_prompt_stops_before_the_interface(
         raise KeyboardInterrupt
 
     provider = LoopbackTokenProvider(
-        credentials_path=tmp_path / "absent", environ={}, prompt=_cancelled
+        credentials_path=tmp_path / "absent", prompt=_cancelled
     )
     app = _RecordingApp(order)
     monkeypatch.setattr(

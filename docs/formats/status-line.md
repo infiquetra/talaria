@@ -103,6 +103,12 @@ The command's environment is **default-deny**, not a copy of Talaria's own envir
 A variable whose name looks credential-shaped (matching the same pattern set Talaria's recorder uses
 to redact frame logs — names like `*_token`, `*_secret`, `*password*`, `*_api_key`) is **never**
 forwarded, regardless of whether it carries the `TALARIA_` prefix or appears in the operator
-allowlist. This is a hard deny, not a suggestion: it exists specifically because the attach
-credential rides a `TALARIA_GATEWAY_URL` query parameter, and the query string is stripped rather
-than pattern-filtered for exactly that reason.
+allowlist. This is a hard deny, not a suggestion.
+
+It was written because the attach credential could ride a `TALARIA_GATEWAY_URL` query parameter,
+which is why the query string is stripped wholesale rather than pattern-filtered. **That route was
+removed on 2026-08-07** — Talaria now refuses an endpoint carrying a credential instead of reading
+one from it — so the variable should no longer carry a credential at all. Both the stripping and the
+deny stay: a variable Talaria refuses to *read* a credential from is still a variable an operator
+may have put one in, and forwarding it to a child would leak it whether or not Talaria dialled with
+it.

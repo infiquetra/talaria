@@ -614,15 +614,17 @@ async def test_a_credential_the_provider_cannot_supply_is_reported_not_raised() 
 async def test_the_file_route_supplies_a_credential_without_any_environment_variable(
     tmp_path: Path,
 ) -> None:
-    """The supported non-interactive route after U3 removes the environment source.
+    """The only supported non-interactive route, on the admin surface too.
 
-    ``environ`` is injected as an *empty* mapping, so this passes whether or not
-    the developer running it happens to have a dashboard token exported — and it
-    cannot be satisfied by one.
+    This used to inject an empty ``environ`` so a developer's exported dashboard
+    token could not satisfy it. The provider has had no environment injection
+    point since 2026-08-07, when the last environment-borne level left the chain,
+    so the guarantee is now structural: there is no environment for this test to
+    be accidentally satisfied by.
     """
     path = credential_file(tmp_path)
     provider = LoopbackTokenProvider(
-        credentials_path=path, environ={}, allow_prompt=False
+        credentials_path=path, allow_prompt=False
     )
 
     seen: list[Recorded] = []
@@ -639,7 +641,7 @@ async def test_a_credential_file_looser_than_0600_is_refused(tmp_path: Path) -> 
     path = credential_file(tmp_path)
     path.chmod(0o644)
     provider = LoopbackTokenProvider(
-        credentials_path=path, environ={}, allow_prompt=False
+        credentials_path=path, allow_prompt=False
     )
 
     with catalog_gateway() as origin:

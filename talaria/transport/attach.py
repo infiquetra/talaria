@@ -86,6 +86,7 @@ __all__ = [
     "classify_dial_error",
     "scrub_urls",
     "strip_credential_query",
+    "url_carries_credential",
     "websockets_dialer",
 ]
 
@@ -181,6 +182,63 @@ def _scrub_credential(text: str, credential: Credential | None) -> str:
     if credential is None or len(credential.value) < _MIN_SCRUBBABLE_CREDENTIAL:
         return text
     return text.replace(credential.value, REDACTED)
+
+
+def url_carries_credential(url: str) -> bool:
+    """Whether a raw, unstripped endpoint string carries a credential (R1, R5).
+
+    Inspects the string **before** anything strips it. :func:`strip_credential_query`
+    removes credential query parameters as an invariant, so a check placed
+    downstream of it would be examining a string that can no longer hold the
+    thing being looked for and would report "clean" every time.
+
+    Three shapes count, and they count for different reasons.
+
+    A credential *query parameter* — the names in :data:`CREDENTIAL_QUERY_KEYS` —
+    is the form the Hermes upgrade path actually reads, so this is the URL that
+    used to work and that leaked while it worked.
+
+    *Userinfo* — ``ws://user:pass@host/api/ws`` — would never have authenticated,
+    because Hermes reads the upgrade credential only from query parameters. What
+    it does do is put a secret somewhere another process can read it. This
+    repository already treats userinfo as a credential everywhere else
+    (:func:`~talaria.recorder.redact.redact_url` withholds it deliberately), so
+    keying the check on query parameters alone would leave a hole with exactly
+    the shape of the one this closes.
+
+    A *fragment* — ``ws://host/api/ws#token=…`` — counts whatever it holds. Like
+    userinfo it can never authenticate: a fragment is by definition not sent to a
+    server, and ``websockets`` rejects such a URI outright ("fragment identifier
+    is meaningless"). Because a WebSocket endpoint has no legitimate use for one
+    at all, any fragment counts rather than being sniffed for credential-shaped
+    keys: guessing at the contents of a component that should not be there is a
+    worse boundary than rejecting the component.
+
+    A URL that :func:`~urllib.parse.urlsplit` cannot read is treated as carrying
+    one. It cannot be shown to be credential-free, and a string malformed enough
+    to defeat ``urlsplit`` is exactly what an operator produces by pasting a
+    credential into a URL by hand.
+
+    **This lived in** ``talaria/cli.py`` **until 2026-08-07, where it guarded one
+    caller.** It moved here when ``TALARIA_GATEWAY_URL`` stopped being a
+    credential source and started being refused for carrying one
+    (:func:`~talaria.transport.credentials.resolve_endpoint`): the command line
+    and the environment variable are the same question asked about two strings,
+    and two copies of this predicate would disagree the first time one of them
+    gained a shape.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return True
+    if "@" in parts.netloc:
+        return True
+    if parts.fragment:
+        return True
+    return any(
+        name.lower() in CREDENTIAL_QUERY_KEYS
+        for name, _value in parse_qsl(parts.query, keep_blank_values=True)
+    )
 
 
 def strip_credential_query(url: str) -> str:
