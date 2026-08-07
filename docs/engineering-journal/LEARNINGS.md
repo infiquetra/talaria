@@ -4,6 +4,18 @@
 
 ## 2026-08-07
 
+### A checklist step marked "provocation not established" was a two-line derivation from source, and the search it recommended would not have found it
+
+**Author.** driving F2 through F6 live to move row 6 of the v0.1 gate
+
+**Evidence.** `docs/plans/2026-08-07-f2-f6-operator-checklist.md` marked `command.dispatch` as having no established provocation, reasoning that the commands it serves are assembled at runtime from the operator's own config and installed skills and so are "not derivable from source". Its advice was to work down the catalogue looking for a command that errors on `slash.exec`. Two reads settled it instead: `talaria/ui/app.py` calls `command.dispatch` whenever the `slash.exec` RPC returns not-`ok`, full stop; and Hermes's own test `test_slash_exec_rejects_skill_commands` says in its docstring "slash.exec must reject skill commands so the TUI falls through to command.dispatch", asserting error code 4018. Any skill command therefore takes the fallback, and the first one tried did. The same two-read approach then produced exact triggers for `sudo.respond` (the terminal tool's sudo-password callback, which is skipped entirely on a host with passwordless sudo) and `terminal.read.respond` (a desktop-renderer tool that reports itself unavailable anywhere else).
+
+**Mechanism.** The checklist asked the wrong question. "Which commands does this serve?" genuinely is not derivable — it depends on installed skills. "What makes Talaria take this branch?" is one `if` statement, and it is the question that matters, because the branch is Talaria's and only the *condition* had to be reproduced, not the whole category of commands satisfying it. Writing the step in the remote system's vocabulary instead of the local branch condition turned a two-minute derivation into an open-ended search — and that search would have been slow *and* inconclusive, because a catalogue command that happens not to error proves nothing about whether the fallback works.
+
+**What was correctly marked.** The other three "not established" steps stayed hard for real reasons: one needs a credential-capturing skill installed on the operator's machine, one needs a host without passwordless sudo, one appears to need a desktop renderer. Three of the four cautions were right, so the lesson is not that the caution was wrong.
+
+**Generalizable rule.** Before recording that a code path cannot be provoked, find the local branch that reaches it and read its condition. "Unreachable" is a claim about a condition, not about a feature — and a step written in the remote system's vocabulary hides the condition that would have answered it.
+
 ### The picker marked the wrong model after a switch, and no amount of refetching could have fixed it — the gateway does not publish the fact at all
 
 **Author.** the operator's first report against the modal picker: "after making the selection and then re-opening the modal with `/models` the current model isn't what is currently selected in the model list"

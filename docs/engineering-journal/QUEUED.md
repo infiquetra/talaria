@@ -4,6 +4,35 @@
 
 ## P0
 
+### A blocking prompt cannot be answered without guessing how many times to press `tab`
+
+**Priority.** P0 — an approval that cannot be answered in time is an approval that expires, and the
+same invisible focus put a value meant for a hidden credential field into the visible message box.
+Found 2026-08-07 driving F2 through F6 live for row 6; full write-up in
+[docs/plans/2026-08-07-row6-live-evidence-results.md](../plans/2026-08-07-row6-live-evidence-results.md).
+
+**Evidence, all from one session.** An approval expired while its answer was being aimed — the reply
+came back "the gateway had no approval waiting — nothing was resolved" — and it happened twice, once
+for a single approval and once for `deny all` across three. One `tab` from the sudo card put focus on
+the composer, and the typed answer appeared in plain text where a chat message goes; it was a canary,
+but a real sudo password would have been one `enter` from the transcript. Two other typed answers
+were absorbed by whatever held focus and went nowhere. The tab distance to a control varied between
+**3 and 7** in the same session, because it depends on what else is on screen.
+
+**Why the existing styling does not solve it.** The focus styles exist —
+`AgentRow.-interruptible:focus` sets a 20% accent background, `Button` takes reverse video — and they
+are only legible once you already know which row to look at. Locating a control took an ANSI-level
+dump of the screen.
+
+**Worth it when.** Before F2 is claimed to work for anybody but its author. This is the same shape as
+the picker defect: the machine does the right thing when driven correctly and nothing tells the
+operator what correct is.
+
+**Two smaller things from the same run**, neither blocking and both worth their own entry if they are
+not fixed alongside: an outstanding blocking prompt survives `F4`, so the next submission queues
+behind a card the operator may think they cancelled; and nothing on a prompt card names the keys that
+reach it, unlike the picker dialog's hint line, which names every key that does something.
+
 ### `absent_capability` blames the gateway's version for a mistyped profile name
 
 **Priority.** P1 — the message actively misdiagnoses, and it fires on the most likely operator error.
