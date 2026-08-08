@@ -18,6 +18,8 @@ The generalisable failure is doing the research that supports the plan and stopp
 
 **Consequence.** Step S5 became "write the letter, and file the PEP 541 request only after a reasonable wait with no reply", with both artifacts drafted in `docs/plans/2026-08-08-pypi-name-request.md`. Nothing about the v0.1.0 release depends on the outcome; it installs from a git tag either way.
 
+**The letter was never sent.** Later the same day the step was deferred entirely — not because the finding was wrong, but because of it: asking an active person for a name is a favour, and Talaria could not yet promise it would keep the name. See [DECISIONS.md](DECISIONS.md#the-talaria-name-on-the-python-package-index-is-not-asked-for-yet-because-the-project-cannot-yet-promise-it-will-keep-it) for the reasoning and the reopen condition.
+
 **Generalizable rule.** Before invoking any process that exists for unreachable parties — name claims, abandoned-account recovery, escalation over a non-responder — spend two minutes checking whether the party is reachable. Evidence that the *artifact* is dead says nothing about whether the *person* is, and only the second fact chooses the procedure.
 
 ## 2026-08-07
