@@ -2,6 +2,24 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-08
+
+### "The project is abandoned" and "the owner is unreachable" are separate questions, and only the second one decides what to do about it
+
+**Author.** the v0.1.0 release preparation, researching a PEP 541 name claim for `talaria` on the Python Package Index
+
+**Evidence.** The plan filed a step to request the `talaria` name through PEP 541, PyPI's process for claiming names from abandoned projects. Every abandonment signal was present and then some: one release ever, version 0.2.0 uploaded **2010-06-19**, a 12,758-byte tarball, no surviving source repository anywhere public, and — strongest of all — the package's own metadata carrying the classifier `Development Status :: 7 - Inactive`. The author had declared it dead himself.
+
+Then the owner was checked rather than assumed. The homepage recorded in the 2010 package metadata still resolves and redirects to a live personal site. The matching account on GitHub has 128 public repositories and profile activity dated **2026-06-05**, ten weeks before this was written. The project is abandoned; the person is not.
+
+**Mechanism.** The two facts feel like one because abandonment is usually inferred *from* silence, so a dead project and a vanished author normally arrive together. When they come apart, the evidence for the first is exactly as strong as before and the correct action inverts completely. PEP 541 exists for disputes that cannot be settled directly; its issue template makes "Contact and additional research" a required field for that reason. Filing against a reachable, active maintainer skips the obvious step, spends volunteer moderator time on a conversation two people could have had, and asks a stranger's property be reassigned without asking the stranger.
+
+The generalisable failure is doing the research that supports the plan and stopping there. Every check performed — release dates, classifiers, repository searches — was aimed at the question "is this project dead?", which was the question whose expected answer justified the step already written down. Nobody had asked the question that could have changed it.
+
+**Consequence.** Step S5 became "write the letter, and file the PEP 541 request only after a reasonable wait with no reply", with both artifacts drafted in `docs/plans/2026-08-08-pypi-name-request.md`. Nothing about the v0.1.0 release depends on the outcome; it installs from a git tag either way.
+
+**Generalizable rule.** Before invoking any process that exists for unreachable parties — name claims, abandoned-account recovery, escalation over a non-responder — spend two minutes checking whether the party is reachable. Evidence that the *artifact* is dead says nothing about whether the *person* is, and only the second fact chooses the procedure.
+
 ## 2026-08-07
 
 ### A source distribution built from a deny-list ships untracked working-tree files, so the contents of a release artifact depend on whose machine built it
