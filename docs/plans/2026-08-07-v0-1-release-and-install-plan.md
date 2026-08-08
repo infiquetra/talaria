@@ -1,8 +1,9 @@
 ---
 title: Releasing v0.1 — how a person gets Talaria, and what a tag asserts
 type: chore
-status: active
+status: complete
 date: 2026-08-07
+completed: 2026-08-08
 origin: docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md
 ---
 
@@ -121,7 +122,15 @@ workflow's first execution is not also the first release.
 - Release notes lead with the six limits from the verdict rather than burying them. Someone installing
   from a release page should meet "nobody has driven this on Linux" before they meet the feature list.
 
-### S5 — File the PEP 541 request — operator-owned
+### S5 — File the PEP 541 request — operator-owned — **deferred 2026-08-08, nothing sent or filed**
+
+**Outcome: researched, drafted, not acted on.** The research inverted this step's premise — the
+project holding the name is abandoned but its author is active — and then the step was deferred
+before the contact attempt, because Talaria cannot yet promise it will keep the name it would be
+asking for. See [docs/plans/2026-08-08-pypi-name-request.md](2026-08-08-pypi-name-request.md) for
+the drafts, held for whenever this reopens, and
+[DECISIONS.md](../engineering-journal/DECISIONS.md) for the reasoning and the reopen condition.
+S1–S4 all shipped; v0.1.0 was released on 2026-08-08.
 
 The template at `pypi/support` (`.github/ISSUE_TEMPLATE/pep541-request.yml`) requires the project
 name, **your PyPI username**, the reasons, whether this is maintenance or replacement, source

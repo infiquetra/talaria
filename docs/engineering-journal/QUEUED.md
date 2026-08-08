@@ -1034,9 +1034,24 @@ Not widened because a genuinely slow replay is wall-clock expensive: `speed` mul
 
 ## Maybe
 
-### Package Talaria as an independently installable distribution
+### ~~Package Talaria as an independently installable distribution~~ — CLOSED 2026-08-08
 
 **Author.** Project bootstrap
 **Priority.** Maybe
 **Effort.** Medium
 **Worth it when.** The client can launch against both local and remote Hermes instances with a stable compatibility story.
+
+**Closed by v0.1.0**, which builds a wheel and a source distribution in continuous integration and attaches both to the GitHub Release. `uv tool install git+https://github.com/infiquetra/talaria@v0.1.0` was verified end to end into a clean prefix, run under a scrubbed environment, and reports its version.
+
+**Its trigger was not met — the release went out anyway, with the gap stated instead.** Nobody has driven the interface against a remote Hermes, and the compatibility story is checked at the top level of each response only. Those are written into the release notes and the v0.1 verdict rather than treated as satisfied. What this entry actually asked for was a *distribution*, and that exists; what remains is publishing it to an index, which is the item below and a different question.
+
+### Ask for the `talaria` name on the Python Package Index
+
+**Author.** the v0.1.0 release, step S5 — deferred 2026-08-08
+**Priority.** Maybe
+**Effort.** Small to send; slow to resolve
+**Worth it when.** The name is settled — no rename under consideration — **and** there is an actual intent to publish. Either one alone is not the trigger.
+
+The research is done and both drafts are written in [docs/plans/2026-08-08-pypi-name-request.md](../plans/2026-08-08-pypi-name-request.md); neither was sent. The name belongs to an unrelated content management system, last uploaded **2010-06-19**, whose own metadata carries `Development Status :: 7 - Inactive` — but whose author is active and reachable, which is why the first step is a letter rather than a PEP 541 form. Reasoning and the reopen condition are in [DECISIONS.md](DECISIONS.md#the-talaria-name-on-the-python-package-index-is-not-asked-for-yet-because-the-project-cannot-yet-promise-it-will-keep-it).
+
+**Two things a repository cannot supply:** the letter has to be sent by a person under their own name, and the PEP 541 form validates a PyPI username that is not derivable from here.

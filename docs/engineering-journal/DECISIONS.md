@@ -2,6 +2,22 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-08
+
+### The `talaria` name on the Python Package Index is not asked for yet, because the project cannot yet promise it will keep it
+
+**Author.** the operator, on reading the S5 research
+
+**Decision.** Step S5 of the release plan stops after the research. The letter to the current owner is **not sent**, no PEP 541 request is filed, and `docs/plans/2026-08-08-pypi-name-request.md` moves to `status: deferred` with both drafts kept intact. Talaria continues to install from a git tag, and its user-facing documents continue to say — accurately — that it is deliberately not on the index.
+
+**Why waiting is the stronger move, not merely the cheaper one.** The finding that reshaped S5 was that the project holding the name is abandoned but its author is not: an active maintainer with 128 public repositories and activity dated 2026-06-05. That makes the request a favour asked of a person rather than a form filed against a dead account, and a favour is spent once. Talaria is one release old and may not carry this name at v0.3 — a rename after a transfer would waste the ask entirely, and there is no version of this worth doing twice.
+
+**Why nothing is lost by waiting.** The name's last upload was 2010-06-19. Sixteen years of dormancy does not become less dormant, so the case does not decay. The install path does not depend on the outcome. And the request itself gets stronger with time: a project with a settled name and a release history behind it is a more credible claimant than one with a working title.
+
+**Why this is not the same as the "do not publish" decision.** Those are separate and both hold. Holding a name is not publishing under it, and publishing is blocked on the v0.1 verdict's own limits — nobody has driven the interface on Linux, no run has used a real terminal emulator — which are exactly the claims a package index would make on Talaria's behalf. Deferring the name request does not weaken that; it removes the only step that could have looked like preparation to publish.
+
+**Revisit when both hold:** the name is settled, with no rename under consideration, *and* there is an actual intent to publish. Either one alone is not the trigger. Reopen at the letter, not at the PEP 541 form.
+
 ## 2026-08-07
 
 ### The release gate is overridable, and the override is a visible act rather than a private one

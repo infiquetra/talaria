@@ -1,8 +1,9 @@
 ---
 title: Claiming the `talaria` name on the Python Package Index
 type: chore
-status: active
+status: deferred
 date: 2026-08-08
+deferred: 2026-08-08
 origin: docs/plans/2026-08-07-v0-1-release-and-install-plan.md
 ---
 
@@ -10,6 +11,30 @@ origin: docs/plans/2026-08-07-v0-1-release-and-install-plan.md
 
 This is step S5 of the release plan. It is off the critical path: v0.1.0 ships from a git tag and its
 outcome changes nothing about S1–S4.
+
+## Deferred, 2026-08-08 — nothing below has been sent or filed
+
+**The research stands and the drafts are ready. Neither was acted on, by decision.** The finding that
+reshaped this step — the project is abandoned but its author is not — is also the reason to stop
+here rather than proceed to the letter.
+
+Asking a stranger for a name costs him a reply, and this project cannot yet say what it wants the
+name *for*. `talaria` is the right name for the terminal user interface as it exists today; it may
+not be the right one for whatever this is at v0.3, and a rename after a transfer would waste the
+favour entirely. There is no version of this worth asking twice.
+
+Nothing is lost by waiting. The name has sat untouched since **2010-06-19**, so the case for it is
+not weakening, and Talaria installs from a git tag regardless. Waiting also converts a guess into a
+fact: the request is stronger when the project asking has a settled name and a release history behind
+it than when it has one release and a working title.
+
+**Reopen when both are true:** the name is settled — no rename is under consideration — and there is
+an actual intent to publish, which the [v0.1 verdict's stated
+limits](../analysis/2026-08-02-v0-1-daily-driver-verdict.md) do not yet support. At that point start
+at the letter below, not at the PEP 541 form; the research may need re-verifying but the reasoning
+will not.
+
+Everything from here down is the prepared work, kept intact for that day.
 
 ## What is actually true, verified 2026-08-08
 
@@ -47,12 +72,13 @@ File the PEP 541 request only if there is **no reply after a reasonable wait** �
 conventional window. At that point the contact attempt is documented, which is exactly what the form
 asks for.
 
-**This is not a deferral of S5.** It is S5 done in the order the evidence supports. Both artifacts
-below are written and ready; what they need is a human to send one and, later, possibly the other.
+That ordering is what the evidence supports whenever this is picked up. It is not what happened: the
+deferral above stopped the step before the letter, on the judgment that a name worth asking for is
+one the project has committed to keeping.
 
-## Blocked on the operator, and why
+## What this needs from a person, whenever it resumes
 
-Two things cannot be supplied from here:
+Two things cannot be supplied from a repository:
 
 1. **The contact attempt itself.** Sending mail to a third party as Jeff Cox is not something to do
    on his behalf without him seeing the words first. The draft is below; the addresses are in the
