@@ -63,7 +63,7 @@ python_version = "3.12"
 strict = true
 # Tests are type-checked too: a test asserting against a type the
 # implementation no longer returns is a defect strict mode can catch.
-files = ["talaria", "tests"]
+files = ["talaria", "tests", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

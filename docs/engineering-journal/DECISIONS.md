@@ -4,6 +4,28 @@
 
 ## 2026-08-07
 
+### The release gate is overridable, and the override is a visible act rather than a private one
+
+**Author.** the v0.1.0 release preparation, working the pre-mortem in the release plan before writing the workflow
+
+**Decision.** `.github/workflows/release.yml` refuses to publish a tag unless the `v0-1-daily-driver` gate reads `READY`. The refusal is **absolute on the normal path** — a pushed `v*` tag — and **overridable on the manual path**: a `workflow_dispatch` run may set `allow_red_gate`, but only together with a typed `reason`, and both land in the run record along with the identity of whoever dispatched it. A gate that cannot be read at all is **not** overridable, and exits differently from a gate that reads red.
+
+**Why an override exists at all.** A gate check that blocks releases while the verdict is red has an obvious failure mode: a defect drops the verdict, and the check then blocks the very patch that repairs it. That is a safety interlock jamming hardest exactly when it most needs to move, and the predictable human response — disabling the check under time pressure, at speed, with no record — is worse than the risk it was guarding. Building the escape hatch deliberately means the bypass is bounded, attributed and explained, rather than improvised.
+
+**Why the reason is mandatory.** An override with no reason produces a run that says a rule was skipped and nothing about why, which is indistinguishable in six months from a mistake. Requiring the sentence costs the person bypassing the gate ten seconds and gives the next reader the whole story.
+
+**Why "cannot read the gate" is not overridable.** The two failures call for opposite responses. A red gate means fix the software; an unreadable gate means the gating document moved, was renamed, or lost its `id`, and the check has quietly stopped checking anything. Allowing the override to cover both would let a check that verifies nothing be waved through as though it had merely disagreed. `scripts/gate_verdict.py` exits `1` for "read it, wrong verdict" and `2` for "could not determine", and the workflow treats them differently.
+
+**The parser has one home.** Reading the fenced `gate` block inline in a workflow step would have produced a second implementation of what `tests/docs/test_gating_documents.py` already parses, free to drift while both kept passing. `scripts/gate_verdict.py` holds it, and the test suite runs that script *as a subprocess* — the interface continuous integration actually uses — asserting it reports the same verdict the suite parses, that it exits 1 on a mismatch, and that an unknown gate id exits 2. Gates are found by `id` rather than by path, so moving the document fails loudly instead of silently disabling the check.
+
+#### Rejected alternatives
+
+**No gate check.** Rejected because it makes the tag mean only that somebody typed `git tag`. The gating document exists to be consulted.
+
+**An absolute check with no override.** Rejected on the pre-mortem above.
+
+**Override by a repository variable or a commit-message token.** Rejected: both are settable well ahead of time and out of sight of the run, so neither carries attribution to the moment of the decision the way a dispatch input does.
+
 ### The TypeScript tree is not superseded bootstrap awaiting deletion — it is the reference recorder, and it stays
 
 **Author.** the v0.1.0 release preparation, which set out to delete `src/` as routine cleanup and stopped when it read the import graph

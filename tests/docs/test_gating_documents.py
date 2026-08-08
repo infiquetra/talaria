@@ -35,6 +35,8 @@ gate nobody has looked at in a while.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -379,3 +381,72 @@ def test_no_backlink_claims_to_clear_a_condition_its_gate_still_blocks_on() -> N
             f"still holds its verdict up on it. One of the two documents is wrong, and this "
             f"is the contradiction that went unnoticed for a day as DRIFT-04."
         )
+
+
+# ── The release workflow's copy of this parser, pinned to this one ───────
+#
+# scripts/gate_verdict.py is what the release workflow runs to decide whether a
+# tag may ship. It parses the same gate blocks these tests parse, so the two can
+# drift — and the drift would be invisible, because each would keep passing on
+# its own. These run the script as a subprocess, which is the interface CI uses,
+# rather than importing its internals.
+
+_GATE_VERDICT_SCRIPT = _REPO_ROOT / "scripts" / "gate_verdict.py"
+
+
+def _run_gate_verdict(*arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(_GATE_VERDICT_SCRIPT), *arguments],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@_over_each_gate
+def test_the_release_gate_reader_reports_the_verdict_this_module_parses(
+    path: Path, body: str
+) -> None:
+    gate = _parse_gate(path, body)
+    result = _run_gate_verdict("--id", gate.identifier)
+    assert result.returncode == 0, (
+        f"scripts/gate_verdict.py could not read gate {gate.identifier!r}, which "
+        f"{path} declares: {result.stderr.strip()}"
+    )
+    assert result.stdout.strip() == gate.verdict, (
+        f"scripts/gate_verdict.py reads gate {gate.identifier!r} as "
+        f"{result.stdout.strip()!r}; this module parses {gate.verdict!r} from {path}. "
+        f"The release workflow decides on the script's answer, so they must agree."
+    )
+
+
+@_over_each_gate
+def test_the_release_gate_reader_refuses_a_verdict_that_is_not_the_expected_one(
+    path: Path, body: str
+) -> None:
+    """The refusal has to work, or the gate check is decoration.
+
+    A checker that only ever returns success is indistinguishable from a passing
+    gate until the day it matters, which is the day the gate is red.
+    """
+    gate = _parse_gate(path, body)
+    result = _run_gate_verdict("--id", gate.identifier, "--expect", f"NOT-{gate.verdict}")
+    assert result.returncode == 1, (
+        f"scripts/gate_verdict.py exited {result.returncode} when told to expect a verdict "
+        f"the gate does not carry. It must exit 1, or the release workflow would ship over "
+        f"a red gate."
+    )
+
+
+def test_the_release_gate_reader_separates_unknown_from_wrong() -> None:
+    """A moved document must not read as a failed gate.
+
+    Both are failures, but they call for opposite responses: fix the check
+    versus fix the gate. Collapsing them onto one exit code would send whoever
+    is cutting a release looking at the wrong document.
+    """
+    result = _run_gate_verdict("--id", "no-such-gate-exists")
+    assert result.returncode == 2, (
+        f"an unknown gate id exited {result.returncode}; it must exit 2, distinct from "
+        f"the 1 that means the verdict was read and was wrong."
+    )
