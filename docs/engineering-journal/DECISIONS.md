@@ -4,6 +4,28 @@
 
 ## 2026-08-07
 
+### The TypeScript tree is not superseded bootstrap awaiting deletion — it is the reference recorder, and it stays
+
+**Author.** the v0.1.0 release preparation, which set out to delete `src/` as routine cleanup and stopped when it read the import graph
+
+**Decision.** Five files are removed from `src/`: `app.tsx`, `app.test.ts`, `cli.tsx`, `record/command.ts` and `transport/attach.ts`. Three stay: `record/recorder.ts`, `record/redact.ts` and `record/redact.test.ts`. `ink`, `react` and `@types/react` leave `package.json`, which becomes `private` and loses the `version`, `bin` and `files` keys that declared a publishable npm command named `talaria` pointing at a file that no longer builds. `CLAUDE.md`, `AGENTS.md` and `README.md` stop describing the tree as bootstrap awaiting removal and start describing what it is.
+
+**Why the deletion was nearly wrong.** `CLAUDE.md` said the tree was "superseded bootstrap code", `AGENTS.md` said "the rest is discarded", and ADR-0004 had moved the project to Python. Every instruction in the repository pointed at removing it. Reading the imports first is what caught the problem: `tests/recorder/test_equivalence.py` runs `tests/recorder/ts_bridge/run_ts_recorder.mjs` in a `tsx` subprocess, that bridge imports `src/record/recorder.js`, and `recorder.ts` imports `redact.ts`. Those two files are the reference implementation the Python recorder is asserted *equivalent to* across the credential redaction boundary — the blocking bridges, `model.save_key`, nested and array credentials, camelCase keys, unparseable payloads. Deleting `src/` wholesale would have removed a credential-redaction guarantee while looking exactly like tidying, and it would have been reported as tidying.
+
+**The tell was in the test file.** `test_equivalence.py` carries a docstring recording that this harness once skipped invisibly in continuous integration, and a guard — `TALARIA_REQUIRE_TS_BRIDGE=1` on the leg that fails the run — added specifically so it could not happen again. A test that has already been silently disabled once is a test worth checking the dependencies of before touching its inputs.
+
+**Verified rather than assumed.** The equivalence suite passes with the bridge enforced after the cut: `TALARIA_REQUIRE_TS_BRIDGE=1 uv run pytest tests/recorder/` reports 122 passed, 17 of them in `test_equivalence.py`. `npm run check` passes with 43 redaction tests. `npm audit` reports zero vulnerabilities where it previously reported one high severity in a transitive development dependency, resolved incidentally by the lockfile regeneration.
+
+#### Rejected alternatives
+
+**Delete `src/` entirely, as the instruction files said to.** Rejected on the import graph. It would have traded a continuously-checked equivalence proof for a tidier directory listing, and the trade would have been invisible in the diff.
+
+**Keep all eight files and change nothing.** Rejected because the dead five actively misled: `package.json` declared `bin: {"talaria": "dist/cli.js"}`, so the repository claimed to ship a Node command with the same name as the Python one, and three instruction files told every reader the whole tree was awaiting removal.
+
+**Port the reference recorder to Python and delete the tree.** Rejected on what an oracle is for. An equivalence test against a reimplementation in the same language, by the same author, at the same time, proves that two expressions of one belief agree. The value here is that the TypeScript was written first, independently, and is now frozen.
+
+**Revisit when.** The redaction contract is expressed as a specification that both implementations are checked against independently, rather than one being checked against the other. At that point the oracle has been replaced rather than deleted, and this entry's constraint is satisfied.
+
 ### Row 13 grades Talaria, not the machine Talaria runs on — and that clears the last condition on the v0.1 gate
 
 **Author.** the operator, answering the scoping question the entry below this one left open, in the words "I don't think we should be grading the machine it runs on... we are grading Talaria"

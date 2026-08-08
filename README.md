@@ -4,9 +4,9 @@ Talaria is an experimental, Hermes-native terminal UI focused on a calmer, more 
 
 The name comes from the _talaria_, Hermes's winged sandals. The project is intentionally named for the Hermes ecosystem rather than as a private product fork.
 
-> **Status: pre-implementation.** The repository contains the project direction, repository standards, the architecture decisions below, and a small TypeScript shell left over from repository bootstrap. The Hermes integration is not implemented yet.
+> **Status: v0.1, installed from a git tag.** The Hermes integration is implemented: Talaria dials a running gateway, streams turns, records every frame, and replays a recording through the whole interface with no socket open. The v0.1 daily-driver verdict reached **ready** on 2026-08-07 — under limits that are stated, not buried. Read them under "Quick start" before relying on it.
 >
-> **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)) with **Textual** as its terminal framework, which passed its validation gate on 2026-08-03 — see the [gate results](docs/analysis/2026-08-03-textual-validation-gate-results.md) and [ADR-0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) (`proposed`). The TypeScript shell described under "Quick start" is superseded and receives no new behavior.
+> **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)) with **Textual** as its terminal framework, which passed its validation gate on 2026-08-03 — see the [gate results](docs/analysis/2026-08-03-textual-validation-gate-results.md) and [ADR-0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) (`proposed`). A small TypeScript tree remains under `src/`, reduced to the reference recorder the Python one is tested against; it is not the product and is described at the end of this page.
 
 ## Goals
 
@@ -218,21 +218,26 @@ Talaria itself never adds the credential to its own command line or environment;
 asserted against a running process in `tests/transport/test_process_surface.py`, and the same file
 asserts the _failure_ of the inherited half rather than defining it away.
 
-### The superseded TypeScript bootstrap
+### The TypeScript reference recorder
 
-The repository still carries the shell it was initialized with — a small Ink prototype, a frame
-recorder, and a redaction boundary. It runs, and its checks pass, but it is not the product and it is
-not being extended. It stays until the Python tree replaces it, because its recorder and redaction
-rules are still the only working evidence of the protocol.
+`src/` is down to three files, and they are not leftovers. `record/recorder.ts` and `record/redact.ts`
+are the reference implementation the Python recorder is asserted _equivalent to_, across the
+credential redaction boundary: `tests/recorder/test_equivalence.py` feeds the same frames through both
+and compares the results, running the real TypeScript in a `tsx` subprocess rather than a
+reimplementation of it. Deleting the tree would delete that guarantee. That is why these three
+survived the cut on 2026-08-07 that removed the Ink prototype, the command-line entry point, the
+recording command and the transport shim — five files nothing depended on any more.
 
 ```bash
 npm install
 npm run check
-npm run dev
 ```
 
-Press `q` or `Esc` to exit. `npm run check` runs TypeScript compilation, unit tests, and a Prettier
-formatting check.
+`npm run check` runs TypeScript compilation, the redaction unit tests, and a Prettier formatting
+check. The equivalence assertion itself runs from the Python suite. The continuous-integration leg
+that sets `TALARIA_REQUIRE_TS_BRIDGE=1` turns a missing Node toolchain into a failure rather than a
+skip, because this harness once skipped invisibly inside a green run and nobody noticed that the
+parity proof had stopped running.
 
 ## Documentation
 
@@ -254,13 +259,18 @@ formatting check.
 
 ## Contributing
 
-Small, focused pull requests are preferred. Before opening a pull request, run the repository's check
-command. Until the Python implementation lands, that is still the TypeScript bootstrap's:
+Small, focused pull requests are preferred. Before opening a pull request, run the repository's check:
 
 ```bash
-npm run check
+uv sync --all-groups
+uv run ruff check .
+uv run mypy
+uv run pytest
+uv run bandit -r talaria -q
 git diff --check
 ```
+
+If the change touches `src/`, run `npm run check` as well.
 
 Changes that create durable project knowledge should update the relevant engineering-journal file in the same change. See [AGENTS.md](AGENTS.md) for repository-local guidance.
 

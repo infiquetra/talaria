@@ -18,7 +18,7 @@ Four decisions are settled and are not open for re-litigation in an implementati
 | [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is written in Python; the terminal framework is decided by a validation gate         |
 | [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)   | Textual 8.2.8 is the presentation layer — `proposed`, on the U5 gate's pass verdict          |
 
-**The repository is mid-transition.** The TypeScript tree under `src/` is superseded repository-bootstrap code. Do not add behavior to it. Do not port it to Python file by file either — its redaction rules and frame-log contract are re-encoded as contracts, and the rest is discarded.
+**The transition is done, and `src/` is what survived it.** The Ink prototype, the command-line entry point, the recording command and the transport shim were removed on 2026-08-07. The three remaining TypeScript files are the reference recorder and its redaction rules, kept because `tests/recorder/test_equivalence.py` runs the real thing in a subprocess and asserts the Python recorder matches it across the credential redaction boundary. Do not add behavior to them. Do not port them file by file. Do not delete them without first saying what replaces that guarantee.
 
 ## Source of truth
 
@@ -42,8 +42,7 @@ uv run bandit -r talaria -q
 git diff --check
 ```
 
-The TypeScript bootstrap's check command still applies to the superseded `src/` tree until it is
-removed:
+A change touching `src/` runs the Node check as well:
 
 ```bash
 npm install
@@ -51,8 +50,9 @@ npm run check
 git diff --check
 ```
 
-When the Python tree exists, its checks — `ruff`, a strict type checker, and `pytest` — ship with its
-first commit rather than being added later. See [ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md).
+The equivalence assertion between the two recorders runs from the Python suite, not this one. The
+continuous-integration leg that sets `TALARIA_REQUIRE_TS_BRIDGE=1` makes a missing Node toolchain a
+failure rather than a skip, because the harness once skipped invisibly inside a green run.
 
 ## Working rules
 
