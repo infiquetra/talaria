@@ -12,6 +12,10 @@ coverage/
 # Ideation working records contain live local probes; only the scrubbed
 # artifact under docs/ideation/ is public-safe.
 .claude/saga/
+# Per-machine Claude Code preferences. Ignored rather than merely uncommitted:
+# an untracked file that nothing ignores is still visible to tooling that walks
+# the working tree, and one such build swept this into a release tarball.
+.claude/settings.local.json
 # Machine-local saga tooling preferences (engine second-opinion choices).
 .saga/
 

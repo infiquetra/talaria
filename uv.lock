@@ -335,7 +335,6 @@ wheels = [
 
 [[package]]
 name = "talaria"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "textual" },

@@ -4,6 +4,20 @@
 
 ## 2026-08-07
 
+### A source distribution built from a deny-list ships untracked working-tree files, so the contents of a release artifact depend on whose machine built it
+
+**Author.** the v0.1.0 release preparation, which built a wheel only to confirm the dynamic version resolved and then read the tarball out of habit
+
+**Evidence.** `uv build` on a clean checkout produced `talaria-0.1.0.tar.gz` containing `.claude/settings.local.json`. That file is not committed — `git ls-files .claude` returns nothing — and it is not ignored; `.gitignore` names `.claude/saga/` only. It was 35 bytes holding one output-style preference, so the exposure was nil, but it reached a distributable artifact by a route nobody had chosen. The tarball also carried `platform-specs/`, `docs/`, `.github/` and the whole superseded TypeScript tree, at 1.1 MB against a 300 KB wheel. Fixed in `pyproject.toml` by giving `[tool.hatch.build.targets.sdist]` an explicit `include` allow-list; the rebuilt tarball holds `talaria/`, `README.md`, `LICENSE`, and the two files hatchling generates.
+
+**Mechanism.** Hatchling's default sdist selection is *everything in the project directory that version control does not ignore*. The word doing the damage is "ignore": untracked-but-unignored is a third state, and it is the state every machine-local scratch file passes through. So the default is not "ship what is in the repository" — which is what it looks like, and what it behaves as on a fresh CI checkout — it is "ship the repository plus whatever the builder happened to leave lying around". The failure is invisible on the machine most likely to catch it, because continuous integration always builds from a clean clone.
+
+This is the general shape of a deny-list guarding an open set: it can only exclude what somebody anticipated. An allow-list inverts the default so that a file nobody thought of is excluded by construction rather than by vigilance. For a public repository shipping artifacts, that inversion is worth the small cost of naming three paths.
+
+**What it did not catch, and why the fix is still worth it.** The v0.1.0 release is built in GitHub Actions from a fresh checkout, where no untracked file exists, so this defect would not have shipped anything. The reason to fix it anyway is that "the artifact is clean" was true by accident of build location rather than by any property of the build, and the first local `uv build` before an upload would have ended that.
+
+**Generalizable rule.** Before a project's first release, extract the artifact and read its file list. Packaging defaults are deny-lists over the working tree, and a deny-list cannot exclude what nobody anticipated — so name what ships.
+
 ### A gate row that no action by the graded subject can move is mis-scoped, and that is a diagnosable condition rather than a judgement call
 
 **Author.** the row-13 re-scoping pass, after the operator answered the scoping question with "we are grading Talaria"

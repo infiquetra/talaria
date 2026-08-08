@@ -119,6 +119,22 @@ jobs:
         run: |
           env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/fake-home" \
             "$UV_TOOL_BIN_DIR/talaria" --help
+      - name: The installed build reports the version the source declares
+        # The point of the dynamic version is that the distribution metadata
+        # and the runtime string come from one literal. This is where that is
+        # actually observed: a real built-and-installed artifact, asked what it
+        # is, compared against the file hatchling read to build it. A repo-only
+        # test cannot see the built metadata, so it cannot make this claim.
+        env:
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/tool-bin
+        run: |
+          expected="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' talaria/__init__.py)"
+          # Without this, a sed that matched nothing would compare the installed
+          # output against the string "talaria " and a broken build would pass.
+          test -n "$expected"
+          actual="$(env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/fake-home" \
+            "$UV_TOOL_BIN_DIR/talaria" --version)"
+          test "$actual" = "talaria $expected"
       - name: The install wrote nothing outside its own prefix
         # Specifically: nothing into a Hermes installation. Talaria is a
         # standalone client (ADR-0001) and installing it must not touch the

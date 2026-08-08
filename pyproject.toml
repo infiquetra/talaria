@@ -1,6 +1,10 @@
 [project]
 name = "talaria"
-version = "0.1.0"
+# Read from talaria/__init__.py rather than written here. Two literals that
+# must agree drift the moment somebody bumps one of them, and the drift is
+# silent: the wheel says one version and `talaria --version` says another.
+# One source of truth by construction beats a test asserting two agree.
+dynamic = ["version"]
 description = "Hermes-native terminal UI client"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -16,6 +20,24 @@ talaria = "talaria.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "talaria/__init__.py"
+
+# An allow-list, not a deny-list. Hatchling's default source-distribution
+# selection is "everything in the project directory that version control does
+# not ignore", which sweeps in *untracked* working-tree files: building v0.1.0
+# locally put `.claude/settings.local.json` — never committed, never ignored —
+# into the tarball. It was harmless, but the shape is not: what a release
+# artifact contains would depend on what happened to be lying in the builder's
+# directory that day, and this repository is public. Naming what ships cannot
+# leak a file nobody thought of.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/talaria",
+    "/README.md",
+    "/LICENSE",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["talaria"]

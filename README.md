@@ -108,12 +108,20 @@ uv run talaria replay <recording.jsonl>
 uv run talaria gate --corpus <recording.jsonl> --deltas 50000
 ```
 
-Talaria also installs as an ordinary command:
+Talaria also installs as an ordinary command, from a release tag:
 
 ```bash
-uv tool install talaria
+uv tool install git+https://github.com/infiquetra/talaria@v0.1.0
+talaria --version
 talaria
 ```
+
+**Do not `uv tool install talaria`.** The name `talaria` on the Python Package Index belongs to an
+unrelated content management system whose last upload was 2010-06-19, and installing it gets you that
+project, not this one. Talaria is not published to PyPI and this is deliberate: the v0.1 verdict
+records that nobody has driven the interface on Linux and that no run on either platform has used a
+real terminal emulator rather than a bare pseudo-terminal, which is not the claim a package index
+makes on your behalf. Install from a tag until those gaps close.
 
 ### Switching Hermes profile
 
