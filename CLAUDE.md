@@ -23,12 +23,13 @@ uv run bandit -r talaria -q
 git diff --check
 ```
 
-The TypeScript bootstrap's `npm run check` still applies to the superseded `src/` tree until it is
-removed.
+`npm run check` still applies to `src/`, which is no longer a bootstrap awaiting removal: it is three
+files holding the TypeScript reference recorder that `tests/recorder/test_equivalence.py` asserts the
+Python recorder is equivalent to. Run it when you touch them.
 
 ## Notes
 
-- Talaria is written in Python (ADR-0004) with Textual as the terminal framework (ADR-0005, `proposed` on the U5 gate's pass verdict). The TypeScript tree under `src/` is superseded bootstrap code — do not extend it, and do not port it file by file.
+- Talaria is written in Python (ADR-0004) with Textual as the terminal framework (ADR-0005, `proposed` on the U5 gate's pass verdict). The TypeScript tree under `src/` is not superseded bootstrap any more — the bootstrap was removed on 2026-08-07 and what remains is the reference recorder the Python one is tested against. Do not extend it, do not port it file by file, and do not delete it without saying what replaces the redaction equivalence guarantee.
 - The domain core never imports the terminal framework (ADR-0002).
 - Hermes's terminal UI is documentation of behavior, not a source tree to translate (ADR-0003).
 - Prefer transport interfaces and capability discovery over direct Hermes internals.

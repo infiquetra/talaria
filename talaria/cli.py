@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from talaria import __version__
 from talaria import config as config_module
 from talaria.domain.commands import PasteThreshold
 from talaria.domain.startup import (
@@ -44,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="talaria",
         description="Hermes-native terminal UI client",
+    )
+    # Reports the literal that hatchling also builds the distribution's
+    # metadata from, so the answer to "what am I running" is the same string
+    # a bug report can be tied back to a build with.
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="print the version and exit",
     )
     parser.add_argument(
         "--session",

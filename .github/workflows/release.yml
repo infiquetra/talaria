@@ -1,0 +1,221 @@
+name: Release
+
+# A tag is a claim, and this workflow is what makes the claim mean something:
+# nothing ships unless the tag agrees with the package version, the full check
+# passes on the tagged tree, and the repository's own gating document says the
+# release is ready.
+#
+# Two entry points, deliberately. A pushed `v*` tag is the normal path and the
+# gate is absolute there. `workflow_dispatch` is the break-glass path: it can
+# release over a red gate, but only when a human sets `allow_red_gate` and types
+# a reason, both of which land in the run record. The pre-mortem in
+# docs/plans/2026-08-07-v0-1-release-and-install-plan.md names the failure this
+# avoids — a defect drops the verdict, and the absolute check then blocks the
+# very patch that would repair it.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, e.g. v0.1.0"
+        required: true
+        type: string
+      allow_red_gate:
+        description: "Release even though the gate is not READY"
+        type: boolean
+        default: false
+      reason:
+        description: "Why the gate is being bypassed. Required with allow_red_gate."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # macOS arm64 is PC7's supported matrix. A release is built where the
+    # project claims to work, not where it is cheapest to build.
+    runs-on: macos-14
+    steps:
+      - name: Resolve the tag being released
+        id: resolve
+        shell: bash
+        # Two separate defences, because this value later reaches `ref:` on
+        # actions/checkout and that is the one place a bad value would be acted
+        # on rather than merely printed.
+        #
+        # First, the tag reaches the shell through the environment rather than
+        # through `${{ }}` interpolation, so it cannot become shell syntax here.
+        # Second, it must match a whole-string regex before it is allowed out of
+        # this step. `[[ =~ ]]` is used rather than a `case` glob deliberately:
+        # a glob like v[0-9]*.[0-9]*.[0-9]* looks strict and is not, because `*`
+        # matches spaces, semicolons and newlines — so `v1.2.3; rm -rf /` passes
+        # it, as does a value carrying a second line that would forge an extra
+        # GITHUB_OUTPUT entry. The regex below admits digits, dots and a
+        # conventional pre-release suffix, and nothing else.
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$REF_NAME"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$tag' is not a release tag. Expected vMAJOR.MINOR.PATCH with an optional pre-release suffix, e.g. v0.1.0 or v0.1.0-rc1."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$tag" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the tagged tree
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
+
+      - name: The tag agrees with the package version
+        # A tag saying v0.1.1 over a package still reporting 0.1.0 is the version
+        # drift that single-sourcing the version was meant to end, reintroduced
+        # one layer out. A pre-release suffix is allowed to differ: v0.1.0-rc1
+        # releases package version 0.1.0.
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          expected="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' talaria/__init__.py)"
+          test -n "$expected" || {
+            echo "::error::Could not read __version__ from talaria/__init__.py."
+            exit 1
+          }
+          base="${TAG#v}"
+          base="${base%%-*}"
+          if [ "$base" != "$expected" ]; then
+            echo "::error::Tag $TAG releases version '$base', but the package declares '$expected'."
+            exit 1
+          fi
+          echo "Tag $TAG matches package version $expected."
+
+      - name: Set up Node.js (TypeScript equivalence bridge)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install the equivalence bridge
+        run: npm ci
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: mypy --strict
+        run: uv run mypy
+
+      - name: pytest
+        # The release runs the equivalence proof rather than skipping it. A
+        # missing Node toolchain fails here for the same reason it fails on the
+        # validation workflow's macOS leg: this harness once skipped invisibly.
+        env:
+          TALARIA_REQUIRE_TS_BRIDGE: "1"
+        run: uv run pytest
+
+      - name: bandit
+        run: uv run bandit -r talaria -q
+
+      - name: The gate must read READY
+        shell: bash
+        env:
+          ALLOW_RED_GATE: ${{ inputs.allow_red_gate }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set +e
+          # Only stdout is captured. The script's stderr carries the reason a
+          # read failed, and that belongs in the run log rather than /dev/null.
+          verdict="$(uv run python scripts/gate_verdict.py --id v0-1-daily-driver --expect READY)"
+          status=$?
+          set -e
+
+          if [ "$status" = "2" ]; then
+            echo "::error::The v0-1-daily-driver gate could not be read at all. This is deliberately not overridable: an override would be overriding nothing. Find the gating document."
+            exit 1
+          fi
+
+          if [ "$status" = "0" ]; then
+            echo "Gate v0-1-daily-driver reads $verdict."
+            exit 0
+          fi
+
+          if [ "$ALLOW_RED_GATE" != "true" ]; then
+            echo "::error::Gate v0-1-daily-driver reads '$verdict', not READY. Refusing to release. If this release is the fix for whatever turned the gate red, re-run this workflow manually with allow_red_gate and a reason."
+            exit 1
+          fi
+
+          if [ -z "$REASON" ]; then
+            echo "::error::allow_red_gate was set with no reason. The bypass is allowed, but not silently."
+            exit 1
+          fi
+
+          echo "::warning title=Released over a red gate::Gate v0-1-daily-driver reads '$verdict'. Reason given: $REASON"
+
+      - name: Build the distributions
+        run: uv build --out-dir dist
+
+      - name: The built artifact installs clean and reports its version
+        # Same shape as the validation workflow's AE10/R39 install job, against
+        # the artifact actually about to be published rather than the source
+        # tree. `env -i` because the point is a machine that is not this runner.
+        env:
+          UV_TOOL_DIR: ${{ runner.temp }}/release-tool-dir
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/release-tool-bin
+        run: |
+          wheel="$(ls dist/*.whl)"
+          uv tool install "$wheel"
+          expected="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' talaria/__init__.py)"
+          test -n "$expected"
+          actual="$(env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/release-fake-home" \
+            "$UV_TOOL_BIN_DIR/talaria" --version)"
+          test "$actual" = "talaria $expected"
+          env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/release-fake-home" \
+            "$UV_TOOL_BIN_DIR/talaria" --help > /dev/null
+
+      - name: Create the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          PRERELEASE: ${{ steps.resolve.outputs.prerelease }}
+        run: |
+          notes="docs/releases/$TAG.md"
+          args=(release create "$TAG" dist/* --verify-tag --title "Talaria $TAG")
+          if [ -f "$notes" ]; then
+            args+=(--notes-file "$notes")
+          else
+            # Better an autogenerated commit list than a release with no notes:
+            # the absence would be silent, and a reader cannot tell a release
+            # with nothing to say from one whose notes were forgotten.
+            echo "::warning::No $notes; falling back to generated notes."
+            args+=(--generate-notes)
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}"

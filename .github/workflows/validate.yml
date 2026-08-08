@@ -30,12 +30,12 @@ jobs:
   # macOS arm64, so this job carries no continue-on-error: a failure here
   # fails the workflow run.
   #
-  # Failing the run is NOT the same as blocking a merge. Making these checks
-  # required status checks is a repository-settings change (branch protection
-  # or a ruleset) that cannot be expressed in this file; `main` currently has
-  # neither. Tracked in docs/engineering-journal/QUEUED.md. Job names are kept
-  # free of incidental matrix keys so the check names stay stable if branch
-  # protection is later configured against them.
+  # Failing the run is NOT the same as blocking a merge. That is a
+  # repository-settings change which cannot be expressed in this file, and it
+  # has since been made: `main` requires `python-check (3.12)` and
+  # `python-check (3.13)`, with administrator enforcement on. Job names are
+  # therefore load-bearing — renaming this job, or letting a matrix key into
+  # its name, silently detaches the protection rule from the check it names.
   python-check:
     strategy:
       fail-fast: false
@@ -119,6 +119,22 @@ jobs:
         run: |
           env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/fake-home" \
             "$UV_TOOL_BIN_DIR/talaria" --help
+      - name: The installed build reports the version the source declares
+        # The point of the dynamic version is that the distribution metadata
+        # and the runtime string come from one literal. This is where that is
+        # actually observed: a real built-and-installed artifact, asked what it
+        # is, compared against the file hatchling read to build it. A repo-only
+        # test cannot see the built metadata, so it cannot make this claim.
+        env:
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/tool-bin
+        run: |
+          expected="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' talaria/__init__.py)"
+          # Without this, a sed that matched nothing would compare the installed
+          # output against the string "talaria " and a broken build would pass.
+          test -n "$expected"
+          actual="$(env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/fake-home" \
+            "$UV_TOOL_BIN_DIR/talaria" --version)"
+          test "$actual" = "talaria $expected"
       - name: The install wrote nothing outside its own prefix
         # Specifically: nothing into a Hermes installation. Talaria is a
         # standalone client (ADR-0001) and installing it must not touch the

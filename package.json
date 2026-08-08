@@ -1,35 +1,21 @@
 {
   "name": "talaria",
-  "version": "0.1.0",
-  "description": "A modern, Hermes-native terminal UI and fleet console.",
+  "private": true,
+  "description": "The TypeScript reference recorder that the Python recorder is asserted equivalent to. Not the product, not published.",
   "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
-  "bin": {
-    "talaria": "dist/cli.js"
-  },
-  "files": [
-    "dist"
-  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsx src/cli.tsx",
-    "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm test && npm run format:check"
   },
-  "dependencies": {
-    "ink": "^5.1.0",
-    "react": "^18.3.1"
-  },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/react": "^18.3.0",
     "prettier": "^3.6.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

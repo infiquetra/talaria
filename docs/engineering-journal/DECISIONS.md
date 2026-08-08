@@ -4,6 +4,50 @@
 
 ## 2026-08-07
 
+### The release gate is overridable, and the override is a visible act rather than a private one
+
+**Author.** the v0.1.0 release preparation, working the pre-mortem in the release plan before writing the workflow
+
+**Decision.** `.github/workflows/release.yml` refuses to publish a tag unless the `v0-1-daily-driver` gate reads `READY`. The refusal is **absolute on the normal path** — a pushed `v*` tag — and **overridable on the manual path**: a `workflow_dispatch` run may set `allow_red_gate`, but only together with a typed `reason`, and both land in the run record along with the identity of whoever dispatched it. A gate that cannot be read at all is **not** overridable, and exits differently from a gate that reads red.
+
+**Why an override exists at all.** A gate check that blocks releases while the verdict is red has an obvious failure mode: a defect drops the verdict, and the check then blocks the very patch that repairs it. That is a safety interlock jamming hardest exactly when it most needs to move, and the predictable human response — disabling the check under time pressure, at speed, with no record — is worse than the risk it was guarding. Building the escape hatch deliberately means the bypass is bounded, attributed and explained, rather than improvised.
+
+**Why the reason is mandatory.** An override with no reason produces a run that says a rule was skipped and nothing about why, which is indistinguishable in six months from a mistake. Requiring the sentence costs the person bypassing the gate ten seconds and gives the next reader the whole story.
+
+**Why "cannot read the gate" is not overridable.** The two failures call for opposite responses. A red gate means fix the software; an unreadable gate means the gating document moved, was renamed, or lost its `id`, and the check has quietly stopped checking anything. Allowing the override to cover both would let a check that verifies nothing be waved through as though it had merely disagreed. `scripts/gate_verdict.py` exits `1` for "read it, wrong verdict" and `2` for "could not determine", and the workflow treats them differently.
+
+**The parser has one home.** Reading the fenced `gate` block inline in a workflow step would have produced a second implementation of what `tests/docs/test_gating_documents.py` already parses, free to drift while both kept passing. `scripts/gate_verdict.py` holds it, and the test suite runs that script *as a subprocess* — the interface continuous integration actually uses — asserting it reports the same verdict the suite parses, that it exits 1 on a mismatch, and that an unknown gate id exits 2. Gates are found by `id` rather than by path, so moving the document fails loudly instead of silently disabling the check.
+
+#### Rejected alternatives
+
+**No gate check.** Rejected because it makes the tag mean only that somebody typed `git tag`. The gating document exists to be consulted.
+
+**An absolute check with no override.** Rejected on the pre-mortem above.
+
+**Override by a repository variable or a commit-message token.** Rejected: both are settable well ahead of time and out of sight of the run, so neither carries attribution to the moment of the decision the way a dispatch input does.
+
+### The TypeScript tree is not superseded bootstrap awaiting deletion — it is the reference recorder, and it stays
+
+**Author.** the v0.1.0 release preparation, which set out to delete `src/` as routine cleanup and stopped when it read the import graph
+
+**Decision.** Five files are removed from `src/`: `app.tsx`, `app.test.ts`, `cli.tsx`, `record/command.ts` and `transport/attach.ts`. Three stay: `record/recorder.ts`, `record/redact.ts` and `record/redact.test.ts`. `ink`, `react` and `@types/react` leave `package.json`, which becomes `private` and loses the `version`, `bin` and `files` keys that declared a publishable npm command named `talaria` pointing at a file that no longer builds. `CLAUDE.md`, `AGENTS.md` and `README.md` stop describing the tree as bootstrap awaiting removal and start describing what it is.
+
+**Why the deletion was nearly wrong.** `CLAUDE.md` said the tree was "superseded bootstrap code", `AGENTS.md` said "the rest is discarded", and ADR-0004 had moved the project to Python. Every instruction in the repository pointed at removing it. Reading the imports first is what caught the problem: `tests/recorder/test_equivalence.py` runs `tests/recorder/ts_bridge/run_ts_recorder.mjs` in a `tsx` subprocess, that bridge imports `src/record/recorder.js`, and `recorder.ts` imports `redact.ts`. Those two files are the reference implementation the Python recorder is asserted *equivalent to* across the credential redaction boundary — the blocking bridges, `model.save_key`, nested and array credentials, camelCase keys, unparseable payloads. Deleting `src/` wholesale would have removed a credential-redaction guarantee while looking exactly like tidying, and it would have been reported as tidying.
+
+**The tell was in the test file.** `test_equivalence.py` carries a docstring recording that this harness once skipped invisibly in continuous integration, and a guard — `TALARIA_REQUIRE_TS_BRIDGE=1` on the leg that fails the run — added specifically so it could not happen again. A test that has already been silently disabled once is a test worth checking the dependencies of before touching its inputs.
+
+**Verified rather than assumed.** The equivalence suite passes with the bridge enforced after the cut: `TALARIA_REQUIRE_TS_BRIDGE=1 uv run pytest tests/recorder/` reports 122 passed, 17 of them in `test_equivalence.py`. `npm run check` passes with 43 redaction tests. `npm audit` reports zero vulnerabilities where it previously reported one high severity in a transitive development dependency, resolved incidentally by the lockfile regeneration.
+
+#### Rejected alternatives
+
+**Delete `src/` entirely, as the instruction files said to.** Rejected on the import graph. It would have traded a continuously-checked equivalence proof for a tidier directory listing, and the trade would have been invisible in the diff.
+
+**Keep all eight files and change nothing.** Rejected because the dead five actively misled: `package.json` declared `bin: {"talaria": "dist/cli.js"}`, so the repository claimed to ship a Node command with the same name as the Python one, and three instruction files told every reader the whole tree was awaiting removal.
+
+**Port the reference recorder to Python and delete the tree.** Rejected on what an oracle is for. An equivalence test against a reimplementation in the same language, by the same author, at the same time, proves that two expressions of one belief agree. The value here is that the TypeScript was written first, independently, and is now frozen.
+
+**Revisit when.** The redaction contract is expressed as a specification that both implementations are checked against independently, rather than one being checked against the other. At that point the oracle has been replaced rather than deleted, and this entry's constraint is satisfied.
+
 ### Row 13 grades Talaria, not the machine Talaria runs on — and that clears the last condition on the v0.1 gate
 
 **Author.** the operator, answering the scoping question the entry below this one left open, in the words "I don't think we should be grading the machine it runs on... we are grading Talaria"
