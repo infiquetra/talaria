@@ -450,6 +450,16 @@ def build_live_app(
     # Bound after construction rather than passed in: the app is built *from*
     # the source, so wiring the source's callbacks to the app's methods at
     # construction time would be circular (see ``LiveSource.bind``).
+    #
+    # This is the live path KTD7's typed terminal cause travels end to end:
+    # ``LiveSource`` sets a cause on its four disconnect sites, ``bind``
+    # hands the whole three-argument callback to
+    # ``TalariaApp.note_connection_state`` unchanged, and that method passes
+    # the cause straight into ``set_connection`` — the domain transition that
+    # actually commits any partial streaming/reasoning text before clearing
+    # it (R6). Nothing in this line itself needed to change: the callback's
+    # shape grew a third argument and a bound-method reference forwards
+    # whatever it is called with.
     source.bind(on_connection=app.note_connection_state, on_reconnect=app.note_reconnect)
     return app, source
 

@@ -43,6 +43,7 @@ from talaria.domain.models import (
     PromptKind,
     SubagentState,
     SubagentStatus,
+    TerminalCause,
     TranscriptEntry,
     TranscriptKind,
     TurnPhase,
@@ -55,6 +56,7 @@ from talaria.domain.normalize import (
     clip_detail_line,
     clip_transcript_line,
     coerce_text,
+    coerce_text_exact,
     is_terminal_status,
     keep_terminal_else,
     normalize_subagent_status,
@@ -126,6 +128,21 @@ class SessionState:
     segments: tuple[str, ...] = ()
     #: Segments below this index were sealed by ``message.interim``.
     interim_boundary: int = 0
+
+    #: Bumped every time :attr:`streaming_text` is *replaced* rather than
+    #: appended to (KTD3) — sealed by ``message.interim``, cleared at a new
+    #: turn's start, or committed and cleared on any terminal path
+    #: (``message.complete``, ``_on_error``, ``cancel_turn``, a typed
+    #: transport terminal cause). Never bumped by ``message.delta``'s plain
+    #: append. A block-rendering consumer of :class:`~talaria.domain.projection.ProvisionalTail`
+    #: uses this to tell "the same tail grew" (append the suffix) from "the
+    #: tail was replaced" (re-render from the authoritative text) without
+    #: diffing the string itself — the pane receives snapshots, not deltas.
+    assistant_stream_generation: int = 0
+    #: The same counter for :attr:`reasoning_text`. Two counters, not one,
+    #: because KTD2's two provisional tail documents render independently and
+    #: neither may be told to replace on the other's account (R18).
+    reasoning_stream_generation: int = 0
 
     transcript: tuple[TranscriptEntry, ...] = ()
     subagents: tuple[SubagentState, ...] = ()
@@ -296,18 +313,54 @@ def _append(state: SessionState, kind: TranscriptKind, text: str) -> SessionStat
 
 
 def _final_tail(final_text: str, committed: tuple[str, ...]) -> str:
-    """Strip text the transcript already shows from the turn's final message.
+    """Remove text the transcript already shows from the turn's final message.
 
     Re-encodes ``finalTail`` (``turnController.ts:81-93``). ``message.complete``
     carries the whole assistant reply, but streaming already committed part of
     it; without this the transcript shows the opening paragraphs twice.
+
+    **The match is exact, not whitespace-trimmed (KTD7).** A committed segment
+    is compared against the head of the final text byte-for-byte. Comparing
+    stripped forms was the old behaviour, and it breaks the moment a
+    committed segment carries meaningful leading whitespace — a four-space
+    indented code block, say — because the final text's *own* leading
+    whitespace at that position no longer matches a trimmed comparison
+    target, the "already shown" prefix goes unrecognized, and the whole reply
+    duplicates instead of just its un-dealt-with tail.
     """
     tail = final_text
     for text in committed:
-        trimmed = text.strip()
-        if trimmed and tail.startswith(trimmed):
-            tail = tail[len(trimmed) :].lstrip()
+        if text and tail.startswith(text):
+            tail = tail[len(text) :]
     return tail
+
+
+def _commit_partial_streams(state: SessionState) -> SessionState:
+    """Commit in-flight streaming and reasoning text as entries, exactly.
+
+    Shared by every terminal path that must not lose partial content (R6):
+    the domain error transition (:func:`_on_error`) and the transport's typed
+    terminal causes (KTD7, :func:`set_connection`). ``cancel_turn`` does not
+    call this — it has its own "*[interrupted]*" marker and bare-cancelled
+    fallback, both pinned by regression — but it commits exactly the same two
+    buffers, in the same order, and exactly (no stripping).
+
+    Content is committed byte-for-byte. Leading indentation is markdown
+    structure (an indented code block), not incidental whitespace, and a
+    trailing blank line closes a construct; stripping either one here would
+    silently rewrite what the model said on the one path meant to preserve it.
+
+    The caller still owns clearing the buffers and settling the turn — this
+    only appends; it never mutates ``streaming_text``/``reasoning_text``
+    themselves, so a caller that decides not to clear them (there is none
+    today) is free not to.
+    """
+    next_state = state
+    if state.reasoning_text:
+        next_state = _append(next_state, "reasoning", state.reasoning_text)
+    if state.streaming_text:
+        next_state = _append(next_state, "assistant", state.streaming_text)
+    return next_state
 
 
 # ── Local (non-wire) transitions ─────────────────────────────────────────
@@ -557,11 +610,63 @@ def seed_history(
     return next_state
 
 
-def set_connection(state: SessionState, status: ConnectionStatus) -> SessionState:
-    """Record a transport state change and re-arm the once-per-connection latch."""
-    if status == state.connection:
+def set_connection(
+    state: SessionState,
+    status: ConnectionStatus,
+    *,
+    cause: TerminalCause | None = None,
+    at: float | None = None,
+) -> SessionState:
+    """Record a transport state change and re-arm the once-per-connection latch.
+
+    ``cause`` is KTD7's typed end-of-stream cause. When it is one of the four
+    terminal members (``auth_failed``, ``dial_failed``, ``orderly_close``,
+    ``reconnect_exhausted``), the transport is telling the domain the stream
+    genuinely will not resume — so, exactly like ``_on_error`` and
+    ``cancel_turn``, any partial ``streaming_text``/``reasoning_text`` is
+    committed as transcript entries before it is cleared (R6), and a
+    streaming turn settles to ``idle`` because nothing more is coming for it.
+    A turn already ``cancelled`` stays ``cancelled`` — the operator's own
+    outcome is not overwritten by a connection that dropped afterwards.
+
+    ``cause=None`` (the default, and every non-terminal status change —
+    ``connecting``, ``connected``, ``reconnecting``, or a reconnect attempt
+    that failed but will retry) commits nothing and clears nothing. That is
+    what makes a transient reconnect that resumes the same response arrive
+    without duplication: the segment/interim machinery is the dedupe
+    backstop for whatever text *does* arrive, and a cause-less call never
+    touches the buffers it would otherwise need to dedupe against.
+
+    The early return below is gated on ``cause is None`` as well as on the
+    status being unchanged — a repeated terminal notification (``close()``
+    called again after the stream already ended, say) must still be allowed
+    through so the commit is never silently skipped, even though it is a
+    no-op in practice once the buffers are already empty.
+    """
+    if cause is None and status == state.connection:
         return state
-    return replace(state, connection=status, protocol_noise_announced=False)
+
+    next_state = state
+    if cause is not None:
+        next_state = _commit_partial_streams(next_state)
+        next_state = replace(
+            next_state,
+            turn="idle" if next_state.turn == "streaming" else next_state.turn,
+            streaming_text="",
+            reasoning_text="",
+            thinking_notice="",
+            segments=(),
+            interim_boundary=0,
+            last_observed_at=(
+                max(next_state.last_observed_at, at)
+                if at is not None
+                else next_state.last_observed_at
+            ),
+            assistant_stream_generation=next_state.assistant_stream_generation + 1,
+            reasoning_stream_generation=next_state.reasoning_stream_generation + 1,
+        )
+
+    return replace(next_state, connection=status, protocol_noise_announced=False)
 
 
 def cancel_turn(state: SessionState, *, at: float) -> SessionState:
@@ -572,17 +677,27 @@ def cancel_turn(state: SessionState, *, at: float) -> SessionState:
     partial text exists it is preserved and marked, and when nothing was streamed
     a bare note is written anyway, so the transcript never shows a turn that
     simply stopped.
+
+    **Preserved exactly, no stripping (KTD7).** The commit behaviour here —
+    both buffers committed before clearing — is pinned by regression; the one
+    change this made is removing the ``.strip()``/``.lstrip()`` that used to
+    run on the way out. Leading indentation and trailing blank lines are
+    markdown structure, and the guard below (a plain truthiness check rather
+    than a stripped one) is what lets a whitespace-only reasoning or
+    streaming buffer still leave its trace, matching every other
+    content-channel path.
     """
     if state.turn != "streaming":
         return state
 
     next_state = state
-    if state.reasoning_text.strip():
-        next_state = _append(next_state, "reasoning", state.reasoning_text.strip())
+    if state.reasoning_text:
+        next_state = _append(next_state, "reasoning", state.reasoning_text)
 
-    partial = state.streaming_text.lstrip()
-    if partial:
-        next_state = _append(next_state, "assistant", f"{partial}\n\n*[interrupted]*")
+    if state.streaming_text:
+        next_state = _append(
+            next_state, "assistant", f"{state.streaming_text}\n\n*[interrupted]*"
+        )
     else:
         next_state = _append(next_state, "cancelled", "*[interrupted]*")
 
@@ -595,6 +710,8 @@ def cancel_turn(state: SessionState, *, at: float) -> SessionState:
         segments=(),
         interim_boundary=0,
         last_observed_at=max(state.last_observed_at, at),
+        assistant_stream_generation=next_state.assistant_stream_generation + 1,
+        reasoning_stream_generation=next_state.reasoning_stream_generation + 1,
     )
 
 
@@ -1368,6 +1485,8 @@ def _on_message_start(state: SessionState, event: GatewayEvent) -> SessionState:
         segments=(),
         interim_boundary=0,
         subagents=(),
+        assistant_stream_generation=state.assistant_stream_generation + 1,
+        reasoning_stream_generation=state.reasoning_stream_generation + 1,
     )
 
 
@@ -1397,6 +1516,8 @@ def _ensure_streaming(state: SessionState) -> SessionState:
         segments=(),
         interim_boundary=0,
         synthetic_turn_starts=state.synthetic_turn_starts + 1,
+        assistant_stream_generation=state.assistant_stream_generation + 1,
+        reasoning_stream_generation=state.reasoning_stream_generation + 1,
     )
     return _append(opened, "system", "stream began without a message.start event")
 
@@ -1428,11 +1549,15 @@ def _on_message_interim(state: SessionState, event: GatewayEvent) -> SessionStat
     interim text is authoritative even when the stream did not carry every
     token, and the sealed segment is marked so the final message's dedupe pass
     leaves it alone.
+
+    ``coerce_text_exact``, not ``coerce_text`` (KTD7): this is the content
+    channel, and stripping it is what used to turn a four-space indented
+    reply into an unindented one the moment it sealed.
     """
     if state.turn == "cancelled":
         return replace(state, late_events_ignored=state.late_events_ignored + 1)
 
-    text = coerce_text(event.payload.get("text"))
+    text = coerce_text_exact(event.payload.get("text"))
     if not text:
         return state
 
@@ -1443,6 +1568,11 @@ def _on_message_interim(state: SessionState, event: GatewayEvent) -> SessionStat
         streaming_text="",
         segments=(*opened.segments, text),
         interim_boundary=len(opened.segments) + 1,
+        # Sealing the provisional text is a replacement, not a growth step
+        # (KTD3): the tail that follows starts over, empty, at a new
+        # generation, so a stale append against the sealed text is never
+        # mistaken for the next turn's content continuing to grow.
+        assistant_stream_generation=committed.assistant_stream_generation + 1,
     )
 
 
@@ -1471,8 +1601,8 @@ def _on_message_complete(state: SessionState, event: GatewayEvent) -> SessionSta
     final = _resolve_final_text(state, event.payload)
 
     next_state = state
-    if state.reasoning_text.strip():
-        next_state = _append(next_state, "reasoning", state.reasoning_text.strip())
+    if state.reasoning_text:
+        next_state = _append(next_state, "reasoning", state.reasoning_text)
     if final:
         next_state = _append(next_state, "assistant", final)
 
@@ -1485,6 +1615,8 @@ def _on_message_complete(state: SessionState, event: GatewayEvent) -> SessionSta
         segments=(),
         interim_boundary=0,
         usage=usage,
+        assistant_stream_generation=next_state.assistant_stream_generation + 1,
+        reasoning_stream_generation=next_state.reasoning_stream_generation + 1,
     )
 
 
@@ -1500,6 +1632,11 @@ def _resolve_final_text(state: SessionState, payload: Mapping[str, Any]) -> str:
     normally preserved even when the final text repeats them, unless
     ``response_previewed`` says the final text *is* the same response that was
     published provisionally — in which case every segment is fair game.
+
+    **No left-strip on the raw text (KTD7).** The content channel is
+    preserved exactly; ``_final_tail`` now compares byte-for-byte rather than
+    on stripped forms, so it no longer needs a pre-stripped ``raw`` to line
+    its comparisons up.
     """
     raw = payload.get("text")
     if not isinstance(raw, str):
@@ -1508,13 +1645,13 @@ def _resolve_final_text(state: SessionState, payload: Mapping[str, Any]) -> str:
         raw = state.streaming_text
 
     dedupe_start = 0 if payload.get("response_previewed") is True else state.interim_boundary
-    final = _final_tail(raw.lstrip(), state.segments[dedupe_start:])
+    final = _final_tail(raw, state.segments[dedupe_start:])
 
-    if not final and state.streaming_text.strip():
+    if not final and state.streaming_text:
         # The gateway sent an empty final message while text was still buffered.
         # Hermes would drop it; R6 says transcript content is never dropped, so
-        # the buffered text is committed instead.
-        return state.streaming_text.lstrip()
+        # the buffered text is committed instead, exactly as accumulated.
+        return state.streaming_text
     return final
 
 
@@ -1573,11 +1710,16 @@ def _on_reasoning_available(state: SessionState, event: GatewayEvent) -> Session
     Re-encodes ``recordReasoningAvailable`` (``turnController.ts:715-731``): the
     gateway can send both a stream of deltas and a complete block, and taking
     the block second would duplicate what the deltas already built.
+
+    ``coerce_text_exact`` (KTD7): this lands in ``reasoning_text``, the same
+    content-channel buffer ``reasoning.delta`` accumulates into and every
+    terminal path later commits exactly — stripping it here would have
+    already lost the whitespace those paths exist to preserve.
     """
     if state.turn == "cancelled":
         return replace(state, late_events_ignored=state.late_events_ignored + 1)
-    text = coerce_text(event.payload.get("text"))
-    if not text or state.reasoning_text.strip():
+    text = coerce_text_exact(event.payload.get("text"))
+    if not text or state.reasoning_text:
         return state
     opened = _ensure_streaming(state)
     return replace(opened, reasoning_text=text)
@@ -1589,9 +1731,18 @@ def _on_error(state: SessionState, event: GatewayEvent) -> SessionState:
     Re-encodes ``recordError`` (``turnController.ts:545-556``), minus its notice
     flush. A cancelled turn stays cancelled: an error arriving after the
     operator cancelled is not a second, different outcome.
+
+    **Commits the partial streaming and reasoning buffers before clearing
+    (R6, KTD7).** An error is one of the ways a turn ends without the
+    gateway ever sending ``message.complete``, so whatever was streamed so
+    far used to vanish silently on this path — the defect KTD7 exists to
+    close. The error line itself is appended *after* the partial content, so
+    the transcript reads as "here is what arrived, and here is why it
+    stopped," the same order ``cancel_turn`` already uses for its own marker.
     """
     message = coerce_text(event.payload.get("message")) or "unknown error"
-    next_state = _append(state, "error", f"error: {clip_transcript_line(message)}")
+    next_state = _commit_partial_streams(state)
+    next_state = _append(next_state, "error", f"error: {clip_transcript_line(message)}")
     if state.turn == "cancelled":
         return next_state
     return replace(
@@ -1602,6 +1753,8 @@ def _on_error(state: SessionState, event: GatewayEvent) -> SessionState:
         thinking_notice="",
         segments=(),
         interim_boundary=0,
+        assistant_stream_generation=next_state.assistant_stream_generation + 1,
+        reasoning_stream_generation=next_state.reasoning_stream_generation + 1,
     )
 
 

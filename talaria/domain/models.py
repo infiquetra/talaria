@@ -63,6 +63,36 @@ ConnectionStatus = Literal[
     "disconnected", "connecting", "connected", "reconnecting", "auth_failed"
 ]
 
+#: KTD7's typed end-of-stream cause. Every member names a way the transport
+#: knows the stream will not resume on its own, which is exactly the fact the
+#: domain needs to decide whether a partial ``streaming_text``/``reasoning_text``
+#: buffer is lost content (R6) or merely mid-retry:
+#:
+#: * ``auth_failed`` — the gateway rejected the credential (on the first dial,
+#:   or on a reconnect attempt, or read off a socket the gateway closed with an
+#:   authentication close code).
+#: * ``dial_failed`` — nothing was dialled (no local credential) or nothing
+#:   answered, and this was the attempt after which the source gave up rather
+#:   than one it will retry.
+#: * ``orderly_close`` — :meth:`~talaria.transport.source.LiveSource.close` ran
+#:   its real body, i.e. an explicit teardown (most often the operator quitting
+#:   the app) rather than idempotent cleanup after an already-terminal state.
+#: * ``reconnect_exhausted`` — every delay in the reconnect schedule was tried
+#:   and none produced a connection.
+#:
+#: Re-declared (not re-used) in ``talaria/transport/source.py`` for the same
+#: reason :data:`ConnectionStatus`/``LiveConnectionState`` are: the transport
+#: package does not import the domain to name an enum.
+#: ``tests/transport/test_source.py`` pins the two spellings identical.
+#:
+#: A transient status change — ``connecting``, ``connected``, ``reconnecting``,
+#: or a reconnect attempt that failed but will retry — carries no cause at all
+#: (``None``), which is what lets a reconnect that resumes the same response
+#: commit nothing: the segment/interim machinery is the dedupe backstop for
+#: content that does arrive, and a cause-less status change never asks the
+#: domain to commit or clear anything.
+TerminalCause = Literal["auth_failed", "dial_failed", "orderly_close", "reconnect_exhausted"]
+
 #: KTD5's frozen ``mode`` field.
 RunMode = Literal["replay", "live"]
 
