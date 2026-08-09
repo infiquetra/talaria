@@ -25,10 +25,12 @@ not a rendering defect in this pane.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widget import Widget
 from textual.widgets._markdown import (
     MarkdownBlockQuote,
     MarkdownBulletList,
@@ -36,6 +38,7 @@ from textual.widgets._markdown import (
     MarkdownH1,
     MarkdownOrderedList,
     MarkdownParagraph,
+    MarkdownTableCellContents,
 )
 
 from talaria.domain.projection import (
@@ -613,3 +616,133 @@ async def test_per_construct_oracles_fail_when_flattened() -> None:
         assert not list(flat_unit.block.query(MarkdownBulletList))
         assert not list(flat_unit.block.query(MarkdownBlockQuote))
         assert not list(flat_unit.block.query(MarkdownFence))
+
+
+# ── RA2: bounded-fractional table column widths (amended R3) ───────────────
+
+_WHITESPACE: re.Pattern[str] = re.compile(r"\s+")
+
+
+def _dense(text: str) -> str:
+    """``text`` with every run of whitespace collapsed away entirely."""
+    return _WHITESPACE.sub("", text)
+
+
+def _painted_dense_text(widget: Widget) -> str:
+    """Every character actually painted for ``widget``, across every one of
+    its rendered rows, whitespace collapsed away — this is the "actual
+    painted content" RA2 asks the test to assert, not the un-wrapped string
+    the cell was constructed with. It is robust to *where* word-wrap or
+    character-fold happened to break a line (a wrap point silently eats the
+    separating space either way), while still catching a real defect: a
+    dropped character or an injected one — an ellipsis, for instance — would
+    make this not match the source text's own dense form.
+    """
+    lines = [widget.render_line(y).text for y in range(widget.size.height)]
+    return "".join(_dense(line) for line in lines)
+
+
+def _markdown_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    header_line = "|" + "|".join(headers) + "|"
+    delim_line = "|" + "|".join("---" for _ in headers) + "|"
+    row_lines = ["|" + "|".join(row) + "|" for row in rows]
+    return "\n".join([header_line, delim_line, *row_lines]) + "\n"
+
+
+@pytest.mark.asyncio
+async def test_table_cells_paint_full_content_at_80_columns_no_truncation() -> None:
+    """RA2's amended R3: every cell's actual content is legible at 80
+    columns without a mouse — no ellipsis, no tooltip dependence. Asserted
+    against what the cell widgets actually paint on screen, not just the
+    string each was constructed with (the stock widget's cells hold the
+    same full string too; it is what gets *painted* that ellipsis would
+    have truncated).
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        headers = ("Name", "Description", "Status")
+        rows = (
+            (
+                "alpha",
+                "a modestly long piece of descriptive text that needs to wrap",
+                "ok",
+            ),
+            (
+                "beta",
+                "short",
+                "a longer status note that also has to wrap somewhere in here",
+            ),
+        )
+        body = _markdown_table(headers, rows)
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body=body, committed=True, line_span=(0, 4)
+            ),
+        )
+        await _apply(pane, entries)
+        await pilot.pause()
+        await pilot.pause()
+
+        doc = pane._entries[1].block
+        assert doc is not None
+        cells = list(doc.query(MarkdownTableCellContents))
+        expected = [*headers, *(cell for row in rows for cell in row)]
+        assert len(cells) == len(expected)
+        for cell, text in zip(cells, expected, strict=True):
+            assert cell.size.width >= 3, f"cell {text!r} collapsed to a degenerate width"
+            assert _painted_dense_text(cell) == _dense(text), (
+                f"cell {text!r} lost content instead of wrapping"
+            )
+
+
+@pytest.mark.asyncio
+async def test_five_column_probe_no_column_starved_at_80_columns() -> None:
+    """The plan's own probed failure this amendment exists to prevent:
+    Textual's stock ``grid-columns: auto`` assigned this exact five-column
+    shape at 80 columns the widths ``[0, 0, 58, 1, 1]`` — four columns
+    starved to nothing because the fifth column's own widest cell dominated
+    the auto layout with no regard for its neighbors. RA2's bounded-
+    fractional algorithm must not reproduce that: every column gets a
+    real, non-degenerate, actually-painted share, and the one long,
+    unbreakable word character-wraps instead of starving everything else
+    or silently losing characters.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        headers = ("A", "B", "Detail", "D", "E")
+        long_cell = "x" * 70
+        rows = (("p", "q", long_cell, "r", "s"),)
+        body = _markdown_table(headers, rows)
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body=body, committed=True, line_span=(0, 3)
+            ),
+        )
+        await _apply(pane, entries)
+        await pilot.pause()
+        await pilot.pause()
+
+        doc = pane._entries[1].block
+        assert doc is not None
+        cells = list(doc.query(MarkdownTableCellContents))
+        expected = [*headers, *rows[0]]
+        assert len(cells) == len(expected)
+        # `cell.size` is the cell's *content* area (padding excluded) --
+        # the plan's own probed defect was a literal zero there for four of
+        # the five columns, not merely a narrow one; every narrow column
+        # here still legitimately earns only a couple of content columns
+        # once the dominant column's content length claims most of the
+        # proportional remainder, so the anti-regression bar is "never
+        # zero," matching the defect being prevented, not an arbitrary
+        # larger floor this shape was never going to clear.
+        widths = [cell.size.width for cell in cells]
+        assert all(w >= 1 for w in widths), (
+            f"a column was starved to a zero content width: {widths!r}"
+        )
+        for cell, text in zip(cells, expected, strict=True):
+            assert _painted_dense_text(cell) == _dense(text), (
+                f"cell {text!r} lost content — a starved column would have "
+                "truncated or hidden it"
+            )

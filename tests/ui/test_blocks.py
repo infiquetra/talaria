@@ -189,6 +189,25 @@ async def test_an_image_with_no_alt_text_still_shows_its_target() -> None:
         assert block_texts(app.doc())[0] == "(http://example.com/cat.png)"
 
 
+@pytest.mark.asyncio
+async def test_an_image_with_inline_formatted_alt_text_renders_flattened_plain_text() -> None:
+    """``child.content`` on an image token is the raw, unparsed alt-text
+    *source* -- for ``![*a* cat](url)`` that is the literal string
+    ``"*a* cat"``, asterisks included. Using it directly (the bug this
+    pins) would render ``"*a* cat (url)"``: inline formatting inside alt
+    text leaking as literal markup punctuation instead of the flattened
+    plain text R10 and the module docstring both promise. The alt text must
+    come out with the emphasis markers gone and only the letters left.
+    """
+    app = Host()
+    async with app.run_test() as pilot:
+        await app.doc().update("![*a* **bold** cat](http://example.com/cat.png)")
+        await pilot.pause()
+        painted = block_texts(app.doc())[0]
+        assert painted == "a bold cat (http://example.com/cat.png)"
+        assert "*" not in painted
+
+
 # ── bare URLs stay text (linkify off) ───────────────────────────────────────
 
 
@@ -331,7 +350,25 @@ def test_the_installed_textual_version_matches_the_audited_one() -> None:
 async def test_append_reparses_from_the_last_unfinished_block_not_the_whole_document() -> None:
     """The probed fact KTD3 cites directly: an open fence grows across
     ``append`` calls as one widget, its content accumulating, rather than
-    each boundary re-parsing the whole document from the top."""
+    each boundary re-parsing the whole document from the top.
+
+    Rendered content alone cannot tell a true incremental ``append`` apart
+    from a disguised full-document ``update(self.source + fragment)`` --
+    both end up painting the same fence text (confirmed live: replaying this
+    test's assertions against that substitution still passed every one of
+    them). What actually differs is *widget identity*. Textual's own
+    ``Markdown.append`` mutates the trailing block in place through
+    ``MarkdownBlock._update_from_block`` (``_markdown.py:1483``,
+    ``MarkdownFence._update_from_block`` at ``:943`` copies the new code
+    onto ``self`` rather than replacing ``self``), so the *same*
+    ``MarkdownFence`` object survives every boundary. ``Markdown.update``
+    takes the opposite path unconditionally: it removes every existing
+    block and mounts brand-new ones from scratch
+    (``_markdown.py:1403-1416``). So a disguised ``update()`` would still
+    paint the right characters but would mount a *new* ``MarkdownFence``
+    instance on every call -- which is exactly what the identity
+    assertions below catch.
+    """
     app = Host()
     async with app.run_test() as pilot:
         document = app.doc()
@@ -346,15 +383,23 @@ async def test_append_reparses_from_the_last_unfinished_block_not_the_whole_docu
         await document.update("```text\n")
         await pilot.pause()
         assert fence_code() == ""
+        fence_widget = _blocks(document)[0]
 
         await document.append("line one\n")
         await pilot.pause()
         assert fence_code() == "line one"
+        assert _blocks(document)[0] is fence_widget, (
+            "append must extend the same fence widget in place -- a "
+            "disguised whole-document update() would mount a new one here"
+        )
 
         await document.append("line two\n")
         await pilot.pause()
         assert fence_code() == "line one\nline two", (
             "the second append should extend the still-open fence, not replace it"
+        )
+        assert _blocks(document)[0] is fence_widget, (
+            "the fence widget must still be the same object after a second append"
         )
 
         await document.append("```\n")
@@ -363,6 +408,7 @@ async def test_append_reparses_from_the_last_unfinished_block_not_the_whole_docu
 
         blocks = _blocks(document)
         assert isinstance(blocks[0], MarkdownFence)
+        assert blocks[0] is fence_widget, "closing the fence still updates it in place"
         assert blocks[0].code == "line one\nline two"
         assert block_texts(document)[1:] == ["trailing paragraph"]
 

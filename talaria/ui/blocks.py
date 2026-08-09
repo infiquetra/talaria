@@ -63,19 +63,40 @@ markdown-it's ``emphasis`` rule does not distinguish ``*word*`` from
 ``_word_`` — disabling one disables both — and disabling ``strikethrough``
 outright would mean GitHub-Flavoured Markdown's ``~~text~~`` staple never
 renders. Both stay in the allowlist :func:`parser_factory` pins.
+
+**RA2 — table columns get an explicit bounded-fractional width instead of
+Textual's stock ``grid-columns: auto``.** Content-driven auto layout starves
+columns unpredictably once more than a couple of them compete for the same
+row (a live five-column, 80-column-wide probe assigned data widths
+``[0, 0, 58, 1, 1]``). :func:`_column_content_widths` and
+:class:`_BoundedMarkdownTableContent` compute and set each column's width
+explicitly, and drop the stock cell's tooltip-and-ellipsis truncation in
+favor of wrapping, so every cell's content is legible at 80 columns without
+a mouse — RA2's amendment to R3.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
+from fractions import Fraction
 from typing import Final
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
+from rich.cells import cell_len
+from textual.app import ComposeResult
 from textual.await_complete import AwaitComplete
 from textual.content import Content, Span
+from textual.geometry import Size
+from textual.layout import DockArrangeResult
 from textual.style import Style
 from textual.widgets import Markdown
+from textual.widgets._markdown import (
+    MarkdownTable,
+    MarkdownTableCellContents,
+    MarkdownTableContent,
+)
 from textual.widgets.markdown import MarkdownBlock
 
 from talaria.ui.literal import defang
@@ -186,6 +207,37 @@ LINK_STYLE: Final[Style] = Style(underline=True)
 _COLLAPSE_WHITESPACE: Final[re.Pattern[str]] = re.compile(r"\s+")
 
 
+def _flatten_alt_text(children: Sequence[Token] | None) -> str:
+    """Flattens an image token's parsed alt-text children into plain text.
+
+    An image token's ``content`` attribute is the raw, *unparsed* alt-text
+    source — ``![*a* cat](url)`` carries ``"*a* cat"`` there, asterisks
+    included — while ``children`` is the same alt text markdown-it already
+    parsed into inline tokens (``text``, ``em_open``/``em_close``, and so
+    on), the same shape a paragraph's own children have. This walks that
+    parsed structure and keeps only the textual leaves, dropping every
+    styling open/close marker, so bold or italic *inside* alt text renders
+    as its plain characters rather than leaking literal markup punctuation
+    (R10: alt text renders as text, not as re-parsed markdown).
+    """
+    if not children:
+        return ""
+    parts: list[str] = []
+    for child in children:
+        if child.type == "text":
+            parts.append(_COLLAPSE_WHITESPACE.sub(" ", child.content))
+        elif child.type == "code_inline":
+            parts.append(child.content)
+        elif child.type == "hardbreak":
+            parts.append("\n")
+        elif child.type == "softbreak":
+            parts.append(" ")
+        # em_open/strong_open/s_open/link_open and their *_close carry no
+        # text of their own: alt text is plain text, not styled text, so
+        # their markers contribute nothing and are silently skipped.
+    return "".join(parts)
+
+
 class _InertContentMixin(MarkdownBlock):
     """Overrides the one method that installs link/image action metadata.
 
@@ -249,11 +301,17 @@ class _InertContentMixin(MarkdownBlock):
                 # R10: alt text *and* target render as text; nothing is
                 # fetched, and — unlike the stock method, which installs a
                 # click action and then drops the target — no action is
-                # installed either. `child.content` (not `attrs["alt"]`,
-                # which markdown-it leaves empty on an `image` token) is
-                # where the flattened alt text actually lives.
+                # installed either. `attrs["alt"]` is always empty on an
+                # `image` token (markdown-it leaves it that way); the alt
+                # text markdown-it actually parsed lives in `child.children`
+                # and is flattened by :func:`_flatten_alt_text` the same
+                # way a paragraph's own children would be. `child.content`
+                # is the raw, *unparsed* alt-text source — asterisks,
+                # underscores, and all — and using it directly (the former
+                # bug here) let inline formatting inside alt text leak as
+                # literal markup punctuation instead of plain text.
                 href = str(child.attrs.get("src", ""))
-                alt = child.content or str(child.attrs.get("alt", ""))
+                alt = _flatten_alt_text(child.children)
                 add_content(f"{alt} ({href})" if alt else f"({href})")
             elif child_type.endswith("_close"):
                 close_tag()
@@ -261,17 +319,180 @@ class _InertContentMixin(MarkdownBlock):
         return Content("".join(tokens), spans=spans)
 
 
+# ── RA2: bounded-fractional table column widths ────────────────────────────
+
+#: RA2's amendment to R3: table content must be legible at 80 columns
+#: without a mouse. The stock ``MarkdownTableContent`` trusts
+#: ``grid-columns: auto``, which sizes each column from its own widest
+#: rendered cell with no regard for how many columns are competing for the
+#: same row — a live probe of a five-column, 80-column-wide table assigned
+#: data widths ``[0, 0, 58, 1, 1]``, starving four columns down to nothing.
+#: The functions and class below compute an explicit per-column width
+#: instead: a per-column minimum capped so no single wide column can starve
+#: its neighbors, with any leftover space handed out proportionally to each
+#: column's own content length.
+
+
+def _largest_remainder_shares(remainder: int, weights: Sequence[int]) -> list[int]:
+    """Distributes ``remainder`` whole cells across ``len(weights)`` columns
+    proportionally to ``weights`` by the largest-remainder method, ties
+    broken to the leftmost column — deterministic integer arithmetic, no
+    float residue (RA2). When every weight is zero (a table whose every
+    cell is empty is valid and probed to mount), the split is equal instead,
+    with the same leftmost-column tie rule.
+    """
+    n = len(weights)
+    if n == 0 or remainder <= 0:
+        return [0] * n
+    total = sum(weights)
+    if total == 0:
+        base, extra = divmod(remainder, n)
+        return [base + (1 if i < extra else 0) for i in range(n)]
+
+    quotas = [Fraction(remainder * weight, total) for weight in weights]
+    floors = [quota.numerator // quota.denominator for quota in quotas]
+    leftover = remainder - sum(floors)
+    fractional_parts = [
+        quota - floor_ for quota, floor_ in zip(quotas, floors, strict=True)
+    ]
+    # Largest fractional remainder first; a tie keeps the lower index first,
+    # which `sorted`'s stability alone would not guarantee against floating
+    # point, but does here since the key is the exact `Fraction` itself.
+    order = sorted(range(n), key=lambda i: (-fractional_parts[i], i))
+    shares = floors[:]
+    for i in order[:leftover]:
+        shares[i] += 1
+    return shares
+
+
+def _column_content_widths(
+    width: int, headers: Sequence[str], rows: Sequence[Sequence[str]]
+) -> list[int]:
+    """RA2's bounded-fractional column-width algorithm, exactly as specified.
+
+    ``width`` is the table content box's own resolved width in cells (not
+    the pane width — the enclosing ``Markdown`` document's own padding is
+    already excluded by the time a ``MarkdownTableContent`` widget is
+    arranged). For ``n`` columns, ``available = width - (3n + 1)`` cells
+    remain for cell text once the per-cell padding (one cell each side, two
+    per column) and one grid gutter per column boundary are subtracted.
+    Each column's minimum is its longest single word, capped at
+    ``max(8, available // n)``. If every minimum fits inside ``available``,
+    the leftover space is handed out by the largest-remainder method,
+    weighted by each column's total content length. Otherwise every column
+    gets the equal split ``available // n`` with a hard floor of 3 cells,
+    and a word wider than its column character-wraps at render time.
+
+    Returns the *content* width per column — the width available to a
+    cell's text, not the column's total width on screen (the caller adds
+    the 2-cell padding back before handing this to ``grid-columns``).
+    """
+    n = len(headers)
+    if n == 0:
+        return []
+    columns: list[list[str]] = [[headers[i]] for i in range(n)]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < n:
+                columns[i].append(cell)
+
+    longest_word = [
+        max((cell_len(word) for text in texts for word in text.split()), default=0)
+        for texts in columns
+    ]
+    total_content_len = [sum(cell_len(text) for text in texts) for texts in columns]
+
+    available = width - (3 * n + 1)
+    cap = max(8, available // n)
+    minimums = [min(word, cap) for word in longest_word]
+
+    if sum(minimums) <= available:
+        remainder = available - sum(minimums)
+        shares = _largest_remainder_shares(remainder, total_content_len)
+        return [minimum + share for minimum, share in zip(minimums, shares, strict=True)]
+
+    equal_split = available // n
+    return [max(3, equal_split) for _ in range(n)]
+
+
+class _BoundedMarkdownTableContent(MarkdownTableContent):
+    """RA2's column widths, computed and set explicitly rather than trusted
+    to the stock widget's ``grid-columns: auto``.
+
+    Two changes from the stock ``MarkdownTableContent``: :meth:`compose`
+    drops ``.with_tooltip(...)`` from every cell and sets each cell's
+    ``text-overflow`` to ``"fold"`` (character-wrap, never truncate) instead
+    of the stock ``"ellipsis"`` — RA2's amended R3 reads "no construct
+    depends on hover or focus to show its content", so a cell's *only* path
+    to full legibility is wrapping, never a tooltip a mouse would have to
+    open. :meth:`arrange` is the actual RA2 arithmetic: it is called with
+    this widget's own resolved content-box size before Textual's grid
+    layout consumes ``styles.grid_columns``, which is exactly the point
+    :func:`_column_content_widths` needs to measure ``width`` from — so the
+    widths are computed and assigned there, immediately before delegating
+    to the stock layout.
+    """
+
+    def compose(self) -> ComposeResult:
+        for header in self.headers:
+            header_cell = MarkdownTableCellContents(header, classes="header")
+            header_cell.styles.text_overflow = "fold"
+            yield header_cell
+        for row_index, row in enumerate(self.rows, 1):
+            for cell_index, cell in enumerate(row, 1):
+                data_cell = MarkdownTableCellContents(
+                    cell,
+                    classes=f"row{row_index} cell",
+                    name=f"cell{row_index}.{cell_index}",
+                )
+                data_cell.styles.text_overflow = "fold"
+                yield data_cell
+            self.last_row = row_index
+
+    def arrange(self, size: Size, optimal: bool = False) -> DockArrangeResult:
+        if self.headers:
+            content_widths = _column_content_widths(
+                size.width,
+                [header.plain for header in self.headers],
+                [[cell.plain for cell in row] for row in self.rows],
+            )
+            # +2: the padding each cell keeps (one cell each side) is part
+            # of the grid column's own width, not part of the content width
+            # the algorithm above solved for.
+            self.styles.grid_columns = [width + 2 for width in content_widths]
+        return super().arrange(size, optimal)
+
+
+def _bounded_table_compose(self: MarkdownTable) -> ComposeResult:
+    """Replaces the stock ``MarkdownTable.compose`` to mount
+    :class:`_BoundedMarkdownTableContent` in place of the stock
+    ``MarkdownTableContent`` (RA2). Otherwise identical to Textual's own
+    ``MarkdownTable.compose`` (``_markdown.py:735``) — this function's only
+    job is the substitution, not the header/row extraction it delegates to
+    ``self._get_headers_and_rows()`` for unchanged.
+    """
+    headers, rows = self._get_headers_and_rows()
+    self._headers = headers
+    self._rows = rows
+    yield _BoundedMarkdownTableContent(headers, rows)
+
+
 def _safe_block_classes() -> dict[str, type[MarkdownBlock]]:
     """Every stock block class, single-inheriting from itself with the one
     method patched onto its own class dict (U4 fix).
 
     Built from ``Markdown.BLOCKS`` itself — the live mapping token names use
-    to select a widget class — rather than importing each class by name from
-    the private ``textual.widgets._markdown`` module, so this stays correct
-    if Textual renames or reorganizes a block class; a class Textual adds or
-    removes entirely is exactly what the Textual-version pin test in
+    to select a widget class — rather than importing every class by name
+    from the private ``textual.widgets._markdown`` module, so this stays
+    correct if Textual renames or reorganizes a block class; a class Textual
+    adds or removes entirely is exactly what the Textual-version pin test in
     ``tests/ui/test_blocks.py`` exists to notice, not something this function
-    should paper over.
+    should paper over. ``MarkdownTable`` is the one class this module does
+    import by name — RA2's table override (:func:`_bounded_table_compose`)
+    has to be wired onto that specific class, not onto whichever one
+    ``Markdown.BLOCKS["table_open"]`` happens to be, so the ``block_cls is
+    MarkdownTable`` check below needs the class as a value to compare
+    against, not only as something discovered generically.
 
     **Not** ``type(name, (_InertContentMixin, block_cls), {})`` — that was
     U3's original shape, and it crashes on every table (found live while
@@ -301,11 +522,15 @@ def _safe_block_classes() -> dict[str, type[MarkdownBlock]]:
     safe: dict[str, type[MarkdownBlock]] = {}
     for name, block_cls in Markdown.BLOCKS.items():
         if block_cls not in wrapped:
-            wrapped[block_cls] = type(
-                block_cls.__name__,
-                (block_cls,),
-                {"_token_to_content": _InertContentMixin._token_to_content},
-            )
+            overrides: dict[str, object] = {
+                "_token_to_content": _InertContentMixin._token_to_content,
+            }
+            if block_cls is MarkdownTable:
+                # RA2: mount `_BoundedMarkdownTableContent` (bounded-
+                # fractional column widths) instead of the stock,
+                # auto-layout table content.
+                overrides["compose"] = _bounded_table_compose
+            wrapped[block_cls] = type(block_cls.__name__, (block_cls,), overrides)
         safe[name] = wrapped[block_cls]
     return safe
 
