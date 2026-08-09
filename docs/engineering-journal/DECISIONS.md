@@ -4,6 +4,103 @@
 
 ## 2026-08-09
 
+### Block-level markdown rendering is bounded by a two-tier descendant count, not a single line-widget cap, and ADR-0005 decisions 3 and 7 are amended accordingly
+
+**Author.** Unit U1 of the
+[v0.2 block-markdown plan](../plans/2026-08-09-talaria-v0-2-block-markdown-plan.md) (KTD1, KTD8;
+R13), recorded in
+[ADR-0006](../../platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md)
+before any widget work lands on it.
+
+**Decision.** The bounded-rendering claim for the transcript pane is restated as four measurable
+ceilings, each with an exact measurement point, rather than the single "500 line widgets at every
+instant" cap ADR-0005 decision 3 recorded for v0.1:
+
+- **Mounted descendant count, two tiers.** All mounted widgets count as descendants — a table's
+  per-cell widgets included, since Textual's `Markdown` widget mounts one widget per cell and a
+  probed three-line, 601-column table mounts 1,204 descendants from what would count as one
+  top-level block. Tier one, the folded window (everything except the newest entry and the two
+  live streaming tails), stays at or under 600 descendants — the gate's existing ceiling
+  (`gate.py:69`), now counted as descendants instead of assumed to be one widget per line. Tier
+  two, the newest entry and each live tail, falls back to non-wrapping line rendering when its
+  descendant count (or a construct-aware estimate: top-level tokens plus table cells plus
+  calibrated per-construct container overhead) exceeds 1,200, **or** its estimated wrapped rows —
+  measured in Textual's display-cell width, never `len()` — exceed `mount_cap` (500). A probed
+  100,000-character single line (one descendant, 1,353 rendered rows) and a probed 10,000-line
+  open fence (one block, two descendants, 10,004 rows) are the reason both conditions exist:
+  neither a descendant count nor a source-line count alone sees either shape.
+- **The fallback renders non-wrapping** — one widget per projected line, wrap off, clipped at the
+  viewport, with a banner naming the clip and its cause; the full line stays in the terminal-read
+  buffer regardless of what the screen clips. Wrapping was probed and rejected twice (a single
+  wrapping widget paints 1,283 rows; pre-split hard-wrapped fragments become ~1,283 widgets of
+  their own, break the pane's `rendered_lines` reconstruction, and re-wrap on every resize).
+  **Banner rows are charged to the fold arithmetic, never to a fixed headroom**: a fallen-back
+  entry's accounted span is projected lines + 1, counted against the same 500-row `mount_cap` that
+  bounds line content, because a fixed margin against a per-entry, unbounded-count cost is itself
+  unbounded — 302 one-line fallen-back entries would put 602 widgets under a lines-only fold rule
+  that never trips, while the accounted-row charge folds the same shape at 500 accounted rows.
+  Banner rows count toward the cap and the fold arithmetic but stay out of the
+  `condensed_count + lines-accounted-for == total` content identity — they are chrome, not
+  content.
+- **Rendered height** is bounded by the same two tiers (the wrapped-rows condition covers the
+  tall-but-few-descendants shapes a count alone misses); **reconcile work** is measured as
+  parser-input bytes per coalescing boundary — the actual `Markdown.append` reparse window, which
+  a probe shows grows with an unfinished block (499/999/1,499/1,999/2,499 bytes on five constant
+  500-byte appends into an open fence), not the bytes handed to `append`; **latency** is p99
+  per-boundary apply time under 50 ms across three adversarial workloads (a growing open fence, a
+  growing table, a single ever-growing line), clocked with `time.monotonic()` around
+  `TranscriptPane.apply`, first 10 boundaries excluded as warm-up.
+- **Enforcement point.** `Markdown.update` mounts in batches of 200 off the message pump, holding
+  old and new blocks transiently, so "at every instant" is not enforceable against the widget's
+  own mechanics — ceilings are enforced at the 50 ms coalescing boundary Talaria controls, before
+  each apply.
+
+**Amends ADR-0005.** Decision 3 ("the transcript mounts at most 500 line widgets plus one
+condensed block, at every instant") is superseded by the two-tier model above: 500 remains
+`DEFAULT_MOUNT_CAP` — now the line cap for line-rendered surfaces and the wrapped-rows trigger
+threshold — while 600 is the folded-window **descendant** ceiling. Decision 7 (untrusted text
+reaches the screen only through `literal_text`) is amended, not broken: untrusted text may
+additionally reach the screen through the KTD4-configured parser (`html=False`, `linkify=False`,
+a pinned exact rule set) and its rendering hooks (links styled but with no click action metadata,
+so `Markdown.LinkClicked` never fires; images render as `alt (target)` text, nothing fetched) —
+and nothing else. Defang still runs before parse on both channels.
+
+**Requirements amendments.** RA1: underscore emphasis and strikethrough enter scope (a real
+parser can't disable one without disabling asterisk emphasis too; strikethrough is a GFM staple in
+the same position) — both join the R9 allowlist, pinned by a snapshot test of the parser's exact
+enabled rule set. RA2: R3's table-reachability requirement is met by cell wrapping, not cell
+focus, using an explicit largest-remainder column-allocation rule (per-column cap
+`max(8, floor(A/N))`, minimum `min(longest_word, CAP)`, ties to the leftmost column) because plain
+wrapping doesn't survive Textual's `grid-columns: auto` layout — a live five-column probe at 80
+columns assigned widths `[0, 0, 58, 1, 1]`. RA3: on fallen-back entries only, R11's
+projection-to-screen visibility and R3's legibility narrow to one painted row per projected line
+plus a banner naming the clip and cause — the gate proves the banner and the exact row count, not
+clipped-cell reachability; a keyboard expand/inspect affordance is queued follow-up, not built now.
+
+**KTD8 fallback trigger and branch hold.** A separate, whole-feature fallback — reverting to the
+existing styled-line-run renderer (`talaria/ui/markdown.py`) instead of the block-document widget
+family — is invoked only on a red restated replay gate (U6) with measured evidence attached, and
+taking it is itself a recorded amendment to R4, never a silent swap. No fallback code is written
+ahead of that evidence. Units U4–U6 land on one feature branch that merges to `main` only after
+U6's gate runs green and its cross-review (CR6) passes, so a red gate leaves `main` untouched and
+the fallback decision — amend R4, or keep iterating on the branch — is an explicit operator gate
+with numbers attached. Units U1–U3 merge independently of that branch.
+
+**Rejected alternatives.** A single-tier descendant ceiling with no per-entry fallback (can't
+distinguish "the folded window is too big" from "the entry currently streaming is too big," which
+need different remedies). A top-level-block or source-line count as the mounting metric (three
+separate probed counter-examples — the 601-column table, the mega-line, the 10,000-line fence —
+none of which a single metric covers). A wrapping or pre-split-fragment fallback (both probed and
+rejected; see the row counts above). Charging banner rows to a fixed headroom instead of the fold
+arithmetic (unbounded against a per-entry cost). Reverting to the styled-line-run renderer ahead of
+any gate evidence (spends the fallback on a guess instead of a measurement).
+
+**Revisit when.** U6's replay gate runs against this claim — a green run moves ADR-0006 from
+`proposed` to `accepted`; a red run is the KTD8 decision point. Textual is upgraded past 8.2.8,
+since the per-cell mounting cost and `Markdown.update`/`append`/`get_stream` semantics this
+decision depends on are version-specific and pinned by tests. The RA3 expand/inspect affordance is
+taken up as an explicit scope decision, not a side effect of these numbers changing.
+
 ### Resumed history is decoded by a typed decoder and appended as committed entries, never replayed as synthesized events
 
 **Decision.** `session.resume`'s `messages` array is turned into transcript entries by
