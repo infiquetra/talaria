@@ -61,15 +61,25 @@ first for the "session-record" group and rejected: it resolves to
 parser rejects it outright as a ``background``/``border`` value — caught by
 actually mounting a pane with it before writing the pin test, not by reading
 the theme dict and assuming every name in it is colour-shaped. The
-one-column border consumes one column of wrap width, so
-:class:`EntryMarkdown` — whose stock ``padding: 0 2 0 2`` has a spare column
-to give up — loses ``padding-left`` down to ``1`` in the same rule that adds
-the border, keeping its total left inset at 2 columns either way and its
-wrapped height unaffected; :class:`TranscriptLine` starts with no padding to
-trade, so a wrapping (non-``no_wrap``) line loses exactly one column of
-available width when styled — invisible for the short, single-projected-line
-content every fixture in ``tests/ui/test_kind_styles.py`` uses, and already
-moot for a ``no_wrap`` (fallen-back) line, which never wraps regardless.
+one-column border consumes one column of wrap width, so both mounted unit
+types reserve that column unconditionally rather than only when a group
+class happens to be present — the reservation, not the border, is what
+keeps wrap width constant. :class:`EntryMarkdown` — whose stock
+``padding: 0 2 0 2`` has a spare column to give up — loses ``padding-left``
+down to ``1`` in the same rule that adds the border, keeping its total left
+inset at 2 columns either way. :class:`TranscriptLine` has no stock padding
+to trade, so this module gives it one unconditionally instead: every
+:class:`TranscriptLine`, classed or not, carries ``padding-left: 1``, and
+the per-group rule that adds the border zeroes that padding back to ``0`` in
+the same breath — the reserved column moves from padding to border rather
+than being consumed in addition to it. An *unclassed* line therefore has the
+same content width as a classed one at every wrap boundary, not just the
+short, single-projected-line fixtures ``tests/ui/test_kind_styles.py`` also
+uses for the distinguishability tests. (CR5: before this reservation
+existed, an unclassed line kept the full pane width while a classed line
+lost one column to the border alone, so a line whose content exactly filled
+the wrap width rendered one row taller styled than unstyled — the border was
+taking a column nothing had set aside for it.)
 """
 
 from __future__ import annotations
@@ -228,32 +238,47 @@ _GROUP_VARIABLES: Final[dict[KindGroup, str]] = {
 #: ``DEFAULT_CSS`` — one background-tint-plus-border-left rule per group
 #: (matching both :class:`TranscriptLine` and
 #: :class:`~talaria.ui.blocks.EntryMarkdown`, since both carry the same
-#: class name), plus one ``EntryMarkdown``-scoped ``padding-left`` rule per
-#: group. The second rule matters: :class:`~talaria.ui.blocks.EntryMarkdown`
-#: ships ``padding: 0 2 0 2`` (Textual's stock ``Markdown`` CSS), so the
-#: one-column border this module adds would shrink its wrap width by one
-#: column relative to an *unstyled* document (no class, stock padding) if
-#: left alone — this rule gives back exactly the column the border took,
-#: scoped to ``EntryMarkdown.transcript--group-*`` specifically so an
-#: unclassed document (the "styling disabled" comparison
+#: class name), plus one width-compensation rule per group for each of the
+#: two widget types the border can land on. Both compensation rules exist
+#: for the same reason: the one-column border must never be a column nobody
+#: reserved, or a classed widget ends up narrower — and therefore taller,
+#: for content that exactly fills the wrap width — than an unclassed one
+#: (CR5's exact defect).
+#:
+#: :class:`~talaria.ui.blocks.EntryMarkdown` ships ``padding: 0 2 0 2``
+#: (Textual's stock ``Markdown`` CSS), so it already has a spare column to
+#: give back: its rule drops ``padding-left`` to ``1`` in the same breath
+#: that adds the border, scoped to ``EntryMarkdown.transcript--group-*``
+#: specifically so an unclassed document (the "styling disabled" comparison
 #: ``tests/ui/test_kind_styles.py`` builds) keeps its stock 2-column inset
 #: rather than being shrunk to 1 by a blanket rule that does not check for
-#: the class carrying the border in the first place. :class:`TranscriptLine`
-#: (a ``Static``) has no such spare padding to give back — see the module
-#: docstring's note on why that is left alone rather than compensated.
+#: the class carrying the border in the first place. That rule spells out
+#: the **full** ``padding`` shorthand (``0 2 0 1``, not a bare
+#: ``padding-left: 1``) on purpose — probed live: a subclass rule that sets
+#: only the ``padding-left`` longhand does not cascade against the base
+#: ``Markdown`` class's ``padding: 0 2 0 2`` per side the way plain CSS
+#: would; Textual's stylesheet engine treats ``padding`` as one atomic
+#: value, and the more specific rule (a two-part selector beats the base
+#: class's one-part selector) replaces it entirely, silently zeroing
+#: ``padding-right`` and ``padding-top``/``-bottom`` along with it — found
+#: by mounting a real widget and reading ``.styles.padding`` rather than by
+#: trusting per-side CSS cascade to behave as it would in a browser.
+#: Restating all four sides is what keeps the other three matching the
+#: stock widget's own values.
 #:
-#: The ``EntryMarkdown``-scoped rule spells out the **full** ``padding``
-#: shorthand (``0 2 0 1``, not a bare ``padding-left: 1``) on purpose —
-#: probed live: a subclass rule that sets only the ``padding-left`` longhand
-#: does not cascade against the base ``Markdown`` class's ``padding: 0 2 0
-#: 2`` per side the way plain CSS would; Textual's stylesheet engine treats
-#: ``padding`` as one atomic value, and the more specific rule (a two-part
-#: selector beats the base class's one-part selector) replaces it entirely,
-#: silently zeroing ``padding-right`` and ``padding-top``/``-bottom`` along
-#: with it — found by mounting a real widget and reading ``.styles.padding``
-#: rather than by trusting per-side CSS cascade to behave as it would in a
-#: browser. Restating all four sides is what keeps the other three matching
-#: the stock widget's own values.
+#: :class:`TranscriptLine` (a bare ``Static``) has no stock padding to give
+#: back, so it is given one instead: ``TranscriptPane.DEFAULT_CSS`` sets
+#: ``padding-left: 1`` unconditionally on every :class:`TranscriptLine`,
+#: classed or not (see the plain rule beside the other static rules below).
+#: The per-group rule generated here then drops that padding back to ``0``
+#: in the same breath that adds the border, exactly mirroring
+#: :class:`~talaria.ui.blocks.EntryMarkdown`'s trade — the reserved column
+#: moves from padding to border rather than being consumed on top of it.
+#: ``TranscriptLine.transcript--group-*`` is a three-part selector (ancestor
+#: plus type plus class), which is what makes it beat the two-part baseline
+#: rule (ancestor plus type) regardless of source order — the same
+#: specificity relationship already relied on for the ``EntryMarkdown``
+#: rule above.
 _GROUP_CSS_RULES: Final[str] = "\n".join(
     f"""
     TranscriptPane .transcript--group-{group} {{
@@ -262,6 +287,9 @@ _GROUP_CSS_RULES: Final[str] = "\n".join(
     }}
     TranscriptPane EntryMarkdown.transcript--group-{group} {{
         padding: 0 2 0 1;
+    }}
+    TranscriptPane TranscriptLine.transcript--group-{group} {{
+        padding-left: 0;
     }}"""
     for group, variable in _GROUP_VARIABLES.items()
 )
@@ -515,6 +543,9 @@ class TranscriptPane(VerticalScroll):
     }}
     TranscriptPane .transcript--nowrap {{
         height: 1;
+    }}
+    TranscriptPane TranscriptLine {{
+        padding-left: 1;
     }}
     {_GROUP_CSS_RULES}
     """
