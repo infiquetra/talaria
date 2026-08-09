@@ -164,7 +164,8 @@ ADR-0006 before implementation:**
   self-reported, at every 50 ms coalescing boundary. Tier one: the **folded window** — every
   committed entry document and line widget except the newest entry and the live tails — stays
   ≤ 600 descendants, enforced by KTD2's fold rule (fold decisions read the measured descendant
-  counts of already-mounted entries; an incoming entry's **construct-aware estimate** counts
+  counts of already-mounted entries — fallback banner widgets included, since they are mounted
+  widgets like any other; an incoming entry's **construct-aware estimate** counts
   top-level tokens **plus table cells and per-construct container widgets** — a table's cells are
   rows × columns read from the source's delimiter row, and the per-construct container overhead
   is **calibrated against the installed widget's actual mounting and pinned by a test**, because
@@ -194,10 +195,20 @@ ADR-0006 before implementation:**
   projected lines), forces fragment-aware condensation, and un-wraps differently on every
   resize. Non-wrapping keeps painted rows == widgets == projected lines **for the entry's
   content**; the fallback banner is **one separately budgeted widget and row per fallen-back
-  entry**, drawn from the same headroom the condensation banner uses — the 100-widget margin
-  between the 500-line cap and the 600 gate ceiling — never from the entry's projected-line
-  budget, so the exact-row formula is `painted rows == projected lines + one banner row per
-  fallen-back entry`, pinned in U4 and U6. Condensation stays whole-projected-lines, the
+  entry**, and because the count of fallen-back entries is unbounded, banner rows are **charged
+  to the fold arithmetic, never to a fixed headroom**: a fallen-back entry's accounted row span
+  is projected lines + 1, so KTD2's fold rule counts banner rows against the same `mount_cap`
+  (500) that bounds content rows, and an accumulation of fallen-back entries triggers folding
+  exactly as an accumulation of lines does. The 100-widget margin between the 500-row cap and
+  the 600 gate ceiling pays only for **fixed-count** chrome — the single condensation banner —
+  never for a per-entry cost, because a per-entry cost against a fixed margin is unbounded:
+  302 one-line fallen-back entries would put 301 two-widget entries — 602 widgets — into a
+  folded window whose 301 projected lines never trigger a lines-only fold, while charging the
+  banner row folds that same shape at 500 accounted rows, mounting ≤ 501 widgets inside the
+  600 ceiling. The exact-row formula is `painted rows == projected lines + one banner row per
+  fallen-back entry`, pinned in U4 and U6; banner rows count toward the cap and the fold
+  arithmetic but are chrome, not content — they never enter the `condensed_count +
+  lines-accounted-for == total` content identity. Condensation stays whole-projected-lines, the
   reconstruction is trivially exact, and resize moves only the clip point (one row per widget at
   every width). The entry-level fallback both restores the count and height bounds and ends the
   growing-reparse work of clause (c). The boundary
@@ -255,16 +266,19 @@ line widget shows today. And an entry that trips KTD1(a)'s two-condition trigger
 construct-aware estimate > 1,200, or estimated wrapped rows > `mount_cap`) line-renders with a
 banner note.
 
-Condensation over mixed units, exactly: `desired_top` is computed in projected lines as today
-(transcript.py:223); when it lands inside a **block** entry's line span, it rounds **up** to the
+Condensation over mixed units, exactly: `desired_top` is computed in **accounted rows** —
+projected lines plus one banner row per fallen-back entry, per KTD1's charge rule, extending
+today's projected-line arithmetic (transcript.py:223); a banner row folds with its entry.
+When `desired_top` lands inside a **block** entry's line span, it rounds **up** to the
 next unit boundary — the cap prefers evicting more over keeping a cap-buster — with one
 exception: a block-rendered newest entry is mounted whole (its size is already bounded by the
 two-condition trigger, and the residual overage is recorded in the high-water instrumentation).
 A **line-rendered** entry — including a fallen-back newest entry — is ordinary line content:
 `desired_top` may land inside it and fold its head, exactly as today. The ceiling claim in
 KTD1(a) is stated over these rules: folded window ≤ 600 descendants, plus at most one
-block-rendered newest entry and the tails, each bounded by the two-condition trigger. The banner
-keeps counting **lines**; the entry line spans KTD6 publishes are what keep
+block-rendered newest entry and the tails, each bounded by the two-condition trigger. The
+**condensation** banner keeps counting **lines** (fallback banner rows are chrome and stay out
+of the line identity); the entry line spans KTD6 publishes are what keep
 `condensed_count + lines-accounted-for == total` computable over folded block units.
 
 Rationale: this confines variable-height widgets to entry-scoped regions, keeps the stable-prefix
@@ -412,11 +426,13 @@ graph cannot be launched by habit.
 implementation lands on it (R13; KTD1, KTD8).
 
 **Files:** platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md
-(new), docs/engineering-journal/DECISIONS.md (KTD mirror, RA1/RA2 amendments).
+(new), docs/engineering-journal/DECISIONS.md (KTD mirror, RA1/RA2/RA3 amendments).
 
 **Scope:** The four ceilings of KTD1 with their exact measurement points (the boundary-observed
 descendant count and why "every instant" is not the enforcement point, the height-via-fold-rule
-argument, the work metric, the latency workloads/clock/warm-up/quantile); the amendments to
+argument, the fallback-banner charge rule — content-only equality, banner rows charged to the
+fold arithmetic, only fixed-count chrome in the 500→600 margin — the work metric, the latency
+workloads/clock/warm-up/quantile); the amendments to
 ADR-0005 — **both** decision 3 (the 500-line-widget cap "at every instant", superseded by the
 two-tier model; state that 500 stays `DEFAULT_MOUNT_CAP` — the line cap for line-rendered
 surfaces and the wrapped-rows trigger threshold — while 600 is the folded-window **descendant**
@@ -526,13 +542,18 @@ keyed by entry id without a pane rebuild; a terminal path stops and awaits pendi
 updates nothing and raises nothing (R16 clause 3 — exactly the mount-cap interaction); the
 descendant count under KTD1(a)'s ceiling at every coalescing boundary, including across an
 oversized-newest-entry overage (the KTD2 rule), with the three boundary probes as fixtures —
-the 100,000-character mega-line (non-wrapping fallback: one widget, one painted row, clipped at
-the viewport with the banner note, stable across resize with the anchor held), the
+the 100,000-character mega-line (non-wrapping fallback: one content widget painting one row
+**plus one separate banner widget painting one banner row** — two widgets, two painted rows —
+clipped at the viewport, stable across resize with the anchor held), the
 37,000-character double-width line (display-cell estimate, not character count), the 601-column
 table (construct-aware estimate), and the **exact-boundary regression** — a 599-column table plus
 one paragraph, where top-level blocks plus cells estimate exactly 1,200 while the installed
 widget mounts 1,201 descendants: the calibrated estimate (containers included) must exceed 1,200
-and fire the trigger; condensation folds whole units with the round-up
+and fire the trigger — and the **aggregate-ceiling regression** — 302 one-line fallen-back
+entries, leaving 301 in the folded tier at two accounted rows each (602 in total): a lines-only
+fold trigger would mount 602 widgets under the 600 ceiling, so the fold must fire on accounted
+rows and hold the folded window at ≤ 500 accounted rows and ≤ 600 descendants; condensation
+folds whole units with the round-up
 rule, a **block-rendered** newest entry survives whole (a fallen-back line-rendered one may fold
 under the cap), and the banner's line arithmetic still sums; a reader
 scrolled above the stream holds position through reinterpretation, resize, and condensation (R17)
@@ -597,7 +618,8 @@ visual oracles for every R1 construct (heading, both list types, table grid, fen
 each proven to fail when flattened; line-rendered kinds keep the existing window comparison;
 progressiveness asserted at timed intermediate checkpoints, not only settled (R5/R14), including
 the two-tail overlap case (R18); the adversarial workloads — the KTD1(d) fence, table, and
-unbroken mega-line (through resize) plus the double-width-character, 601-column-table, and exact-boundary 599-column probes, exact
+unbroken mega-line (through resize) plus the double-width-character, 601-column-table,
+exact-boundary 599-column, and aggregate-ceiling 302-fallen-back-entry probes, exact
 sizes as specified — hold the latency and descendant ceilings with high-water figures recorded;
 replay determinism compares normalized block structure (ordered classes, source ranges, semantic
 content; runtime identifiers excluded) under the pinned width, theme, and framework version (R12),
