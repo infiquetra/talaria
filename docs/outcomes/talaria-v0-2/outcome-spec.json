@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "outcome_id": "talaria-v0-2",
-  "spec_revision": 4,
+  "spec_revision": 5,
   "objective": "Ship talaria v0.2: make the interface answerable and --resume mean what it says (the defect spine, executing first), then block-level markdown transcript differentiation (planned separately, landing behind the spine because it reopens the measured gate); one release, one changelog, one version bump.",
   "nodes": [
     {
@@ -45,10 +45,14 @@
       "depends_on": [],
       "leaf_saga_id": "",
       "child_spec_ref": "",
-      "github": {},
+      "github": {
+        "pr": "https://github.com/infiquetra/talaria/pull/47"
+      },
       "worktree": {},
       "evidence": {
-        "brainstorm": "docs/brainstorms/2026-08-08-block-markdown-and-transcript-differentiation-requirements.md"
+        "brainstorm": "docs/brainstorms/2026-08-08-block-markdown-and-transcript-differentiation-requirements.md",
+        "plan": "docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md",
+        "review": "docs/reviews/2026-08-09-talaria-v0-2-block-markdown-plan-review.md"
       },
       "cost": {}
     },
@@ -76,7 +80,10 @@
       "evidence": {
         "execution_spec": "docs/plans/2026-08-09-talaria-v0-2-block-markdown-spec.json",
         "plan": "docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md",
-        "recommended_backend": "team-execution (recommender; operator may flip at the build gate)"
+        "recommended_backend": "team-execution (recommender; operator may flip at the build gate)",
+        "plan_revision": "2 \u2014 branch head 94b2507, merged to main f74e335 via PR #47; doc-reviewed (35 findings fixed) and hardened through eleven Codex confirm rounds to PASS",
+        "review": "docs/reviews/2026-08-09-talaria-v0-2-block-markdown-plan-review.md",
+        "amendments": "three operator-vetoable requirements amendments: RA1/RA2 accepted 2026-08-09; RA3 (fallen-back entries: clipped rows + banner, expand affordance queued) pending operator accept-or-veto at this gate"
       },
       "cost": {}
     },
@@ -124,6 +131,11 @@
       "revision": 4,
       "reason": "block-markdown-build: attach the authored plan/spec, backend cc-workflows-ultracode (recommender said team-execution; divergence recorded for the build gate)",
       "at": "2026-08-09T05:10:03Z"
+    },
+    {
+      "revision": 5,
+      "reason": "block-markdown-plan complete: plan revision 2 merged via PR #47 (f74e335) after doc-review + eleven Codex confirm rounds (PASS at 94b2507); build-node evidence updated to revision 2 with RA3 recorded as pending the build gate",
+      "at": "2026-08-09T16:20:00Z"
     }
   ],
   "cost_rollup": {},
