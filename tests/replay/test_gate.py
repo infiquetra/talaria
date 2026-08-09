@@ -19,12 +19,19 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.geometry import Size
 
 from talaria.domain.models import TranscriptEntry
-from talaria.domain.projection import TranscriptView
+from talaria.domain.projection import (
+    EntryScopedView,
+    ProvisionalTail,
+    TranscriptEntryRecord,
+    TranscriptView,
+)
 from talaria.domain.state import SessionState
 from talaria.replay import gate as gate_module
 from talaria.replay.gate import (
+    DESCENDANT_WIDGET_CEILING,
     CorpusIdentity,
     GateMeasurement,
     GateResult,
@@ -35,6 +42,7 @@ from talaria.replay.gate import (
     block_documents_are_owned,
     content_is_complete,
     document_ownership,
+    expected_block_documents_are_mounted,
     fallback_banner_accounting,
     measure_replay,
     ownership_report,
@@ -43,6 +51,7 @@ from talaria.replay.gate import (
 )
 from talaria.replay.stress import build_stress_corpus
 from talaria.ui.blocks import EntryMarkdown
+from talaria.ui.transcript import TranscriptPane
 
 
 def _identity() -> CorpusIdentity:
@@ -354,6 +363,36 @@ def test_prove_span_coverage_accounts_the_inter_block_blank_to_the_entry_not_a_b
     assert "owned by no block" in reason
 
 
+def test_prove_span_coverage_treats_a_whitespace_only_inter_block_line_as_blank_too() -> None:
+    """CR6's confirmed finding at gate.py:452, the reviewer's own live REPL
+    reproduction, pinned as a test: before the fix, checking only the
+    literal ``""`` rejected ``"  "`` — a whitespace-only inter-block line —
+    as "dropped text", even though the markdown parser itself treats a
+    space-only line exactly as it treats an empty one (neither ever opens a
+    construct, so neither is ever claimed by a block's ``source_range``).
+    """
+    lines = ["a", "  ", "# h"]
+    spans: list[tuple[str, tuple[int, int]]] = [
+        ("MarkdownParagraph", (0, 1)),
+        ("MarkdownH1", (2, 3)),
+    ]
+    ok, reason = _prove_span_coverage(lines, spans)
+    assert ok, reason
+
+
+@pytest.mark.asyncio
+async def test_a_whitespace_only_inter_block_line_does_not_break_document_ownership() -> None:
+    """The same reproduction, driven through the real parser and a real
+    mounted document rather than a hand-built spans list — confirms the
+    parser genuinely treats ``"a\\n  \\n# h\\n"``'s middle line as blank
+    (it opens no construct, so no block's own ``source_range`` ever claims
+    it), which is the fact the fixed accounting rule now relies on.
+    """
+    async with mounted_document("a\n  \n# h\n") as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+
 # ── mutation tests: the proof can fail ─────────────────────────────────────
 
 
@@ -403,6 +442,101 @@ async def test_a_wrong_block_class_makes_document_ownership_fail() -> None:
         ok, reason = document_ownership(widget)
         assert ok is False
         assert "wrong block class" in reason
+
+
+@pytest.mark.asyncio
+async def test_document_ownership_is_self_referential_without_applied_text() -> None:
+    """The bug named at gate.py:463 (CR6), pinned as ground truth before the
+    fix below is proven: ``document_ownership(widget)`` with no
+    ``applied_text`` checks only that the document's own blocks cover its
+    own ``.source`` -- so replacing that ``.source`` wholesale, with
+    different but still internally-consistent markdown, passes. This is not
+    the desired behaviour; it is the false pass CR6 found, kept as a named
+    fact so the next test's fix is legible as a fix.
+    """
+    async with mounted_document("# original\n") as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+        await widget.update("# substituted")
+
+        ok, reason = document_ownership(widget)
+        assert ok, "a swap to internally-consistent text is invisible without applied_text"
+
+
+@pytest.mark.asyncio
+async def test_document_ownership_catches_a_document_swapped_for_consistent_text() -> None:
+    """CR6's confirmed finding, fixed: ``document_ownership`` must also
+    compare ``widget.source`` against the domain's actual applied text for
+    that document, not only against the document's own blocks. A document
+    whose ``.source`` was swapped for different — but still internally
+    self-consistent — markdown (every span still covers it, every construct
+    oracle still holds) now fails, because the swap is caught against what
+    the document was supposed to still be showing.
+    """
+    async with mounted_document("# original") as widget:
+        ok, reason = document_ownership(widget, applied_text="# original")
+        assert ok, reason
+
+        await widget.update("# substituted")
+
+        ok, reason = document_ownership(widget, applied_text="# original")
+        assert ok is False
+        assert "does not match the document's own applied text" in reason
+
+
+@pytest.mark.asyncio
+async def test_block_documents_are_owned_catches_a_real_mounted_entry_swapped_for_wrong_text() -> (
+    None
+):
+    """The same swap, proven through :func:`block_documents_are_owned`
+    against a real :class:`~talaria.ui.transcript.TranscriptPane` rather
+    than a bare widget — the shape CR6's context citation
+    (``talaria/ui/transcript.py:584``) points at: the pane's own
+    ``rendered_lines``/``_MountedUnit.applied_text`` bookkeeping is what the
+    swapped widget is checked against.
+    """
+
+    class _PaneHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TranscriptPane(id="t")
+
+    committed = TranscriptEntryRecord(
+        entry_id=1,
+        kind="assistant",
+        raw_body="# original heading\n",
+        committed=True,
+        line_span=(0, 1),
+    )
+    entries = EntryScopedView(
+        entries=(committed,),
+        assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=0),
+        reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="", generation=0),
+    )
+    view = TranscriptView(lines=("# original heading",), entry_count=1)
+
+    app = _PaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(TranscriptPane)
+        await pane.apply(view, entries)
+        await pilot.pause()
+
+        ok, reason = block_documents_are_owned(pane)
+        assert ok, reason
+
+        # The swap: the widget's own source changes to different,
+        # internally-consistent text, while the pane's own bookkeeping
+        # (`_MountedUnit.applied_text`) is left saying the original text was
+        # last applied -- exactly a document silently substituted after
+        # being built.
+        unit = pane._entries[1]
+        assert unit.block is not None
+        await unit.block.update("# substituted heading")
+
+        ok, reason = block_documents_are_owned(pane)
+        assert ok is False
+        assert "entry 1" in reason
+        assert "does not match the document's own applied text" in reason
 
 
 @pytest.mark.asyncio
@@ -636,17 +770,83 @@ async def test_a_zero_block_entry_line_renders_and_mounts_no_entry_markdown() ->
         assert pane.rendered_lines == ("", "", "")
 
 
+@pytest.mark.asyncio
+async def test_a_tail_collapsing_to_a_bare_newline_stays_mounted_as_a_block_and_is_rejected() -> (
+    None
+):
+    """CR6: "zero-block sources are never reached here at all" was asserted
+    in :func:`block_documents_are_owned`'s own docstring, never verified.
+    Driven live against the real pane: a reasoning tail grows into a block
+    document, then collapses to a bare newline as a new generation (a
+    replace-wins reset, not a plain append) -- and
+    :meth:`TranscriptPane._reconcile_tail`'s block-kind branch only
+    re-checks ``trips_fallback_trigger`` after writing, never
+    ``is_zero_block``, so the now-empty tail stays mounted as a height-zero
+    ``EntryMarkdown`` rather than being demoted to line rendering. Before
+    this unit's fix, ``document_ownership`` passed a document like this
+    vacuously (zero blocks trivially "cover" a zero-length span); it must
+    now reject it outright.
+    """
+    from talaria.domain.projection import EntryScopedView, ProvisionalTail
+    from talaria.ui.transcript import TranscriptPane
+
+    class _PaneHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TranscriptPane(id="t")
+
+    app = _PaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(TranscriptPane)
+
+        grown = EntryScopedView(
+            entries=(),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=0),
+            reasoning_tail=ProvisionalTail(
+                kind="reasoning", raw_text="# heading\n\nreal content", generation=0
+            ),
+        )
+        await pane.apply(
+            TranscriptView(lines=("# heading", "", "real content"), entry_count=0), grown
+        )
+        await pilot.pause()
+        assert pane._tails["reasoning"] is not None
+        assert pane._tails["reasoning"].kind == "block"
+
+        collapsed = EntryScopedView(
+            entries=(),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=0),
+            reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="\n", generation=1),
+        )
+        await pane.apply(TranscriptView(lines=("",), entry_count=0), collapsed)
+        await pilot.pause()
+
+        tail_unit = pane._tails["reasoning"]
+        assert tail_unit is not None
+        assert tail_unit.kind == "block", "the live bug this test pins: it never got demoted"
+        assert tail_unit.block is not None
+        assert tail_unit.block.outer_size.height == 0, "a zero-block document mounts at height 0"
+
+        ok, reason = block_documents_are_owned(pane)
+        assert ok is False
+        assert "zero top-level blocks" in reason
+
+
 # ── RA3: the fallback banner proof ─────────────────────────────────────────
 
 
 class _FakeClassed:
-    def __init__(self, *classes: str) -> None:
+    def __init__(self, *classes: str, height: int = 1) -> None:
         self.classes = frozenset(classes)
+        #: `fallback_banner_accounting` reads `.outer_size.height` on a
+        #: banner widget (the row-count measurement, CR6); a plain fake with
+        #: no such attribute would raise instead of exercising the check.
+        self.outer_size = Size(1, height)
 
 
 class _FakePane:
-    """Duck-typed stand-in for the one thing `fallback_banner_accounting`
-    reads: ``.children``, an ordered sequence of objects with ``.classes``.
+    """Duck-typed stand-in for the two things `fallback_banner_accounting`
+    reads: ``.children``, an ordered sequence of objects with ``.classes``
+    and ``.outer_size``.
     """
 
     def __init__(self, children: list[_FakeClassed]) -> None:
@@ -684,6 +884,217 @@ def test_fallback_banner_accounting_fails_when_a_banner_stands_alone() -> None:
     ok, reason = fallback_banner_accounting(pane)  # type: ignore[arg-type]
     assert ok is False
     assert "standing alone" in reason
+
+
+def test_fallback_banner_accounting_fails_when_the_banner_wraps_past_one_row() -> None:
+    """CR6: the "+1" in KTD1(a)'s exact-row formula is a claim about a
+    *painted row*, not a mounted widget. A banner whose own text wraps to
+    more than one row breaches that formula even though the DOM shape (one
+    run, one banner, immediately adjacent) is otherwise exactly right.
+    """
+    pane = _FakePane(
+        [
+            _FakeClassed("transcript--nowrap"),
+            _FakeClassed("transcript--fallback-banner", height=2),
+        ]
+    )
+    ok, reason = fallback_banner_accounting(pane)  # type: ignore[arg-type]
+    assert ok is False
+    assert "2 rows" in reason
+
+
+# ── RA3 against real fold arithmetic, not class-only fakes (CR6) ──────────
+#
+# The tests above pin `fallback_banner_accounting`'s own DOM-walking logic in
+# isolation, cheaply. They cannot fail on a wrong fold count or a wrong
+# odd-cut arm, because nothing about a hand-built `_FakeClassed` sequence
+# depends on `TranscriptPane._compute_new_top`'s actual arithmetic -- a wrong
+# 302-entry fold or either odd-cut arm would still produce a `_FakePane`
+# shaped exactly like a correct one, if the fixture is built by hand rather
+# than by driving the real pane. The tests below drive a real
+# `TranscriptPane` through its own `apply()`/`_condense()` over the three
+# exact shapes the plan pins (U4's aggregate-ceiling, odd-cut, and
+# partial-retention regressions), and check `fallback_banner_accounting`
+# against the DOM that arithmetic actually produced.
+#
+# The geometry (140 columns, not this module's own `GATE_SIZE`) is chosen
+# wide enough that `FALLBACK_BANNER_TEMPLATE`'s own fixed ~126-character
+# message does not itself wrap past one row -- that is a separate claim,
+# pinned above and by `test_fallback_banner_accounting_fails_when_the_
+# banner_wraps_past_one_row`, and conflating it with these fold-arithmetic
+# fixtures would make a fold-count regression indistinguishable from a
+# banner-width regression. Correspondingly, `_BIG_LINE` is long enough to
+# still trip `trips_fallback_trigger`'s wrapped-row condition at this wider
+# content width.
+
+_FOLD_SIZE = (140, 40)
+_BIG_LINE = "x" * 80_000
+
+
+def _one_line_fallback_entries(n: int, *, start_id: int = 1) -> tuple[TranscriptEntryRecord, ...]:
+    """``n`` one-line fallen-back entries (KTD1(a)): a single line long
+    enough to trip the wrapped-row trigger at :data:`_FOLD_SIZE`'s content
+    width, each contributing exactly one projected line -- the exact shape
+    the plan's aggregate-ceiling and odd-cut regressions are stated over.
+    """
+    return tuple(
+        TranscriptEntryRecord(
+            entry_id=start_id + i,
+            kind="assistant",
+            raw_body=_BIG_LINE,
+            committed=True,
+            line_span=(i, 1),
+        )
+        for i in range(n)
+    )
+
+
+@asynccontextmanager
+async def _apply_fold_fixture(
+    records: tuple[TranscriptEntryRecord, ...], lines: tuple[str, ...]
+) -> AsyncIterator[TranscriptPane]:
+    """Yields the pane with ``app.run_test()``'s context still open --
+    returning it *after* that context exits would hand back a pane whose
+    widgets ``run_test``'s own teardown already unmounted.
+    """
+
+    class _PaneHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TranscriptPane(id="t")
+
+    app = _PaneHarness()
+    async with app.run_test(size=_FOLD_SIZE):
+        pane = app.query_one(TranscriptPane)
+        view = TranscriptView(lines=lines, entry_count=len(records))
+        entries = EntryScopedView(
+            entries=records,
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=0),
+            reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="", generation=0),
+        )
+        await pane.apply(view, entries)
+        yield pane
+
+
+@pytest.mark.asyncio
+async def test_the_real_fold_holds_302_fallen_back_entries_at_the_aggregate_ceiling() -> None:
+    """The plan's exact aggregate-ceiling shape: 302 one-line fallen-back
+    entries, each accounted at two rows (content + banner). A lines-only
+    fold trigger (ignoring the banner charge) would mount all 301 non-newest
+    entries -- 602 widgets -- breaching the 600 descendant ceiling; the real
+    fold must instead hold the folded window at <= 500 accounted rows.
+    """
+    records = _one_line_fallback_entries(302)
+    async with _apply_fold_fixture(records, tuple(_BIG_LINE for _ in range(302))) as pane:
+        assert len(pane._entry_order) == 250, "250 entries fit two accounted rows each into 500"
+        assert pane.condensed_count == 52, "the other 52 fold away, oldest first"
+        # 250 entries x (1 content widget + 1 banner widget) + 1 condensation banner.
+        assert pane.mounted_count == 501
+        assert pane.descendant_count <= DESCENDANT_WIDGET_CEILING
+
+        ok, reason = fallback_banner_accounting(pane)
+        assert ok, reason
+        block_ok, block_reason = block_documents_are_owned(pane)
+        assert block_ok, block_reason
+
+
+@pytest.mark.asyncio
+async def test_the_real_fold_rounds_forward_on_the_odd_cut_regression() -> None:
+    """The plan's exact odd-cut shape: 250 one-line fallen-back entries plus
+    one ordinary line (501 accounted rows total). `desired_top = 1` lands
+    inside the oldest (fallen-back) entry's own two-row span -- the fold
+    must round forward and take the whole entry, banner included, never
+    leaving a bannerless clipped row or an orphan banner.
+    """
+    records = _one_line_fallback_entries(250) + (
+        TranscriptEntryRecord(
+            entry_id=251, kind="user", raw_body="ordinary", committed=True, line_span=(250, 1)
+        ),
+    )
+    lines = tuple(_BIG_LINE for _ in range(250)) + ("› ordinary",)
+    async with _apply_fold_fixture(records, lines) as pane:
+        assert pane.condensed_count == 1, "the fold rounds forward over the whole oldest entry"
+        assert 1 not in pane._entries, "the fallen-back entry -- banner included -- is gone"
+        assert list(pane._entry_order)[0] == 2, "eviction never leaves a bannerless remainder"
+
+        ok, reason = fallback_banner_accounting(pane)
+        assert ok, reason
+        block_ok, block_reason = block_documents_are_owned(pane)
+        assert block_ok, block_reason
+
+
+@pytest.mark.asyncio
+async def test_the_real_fold_partially_retains_the_two_line_entry_and_keeps_its_one_banner() -> (
+    None
+):
+    """The plan's exact partial-retention shape: a two-line fallen-back
+    entry plus 498 ordinary lines (501 accounted rows total).
+    `desired_top = 1` folds exactly one content row of the oldest entry,
+    which then retains one content row **plus exactly one banner**
+    (painted rows = retained projected lines + 1 = 2) -- the arm an
+    always-round-forward implementation (which would pass the odd-cut test
+    above) fails, which is why the plan pins both.
+    """
+    records = (
+        TranscriptEntryRecord(
+            entry_id=1,
+            kind="assistant",
+            raw_body=f"{_BIG_LINE}\n{_BIG_LINE}",
+            committed=True,
+            line_span=(0, 2),
+        ),
+        *(
+            TranscriptEntryRecord(
+                entry_id=2 + i,
+                kind="user",
+                raw_body=f"line{i}",
+                committed=True,
+                line_span=(2 + i, 1),
+            )
+            for i in range(498)
+        ),
+    )
+    lines = (_BIG_LINE, _BIG_LINE) + tuple(f"› line{i}" for i in range(498))
+    async with _apply_fold_fixture(records, lines) as pane:
+        assert pane.condensed_count == 1
+        retained = pane._entries[1]
+        assert retained.line_count == 1, "one content row folded away, one retained"
+        assert retained.banner is not None, "the retained row still carries exactly one banner"
+
+        ok, reason = fallback_banner_accounting(pane)
+        assert ok, reason
+        block_ok, block_reason = block_documents_are_owned(pane)
+        assert block_ok, block_reason
+
+
+@pytest.mark.asyncio
+async def test_removing_a_banner_from_a_real_fold_makes_the_accounting_fail() -> None:
+    """The mutation twin of the three tests above: the real 302-entry fold
+    is proven correct, then one of its own banners -- produced by the real
+    fold arithmetic, not a hand-built fake -- is torn off, and the proof
+    must notice. This is exactly what a class-only `_FakePane` fixture
+    cannot exercise: there is no real fold to corrupt.
+
+    The *newest* mounted entry's banner is the one removed, deliberately:
+    every other fallen-back entry sits immediately in front of the next
+    one's own banner, so tearing off an interior banner only merges two
+    adjacent content runs into one still-followed-by-a-real-banner run --
+    correctly not a violation, since RA3 requires a banner after every
+    maximal run, not one banner per original entry. Only the trailing
+    banner has no following banner to be absorbed into.
+    """
+    records = _one_line_fallback_entries(302)
+    async with _apply_fold_fixture(records, tuple(_BIG_LINE for _ in range(302))) as pane:
+        ok, reason = fallback_banner_accounting(pane)
+        assert ok, reason
+
+        newest_mounted = pane._entry_order[-1]
+        banner = pane._entries[newest_mounted].banner
+        assert banner is not None
+        await banner.remove()
+
+        ok, reason = fallback_banner_accounting(pane)
+        assert ok is False
+        assert "no banner" in reason
 
 
 # ── progressiveness, including R18's two-tail overlap ─────────────────────
@@ -769,4 +1180,57 @@ async def test_ownership_report_composes_all_three_halves_and_names_which_failed
         # An empty replay: nothing mounted, nothing condensed, nothing owed.
         assert ok, reasons
         assert reasons == ()
+        await app.shutdown_sources()
+
+
+# ── the two-sided proof: an expected document can also be absent (CR6) ────
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_only_delta_withheld_from_the_pane_is_not_accepted_vacuously() -> None:
+    """CR6's plausible finding at gate.py:524: :func:`block_documents_are_owned`
+    only ever walks what is *already* mounted, so a delta that never reaches
+    :meth:`TranscriptPane.apply` at all leaves nothing missing *from* that
+    walk to notice — the absent document passes vacuously. Reproduced here
+    by writing directly to ``app.state`` (a reasoning delta lands in the
+    domain) without ever calling :meth:`TalariaApp.render_snapshot` again —
+    the only call site that reconciles the pane — so the pane stays exactly
+    as it was: nothing mounted, and nothing wrong with what is mounted.
+    :func:`expected_block_documents_are_mounted` is the fix: it derives what
+    should be mounted straight from the domain's own current
+    ``entry_scoped_view`` rather than from what already made it onto the
+    pane, so it is the half of the composed proof that actually notices.
+    """
+    from talaria.domain.state import SessionState
+    from talaria.replay.controls import ReplayControls
+    from talaria.replay.source import ReplaySource
+    from talaria.ui.app import TalariaApp
+
+    controls = ReplayControls(paused=True)
+    source = ReplaySource((), controls=controls)
+    app = TalariaApp(source, mode="replay", controls=controls)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        app.state = SessionState(
+            reasoning_text="# a reasoning heading\n\nmore reasoning",
+            reasoning_stream_generation=1,
+        )
+
+        # The old, one-sided check: nothing is mounted, and nothing that IS
+        # mounted is wrong, so it passes -- the vacuous accept CR6 named.
+        ok, reason = block_documents_are_owned(app.transcript)
+        assert ok, reason
+
+        # The new, two-sided check: the domain's own current view says the
+        # reasoning tail should be a block document by now, and it is not.
+        ok, reason = expected_block_documents_are_mounted(app)
+        assert ok is False
+        assert "reasoning" in reason
+
+        # The composed proof inherits the fix.
+        settled_ok, reasons = ownership_report(app, settled=True)
+        assert settled_ok is False
+        assert any("reasoning" in r for r in reasons)
+
         await app.shutdown_sources()
