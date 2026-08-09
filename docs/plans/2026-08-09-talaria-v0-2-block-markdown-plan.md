@@ -192,8 +192,12 @@ ADR-0006 before implementation:**
   own, and pre-splitting into hard-wrapped fragments makes a 100,000-character line ~1,283
   widgets (its own cap violation), breaks the `rendered_lines` reconstruction (fragments are not
   projected lines), forces fragment-aware condensation, and un-wraps differently on every
-  resize. Non-wrapping keeps painted rows == widgets == projected lines, so the existing
-  500-widget cap bounds height directly, condensation stays whole-projected-lines, the
+  resize. Non-wrapping keeps painted rows == widgets == projected lines **for the entry's
+  content**; the fallback banner is **one separately budgeted widget and row per fallen-back
+  entry**, drawn from the same headroom the condensation banner uses — the 100-widget margin
+  between the 500-line cap and the 600 gate ceiling — never from the entry's projected-line
+  budget, so the exact-row formula is `painted rows == projected lines + one banner row per
+  fallen-back entry`, pinned in U4 and U6. Condensation stays whole-projected-lines, the
   reconstruction is trivially exact, and resize moves only the clip point (one row per widget at
   every width). The entry-level fallback both restores the count and height bounds and ends the
   growing-reparse work of clause (c). The boundary
@@ -365,7 +369,7 @@ carry the same lists; a unit naming an R-ID here covers its substance in scope a
 | --- | --- |
 | R1 all five constructs render | U4 (render + per-construct oracles), U6 (corpus + gate oracles) |
 | R2 bounded fence, no inline code-span inside | U4 |
-| R3 tables legible at 80 columns without a mouse (as amended by RA2) | U4 |
+| R3 tables legible at 80 columns without a mouse (as amended by RA2; narrowed on fallen-back entries by RA3) | U4 |
 | R4 built-in widget family, glue only | U3 (factory is configuration + subclassed rendering hooks, no parser/assembly engine), U4; CR3/CR4 verify |
 | R5 progressive structure | U4, U6 |
 | R6 early-ending turn commits partials | U2, U6 |
@@ -374,7 +378,7 @@ carry the same lists; a unit naming an R-ID here covers its substance in scope a
 | R9 forgery allowlist (as amended by RA1) | U3 |
 | R10 HTML literalized; links inert; images not fetched, alt + target as text | U3 |
 | R11a `content_is_complete` intact, not restated | U6 (explicit guard: the function and its callers are untouched; the v0.1 pin passes verbatim) |
-| R11b projection-to-screen region proof | U6 |
+| R11b projection-to-screen region proof (fallen-back entries proven per RA3: banner plus exact row count) | U6 |
 | R12 replay determinism, normalized | U6 |
 | R13 ADR precedes implementation | U1 (record), spec graph (U3 gated on CR1) |
 | R14 adversarial corpus incl. open-fence and mid-table termination | U2 (domain legs), U6 (gate legs) |
@@ -418,7 +422,7 @@ two-tier model; state that 500 stays `DEFAULT_MOUNT_CAP` — the line cap for li
 surfaces and the wrapped-rows trigger threshold — while 600 is the folded-window **descendant**
 ceiling the gate enforces) and decision 7 (the `literal_text`-only rule — untrusted text may
 additionally reach the screen through the KTD4-configured parser and rendering hooks and nothing
-else); the RA1 and RA2 requirements amendments; the fallback trigger (KTD8), its branch-hold
+else); the RA1, RA2, and RA3 requirements amendments; the fallback trigger (KTD8), its branch-hold
 mechanism, and what evidence invokes it.
 
 **Test expectation:** none — architecture record; U6 makes every clause executable.
@@ -597,7 +601,9 @@ unbroken mega-line (through resize) plus the double-width-character, 601-column-
 sizes as specified — hold the latency and descendant ceilings with high-water figures recorded;
 replay determinism compares normalized block structure (ordered classes, source ranges, semantic
 content; runtime identifiers excluded) under the pinned width, theme, and framework version (R12),
-sideband included; early termination by cancellation, error, and typed disconnect renders all
+sideband included; a fallen-back entry is proven per RA3 — its banner present and its painted
+rows exactly `projected lines + 1` — with clipped-cell reachability explicitly not claimed;
+early termination by cancellation, error, and typed disconnect renders all
 received content, driven through the sideband timeline (AE2 at gate level), including the
 mid-table case; resize including 80 columns; verdict green over both the existing corpora and the
 new feature corpus.
@@ -609,7 +615,9 @@ behaviors (images render alt and target as text — R10); diff rendering keeps R
 stance; theme selection and terminal colour detection stay deferred, and kind styling uses the
 existing theme's vocabulary; turning fence highlighting off is out of scope; no Hermes markdown
 machinery is ported (ADR-0003). Amended by this plan's review (see Requirements Amendments):
-underscore emphasis and strikethrough are **in** scope (RA1); per-cell table focus is **out** —
+underscore emphasis and strikethrough are **in** scope (RA1); on fallen-back entries, on-screen
+visibility narrows to the clipped row plus banner (RA3), with the expand affordance queued as
+follow-up; per-cell table focus is **out** —
 table legibility is met by wrapping (RA2). Additionally out of scope: the approved v0.2
 answerability plan and its execution spec are untouched; transcript memory eviction (KTD14's
 deferred item) is not taken up; the styled-line-run fallback is not built ahead of the evidence
