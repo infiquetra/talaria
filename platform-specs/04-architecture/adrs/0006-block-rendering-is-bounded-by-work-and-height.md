@@ -110,6 +110,14 @@ at most 501 widgets, inside the 600-descendant ceiling. Banner rows are **chrome
 counted for the cap and the fold arithmetic, but never entering the
 `condensed_count + lines-accounted-for == total` content identity the gate proves.
 
+**The banner-preserving odd-cut rule.** Because a fallen-back entry's accounted span includes its
+banner row, a fold target can land *inside* that span. The cut folds content rows only: a
+partially retained fallen-back entry keeps **exactly one** banner row, its painted rows are
+*retained projected lines + 1*, and only its content rows enter the condensed-line arithmetic. A
+cut that would retain zero content rows rounds **forward**, folding the whole entry, banner
+included. A banner never stands alone in either direction — no bannerless clipped rows, no orphan
+banner.
+
 The exact-row formula: **painted rows == projected lines + one banner row per fallen-back entry**,
 or, over a partially retained span, **retained projected lines + 1**. A block-rendered newest
 entry is the one exception to folding: it mounts whole, because its size is already bounded by the
