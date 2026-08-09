@@ -291,7 +291,9 @@ async def test_the_pane_draws_agent_prose_styled_and_tool_output_verbatim() -> N
         assistant_entry = next(e for e in app.state.transcript if e.kind == "assistant")
         unit = pane._entries[assistant_entry.seq]
         assert unit.kind == "block", "assistant prose block-renders under U4"
-        painted = "\n".join(str(p.render()) for p in unit.block.query(MarkdownParagraph))
+        document = unit.block
+        assert document is not None
+        painted = "\n".join(str(p.render()) for p in document.query(MarkdownParagraph))
         assert "Lead with the recommendation and cite path:line." in painted
         assert "**the recommendation**" not in painted
 
@@ -368,7 +370,9 @@ async def test_streaming_prose_is_styled_before_the_turn_commits() -> None:
         assert view.committed_lines < view.total_lines, "nothing was provisional"
         tail = pane._tails["assistant"]
         assert tail is not None and tail.kind == "block", "the live tail is a block document"
-        painted = "\n".join(str(p.render()) for p in tail.block.query(MarkdownParagraph))
+        document = tail.block
+        assert document is not None
+        painted = "\n".join(str(p.render()) for p in document.query(MarkdownParagraph))
         assert "still arriving" in painted
         assert "**arriving**" not in painted
         await app.shutdown_sources()

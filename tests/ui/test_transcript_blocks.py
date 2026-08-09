@@ -41,6 +41,7 @@ from textual.widgets._markdown import (
     MarkdownTableCellContents,
 )
 
+from talaria.domain.models import TranscriptKind
 from talaria.domain.projection import (
     EntryScopedView,
     ProvisionalTail,
@@ -81,7 +82,7 @@ def _view_for(
     (only) the assistant tail — see the module docstring's caveat.
     """
     lines: list[str] = []
-    kinds: list[str] = []
+    kinds: list[TranscriptKind] = []
     for record in entries:
         welded = f"{_ENTRY_PREFIX.get(record.kind, '')}{record.raw_body}"
         body_lines = welded.split("\n") if welded else [""]
@@ -289,6 +290,7 @@ async def test_fence_streams_progressively_at_boundaries() -> None:
         body = ProvisionalTail(kind="assistant", raw_text="```python\nx = 1\n", generation=gen)
         await _apply(pane, (), assistant_tail=body)
         tail = pane._tails["assistant"]
+        assert tail is not None
         assert tail.block is opener_widget, "same generation appends in place, no rebuild"
         assert tail.applied_text == body.raw_text
 
@@ -297,8 +299,11 @@ async def test_fence_streams_progressively_at_boundaries() -> None:
         )
         await _apply(pane, (), assistant_tail=closer)
         tail = pane._tails["assistant"]
+        assert tail is not None
         assert tail.block is opener_widget
-        fences = list(tail.block.query(MarkdownFence))
+        document = tail.block
+        assert document is not None
+        fences = list(document.query(MarkdownFence))
         assert len(fences) == 1, "closed fence is one bounded region"
 
 
@@ -326,8 +331,11 @@ async def test_interim_replacement_renders_exactly_once_via_generation() -> None
             ),
         )
         tail = pane._tails["assistant"]
+        assert tail is not None
         assert tail.applied_text == "interim replacement, authoritative"
-        painted = "\n".join(str(p.render()) for p in tail.block.query(MarkdownParagraph))
+        document = tail.block
+        assert document is not None
+        painted = "\n".join(str(p.render()) for p in document.query(MarkdownParagraph))
         assert "draft one" not in painted
         assert "interim replacement, authoritative" in painted
 
@@ -404,8 +412,12 @@ async def test_both_tails_stream_independently_in_the_same_turn() -> None:
             assistant_tail=ProvisionalTail(kind="assistant", raw_text="answering", generation=1),
             reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="thinking", generation=1),
         )
-        a_widget = pane._tails["assistant"].block
-        r_widget = pane._tails["reasoning"].block
+        assistant_tail = pane._tails["assistant"]
+        reasoning_tail = pane._tails["reasoning"]
+        assert assistant_tail is not None
+        assert reasoning_tail is not None
+        a_widget = assistant_tail.block
+        r_widget = reasoning_tail.block
         assert a_widget is not r_widget
 
         # Advance only the reasoning tail -- the assistant tail's widget and
@@ -418,9 +430,13 @@ async def test_both_tails_stream_independently_in_the_same_turn() -> None:
                 kind="reasoning", raw_text="thinking more", generation=1
             ),
         )
-        assert pane._tails["assistant"].block is a_widget
-        assert pane._tails["assistant"].applied_text == "answering"
-        assert pane._tails["reasoning"].applied_text == "thinking more"
+        assistant_tail = pane._tails["assistant"]
+        reasoning_tail = pane._tails["reasoning"]
+        assert assistant_tail is not None
+        assert reasoning_tail is not None
+        assert assistant_tail.block is a_widget
+        assert assistant_tail.applied_text == "answering"
+        assert reasoning_tail.applied_text == "thinking more"
 
 
 @pytest.mark.asyncio
@@ -436,7 +452,9 @@ async def test_commit_hands_tail_source_to_entry_document_without_rebuild() -> N
             (),
             assistant_tail=ProvisionalTail(kind="assistant", raw_text="final reply", generation=1),
         )
-        tail_widget = pane._tails["assistant"].block
+        assistant_tail = pane._tails["assistant"]
+        assert assistant_tail is not None
+        tail_widget = assistant_tail.block
 
         entries = (
             TranscriptEntryRecord(
@@ -470,7 +488,10 @@ async def test_stale_tail_write_after_removal_updates_nothing_and_raises_nothing
             (),
             assistant_tail=ProvisionalTail(kind="assistant", raw_text="hello", generation=1),
         )
-        widget = pane._tails["assistant"].block
+        assistant_tail = pane._tails["assistant"]
+        assert assistant_tail is not None
+        widget = assistant_tail.block
+        assert widget is not None
         await widget.remove()
         # No exception -- the guard checks is_mounted before writing.
         await pane._safe_write(widget, "append", " more")
@@ -677,6 +698,7 @@ async def test_per_construct_oracles_fail_when_flattened() -> None:
         unit = pane._entries[1]
         assert unit.kind == "block"
         doc = unit.block
+        assert doc is not None
         assert list(doc.query(MarkdownH1))
         assert list(doc.query(MarkdownBulletList))
         assert list(doc.query(MarkdownOrderedList))
@@ -700,10 +722,12 @@ async def test_per_construct_oracles_fail_when_flattened() -> None:
         )
         await _apply(pane, entries + flat_entries)
         flat_unit = pane._entries[2]
-        assert not list(flat_unit.block.query(MarkdownH1))
-        assert not list(flat_unit.block.query(MarkdownBulletList))
-        assert not list(flat_unit.block.query(MarkdownBlockQuote))
-        assert not list(flat_unit.block.query(MarkdownFence))
+        flat_doc = flat_unit.block
+        assert flat_doc is not None
+        assert not list(flat_doc.query(MarkdownH1))
+        assert not list(flat_doc.query(MarkdownBulletList))
+        assert not list(flat_doc.query(MarkdownBlockQuote))
+        assert not list(flat_doc.query(MarkdownFence))
 
 
 # ── RA2: bounded-fractional table column widths (amended R3) ───────────────
