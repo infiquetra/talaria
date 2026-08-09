@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "outcome_id": "talaria-v0-2",
+  "spec_revision": 2,
+  "objective": "Ship talaria v0.2: make the interface answerable and --resume mean what it says (the defect spine, executing first), then block-level markdown transcript differentiation (planned separately, landing behind the spine because it reopens the measured gate); one release, one changelog, one version bump.",
+  "nodes": [
+    {
+      "subplot_id": "answerability",
+      "title": "Answerable prompts + the session story (the defect spine)",
+      "kind": "code",
+      "state": "pending",
+      "backend": "cc-workflows-ultracode",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "task-talaria-v0-2-answerability-and-session-story",
+      "child_spec_ref": "docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-spec.json",
+      "github": {},
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "block-markdown-plan",
+      "title": "Block markdown: /plan from the requirements-ready brainstorm",
+      "kind": "non-code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "docs/brainstorms/2026-08-08-block-markdown-and-transcript-differentiation-requirements.md",
+      "github": {},
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "block-markdown-build",
+      "title": "Block markdown: build (lands behind the spine - reopens the measured gate)",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": true,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "answerability",
+        "block-markdown-plan"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "release",
+      "title": "v0.2 release close: one changelog, one version bump",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": true,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "answerability",
+        "block-markdown-build"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {},
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    }
+  ],
+  "decision_trail": [
+    {
+      "revision": 2,
+      "reason": "set-intent: attach run-start intent envelope",
+      "kind": "set-intent",
+      "scope": "",
+      "live": false,
+      "deltas": [],
+      "intent_revision": 2
+    }
+  ],
+  "cost_rollup": {},
+  "created_at": "",
+  "updated_at": "",
+  "intent": {
+    "schema_version": 1,
+    "run_mode": "unattended",
+    "ceremony_gates": {
+      "reviews_required": "auto",
+      "merge": "auto",
+      "deploy_nonprod": "auto"
+    },
+    "source": "interview"
+  },
+  "intent_revision": 2
+}
