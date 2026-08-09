@@ -222,8 +222,27 @@ def preserved(value: Any, previous: Any) -> Any:
 
 
 def coerce_text(value: Any) -> str:
-    """A string or nothing — never ``str(value)`` on arbitrary wire content."""
+    """A string or nothing — never ``str(value)`` on arbitrary wire content.
+
+    Stripping stays here for **diagnostic** channels only — a tool name, an
+    error message, a status note — where leading or trailing whitespace is
+    never meaningful. Content-channel text (an assistant reply, a reasoning
+    block) must not go through this: see :func:`coerce_text_exact` (KTD7).
+    """
     return value.strip() if isinstance(value, str) else ""
+
+
+def coerce_text_exact(value: Any) -> str:
+    """A string or nothing, preserved byte-for-byte — the content channel's
+    own coercion (KTD7).
+
+    The only difference from :func:`coerce_text` is that this never strips.
+    Content-channel text is markdown: four leading spaces are an indented
+    code block, and a trailing blank line closes a construct — both are
+    structure, not incidental whitespace, so a coercion that trims either one
+    silently rewrites what the model said.
+    """
+    return value if isinstance(value, str) else ""
 
 
 def _clip(text: str, limit: int) -> str:

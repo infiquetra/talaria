@@ -72,7 +72,13 @@ from talaria.domain.decode import (
     UnknownDispatchResult,
     decode_dispatch_result,
 )
-from talaria.domain.models import ConnectionStatus, PendingPrompt, PromptKind, RunMode
+from talaria.domain.models import (
+    ConnectionStatus,
+    PendingPrompt,
+    PromptKind,
+    RunMode,
+    TerminalCause,
+)
 from talaria.domain.models_catalog import (
     ModelAssignmentResult,
     ProfileDirectory,
@@ -1452,18 +1458,37 @@ class TalariaApp(App[None]):
 
     # ── the live transport's own state (R35, F6) ─────────────────────────
 
-    def note_connection_state(self, state: ConnectionStatus, detail: str = "") -> None:
+    def note_connection_state(
+        self,
+        state: ConnectionStatus,
+        detail: str = "",
+        cause: TerminalCause | None = None,
+    ) -> None:
         """Fold a transport state change into domain state and show it.
 
-        Wired to ``LiveSource(on_connection=…)``. It is a callback rather than a
-        synthetic frame on purpose: a fabricated ``gateway.disconnected`` event
-        would land in the recorded corpus as though the gateway had sent it.
+        Wired to ``LiveSource(on_connection=…)`` via :meth:`LiveSource.bind`
+        (``talaria/cli.py``). It is a callback rather than a synthetic frame
+        on purpose: a fabricated ``gateway.disconnected`` event would land in
+        the recorded corpus as though the gateway had sent it.
 
         ``detail`` carries the cause for the one distinction the frozen KTD5
         enum cannot express — a gateway that could not be reached versus one
         that hung up — so R35's four states stay four on screen.
+
+        ``cause`` is KTD7's typed end-of-stream cause — ``None`` for a
+        transient status change, one of ``auth_failed``/``dial_failed``/
+        ``orderly_close``/``reconnect_exhausted`` when the transport is
+        telling the domain the stream genuinely will not resume. Passed
+        straight through to :func:`~talaria.domain.state.set_connection`,
+        which is what actually commits any partial streaming and reasoning
+        text as transcript entries before clearing it (R6) — this method
+        does no committing of its own. ``at`` is
+        ``self.state.last_observed_at`` rather than a fresh clock read,
+        matching :meth:`interrupt_live`'s own call into ``cancel_turn``.
         """
-        self.state = set_connection(self.state, state)
+        self.state = set_connection(
+            self.state, state, cause=cause, at=self.state.last_observed_at
+        )
         self._dirty = True
         line = _CONNECTION_NOTICE[state]
         if detail:
