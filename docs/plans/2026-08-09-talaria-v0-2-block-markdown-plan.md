@@ -127,8 +127,11 @@ deterministic integer arithmetic, no float residue. Available content width `A =
 column each side of every cell plus one gutter per boundary); per-column cap
 `CAP = max(8, floor(A / N))`; each column's minimum `m_i = min(longest_word_i, CAP)`. If
 `sum(m_i) ≤ A`, every column gets its `m_i` and the remainder is distributed proportionally to
-each column's total content length. If `sum(m_i) > A`, every column gets the equal split
-`floor(A / N)` with a hard floor of 3 cells; a word longer than its column character-wraps. The
+each column's total content length — and when total content length is **zero** (a valid table
+can have every header and cell empty; probed, it mounts with four zero-length cells), the
+remainder is allocated equally with the leftmost-column remainder rule. If `sum(m_i) > A`, every
+column gets the equal split `floor(A / N)` with a hard floor of 3 cells; a word longer than its
+column character-wraps. The
 factory's table subclass computes these widths and sets them explicitly rather than trusting the
 auto layout. Every cell's full content is then readable at 80 columns by ordinary transcript
 scrolling — no hover, no mouse, no per-cell focus — and the test asserts the **actual painted
@@ -147,23 +150,30 @@ ADR-0006 before implementation:**
   committed entry document and line widget except the newest entry and the live tails — stays
   ≤ 600 descendants, enforced by KTD2's fold rule (fold decisions read the measured descendant
   counts of already-mounted entries; an incoming entry's **construct-aware estimate** counts
-  top-level tokens **plus table cells** — rows × columns read from the source's delimiter row —
-  because a probed three-line, 601-column table mounts 1,204 descendants, so a top-level token
-  count alone is not conservative). Tier two: the newest entry and each live tail carry a
-  **per-entry ceiling with a two-condition trigger** — the entry falls back to line rendering
-  when its descendant count (or construct-aware estimate) exceeds **1,200** (the gate's 1,000-row
-  table workload measures 1,003 descendants, fitting with headroom) **or** when its **estimated
-  wrapped rows** exceed **`mount_cap` (500)**. Estimated wrapped rows are width-aware by
-  construction: `sum over source lines of max(1, ceil(len(line) / content_width))` — a source-line
-  count is not the metric, because a probed single 100,000-character source line mounts as **one
-  descendant** yet renders 1,353 wrapped rows, and neither a descendant nor a source-line
-  condition would fire. The estimate covers both probed degenerate shapes: the 10,000-line open
-  fence (one block, two descendants, 10,004 rows) and the mega-line. A line-rendered entry is
-  **not** exempt from folding: it is
-  ordinary line content under today's cap machinery, `desired_top` may land inside it (exactly as
-  it does today for a 4,000-line tool dump), and the banner accounts its folded lines — so the
-  fallback can never itself mount more than the line cap allows. The entry-level fallback both
-  restores the count bound and ends the growing-reparse work of clause (c). The boundary
+  top-level tokens **plus table cells and per-construct container widgets** — a table's cells are
+  rows × columns read from the source's delimiter row, and the per-construct container overhead
+  is **calibrated against the installed widget's actual mounting and pinned by a test**, because
+  a probed three-line, 601-column table mounts 1,204 descendants, so a top-level token count
+  alone is not conservative). Tier two: the newest entry and each live tail carry a **per-entry
+  ceiling with a two-condition trigger** — the entry falls back to line rendering when its
+  descendant count (or construct-aware estimate) exceeds **1,200** (the gate's 1,000-row table
+  workload measures 1,003 descendants, fitting with headroom) **or** when its **estimated wrapped
+  rows** exceed **`mount_cap` (500)**. Estimated wrapped rows are width-aware **in display
+  cells**: `sum over source lines of max(1, ceil(cell_len(line) / content_width))`, where
+  `cell_len` is terminal display-cell width (Textual's own cell-length measure), **not**
+  `len()` — a probed 37,000-character line of double-width CJK characters paints 949 rows where a
+  character count estimates 475, so character counting undercounts by up to half. A source-line
+  count is not the metric either: a probed single 100,000-character source line mounts as **one
+  descendant** yet renders 1,353 wrapped rows. The estimate covers all three probed degenerate
+  shapes: the 10,000-line open fence (one block, two descendants, 10,004 rows), the mega-line,
+  and the double-width line. **The fallback itself hard-wraps**: a fallen-back entry's lines are
+  split at display-cell width into **one-row-per-widget** `TranscriptLine`s before mounting —
+  never one wrapping widget per source line, because a probed single fallback line widget paints
+  1,283 rows on its own, which would defeat the bound the fallback exists to restore. One widget
+  = one painted row, so the existing widget cap bounds painted rows directly; fold boundaries
+  land on projected-line boundaries and the banner accounts whole projected lines as today. The
+  entry-level fallback both restores the count and height bounds and ends the growing-reparse
+  work of clause (c). The boundary
   observation point is deliberate:
   `Markdown.update` parses off the pump and mounts in batches of 200, transiently holding old and
   new blocks, so "at every instant" is not enforceable against the widget's own mechanics; the
@@ -198,7 +208,8 @@ ADR-0006 before implementation:**
 Rationale: R13 requires the target to precede the implementation, and requires work **and height**
 bounded, not only count; a top-level block count alone lets one table mount unbounded cell widgets,
 which is why the count ceiling is descendants — and a single-tier descendant ceiling is
-incompatible with the gate's own 1,000-row workload once the newest entry mounts whole, which is
+incompatible with the gate's own 1,000-row workload once the block-rendered newest entry mounts
+whole, which is
 why there are two tiers and an entry-level fallback rather than one number.
 
 **KTD2 — The pane goes hybrid: block documents for committed assistant/reasoning entries, line
@@ -487,7 +498,10 @@ keyed by entry id without a pane rebuild; a terminal path stops and awaits pendi
 (R16 clause 2); a stale stream write arriving after its widget was condensed away or removed
 updates nothing and raises nothing (R16 clause 3 — exactly the mount-cap interaction); the
 descendant count under KTD1(a)'s ceiling at every coalescing boundary, including across an
-oversized-newest-entry overage (the KTD2 rule); condensation folds whole units with the round-up
+oversized-newest-entry overage (the KTD2 rule), with the three boundary probes as fixtures —
+the 100,000-character mega-line (hard-wrapped fallback, one row per widget), the 37,000-character
+double-width line (display-cell estimate, not character count), and the 601-column table
+(construct-aware estimate); condensation folds whole units with the round-up
 rule, a **block-rendered** newest entry survives whole (a fallen-back line-rendered one may fold
 under the cap), and the banner's line arithmetic still sums; a reader
 scrolled above the stream holds position through reinterpretation, resize, and condensation (R17)
@@ -552,7 +566,7 @@ visual oracles for every R1 construct (heading, both list types, table grid, fen
 each proven to fail when flattened; line-rendered kinds keep the existing window comparison;
 progressiveness asserted at timed intermediate checkpoints, not only settled (R5/R14), including
 the two-tail overlap case (R18); the adversarial workloads — the KTD1(d) fence, table, and
-unbroken mega-line, exact
+unbroken mega-line plus the double-width-character and 601-column-table boundary probes, exact
 sizes as specified — hold the latency and descendant ceilings with high-water figures recorded;
 replay determinism compares normalized block structure (ordered classes, source ranges, semantic
 content; runtime identifiers excluded) under the pinned width, theme, and framework version (R12),
