@@ -39,7 +39,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from talaria.transport.source import FrameRecord
+from talaria.domain.state import SUBMIT_METHOD
+from talaria.replay.source import SidebandAction, build_sideband
+from talaria.transport.source import Direction, FrameRecord
 
 #: Default size, straight from KTD14's "full 50k-delta replay".
 DEFAULT_DELTA_COUNT = 50_000
@@ -233,3 +235,254 @@ def _generate(*, deltas: int, seed: int) -> Iterator[FrameRecord]:
         # eighth turn: the "frame-not-an-object" protocol-error path.
         if turn % 8 == 0:
             yield emit(["not", "an", "object"])
+
+
+# ── U6: the feature corpus (gap 4) ──────────────────────────────────────────
+#
+# The stress corpus above measures KTD14's numbers against traffic mix, not
+# against markdown *content* — its text fragments are plain prose, never a
+# construct. This corpus is the other half: every R1 construct, early
+# termination by cancel/error/typed-disconnect (mid-table included), the
+# forgery/parser-attack payloads U3 already proves inert, a representative of
+# every R7 kind group, and the sideband timeline (talaria/replay/source.py)
+# that makes AE2's "early termination renders all received content" claim
+# checkable at gate level. Fully scripted, not seeded-random — the point is
+# specific, exact constructs, not statistical coverage — so there is no seed
+# parameter; the "seed" a caller would look for is the corpus's own literal
+# turn sequence, deterministic by construction.
+
+
+@dataclass(frozen=True)
+class FeatureCorpus:
+    """The feature corpus's records, its sideband timeline, and its identity."""
+
+    label: str
+    records: tuple[FrameRecord, ...]
+    sideband: tuple[SidebandAction, ...]
+    sha256: str
+
+    @property
+    def frame_count(self) -> int:
+        return len(self.records)
+
+
+#: The exact markdown bodies each construct turn streams, named so a test can
+#: assert against the same literal text this module generates rather than a
+#: re-typed copy that could silently drift from it.
+FEATURE_HEADING_TEXT = (
+    "# Heading one\n\nAn opening paragraph with **bold**, _underscore emphasis_, "
+    "and ~~strikethrough~~ (RA1)."
+)
+FEATURE_LIST_TEXT = (
+    "- bullet one\n- bullet two\n- bullet three\n\n1. ordered one\n2. ordered two\n3. ordered three"
+)
+FEATURE_QUOTE_AND_ATTACKS_TEXT = (
+    "> a quoted line\n> a second quoted line\n\n"
+    "<script>alert(1)</script>\n\n"
+    "[bold red]not rich markup[/]\n\n"
+    "a bare url: https://example.com/bare\n\n"
+    "![an image](https://example.com/pic.png)\n\n"
+    "[a link](https://example.com/page)"
+)
+FEATURE_FENCE_TEXT = "```python\ndef f(x):\n    return x + 1\n```"
+#: The table's three progressive fragments — header+separator+row1 as the
+#: turn's first delta (already enough for markdown-it to recognize a table),
+#: then one more row per delta. This is deliberately the shape that streams a
+#: table across more than one ``EntryMarkdown.append`` call, because that is
+#: the shape KTD1(d)'s own workload harness found corrupts (see
+#: ``talaria/replay/workloads.py``'s module docstring, "A real, pre-existing
+#: defect") — the feature corpus does not dodge that shape to keep the gate
+#: green; it streams a real table the realistic way and lets the ownership
+#: proof say what it finds.
+FEATURE_TABLE_FRAGMENTS: tuple[str, ...] = (
+    "| col |\n| --- |\n| r1 |",
+    "\n| r2 |",
+    "\n| r3 |",
+)
+FEATURE_MID_TABLE_FRAGMENTS: tuple[str, ...] = ("| a | b |\n| --- | --- |\n| x | y |",)
+
+
+#: One session for the whole corpus, exactly like build_stress_corpus's own
+#: constant ``session``. ``_apply_event`` (state.py) adopts the *first*
+#: session id it ever sees on the wire as ``focused_session_id`` and then
+#: silently drops every event carrying a different one as cross-talk — a
+#: corpus that varied the session id per turn would have every turn after
+#: the first discarded before ever reaching a handler, not committed and
+#: not visible, which is not what this corpus is testing.
+FEATURE_SESSION_ID = "feature-session"
+
+
+def _session_id(turn: int) -> str:
+    return FEATURE_SESSION_ID
+
+
+def build_feature_corpus() -> FeatureCorpus:
+    """Every R1 construct, early termination by cancel/error/typed-disconnect
+    (mid-table included), parser attacks, a representative of every R7 kind
+    group, and the sideband timeline those early-termination turns need.
+
+    Deterministic by construction — no seed, nothing random — because this
+    corpus exists to hit exact, named shapes, not to sample a distribution.
+    """
+    records: list[FrameRecord] = []
+    sideband_actions: list[SidebandAction] = []
+    seq = 0
+    at = EPOCH_START
+
+    def emit(frame: Any, *, direction: Direction = "in", parse_error: bool = False) -> None:
+        nonlocal seq, at
+        seq += 1
+        at += FRAME_INTERVAL_SECONDS
+        records.append(
+            FrameRecord(seq=seq, at=at, direction=direction, frame=frame, parse_error=parse_error)
+        )
+
+    def streamed_turn(
+        turn: int, deltas: tuple[str, ...], *, complete: bool = True
+    ) -> None:
+        session = _session_id(turn)
+        emit(_event("message.start", {"session_id": session}, session))
+        text_so_far: list[str] = []
+        for fragment in deltas:
+            text_so_far.append(fragment)
+            emit(_event("message.delta", {"text": fragment}, session))
+        if complete:
+            emit(
+                _event(
+                    "message.complete",
+                    {"text": "".join(text_so_far), "usage": {}},
+                    session,
+                )
+            )
+
+    # gateway.ready / session.info: the same opening pair every corpus in
+    # this package starts with (build_stress_corpus's own shape).
+    emit(_event("gateway.ready", {"skin": {"name": "feature"}}, FEATURE_SESSION_ID))
+    emit(
+        _event(
+            "session.info",
+            {"session_id": FEATURE_SESSION_ID, "title": "feature corpus"},
+            FEATURE_SESSION_ID,
+        )
+    )
+
+    # R7 kind group: operator. A replayed outbound prompt.submit, recovered
+    # by replayed_submission_text (state.py) exactly as a real replay does.
+    emit(
+        {"method": SUBMIT_METHOD, "params": {"text": "please demonstrate every construct"}},
+        direction="out",
+    )
+
+    # R1: heading + paragraph + RA1's emphasis/strikethrough allowlist.
+    streamed_turn(1, (FEATURE_HEADING_TEXT,))
+
+    # R1: both list types.
+    streamed_turn(2, (FEATURE_LIST_TEXT,))
+
+    # R1: block quote. Plus the AE3 parser-attack quartet U3 already proves
+    # inert at the widget level — carried here so the *corpus* exercises them
+    # end to end, not only the unit-level factory test.
+    streamed_turn(3, (FEATURE_QUOTE_AND_ATTACKS_TEXT,))
+
+    # R1: fence region, closed normally.
+    streamed_turn(4, (FEATURE_FENCE_TEXT,))
+
+    # R1: table grid, streamed progressively across three deltas and closed
+    # normally (message.complete) — see FEATURE_TABLE_FRAGMENTS's docstring.
+    streamed_turn(5, FEATURE_TABLE_FRAGMENTS)
+
+    # R7 kind group: reasoning, alongside assistant prose in the same turn
+    # (R18 — the domain holds both buffers at once).
+    session6 = _session_id(6)
+    emit(_event("message.start", {"session_id": session6}, session6))
+    emit(_event("reasoning.delta", {"text": "# thinking about it\n\nreasoning body"}, session6))
+    emit(_event("message.delta", {"text": "an assistant reply streamed alongside"}, session6))
+    emit(
+        _event(
+            "message.complete",
+            {"text": "an assistant reply streamed alongside", "usage": {}},
+            session6,
+        )
+    )
+
+    # R7 kind group: activity (tool).
+    session7 = _session_id(7)
+    emit(_event("message.start", {"session_id": session7}, session7))
+    emit(_event("tool.start", {"name": "search", "context": "the codebase"}, session7))
+    emit(_event("tool.complete", {"name": "search", "summary": "3 matches"}, session7))
+    emit(_event("message.delta", {"text": "found it"}, session7))
+    emit(_event("message.complete", {"text": "found it", "usage": {}}, session7))
+
+    # R7 kind group: activity (subagent fan-out), the same payload shape
+    # build_stress_corpus already uses.
+    session8 = _session_id(8)
+    emit(_event("message.start", {"session_id": session8}, session8))
+    emit(
+        _event(
+            "subagent.start",
+            {"subagent_id": "feature-agent-1", "goal": "indexer", "depth": 1, "task_index": 0},
+            session8,
+        )
+    )
+    emit(
+        _event(
+            "subagent.complete",
+            {"subagent_id": "feature-agent-1", "status": "completed"},
+            session8,
+        )
+    )
+    emit(_event("message.delta", {"text": "subagent finished"}, session8))
+    emit(_event("message.complete", {"text": "subagent finished", "usage": {}}, session8))
+
+    # AE2 at gate level, arm 1: early termination by confirmed-cancel, plain
+    # content (not mid-table) — an open fence, cancelled mid-stream. The
+    # sideband action's frame_index is 1-based against this whole records
+    # list, so it is captured *after* streamed_turn appends this turn's
+    # frames, from len(records) at that point.
+    streamed_turn(9, ("```text\nan unclosed fence, ", "cancelled mid-stream"), complete=False)
+    sideband_actions.append(SidebandAction(frame_index=len(records), kind="confirmed_cancel"))
+
+    # AE2 at gate level, arm 2: early termination by confirmed-cancel,
+    # *mid-table* — cancelled right after the header/separator/first row, the
+    # exact case the plan names: "the parser reinterprets the unterminated
+    # table as a paragraph".
+    streamed_turn(10, FEATURE_MID_TABLE_FRAGMENTS, complete=False)
+    sideband_actions.append(SidebandAction(frame_index=len(records), kind="confirmed_cancel"))
+
+    # AE2 at gate level, arm 3: early termination by error (a real wire
+    # event, R7's fault kind group — this one needs no sideband at all).
+    streamed_turn(11, ("partial content before an error arrives",), complete=False)
+    session11 = _session_id(11)
+    emit(_event("error", {"message": "the gateway reported a failure"}, session11))
+
+    # AE2 at gate level, arm 4: early termination by typed-disconnect (KTD7)
+    # — not a wire frame either; the transport callback this represents is
+    # never recorded, which is exactly why the sideband exists.
+    streamed_turn(12, ("partial content before the connection drops",), complete=False)
+    sideband_actions.append(
+        SidebandAction(frame_index=len(records), kind="typed_disconnect", cause="orderly_close")
+    )
+
+    # R7 kind group: fault (protocol-error / unknown-event), the same two
+    # shapes build_stress_corpus already interleaves.
+    emit(None, parse_error=True)
+    emit(_event("feature.unknown.type", {"note": "unmodelled"}, FEATURE_SESSION_ID))
+    emit(["not", "an", "object"])
+
+    record_tuple = tuple(records)
+    digest = hashlib.sha256()
+    for record in record_tuple:
+        digest.update(
+            json.dumps(
+                {"seq": record.seq, "at": record.at, "frame": record.frame},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        )
+    return FeatureCorpus(
+        label="talaria-feature-v1",
+        records=record_tuple,
+        sideband=build_sideband(sideband_actions),
+        sha256=digest.hexdigest(),
+    )
