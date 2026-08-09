@@ -41,7 +41,11 @@ instant" cap ADR-0005 decision 3 recorded for v0.1:
   that never trips, while the accounted-row charge folds the same shape at 500 accounted rows.
   Banner rows count toward the cap and the fold arithmetic but stay out of the
   `condensed_count + lines-accounted-for == total` content identity — they are chrome, not
-  content.
+  content. The **banner-preserving odd-cut rule** disambiguates a fold target landing inside a
+  fallen-back entry's accounted span: the cut folds content rows only — a partially retained
+  entry keeps exactly one banner row (painted rows = retained projected lines + 1) — and a cut
+  that would retain zero content rows rounds forward, folding the whole entry, banner included;
+  a banner never stands alone in either direction.
 - **Rendered height** is bounded by the same two tiers (the wrapped-rows condition covers the
   tall-but-few-descendants shapes a count alone misses); **reconcile work** is measured as
   parser-input bytes per coalescing boundary — the actual `Markdown.append` reparse window, which
