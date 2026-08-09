@@ -1,0 +1,262 @@
+{
+  "name": "talaria-v0-2-block-markdown",
+  "description": "v0.2 block-level markdown + transcript differentiation: ADR-first bounded-rendering claim, domain terminal-path commits, safe parser boundary, hybrid pane, kind channels, restated gate re-run green; every unit cross-reviewed by the Codex engine before its dependents run.",
+  "repo": "infiquetra/talaria",
+  "concurrency": {
+    "max_concurrent": 3,
+    "readonly_max_concurrent": 3,
+    "aggregate_max_concurrent": 3
+  },
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "ADR-0006: the block-aware bounded-rendering claim",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: Write ADR-0006 recording the block-aware bounded-rendering claim BEFORE any implementation: the three ceilings (mounted top-level renderables <= 600 read from Textual's own tree; per-boundary reconcile work proportional to tail + newly committed entries; p99 append/apply latency under one 50ms boundary on the adversarial workloads) with their exact measurement points, the amendment to ADR-0005's literal_text-only rule, and the gate-triggered styled-line-run fallback with what evidence invokes it. Mirror the decision to docs/engineering-journal/DECISIONS.md. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U1, KTD1/KTD8, R13) as your authoritative spec.",
+      "returns": [
+        "adr_records_three_ceilings_with_measurement_points",
+        "adr_amends_literal_text_rule_explicitly",
+        "fallback_trigger_recorded",
+        "decisions_md_mirrored"
+      ],
+      "depends_on": [],
+      "files": [
+        "platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    },
+    {
+      "unit_id": "CR1",
+      "label": "Codex review of U1's ADR",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR1: Drive the operator's herdr-managed Codex reviewer pane to review U1's diff (ADR-0006 and its DECISIONS.md mirror), judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U1.",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U2",
+      "label": "Domain: terminal-path commits + entry-scoped projection",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: In the domain only (ADR-0002: no framework import), commit partial streaming and reasoning buffers as entries on turn-terminal paths (_on_error at talaria/domain/state.py:1181, confirmed cancellation, terminal disconnect) while a transient resume never duplicates; grow TranscriptView with per-entry records (kind, raw body, committed flag, line span) while the flattened decorated line buffer stays byte-identical for terminal_read and content_is_complete - tests/domain/test_projection.py::test_every_transcript_entry_survives_into_the_line_buffer must pass UNMODIFIED. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U2, KTD6/KTD7, R6/R18) as your authoritative spec.",
+      "returns": [
+        "terminal_paths_commit_partial_buffers",
+        "transient_resume_never_duplicates",
+        "entry_view_carries_raw_undecorated_bodies",
+        "line_buffer_and_v01_pin_unchanged"
+      ],
+      "depends_on": [],
+      "files": [
+        "talaria/domain/state.py",
+        "talaria/domain/projection.py",
+        "tests/domain/test_state.py",
+        "tests/domain/test_projection.py"
+      ]
+    },
+    {
+      "unit_id": "CR2",
+      "label": "Codex review of U2's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR2: Drive the operator's herdr-managed Codex reviewer pane to review U2's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U2.",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U3",
+      "label": "The block factory and its forgery proof",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U3: Create talaria/ui/blocks.py - the single constructor for safely configured Markdown entry documents: parser_factory returning MarkdownIt('gfm-like') with html=False and linkify=False, open_links=False, defang before parse at parity with talaria/ui/literal.py. Prove every forbidden channel with a test: HTML literalized visible (never dropped), Rich console markup unparsed, ANSI defanged, links styled but inert with nothing opened or fetched, bare URLs stay text, entry isolation across an unclosed fence, and a Textual 8.2.8 pin test on append/update semantics that fails loudly on upgrade drift. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U3, KTD3/KTD4, R9/R10/R15) as your authoritative spec.",
+      "returns": [
+        "html_literalized_visible_never_dropped",
+        "links_and_bare_urls_inert_text",
+        "rich_markup_and_ansi_never_interpreted",
+        "entry_isolation_holds_across_unclosed_fence",
+        "textual_pin_test_fails_on_drift"
+      ],
+      "depends_on": [],
+      "files": [
+        "talaria/ui/blocks.py",
+        "tests/ui/test_blocks.py"
+      ]
+    },
+    {
+      "unit_id": "CR3",
+      "label": "Codex review of U3's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR3: Drive the operator's herdr-managed Codex reviewer pane to review U3's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U3.",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U4",
+      "label": "The hybrid transcript pane",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U4: Rebuild TranscriptPane as the hybrid: committed assistant/reasoning entries mount one Markdown document each (built by talaria/ui/blocks.py), every other kind keeps one TranscriptLine per line, the in-flight stream renders in a single live Markdown tail widget driven by public Markdown.append at the 50ms boundary with Markdown.update for interim replacement (replace wins, exactly once); commit hands the tail source to the entry document without a pane rebuild; restate cap, condensation (banner keeps line arithmetic), and reader anchor over mixed units per ADR-0006's ceilings; tables keyboard-reachable at 80 columns. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U4, KTD1/KTD2/KTD3, R1/R2/R5/R16/R17) as your authoritative spec.",
+      "returns": [
+        "fence_streams_progressively_at_boundaries",
+        "interim_replacement_renders_exactly_once",
+        "commit_hands_tail_to_entry_without_rebuild",
+        "mounted_renderables_under_cap_at_every_instant",
+        "condensed_line_arithmetic_still_sums",
+        "reader_anchor_and_follow_bottom_survive_blocks",
+        "table_cells_keyboard_reachable_at_80_columns"
+      ],
+      "depends_on": [
+        "CR1",
+        "CR2",
+        "CR3"
+      ],
+      "files": [
+        "talaria/ui/transcript.py",
+        "talaria/ui/app.py",
+        "tests/ui/test_transcript_blocks.py",
+        "tests/ui/test_transcript_bounds.py"
+      ]
+    },
+    {
+      "unit_id": "CR4",
+      "label": "Codex review of U4's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR4: Drive the operator's herdr-managed Codex reviewer pane to review U4's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U4.",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U5",
+      "label": "Kind differentiation channels",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U5: Map the twelve TranscriptKind members to the five kind groups with per-widget CSS classes and theme variables; carry the channel by background tint and gutter marker so a fence's syntax colours cannot erase it; assert by computed styles with zero per-widget height delta against the same screen unstyled; the mapping test is total (a new kind fails it rather than rendering ungrouped). Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U5, KTD5, R7/R8) as your authoritative spec.",
+      "returns": [
+        "adjacent_groups_distinguishable_by_computed_style",
+        "reasoning_fence_keeps_kind_channel",
+        "styling_changes_no_widget_height",
+        "twelve_kind_mapping_is_total"
+      ],
+      "depends_on": [
+        "CR4"
+      ],
+      "files": [
+        "talaria/ui/transcript.py",
+        "talaria/ui/app.py",
+        "tests/ui/test_kind_styles.py"
+      ]
+    },
+    {
+      "unit_id": "CR5",
+      "label": "Codex review of U5's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR5: Drive the operator's herdr-managed Codex reviewer pane to review U5's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U5.",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U5"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U6",
+      "label": "The restated gate, the feature corpus, and the green re-run",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U6: Replace interface_shows_everything's one-line-one-widget claim with the region-ownership proof (every projected source region of a committed block entry owned by a mounted visible block whose source_range covers it, construct-specific visual assertions; line-rendered kinds keep the window comparison); grow the deterministic feature corpus the plan's R14 scopes (every construct, early termination by cancel/error/disconnect, parser attacks, kind groups, 80-column resize, long-unclosed-fence and growing-table workloads with latency thresholds); assert progressiveness at timed checkpoints; compare replay determinism on normalized block structure under pinned width/theme/framework; re-run the gate green over existing AND feature corpora and record the measured verdict with high-water figures. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U6, KTD1/KTD8, R5/R11/R12/R13/R14/R17) as your authoritative spec.",
+      "returns": [
+        "region_ownership_proof_replaces_line_window_claim",
+        "progressiveness_asserted_at_timed_checkpoints",
+        "adversarial_workloads_hold_ceilings_with_high_water",
+        "replay_determinism_on_normalized_block_structure",
+        "early_termination_renders_all_received_content",
+        "gate_green_over_existing_and_feature_corpora"
+      ],
+      "depends_on": [
+        "CR5"
+      ],
+      "files": [
+        "talaria/replay/gate.py",
+        "talaria/replay/stress.py",
+        "tests/replay/test_gate.py",
+        "tests/ui/test_transcript_bounds.py",
+        "docs/measurements/2026-08-XX-block-markdown-gate-results.md"
+      ]
+    },
+    {
+      "unit_id": "CR6",
+      "label": "Codex review of U6's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR6: Drive the operator's herdr-managed Codex reviewer pane to review U6's diff (the restated gate and corpus), judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U6.",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U6"
+      ],
+      "files": []
+    }
+  ]
+}
