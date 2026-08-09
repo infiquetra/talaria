@@ -48,7 +48,13 @@ from typing import Any, Final
 from textual.containers import Horizontal
 from textual.widgets._markdown import MarkdownBlock, MarkdownFence
 
-from talaria.domain.projection import TranscriptView, transcript_view
+from talaria.domain.models import TranscriptKind
+from talaria.domain.projection import (
+    ProvisionalTail,
+    TranscriptView,
+    entry_scoped_view,
+    transcript_view,
+)
 from talaria.domain.state import SessionState
 from talaria.replay.controls import MAX_SPEED, MIN_SPEED, ReplayControls
 from talaria.replay.source import ReplaySource, load_frame_records, load_header
@@ -56,7 +62,13 @@ from talaria.replay.stress import StressCorpus, build_stress_corpus
 from talaria.transport.source import FrameRecord
 from talaria.ui.app import TalariaApp
 from talaria.ui.blocks import EntryMarkdown, parser_factory
-from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptPane
+from talaria.ui.transcript import (
+    DEFAULT_MOUNT_CAP,
+    MARKDOWN_KINDS,
+    TranscriptPane,
+    is_zero_block,
+    trips_fallback_trigger,
+)
 
 
 class GateError(Exception):
@@ -429,9 +441,15 @@ def _prove_span_coverage(
     neither span. That is not a gap in the proof; it is accounted to the
     entry's whole span rather than to any one block. The rule this function
     enforces: every projected line offset is owned by exactly one span, *or*
-    is blank (``""``) in the document's own source. An offset that is
-    neither — covered by no span and not blank — is exactly what "dropped
-    text" looks like, and fails here.
+    is blank *to the parser* — the empty string or a whitespace-only line,
+    since CommonMark (and this document's own ``parser_factory``) treats
+    ``"  "`` between two blocks exactly as it treats ``""``: neither opens a
+    construct, so neither is ever claimed by a block's ``source_range``.
+    Checking only the literal ``""`` rejected a whitespace-only inter-block
+    line as "dropped text" even though the parser itself never disagreed
+    that the line was blank. An offset that is neither owned nor blank by
+    this (parser-matching) definition is exactly what "dropped text" looks
+    like, and fails here.
     """
     total = len(lines)
     covered = [False] * total
@@ -449,7 +467,7 @@ def _prove_span_coverage(
             covered[offset] = True
 
     for offset, owned in enumerate(covered):
-        if not owned and lines[offset] != "":
+        if not owned and lines[offset].strip() != "":
             return False, (
                 f"projected line {offset} ({lines[offset]!r}) is owned by no block and is "
                 "not blank — the blank-line accounting rule does not excuse it"
@@ -457,7 +475,9 @@ def _prove_span_coverage(
     return True, ""
 
 
-def document_ownership(widget: EntryMarkdown) -> tuple[bool, str]:
+def document_ownership(
+    widget: EntryMarkdown, *, applied_text: str | None = None
+) -> tuple[bool, str]:
     """The two-part proof's Part 1, for one mounted block document.
 
     Self-contained against the widget's own ``source`` — the exact
@@ -466,8 +486,27 @@ def document_ownership(widget: EntryMarkdown) -> tuple[bool, str]:
     or tail the widget belongs to; the claim is "this document's own blocks
     cover this document's own text", checked the same way for a committed
     entry and for a still-streaming tail alike.
+
+    That self-contained claim is deliberately *not* the whole proof: nothing
+    above stops ``widget.source`` itself from having been swapped for
+    different, internally-consistent text — every span still covers it,
+    every construct oracle still holds, and this function would still
+    report success on a document showing the wrong words. ``applied_text``,
+    when given, is the domain-sourced text this document was last built or
+    updated *from* — :class:`~talaria.ui.transcript.TranscriptPane`'s own
+    per-unit record (``_MountedUnit.applied_text``), captured at the same
+    call site that wrote to the widget — and is checked against
+    ``widget.source`` before anything else: a mismatch means the mounted
+    document no longer shows what the pane believes it told it to show.
     """
     source = widget.source
+    if applied_text is not None and source != applied_text:
+        return False, (
+            f"widget.source {source!r} does not match the document's own applied "
+            f"text {applied_text!r} — the document was swapped for different "
+            "text after being built or updated, even though its own blocks are "
+            "internally consistent with what it now shows"
+        )
     lines = source.split("\n")
     children = [child for child in widget.children if isinstance(child, MarkdownBlock)]
 
@@ -485,6 +524,24 @@ def document_ownership(widget: EntryMarkdown) -> tuple[bool, str]:
     # construct's content was silently dropped inside an otherwise correctly
     # spanned block — this is what construct-specific oracles hunt for.
     expected = _expected_top_level_blocks(source)
+    # KTD2's mounting rule says a zero-block source is never mounted as an
+    # EntryMarkdown at all -- it line-renders instead (block_documents_are_
+    # owned's own docstring says so). That was asserted, never verified: a
+    # live tail that collapses from real content to a bare newline stays
+    # mounted as a block document (probed live -- TranscriptPane._reconcile_
+    # tail's block-kind branch never re-checks is_zero_block after a
+    # generation change, only trips_fallback_trigger), and a document with
+    # zero blocks trivially "covers" its own zero-length span, so span
+    # coverage and the oracle loop below would both pass vacuously. A
+    # zero-block document reaching this function at all is exactly that
+    # violation, regardless of how it got here.
+    if not expected:
+        return False, (
+            f"document parses to zero top-level blocks (source {source!r}) — KTD2's "
+            "rule is that a zero-block source is never mounted as a block document "
+            "at all, it line-renders instead; a mounted EntryMarkdown that collapsed "
+            "to zero blocks was left in place rather than demoted"
+        )
     if len(expected) != len(children):
         return False, (
             f"source parses to {len(expected)} top-level constructs, "
@@ -511,20 +568,110 @@ def document_ownership(widget: EntryMarkdown) -> tuple[bool, str]:
 def block_documents_are_owned(pane: TranscriptPane) -> tuple[bool, str]:
     """Part 1 over every currently mounted block document.
 
-    ``pane.query(EntryMarkdown)`` walks the live widget tree through
-    Textual's own public query API — it does not distinguish a committed
-    entry's document from a live tail's, which is exactly what "applied to
-    both provisional tail documents at every checkpoint, not only committed
-    entries" requires: whatever is mounted gets proven, tail or not.
-    Zero-block sources are never reached here at all — KTD2 line-renders
-    them instead of mounting an ``EntryMarkdown``, so they fall under
-    :func:`_line_window_ownership`'s window comparison by construction, not
-    by a check this function has to make.
+    Walks :attr:`TranscriptPane._entries` and :attr:`TranscriptPane._tails`
+    rather than ``pane.query(EntryMarkdown)`` — a deliberate, documented
+    exception to this module's usual preference for public state (contrast
+    :func:`fallback_banner_accounting`, which reaches only ``pane.children``):
+    no public widget API carries an entry's identity or the text the pane
+    last applied to it, and :func:`document_ownership`'s cross-check against
+    that applied text (the fix for the self-referential "swapped text"
+    finding) needs exactly that pairing. This still covers a committed
+    entry's document and a live tail's identically — ``_entries`` and
+    ``_tails`` are the pane's whole record of what is mounted as a block
+    document, tail or not. Zero-block sources are proven never to reach here
+    as a *checked* fact now, inside :func:`document_ownership` itself, not
+    merely asserted in this docstring.
     """
-    for widget in pane.query(EntryMarkdown):
-        ok, reason = document_ownership(widget)
+    for entry_id, unit in pane._entries.items():
+        if unit.kind != "block":
+            continue
+        assert unit.block is not None
+        ok, reason = document_ownership(unit.block, applied_text=unit.applied_text)
         if not ok:
-            return False, reason
+            return False, f"entry {entry_id}: {reason}"
+    for tail_kind, tail_unit in pane._tails.items():
+        if tail_unit is None or tail_unit.kind != "block":
+            continue
+        assert tail_unit.block is not None
+        ok, reason = document_ownership(tail_unit.block, applied_text=tail_unit.applied_text)
+        if not ok:
+            return False, f"{tail_kind} tail: {reason}"
+    return True, ""
+
+
+def _ktd2_selects_block(kind: TranscriptKind, text: str, *, content_width: int) -> bool:
+    """Whether KTD2's mounting rule would block-render this text.
+
+    The identical decision :meth:`TranscriptPane._prepare_unit` makes
+    (``kind in MARKDOWN_KINDS`` and not zero-block and does not trip the
+    fallback trigger), applied here to the domain's own current text rather
+    than trusted from the pane's choice — this is what lets
+    :func:`expected_block_documents_are_mounted` notice when the pane never
+    got the chance to make that choice at all.
+    """
+    return (
+        kind in MARKDOWN_KINDS
+        and not is_zero_block(text)
+        and not trips_fallback_trigger(text, content_width=content_width)
+    )
+
+
+def expected_block_documents_are_mounted(app: TalariaApp) -> tuple[bool, str]:
+    """The other half of mounted-window ownership: is everything that
+    *should* be a block document actually mounted as one?
+
+    :func:`block_documents_are_owned` only walks what is currently mounted —
+    if a delta never reaches :meth:`TranscriptPane.apply` at all (a
+    reasoning-only update that the app's render path drops before the
+    pane's own reconciliation runs, say), there is nothing missing *from*
+    that walk for it to notice: the absent document is accepted vacuously,
+    the same hole the original one-line-one-widget claim had for a pane
+    rendering nothing at all.
+
+    This derives the expected set independently, from the domain's own
+    current :func:`~talaria.domain.projection.entry_scoped_view` — both
+    provisional tails included, per KTD8's branch instruction on this unit —
+    using :func:`_ktd2_selects_block`, and fails when an entry or tail that
+    rule selects for block rendering, and that is still inside the pane's
+    visible window (its line span not yet folded below
+    :attr:`~talaria.ui.transcript.TranscriptPane.condensed_count`), is
+    absent from the mounted window.
+    """
+    pane = app.transcript
+    entries_view = entry_scoped_view(app.state)
+    width = pane._content_width
+
+    for record in entries_view.entries:
+        start, count = record.line_span
+        if start + count <= pane.condensed_count:
+            continue  # folded away -- no longer part of the visible window
+        if not _ktd2_selects_block(record.kind, record.raw_body, content_width=width):
+            continue
+        unit = pane._entries.get(record.entry_id)
+        if unit is None or unit.kind != "block":
+            return False, (
+                f"entry {record.entry_id} parses to a block document under KTD2's "
+                "mounting rule and is still inside the pane's visible window, but "
+                "is absent from the mounted window — a delta that never reached "
+                "TranscriptPane.apply"
+            )
+
+    tail_kinds: tuple[tuple[TranscriptKind, ProvisionalTail], ...] = (
+        ("reasoning", entries_view.reasoning_tail),
+        ("assistant", entries_view.assistant_tail),
+    )
+    for kind, tail in tail_kinds:
+        if tail.is_empty:
+            continue
+        if not _ktd2_selects_block(tail.kind, tail.raw_text, content_width=width):
+            continue
+        tail_unit = pane._tails.get(kind)
+        if tail_unit is None or tail_unit.kind != "block":
+            return False, (
+                f"the {kind} tail parses to a block document under KTD2's mounting "
+                "rule, but is absent from the mounted window — a delta that never "
+                "reached TranscriptPane.apply"
+            )
     return True, ""
 
 
@@ -543,6 +690,19 @@ def fallback_banner_accounting(pane: TranscriptPane) -> tuple[bool, str]:
     the final tally below would disagree). Clipped-cell reachability is
     deliberately not claimed anywhere in this function, matching RA3's own
     text.
+
+    The "+1" in that formula is a claim about *painted rows*, not mounted
+    widgets, and counting one banner widget as one row was never actually
+    checked against what the widget paints: :attr:`Widget.outer_size` (the
+    same measure :meth:`TranscriptPane._condense` already reads for
+    scroll-anchor accounting) is read here for exactly that reason. A
+    banner's own message text is a fixed template
+    (``FALLBACK_BANNER_TEMPLATE``) wider than an ordinary terminal width, so
+    without a no-wrap/width constraint on the banner widget it wraps to more
+    than one row — probed live: a 100,000-character fallback entry mounts a
+    banner painting 2 rows at this module's own :data:`GATE_SIZE` (100
+    columns). KTD1(a)'s exact-row formula is violated whenever that happens,
+    and nothing about "one widget" being mounted would show it.
     """
     children = list(pane.children)
     index = 0
@@ -562,6 +722,15 @@ def fallback_banner_accounting(pane: TranscriptPane) -> tuple[bool, str]:
                 return False, (
                     f"a fallen-back run of {run_length} content rows at pane child "
                     f"{run_start} has no banner immediately after it"
+                )
+            banner = children[index]
+            banner_height = banner.outer_size.height
+            if banner_height > 1:
+                return False, (
+                    f"the banner at pane child {index} paints {banner_height} rows, not "
+                    "exactly one — KTD1(a)'s exact-row formula (painted rows == projected "
+                    "lines + one banner row) requires the banner itself to be exactly one "
+                    "painted row"
                 )
             proven_banners += 1
             index += 1  # past the banner just proven
@@ -656,6 +825,10 @@ def ownership_report(app: TalariaApp, *, settled: bool) -> tuple[bool, tuple[str
     block_ok, block_reason = block_documents_are_owned(pane)
     if not block_ok:
         reasons.append(f"mounted-window ownership: {block_reason}")
+
+    expected_ok, expected_reason = expected_block_documents_are_mounted(app)
+    if not expected_ok:
+        reasons.append(f"mounted-window ownership (expected document absent): {expected_reason}")
 
     banner_ok, banner_reason = fallback_banner_accounting(pane)
     if not banner_ok:
