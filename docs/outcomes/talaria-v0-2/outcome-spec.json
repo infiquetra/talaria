@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "outcome_id": "talaria-v0-2",
-  "spec_revision": 3,
+  "spec_revision": 4,
   "objective": "Ship talaria v0.2: make the interface answerable and --resume mean what it says (the defect spine, executing first), then block-level markdown transcript differentiation (planned separately, landing behind the spine because it reopens the measured gate); one release, one changelog, one version bump.",
   "nodes": [
     {
@@ -55,7 +55,7 @@
       "title": "Block markdown: build (lands behind the spine - reopens the measured gate)",
       "kind": "code",
       "state": "pending",
-      "backend": "inline",
+      "backend": "cc-workflows-ultracode",
       "gated": true,
       "risky": false,
       "destructive": false,
@@ -67,11 +67,15 @@
         "answerability",
         "block-markdown-plan"
       ],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "task-talaria-v0-2-block-markdown",
       "child_spec_ref": "",
       "github": {},
       "worktree": {},
-      "evidence": {},
+      "evidence": {
+        "execution_spec": "docs/plans/2026-08-09-talaria-v0-2-block-markdown-spec.json",
+        "plan": "docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md",
+        "recommended_backend": "team-execution (recommender; operator may flip at the build gate)"
+      },
       "cost": {}
     },
     {
@@ -113,6 +117,11 @@
       "revision": 3,
       "reason": "fix: clear misused child_spec_ref on answerability + block-markdown-plan (they held document paths, not child outcome ids; refs preserved in node evidence)",
       "at": "2026-08-09T04:56:30Z"
+    },
+    {
+      "revision": 4,
+      "reason": "block-markdown-build: attach the authored plan/spec, backend cc-workflows-ultracode (recommender said team-execution; divergence recorded for the build gate)",
+      "at": "2026-08-09T05:10:03Z"
     }
   ],
   "cost_rollup": {},
