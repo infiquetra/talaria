@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "outcome_id": "talaria-v0-2",
-  "spec_revision": 5,
+  "spec_revision": 6,
   "objective": "Ship talaria v0.2: make the interface answerable and --resume mean what it says (the defect spine, executing first), then block-level markdown transcript differentiation (planned separately, landing behind the spine because it reopens the measured gate); one release, one changelog, one version bump.",
   "nodes": [
     {
@@ -83,7 +83,8 @@
         "recommended_backend": "team-execution (recommender; operator may flip at the build gate)",
         "plan_revision": "2 \u2014 branch head 94b2507, merged to main f74e335 via PR #47; doc-reviewed (35 findings fixed) and hardened through eleven Codex confirm rounds to PASS",
         "review": "docs/reviews/2026-08-09-talaria-v0-2-block-markdown-plan-review.md",
-        "amendments": "three operator-vetoable requirements amendments: RA1/RA2 accepted 2026-08-09; RA3 (fallen-back entries: clipped rows + banner, expand affordance queued) pending operator accept-or-veto at this gate"
+        "amendments": "three operator-vetoable requirements amendments RA1/RA2/RA3 all ACCEPTED by the operator 2026-08-09 (RA3 at the build gate); U1 mirrors them to DECISIONS.md",
+        "gate_decision": "operator at the build gate 2026-08-09: RA3 accepted; backend cc-workflows-ultracode confirmed (recommender divergence settled); Codex cross-reviews continue through the herdr reviewer pane"
       },
       "cost": {}
     },
@@ -136,6 +137,11 @@
       "revision": 5,
       "reason": "block-markdown-plan complete: plan revision 2 merged via PR #47 (f74e335) after doc-review + eleven Codex confirm rounds (PASS at 94b2507); build-node evidence updated to revision 2 with RA3 recorded as pending the build gate",
       "at": "2026-08-09T16:20:00Z"
+    },
+    {
+      "revision": 6,
+      "reason": "build gate passed: operator accepted RA3 and confirmed backend cc-workflows-ultracode (herdr pane stays the CR surface); frontier approval follows",
+      "at": "2026-08-09T16:45:00Z"
     }
   ],
   "cost_rollup": {},
