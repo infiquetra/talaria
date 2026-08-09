@@ -48,15 +48,19 @@ from tests.transport.conftest import STUB_TOKEN, StubGateway, err, ok
 
 FAST_RETRIES = (0.0, 0.01, 0.01)
 
-#: The five methods U3 proved side-effect-free by reading their handlers at the
-#: pin, written out by hand. This is the whole set a startup probe is allowed to
-#: invoke (KTD9, R34).
+#: The six methods U3 and U7 proved side-effect-free by reading their handlers
+#: at the pin, written out by hand. This is the whole set a startup probe is
+#: allowed to invoke (KTD9, R34). ``session.list`` joined the other five in
+#: U7 of the 2026-08-08 v0.2 plan (R10): it is a plain read of the sessions
+#: database (``tui_gateway/methods_session.py:162-208``) with nothing
+#: mutating in it, the same read-only case the other five already make.
 EXPECTED_PROBE_SET: tuple[str, ...] = (
     "session.most_recent",
     "spawn_tree.list",
     "agents.list",
     "delegation.status",
     "commands.catalog",
+    "session.list",
 )
 
 #: Every required method a startup probe must **never** invoke, written out by
@@ -108,6 +112,18 @@ HEALTHY: dict[str, dict[str, Any]] = {
         "skill_count": 0,
         "warning": "",
     },
+    "session.list": {
+        "sessions": [
+            {
+                "id": "s-9f12",
+                "title": "refactor the ingest pipeline",
+                "preview": "let's pick this back up",
+                "started_at": 1785000000.0,
+                "message_count": 12,
+                "source": "cli",
+            }
+        ]
+    },
 }
 
 
@@ -121,7 +137,7 @@ class StubProvider:
 def healthy_responder(
     message: dict[str, Any], stub: StubGateway
 ) -> dict[str, Any] | None:
-    """A gateway whose five read-only methods all match the pin."""
+    """A gateway whose six read-only methods all match the pin."""
     method = str(message.get("method", ""))
     rid = message.get("id")
     if method in HEALTHY:
@@ -201,7 +217,7 @@ def test_the_literal_probe_set_is_exactly_the_pinned_read_only_set() -> None:
     assert set(EXPECTED_PROBE_SET) == set(READ_ONLY_METHODS)
     assert set(FORBIDDEN_AT_STARTUP) == set(EVIDENCE_ONLY_METHODS)
     assert not set(EXPECTED_PROBE_SET) & set(FORBIDDEN_AT_STARTUP)
-    assert len(EXPECTED_PROBE_SET) == 5, "the read-only set changed size"
+    assert len(EXPECTED_PROBE_SET) == 6, "the read-only set changed size"
     assert len(FORBIDDEN_AT_STARTUP) == 13, "the evidence-only set changed size"
 
 
@@ -266,7 +282,7 @@ async def test_the_guard_lets_a_read_only_method_through() -> None:
 async def test_a_matching_gateway_is_ready_and_every_read_only_method_was_probed(
     healthy_gateway: StubGateway,
 ) -> None:
-    """The positive half: five present verdicts, and five calls the server saw.
+    """The positive half: six present verdicts, and six calls the server saw.
 
     ``ready`` alone would be satisfied by a check that probed nothing at all, so
     the call log is asserted in the same observation.
@@ -282,7 +298,7 @@ async def test_a_matching_gateway_is_ready_and_every_read_only_method_was_probed
     assert methods_received(healthy_gateway) == list(EXPECTED_PROBE_SET)
     assert [v.status for v in report.verdicts if v.classification == "read-only"] == [
         "present"
-    ] * 5
+    ] * 6
     assert unprobed_methods(report) == FORBIDDEN_AT_STARTUP
 
 
@@ -293,7 +309,7 @@ async def test_no_mutating_method_appears_in_the_startup_call_log(
     """Asserted against the server's received-call record (R34, KTD9).
 
     The negative — no evidence-only name on the wire — is paired with the
-    positive that the wire carried the five read-only names, because an empty
+    positive that the wire carried the six read-only names, because an empty
     call log satisfies the negative perfectly and proves nothing.
     """
     source = await attached(healthy_gateway)
@@ -386,7 +402,7 @@ async def test_a_dropped_response_key_is_flagged_by_name() -> None:
     verdict = report.verdict_for("delegation.status")
     assert [(d.key, d.kind) for d in verdict.drifts] == [("active", "missing-key")]
     assert "no longer carries 'active'" in verdict.describe()
-    # Still five probes, four of them clean: the drift is a statement about one
+    # Still six probes, five of them clean: the drift is a statement about one
     # method, not about the run.
     assert report.probed == EXPECTED_PROBE_SET
 
@@ -511,7 +527,7 @@ async def test_a_probe_that_never_comes_back_blocks_rather_than_passing() -> Non
     assert not report.ready
     assert [v.status for v in report.verdicts if v.classification == "read-only"] == [
         "unproved"
-    ] * 5
+    ] * 6
     assert all("UNPROVED" in line for line in report.lines()[1:])
 
 
@@ -541,7 +557,7 @@ async def test_a_clean_report_still_says_how_much_it_did_not_verify(
     healthy_gateway: StubGateway,
 ) -> None:
     """The honesty clause. A summary reading "compatible" on a run that probed
-    five of eighteen methods would be a claim about thirteen it never touched."""
+    six of nineteen methods would be a claim about thirteen it never touched."""
     source = await attached(healthy_gateway)
     try:
         report = await check_compatibility(source, session_id="s-9f12", timeout=5.0)
@@ -552,7 +568,7 @@ async def test_a_clean_report_still_says_how_much_it_did_not_verify(
     assert "0 blocking" in head
     assert "13 unverified at runtime" in head
     assert "7f4d15515" in head
-    assert len(report.verdicts) == len(COMPAT_BASELINE) == 18
+    assert len(report.verdicts) == len(COMPAT_BASELINE) == 19
 
 
 @pytest.mark.asyncio

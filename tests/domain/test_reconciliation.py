@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from talaria.domain.projection import project
-from talaria.domain.state import SessionState, focus_session
+from talaria.domain.state import SessionState, focus_session, land_session
 
 from .conftest import raw_event, replay
 
@@ -182,9 +182,20 @@ def test_reordered_subagent_events_converge_on_the_same_rows() -> None:
     ]
 
 
-def test_focusing_a_new_session_drops_the_previous_sessions_state() -> None:
+def test_focusing_a_new_session_drops_the_previous_sessions_live_state() -> None:
     """``turnController.reset()`` (``:918-938``) — its comment names the failure
-    it prevents, session A's state bleeding into session B."""
+    it prevents, session A's state bleeding into session B — for the live turn
+    state a switch has to end: subagents, streaming text, turn phase.
+
+    ``prompts`` is the one deliberate exception (CR3 finding 1): the gateway
+    keeps blocking on an outstanding bridge across a switch and never
+    re-announces it, so clearing the registry here would orphan the control
+    forever — switching away and back would find an empty ``prompts`` for a
+    question the gateway is still holding open. It survives in the registry;
+    what keeps session A's prompt off session B's screen is
+    :func:`~talaria.domain.projection.prompt_view`'s session filter, not this
+    function (pinned in ``tests/domain/test_prompt_registry.py``).
+    """
     state = replay(
         [
             raw_event("message.start"),
@@ -195,10 +206,37 @@ def test_focusing_a_new_session_drops_the_previous_sessions_state() -> None:
     )
     switched = focus_session(state, "sess-b")
     assert switched.subagents == ()
-    assert switched.prompts == ()
+    assert [p.request_id for p in switched.prompts] == ["req-1"], (
+        "retained, not cleared — see the docstring"
+    )
     assert switched.streaming_text == ""
     assert switched.turn == "idle"
     assert switched.transcript == state.transcript, "history is kept; live state is not"
+
+
+def test_the_transcript_a_focus_change_keeps_is_the_one_a_reconnect_needs() -> None:
+    """Why :func:`focus_session` retains history, stated as the case it serves.
+
+    This pin used to be the whole story, and read as though retention were the
+    right answer for *every* caller. It is the right answer for a reconnect —
+    landing back in the session already on screen, where blanking the pane on a
+    dropped socket would destroy history the operator can still see. It is the
+    wrong answer for a switch, which is why the two are now distinguished one
+    layer up in :func:`~talaria.domain.state.land_session` (KTD3); see the pair
+    of tests below.
+    """
+    state = replay([raw_event("message.complete", {"text": "session A"})])
+    assert land_session(state, state.focused_session_id).transcript == state.transcript
+
+
+def test_landing_a_different_session_starts_the_transcript_over(
+) -> None:
+    """KTD3's other half. Appending the switched-to session's seeded history
+    onto the retained transcript is the merged two-session view the project's
+    non-goals forbid, with no marker saying where one ended."""
+    state = replay([raw_event("message.complete", {"text": "session A"})])
+    assert state.transcript, "the fixture proved nothing; nothing was in the transcript"
+    assert land_session(state, "sess-b").transcript == ()
 
 
 def test_a_malformed_element_inside_a_list_payload_is_skipped_not_fatal() -> None:

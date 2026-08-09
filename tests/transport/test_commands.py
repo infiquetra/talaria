@@ -38,11 +38,13 @@ from talaria.transport.credentials import Credential
 from talaria.transport.source import LiveSource
 from talaria.ui.app import (
     ALIAS_CIRCULAR,
+    LIST_SESSIONS_METHOD,
     SUBAGENT_INTERRUPTED,
     SUBAGENT_NOT_FOUND,
     SUBMIT_METHOD,
     TalariaApp,
 )
+from talaria.ui.dialog import PickerDialog
 from tests.transport.conftest import STUB_TOKEN, StubGateway, err, event, ok
 from tests.ui.conftest import screen_text
 
@@ -255,6 +257,22 @@ def command_responder(message: dict[str, Any], stub: StubGateway) -> dict[str, A
         return ok(rid, {"status": "ok"})
     if method == SUBAGENT_INTERRUPT_METHOD:
         return ok(rid, {"found": True, "subagent_id": params.get("subagent_id", "")})
+    if method == LIST_SESSIONS_METHOD:
+        return ok(
+            rid,
+            {
+                "sessions": [
+                    {
+                        "id": "s1",
+                        "title": "the session already focused",
+                        "preview": "",
+                        "started_at": 1785000000.0,
+                        "message_count": 4,
+                        "source": "cli",
+                    }
+                ]
+            },
+        )
     return None
 
 
@@ -352,6 +370,13 @@ async def test_the_catalogue_is_fetched_once_at_startup(
         assert len(sent(command_gateway, CATALOG_METHOD)) == 1
         catalog = app.catalog
         assert catalog is not None and catalog.available
+        # ``/sessions`` is deliberately absent here as of U7 (KTD6): the
+        # fixture still carries the gateway's real dispatchable row (see
+        # ``CATALOG_BODY``), but Talaria's own local session picker now
+        # shadows the name, so the decoded entry is ``talaria-local`` and
+        # ``gateway_entries`` — the dispatchable subset — no longer lists it.
+        # ``test_sessions_is_dispatched_because_the_registry_owns_that_name``
+        # asserts the shadow directly.
         assert {entry.name for entry in catalog.gateway_entries} == {
             "/status",
             "/compress",
@@ -364,7 +389,6 @@ async def test_the_catalogue_is_fetched_once_at_startup(
             "/release",
             "/goal",
             "/hologram",
-            "/sessions",
             "/widgets",
         }
         await app.shutdown_sources()
@@ -691,7 +715,20 @@ async def test_sessions_is_dispatched_because_the_registry_owns_that_name(
     (``hermes_cli/commands.py:180``), so the catalogue builder's dedup guard
     drops the ``TUI`` extra of that name and a real gateway serves ``/sessions``
     as an ordinary command. Refusing it would be Talaria's copy of a stale list
-    outranking the gateway's own registry.
+    outranking the gateway's own registry — and that was true through v0.1.
+
+    **U7 overturns the conclusion, on purpose (KTD6).** Talaria's own local
+    session picker took the name; see
+    ``docs/engineering-journal/DECISIONS.md``, "`/sessions` is Talaria's own
+    local command, and it shadows the gateway's dispatchable one of the same
+    name". This test now asserts the shadow at the socket, the layer this
+    module owns. ``decode_catalog`` builds the local set first and skips any
+    gateway row whose name collides (``talaria/domain/commands.py``), so the
+    listed entry carries the *local* command's own category (``Talaria``),
+    not the gateway's — the fixture's ``Session``-categorised row (still real,
+    still in ``CATALOG_BODY``) never reaches the listing at all. And typed,
+    ``/sessions`` is never sent as ``slash.exec`` or ``command.dispatch`` — the
+    picker's own listing call, ``session.list``, is what goes out instead.
     """
     app, _source = live_app(command_gateway)
     async with app.run_test(size=SCREEN) as pilot:
@@ -700,13 +737,14 @@ async def test_sessions_is_dispatched_because_the_registry_owns_that_name(
         assert catalog is not None
         entry = catalog.entry_for("/sessions")
         assert entry is not None
-        assert entry.category == "Session"
-        assert entry.availability == "dispatch"
+        assert entry.availability == "talaria-local"
+        assert entry.category == "Talaria", "the local entry shadows the gateway's own category"
 
         await run_command(app, pilot, "/sessions")
-        assert sent(command_gateway, SLASH_EXEC_METHOD) == [
-            {"command": "sessions", "session_id": "s1"}
-        ]
+        assert sent(command_gateway, SLASH_EXEC_METHOD) == []
+        assert sent(command_gateway, DISPATCH_METHOD) == []
+        assert len(sent(command_gateway, LIST_SESSIONS_METHOD)) == 1
+        assert isinstance(app.screen, PickerDialog)
         await app.shutdown_sources()
 
 

@@ -33,7 +33,8 @@ from talaria.domain.commands import CommandCatalog
 from talaria.domain.startup import StartupSelection
 from talaria.transport.attach import AttachTarget
 from talaria.transport.compat_check import METHOD_NOT_FOUND
-from talaria.transport.source import LiveSource
+from talaria.transport.rpc import RpcOutcome
+from talaria.transport.source import FrameRecord, LiveSource
 from talaria.ui.app import (
     BACKGROUND_FAILED,
     COMPAT_BLOCKED,
@@ -57,9 +58,16 @@ FAST_RETRIES = (0.0, 0.01, 0.01)
 
 #: What ``session.create`` answers, transcribed from
 #: ``tui_gateway/methods_session.py:14-158`` at ``7f4d15515``.
+#:
+#: **``session_id`` and ``stored_session_id`` are distinct on purpose** (P1,
+#: U7 round two). An earlier version of this fixture set them equal, which
+#: masked ``_land_session`` never reading ``stored_session_id`` at all —
+#: every assertion that happened to compare ``focused_session_id`` also
+#: passed for ``session_key``, whether or not the durable id was actually
+#: read. See ``test_a_bare_launch_adopts_the_durable_stored_session_id``.
 CREATED: dict[str, Any] = {
     "session_id": "s-new-001",
-    "stored_session_id": "s-new-001",
+    "stored_session_id": "s-new-stored-001",
     "message_count": 0,
     "messages": [],
     "info": {"model": "hermes-4"},
@@ -67,16 +75,41 @@ CREATED: dict[str, Any] = {
 
 #: What ``session.resume`` answers (``:306-699``). ``session_id`` is the id the
 #: gateway actually resumed, which is why the app reads it back rather than
-#: reusing what it asked for.
+#: reusing what it asked for, and ``session_key`` is the durable identity that
+#: outlives the process (R6/R7).
+#:
+#: **The messages are real bodies, and that is a deliberate repair.** This
+#: fixture used to read ``"message_count": 3`` with ``"messages": []``, which is
+#: a reply no gateway can send: an empty array is the *omission* shape and it
+#: arrives with ``messages_omitted: true`` (``methods_session.py:494-500``). An
+#: internally inconsistent fixture meant no test in this suite ever saw resumed
+#: history at all, which is how ``--resume`` shipped rendering an empty pane.
+#: The three element shapes below are the ones live replies carry — text row,
+#: tool row, assistant row — pinned element by element in
+#: ``tests/domain/test_history_decoder.py``.
+RESUMED_MESSAGES: list[dict[str, Any]] = [
+    {"role": "user", "text": "what changed in the config?", "row_id": 11},
+    {"role": "tool", "name": "read_file", "context": "config.toml"},
+    {"role": "assistant", "text": "two keys were added.", "row_id": 12},
+]
+
+#: What the three messages above are expected to put on screen, in order.
+RESUMED_LINES: tuple[str, ...] = (
+    "› what changed in the config?",
+    "⏺ read_file config.toml",
+    "two keys were added.",
+)
+
 RESUMED: dict[str, Any] = {
     "session_id": "s-live-042",
-    "resumed": "full",
+    "resumed": "s-stored-042",
     "message_count": 3,
-    "messages": [],
+    "messages": RESUMED_MESSAGES,
+    "messages_omitted": False,
     "info": {},
     "inflight": None,
     "running": False,
-    "session_key": "k",
+    "session_key": "s-stored-042",
     "started_at": 1785000000.0,
     "status": "idle",
 }
@@ -181,6 +214,26 @@ async def test_a_bare_launch_creates_one_session_and_focuses_it(
         # session to resume, which is ``--resume``'s job and not this one's.
         assert calls.count(MOST_RECENT_METHOD) == 1
         assert params_of(gateway_for_startup, CREATE_METHOD)["cols"] > 0
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_bare_launch_adopts_the_durable_stored_session_id(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """P1, U7 round two. ``session.create``'s reply carries the durable id as
+    ``stored_session_id`` — never as ``session_key`` or ``resumed``, which
+    only ``session.resume`` sends (``talaria/domain/compat.py:160``,
+    ``:188``). Without reading it, a newly created session has no durable
+    key at all, the picker can never recognize its own row as current, and
+    choosing it retains-then-reseeds the same transcript.
+    """
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="new"))
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        assert app.state.focused_session_id == "s-new-001"
+        assert app.state.session_key == "s-new-stored-001"
         await app.shutdown_sources()
 
 
@@ -523,3 +576,245 @@ async def test_a_catalogue_fetch_that_raises_is_named_too() -> None:
         assert "the catalogue fetch" in app.background_failure
         await until(lambda: app.return_code == STREAM_FAILURE_EXIT_CODE)
         await app.shutdown_sources()
+
+
+# ── U6: the resumed conversation reaches the transcript and the screen ───
+
+
+@pytest.mark.asyncio
+async def test_resume_puts_the_resumed_conversation_on_the_rendered_screen(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """R6, and the gap the grounding found: no test asserted resumed history.
+
+    The assertion is taken from the **pane**, not from the projection, because
+    a projection that is correct while the pane never mounts it is exactly the
+    shape the shipped defect had.
+    """
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="resume"))
+
+    async with app.run_test() as pilot:
+        await until(lambda: app._startup_done)
+        await pilot.pause()
+        await app.render_snapshot()
+        await pilot.pause()
+
+        assert [(e.kind, e.text) for e in app.state.transcript] == [
+            ("user", "what changed in the config?"),
+            ("tool", "⏺ read_file config.toml"),
+            ("assistant", "two keys were added."),
+        ]
+        assert app.transcript.rendered_lines == RESUMED_LINES
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_resume_keeps_the_runtime_id_and_the_durable_one_apart(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """R6/R7. The reply's ``session_id`` is what the gateway streams events for;
+    its ``session_key`` is what survives the process and names the session in
+    the picker. Reading one off the other points the switcher at an id the
+    gateway forgets when the socket closes."""
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="resume"))
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        assert app.state.focused_session_id == "s-live-042"
+        assert app.state.session_key == "s-stored-042"
+        assert app.state.focused_session_id != app.state.session_key, (
+            "the fixture no longer distinguishes the two ids, so this proves nothing"
+        )
+
+        # The discriminating half: correlation runs on the runtime id. An event
+        # stamped with the durable id is another session's traffic as far as
+        # this connection is concerned, and a client that correlated on
+        # ``session_key`` would fold it and drop the real stream instead.
+        before = app.state.cross_session_events_ignored
+        await gateway_for_startup.send(
+            {
+                "method": "event",
+                "params": {
+                    "type": "message.complete",
+                    "session_id": "s-stored-042",
+                    "payload": {"text": "addressed to the durable id"},
+                },
+            }
+        )
+        await until(lambda: app.state.cross_session_events_ignored > before)
+        assert all(
+            e.text != "addressed to the durable id" for e in app.state.transcript
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_event_racing_the_resume_reply_lands_after_the_seeded_history() -> None:
+    """KTD2's landing barrier, end to end over a real socket.
+
+    The stub writes the ``session.resume`` reply and the next event back to back
+    on the same connection, which is what a busy gateway does: the turn that was
+    already running keeps streaming while the resume is answered.
+
+    **What this test does and does not prove.** It proves the outcome — the
+    event lands after the history it follows — and it proves the barrier is
+    *engaged* on the real startup path, by asserting that inbound frames were
+    actually held while the landing was in flight. It does **not** reproduce the
+    losing schedule: with this stub the awaiting coroutine reliably resumes
+    before the event is read off the socket, so the ordering assertion here
+    passes with the barrier removed as well. The mechanism is pinned
+    deterministically by
+    :func:`test_a_frame_arriving_during_a_landing_is_folded_after_the_seed`,
+    which fails without the barrier. Both are kept: one says the real path is
+    correct, the other says why.
+    """
+    live_line = "the turn that was already running"
+    stub = StubGateway(
+        responder=startup_responder(),
+        follow_ups={
+            RESUME_METHOD: [
+                {
+                    "method": "event",
+                    "params": {
+                        "type": "message.complete",
+                        "session_id": "s-live-042",
+                        "payload": {"text": live_line},
+                    },
+                }
+            ]
+        },
+    )
+    await stub.start()
+    held: list[FrameRecord] = []
+    try:
+        app, _source = live_app(stub, StartupSelection(mode="resume"))
+        folded = app.ingest
+
+        def _watch(record: FrameRecord) -> None:
+            if app._landing_depth and record.direction == "in":
+                held.append(record)
+            folded(record)
+
+        app.ingest = _watch  # type: ignore[method-assign]
+        async with app.run_test():
+            await until(lambda: app._startup_done)
+            await until(lambda: any(e.text == live_line for e in app.state.transcript))
+
+            texts = [e.text for e in app.state.transcript]
+            assert texts[:3] == [
+                "what changed in the config?",
+                "⏺ read_file config.toml",
+                "two keys were added.",
+            ], texts
+            assert texts[-1] == live_line, (
+                "the event that followed the reply landed before the history it "
+                f"follows: {texts}"
+            )
+            assert len(texts) == 4, texts
+            assert held, (
+                "no inbound frame arrived while the landing was in flight, so this "
+                "run did not exercise the barrier at all"
+            )
+            await app.shutdown_sources()
+    finally:
+        await stub.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_frame_arriving_during_a_landing_is_folded_after_the_seed() -> None:
+    """The barrier's mechanism, driven rather than raced (KTD2).
+
+    The window is real but narrow: the transport resolves the RPC future
+    (``transport/source.py:589``) and enqueues later frames independently
+    (``:601``) while the frame pump runs concurrently, so which of the two wins
+    is a scheduling accident that depends on how many await layers sit between
+    the reply and the coroutine that seeds. A test that hopes to lose that race
+    proves nothing on the runs where it wins, so this one holds the landing open
+    and delivers the frame inside it — the same sequence, with the timing taken
+    out.
+
+    Without the barrier this fails: the event is folded first, the reducer
+    adopts its session id, and the resumed history is appended *below* a line
+    from the turn that came after it.
+    """
+    app: TalariaApp = TalariaApp(IdleSource(), mode="live", coalesce_interval=3600.0)
+    live_line = "the turn that was already running"
+    event = FrameRecord(
+        seq=1,
+        at=1785000000.0,
+        direction="in",
+        frame={
+            "method": "event",
+            "params": {
+                "type": "message.complete",
+                "session_id": "s-live-042",
+                "payload": {"text": live_line},
+            },
+        },
+    )
+
+    async with app.run_test():
+        with app._landing():
+            app.ingest(event)
+            during = [entry.text for entry in app.state.transcript]
+            assert during == [], f"the barrier let the event through: {during}"
+            app._land_session(
+                RpcOutcome(
+                    status="ok",
+                    method=RESUME_METHOD,
+                    request_id="1",
+                    epoch=1,
+                    result=RESUMED,
+                )
+            )
+        assert [entry.text for entry in app.state.transcript] == [
+            "what changed in the config?",
+            "⏺ read_file config.toml",
+            "two keys were added.",
+            live_line,
+        ]
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_withheld_its_history_says_so_on_screen() -> None:
+    """The gateway's omission shape is an **empty** ``messages`` array carrying
+    the full ``message_count`` (``methods_session.py:494-500``). A client that
+    renders that as an empty pane tells the operator their conversation is
+    gone."""
+    withheld = {
+        **RESUMED,
+        "message_count": 7,
+        "messages": [],
+        "messages_omitted": True,
+    }
+    stub = StubGateway(responder=startup_responder(resume=withheld))
+    await stub.start()
+    try:
+        app, _source = live_app(stub, StartupSelection(mode="resume"))
+        async with app.run_test():
+            await until(lambda: app._startup_done)
+            assert len(app.state.transcript) == 1
+            line = app.state.transcript[0]
+            assert line.kind == "system"
+            assert "7 earlier messages" in line.text
+            await app.shutdown_sources()
+    finally:
+        await stub.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_new_session_seeds_nothing_and_says_nothing_about_history() -> None:
+    """``session.create`` answers ``message_count: 0`` with an empty array and
+    no ``messages_omitted`` key at all. Nothing to seed, and nothing withheld."""
+    stub = StubGateway(responder=startup_responder())
+    await stub.start()
+    try:
+        app, _source = live_app(stub, StartupSelection(mode="new"))
+        async with app.run_test():
+            await until(lambda: app._startup_done)
+            assert app.state.focused_session_id == "s-new-001"
+            assert app.state.transcript == ()
+            await app.shutdown_sources()
+    finally:
+        await stub.stop()

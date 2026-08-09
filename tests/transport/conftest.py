@@ -128,6 +128,7 @@ class StubGateway:
         reject_with: Literal["handshake", "close"] = "handshake",
         greeting: list[dict[str, Any]] | None = None,
         responder: Callable[[dict[str, Any], StubGateway], dict[str, Any] | None] | None = None,
+        follow_ups: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self.token = token
         self.require_auth = require_auth
@@ -139,6 +140,16 @@ class StubGateway:
         self.reject_with = reject_with
         self.greeting = greeting if greeting is not None else [READY_FRAME]
         self.responder = responder
+        #: Frames written **immediately after** the reply to a named method,
+        #: with no await between them, keyed by method name.
+        #:
+        #: This is the only way to reproduce the race KTD2's landing barrier
+        #: exists for: a gateway that answers ``session.resume`` and then
+        #: streams the next event straight down the same socket. A test that
+        #: pushed the event with a separate ``send`` call would have yielded to
+        #: the loop in between, which is precisely the window the real gateway
+        #: does not leave.
+        self.follow_ups = dict(follow_ups or {})
 
         self._server: Server | None = None
         self._port = 0
@@ -243,6 +254,8 @@ class StubGateway:
                 reply = self.responder(message, self)
                 if reply is not None:
                     await connection.send(json.dumps(reply))
+                for frame in self.follow_ups.get(str(message.get("method", "")), ()):
+                    await connection.send(json.dumps(frame))
         except Exception:  # noqa: BLE001 - the stub never fails a test by raising
             return
 

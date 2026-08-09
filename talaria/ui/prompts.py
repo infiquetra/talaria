@@ -50,11 +50,12 @@ without a terminal (ADR-0002).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Final
+from typing import Any, ClassVar, Final
 
 from rich.cells import chop_cells
 from textual import events
 from textual.app import ComposeResult
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widget import Widget
@@ -66,10 +67,15 @@ from talaria.ui.focus import CaretReleased, holds_caret
 from talaria.ui.literal import defang, literal_text
 
 __all__ = [
+    "ANSWER_HINT",
+    "CHOICE_HINT",
     "COMMAND_MIN_WIDTH",
     "COMMAND_PREVIEW_LINES",
     "CONTROL_OFFSCREEN_TITLE",
+    "DECLINE_VALUES",
     "DENY_ALL_CHOICE",
+    "DENY_ALL_HINT",
+    "EMPTY_ANSWER",
     "GATEWAY_DISCARDED_ANSWER",
     "GATEWAY_HAD_NO_APPROVAL",
     "HIDDEN_KINDS",
@@ -84,6 +90,7 @@ __all__ = [
     "activity_line",
     "attended_rows",
     "command_overflow_line",
+    "decline_value",
     "echoable_answer",
     "gateway_refusal",
     "respond_params",
@@ -154,6 +161,45 @@ NO_CHOICES_FALLBACK: Final[tuple[str, ...]] = ("deny",)
 #: a constant here rather than a parameter.
 DENY_ALL_CHOICE: Final[str] = "deny"
 
+#: What a **decline** puts on the wire, per bridge (R3, KTD4).
+#:
+#: These are not values invented here. They are what the gateway's own terminal
+#: client sends down its escape path: the empty field value for clarify, sudo
+#: and secret (``ui-tui/src/app/useInputHandlers.ts:119``, ``:128`` at Hermes
+#: ``7f4d15515``) and the explicit ``deny`` choice for an approval (``:180``).
+#: Declining therefore needs no new method and no protocol change — it is an
+#: ordinary ``*.respond`` carrying the value that client already sends.
+#:
+#: **Approval's entry is the one that must never be the empty string, and the
+#: reason is not symmetry.** The gateway's approval consumer blocks on ``None``
+#: and on ``"deny"`` and returns *approved* for every other resolved choice
+#: (``tools/approval.py:3291``, ``:3320``), so an approval "declined" with an
+#: empty choice would authorize the command the operator was trying to refuse.
+#: The value lives in this table rather than being derived at the call site so
+#: there is exactly one place that decision is written down.
+#:
+#: ``terminal_read`` is deliberately absent rather than mapped to ``""``.
+#: Talaria answers it itself and it renders no card
+#: (:data:`UNATTENDED_KINDS`), so there is nothing for an operator to decline;
+#: a missing key makes :func:`decline_value` return ``None`` and every caller
+#: skip it, where an empty-string entry would have them send one.
+#: The field value that declines every bridge except approval: nothing at all.
+#:
+#: Named rather than written as a bare ``""`` in the table below, and the name
+#: is doing two jobs. It says what an empty string *means* here — "the operator
+#: refused", not "the operator typed nothing" — and it keeps a string literal
+#: out of a mapping whose keys are ``secret`` and ``sudo``, which bandit reads
+#: as a hardcoded credential (B105). A suppression comment would have claimed
+#: the finding was wrong; there is simply no credential to write down.
+EMPTY_ANSWER: Final[str] = ""
+
+DECLINE_VALUES: Final[dict[PromptKind, str]] = {
+    "approval": DENY_ALL_CHOICE,
+    "clarify": EMPTY_ANSWER,
+    "secret": EMPTY_ANSWER,
+    "sudo": EMPTY_ANSWER,
+}
+
 #: How many wrapped rows of an approval's command the card shows before it says
 #: how many it is not showing.
 #:
@@ -165,6 +211,30 @@ DENY_ALL_CHOICE: Final[str] = "deny"
 #: safety is not this one: it is that whatever is *not* shown is announced, so
 #: a truncated command is never mistaken for a short one.
 COMMAND_PREVIEW_LINES: Final[int] = 6
+
+#: The hint line under a card whose control is a set of buttons — an approval
+#: or a multiple-choice clarify. Follows the picker's own hint convention
+#: (``LIST_HINT``, ``talaria/domain/selection.py:40``): every key that does
+#: something, named once, on the line the control's keys actually are (U1,
+#: R1). ``esc decline`` names a key U2 binds; the hint is written now because
+#: a control that is reachable in one press and answerable but silent about
+#: how to say no is only half the requirement R1/R3 together describe.
+CHOICE_HINT: Final[str] = "enter select · esc decline"
+
+#: The hint line under a card whose control is free text — clarify, secret or
+#: sudo with no gateway-offered choices. The control's own placeholder
+#: (``"answer · Enter sends"``) already names the send key; this line adds
+#: the one key the placeholder does not.
+ANSWER_HINT: Final[str] = "enter send · esc decline"
+
+#: The hint line under an unanswerable approval — a queue with more than one
+#: entry offers only "deny all" (the uncorrelated-approval rule this module's
+#: docstring names). No separate ``esc decline`` is listed here: denying the
+#: whole queue already *is* the decline for every prompt on this card
+#: (KTD8's per-kind sweep resolves outstanding approvals with the same
+#: deny-all call), so naming a second key would promise a control the card
+#: does not carry.
+DENY_ALL_HINT: Final[str] = "enter deny all"
 
 #: A card's border title while its answering control is on screen.
 WAITING_TITLE: Final[str] = "waiting for you"
@@ -309,6 +379,18 @@ def respond_params(
             params["all"] = True
         return params
     return {"request_id": request_id, field: value}
+
+
+def decline_value(kind: PromptKind) -> str | None:
+    """What declining this bridge sends, or ``None`` when it cannot be declined.
+
+    A lookup with a name, so that no caller writes ``""`` for an approval by
+    reaching for the obvious symmetry: an empty approval choice is *approved*
+    by the gateway's consumer (:data:`DECLINE_VALUES` carries the citation).
+    ``None`` means the kind renders no control for a human to escape from —
+    today that is ``terminal_read`` alone.
+    """
+    return DECLINE_VALUES.get(kind)
 
 
 def gateway_refusal(kind: PromptKind, result: Any) -> str | None:
@@ -566,7 +648,39 @@ class PromptCard(Vertical):
         height: auto;
         color: $error;
     }
+    PromptCard > .prompt--hint {
+        height: auto;
+        color: $text-muted;
+    }
+    /* R2: legible against the default terminal theme, and a *second* focus
+       style from the two that already existed (Button's own reverse video,
+       AgentRow.-interruptible:focus's tint, talaria/ui/agents.py:127-129) —
+       neither told the operator which *card* the caret was on. Card-level
+       rather than on the control itself, because the card carries the
+       question and the command; a tint on the button alone leaves both of
+       those reading as plain, unfocused text. ``:focus-within`` rather than
+       ``:focus``: the card itself never receives the caret, its Input or its
+       Button does, and the tint has to track the descendant. */
+    PromptCard:focus-within {
+        background: $accent 20%;
+    }
     """
+
+    #: ``escape`` while this card's own control holds the caret declines the
+    #: prompt (R3, KTD4). The binding lives on the card rather than on the app
+    #: because Textual resolves a key against the focused widget's ancestors
+    #: (``Screen._modal_binding_chain`` walks ``focused.ancestors_with_self``),
+    #: so a card-level binding fires exactly when one of *this* card's controls
+    #: is focused and never when the caret is anywhere else — which is what
+    #: KTD4 requires: ``escape`` in the composer stays unbound, so that a
+    #: double-press can never be destructive.
+    #:
+    #: ``show=False`` because the card already names the key on its own hint
+    #: line (:data:`CHOICE_HINT`, :data:`ANSWER_HINT`), where the operator is
+    #: looking when the control is in front of them.
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "decline", "decline", show=False),
+    ]
 
     class Answered(Message):
         """An operator answered one prompt. Carries the value exactly once.
@@ -597,6 +711,42 @@ class PromptCard(Vertical):
         def __init__(self, session_id: str | None) -> None:
             super().__init__()
             self.session_id = session_id
+
+    class Declined(Message):
+        """The operator refused one prompt without waiting for it to expire (R3).
+
+        **It carries no value, and that absence is the safety property.** The
+        wire value is looked up from the prompt's kind by the app
+        (:func:`decline_value`), so the widget layer has no way to post a
+        decline carrying an empty approval choice — the one string the
+        gateway's approval consumer reads as *approved*
+        (``tools/approval.py:3320``). A ``declined=True`` flag on
+        :class:`Answered` would have put that value one keystroke from a
+        control the operator pressed to refuse.
+
+        The kind rides along so the app can do that lookup without going back
+        to the registry, which may already have moved on.
+        """
+
+        def __init__(self, request_id: str, kind: PromptKind) -> None:
+            super().__init__()
+            self.request_id = request_id
+            self.kind = kind
+
+    class DeclineRefused(Message):
+        """Escape was pressed on the unanswerable (deny-all-only) card (CR4
+        finding 6b).
+
+        Its hint line names one key, ``enter deny all`` — escape is not one
+        of them, and the card used to swallow it with no call, no notice and
+        no caret movement. AE11's rule applies here exactly as it does to a
+        control that sends nothing: a key that does not act must still say
+        so, rather than read as identical to one that worked.
+        """
+
+        def __init__(self, request_id: str) -> None:
+            super().__init__()
+            self.request_id = request_id
 
     def __init__(self, row: PromptRow, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -663,6 +813,7 @@ class PromptCard(Vertical):
                     classes="prompt--deny-all",
                     compact=True,
                 )
+            yield Static(literal_text(DENY_ALL_HINT), markup=False, classes="prompt--hint")
             return
         if self.choices:
             # A gateway-supplied choice list turns any bridge into a closed
@@ -684,6 +835,7 @@ class PromptCard(Vertical):
                         classes="prompt--choice",
                         compact=True,
                     )
+            yield Static(literal_text(CHOICE_HINT), markup=False, classes="prompt--hint")
         else:
             self._input = Input(
                 password=self.row.kind in HIDDEN_KINDS,
@@ -694,6 +846,7 @@ class PromptCard(Vertical):
             )
             self._actions = self._input
             yield self._input
+            yield Static(literal_text(ANSWER_HINT), markup=False, classes="prompt--hint")
 
     def on_mount(self) -> None:
         self.border_title = WAITING_TITLE
@@ -711,9 +864,62 @@ class PromptCard(Vertical):
             self.border_title = title
 
     def focus_answer(self) -> None:
-        """Put the caret where the answer goes, without stealing it later."""
+        """Put the caret where the answer goes, without stealing it later.
+
+        Extended for U1 (KTD1): a button-backed card — an approval, a
+        multiple-choice clarify, or the unanswerable deny-all-only card — has
+        no ``self._input`` to hand the caret to, and round 4 left those cards
+        entirely out of the focus chain this method drives (R1's defect,
+        ``talaria/ui/prompts.py:713-716`` pre-U1). The first mounted
+        :class:`Button` is the first choice the card offers — the same
+        ordering the gateway's own ``choices`` list carries, and the same
+        button ``reveal_actions`` scrolls to — so focusing it puts the caret
+        on the answer an operator reading top-to-bottom reaches first.
+        """
         if self._input is not None:
             self._input.focus()
+            return
+        for button in self.query(Button):
+            button.focus()
+            return
+
+    def action_decline(self) -> None:
+        """Refuse this prompt now rather than waiting for it to expire (R3).
+
+        A ``terminal_read`` never reaches this method — it renders no card at
+        all (:data:`UNATTENDED_KINDS`) — and the kind check states that anyway,
+        because :func:`decline_value` and this guard are the two places the
+        "which bridges a human can refuse" rule is read.
+
+        An **unanswerable** card is deliberate too, but it is not silent
+        (CR4 finding 6b). Once a second approval queues, neither card can be
+        aimed at (the uncorrelated-approval rule) and the only control either
+        one carries is ``deny all`` — which is already the decline, for the
+        whole queue, and is the same call KTD8's interrupt sweep makes.
+        Binding ``escape`` to it as well would put a queue-wide safety action
+        on a key the card's hint line (:data:`DENY_ALL_HINT`) deliberately
+        does not name; the operator's way out of that card is the button in
+        front of them. What changed is that pressing it anyway now says so
+        (:class:`DeclineRefused`) instead of doing nothing that looks
+        identical to having worked.
+
+        **The ``Input`` is left alone here (CR4 finding 6a).** A successful
+        decline unmounts the card, which takes its ``Input`` with it — an
+        early clear bought nothing there. What it did buy, while the decline
+        is still in flight or gets refused (replay mode, most concretely),
+        was destroying the operator's half-typed answer under a notice that
+        says the key did nothing: the text and the claim contradicted each
+        other. Nothing here mirrors :meth:`on_input_submitted`'s own clear —
+        that one guards a credential the ANSWER path is about to try sending;
+        a decline never sends what is typed at all, so there is no value to
+        protect from a slow reply.
+        """
+        if decline_value(self.row.kind) is None:
+            return
+        if not self.row.answerable:
+            self.post_message(self.DeclineRefused(self.request_id))
+            return
+        self.post_message(self.Declined(self.request_id, self.row.kind))
 
     def on_button_pressed(self, message: Button.Pressed) -> None:
         message.stop()
@@ -785,6 +991,30 @@ class PromptRegion(VerticalScroll):
 
     def card_for(self, request_id: str) -> PromptCard | None:
         return self._cards.get(request_id)
+
+    def focus_first_unanswered(self) -> bool:
+        """Jump the caret to the oldest outstanding card's control (R1, KTD1).
+
+        "Oldest" is mount order — the same ordering :meth:`reveal_actions`
+        already keeps visible, so the jump and the region's own scroll
+        behaviour never disagree about which card is "the" one on screen.
+        With two approvals queued that card's only action is "deny all",
+        which is correct for the whole queue from either card, so landing on
+        the oldest keeps the command the gateway resolves first in view.
+
+        A no-op — returns ``False``, moves nothing — when no card is
+        mounted. The jump is deliberate (KTD1): unlike mount-time auto-focus
+        it does not check whether the composer holds text, because a
+        keypress this explicit is allowed to move the caret even mid-word.
+        """
+        for card in self.query(PromptCard):
+            target = card.action_widget
+            if target is None:
+                continue
+            self.scroll_to_widget(target, animate=False)
+            card.focus_answer()
+            return True
+        return False
 
     def on_resize(self, event: events.Resize) -> None:
         # Deferred, because the resize cascade has not finished when this
@@ -929,7 +1159,16 @@ class PromptRegion(VerticalScroll):
             card = PromptCard(row)
             self._cards[row.request_id] = card
             await self.mount(card, before=position + 1)
-            if focus_new:
+            # ``isinstance(..., Input)``, not a bare ``focus_new`` check:
+            # mount-time auto-focus is out of U1's scope unchanged, and
+            # :meth:`PromptCard.focus_answer` was extended in U1 to also
+            # focus a button-backed card's first Button for the F1 jump
+            # (KTD1). Calling it unconditionally here would auto-focus every
+            # new approval and multiple-choice clarify the instant it
+            # mounts — a behaviour this unit does not touch. Only an
+            # input-backed card keeps the pre-U1 auto-focus; every other
+            # kind is reachable exclusively through the jump.
+            if focus_new and isinstance(card.action_widget, Input):
                 card.focus_answer()
 
         # ``wanted``, not ``view.rows``: the warning colour is the region

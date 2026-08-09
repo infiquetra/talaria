@@ -20,7 +20,7 @@ from talaria.replay.controls import ReplayControls
 from talaria.replay.source import ReplaySource
 from talaria.transport.rpc import RpcOutcome
 from talaria.transport.source import FrameRecord
-from talaria.ui.app import TalariaApp
+from talaria.ui.app import LiveDispatcher, TalariaApp
 
 #: Recorded seconds between synthetic frames, matching the stress generator.
 STEP = 0.004
@@ -111,9 +111,16 @@ class RecordingDispatcher:
 
 
 def live_app(
-    dispatcher: RecordingDispatcher, *, coalesce_interval: float = 3600.0
+    dispatcher: LiveDispatcher, *, coalesce_interval: float = 3600.0
 ) -> TalariaApp:
     """A live-mode app whose only renders are the ones a test asks for.
+
+    Typed against :class:`~talaria.ui.app.LiveDispatcher` — the structural
+    protocol :class:`RecordingDispatcher` already satisfies — rather than
+    against that one concrete double, so a test module that needs a dispatcher
+    answering more than one fixed outcome (``tests/ui/test_sessions.py``'s
+    ``ScriptedDispatcher``) can build its own double and still call this
+    helper.
 
     ``coalesce_interval`` is parked beyond any test's lifetime by default, on
     purpose. Every assertion here is about what is on screen *after* a specific

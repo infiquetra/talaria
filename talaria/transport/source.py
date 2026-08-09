@@ -596,7 +596,14 @@ class LiveSource:
             # unit test. A guard that cannot be exercised is a guard nobody can
             # trust, which is the reason ids restart per epoch in the first
             # place (see ``transport/rpc.py``'s module docstring).
-            self.correlator.resolve(frame, epoch=epoch)
+            #
+            # ``seq`` is this frame's own position in the log — the same
+            # counter :class:`~talaria.domain.models.GatewayEvent.seq` is
+            # stamped from — carried onto the reply's ``RpcOutcome`` so a
+            # caller can tell a concurrently-arriving event apart from one
+            # that arrived after the reply (B3), which asyncio's own
+            # scheduling order does not reliably distinguish.
+            self.correlator.resolve(frame, epoch=epoch, seq=self._seq)
 
         record = FrameRecord(
             seq=self._seq,

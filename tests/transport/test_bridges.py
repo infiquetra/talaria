@@ -35,7 +35,7 @@ from talaria.ui.app import (
     TERMINAL_READ_UNAVAILABLE,
     TalariaApp,
 )
-from talaria.ui.prompts import RESPOND_METHODS
+from talaria.ui.prompts import RESPOND_METHODS, decline_value
 from tests.transport.conftest import STUB_TOKEN, StubGateway, event, ok
 from tests.ui.conftest import screen_text
 
@@ -46,7 +46,10 @@ FAST_RETRIES = (0.0, 0.01, 0.01)
 #: see ``test_the_served_viewport_is_the_rows_on_screen``, which is what
 #: holds this pair to the actual screen.
 SCREEN = (80, 24)
-SCREEN_ROWS = 18
+#: 17, not 18: U3's caret slot (``talaria/ui/status_region.py``) added one
+#: permanent chrome row, shrinking the transcript viewport by one at every
+#: terminal height.
+SCREEN_ROWS = 17
 
 #: The one value swept for across the frame log, the transcript, the status
 #: document and every notice. Distinctive enough that a substring search over
@@ -506,7 +509,10 @@ async def test_the_served_viewport_is_the_rows_on_screen(
     """
     measured: dict[int, tuple[int, int, int]] = {}
 
-    for index, (height, expected) in enumerate(((24, 18), (34, 28))):
+    # 17 and 27, not 18 and 28: U3's caret slot added one permanent chrome
+    # row to the status region, shrinking the transcript viewport by one at
+    # every terminal height (see ``SCREEN_ROWS`` above).
+    for index, (height, expected) in enumerate(((24, 17), (34, 27))):
         app, source = live_app(bridge_gateway)
         request_id = f"t-size-{index}"
         async with app.run_test(size=(80, height)):
@@ -686,6 +692,120 @@ async def test_a_wire_expiry_clears_the_prompt_and_the_late_answer_sends_nothing
         ]
         assert app.state.rejected_responses == 1
         assert any(e.kind == "prompt-expired" for e in app.state.transcript)
+        await app.shutdown_sources()
+
+
+# ── U2/R3: what a decline puts on the wire, read off the socket ──────────
+
+
+@pytest.mark.asyncio
+async def test_a_declined_approval_carries_the_explicit_deny_choice(
+    bridge_gateway: StubGateway,
+) -> None:
+    """R3's safety clause, asserted where it can actually be falsified.
+
+    The gateway's approval consumer blocks on ``None`` and on ``"deny"`` and
+    returns *approved* for every other resolved choice
+    (``tools/approval.py:3291``, ``:3320``). So the empty field value that
+    declines the other three bridges would, on this one, authorize the command
+    the operator pressed escape to refuse. The received frame is read off the
+    socket rather than from the sender's own table, for the reason the round
+    trips above are: a table compared with itself agrees with itself.
+    """
+    app, source = live_app(bridge_gateway)
+
+    async with app.run_test():
+        await until(lambda: source.state == "connected")
+        await push(
+            bridge_gateway,
+            app,
+            event(
+                "approval.request",
+                {"description": "rm -rf /", "choices": ["once", "deny"]},
+            ),
+        )
+        await app.render_snapshot()
+
+        outcome = await app.respond_live(
+            "approval:s1#1", decline_value("approval") or "", declined=True
+        )
+
+        assert outcome is not None and outcome.confirmed
+        sent = next(
+            m
+            for m in bridge_gateway.current.received
+            if m.get("method") == "approval.respond"
+        )
+        assert sent["params"] == {"session_id": "s1", "choice": "deny"}
+        assert sent["params"]["choice"] != ""
+        assert app.state.prompt_for("approval:s1#1") is None
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind,request_type,payload,request_id,method,field",
+    (
+        (
+            "clarify",
+            "clarify.request",
+            {"request_id": "c-1", "question": "which branch?"},
+            "c-1",
+            "clarify.respond",
+            "answer",
+        ),
+        (
+            "secret",
+            "secret.request",
+            {"request_id": "s-1", "env_var": "OPENAI_API_KEY", "prompt": "API key"},
+            "s-1",
+            "secret.respond",
+            "value",
+        ),
+        (
+            "sudo",
+            "sudo.request",
+            {"request_id": "u-1"},
+            "u-1",
+            "sudo.respond",
+            "password",
+        ),
+    ),
+)
+async def test_the_other_three_bridges_decline_with_an_empty_field(
+    bridge_gateway: StubGateway,
+    kind: PromptKind,
+    request_type: str,
+    payload: dict[str, Any],
+    request_id: str,
+    method: str,
+    field: str,
+) -> None:
+    """The reference client's own escape path sends the field empty
+    (``ui-tui/src/app/useInputHandlers.ts:119``, ``:128`` at Hermes
+    ``7f4d15515``). The field name and the method are literals here for the
+    same reason the round trips above spell theirs out."""
+    app, source = live_app(bridge_gateway)
+
+    async with app.run_test():
+        await until(lambda: source.state == "connected")
+        await push(bridge_gateway, app, event(request_type, payload))
+        await app.render_snapshot()
+
+        outcome = await app.respond_live(
+            request_id, decline_value(kind) or "", declined=True
+        )
+
+        assert outcome is not None and outcome.confirmed
+        sent = [
+            m
+            for m in bridge_gateway.current.received
+            if m.get("method", "").endswith(".respond")
+        ]
+        assert len(sent) == 1
+        assert sent[0]["method"] == method
+        assert sent[0]["params"] == {"request_id": request_id, field: ""}
+        assert app.state.prompt_for(request_id) is None
         await app.shutdown_sources()
 
 

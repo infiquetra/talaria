@@ -31,7 +31,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
@@ -40,6 +41,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.css.query import NoMatches
+from textual.screen import ModalScreen
 from textual.timer import Timer
 
 from talaria.domain.commands import (
@@ -87,6 +89,7 @@ from talaria.domain.projection import (
     terminal_read,
 )
 from talaria.domain.selection import PickerSource
+from talaria.domain.session_list import decode_session_list
 from talaria.domain.startup import StartupSelection
 from talaria.domain.state import (
     APPROVAL_COMMAND_LABEL,
@@ -97,7 +100,8 @@ from talaria.domain.state import (
     age_out_approvals,
     apply_frame,
     cancel_turn,
-    focus_session,
+    land_session,
+    latch_resolved_prompts,
     record_command_result,
     record_local_note,
     record_replayed_submission,
@@ -106,8 +110,10 @@ from talaria.domain.state import (
     respond_to_all_approvals,
     respond_to_prompt,
     restore_prompt,
+    seed_history,
     set_connection,
     settle_prompt,
+    switch_refusal,
 )
 from talaria.domain.state import (
     SUBMIT_METHOD as SUBMIT_METHOD,
@@ -138,6 +144,7 @@ from talaria.ui.picker import (
     ProfilePickerSource,
     SelectableRow,
     SessionModel,
+    SessionPickerSource,
     flatten_profiles,
     flatten_selectable,
 )
@@ -147,6 +154,7 @@ from talaria.ui.prompts import (
     UNATTENDED_KINDS,
     PromptCard,
     PromptRegion,
+    decline_value,
     echoable_answer,
     gateway_refusal,
     respond_params,
@@ -250,6 +258,41 @@ ALIAS_CIRCULAR: Final[str] = "the alias chain does not end; stopped at"
 #: Re-exported from the domain, where the registry that does the refusing
 #: chooses the wording for each of its three refusals.
 PROMPT_NO_LONGER_LIVE: Final[str] = REFUSED_NOT_OUTSTANDING
+
+#: Shown when F1 (KTD9, R1) is pressed while a modal picker holds the screen.
+#:
+#: ``PromptCard.focus_answer()`` ends in ``Widget.focus()``, which calls
+#: ``widget.screen.set_focus(...)`` — the widget's OWN (background) screen,
+#: never the active top-of-stack modal (Textual 8.2.8, ``widget.py``). With a
+#: picker open, F1 would change a background button's has-focus state with no
+#: visible or functional effect at all, and the operator has no way to tell
+#: that "worked" from "did nothing" — exactly the control AE11 exists to rule
+#: out. The jump is refused instead, and the modal keeps the focus it had.
+JUMP_BLOCKED_BY_MODAL: Final[str] = "close the picker first, then jump to the prompt"
+
+#: Shown when a decline's wire value and the registry's current kind for the
+#: same id no longer agree (CR4 finding 5).
+#:
+#: :func:`~talaria.ui.prompts.decline_value` computes the wire *value* from
+#: the kind the card carried at the moment ``escape`` was pressed;
+#: :meth:`~talaria.ui.app.TalariaApp.respond_live` picks the wire *method*
+#: from a later, independent read of the registry's kind for that id. Nothing
+#: used to check the two still named the same prompt — a registry id that
+#: expired and was reused under a different kind in between would pair one
+#: kind's value with another kind's method, and for approval that is the one
+#: case that matters: an empty value read against the approval method is
+#: *approved*, not declined (``tools/approval.py:3320``). Refused instead.
+PROMPT_KIND_CHANGED: Final[str] = "the prompt changed before this could be sent — nothing was sent"
+
+#: Shown when escape is pressed on the unanswerable (deny-all-only) card
+#: (CR4 finding 6b). Named rather than silent, for the same AE11 reason
+#: every other refusal in this module is: the card's own hint line
+#: (:data:`~talaria.ui.prompts.DENY_ALL_HINT`) names one key, and pressing a
+#: different one used to look exactly like a control that worked by doing
+#: nothing visible at all.
+DECLINE_NOT_OFFERED_HERE: Final[str] = (
+    "escape does nothing on this card — it only offers deny all"
+)
 
 #: How a successful whole-queue denial opens. A constant so the transcript and
 #: the operator's notice cannot come to say different things about the one
@@ -364,6 +407,48 @@ PROFILE_SWITCH_UNAVAILABLE: Final[str] = (
 #: How the transcript names a switch that closed the old connection without
 #: making the new one. The report's own reason and detail follow.
 PROFILE_SWITCH_FAILED: Final[str] = "profile switch failed:"
+
+# ── U7: the session picker (KTD3, KTD6) ─────────────────────────────────────
+
+#: The gateway method the picker's listing comes from (``tui_gateway/methods_session.py:162``,
+#: pinned read-only in ``talaria/domain/compat.py`` — R10).
+LIST_SESSIONS_METHOD: Final[str] = "session.list"
+
+#: Sent explicitly on every ``session.list`` call rather than omitted — it is
+#: the handler's own default (``methods_session.py:181``), and the compat
+#: baseline's request fixture pins the same value, so a startup probe and an
+#: operator's ``/sessions`` ask the gateway the identical question.
+SESSIONS_LIST_LIMIT: Final[int] = 200
+
+#: Said when ``/sessions`` is typed with no gateway attached at all — a
+#: replay, or a live session that has not (yet, or any longer) connected.
+SESSIONS_UNAVAILABLE: Final[str] = (
+    "this session cannot list sessions: no gateway connection"
+)
+
+#: Prefix for the line naming a ``session.list`` call the gateway refused or
+#: never answered. The outcome's own notice supplies the rest.
+SESSIONS_LIST_FAILED: Final[str] = "could not list sessions:"
+
+#: Said when the connection changed between issuing ``session.list`` and its
+#: reply landing. Unlike ``MODELS_STALE_EPOCH``/``PROFILES_STALE_EPOCH`` this
+#: is not about a *cached* listing going stale — the picker never caches one
+#: (``talaria/ui/picker.py:SessionPickerSource``) — it is about the reply
+#: itself having answered for a gateway Talaria is no longer talking to by
+#: the time it lands.
+SESSIONS_STALE_EPOCH: Final[str] = (
+    "the connection changed while sessions were being listed — try /sessions again"
+)
+
+#: Said for an empty, but successfully fetched, listing.
+NO_SESSIONS: Final[str] = "the gateway reports no sessions to switch to"
+
+#: Said when a switch is chosen while a previous ``session.create``/
+#: ``session.resume`` is still on the wire (C1, U7 round three). Refuses the
+#: *send*, not just the reply — see :attr:`TalariaApp._resume_in_flight`.
+SWITCH_ALREADY_IN_FLIGHT: Final[str] = (
+    "a session switch is already on the wire — wait for it to land, then try again"
+)
 
 # ── U5: the default-model write and its two-act confirmation (KTD7) ────────
 
@@ -514,6 +599,26 @@ class AnswerVerdict:
         return self.disposition == "used"
 
 
+def _reply_resolved_count(outcome: RpcOutcome) -> int | None:
+    """How many queue entries the gateway's own ``approval.respond`` reply
+    says it resolved, or ``None`` when the reply carried no usable count.
+
+    ``resolve_gateway_approval`` (``tools/approval.py``) returns exactly the
+    length of the queue snapshot it took under its own lock, and the
+    ``approval.respond`` handler (``tui_gateway/methods_prompt.py``) puts it
+    on the wire verbatim as ``{"resolved": <int>}``. It is the one place the
+    gateway's real, internal queue size at resolution time is visible to the
+    client at all — frame arrival order on the wire says only what Talaria
+    observed, not what the gateway's own snapshot held
+    (:meth:`TalariaApp.deny_all_approvals_live`'s P1, U7 round four).
+    """
+    body = outcome.result if isinstance(outcome.result, Mapping) else {}
+    resolved = body.get("resolved")
+    if isinstance(resolved, int) and not isinstance(resolved, bool):
+        return resolved
+    return None
+
+
 def _resolved_clause(outcome: RpcOutcome) -> str:
     """How many queue entries the gateway says it released, or that it did not say.
 
@@ -523,10 +628,9 @@ def _resolved_clause(outcome: RpcOutcome) -> str:
     out: a missing count is the gateway declining to answer, and the sentence
     has to say that rather than print a Python literal that reads as zero.
     """
-    body = outcome.result if isinstance(outcome.result, Mapping) else {}
-    resolved = body.get("resolved")
-    if isinstance(resolved, int) and not isinstance(resolved, bool):
-        return f"{resolved} resolved"
+    count = _reply_resolved_count(outcome)
+    if count is not None:
+        return f"{count} resolved"
     return UNCOUNTED_RESOLUTION
 
 
@@ -649,6 +753,14 @@ class TalariaApp(App[None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("ctrl+q", "quit", "quit", priority=True),
+        # R1/KTD9: the conventional remaining choice among the un-shadowed
+        # function keys (f2-f10 are already bound below). ``priority=True`` so
+        # the jump reaches its target "from anywhere in the interface" per R1,
+        # including while a card's own Input or Button already holds the
+        # caret. If a terminal or OS intercepts f1, KTD9 names ``ctrl+space``
+        # as the recorded fallback — see the U1 verification note in
+        # DECISIONS.md for the measurement that would trigger it.
+        Binding("f1", "jump_to_prompt", "answer", priority=True),
         Binding("f8", "toggle_pause", "pause/resume", priority=True),
         Binding("f9", "slow_down", "slower", priority=True),
         Binding("f10", "speed_up", "faster", priority=True),
@@ -789,6 +901,14 @@ class TalariaApp(App[None]):
         self._teardown_started = False
         self._coalesce_timer: Timer | None = None
         self._pump_task: asyncio.Task[None] | None = None
+        #: KTD2's landing barrier: how many session landings are in flight.
+        #:
+        #: A counter rather than a flag so a nested landing (a switch issued
+        #: while startup's own resume is still travelling) cannot have its
+        #: inner exit release the outer one's hold.
+        self._landing_depth = 0
+        #: Inbound frames held while a landing is in flight, in arrival order.
+        self._deferred_frames: list[FrameRecord] = []
         self._status_task: asyncio.Task[None] | None = None
         self._catalog_task: asyncio.Task[None] | None = None
         #: The model catalogue's own fetch task, held separately from
@@ -829,6 +949,27 @@ class TalariaApp(App[None]):
         self._model_catalog_epoch = 0
         #: The same stamp for :attr:`profiles`.
         self._profiles_epoch = 0
+        #: True for the duration of one ``session.create``/``session.resume``
+        #: round trip (C1, U7 round three; supersedes the generation counter
+        #: P1/U7 round two used here previously).
+        #:
+        #: Choosing B, reopening ``/sessions`` before B's ``session.resume``
+        #: reply lands, and choosing C used to dispatch two resumes with no
+        #: ordering guarantee on the gateway's side either — a client-side
+        #: generation number could discard C's reply if it arrived first,
+        #: but the gateway's own active session and Talaria's belief could
+        #: still diverge (B live gateway-side, discarded client-side)
+        #: because nothing had stopped the *second send*. This stops the
+        #: send instead: :meth:`open_session` checks the flag before
+        #: dispatching and refuses a newer selection outright (the same
+        #: notice :func:`~talaria.domain.state.switch_refusal` already
+        #: uses) rather than queuing it — a queued switch would still land
+        #: eventually, silently, for a row the operator may not even
+        #: remember choosing. With at most one resume ever in flight, a
+        #: reply is never stale by the time it lands, which is what let the
+        #: generation counter retire rather than needing to compose with
+        #: this.
+        self._resume_in_flight = False
         #: Request ids whose respond is already in flight. The render tick fires
         #: every 50ms and a terminal-read answer is dispatched from it, so
         #: without this the same read is answered once per tick until the reply
@@ -1079,6 +1220,17 @@ class TalariaApp(App[None]):
         the mode test: there the local write has already happened, so folding
         the frame too would print the operator's message twice.
         """
+        if self._landing_depth and record.direction == "in":
+            # KTD2's barrier. The transport resolves the RPC future
+            # (``transport/source.py:589``) and enqueues later frames
+            # independently (``:601``) while this pump runs concurrently, so an
+            # event the gateway sent *after* the resume reply can reach the
+            # reducer before the awaiting coroutine wakes up and seeds. Held
+            # here and flushed by :meth:`_landing` the moment the seed is
+            # applied, which puts the event after the history it follows —
+            # which is where the gateway put it.
+            self._deferred_frames.append(record)
+            return
         self.frames_applied += 1
         if record.direction == "out":
             if self.mode == "replay":
@@ -1241,6 +1393,27 @@ class TalariaApp(App[None]):
             return
         self.controls.slow_down()
         self._notice(self._pacing_notice())
+
+    def action_jump_to_prompt(self) -> None:
+        """Move the caret to the oldest unanswered prompt's control (R1, U1).
+
+        Delegates entirely to :meth:`PromptRegion.focus_first_unanswered` —
+        the region already knows which card is "the" one on screen (the same
+        ordering :meth:`~talaria.ui.prompts.PromptRegion.reveal_actions`
+        keeps visible), so this binding carries no ordering logic of its own.
+        With nothing outstanding the call is a no-op and the caret stays
+        exactly where it was.
+
+        **Refused while a modal picker holds the screen (CR1 finding 2).**
+        ``focus_answer()`` targets the card's own screen, which is the
+        background screen while a picker is pushed on top of it — moving
+        focus there would be invisible and would do nothing the operator
+        could act on, so no focus is changed at all and the picker keeps it.
+        """
+        if isinstance(self.screen, ModalScreen):
+            self._notice(JUMP_BLOCKED_BY_MODAL)
+            return
+        self.prompts.focus_first_unanswered()
 
     async def action_toggle_agents(self) -> None:
         await self.agents.toggle_collapsed()
@@ -1405,26 +1578,147 @@ class TalariaApp(App[None]):
         it on an ``unknown`` would be worse than cosmetic: ``cancelled`` is
         sticky and suppresses later deltas, so an interrupt that never landed
         would silently swallow the rest of a turn that is still streaming.
+
+        **A confirmed interrupt also declines the turn's outstanding prompts
+        (R4/KTD8), and only a confirmed one does.** The prompts belong to the
+        turn that just died, and the gateway is blocking on each of them;
+        releasing them now beats leaving the operator with cards for a dead
+        turn and the gateway waiting out its own timeout. An interrupt whose
+        outcome is unknown declines nothing at all, for exactly the reason the
+        cancelled state is not applied either: the turn may still be alive, and
+        denying its approvals would refuse commands for work that is still
+        running.
         """
         dispatcher = self.dispatcher
         if dispatcher is None:  # pragma: no cover - guarded by every caller
             return None
 
+        # Captured once, before the await, and used for both the call and
+        # the sweep below. Re-reading ``self.state.focused_session_id`` after
+        # the await let a focus change during the round trip — a slow reply
+        # plus a switch, reachable today at reconnect and once the ``/sessions``
+        # switcher lands — decline the WRONG session's prompts: the interrupt
+        # that was confirmed for session A would sweep whatever session B had
+        # raised in the meantime (CR4 finding 2).
+        target_session_id = self.state.focused_session_id
         outcome = await dispatcher.call(
             INTERRUPT_METHOD,
-            {"session_id": self.state.focused_session_id or ""},
+            {"session_id": target_session_id or ""},
             timeout=self.call_timeout,
         )
 
         if outcome.confirmed:
-            self.state = cancel_turn(self.state, at=self.state.last_observed_at)
+            # Only applied while the interrupted session is still the one
+            # displayed (B1). ``cancel_turn`` mutates ``state.turn`` and its
+            # streaming fields unconditionally, and those belong to whichever
+            # session is *currently* focused — not necessarily the one this
+            # call was for. A focus change during the round trip (reconnect,
+            # or the ``/sessions`` switcher) would otherwise mark a live,
+            # still-streaming session B interrupted because session A's
+            # delayed confirm arrived after the switch. Skipped rather than
+            # redirected: there is no other session's turn state on this
+            # object to redirect it to (the same non-goal A3 documents), so A
+            # is left to land its own, correct turn state the next time it is
+            # focused.
+            if self.state.focused_session_id == target_session_id:
+                self.state = cancel_turn(self.state, at=self.state.last_observed_at)
         else:
             self.state = record_local_note(
                 self.state, outcome.notice, at=self.state.last_observed_at
             )
         self.composer.show_notice(outcome.notice)
         self._dirty = True
+        if outcome.confirmed:
+            # After the interrupt's own notice, not before: the sweep's
+            # sentences are the newer information, and the last one left on
+            # the notice bar should be what the sweep did.
+            await self.decline_outstanding_prompts(target_session_id)
         return outcome
+
+    async def decline_outstanding_prompts(self, session_id: str | None) -> None:
+        """Decline every outstanding prompt of one session, per kind (KTD8).
+
+        The algorithm is per kind because the bridges are not alike on the
+        wire:
+
+        * **Approvals resolve as one** ``approval.respond {all: true, choice:
+          "deny"}``. Not a loop of single answers: ``approval.respond`` carries
+          no discriminator and pops the queue's head, so answering two
+          uncorrelated approvals individually is the exact defect
+          :func:`~talaria.domain.state.respond_to_prompt` refuses
+          (``REFUSED_UNCORRELATED_APPROVAL``). One choice applied to the whole
+          queue needs no correlation, which is what makes it correct here — and
+          it is a denial, the only direction that is safe to apply to commands
+          nobody re-read.
+        * **Clarify, sudo and secret each get their kind's empty answer**, one
+          ``*.respond`` apiece. They carry real request ids, so each one is
+          aimed at the question that asked it.
+        * **``terminal_read`` gets nothing.** Talaria answers it itself and it
+          renders no card, so there is no blocked human to release and no
+          reason to put a value on the wire for it.
+
+        Sequential rather than concurrent: every call folds its outcome into
+        ``self.state``, and two coroutines doing that from the same starting
+        value would lose one of the two results.
+
+        **Every outstanding id is latched before any of this sends (CR4
+        findings 1 and 4).** The installed gateway's own ``session.interrupt``
+        clears every pending clarify/sudo/secret and deny-alls the approval
+        queue *before* it replies — so by the time this method's caller
+        observes a confirmed interrupt, the gateway has already resolved
+        every prompt this sweep is about to answer. A prompt still in
+        ``prompts`` **and** one already ``answering`` (its own single answer
+        in flight when the interrupt landed) are both tombstoned first, so a
+        later definite ``not_sent`` for either — this sweep's own call, or the
+        in-flight one that started before it — cannot restore a control the
+        gateway is no longer holding. The sweep's sends below are kept
+        regardless: harmless once latched, and the belt for a gateway build
+        that does not clear pending state this way.
+        """
+        self.state = latch_resolved_prompts(
+            self.state,
+            (
+                prompt
+                for prompt in (*self.state.prompts, *self.state.answering)
+                if session_id is None
+                or prompt.session_id is None
+                or prompt.session_id == session_id
+            ),
+        )
+
+        # The approval test is the registry's own, not a re-derivation: an
+        # approval still in ``prompts`` is exactly what
+        # :func:`~talaria.domain.state.respond_to_all_approvals` will take, so
+        # the sweep never makes a deny-all call that has nothing to deny and
+        # then reports "no longer live" about an interrupt that went fine.
+        if any(
+            self.state.prompt_for(prompt.request_id) is not None
+            for prompt in self.state.outstanding_approvals(session_id)
+        ):
+            await self.deny_all_approvals_live(session_id)
+
+        mine = tuple(
+            prompt
+            for prompt in self.state.prompts
+            if prompt.kind != "approval"
+            and (
+                session_id is None
+                or prompt.session_id is None
+                or prompt.session_id == session_id
+            )
+        )
+        for prompt in mine:
+            value = decline_value(prompt.kind)
+            if value is None:
+                # ``terminal_read``. Nothing is sent and nothing is said: the
+                # operator was never shown a control for it.
+                continue
+            # The sweep's own captured session (B2), not whatever is
+            # focused when this particular await lands — see
+            # :meth:`respond_live`'s ``session_id`` paragraph.
+            await self.respond_live(
+                prompt.request_id, value, declined=True, session_id=session_id
+            )
 
     # ── blocking prompts: the approval path and the four bridges (U8) ────
 
@@ -1453,7 +1747,60 @@ class TalariaApp(App[None]):
             # the refusal path, which that registry exists to refuse.
             self._refuse_mutation(PROMPT_RESPOND_CONTROL)
             return
-        self._spawn_live(self._respond_and_discard(message.request_id, message.value))
+        self._spawn_live(
+            self._respond_and_discard(message.request_id, message.value, message.kind)
+        )
+
+    def on_prompt_card_declined(self, message: PromptCard.Declined) -> None:
+        """The operator pressed ``escape`` on a card. Refuse the prompt (R3).
+
+        **The wire value is decided here, from the kind, and never carried on
+        the message.** :func:`~talaria.ui.prompts.decline_value` is the one
+        place that knows an approval's decline is the explicit ``deny`` choice
+        while the other three send their field empty — an empty *approval*
+        choice is not a decline at all, because the gateway's consumer blocks
+        only on ``None`` and ``"deny"`` and returns approved for anything else
+        resolved (``tools/approval.py:3291``, ``:3320``).
+
+        Everything after that is the ordinary answer path: same
+        :meth:`respond_live`, same registry guards, same outcome discipline.
+        A decline is an answer that happens to say no, so nothing about how it
+        is sent, cleared, restored or recorded is a second set of rules.
+
+        The replay refusal is the same one an answer gets, for the reason
+        AE11's inert-control rule gives: a control that swallows a keypress
+        and does nothing is indistinguishable from one that worked.
+
+        **The kind this message carries is passed on to** :meth:`respond_live`
+        **as the pairing it must still hold at send time.** ``value`` above is
+        computed from ``message.kind`` — the kind the card had when the
+        operator pressed escape — while :meth:`respond_live` picks the wire
+        *method* from a later, independent read of the registry's kind for
+        this id. Nothing used to check the two still agreed (CR4 finding 5):
+        a registry id that expires and is reused under a different kind
+        between the two reads would pair one kind's value with another
+        kind's method — for approval, the one case where that matters, an
+        empty value paired with the approval method is read as *approved*.
+        """
+        message.stop()
+        if self.mode == "replay" or self.dispatcher is None:
+            self._refuse_mutation(PROMPT_RESPOND_CONTROL)
+            return
+        value = decline_value(message.kind)
+        if value is None:  # pragma: no cover - the card refuses these already
+            return
+        self._spawn_live(self._decline_and_discard(message.request_id, value, message.kind))
+
+    async def _decline_and_discard(self, request_id: str, value: str, kind: PromptKind) -> None:
+        await self.respond_live(request_id, value, declined=True, expected_kind=kind)
+
+    def on_prompt_card_decline_refused(self, message: PromptCard.DeclineRefused) -> None:
+        """Escape did nothing on the unanswerable card, and says so (CR4
+        finding 6b, AE11). No mutation of any kind is attempted — the card's
+        one control is the button in front of the operator, not this key.
+        """
+        message.stop()
+        self._notice(DECLINE_NOT_OFFERED_HERE)
 
     def on_prompt_card_denied_all(self, message: PromptCard.DeniedAll) -> None:
         """Deny every approval queued in the session, as one call.
@@ -1478,7 +1825,40 @@ class TalariaApp(App[None]):
         The answerable queue is taken out of the registry before the call, for
         the same reason a single answer is: a second denial while the first is
         travelling is a second value delivered for questions that already have
-        one. If the call reaches no socket, every one of them goes back.
+        one.
+
+        **No approval-kind outcome ever restores a card, on this call or on
+        any follow-up it sends (the round-six policy, terminal for this
+        path).** ``approval.respond`` carries no request id (R9) — the
+        gateway pops whatever sits at the queue's FIFO head, or clears the
+        whole queue for ``all: true`` — so no client-side scheme can aim a
+        wire call at one specific approval. Every earlier attempt at this
+        (B3's seq boundary, round four's resolved-count bound, round five's
+        follow-up deny) only relocated the same race one layer down; round
+        six stops redesigning the mechanism and adopts a policy instead.
+        Restoring on ambiguity is the dangerous direction: a live-looking
+        card the gateway has actually already resolved sends every later
+        answer attempt back through the same ambiguous reply shape,
+        restoring it again — an unkillable zombie. Settling and latching is
+        safe even when it is *wrong* about a specific card: if the gateway
+        genuinely still holds that approval, its own unannounced 300-second
+        timeout (``tools/approval.py``'s ``_get_approval_timeout``, the same
+        number :func:`~talaria.domain.state.age_out_approvals` mirrors
+        locally) unblocks the waiting agent thread regardless of what
+        Talaria's screen shows, and the gateway fails closed on that timeout
+        (``"Silence is not consent."``) — which is itself the denial the
+        operator's deny-all asked for. Nothing latching does locally changes
+        whether that timeout fires; it only stops offering a control for a
+        question the wire's own ambiguity had very likely already answered.
+        The accepted residual is bounded: a card whose approval the gateway
+        resolved by some other path may sit on screen, looking answerable,
+        until the operator's next interaction with it settles it — one
+        wasted keypress. :meth:`_deny_one_approval_followup`'s own docstring
+        names the specific way a follow-up deny can leave exactly this
+        residual. Non-approval kinds (clarify/sudo/secret) are unaffected:
+        they carry real request ids on the wire, so their existing
+        restore-on-``not_sent`` discipline (:meth:`respond_live`) is aimed
+        and stays correct.
 
         **This path reads the outcome through :func:`read_answer`, the same
         function the single-answer path uses, and that is the fix rather than an
@@ -1529,11 +1909,157 @@ class TalariaApp(App[None]):
         )
 
         verdict = read_answer("approval", outcome)
+        # Defined here, not only inside the branch below, so the notice's
+        # arithmetic (round five/six) can read them whichever way ``verdict``
+        # came back — all zero unless a follow-up deny actually ran.
+        followed_up: tuple[PendingPrompt, ...] = ()
+        followup_resolved = 0
+        followup_withdrawn = 0
         for prompt in scope.taken:
-            self.state = (
-                restore_prompt(self.state, prompt)
-                if verdict.restore
-                else settle_prompt(self.state, prompt.request_id)
+            self.state = settle_prompt(
+                self.state, prompt.request_id, session_id=prompt.session_id
+            )
+        if verdict.restore:
+            # **Round six: even a genuine not_sent for this call's own reply
+            # latches rather than restores.** There is no resolved count and
+            # no queue to follow up against when the call itself never
+            # reached a socket, so ``scope.taken`` is latched directly — the
+            # same policy the block below applies through the follow-up
+            # mechanism, taken here in one step because there is nothing
+            # ambiguous left to resolve against the wire.
+            self.state = latch_resolved_prompts(self.state, scope.taken)
+        else:
+            # **The gateway's ``all: true`` resolves the queue as it stands
+            # *there*, when the call executes — not as it stood *here*, when
+            # ``scope`` was built.** An approval that registered while the
+            # reply was on the wire is in that resolved queue too (CR4
+            # finding 3), and ``scope`` alone has no way to name it. Taking it
+            # the same way ``scope`` took everything else — through
+            # :func:`~talaria.domain.state.respond_to_all_approvals` again,
+            # now that the reply is in — moves it out of ``prompts`` so its
+            # card leaves the screen, the same as every other approval this
+            # call swept. Nothing on the wire follows this second call: this
+            # confirmed reply already covers it, and only its own domain
+            # state needs to catch up.
+            late_state, late_scope = respond_to_all_approvals(self.state, session_id=target)
+            self.state = late_state
+            # **Bounded to approvals that existed at reply time (B3).** The
+            # re-scope above has no causal boundary of its own: it takes
+            # *everything* answerable right now, and "right now" is after an
+            # ``await`` — an approval that registered on a frame arriving
+            # strictly after this reply's own frame is not one the gateway's
+            # ``all: true`` could have seen, because it did not exist yet
+            # when the gateway acted. ``outcome.seq`` is the reply's own
+            # frame position (``RpcOutcome.seq``); a prompt's ``seq`` is the
+            # frame it registered on. ``outcome.seq is None`` means the
+            # outcome never had a reply frame to read a position from (a
+            # test double, or a call that never reached the gateway at all)
+            # — nothing to bound against, so every taken approval is treated
+            # as pre-existing, matching this method's behaviour before B3.
+            boundary = outcome.seq
+            if boundary is None:
+                seq_eligible_late = late_scope.taken
+                really_late_flight = late_scope.already_in_flight
+            else:
+                seq_eligible_late = tuple(p for p in late_scope.taken if p.seq <= boundary)
+                really_late_flight = tuple(
+                    p for p in late_scope.already_in_flight if p.seq <= boundary
+                )
+                # Given back exactly as this call found them: never sent,
+                # never settled, never latched. The gateway's own reply
+                # could not have resolved a queue entry that did not exist
+                # when it was built, so this call has nothing to claim about
+                # it — the operator sees its card and answers it normally.
+                for prompt in late_scope.taken:
+                    if prompt.seq > boundary:
+                        self.state = restore_prompt(self.state, prompt)
+            for prompt in seq_eligible_late:
+                self.state = settle_prompt(self.state, prompt.request_id, session_id=target)
+            # **The seq boundary is necessary but not sufficient (P1, U7
+            # round four/five).** An approval whose event frame arrived on
+            # the wire *before* the reply's own frame can still postdate the
+            # gateway's own queue snapshot: a concurrent timeout, or a
+            # different call's own ``approval.respond``, can pop an entry
+            # from the gateway's queue between when it announced the
+            # approval and when this call's ``all: true`` actually ran —
+            # the frame ordering Talaria observed says nothing about that.
+            # The reply's own ``resolved`` count (``resolve_gateway_approval``,
+            # ``tools/approval.py``) is the one place the gateway's real
+            # snapshot size is visible at all.
+            #
+            # **The count's only job is to detect ambiguity, never to pick
+            # survivors (round five).** Guessing which oldest-``k`` of the
+            # candidates the count actually covers and *restoring* the rest
+            # was the round-four design, and it could misidentify: if the
+            # gateway's real snapshot dropped one from the *middle* rather
+            # than the youngest, restoring an already-resolved approval put
+            # a live-looking card back on screen for a command the gateway
+            # is done with — and because ``approval.respond`` reads no
+            # ``request_id`` (verified against the installed gateway,
+            # ``tui_gateway/methods_prompt.py:958-977`` and
+            # ``tools/approval.py:2486-2519``: an empty or already-resolved
+            # queue answers ``{"resolved": 0}`` with an ordinary confirmed
+            # reply, never a raw exception or a mis-resolved unrelated
+            # entry), any later answer against that phantom card comes back
+            # the same ``not_sent``-shaped way and restores it again — an
+            # unkillable zombie.
+            #
+            # When the count covers every candidate, they are ordered
+            # oldest first by registration order and all settle and latch,
+            # unchanged from round four. When it does not, the candidates
+            # beyond the count get an individual follow-up
+            # ``approval.respond`` instead of a restore
+            # (:meth:`_deny_one_approval_followup`). A follow-up is safe
+            # under *either* arm of the ambiguity, which is exactly why it
+            # replaces the guess rather than refining it: if the gateway
+            # already resolved this specific entry, the follow-up finds an
+            # empty queue and answers harmlessly; if it is still genuinely
+            # queued, the follow-up denies it — which is what the
+            # operator's original deny-all meant for every entry it
+            # reached, not only the ones the reply happened to name. Which
+            # *specific* candidates are treated as "covered by the reply"
+            # versus "followed up" does not have to be correct, only their
+            # count does: an approval the gateway already resolved is safe
+            # to latch directly OR to follow up (both land on "resolved,
+            # not shown again"), so there is no wrong split, only wrapped
+            # work when the guess happens to differ from the gateway's own.
+            resolved_count = _reply_resolved_count(outcome)
+            settled = tuple(
+                sorted((*scope.taken, *seq_eligible_late), key=lambda p: (p.seq, p.request_id))
+            )
+            if resolved_count is not None and resolved_count < len(settled):
+                followed_up, settled = settled[resolved_count:], settled[:resolved_count]
+                for prompt in followed_up:
+                    if await self._deny_one_approval_followup(prompt, target):
+                        followup_resolved += 1
+                    else:
+                        followup_withdrawn += 1
+            # **Every id this call swept is latched, including the ones it did
+            # not take.** ``all: true`` resolves the whole queue at the
+            # gateway, so an approval whose own single answer is still on the
+            # wire has been resolved by *this* call as well — and under the
+            # round-six policy that single answer's own owner never restores
+            # it either (:meth:`respond_live` / ``_record_prompt_outcome``'s
+            # approval carve-out), so nothing else clears that card. The
+            # latch is the mechanism ``restore_prompt`` already consults,
+            # applied to ``already_in_flight`` (both readings of it) as well
+            # as to ``taken``.
+            #
+            # This ``else`` is reached only when this call's own reply was
+            # not a definite ``not_sent``; that other case is handled above,
+            # before this ``if``/``else``, by latching ``scope.taken``
+            # directly instead of restoring it — the round-six policy means
+            # both arms end in a latch, just by different routes.
+            self.state = latch_resolved_prompts(
+                self.state,
+                (
+                    p
+                    for p in (
+                        *settled,
+                        *scope.already_in_flight,
+                        *really_late_flight,
+                    )
+                ),
             )
         covered = f"{scope.denied} waiting"
         if scope.undecided:
@@ -1542,6 +2068,39 @@ class TalariaApp(App[None]):
             line = f"{DENIED_EVERY_APPROVAL}: {covered}"
             if verdict.reason is None:
                 line = f"{line}, {_resolved_clause(outcome)}"
+                # **The count only ever names what the reply itself resolved
+                # (round five finding 2).** ``_resolved_clause`` reads the
+                # reply's own ``resolved`` field, and before round five's
+                # follow-up redesign that number was always the complete
+                # story. It is not once a follow-up deny ran: those
+                # candidates are denials too by the time this line is
+                # written — every follow-up above has already been awaited
+                # — but the wire's own count never counted them, so saying
+                # only that count would understate what actually happened.
+                # Named rather than folded into one bigger number, because
+                # the two came from different calls and claiming one figure
+                # would erase that the reply itself only vouches for the
+                # first.
+                #
+                # **Round six splits that clause in two, at the wire, not at
+                # whether a queue entry actually existed.** A follow-up's own
+                # reply either reaches the gateway — an ordinary denial
+                # (``resolved: 1``) or the harmless empty-queue answer
+                # (``resolved: 0``), both counted as "followed up
+                # individually" because both mean the follow-up was
+                # genuinely served — or comes back a definite not_sent
+                # (counted separately, as "unreachable and withdrawn").
+                # Under the no-restore policy both outcomes settle the card
+                # the same way, but only the first pair is a follow-up the
+                # wire actually carried; the second is a card the operator's
+                # deny-all could not reach at all, which this method's
+                # docstring documents as the accepted residual. Folding the
+                # second into "followed up" would claim contact the wire
+                # never had.
+                if followup_resolved:
+                    line = f"{line}, {followup_resolved} followed up individually"
+                if followup_withdrawn:
+                    line = f"{line}, {followup_withdrawn} unreachable and withdrawn"
             else:
                 # An unacknowledged call carries no count, so the delivery note
                 # already answers "how many"; a second clause saying the gateway
@@ -1557,11 +2116,128 @@ class TalariaApp(App[None]):
         self._dirty = True
         return outcome
 
-    async def _respond_and_discard(self, request_id: str, value: str) -> None:
-        await self.respond_live(request_id, value)
+    async def _deny_one_approval_followup(
+        self, prompt: PendingPrompt, session_id: str | None
+    ) -> bool:
+        """Individually deny one approval the deny-all reply's own count
+        left ambiguous (round five finding 1), never restoring it (round
+        six policy).
 
-    async def respond_live(self, request_id: str, value: str) -> RpcOutcome | None:
+        ``prompt`` is already settled (out of both ``prompts`` and
+        ``answering``) by the time this runs — it was already taken as part
+        of this same call's sweep. This sends one ordinary, single
+        ``approval.respond`` (``all`` unset), which — verified against the
+        installed gateway before this was written
+        (``tui_gateway/methods_prompt.py:958-977``,
+        ``tools/approval.py:2486-2519``) — pops whatever is at the head of
+        the session's queue, or answers ``{"resolved": 0}`` harmlessly if
+        the queue is already empty. It never raises for an absent target and
+        never touches a different session's queue.
+
+        **Which specific command this denies, if any, is not knowable from
+        here — and that is fine.** ``approval.respond`` carries no
+        ``request_id`` on the wire (R9), so there is no way to aim this at
+        ``prompt`` specifically. The operator's original action was "deny
+        every queued approval", and every candidate reaching this method
+        already passed the seq boundary — it is part of that same original
+        intent, not a later, unrelated approval. Denying whatever the queue
+        actually holds fulfills that intent regardless of which entry it
+        turns out to be — which is also why this is the specific site where
+        a follow-up meant for one candidate can pop a different, genuinely
+        later approval instead (:meth:`deny_all_approvals_live`'s docstring
+        names this as the accepted residual): the queue has no way to tell
+        this call which entry it is popping, only that popping one matches
+        the operator's intent.
+
+        **Never restored, on any outcome (round six).** Round five restored
+        ``prompt`` on a definite not_sent; that instruction is superseded.
+        Under the round-six policy ``prompt`` is latched here regardless of
+        which of the two outcomes this call reaches — an already-resolved
+        queue (``{"resolved": 0}``) or a genuine not_sent — because
+        restoring on either one risks the unkillable zombie the class
+        docstring describes, and latching wrongly self-heals through the
+        gateway's own timeout instead. The return value distinguishes them
+        only for the caller's notice text, and the line is drawn at the
+        wire, not at whether a real queue entry was denied: ``True`` means
+        this call's own reply reached the gateway at all — an ordinary
+        denial (``resolved: 1``) or the harmless empty-queue answer
+        (``resolved: 0``, ``disposition == "discarded"``) both count,
+        because both mean the follow-up was genuinely served, and the caller
+        reports either one as "followed up individually". ``False`` means
+        ``verdict.restore``: a definite not_sent, this call never reaching a
+        socket at all, and the caller reports it separately, as unreachable,
+        because the wire gave it nothing to point to. The state action —
+        latch, never restore — is identical either way; only the notice
+        text this feeds back to the caller differs.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded by every caller
+            return False
+        outcome = await dispatcher.call(
+            RESPOND_METHODS["approval"],
+            respond_params(
+                "approval", request_id="", session_id=session_id, value=DENY_ALL_CHOICE
+            ),
+            timeout=self.call_timeout,
+        )
+        verdict = read_answer("approval", outcome)
+        self.state = latch_resolved_prompts(self.state, (prompt,))
+        self._dirty = True
+        return not verdict.restore
+
+    async def _respond_and_discard(self, request_id: str, value: str, kind: PromptKind) -> None:
+        await self.respond_live(request_id, value, expected_kind=kind)
+
+    async def respond_live(
+        self,
+        request_id: str,
+        value: str,
+        *,
+        declined: bool = False,
+        expected_kind: PromptKind | None = None,
+        session_id: str | None = None,
+    ) -> RpcOutcome | None:
         """Answer one outstanding prompt, and only the one that asked (R9).
+
+        ``declined`` changes **only the wording written down** (R3/KTD4): a
+        decline is sent, cleared, restored and latched by exactly the rules
+        above, because it is an answer that says no rather than a second kind
+        of act. What it is not is an *answer* in the transcript — "sudo
+        answered" for a control the operator refused is a false entry in the
+        one record that says what was allowed — so the verb changes and
+        nothing else does.
+
+        **The registry is consulted before anything is sent, and it is what
+        clears the prompt.** Both halves of the correlation clause are checked
+        there — the request id must still be live *and* it must belong to the
+        session currently focused — so an answer typed into a control that a
+        ``*.expire`` cleared a moment earlier reaches no socket at all (R8), and
+        an answer for a session that is no longer the focused one cannot be
+        delivered to whatever question the new session happens to be asking.
+
+        **``expected_kind``, when given, must still match the registry's own
+        kind for this id (CR4 finding 5, B4).** Both single-answer callers —
+        :meth:`on_prompt_card_answered` and :meth:`on_prompt_card_declined` —
+        compute ``value`` from the kind their message carried and pass that
+        same kind here; the wire *method* below is picked from
+        ``prompt.kind``, an independent, later read of the registry. A
+        mismatch means the id was reused under a different kind between the
+        two reads, and sending would pair one kind's value with another
+        kind's method — refused instead of guessed. This used to be wired
+        only from the decline path; a stale answer card was still sent
+        under whatever kind the registry now held for its id, which for a
+        sudo password reused as a clarify made the value cross bridges.
+
+        **``session_id``, when given, is who this answer is for — not
+        necessarily whoever is focused right now (B2).** A single card the
+        operator is looking at answers for the current focus, and every
+        caller but one passes nothing and gets exactly that. The interrupt
+        sweep (:meth:`decline_outstanding_prompts`) captures its own target
+        session before it starts a *sequential* run of these calls; each
+        earlier call in that run can itself await a round trip, and a focus
+        change during one would otherwise make every later call in the same
+        sweep re-read the *new* focus and refuse the session it was actually
+        declining for (``REFUSED_WRONG_SESSION``) instead of sending.
 
         **The registry is consulted before anything is sent, and it is what
         clears the prompt.** Both halves of the correlation clause are checked
@@ -1585,8 +2261,16 @@ class TalariaApp(App[None]):
         if dispatcher is None:  # pragma: no cover - guarded by every caller
             return None
 
-        prompt = self.state.prompt_for(request_id)
-        session_id = self.state.focused_session_id
+        if session_id is None:
+            session_id = self.state.focused_session_id
+        prompt = self.state.prompt_for(request_id, session_id=session_id)
+        if expected_kind is not None and prompt is not None and prompt.kind != expected_kind:
+            # Refused before the registry is touched at all: the prompt now
+            # live under this id may be a real, unrelated question, and it is
+            # left exactly as it was for whoever asks about it correctly.
+            self._notice(PROMPT_KIND_CHANGED)
+            self._dirty = True
+            return None
         next_state, refusal = respond_to_prompt(
             self.state, request_id, session_id=session_id
         )
@@ -1617,11 +2301,16 @@ class TalariaApp(App[None]):
             timeout=self.call_timeout,
         )
 
-        self._record_prompt_outcome(prompt, value, outcome)
+        self._record_prompt_outcome(prompt, value, outcome, declined=declined)
         return outcome
 
     def _record_prompt_outcome(
-        self, prompt: PendingPrompt, value: str, outcome: RpcOutcome
+        self,
+        prompt: PendingPrompt,
+        value: str,
+        outcome: RpcOutcome,
+        *,
+        declined: bool = False,
     ) -> None:
         """Write what is known about one answer — never the answer itself.
 
@@ -1651,7 +2340,21 @@ class TalariaApp(App[None]):
         honouring the rule: refused, discarded and delivery-unconfirmed still
         wrote a line each, one line of self-contamination per failed read, with
         the code's own comment two branches lower stating the rule they broke.
+
+        **The transcript line is written only while ``prompt``'s own session
+        is still the one focused (the sweep-transcript fix, U7 round four).**
+        This is the same caller ``session_id`` can name a session other than
+        the currently-focused one for: the interrupt sweep
+        (:meth:`decline_outstanding_prompts`) answers for its own captured
+        target regardless of what becomes focused meanwhile. ``self.state``
+        holds exactly one transcript, the focused session's, so a sweep
+        outcome for a session that is no longer displayed has nowhere correct
+        to be written — appending it anyway put "sudo declined" into whatever
+        session the operator had since switched to. Settling and latching
+        still happen unconditionally below; only the presentation is
+        skipped, the same choice B1 made for ``cancel_turn``.
         """
+        in_focus = prompt.session_id is None or prompt.session_id == self.state.focused_session_id
         row = PromptRow(
             request_id=prompt.request_id,
             kind=prompt.kind,
@@ -1662,17 +2365,24 @@ class TalariaApp(App[None]):
         shown = echoable_answer(row, value)
         label = prompt.kind.replace("_", " ")
         applied_to = f" · {APPROVAL_COMMAND_LABEL}{prompt.command}" if prompt.command else ""
+        # One verb pair, read from one flag, so the sentence a decline leaves
+        # behind cannot drift from the sentence an answer leaves behind. The
+        # negative form is what every unconfirmed and refused branch below
+        # uses; "sudo not declined — nothing was sent" and "sudo not answered —
+        # nothing was sent" then say the same true thing about the same
+        # outcome, and the operator can tell which act failed.
+        verb, negated = ("declined", "not declined") if declined else ("answered", "not answered")
         answered = (
-            f"{label} answered: {shown}{applied_to}"
+            f"{label} {verb}: {shown}{applied_to}"
             if shown
-            else f"{label} answered{applied_to}"
+            else f"{label} {verb}{applied_to}"
         )
         verdict = read_answer(prompt.kind, outcome)
 
         if verdict.disposition == "error":
-            self.state = settle_prompt(self.state, prompt.request_id)
+            self.state = settle_prompt(self.state, prompt.request_id, session_id=prompt.session_id)
             self._report_prompt_outcome(
-                prompt, f"{answered} — {verdict.reason}", notice=outcome.notice
+                prompt, f"{answered} — {verdict.reason}", notice=outcome.notice, in_focus=in_focus
             )
             self._dirty = True
             return
@@ -1694,8 +2404,48 @@ class TalariaApp(App[None]):
             # answer larger than the one before it — 159 characters to 884
             # across three cycles. The operator is still told, on the notice
             # bar, which the transcript projection does not read.
-            self.state = settle_prompt(self.state, prompt.request_id)
+            self.state = settle_prompt(self.state, prompt.request_id, session_id=prompt.session_id)
             self._notice(f"{label} not answered — {verdict.reason}")
+            self._dirty = True
+            return
+
+        if verdict.restore and prompt.kind == "approval":
+            # **An approval-kind not_sent never restores, on this ordinary
+            # single-answer path exactly as on the deny-all's own follow-up
+            # path (round six policy;
+            # :meth:`deny_all_approvals_live`'s docstring, and
+            # :meth:`_deny_one_approval_followup`).** ``approval.respond``
+            # carries no request id (R9), so a restored card here carries the
+            # same unkillable-zombie risk the deny-all docstring describes:
+            # a later answer for this same, still-unaimed approval reaches
+            # the wire the same ambiguous way and would restore it again.
+            # Settling and latching instead is safe even when the gateway
+            # genuinely never saw this call, because the gateway's own
+            # approval timeout unblocks the waiting agent thread regardless
+            # of what Talaria's screen shows, and that timeout is itself a
+            # denial. The transcript wording below is unchanged from the
+            # general branch beneath this one — the wire outcome really was
+            # a not_sent — only the state action differs.
+            #
+            # **``latch_resolved_prompts`` alone is not enough here.** Its
+            # own docstring is explicit that it touches only
+            # ``flushed_prompt_ids`` and leaves ``answering`` untouched,
+            # because the deny-all's own use of it names ids whose in-flight
+            # call is *someone else's* to settle. Here it is this very call's
+            # own prompt, still sitting in ``answering`` — the settle
+            # ``restore_prompt`` would otherwise have performed internally
+            # has to be done explicitly before the latch.
+            self.state = settle_prompt(
+                self.state, prompt.request_id, session_id=prompt.session_id
+            )
+            self.state = latch_resolved_prompts(self.state, (prompt,))
+            if in_focus:
+                self.state = record_local_note(
+                    self.state,
+                    f"{label} {negated}{applied_to} — {verdict.reason}",
+                    at=self.state.last_observed_at,
+                )
+            self._notice(DELIVERY_NOTES["not_sent"])
             self._dirty = True
             return
 
@@ -1703,22 +2453,27 @@ class TalariaApp(App[None]):
             # ``restore_prompt`` settles the in-flight entry itself, and it is
             # the one path that may decline to put the control back — an expiry
             # that landed while this call was out already closed the question.
+            # Approval kind never reaches here (carved out above); this
+            # branch now handles only clarify/sudo/secret, which carry real
+            # request ids and so restore safely and correctly.
             self.state = restore_prompt(self.state, prompt)
-            self.state = record_local_note(
-                self.state,
-                f"{label} not answered{applied_to} — {verdict.reason}",
-                at=self.state.last_observed_at,
-            )
+            if in_focus:
+                self.state = record_local_note(
+                    self.state,
+                    f"{label} {negated}{applied_to} — {verdict.reason}",
+                    at=self.state.last_observed_at,
+                )
             self._notice(DELIVERY_NOTES["not_sent"])
             self._dirty = True
             return
 
-        self.state = settle_prompt(self.state, prompt.request_id)
+        self.state = settle_prompt(self.state, prompt.request_id, session_id=prompt.session_id)
         if verdict.disposition == "discarded":
             self._report_prompt_outcome(
                 prompt,
-                f"{label} not answered{applied_to} — {verdict.reason}",
+                f"{label} {negated}{applied_to} — {verdict.reason}",
                 notice=verdict.reason or "",
+                in_focus=in_focus,
             )
             self._dirty = True
             return
@@ -1742,11 +2497,16 @@ class TalariaApp(App[None]):
         # reason and says so in a comment; the prompt path did not inherit it.
         # ``line`` carries no operator-typed value: ``answered`` only ever
         # names a choice the *gateway* offered (:func:`echoable_answer`).
-        self._report_prompt_outcome(prompt, line)
+        self._report_prompt_outcome(prompt, line, in_focus=in_focus)
         self._dirty = True
 
     def _report_prompt_outcome(
-        self, prompt: PendingPrompt, line: str, *, notice: str | None = None
+        self,
+        prompt: PendingPrompt,
+        line: str,
+        *,
+        notice: str | None = None,
+        in_focus: bool = True,
     ) -> None:
         """Put one outcome sentence where that prompt's kind allows it to go.
 
@@ -1770,11 +2530,20 @@ class TalariaApp(App[None]):
         ``notice`` overrides what the operator is shown; the default is the same
         sentence that went to the transcript, which is the property
         ``test_the_notice_bar_and_the_transcript_say_one_thing`` pins.
+
+        ``in_focus`` is ``False`` only for a sweep answering a session that
+        is no longer the one displayed (the sweep-transcript fix, U7 round
+        four) — ``self.state`` holds one transcript, the focused session's,
+        and a line about a different session's prompt has nowhere correct
+        to go. The notice bar still shows: it is not part of any session's
+        own record, and the operator gets no other signal that the sweep's
+        answer landed.
         """
         if prompt.kind not in UNATTENDED_KINDS:
-            self.state = record_local_note(
-                self.state, line, at=self.state.last_observed_at
-            )
+            if in_focus:
+                self.state = record_local_note(
+                    self.state, line, at=self.state.last_observed_at
+                )
             self._notice(line if notice is None else notice)
             return
         self._notice(line)
@@ -2276,16 +3045,23 @@ class TalariaApp(App[None]):
         """Probe KTD9's read-only set and name every gap on screen (R34, AE7).
 
         What lands in the transcript is only the blocking rows. A clean check
-        says nothing, because a line reading "18 methods verified" would be
-        false — five were verified and thirteen were not probed at all — and a
+        says nothing, because a line reading "19 methods verified" would be
+        false — six were verified and thirteen were not probed at all — and a
         line that told the truth about that would be an operator-facing
         paragraph on every launch about a thing that is fine.
 
-        These counts used to read "a line reading '17 methods verified' … five
-        were verified and twelve were not probed at all". Five plus twelve is
-        seventeen, and ``REQUIRED_METHODS`` holds eighteen: commit ``ec861fa``
-        pinned ``slash.exec``, taking ``EVIDENCE_ONLY_METHODS`` from twelve to
-        thirteen, and never touched this file.
+        These counts have moved twice and both times this docstring was the
+        thing that went stale, which is worth naming rather than quietly
+        re-editing away. They used to read "a line reading '17 methods
+        verified' … five were verified and twelve were not probed at all".
+        Five plus twelve is seventeen, and ``REQUIRED_METHODS`` held eighteen:
+        commit ``ec861fa`` pinned ``slash.exec``, taking
+        ``EVIDENCE_ONLY_METHODS`` from twelve to thirteen, and never touched
+        this file. U7 of the 2026-08-08 v0.2 plan then pinned ``session.list``
+        read-only (R10), taking the probed set from five to six and
+        ``REQUIRED_METHODS`` from eighteen to nineteen — five plus thirteen is
+        eighteen, not nineteen, which is the same arithmetic mismatch this
+        paragraph was written to explain the first time.
 
         The gaps do not stop the launch. AE7 blocks the *daily-driver verdict*
         on any gap, and that verdict lives in
@@ -2324,6 +3100,23 @@ class TalariaApp(App[None]):
         session" case be *reported* instead of quietly turning into a new
         conversation.
 
+        **At most one call runs at a time (C1, U7 round three).** See
+        :attr:`_resume_in_flight`, checked and held below. A second
+        selection made while one is still on the wire is refused before it
+        ever reaches the dispatcher — startup's own two paths (``new``/
+        ``resume``) run once, before any switch is possible, and have
+        nothing to race, so the guard costs them nothing.
+
+        This used to be a client-side generation counter instead: choosing
+        B then C while B's reply was still on the wire dispatched two
+        ``session.resume`` calls with no ordering guarantee on the
+        gateway's side either, and comparing a generation number when a
+        reply landed could discard C's *reply* but never stopped the second
+        *send* — the gateway's own active session and Talaria's belief
+        could still diverge underneath a client that showed no error. With
+        the send itself refused instead, the generation counter had nothing
+        left to discard and was retired along with it.
+
         **This has run against a real Hermes gateway**, first on 2026-08-04. R2
         is graded *measured* in
         ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md`` (evidence-table
@@ -2342,39 +3135,87 @@ class TalariaApp(App[None]):
         if dispatcher is None:  # pragma: no cover - guarded by every caller
             return None
 
-        cols = max(self.size.width or DEFAULT_SESSION_COLS, 1)
+        # Refuses a second send outright rather than queuing it (C1) — see
+        # :attr:`_resume_in_flight` and this method's own docstring.
+        if self._resume_in_flight:
+            self._notice(SWITCH_ALREADY_IN_FLIGHT)
+            return None
+        self._resume_in_flight = True
+        try:
+            cols = max(self.size.width or DEFAULT_SESSION_COLS, 1)
 
-        if selection.mode == "new":
-            return self._land_session(
-                await dispatcher.call(CREATE_METHOD, {"cols": cols}, timeout=self.call_timeout)
-            )
+            if selection.mode == "new":
+                with self._landing():
+                    return self._land_session(
+                        await dispatcher.call(
+                            CREATE_METHOD, {"cols": cols}, timeout=self.call_timeout
+                        )
+                    )
 
-        target = selection.session_id
-        if selection.mode == "resume":
-            found = await dispatcher.call(MOST_RECENT_METHOD, {}, timeout=self.call_timeout)
-            if not found.confirmed:
-                self._report_startup_failure(found)
-                return found
-            raw = (found.result or {}).get("session_id")
-            target = raw if isinstance(raw, str) and raw else None
-            if target is None:
-                self._notice(NO_SESSION_TO_RESUME)
-                self.state = record_local_note(
-                    self.state, NO_SESSION_TO_RESUME, at=self.state.last_observed_at
+            target = selection.session_id
+            if selection.mode == "resume":
+                found = await dispatcher.call(MOST_RECENT_METHOD, {}, timeout=self.call_timeout)
+                if not found.confirmed:
+                    self._report_startup_failure(found)
+                    return found
+                raw = (found.result or {}).get("session_id")
+                target = raw if isinstance(raw, str) and raw else None
+                if target is None:
+                    self._notice(NO_SESSION_TO_RESUME)
+                    self.state = record_local_note(
+                        self.state, NO_SESSION_TO_RESUME, at=self.state.last_observed_at
+                    )
+                    self._dirty = True
+                    return found
+
+            # Rechecked immediately before the dispatch, not only inside
+            # ``_land_session`` after the reply lands (P1, U7 round two). That
+            # later check refuses to *apply* a switch whose answer raced it, but
+            # by then ``session.resume`` has already gone out — an answer that
+            # started travelling in the window since :meth:`open_sessions_picker`
+            # returned (listing fetched, dialog open, operator selects) reached
+            # this point unrefused and put the RPC on the wire regardless of
+            # what its reply would do with it.
+            refusal = switch_refusal(self.state)
+            if refusal:
+                self._notice(refusal)
+                return None
+            with self._landing():
+                outcome = await dispatcher.call(
+                    RESUME_METHOD,
+                    {"session_id": target or "", "cols": cols},
+                    timeout=self.call_timeout,
                 )
-                self._dirty = True
-                return found
+                return self._land_session(outcome)
+        finally:
+            self._resume_in_flight = False
 
-        return self._land_session(
-            await dispatcher.call(
-                RESUME_METHOD,
-                {"session_id": target or "", "cols": cols},
-                timeout=self.call_timeout,
-            )
-        )
+    @contextmanager
+    def _landing(self) -> Iterator[None]:
+        """Hold inbound frames for the duration of one landing (KTD2).
+
+        Everything between issuing the ``session.create``/``session.resume``
+        call and applying its seeded history runs inside this. On exit the held
+        frames are folded in arrival order, so a live event that raced the
+        reply lands *after* the history it follows rather than before it.
+
+        The flush is unconditional — a landing that failed still releases what
+        it held. Dropping those frames to keep the transcript "clean" would
+        lose real session content on exactly the path where the operator most
+        needs to see what the gateway is doing.
+        """
+        self._landing_depth += 1
+        try:
+            yield
+        finally:
+            self._landing_depth -= 1
+            if self._landing_depth == 0 and self._deferred_frames:
+                held, self._deferred_frames = self._deferred_frames, []
+                for record in held:
+                    self.ingest(record)
 
     def _land_session(self, outcome: RpcOutcome) -> RpcOutcome:
-        """Focus the session the gateway just handed back, or say why not.
+        """Focus the session the gateway just handed back and seed its history.
 
         Reads the id out of the reply rather than reusing the one that was
         asked for. ``session.resume`` answers with the id it actually resumed
@@ -2382,15 +3223,69 @@ class TalariaApp(App[None]):
         the gateway maps a stored id onto a live one — focusing the id Talaria
         sent would then point the whole interface at a session the gateway is
         not streaming.
+
+        **Both identities are kept** (R6/R7). ``session_id`` is the runtime id
+        events are stamped with, so it drives correlation; ``session_key`` (and
+        ``resumed``, which is the same target on every resume return site,
+        ``methods_session.py:494-506``, ``:581-596``, ``:643-801``) is the
+        durable id that survives the process, so it is what the picker names a
+        session by and what a later resume asks for.
+
+        **The seed is applied inside the landing barrier**, which the caller
+        holds open across the RPC — see :meth:`_landing`.
         """
         if not outcome.confirmed:
             self._report_startup_failure(outcome)
             return outcome
-        raw = (outcome.result or {}).get("session_id")
+        result = outcome.result or {}
+        raw = result.get("session_id")
         if not isinstance(raw, str) or not raw:
             self._notice(f"{SESSION_START_FAILED} the reply named no session")
             return outcome
-        self.state = focus_session(self.state, raw)
+        refusal = switch_refusal(self.state)
+        if refusal:
+            # Landing is refused for the same reason a switch is: an answer is
+            # still travelling. Seeding into a state that did not move would
+            # append the landed session's history to the session still on
+            # screen.
+            self._notice(refusal)
+            return outcome
+        # ``session.resume`` carries the durable id as ``session_key`` and
+        # ``resumed``; ``session.create`` carries none of those two, only
+        # ``stored_session_id`` (``talaria/domain/compat.py:160``) — reading
+        # only the first two left every newly created session with no
+        # durable key at all, so the picker could never recognize it as the
+        # current row (P1, U7 round two).
+        stored = (
+            result.get("session_key")
+            or result.get("resumed")
+            or result.get("stored_session_id")
+        )
+        # Captured before ``land_session`` runs: it is the *previous* focus
+        # that decides whether the transcript ``land_session`` returns is the
+        # fresh buffer of a real switch or the retained one of a reconnect —
+        # by the time ``land_session`` returns, ``focused_session_id`` is
+        # ``raw`` either way, so this is the only point that still knows
+        # which branch it took (CR6 finding 1).
+        previously_focused = self.state.focused_session_id
+        self.state = land_session(
+            self.state,
+            raw,
+            session_key=stored if isinstance(stored, str) and stored else None,
+        )
+        if previously_focused != raw:
+            # The retain branch (landing the session already focused) keeps
+            # the transcript on screen exactly as it is — seeding into it
+            # unconditionally re-appended the same history a second time,
+            # reachable the moment a picker lets the operator choose the
+            # already-focused row (``/sessions``, U7).
+            count = result.get("message_count")
+            self.state = seed_history(
+                self.state,
+                result.get("messages"),
+                omitted=result.get("messages_omitted") is True,
+                count=count if isinstance(count, int) and not isinstance(count, bool) else 0,
+            )
         self._dirty = True
         return outcome
 
@@ -2493,6 +3388,11 @@ class TalariaApp(App[None]):
             # Scheduled for the same reason ``models`` is: opening the region
             # is instant, but selecting a row drops a socket and dials another.
             self._perform_profiles(invocation.argument)
+            return
+        if command.action == "sessions":
+            # Scheduled for the same reason: the fetch and the switch both
+            # cross the socket (U7, KTD6).
+            self._perform_sessions(invocation.argument)
             return
         if command.action == "pause":
             self.controls.pause()
@@ -2646,6 +3546,147 @@ class TalariaApp(App[None]):
                 f"— still connected to the previous gateway"
             )
         return report
+
+    # ── U7: the session picker (KTD3, KTD6) ─────────────────────────────────
+
+    def _perform_sessions(self, argument: str) -> None:
+        """Route ``/sessions``: always opens the picker; no argument shorthand.
+
+        Unlike ``/models``/``/profiles`` there is no ``<n>`` form — the picker
+        never caches a listing for a typed index to resolve against (see
+        :meth:`open_sessions_picker`) — so an argument is refused rather than
+        silently ignored, the same AE9 honesty the other unrecognized-syntax
+        refusals in this module follow.
+        """
+        self.composer.clear()
+        stripped = argument.strip()
+        if stripped:
+            self._notice(f"/sessions takes no argument — {stripped!r} is not understood")
+            return
+        self._spawn_live(self._open_sessions_and_discard())
+
+    async def _open_sessions_and_discard(self) -> None:
+        await self.open_sessions_picker()
+
+    async def open_sessions_picker(self) -> None:
+        """Fetch ``session.list`` fresh and put the modal picker up (R7).
+
+        **Fetched on every open, never cached.** ``/models`` and ``/profiles``
+        hold their listing in app state so a reconnect-invalidated read can be
+        caught by an epoch check at *selection* time (KTD4). A session listing
+        has no such shorthand to protect — there is no ``/sessions <n>`` — so
+        there is nothing to cache, and the epoch is instead checked once,
+        right here, between issuing the call and opening the dialog: if the
+        connection moved on while the reply was travelling, the listing
+        answers for a gateway Talaria is no longer attached to and is refused
+        rather than shown (:data:`SESSIONS_STALE_EPOCH`).
+
+        **Refused before anything is sent, while an answer is on the wire**
+        (U5's :func:`~talaria.domain.state.switch_refusal`, surfaced here for
+        the first time a UI caller reaches it): a late outcome resolving after
+        a switch would mutate the newly focused session's transcript, so the
+        same guard :meth:`_land_session` applies to the *switch* is applied
+        here to the *listing fetch* as well — an operator mid-answer gets one
+        consistent refusal instead of a picker that opens and then cannot be
+        used.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:
+            self._notice(SESSIONS_UNAVAILABLE)
+            return
+        refusal = switch_refusal(self.state)
+        if refusal:
+            self._notice(refusal)
+            return
+        epoch = self._connection_epoch
+        outcome = await dispatcher.call(
+            LIST_SESSIONS_METHOD, {"limit": SESSIONS_LIST_LIMIT}, timeout=self.call_timeout
+        )
+        if not outcome.confirmed:
+            self._notice(f"{SESSIONS_LIST_FAILED} {outcome.notice}")
+            return
+        if epoch != self._connection_epoch:
+            self._notice(SESSIONS_STALE_EPOCH)
+            return
+        directory = decode_session_list(outcome.result)
+        if directory.is_empty:
+            self._notice(NO_SESSIONS)
+            return
+        source = SessionPickerSource(directory, current=self.state.session_key or "")
+        self.push_screen(PickerDialog(source), self._sessions_dismissed(epoch))
+
+    def _sessions_dismissed(self, epoch: int) -> Callable[[str | None], None]:
+        """What happens when the session dialog closes — mirrors
+        :meth:`_picker_dismissed`, kept separate because a chosen row here
+        dispatches through :meth:`open_session` (KTD3) rather than through a
+        model selection or a profile dial.
+
+        **``epoch`` is the connection generation the listing was fetched
+        under, carried in from :meth:`open_sessions_picker` (P1, U7 round
+        two).** The epoch check there only covered the window up to the
+        dialog opening — a reconnect while the dialog sat open (an operator
+        reading titles takes longer than a socket drop) went unnoticed, and
+        selecting an old row dispatched ``session.resume`` on the *new*
+        connection, contradicting the plan's stale-selection refusal.
+        Compared here, immediately before the dispatch, the same way
+        :func:`~talaria.ui.app.TalariaApp._lookup_model_row` compares
+        ``_model_catalog_epoch`` at *its* selection time (KTD4).
+
+        **Checked again inside the scheduled task itself (C2).** This
+        closure runs synchronously at dismissal time, but the switch it
+        starts is handed to :meth:`_spawn_live`, which only *schedules* it
+        via ``asyncio.create_task`` — the coroutine's body does not actually
+        run until the event loop gets to it. A reconnect landing in that
+        window is exactly as invisible to the check here as it was to the
+        one in :meth:`open_sessions_picker`, for the identical reason: the
+        epoch this closure compared against is already behind by the time
+        the scheduled body executes. :meth:`_switch_session_and_discard`
+        re-reads and compares it once more, right before the send, which is
+        the only point that is actually synchronous with the dispatch.
+        """
+
+        def dismissed(chosen: str | None) -> None:
+            self.composer.focus()
+            if chosen is None:
+                return
+            if epoch != self._connection_epoch:
+                self._notice(SESSIONS_STALE_EPOCH)
+                return
+            self._spawn_live(self._switch_session_and_discard(chosen, epoch))
+
+        return dismissed
+
+    async def _switch_session_and_discard(self, session_id: str, epoch: int) -> None:
+        # Re-validated here, not only in the closure that scheduled this
+        # task (C2): a reconnect between scheduling and this coroutine
+        # actually running would otherwise dispatch ``session.resume`` on a
+        # connection the listing was never fetched under.
+        if epoch != self._connection_epoch:
+            self._notice(SESSIONS_STALE_EPOCH)
+            return
+        await self.switch_session(session_id)
+
+    async def switch_session(self, session_id: str) -> RpcOutcome | None:
+        """Resolve a chosen ``/sessions`` row into a switch — KTD3, exactly.
+
+        No new landing code: ``StartupSelection(mode="session", session_id=…)``
+        is the identical selection an explicit ``--session <id>`` resolves to
+        at startup, so this is the same one call into :meth:`open_session`
+        that path already makes — ``session.resume`` under the same
+        :meth:`_landing` barrier (KTD2), landed by the same
+        :meth:`_land_session`, which refuses the switch itself
+        (``switch_refusal``) if an answer started travelling in the window
+        since :meth:`open_sessions_picker` returned.
+
+        **No serialization of its own (C1, U7 round three).** Choosing B,
+        reopening ``/sessions`` before B's reply lands, and choosing C makes
+        two calls here — :meth:`open_session` is what refuses the second
+        one outright while the first is still on the wire; see its own
+        docstring and :attr:`_resume_in_flight`.
+        """
+        return await self.open_session(
+            StartupSelection(mode="session", session_id=session_id)
+        )
 
     def _lookup_model_row(self, argument: str) -> SelectableRow | None:
         """Resolve a ``/models`` row number into its catalogue row, or notice why not.
@@ -3020,6 +4061,56 @@ class TalariaApp(App[None]):
             )
             self._notice(note)
         self._dirty = True
+
+    # ── U3: naming where the caret is (R5, KTD5) ─────────────────────────
+
+    #: Ancestor id → the location word ``StatusRegion.set_caret`` renders.
+    #: Only regions the plan names (``docs/plans/2026-08-08-talaria-v0-2-
+    #: answerability-and-session-story-plan.md``, unit U3) get a word; a
+    #: focused widget with none of these ancestors (nothing focused, or the
+    #: composer itself) clears the slot instead.
+    _CARET_REGION_IDS: dict[str, str] = {
+        "transcript": "transcript",
+        "agents": "agents",
+        "prompts": "prompts",
+    }
+
+    def _caret_location(self) -> str:
+        focused = self.focused
+        if focused is None:
+            return ""
+        for widget in focused.ancestors_with_self:
+            location = self._CARET_REGION_IDS.get(widget.id or "")
+            if location is not None:
+                return location
+        return ""
+
+    def _refresh_caret_slot(self) -> None:
+        """Write the caret's location word into the dedicated status slot.
+
+        Reads :attr:`focused` fresh rather than trusting either event's
+        payload, because Textual delivers ``DescendantBlur`` for the old
+        holder and ``DescendantFocus`` for the new one as two separate
+        messages — reading the app's current focus from both handlers
+        means whichever fires last leaves the right word on screen instead
+        of a stale one from the widget that just lost the caret.
+
+        Guarded, because a ``DescendantBlur`` also lands while the app is
+        coming down, after ``#status`` has already unmounted — the same
+        teardown ordering the other two ``NoMatches`` guards in this file
+        absorb.
+        """
+        try:
+            region = self.status_region
+        except NoMatches:
+            return
+        region.set_caret(self._caret_location())
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        self._refresh_caret_slot()
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        self._refresh_caret_slot()
 
     # ── the caret comes home ─────────────────────────────────────────────
 

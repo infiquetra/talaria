@@ -129,11 +129,15 @@ class Recorded:
     ``body`` is the parsed JSON a POST carried, empty for a GET — U5 is the
     first thing in this module to write, so it is the first thing that needs
     the request body recorded rather than just the path and headers.
+    ``method`` defaults to ``"GET"`` for fixtures that predate it and never
+    record a POST; U4's disambiguation tests are the first to need it, to pin
+    that the probe is a GET and never the POST that would perform the write.
     """
 
     path: str
     headers: dict[str, str]
     body: dict[str, Any] = field(default_factory=dict)
+    method: str = "GET"
 
 
 #: A POST route answers from the parsed request body, so a scenario can
@@ -176,7 +180,9 @@ def gateway_serving(
                 parsed = {}
             if recorder is not None:
                 recorder.append(
-                    Recorded(path=self.path, headers=dict(self.headers), body=parsed)
+                    Recorded(
+                        path=self.path, headers=dict(self.headers), body=parsed, method="POST"
+                    )
                 )
             handler = (post_routes or {}).get(path)
             if handler is None:
@@ -751,6 +757,480 @@ def test_neither_new_module_reads_the_environment_for_a_credential() -> None:
         source = path.read_text(encoding="utf-8")
         assert variable not in source, path.name
         assert "os.environ" not in source, path.name
+
+
+# ── U4: a 404 alongside `profile` is disambiguated before it is believed ──
+
+
+@contextlib.contextmanager
+def routed_gateway(
+    get_route: Callable[[str], tuple[int, bytes, str]] | None = None,
+    post_route: Callable[[str, dict[str, Any]], tuple[int, bytes, str]] | None = None,
+    recorder: list[Recorded] | None = None,
+) -> Iterator[str]:
+    """A loopback server whose GET and POST handlers see the *whole* request
+    path, query string included, and answer through caller-supplied callables.
+
+    ``gateway_serving`` routes by path alone (it strips the query string
+    before the lookup), which cannot express U4's scenarios: a bare path and
+    a ``?profile=`` request to the *same* path must be able to answer
+    differently, and a POST-only route (``MODEL_SET_PATH``) must be able to
+    answer a bare GET with 405 rather than the blanket 404 every unrouted
+    path gets here. Omitting a callable answers that verb with a bare 404,
+    matching ``gateway_serving``'s fall-through for the "gateway serves
+    neither" scenarios.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if recorder is not None:
+                recorder.append(Recorded(path=self.path, headers=dict(self.headers), method="GET"))
+            if get_route is None:
+                status, payload, content_type = (
+                    404,
+                    b'{"detail":"Not Found"}',
+                    "application/json",
+                )
+            else:
+                status, payload, content_type = get_route(self.path)
+            self._respond(status, payload, content_type)
+
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw_body = self.rfile.read(length) if length else b""
+            try:
+                parsed = json.loads(raw_body) if raw_body else {}
+            except json.JSONDecodeError:
+                parsed = {}
+            if recorder is not None:
+                recorder.append(
+                    Recorded(
+                        path=self.path, headers=dict(self.headers), body=parsed, method="POST"
+                    )
+                )
+            if post_route is None:
+                status, payload, content_type = (
+                    404,
+                    b'{"detail":"Not Found"}',
+                    "application/json",
+                )
+            else:
+                status, payload, content_type = post_route(self.path, parsed)
+            self._respond(status, payload, content_type)
+
+        def _respond(self, status: int, payload: bytes, content_type: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_a_bare_route_that_answers_but_404s_the_profile_names_the_profile() -> None:
+    """A gateway serving ``/api/model/options`` bare but 404ing ``?profile=typo``
+    yields ``unknown_profile`` naming ``typo``, not ``absent_capability`` —
+    extends the real-HTTP fall-through above (``test_a_404_becomes_absent_capability_
+    rather_than_an_error``) to the profile-carrying case."""
+
+    def get_route(path: str) -> tuple[int, bytes, str]:
+        if "profile=" in path:
+            return 404, b'{"detail":"Not Found"}', "application/json"
+        return json_route(OPTIONS_BODY)
+
+    with routed_gateway(get_route=get_route) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(
+                origin, MODEL_OPTIONS_PATH, token=CANARY, params={"profile": "typo"}
+            )
+
+    assert caught.value.reason == "unknown_profile"
+    assert "typo" in str(caught.value)
+
+
+def test_a_gateway_serving_neither_route_is_absent_capability_in_exactly_two_requests() -> None:
+    seen: list[Recorded] = []
+    with routed_gateway(recorder=seen) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(
+                origin, MODEL_OPTIONS_PATH, token=CANARY, params={"profile": "typo"}
+            )
+
+    assert caught.value.reason == "absent_capability"
+    assert len(seen) == 2
+
+
+def test_a_profiled_post_that_404s_is_disambiguated_by_a_bare_get_never_a_bare_post() -> None:
+    """KTD7/R9, pinned with a fixture that routes by method rather than
+    answering every verb alike: ``MODEL_SET_PATH`` is POST-only, so a bare GET
+    on it answers 405 — proof the route exists — without ever sending a bare
+    POST, which would perform ``/api/model/set``'s mutation."""
+    seen: list[Recorded] = []
+
+    def get_route(_path: str) -> tuple[int, bytes, str]:
+        return 405, b'{"detail":"Method Not Allowed"}', "application/json"
+
+    def post_route(_path: str, _body: dict[str, Any]) -> tuple[int, bytes, str]:
+        return 404, b'{"detail":"Not Found"}', "application/json"
+
+    with routed_gateway(get_route=get_route, post_route=post_route, recorder=seen) as origin:
+        with pytest.raises(AdminError) as caught:
+            post_admin_json(
+                origin,
+                MODEL_SET_PATH,
+                token=CANARY,
+                params={"profile": "typo"},
+                body={
+                    "scope": "main",
+                    "provider": "p",
+                    "model": "m",
+                    "confirm_expensive_model": False,
+                },
+            )
+
+    assert caught.value.reason == "unknown_profile"
+    assert [r.method for r in seen] == ["POST", "GET"]
+
+
+def test_a_probe_answered_401_reports_the_original_404_unchanged() -> None:
+    """Neither 2xx/405 (route exists) nor a bare 404 (route absent) — the probe
+    itself does not settle the question, so the original error is returned
+    unchanged rather than a disambiguation guessed at from an ambiguous
+    outcome."""
+
+    def get_route(path: str) -> tuple[int, bytes, str]:
+        if "profile=" in path:
+            return 404, b'{"detail":"Not Found"}', "application/json"
+        return 401, b'{"detail":"Unauthorized"}', "application/json"
+
+    with routed_gateway(get_route=get_route) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(
+                origin, MODEL_OPTIONS_PATH, token=CANARY, params={"profile": "typo"}
+            )
+
+    assert caught.value.reason == "absent_capability"
+
+
+def test_no_probe_is_issued_when_the_failed_request_carried_no_profile() -> None:
+    seen: list[Recorded] = []
+    with routed_gateway(recorder=seen) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "absent_capability"
+    assert len(seen) == 1
+
+
+def test_an_empty_profile_value_still_triggers_disambiguation() -> None:
+    """MEDIUM: the check that decides whether to probe used to test the
+    extracted profile's *truthiness*, not its presence. ``?profile=`` is an
+    empty string — falsy — so the probe was skipped and a case where the
+    bare route demonstrably exists reported ``absent_capability`` instead of
+    ``unknown_profile``."""
+
+    def get_route(path: str) -> tuple[int, bytes, str]:
+        if "profile=" in path:
+            return 404, b'{"detail":"Not Found"}', "application/json"
+        return json_route(OPTIONS_BODY)
+
+    with routed_gateway(get_route=get_route) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY, params={"profile": ""})
+
+    assert caught.value.reason == "unknown_profile"
+
+
+# ── U4 repair round: the probe's own boundary behaviour ───────────────────
+
+
+@contextlib.contextmanager
+def custom_gateway(handler_cls: type[BaseHTTPRequestHandler]) -> Iterator[str]:
+    """A loopback server driven by a caller-supplied handler class.
+
+    Neither ``gateway_serving`` nor ``routed_gateway`` exposes raw control
+    over status lines, ``Location`` headers, or closing the connection
+    early — exactly the control the redirect and truncation scenarios below
+    need.
+    """
+    server = HTTPServer(("127.0.0.1", 0), handler_cls)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_a_redirecting_probe_neither_leaks_credentials_nor_reclassifies() -> None:
+    """HIGH: a bare-GET probe whose response is a 3xx to a foreign origin must
+    not be followed. Python's default ``urlopen`` opener installs
+    ``HTTPRedirectHandler``, which forwards every header on the original
+    request — including both credential headers — to whatever host
+    ``Location`` names, with no same-origin check, and then treats that
+    foreign host's 2xx as proof the *original* route exists."""
+    foreign_seen: list[Recorded] = []
+
+    class ForeignHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            foreign_seen.append(Recorded(path=self.path, headers=dict(self.headers)))
+            body = b'{"providers":[]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    with custom_gateway(ForeignHandler) as foreign_origin:
+
+        class RedirectingHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if "profile=" in self.path:
+                    body = b'{"detail":"Not Found"}'
+                    self.send_response(404)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                # The bare probe answers with a redirect to a different origin.
+                self.send_response(302)
+                self.send_header("Location", foreign_origin)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, format: str, *args: Any) -> None:
+                return
+
+        with custom_gateway(RedirectingHandler) as origin:
+            with pytest.raises(AdminError) as caught:
+                fetch_admin_json(
+                    origin, MODEL_OPTIONS_PATH, token=CANARY, params={"profile": "typo"}
+                )
+
+    assert caught.value.reason == "absent_capability", (
+        "a 3xx probe answer is not proof the route exists"
+    )
+    assert foreign_seen == [], "the probe must never issue a second request to the redirect target"
+
+
+def test_a_truncated_probe_body_does_not_prove_the_route_exists() -> None:
+    """MEDIUM: a probe reply that declares a longer ``Content-Length`` than it
+    actually sends, then closes the connection, must not be read as proof the
+    route exists. A bounded ``response.read(n)`` clips its request to the
+    declared length and returns whatever arrived before the socket closed
+    without raising, so a connection that hangs up early reads as a short,
+    silent success unless the declared and actual lengths are compared."""
+
+    class TruncatingHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "profile=" in self.path:
+                body = b'{"detail":"Not Found"}'
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            # Declares far more than it actually sends, then hangs up.
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            self.wfile.write(b'{"providers"')
+            self.close_connection = True
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    with custom_gateway(TruncatingHandler) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(
+                origin, MODEL_OPTIONS_PATH, token=CANARY, params={"profile": "typo"}
+            )
+
+    assert caught.value.reason == "absent_capability"
+
+
+def test_a_chunked_probe_that_closes_mid_chunk_does_not_escape_as_a_raw_exception() -> None:
+    """P2 (verify pass, round four): the ``Content-Length`` truncation above
+    reads short and returns without raising, but a *chunked* response that
+    hangs up before a declared chunk is fully sent takes a different path —
+    ``http.client``'s chunked reader raises ``IncompleteRead``, which is an
+    ``http.client.HTTPException`` rather than an ``OSError``, so it used to
+    fall through both existing ``except`` clauses and reach the caller as a
+    raw exception instead of the module's one named failure vocabulary."""
+
+    class ChunkedTruncatingHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            if "profile=" in self.path:
+                body = b'{"detail":"Not Found"}'
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            # Declares a 30-byte chunk (hex 1e), sends far fewer bytes than
+            # that, then hangs up mid-chunk with no closing "0\r\n\r\n".
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(b"1e\r\n")
+            self.wfile.write(b'{"providers"')
+            self.close_connection = True
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    with custom_gateway(ChunkedTruncatingHandler) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(
+                origin, MODEL_OPTIONS_PATH, token=CANARY, params={"profile": "typo"}
+            )
+
+    assert caught.value.reason == "absent_capability"
+
+
+def test_a_truncated_chunked_405_still_proves_the_route_exists() -> None:
+    """P2 (confirmation pass, round five): round four's ``HTTPException``
+    guard covers only the success-path read above. The ``HTTPError`` branch
+    drains its own body too (so an unread error body does not hold the
+    socket open), and until this fix only ``OSError`` was caught there, so a
+    truncated *error* body — here, a 405's — let ``IncompleteRead`` escape as
+    a raw exception exactly the same way the success path used to.
+
+    The classification is deliberately unaffected by the truncation: a 405
+    already proves the probed route is registered (KTD7/R9) from its status
+    line alone, before a single body byte is read, so a 405 whose chunked
+    body then hangs up mid-chunk still counts as route-exists — the pinned
+    choice this test asserts.
+    """
+
+    class ChunkedTruncating405Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            if "profile=" in self.path:
+                body = b'{"detail":"Not Found"}'
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            # The bare probe answers 405 (Method Not Allowed — proof the
+            # route is registered) with a chunked body that declares more
+            # than it sends, then hangs up mid-chunk.
+            self.send_response(405)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(b"1e\r\n")
+            self.wfile.write(b'{"detail":"Method')
+            self.close_connection = True
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    with custom_gateway(ChunkedTruncating405Handler) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(
+                origin, MODEL_OPTIONS_PATH, token=CANARY, params={"profile": "typo"}
+            )
+
+    assert caught.value.reason == "unknown_profile", (
+        "a 405's status line is proof the route exists, even with a truncated body"
+    )
+
+
+def test_a_truncated_chunked_error_body_on_the_main_path_does_not_escape() -> None:
+    """P2 (round six): round five's fix closed the gap in the disambiguation
+    *probe*'s own error-body drain. ``_perform_admin_request`` — the shared
+    urlopen/read/decode path every admin call takes, not just the probe —
+    has the identical pattern in its own ``HTTPError`` branch, and until
+    this fix it too caught only ``OSError`` there, so a chunked error body
+    that hangs up mid-chunk let ``IncompleteRead`` escape as a raw exception
+    for *any* admin call, instead of the module's normal ``AdminError`` for
+    that status."""
+
+    class ChunkedTruncating500Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            # Declares far more than it sends, then hangs up mid-chunk.
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(b"1e\r\n")
+            self.wfile.write(b'{"detail":"Internal')
+            self.close_connection = True
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    with custom_gateway(ChunkedTruncating500Handler) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "http_error"
+    assert "500" in str(caught.value)
+
+
+def test_a_truncated_chunked_success_body_becomes_a_named_malformed_response() -> None:
+    """P2 (round six, the terminal admin finding): the two error-drain fixes
+    (rounds five and six-minus-one) don't cover this site — the SUCCESS-path
+    read is the one place this module has no boolean fallback to fall back
+    to. A 200 whose chunked body hangs up mid-chunk used to let
+    ``http.client.IncompleteRead`` escape ``_perform_admin_request`` as a raw
+    exception; it must instead surface as the module's own vocabulary — here
+    ``malformed_response``, the same reason a complete-but-invalid JSON body
+    gets, because both describe a reply that could not be turned into usable
+    data."""
+
+    class ChunkedTruncatingSuccessHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            # Declares far more than it sends, then hangs up mid-chunk.
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(b"1e\r\n")
+            self.wfile.write(b'{"providers"')
+            self.close_connection = True
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    with custom_gateway(ChunkedTruncatingSuccessHandler) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+
+    assert caught.value.reason == "malformed_response"
+    assert CANARY not in str(caught.value)
 
 
 # ── U4: the endpoint directory, and the write that never happens ─────────
