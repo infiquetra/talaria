@@ -60,8 +60,10 @@ as KTD2, KTD5, KTD1's instrumentation, and KTD6 respectively.
   R18's headline gap; `committed_lines` marks the boundary.
 - `_on_error` (talaria/domain/state.py:1586) clears `streaming_text`/`reasoning_text` without
   committing them — the R6 defect, a domain transition change. The confirmed-cancel path does
-  **not** share the defect: `cancel_turn` (state.py:567-598) already commits both buffers before
-  clearing; for this plan it is a regression-test subject, not a change site.
+  **not** share the commit defect: `cancel_turn` (state.py:567-598) already commits both buffers
+  before clearing — that commit behavior is pinned by regression — but it strips them on the way
+  (`.strip()` at :580, `.lstrip()` at :583), so it receives exactly one change: the preservation
+  work removes its stripping.
 - Content-channel text is stripped on its way into the domain: `coerce_text`
   (talaria/domain/normalize.py:224) strips both ends, `message.interim` uses it (state.py:1435),
   final bodies are left-stripped (state.py:1510), and `cancel_turn` strips both buffers
@@ -111,44 +113,67 @@ test (U3) captures the exact enabled rule set so any future preset drift fails l
 intent).** R3 exists so table content is usable without a mouse. The stock widget fails it via
 ellipsis-plus-hover-tooltip cells. Making cells focusable would turn the transcript into a data
 grid — new bindings, a caret model inside entries, and a collision with U8's answerability focus
-order. Instead: the block factory styles table cells to wrap (no ellipsis, no tooltip dependence),
-so every cell's full content is readable at 80 columns by ordinary transcript scrolling — no hover,
-no mouse, no per-cell focus. The amended R3 reads: "table content is fully legible at 80 columns
-without a mouse; no construct depends on hover or focus to show its content." AE4's assertion
-follows the amended text.
+order. Instead: the block factory styles table cells to wrap (no ellipsis, no tooltip dependence)
+**with a column-allocation rule**, because wrapping alone does not survive Textual's
+`grid-columns: auto` layout — a live five-column probe at 80 columns assigned data widths
+[0, 0, 58, 1, 1], starving four columns entirely. The rule: bounded fractional columns — every
+column is guaranteed at least its minimum content width (its longest word, capped at a fixed
+per-column maximum), and the remaining width is distributed proportionally; the factory's table
+subclass computes the widths rather than trusting the auto layout. Every cell's full content is
+then readable at 80 columns by ordinary transcript scrolling — no hover, no mouse, no per-cell
+focus — and the test asserts the **actual painted content** of every cell, not just the style.
+The amended R3 reads: "table content is fully legible at 80 columns without a mouse; no construct
+depends on hover or focus to show its content." AE4's assertion follows the amended text.
 
 ## Key Technical Decisions
 
 **KTD1 — The bounded-rendering claim is restated as four measurable ceilings, recorded in
 ADR-0006 before implementation:**
 
-- **(a) Mounted descendant count.** All mounted widgets under the pane — line widgets, each entry
-  document's blocks **and their descendants** (a table's per-cell widgets included), tail
-  documents, banners — stay ≤ 600 at every 50 ms coalescing boundary, read from Textual's own
-  tree (`walk_children`), never self-reported. The boundary observation point is deliberate:
+- **(a) Mounted descendant count — two tiers.** All mounted widgets are counted as descendants (a
+  table's per-cell widgets included), read from Textual's own tree (`walk_children`), never
+  self-reported, at every 50 ms coalescing boundary. Tier one: the **folded window** — every
+  committed entry document and line widget except the newest entry and the live tails — stays
+  ≤ 600 descendants, enforced by KTD2's fold rule (fold decisions read the measured descendant
+  counts of already-mounted entries, and a pre-parse top-level token count estimates an incoming
+  entry). Tier two: the newest entry and each live tail carry a **per-entry ceiling of 1,200
+  descendants** — chosen so the gate's own 1,000-row table workload (measured: 1,003 descendants
+  for the minimal one-column version) fits with headroom — beyond which **that entry alone falls
+  back to line rendering** (one `TranscriptLine` per projected line, bounded by the existing line
+  machinery, with a banner note); the entry-level fallback both restores the count bound and ends
+  the growing-reparse work of clause (c). The boundary observation point is deliberate:
   `Markdown.update` parses off the pump and mounts in batches of 200, transiently holding old and
   new blocks, so "at every instant" is not enforceable against the widget's own mechanics; the
-  ceiling is enforced at the point talaria controls — before each apply — using the pre-parse
-  fold rule of KTD2, and verified at boundaries.
-- **(b) Rendered height.** No single mounted entry document exceeds the height that its projected
-  line span plus construct overhead implies: the fold rule of KTD2 bounds any entry's mounted
-  representation to `mount_cap` projected lines, so pane height is bounded by the same arithmetic
-  that bounds lines today. The gate measures the tallest mounted entry document and records it as
-  a high-water figure.
-- **(c) Reconcile work.** Per-boundary reconcile work is proportional to the provisional tail plus
-  newly committed entries, never O(transcript) — measured as source bytes handed to
-  append/update per boundary, recorded high-water.
+  ceilings are enforced at the point talaria controls — before each apply — and verified at
+  boundaries.
+- **(b) Rendered height.** Bounded by the same two tiers: the folded window's height follows from
+  its line arithmetic as today, and a single entry's height is bounded by the 1,200-descendant
+  per-entry ceiling with the line-render fallback beyond it. The gate measures the tallest mounted
+  entry document and records it as a high-water figure.
+- **(c) Reconcile work.** Per-boundary parse work is measured as **parser-input bytes** — the
+  reparse window `Markdown.append` actually processes, from the last unfinished top-level block to
+  the end (probed fact: five constant 500-byte appends into an open fence produce parser inputs of
+  499, 999, 1,499, 1,999, 2,499 bytes — the window grows with the unfinished block, which is
+  inherent to append's reparse semantics, so "bytes handed to append" understates work and is not
+  the metric). The proportionality claim: parser input per boundary is proportional to the
+  unfinished block plus new bytes, never O(document); for a single ever-growing unfinished block
+  the window grows with it by construction — the latency ceiling (d) is the enforceable bound
+  there, and the per-entry fallback of (a) is the relief valve that ends the growth. Recorded
+  high-water.
 - **(d) Latency.** Under the R14 adversarial workloads, p99 per-boundary apply latency stays under
   the 50 ms coalescing interval. The workloads, exactly: a growing unclosed fence fed 100 lines
   per boundary to 10,000 lines; a growing table fed 10 rows per boundary to 1,000 rows. Clock:
   `time.monotonic()` around `TranscriptPane.apply`. The first 10 boundaries are warm-up and
   excluded; the quantile is the 99th percentile of the remaining samples. High-water
-  instrumentation (peak descendant count, peak apply milliseconds, tallest entry document) is
-  exposed the way `peak_mounted` is today (transcript.py:130).
+  instrumentation (peak descendant count per tier, peak parser-input bytes, peak apply
+  milliseconds, tallest entry document) is exposed the way `peak_mounted` is today
+  (transcript.py:130).
 
 Rationale: R13 requires the target to precede the implementation, and requires work **and height**
 bounded, not only count; a top-level block count alone lets one table mount unbounded cell widgets,
-which is why the count ceiling is descendants.
+which is why the count ceiling is descendants — and a single-tier descendant ceiling is
+incompatible with the gate's own 1,000-row workload once the newest entry mounts whole, which is
+why there are two tiers and an entry-level fallback rather than one number.
 
 **KTD2 — The pane goes hybrid: block documents for committed assistant/reasoning entries, line
 widgets for everything else, two live tail documents for the streams — with a defined fold rule.**
@@ -162,9 +187,12 @@ entry's document without a full-pane rebuild, keyed by the entry identity KTD6 p
 Condensation over mixed units, exactly: `desired_top` is computed in projected lines as today
 (transcript.py:223); when it lands inside a block entry's line span, it rounds **up** to the next
 unit boundary — the cap prefers evicting more over keeping a cap-buster — with one exception: the
-newest entry is always mounted whole, even when its span alone exceeds `mount_cap`, and the
-overage is recorded in the high-water instrumentation (the ceiling claim in KTD1(a) is stated over
-this rule: cap plus at most one oversized newest entry). The banner keeps counting **lines**; the
+newest entry is always mounted whole, even when its span alone exceeds `mount_cap`, subject to
+KTD1(a)'s per-entry ceiling: past 1,200 descendants the newest entry line-renders instead, so the
+overage is always bounded and recorded in the high-water instrumentation (the ceiling claim in
+KTD1(a) is stated over this rule: folded window ≤ 600, plus at most one block-rendered newest
+entry ≤ 1,200, plus the tails under the same per-entry ceiling). The banner keeps counting
+**lines**; the
 entry line spans KTD6 publishes are what keep `condensed_count + lines-accounted-for == total`
 computable over folded block units.
 
@@ -239,11 +267,17 @@ Terminal causes — `auth_failed`, `dial_failed`, `orderly_close`, `reconnect_ex
 teardown — commit `streaming_text` and `reasoning_text` as entries before clearing (R6), as does
 `_on_error` (state.py:1586). A transient reconnect that resumes the same response commits nothing
 and must not duplicate; the existing segment/interim machinery is the dedupe backstop, and a
-scenario pins it. `cancel_turn` already commits both buffers (state.py:580-585) — it gets a
-regression test, not a change. Content-channel strings are preserved **exactly** end-to-end
+scenario pins it. `cancel_turn` already commits both buffers (state.py:580-585) — the commit
+behavior is pinned by regression, and its one change is that the preservation work removes its
+stripping of those buffers. Content-channel strings are preserved **exactly** end-to-end
 (no stripping — leading indentation is a code block; trailing blank lines close constructs);
-`coerce_text`'s stripping remains for diagnostic channels only. This is a domain-plus-transport
-change under ADR-0002's direction rule — the domain still imports no framework.
+`coerce_text`'s stripping remains for diagnostic channels only. The typed cause is wired
+end-to-end: the transport's cause seam reaches the domain through the same live path that today
+connects `LiveSource.bind` to `note_connection_state` (talaria/ui/app.py:1455-1467, wired at
+talaria/cli.py:453), so U2 owns those two wiring files and an end-to-end live-source test — the
+domain transition must have a specified live call path, not just a seam. This is a
+domain-plus-transport-plus-wiring change under ADR-0002's direction rule — the domain still
+imports no framework.
 
 **KTD8 — The styled-line-run fallback is gate-triggered, amends R4 explicitly, and the work is
 branch-held until the gate is green.** The fallback (projection-tagged line runs styled by the
@@ -295,7 +329,9 @@ U4 and follows CR4; U6 closes after CR5. Each build unit is cross-reviewed by th
 before its dependents run, and **a review that returns findings blocks its dependents until the
 findings are fixed and re-reviewed — dependents consume the verdict, not the completion**. CR6
 gates the outcome leaf's completion event. U4–U6 land on the KTD8 feature branch; U1–U3 merge
-independently.
+independently. The executable workflow file is **re-emitted from the revised spec at dispatch
+time** — the previously committed revision-1 emission was deleted with this revision so a stale
+graph cannot be launched by habit.
 
 ## Implementation Units
 
@@ -327,9 +363,11 @@ text exactly, and publish entry identity, raw bodies, and both provisional tails
 decorated line buffer (R6, R14, R16, R18; KTD6, KTD7).
 
 **Files:** talaria/domain/state.py, talaria/domain/projection.py, talaria/domain/normalize.py,
-talaria/transport/source.py, tests/domain/test_transcript_state.py,
+talaria/transport/source.py, talaria/ui/app.py (the `note_connection_state` wiring only),
+talaria/cli.py (the `LiveSource.bind` wiring only), tests/domain/test_transcript_state.py,
 tests/domain/test_turn_lifecycle.py, tests/domain/test_projection.py,
-tests/transport/test_source.py.
+tests/transport/test_source.py. (U4 also edits talaria/ui/app.py; the units are sequential —
+U4 waits for CR2 — so there is no concurrent edit.)
 
 **Scope note:** the stress corpus's projected line counts change when error paths start committing
 partials (the generated corpus carries interleaved malformed frames, gate.py:337-341); the
@@ -339,12 +377,16 @@ re-baseline lands in U6's gate run — expected, not a regression.
 buffers as entries, then clears (AE2's error leg); each typed terminal cause (`auth_failed`,
 `dial_failed`, `orderly_close`, `reconnect_exhausted`) commits likewise; a transient reconnect
 resuming the same response produces the content exactly once (the dedupe scenario); `cancel_turn`
-already commits both buffers — pinned as a regression test, not changed; a cancellation arriving
+keeps committing both buffers (the commit pinned by regression) and stops stripping them (its one
+change); the typed cause travels the live path end-to-end (`LiveSource.bind` →
+`note_connection_state` → the domain transition, exercised against a live source in the
+transport suite); a cancellation arriving
 mid-table (after the header row) commits the partial table (R14's mid-table leg — the parser
 reinterprets an unterminated table as a paragraph, which is exactly why the case exists);
 `message.interim` replacement respects the committed/interim boundary and increments the stream
-generation; content preservation — leading indentation survives (an interim body of two-space
-indented code commits as an indented code block, not prose), trailing blank lines survive,
+generation; content preservation — leading indentation survives **byte-for-byte** (a four-space
+indented body commits as an indented code block — four spaces, because GitHub-Flavoured Markdown
+parses two-space indentation as a paragraph), trailing blank lines survive,
 whitespace-only bodies survive, an open fence survives, across interim, final-replacement, error,
 cancellation, and disconnect paths; the entry-scoped view carries a stable entry id, a reasoning
 body with **no** `·` weld while the flattened line buffer keeps it, and an in-flight reasoning
@@ -418,7 +460,8 @@ scrolled above the stream holds position through reinterpretation, resize, and c
 and follow-bottom is never stolen; per-construct render oracles — heading renders as a heading
 block, bullet and ordered lists as list blocks, a block quote as a quote block, each asserted by
 block class and geometry and each proven to fail when the construct is flattened to a paragraph
-(R1's oracle, not just presence); tables render with wrapped cells fully legible at 80 columns
+(R1's oracle, not just presence); tables render under RA2's bounded-fractional column rule with
+every cell's actual painted content asserted at 80 columns
 (AE4/R3 as amended).
 
 ### U5. Kind differentiation
@@ -459,9 +502,13 @@ sha256, and the reproduction commands.
 
 **Test scenarios (tests/replay/test_gate.py plus the gate's own corpus verdict):** the two-part
 ownership proof — (1) mounted-window ownership: every projected line inside the mounted window of
-a committed block entry is covered by that entry's document blocks' `source_range` spans, with the
+a block entry is covered by that entry's document blocks' `source_range` spans, with the
 blank-line accounting rule stated (a probe shows inter-block blank lines are owned by neither
-block — the proof accounts them to the entry's span, not to a block); (2) condensed-range
+block — the proof accounts them to the entry's span, not to a block), with **document-level
+ownership for zero-block sources** (an empty or whitespace-only entry mounts a document with no
+blocks — probed — so the document widget itself owns the entry's span, asserted by its presence
+and span), and applied to **both provisional tail documents at every checkpoint**, not only
+committed entries; (2) condensed-range
 accounting: folded units are accounted by their line spans in the banner arithmetic — plus the
 semantic comparison (defanged source versus rendered content per construct) and mutation tests
 (dropped text, a wrong block class, a hidden construct each make the gate fail); construct-specific
