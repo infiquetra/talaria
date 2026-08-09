@@ -4,7 +4,14 @@
 
 ## P0
 
-### A blocking prompt cannot be answered without guessing how many times to press `tab`
+### ~~A blocking prompt cannot be answered without guessing how many times to press `tab`~~ — CLOSED 2026-08-09
+
+**Closed.** The v0.2 answerability spine (pull request #45, merge `529928c`) shipped the F1 jump
+(U1), per-card hint lines (U2), and the card-level focus tint (U3); all three were verified live in
+the U8 acceptance run — legs 1 and 2 of
+[docs/plans/2026-08-09-u8-live-acceptance-results.md](../plans/2026-08-09-u8-live-acceptance-results.md).
+The "two smaller things" below also shipped: a confirmed `F4` now sweeps outstanding prompts
+(leg 4), and every card names its operating keys.
 
 **Priority.** P0 — an approval that cannot be answered in time is an approval that expires, and the
 same invisible focus put a value meant for a hidden credential field into the visible message box.
@@ -33,7 +40,13 @@ not fixed alongside: an outstanding blocking prompt survives `F4`, so the next s
 behind a card the operator may think they cancelled; and nothing on a prompt card names the keys that
 reach it, unlike the picker dialog's hint line, which names every key that does something.
 
-### `--resume` reattaches to the session and throws away its entire conversation
+### ~~`--resume` reattaches to the session and throws away its entire conversation~~ — CLOSED 2026-08-09
+
+**Closed.** U4 of the v0.2 answerability spine (pull request #45, merge `529928c`) renders the
+`session.resume` reply's history as committed transcript entries, names an omitted history via
+`messages_omitted`/`message_count`, and was verified live in the U8 acceptance run — leg 6 of
+[docs/plans/2026-08-09-u8-live-acceptance-results.md](../plans/2026-08-09-u8-live-acceptance-results.md)
+rendered all sixteen prior messages before any live event.
 
 **Priority.** P1 — the flag works and the feature does not. Found 2026-08-07 by the reply-side pass
 that closed row 6, then confirmed on screen rather than left as a code reading.
@@ -905,6 +918,24 @@ A fenced code block or a table is one renderable spanning many lines. Every one 
 
 
 ## P3
+
+### Three small findings from the U8 live acceptance run
+
+**Author.** the U8 live acceptance drive, 2026-08-09 —
+[docs/plans/2026-08-09-u8-live-acceptance-results.md](../plans/2026-08-09-u8-live-acceptance-results.md),
+observations 2, 3 and 5. All three are cosmetic or documentation-sized; none blocked a leg.
+**Priority.** P3 · **Effort.** Small each.
+
+1. **`--session` help text should name the durable id.** The gateway refuses a runtime session id
+   with code 4007 ("session not found"); only the durable `stored_session_id` resumes. The help
+   string says "attach to an explicit session id" without saying which of the two ids that is.
+2. **An empty prompt dock still takes focus.** After an interrupt sweep removed the only card, a
+   `tab` stop still reported `caret: prompts` with nothing to operate. The dock should refuse
+   focus (or be skipped) when it holds no card.
+3. **Teach talaria the gateway's newer event kinds.** `platforms.changed` and
+   `agent.terminal.output` render as "! unknown event type" notices — the designed unknown-event
+   path, doing its job loudly on every occurrence. Worth teaching (or deliberately ignoring)
+   both kinds once their payloads are understood.
 
 ### A malformed `status.command` turns the status line off without saying so
 
