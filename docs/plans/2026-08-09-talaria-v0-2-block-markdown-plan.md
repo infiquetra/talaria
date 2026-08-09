@@ -117,7 +117,13 @@ order. Instead: the block factory styles table cells to wrap (no ellipsis, no to
 **with a column-allocation rule**, because wrapping alone does not survive Textual's
 `grid-columns: auto` layout — a live five-column probe at 80 columns assigned data widths
 [0, 0, 58, 1, 1], starving four columns entirely. The rule, exactly — for a table of N columns in
-a pane whose content width is W: available content width `A = W − (3N + 1)` (one cell-padding
+the table's **actual inner content width W** — not the pane width: the `Markdown` document adds
+two columns of padding each side (probed: an 80-column pane gives `MarkdownTableContent` 76
+columns), so W is measured from the table content box (or the padding is explicitly removed and
+then W equals the pane content width; the factory picks one and the test pins it). Proportional
+remainders are distributed by the **largest-remainder method, ties to the leftmost column** —
+deterministic integer arithmetic, no float residue. Available content width `A = W − (3N + 1)`
+(one cell-padding
 column each side of every cell plus one gutter per boundary); per-column cap
 `CAP = max(8, floor(A / N))`; each column's minimum `m_i = min(longest_word_i, CAP)`. If
 `sum(m_i) ≤ A`, every column gets its `m_i` and the remainder is distributed proportionally to
@@ -140,15 +146,20 @@ ADR-0006 before implementation:**
   self-reported, at every 50 ms coalescing boundary. Tier one: the **folded window** — every
   committed entry document and line widget except the newest entry and the live tails — stays
   ≤ 600 descendants, enforced by KTD2's fold rule (fold decisions read the measured descendant
-  counts of already-mounted entries, and a pre-parse top-level token count estimates an incoming
-  entry). Tier two: the newest entry and each live tail carry a **per-entry ceiling with a
-  two-condition trigger** — the entry falls back to line rendering when its descendant count (or
-  pre-parse top-level token estimate) exceeds **1,200** (the gate's 1,000-row table workload
-  measures 1,003 descendants, fitting with headroom) **or** when its projected line span exceeds
-  **`mount_cap` (500) lines**. The second condition exists because descendants alone cannot see
-  the other degenerate shape: a 10,000-line open fence is a **single block with two descendants**
-  while standing 10,004 rows tall — probed — so a descendant-only trigger would bound neither its
-  height nor its reparse window. A line-rendered entry is **not** exempt from folding: it is
+  counts of already-mounted entries; an incoming entry's **construct-aware estimate** counts
+  top-level tokens **plus table cells** — rows × columns read from the source's delimiter row —
+  because a probed three-line, 601-column table mounts 1,204 descendants, so a top-level token
+  count alone is not conservative). Tier two: the newest entry and each live tail carry a
+  **per-entry ceiling with a two-condition trigger** — the entry falls back to line rendering
+  when its descendant count (or construct-aware estimate) exceeds **1,200** (the gate's 1,000-row
+  table workload measures 1,003 descendants, fitting with headroom) **or** when its **estimated
+  wrapped rows** exceed **`mount_cap` (500)**. Estimated wrapped rows are width-aware by
+  construction: `sum over source lines of max(1, ceil(len(line) / content_width))` — a source-line
+  count is not the metric, because a probed single 100,000-character source line mounts as **one
+  descendant** yet renders 1,353 wrapped rows, and neither a descendant nor a source-line
+  condition would fire. The estimate covers both probed degenerate shapes: the 10,000-line open
+  fence (one block, two descendants, 10,004 rows) and the mega-line. A line-rendered entry is
+  **not** exempt from folding: it is
   ordinary line content under today's cap machinery, `desired_top` may land inside it (exactly as
   it does today for a 4,000-line tool dump), and the banner accounts its folded lines — so the
   fallback can never itself mount more than the line cap allows. The entry-level fallback both
@@ -160,7 +171,7 @@ ADR-0006 before implementation:**
   boundaries.
 - **(b) Rendered height.** Bounded by the same two tiers: the folded window's height follows from
   its line arithmetic as today, and a single block-rendered entry's height is bounded by the
-  two-condition trigger of (a) — the 500-line span condition is what bounds the tall-but-few-blocks
+  two-condition trigger of (a) — the width-aware wrapped-rows condition is what bounds the tall-but-few-blocks
   shapes the descendant count cannot see. The gate measures the tallest mounted entry document and
   records it as a high-water figure.
 - **(c) Reconcile work.** Per-boundary parse work is measured as **parser-input bytes** — the
@@ -175,7 +186,9 @@ ADR-0006 before implementation:**
   high-water.
 - **(d) Latency.** Under the R14 adversarial workloads, p99 per-boundary apply latency stays under
   the 50 ms coalescing interval. The workloads, exactly: a growing unclosed fence fed 100 lines
-  per boundary to 10,000 lines; a growing table fed 10 rows per boundary to 1,000 rows. Clock:
+  per boundary to 10,000 lines; a growing table fed 10 rows per boundary to 1,000 rows; a single
+  unbroken line grown 5,000 characters per boundary to 100,000 characters (the wrapped-rows
+  degenerate shape). Clock:
   `time.monotonic()` around `TranscriptPane.apply`. The first 10 boundaries are warm-up and
   excluded; the quantile is the 99th percentile of the remaining samples. High-water
   instrumentation (peak descendant count per tier, peak parser-input bytes, peak apply
@@ -201,7 +214,8 @@ Two mounting rules precede condensation. A committed assistant/reasoning entry (
 whose parse yields **zero blocks** — empty, whitespace-only, newline-only — line-renders: a
 zero-block document mounts at height zero (probed), which would silently drop the blank rows a
 line widget shows today. And an entry that trips KTD1(a)'s two-condition trigger (descendants or
-estimate > 1,200, or line span > `mount_cap`) line-renders with a banner note.
+construct-aware estimate > 1,200, or estimated wrapped rows > `mount_cap`) line-renders with a
+banner note.
 
 Condensation over mixed units, exactly: `desired_top` is computed in projected lines as today
 (transcript.py:223); when it lands inside a **block** entry's line span, it rounds **up** to the
@@ -366,9 +380,9 @@ implementation lands on it (R13; KTD1, KTD8).
 descendant count and why "every instant" is not the enforcement point, the height-via-fold-rule
 argument, the work metric, the latency workloads/clock/warm-up/quantile); the amendments to
 ADR-0005 — **both** decision 3 (the 500-line-widget cap "at every instant", superseded by the
-boundary-observed descendant ceiling; state that 500 stays the pane's enforcement cap
-`DEFAULT_MOUNT_CAP` while 600 is the gate ceiling with headroom for banners and tails, both now
-counted in descendants) and decision 7 (the `literal_text`-only rule — untrusted text may
+two-tier model; state that 500 stays `DEFAULT_MOUNT_CAP` — the line cap for line-rendered
+surfaces and the wrapped-rows trigger threshold — while 600 is the folded-window **descendant**
+ceiling the gate enforces) and decision 7 (the `literal_text`-only rule — untrusted text may
 additionally reach the screen through the KTD4-configured parser and rendering hooks and nothing
 else); the RA1 and RA2 requirements amendments; the fallback trigger (KTD8), its branch-hold
 mechanism, and what evidence invokes it.
@@ -474,7 +488,8 @@ keyed by entry id without a pane rebuild; a terminal path stops and awaits pendi
 updates nothing and raises nothing (R16 clause 3 — exactly the mount-cap interaction); the
 descendant count under KTD1(a)'s ceiling at every coalescing boundary, including across an
 oversized-newest-entry overage (the KTD2 rule); condensation folds whole units with the round-up
-rule, the newest entry survives whole, and the banner's line arithmetic still sums; a reader
+rule, a **block-rendered** newest entry survives whole (a fallen-back line-rendered one may fold
+under the cap), and the banner's line arithmetic still sums; a reader
 scrolled above the stream holds position through reinterpretation, resize, and condensation (R17)
 and follow-bottom is never stolen; per-construct render oracles — heading renders as a heading
 block, bullet and ordered lists as list blocks, a block quote as a quote block, each asserted by
@@ -536,7 +551,8 @@ semantic comparison (defanged source versus rendered content per construct) and 
 visual oracles for every R1 construct (heading, both list types, table grid, fence region, quote)
 each proven to fail when flattened; line-rendered kinds keep the existing window comparison;
 progressiveness asserted at timed intermediate checkpoints, not only settled (R5/R14), including
-the two-tail overlap case (R18); the adversarial workloads — the KTD1(d) fence and table, exact
+the two-tail overlap case (R18); the adversarial workloads — the KTD1(d) fence, table, and
+unbroken mega-line, exact
 sizes as specified — hold the latency and descendant ceilings with high-water figures recorded;
 replay determinism compares normalized block structure (ordered classes, source ranges, semantic
 content; runtime identifiers excluded) under the pinned width, theme, and framework version (R12),
