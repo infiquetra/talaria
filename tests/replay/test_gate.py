@@ -771,21 +771,21 @@ async def test_a_zero_block_entry_line_renders_and_mounts_no_entry_markdown() ->
 
 
 @pytest.mark.asyncio
-async def test_a_tail_collapsing_to_a_bare_newline_stays_mounted_as_a_block_and_is_rejected() -> (
-    None
-):
+async def test_a_collapsing_tail_demotes_and_the_gate_rejects_the_zero_block_shape() -> None:
     """CR6: "zero-block sources are never reached here at all" was asserted
     in :func:`block_documents_are_owned`'s own docstring, never verified.
-    Driven live against the real pane: a reasoning tail grows into a block
-    document, then collapses to a bare newline as a new generation (a
-    replace-wins reset, not a plain append) -- and
-    :meth:`TranscriptPane._reconcile_tail`'s block-kind branch only
-    re-checks ``trips_fallback_trigger`` after writing, never
-    ``is_zero_block``, so the now-empty tail stays mounted as a height-zero
-    ``EntryMarkdown`` rather than being demoted to line rendering. Before
-    this unit's fix, ``document_ownership`` passed a document like this
-    vacuously (zero blocks trivially "cover" a zero-length span); it must
-    now reject it outright.
+    This test originally pinned the live defect — the block-kind branch of
+    :meth:`TranscriptPane._reconcile_tail` re-checked only
+    ``trips_fallback_trigger``, never ``is_zero_block``, so the collapsed
+    tail stayed a height-zero ``EntryMarkdown`` — and asserted the gate
+    rejects that shape. The defect is now fixed at its source (the tail
+    demotes to line rendering, proven in
+    tests/ui/test_transcript_blocks.py), so this test keeps the two halves
+    that remain true: the live path demotes, and ``document_ownership``'s
+    zero-block rejection still catches the shape as defense in depth if the
+    upstream demotion ever regresses — exercised against a synthetically
+    mounted zero-block document, since the live path can no longer
+    produce one.
     """
     from talaria.domain.projection import EntryScopedView, ProvisionalTail
     from talaria.ui.transcript import TranscriptPane
@@ -822,11 +822,25 @@ async def test_a_tail_collapsing_to_a_bare_newline_stays_mounted_as_a_block_and_
 
         tail_unit = pane._tails["reasoning"]
         assert tail_unit is not None
-        assert tail_unit.kind == "block", "the live bug this test pins: it never got demoted"
-        assert tail_unit.block is not None
-        assert tail_unit.block.outer_size.height == 0, "a zero-block document mounts at height 0"
+        assert tail_unit.kind == "line", "the collapsed tail demotes to line rendering at source"
 
-        ok, reason = block_documents_are_owned(pane)
+        ok, _reason = block_documents_are_owned(pane)
+        assert ok is True, "a demoted tail leaves nothing zero-block for the proof to reject"
+
+    # Defense in depth: the live path can no longer mount a zero-block
+    # document, so the rejection is exercised against one mounted
+    # synthetically — if the upstream demotion ever regresses, this is the
+    # check that still fails the gate.
+    class _ZeroBlockHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield EntryMarkdown("\n")
+
+    zero_app = _ZeroBlockHarness()
+    async with zero_app.run_test() as zero_pilot:
+        await zero_pilot.pause()
+        widget = zero_app.query_one(EntryMarkdown)
+        assert widget.outer_size.height == 0, "a zero-block document mounts at height 0"
+        ok, reason = document_ownership(widget)
         assert ok is False
         assert "zero top-level blocks" in reason
 

@@ -520,7 +520,40 @@ class _MountedUnit:
 
 
 def _fallback_banner(line_count: int) -> Static:
-    text = literal_text(FALLBACK_BANNER_TEMPLATE.format(lines=line_count))
+    """The RA3 banner, constrained to exactly one row at every width.
+
+    Built the same way :class:`TranscriptLine` builds its own no-wrap
+    fallback content (``Text(defang(...), no_wrap=True, end="")``), not via
+    :func:`~talaria.ui.literal.literal_text`, whose default ``no_wrap=False``
+    is exactly the bug this fixes: an unconstrained ``Static`` wraps the
+    template's fixed sentence across 2 rows at 100 columns and 4 at 40,
+    while the plan's RA3 exact-row formula, the gate's
+    ``fallback_banner_accounting`` check, and this module's own fold
+    arithmetic (:attr:`_MountedUnit.accounted_rows`) all charge the banner
+    as exactly one row. ``no_wrap=True`` stops Rich from breaking the
+    sentence across lines; ``TranscriptPane``'s own
+    ``.transcript--fallback-banner`` rule pins the widget's height to 1
+    regardless, so the tail of the sentence clips at the viewport edge
+    rather than pushing a second row — the same clipped-but-still-readable
+    contract :data:`FALLBACK_BANNER_TEMPLATE`'s own text already states, and
+    unaffected by which characters happen to be cut.
+
+    Deliberately **not** the existing ``transcript--nowrap`` class the
+    fallen-back content lines beside this banner already carry, even though
+    the effect wanted (``height: 1``) is the same one that class provides:
+    ``talaria/replay/gate.py``'s ``fallback_banner_accounting`` walks
+    ``pane.children`` and defines a fallen-back run as a maximal span of
+    consecutive ``.transcript--nowrap`` widgets, terminated by the next
+    ``.transcript--fallback-banner`` widget — it depends on those two
+    classes being mutually exclusive to tell a content row from the banner
+    that follows it. Marking the banner ``transcript--nowrap`` too would
+    fold it into the content run instead of ending it, and the gate would
+    report the run as bannerless. The height-1 constraint below is
+    therefore its own rule, scoped to the banner's own class only.
+    """
+    text = Text(
+        defang(FALLBACK_BANNER_TEMPLATE.format(lines=line_count)), no_wrap=True, end=""
+    )
     return Static(text, markup=False, classes="transcript--fallback-banner")
 
 
@@ -540,6 +573,7 @@ class TranscriptPane(VerticalScroll):
     }}
     TranscriptPane > .transcript--fallback-banner {{
         color: $text-warning;
+        height: 1;
     }}
     TranscriptPane .transcript--nowrap {{
         height: 1;
@@ -968,10 +1002,25 @@ class TranscriptPane(VerticalScroll):
             else:
                 await self._safe_write(unit.block, "update", tail.raw_text)
             unit.applied_text = tail.raw_text
-            # Re-check the trigger on the grown text; a tail that just
-            # crossed the threshold falls back once and stays there for the
-            # rest of the stream (ends the growing-reparse work, KTD1(a)).
-            if trips_fallback_trigger(tail.raw_text, content_width=self._content_width):
+            # Re-check both demotion conditions on the written text, not
+            # just the size trigger: a tail that crossed the fallback
+            # threshold falls back to non-wrapping line rendering and stays
+            # there for the rest of the stream (ends the growing-reparse
+            # work, KTD1(a)); a tail that collapsed to zero blocks -- most
+            # visibly a new generation replacing committed content with a
+            # bare newline -- must demote to line rendering too, or its
+            # blank row disappears into a height-zero EntryMarkdown that
+            # mounts nothing visible ever again (KTD2's zero-block rule: an
+            # entry or tail whose parse yields zero blocks line-renders,
+            # preserving blank rows as visible line widgets). The
+            # line-rendered branch below already rebuilds on exactly this
+            # crossing (``is_zero_block(unit.applied_text) !=
+            # is_zero_block(tail.raw_text)``); this branch previously
+            # checked only the size trigger, so a block tail that shrank to
+            # nothing stayed mounted as invisible content forever.
+            if is_zero_block(tail.raw_text) or trips_fallback_trigger(
+                tail.raw_text, content_width=self._content_width
+            ):
                 for widget in unit.widgets():
                     await self._safe_remove(widget)
                 self._tails[kind] = await self._build_unit(
