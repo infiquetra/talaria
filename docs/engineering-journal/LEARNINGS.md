@@ -4,6 +4,25 @@
 
 ## 2026-08-09
 
+### A session has two ids and only the durable one survives the process — and "most recent" belongs to whoever spawned last
+
+**Evidence.** The U8 live acceptance run,
+[docs/plans/2026-08-09-u8-live-acceptance-results.md](../plans/2026-08-09-u8-live-acceptance-results.md)
+observations 1 and 2, recordings `a1583ff3…` and `3934ee30…` (sha256-cited there). Resuming by the
+runtime id the `session.create` reply returned (`07e299c5`) was refused with gateway code 4007;
+the durable `stored_session_id` (`20260809_084412_b08629`) resumed correctly. Separately,
+`--resume` attached to a session a background webhook automation had spawned seconds earlier,
+because `session.most_recent` answers for the whole gateway, not for the operator's own activity.
+
+**Mechanism.** The gateway issues a fresh runtime id per attachment and keys durable storage by
+`stored_session_id`; the runtime id dies with the process that held it. `session.most_recent` is
+global: any spawner — webhook, cron, another client — moves it. The v0.2 `/sessions` picker
+already respects this split (it lists, highlights, and resumes by durable id — verified in leg 7).
+
+**Generalizable rule.** Address sessions by durable id everywhere a session outlives a process,
+and treat "most recent" as nondeterministic on any machine where automations spawn sessions —
+scripted drives must capture the durable id at create time and resume by it explicitly.
+
 ### A race you can reason about but cannot lose on demand still needs a test that fails — drive the sequence instead of hoping to lose the schedule
 
 **Author.** unit U6 of the v0.2 plan, adding KTD2's landing barrier to

@@ -1,7 +1,7 @@
 ---
 title: U8 live acceptance checklist — R1 through R7
 type: checklist
-status: authored-not-run
+status: executed-pass
 date: 2026-08-09
 covers: R1, R2, R3, R4, R5, R6, R7, R12
 targets: docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md#u8-the-live-acceptance-run
@@ -10,9 +10,11 @@ targets: docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan
 # U8 live acceptance checklist — R1 through R7
 
 Authored per the plan's instruction that "the checklist authored first names the expected
-observation per leg" (U8 scope). This document names the expected observation for each leg. It was
-**not driven live** in this pass — see "Why this run did not proceed" below, which is itself part of
-the evidence this document exists to produce.
+observation per leg" (U8 scope). This document names the expected observation for each leg. Its
+first pass on 2026-08-09 did **not** drive live — see "Why this run did not proceed" below, kept as
+the record of that pass. Later the same day, with both blockers cleared (U1–U7 merged via pull
+request #45, a throwaway pane created fresh by the driver), every leg was driven live and passed:
+see `docs/plans/2026-08-09-u8-live-acceptance-results.md`.
 
 ## Preconditions (per the plan: "With every prior unit merged")
 
