@@ -1538,3 +1538,15 @@ Two things generalize past the incident. First, **an agent's model of "who else 
 **Cost.** The operator can be left disconnected with nothing dialled. That is a real state and the decision is to *name* it, not to prevent it: the alternative hides the same state behind a second failure.
 
 **Revisit when.** The transport grows a way to hold two connections at once, which would let the new one be proved before the old one is dropped.
+
+## 2026-08-09
+
+### Block markdown renders through Textual's widget family behind an ADR-first bounded-rendering claim
+
+**Author.** v0.2 block-markdown planning session (the block-markdown-plan leaf of outcome talaria-v0-2).
+
+**Decision.** The block-markdown plan (`docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md`) locks eight choices; the load-bearing four: (1) the pane's bounded-rendering claim is restated as three measurable ceilings — mounted top-level renderables ≤ 600 read from Textual's own tree, per-boundary reconcile work proportional to the tail plus newly committed entries, and p99 append/apply latency under one 50 ms boundary on the adversarial workloads — recorded in ADR-0006 **before** implementation (R13's target-precedes-implementation rule). (2) The pane goes hybrid: one `Markdown` document per committed assistant/reasoning entry (entry = parser document is R15's isolation boundary), line widgets for every other kind, one live tail widget streamed via public `Markdown.append` at the 50 ms boundary with `update` for replace-wins interim paths — the unexported `MarkdownStream` is not depended on. (3) The parser configuration is part of the forgery boundary: `MarkdownIt("gfm-like")` with `html=False` and `linkify=False`, `open_links=False`, defang before parse — all three widget defaults are unsafe and each forbidden channel gets a proving test. (4) The styled-line-run fallback is invoked only by a red restated gate with measured evidence attached, and taking it amends R4 explicitly.
+
+**Rejected alternatives.** *Commit-time-only block rendering* — rejected by operator choice in the brainstorm; streaming is fully progressive with accepted fence flicker. *Pinning the internal `MarkdownStream`* — buys backpressure Talaria's 50 ms coalescing already provides, at the price of a private-API dependency. *Restating the flattened line buffer* — would break `terminal_read` (v0.1 KTD10) and the projection pin `test_every_transcript_entry_survives_into_the_line_buffer`; instead the projection grows a second, entry-scoped surface and the line buffer moves zero bytes.
+
+**Revisit when.** U6's gate re-run measures the widget family's cost against the ceilings — a red run with numbers attached is the only trigger for the fallback; or Textual is upgraded past 8.2.8, which trips the U3 pin test.
