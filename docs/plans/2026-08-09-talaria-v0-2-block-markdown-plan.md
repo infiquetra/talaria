@@ -98,8 +98,8 @@ as KTD2, KTD5, KTD1's instrumentation, and KTD6 respectively.
 
 ## Requirements Amendments
 
-Two review findings could not be fixed inside the original requirement text; each is an explicit,
-operator-vetoable amendment recorded here and mirrored in DECISIONS.md by U1.
+Three review findings could not be fixed inside the original requirement text; each is an
+explicit, operator-vetoable amendment recorded here and mirrored in DECISIONS.md by U1.
 
 **RA1 — Underscore emphasis and strikethrough enter scope (amends the inline decision's deferral
 and R9's grammar list).** The brainstorm deferred underscore emphasis because the v0.1 inline
@@ -139,6 +139,21 @@ content** of every cell (the five-column probe case included), not just the styl
 The amended R3 reads: "table content is fully legible at 80 columns without a mouse; no construct
 depends on hover or focus to show its content." AE4's assertion follows the amended text.
 
+**RA3 — On a fallen-back entry, on-screen visibility narrows to the clipped row, explicitly
+(amends R11's projection-to-screen visibility and R3's legibility for that entry class only).**
+The KTD1 fallback fires only on degenerate content — an entry estimated past 500 wrapped display
+rows or 1,200 descendants — and renders it non-wrapping, one painted row per projected line,
+clipped at the viewport. R11 requires every projected source region represented visibly, and a
+clipped row genuinely does not show its tail; no presentation of a 100,000-character line does.
+The amendment: for fallen-back entries, projection-to-screen visibility is satisfied by one
+painted row per projected line **plus a banner that names the clip and the fallback cause** —
+the gate proves the banner is present and the row count exact, not that clipped cells are
+reachable. The full content remains byte-exact in the terminal-read buffer and the recording. A
+keyboard expand/inspect affordance for fallen-back entries is **queued follow-up work**, not part
+of this plan — building per-entry horizontal navigation for adversarial content is the same
+data-grid machinery RA2 declined. Veto path: demand the expand affordance now — U4 grows an
+interaction model and its focus-order integration with the answerability spine.
+
 ## Key Technical Decisions
 
 **KTD1 — The bounded-rendering claim is restated as four measurable ceilings, recorded in
@@ -170,7 +185,9 @@ ADR-0006 before implementation:**
   line**: a fallen-back entry keeps exactly one `TranscriptLine` per projected line with wrapping
   **off** — the widget paints one row and clips at the viewport edge, with a banner note on the
   entry saying the on-screen tail is clipped (the full line is always in the terminal-read
-  buffer, so no content is dropped — the screen clips, the buffer doesn't). Wrapping was
+  buffer, so no content is dropped — the screen clips, the buffer doesn't; the visibility
+  narrowing this implies is RA3's explicit, vetoable amendment, and the gate proves the banner
+  and exact row count rather than clipped-cell reachability). Wrapping was
   rejected twice over, both probed: a single wrapping fallback widget paints 1,283 rows on its
   own, and pre-splitting into hard-wrapped fragments makes a 100,000-character line ~1,283
   widgets (its own cap violation), breaks the `rendered_lines` reconstruction (fragments are not
