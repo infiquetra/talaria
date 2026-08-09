@@ -43,7 +43,10 @@ import resource
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
+
+from textual.containers import Horizontal
+from textual.widgets._markdown import MarkdownBlock, MarkdownFence
 
 from talaria.domain.projection import TranscriptView, transcript_view
 from talaria.domain.state import SessionState
@@ -52,7 +55,8 @@ from talaria.replay.source import ReplaySource, load_frame_records, load_header
 from talaria.replay.stress import StressCorpus, build_stress_corpus
 from talaria.transport.source import FrameRecord
 from talaria.ui.app import TalariaApp
-from talaria.ui.transcript import DEFAULT_MOUNT_CAP
+from talaria.ui.blocks import EntryMarkdown, parser_factory
+from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptPane
 
 
 class GateError(Exception):
@@ -67,6 +71,17 @@ class GateError(Exception):
 
 #: Mounted line widgets allowed at any point of the stress corpus.
 MOUNTED_WIDGET_CEILING = 600
+
+#: KTD1(a)'s *second* ceiling — descendants, not top-level widgets. A table
+#: mounts one widget per cell (``talaria/ui/blocks.py``'s module docstring),
+#: so a folded window that stays under :data:`MOUNTED_WIDGET_CEILING` at the
+#: top level can still have blown far past a descendant budget underneath a
+#: single top-level ``MarkdownTable``. Same numeric ceiling as the top-level
+#: one — KTD1(a) states one number for the folded window either way it is
+#: counted — but measured against :attr:`~talaria.ui.transcript.TranscriptPane
+#: .descendant_count`'s own peak, not :attr:`~talaria.ui.transcript
+#: .TranscriptPane.peak_mounted`, which cannot see a per-cell spike.
+DESCENDANT_WIDGET_CEILING = 600
 
 #: Resident-set growth allowed across a full 50k-delta replay, in megabytes.
 RSS_GROWTH_CEILING_MB = 300.0
@@ -129,6 +144,12 @@ class GateMeasurement:
     render_ticks_per_second: float
     peak_mounted_widgets: int
     condensed_lines: int
+    #: KTD1(a)'s second ceiling's high-water mark — descendants, not
+    #: top-level widgets (see :data:`DESCENDANT_WIDGET_CEILING`). Defaulted
+    #: rather than positional so the existing hand-built ``GateMeasurement``
+    #: fixtures in ``tests/replay/test_gate.py`` (predating this field) keep
+    #: constructing without naming every field.
+    peak_descendant_widgets: int = 0
     rss_series_mb: list[tuple[int, float]] = field(default_factory=list)
     rss_growth_mb: float = 0.0
     rss_slope_mb_per_1k_frames: float = 0.0
@@ -145,6 +166,7 @@ class GateMeasurement:
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "render_ticks_per_second": round(self.render_ticks_per_second, 3),
             "peak_mounted_widgets": self.peak_mounted_widgets,
+            "peak_descendant_widgets": self.peak_descendant_widgets,
             "condensed_lines": self.condensed_lines,
             "rss_series_mb": [[frames, round(mb, 2)] for frames, mb in self.rss_series_mb],
             "rss_growth_mb": round(self.rss_growth_mb, 2),
@@ -223,23 +245,352 @@ def _fit_slope(series: list[tuple[int, float]]) -> float:
     return numerator / denominator
 
 
-def interface_shows_everything(app: TalariaApp, *, settled: bool) -> bool:
-    """Is the conversation actually on screen, as opposed to merely in the domain?
+# ── U6: the two-part ownership proof ─────────────────────────────────────
+#
+# `interface_shows_everything`'s original claim (kept below, now `_line_
+# window_ownership`) was "one projected line, one on-screen widget" — true
+# for v0.1's flat line pane, false the moment U4 made a committed assistant
+# or reasoning entry mount as one `EntryMarkdown` document instead of one
+# `TranscriptLine` per line. That claim's own reconstruction still holds
+# *in aggregate* (`TranscriptPane.rendered_lines` correctly rebuilds a block
+# unit's contribution from its applied source text — U4's own docstring, and
+# `tests/ui/test_transcript_blocks.py` pins the identity at unit scale), so
+# Part 1's line-window half is retained unchanged for line-rendered content
+# and for the pane-wide "everything is accounted for" arithmetic. What is
+# new is the second, stronger half: that a mounted block document's own
+# *blocks* — not just its flattened text — genuinely cover the projected
+# lines they claim to, and are the right constructs, not merely the right
+# character count.
+#
+# Two parts, matching the KTD8 branch-hold instruction exactly:
+#
+#   (1) mounted-window ownership — every projected line inside a block
+#       entry's mounted window is covered by that entry's own document
+#       blocks' `source_range` spans, with the blank-line accounting rule
+#       stated and tested below (`_block_ownership`); applied to every
+#       currently mounted `EntryMarkdown` — committed entries and both live
+#       tails alike, since `TranscriptPane.query(EntryMarkdown)` does not
+#       distinguish the two and neither does this proof.
+#
+#   (2) condensed-range accounting — folded units are accounted by their
+#       line spans in the banner arithmetic, which is exactly the pane-wide
+#       "mounted plus condensed equals total" identity Part 1's aggregate
+#       half already proves; RA3's fallback-banner charge
+#       (`_fallback_banner_accounting`) is the one place that arithmetic has
+#       a chrome row (the banner) folded into it deliberately, so it gets
+#       its own proof rather than trusting the aggregate identity to notice
+#       a missing or doubled banner by coincidence.
 
-    :func:`content_is_complete` is a domain-side check, and at both of its call
-    sites the ``view`` argument was ``transcript_view(app.state)`` — a pure
-    function of the very state being walked. Its own docstring warns that
-    comparing the projection against itself "would pass no matter what", which
-    is precisely what the call sites did. Making ``TranscriptPane.apply`` a
-    no-op, so the interface rendered nothing at all, produced a completely blank
-    screen and a ``pass`` verdict with zero content loss.
+#: The markdown-it token types that ever become a **top-level** child of a
+#: mounted `EntryMarkdown` document — probed against Textual 8.2.8's own
+#: `Markdown._parse_markdown`: a token is yielded to the document (rather
+#: than appended to an ancestor's `_blocks`) exactly when it closes back to
+#: an empty construction stack, which is exactly `token.level == 0` for a
+#: block-opening or self-contained token. Table rows/cells, list items, and
+#: blockquote-nested paragraphs all have `level > 0` and are deliberately
+#: excluded — they are never one of `widget.children`, only descendants of
+#: one.
+_TOP_LEVEL_BLOCK_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "heading_open",
+        "hr",
+        "paragraph_open",
+        "blockquote_open",
+        "bullet_list_open",
+        "ordered_list_open",
+        "table_open",
+        "fence",
+        "code_block",
+    }
+)
 
-    This reads the pane instead. Every line the pane still holds as a widget
-    must be the projection's line at the same position, and the pane's own
-    accounting — mounted lines plus condensed lines — must add up to the whole
-    transcript, which is what makes "bounded" and "complete" one claim rather
-    than two. A pane that renders nothing fails on the second half; a pane that
-    renders the wrong text fails on the first.
+
+@dataclass(frozen=True)
+class _ExpectedBlock:
+    """One top-level construct :func:`parser_factory` would produce, ahead
+    of asking Textual to mount anything — the semantic oracle's ground
+    truth."""
+
+    construct_type: str
+    class_name: str
+    start: int
+    end: int
+
+
+def _expected_top_level_blocks(source: str) -> list[_ExpectedBlock]:
+    """Re-parse ``source`` with the exact parser every entry document
+    parses with (KTD4 isolation — a fresh parser, no shared state) and
+    return the top-level construct sequence a correctly mounted document
+    must match: class, order, and span, one entry per :data:`
+    _TOP_LEVEL_BLOCK_TOKENS` token at nesting level 0.
+    """
+    tokens = parser_factory().parse(source)
+    expected: list[_ExpectedBlock] = []
+    for token in tokens:
+        if token.level != 0 or token.type not in _TOP_LEVEL_BLOCK_TOKENS:
+            continue
+        block_name = token.tag if token.type == "heading_open" else token.type
+        block_cls = EntryMarkdown.BLOCKS[block_name]
+        start, end = token.map if token.map is not None else (0, 0)
+        expected.append(_ExpectedBlock(token.type, block_cls.__name__, start, end))
+    return expected
+
+
+def _construct_oracle(
+    construct_type: str, block: MarkdownBlock, lines: list[str]
+) -> tuple[bool, str]:
+    """Per-construct visual oracle (R1): does this mounted block's actual
+    rendered content trace back to its own source span, or did the
+    construct get flattened/dropped/hidden on the way to the screen?
+
+    Scoped deliberately: this proves *non-emptiness traceable to the
+    source*, not full structural equality for every construct — the fence
+    oracle is exact (verbatim code, byte for byte) and the table oracle is
+    exact (cell count), because Textual exposes both precisely; heading,
+    paragraph, block quote, and both list types are proven by "the
+    construct produced content/descendants proportional to a non-blank
+    span", which is weaker but still fails hard on the mutation this unit
+    asks for: a hidden construct that mounts its container with nothing
+    inside it.
+    """
+    start, end = block.source_range
+    span_text = "\n".join(lines[start:end])
+    if construct_type in ("fence", "code_block"):
+        if not isinstance(block, MarkdownFence):
+            return False, f"{construct_type} block is a {type(block).__name__}, not MarkdownFence"
+        # The fence body is every span line strictly between the two ``` (or
+        # indented-code) delimiter lines for a `fence`; a `code_block` (an
+        # indented code block, no delimiters) is the whole span verbatim.
+        body_lines = span_text.split("\n")
+        expected_body = "\n".join(body_lines[1:-1] if construct_type == "fence" else body_lines)
+        if block.code.rstrip("\n") != expected_body.rstrip("\n"):
+            return False, (
+                f"fence at lines {(start, end)}: mounted code {block.code!r} does not match "
+                f"source body {expected_body!r} — dropped or substituted text"
+            )
+        return True, ""
+    if construct_type == "table_open":
+        from textual.widgets._markdown import MarkdownTableCellContents
+
+        expected_tokens = parser_factory().parse(span_text)
+        expected_cells = sum(
+            1 for t in expected_tokens if t.type in ("th_open", "td_open")
+        )
+        actual_cells = len(list(block.query(MarkdownTableCellContents)))
+        if actual_cells != expected_cells:
+            return False, (
+                f"table at lines {(start, end)}: mounted {actual_cells} cells, "
+                f"source parses to {expected_cells} — a dropped or hidden cell"
+            )
+        return True, ""
+    if construct_type in ("bullet_list_open", "ordered_list_open"):
+        expected_tokens = parser_factory().parse(span_text)
+        expected_items = sum(1 for t in expected_tokens if t.type == "list_item_open")
+        actual_rows = len(list(block.query(Horizontal)))
+        if actual_rows != expected_items:
+            return False, (
+                f"list at lines {(start, end)}: mounted {actual_rows} item rows, "
+                f"source parses to {expected_items} — a dropped or hidden item"
+            )
+        return True, ""
+    # heading, paragraph, blockquote, hr: "non-empty content traceable to a
+    # non-blank span" — hr has no textual content to lose, so it is exempt.
+    if construct_type == "hr":
+        return True, ""
+    content_plain = getattr(block, "_content", None)
+    has_content = bool(content_plain is not None and content_plain.plain.strip())
+    has_descendants = bool(list(block.walk_children()))
+    non_blank_source = bool(span_text.strip("#> \t"))
+    if non_blank_source and not (has_content or has_descendants):
+        return False, (
+            f"{construct_type} at lines {(start, end)}: source {span_text!r} is non-blank but "
+            f"the mounted {type(block).__name__} shows nothing — a hidden construct"
+        )
+    return True, ""
+
+
+def _prove_span_coverage(
+    lines: list[str], spans: list[tuple[str, tuple[int, int]]]
+) -> tuple[bool, str]:
+    """Part 1's span-coverage and blank-line-accounting half, over a plain
+    ``(class_name, source_range)`` sequence rather than live Textual widgets.
+
+    Split out from :func:`document_ownership` deliberately: this is the
+    exact logic a "dropped text" or "hidden construct" mutation has to defeat,
+    and testing it against a hand-built ``spans`` list — rather than only
+    against a real mounted widget tree, which is awkward to corrupt safely —
+    is what lets a mutation test prove the proof can fail on those two
+    mutation classes directly, without needing to reach into Textual's own
+    object graph to simulate them.
+
+    **Blank-line accounting rule, stated exactly as probed**: parsing
+    ``"a\\n\\n# h\\n"`` yields two blocks with ``source_range`` ``(0, 1)``
+    and ``(2, 3)`` — line offset 1, the blank line between them, is inside
+    neither span. That is not a gap in the proof; it is accounted to the
+    entry's whole span rather than to any one block. The rule this function
+    enforces: every projected line offset is owned by exactly one span, *or*
+    is blank (``""``) in the document's own source. An offset that is
+    neither — covered by no span and not blank — is exactly what "dropped
+    text" looks like, and fails here.
+    """
+    total = len(lines)
+    covered = [False] * total
+    for class_name, (start, end) in spans:
+        if start < 0 or end > total or start > end:
+            return False, (
+                f"block {class_name} source_range {(start, end)} is out of "
+                f"bounds for a {total}-line document"
+            )
+        for offset in range(start, end):
+            if covered[offset]:
+                return False, (
+                    f"projected line {offset} is claimed by more than one mounted block"
+                )
+            covered[offset] = True
+
+    for offset, owned in enumerate(covered):
+        if not owned and lines[offset] != "":
+            return False, (
+                f"projected line {offset} ({lines[offset]!r}) is owned by no block and is "
+                "not blank — the blank-line accounting rule does not excuse it"
+            )
+    return True, ""
+
+
+def document_ownership(widget: EntryMarkdown) -> tuple[bool, str]:
+    """The two-part proof's Part 1, for one mounted block document.
+
+    Self-contained against the widget's own ``source`` — the exact
+    (defanged) text it was last built or updated from, per Textual's own
+    ``Markdown.source`` — so this needs no external record of which entry
+    or tail the widget belongs to; the claim is "this document's own blocks
+    cover this document's own text", checked the same way for a committed
+    entry and for a still-streaming tail alike.
+    """
+    source = widget.source
+    lines = source.split("\n")
+    children = [child for child in widget.children if isinstance(child, MarkdownBlock)]
+
+    span_ok, span_reason = _prove_span_coverage(
+        lines, [(type(child).__name__, child.source_range) for child in children]
+    )
+    if not span_ok:
+        return False, span_reason
+
+    # The semantic oracle: the parsed construct sequence must match the
+    # mounted sequence exactly (class, order, span), and each construct's
+    # own oracle must hold. Span coverage alone can look complete even when
+    # a block was mounted as the *wrong* class (two adjacent blocks whose
+    # combined span is right but whose shared boundary moved) or when a
+    # construct's content was silently dropped inside an otherwise correctly
+    # spanned block — this is what construct-specific oracles hunt for.
+    expected = _expected_top_level_blocks(source)
+    if len(expected) != len(children):
+        return False, (
+            f"source parses to {len(expected)} top-level constructs, "
+            f"{len(children)} are mounted"
+        )
+    for exp, child in zip(expected, children, strict=True):
+        if type(child).__name__ != exp.class_name:
+            return False, (
+                f"block at lines {(exp.start, exp.end)} mounted as "
+                f"{type(child).__name__}, expected {exp.class_name} for token "
+                f"{exp.construct_type!r} — a wrong block class"
+            )
+        if child.source_range != (exp.start, exp.end):
+            return False, (
+                f"block {type(child).__name__} source_range {child.source_range} != "
+                f"expected {(exp.start, exp.end)}"
+            )
+        ok, reason = _construct_oracle(exp.construct_type, child, lines)
+        if not ok:
+            return False, reason
+    return True, ""
+
+
+def block_documents_are_owned(pane: TranscriptPane) -> tuple[bool, str]:
+    """Part 1 over every currently mounted block document.
+
+    ``pane.query(EntryMarkdown)`` walks the live widget tree through
+    Textual's own public query API — it does not distinguish a committed
+    entry's document from a live tail's, which is exactly what "applied to
+    both provisional tail documents at every checkpoint, not only committed
+    entries" requires: whatever is mounted gets proven, tail or not.
+    Zero-block sources are never reached here at all — KTD2 line-renders
+    them instead of mounting an ``EntryMarkdown``, so they fall under
+    :func:`_line_window_ownership`'s window comparison by construction, not
+    by a check this function has to make.
+    """
+    for widget in pane.query(EntryMarkdown):
+        ok, reason = document_ownership(widget)
+        if not ok:
+            return False, reason
+    return True, ""
+
+
+def fallback_banner_accounting(pane: TranscriptPane) -> tuple[bool, str]:
+    """RA3's banner proof, read from the mounted DOM alone.
+
+    No private pane state: walks ``pane.children`` (public) and finds every
+    maximal run of consecutive ``.transcript--nowrap`` line widgets — a
+    fallen-back entry's content rows, painted one line per widget. Each such
+    run must be followed **immediately** by exactly one
+    ``.transcript--fallback-banner`` widget: that is what "painted rows
+    exactly projected lines + 1" means at the DOM level (the run's own
+    length is the projected-line count; the banner is the ``+ 1``), and what
+    "a banner never stands alone" means (a banner with no run in front of it
+    would be counted among mounted banners but not among proven ones, and
+    the final tally below would disagree). Clipped-cell reachability is
+    deliberately not claimed anywhere in this function, matching RA3's own
+    text.
+    """
+    children = list(pane.children)
+    index = 0
+    proven_banners = 0
+    while index < len(children):
+        widget = children[index]
+        if "transcript--nowrap" in widget.classes:
+            run_start = index
+            while index < len(children) and "transcript--nowrap" in children[index].classes:
+                index += 1
+            run_length = index - run_start
+            next_is_banner = (
+                index < len(children)
+                and "transcript--fallback-banner" in children[index].classes
+            )
+            if not next_is_banner:
+                return False, (
+                    f"a fallen-back run of {run_length} content rows at pane child "
+                    f"{run_start} has no banner immediately after it"
+                )
+            proven_banners += 1
+            index += 1  # past the banner just proven
+            continue
+        index += 1
+    total_banners = sum(1 for w in children if "transcript--fallback-banner" in w.classes)
+    if total_banners != proven_banners:
+        return False, (
+            f"{total_banners} banner widgets are mounted but only {proven_banners} sit "
+            "directly after a fallback content run — a banner standing alone, or a run "
+            "the fold rule left uncharged"
+        )
+    return True, ""
+
+
+def _line_window_ownership(app: TalariaApp, *, settled: bool) -> bool:
+    """The retained half of the original one-claim proof.
+
+    Still true and still needed: :attr:`TranscriptPane.rendered_lines`
+    correctly reconstructs a block unit's contribution (its own applied
+    source text, split on newline) alongside every line-rendered unit's
+    literal ``.source`` — so the pane-wide "on-screen window matches the
+    projection, and mounted plus condensed equals the whole" identity is
+    still exactly the right proof for (a) every line-rendered surface
+    (ordinary kinds, zero-block markdown, fallen-back entries) and (b) the
+    aggregate arithmetic Part 2 (condensed-range accounting) rests on. What
+    it is *not* any longer, on its own, is proof that a block-rendered
+    entry's internal structure is correct — :func:`block_documents_are_owned`
+    is what proves that half now.
     """
     view = transcript_view(app.state)
     pane = app.transcript
@@ -285,6 +636,65 @@ def interface_shows_everything(app: TalariaApp, *, settled: bool) -> bool:
     # be either mounted or accounted for by the condensed block. This is the
     # half that a pane rendering nothing at all fails.
     return len(on_screen) + pane.condensed_count == len(view.lines)
+
+
+def ownership_report(app: TalariaApp, *, settled: bool) -> tuple[bool, tuple[str, ...]]:
+    """The full two-part ownership proof, with reasons a mutation test can read.
+
+    Part 1 (mounted-window ownership) runs at *every* checkpoint, settled or
+    not — a block document's own internal consistency (its blocks correctly
+    span its own current text) is a true invariant at every instant, not a
+    race against a moving projection the way the line-window comparison is,
+    so it is not deferred to the settled checkpoint the way that half still
+    is. RA3's banner accounting is likewise checked at every checkpoint: a
+    fallen-back entry's banner is chrome mounted alongside its content in
+    the same reconciliation pass, never after it.
+    """
+    reasons: list[str] = []
+    pane = app.transcript
+
+    block_ok, block_reason = block_documents_are_owned(pane)
+    if not block_ok:
+        reasons.append(f"mounted-window ownership: {block_reason}")
+
+    banner_ok, banner_reason = fallback_banner_accounting(pane)
+    if not banner_ok:
+        reasons.append(f"RA3 banner accounting: {banner_reason}")
+
+    if not _line_window_ownership(app, settled=settled):
+        reasons.append(
+            "line-window ownership: the on-screen window does not match the projection, "
+            "or mounted plus condensed does not equal the projection's total line count"
+        )
+
+    return (not reasons), tuple(reasons)
+
+
+def interface_shows_everything(app: TalariaApp, *, settled: bool) -> bool:
+    """Is the conversation actually on screen, as opposed to merely in the domain?
+
+    :func:`content_is_complete` is a domain-side check, and at both of its call
+    sites the ``view`` argument was ``transcript_view(app.state)`` — a pure
+    function of the very state being walked. Its own docstring warns that
+    comparing the projection against itself "would pass no matter what", which
+    is precisely what the call sites did. Making ``TranscriptPane.apply`` a
+    no-op, so the interface rendered nothing at all, produced a completely blank
+    screen and a ``pass`` verdict with zero content loss.
+
+    This is the two-part ownership proof (U6), composed by
+    :func:`ownership_report` and collapsed to a bool here for the existing
+    call sites: (1) mounted-window ownership — a block-rendered entry's own
+    document blocks genuinely cover the lines they claim to, blank-line
+    accounting and per-construct semantic oracles included — plus the
+    retained line-window comparison for line-rendered surfaces and the
+    pane-wide totals; (2) condensed-range accounting, including RA3's
+    fallback-banner charge. A pane that renders nothing fails on the
+    line-window half; a pane that renders block-shaped garbage now fails on
+    the mounted-window half, which the original one-line-one-widget claim
+    could not see at all.
+    """
+    ok, _ = ownership_report(app, settled=settled)
+    return ok
 
 
 def content_is_complete(state: SessionState, view: TranscriptView) -> bool:
@@ -393,7 +803,25 @@ async def measure_replay(
                     # interface is actually showing it.
                     if not content_is_complete(app.state, transcript_view(app.state)):
                         failures += 1
-                    # The interface-side check runs only at the settled
+                    # The *line-window* half of the interface check still
+                    # only runs at the settled checkpoint, for the reason
+                    # explained below — it compares the pane's on-screen
+                    # window against a moving projection, which is a race
+                    # mid-stream. Mounted-window ownership (U6, Part 1) is
+                    # different: it is self-contained against each mounted
+                    # block document's own current text, never compared
+                    # against an external, moving projection, so it is a
+                    # true invariant at every instant and is asserted at
+                    # every checkpoint (R5/R14's progressiveness) rather
+                    # than deferred to settled. RA3's banner accounting is
+                    # likewise a same-pass invariant (a banner is mounted
+                    # alongside its content, never after), so it is checked
+                    # here too.
+                    block_ok, _ = block_documents_are_owned(app.transcript)
+                    banner_ok, _ = fallback_banner_accounting(app.transcript)
+                    if not (block_ok and banner_ok):
+                        failures += 1
+                    # The line-window half runs only at the settled
                     # checkpoint, not here. A coalescing renderer is, by
                     # design, an unknown number of flushes behind the
                     # projection at any given instant: it can show fewer lines
@@ -404,8 +832,9 @@ async def measure_replay(
                     # and asserting one produced a steady one-to-eleven
                     # spurious failures per run against a pane that was
                     # provably correct the moment the stream stopped. What is
-                    # checked mid-stream is the domain claim above; the
-                    # interface claim is checked where it is true.
+                    # checked mid-stream is the domain claim and the
+                    # mounted-window/banner claims above; the line-window
+                    # claim is checked where it is true.
                     while applied >= next_mark:
                         next_mark += RSS_SAMPLE_EVERY
 
@@ -448,6 +877,7 @@ async def measure_replay(
         elapsed_seconds=float(raw["elapsed_seconds"]),
         render_ticks_per_second=float(raw["render_ticks_per_second"]),
         peak_mounted_widgets=int(raw["peak_mounted_widgets"]),
+        peak_descendant_widgets=int(raw["peak_descendant_widgets"]),
         condensed_lines=int(raw["condensed_lines"]),
         rss_series_mb=rss_series,
         rss_growth_mb=growth,
@@ -610,6 +1040,12 @@ async def run_gate(
             stress_measurement.peak_mounted_widgets,
             MOUNTED_WIDGET_CEILING,
         ),
+        "descendant_widgets": _check(
+            "KTD1(a)'s second ceiling: mounted descendants (table cells included) "
+            "at any point of the stress corpus",
+            stress_measurement.peak_descendant_widgets,
+            DESCENDANT_WIDGET_CEILING,
+        ),
         "rss_growth_mb": _check(
             "resident-set growth across the full stress replay (MB)",
             stress_measurement.rss_growth_mb,
@@ -619,6 +1055,11 @@ async def run_gate(
             "mounted line widgets during the sustained-streaming pass",
             cadence_measurement.peak_mounted_widgets,
             MOUNTED_WIDGET_CEILING,
+        ),
+        "descendant_widgets_sustained": _check(
+            "mounted descendants during the sustained-streaming pass",
+            cadence_measurement.peak_descendant_widgets,
+            DESCENDANT_WIDGET_CEILING,
         ),
         "render_ticks_per_second": _check(
             "coalescing flushes per second at maximum replay speed",

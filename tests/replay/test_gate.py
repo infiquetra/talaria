@@ -13,9 +13,12 @@ test; it is the recorded measurement in
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
+from textual.app import App, ComposeResult
 
 from talaria.domain.models import TranscriptEntry
 from talaria.domain.projection import TranscriptView
@@ -26,13 +29,20 @@ from talaria.replay.gate import (
     GateMeasurement,
     GateResult,
     _cadence_speed,
+    _expected_top_level_blocks,
     _fit_slope,
+    _prove_span_coverage,
+    block_documents_are_owned,
     content_is_complete,
+    document_ownership,
+    fallback_banner_accounting,
     measure_replay,
+    ownership_report,
     run_gate,
     stress_corpus_identity,
 )
 from talaria.replay.stress import build_stress_corpus
+from talaria.ui.blocks import EntryMarkdown
 
 
 def _identity() -> CorpusIdentity:
@@ -264,3 +274,499 @@ async def test_measuring_a_replay_reports_the_frames_it_actually_applied() -> No
     # The malformed frames in the corpus were surfaced, not skipped.
     assert state.protocol_error_count > 0
     assert state.unknown_event_types
+
+
+# ── U6: the two-part ownership proof ──────────────────────────────────────
+#
+# `interface_shows_everything`'s original claim was one-line-one-widget,
+# true only while every mounted unit was a `TranscriptLine`. U4 broke that
+# premise for committed assistant/reasoning entries, which mount as one
+# `EntryMarkdown` document instead. These tests prove the two-part
+# ownership proof that replaced it: (1) mounted-window ownership — a block
+# document's own top-level blocks, read through Textual's public
+# `source_range`, genuinely cover the lines they claim to, with the
+# blank-line accounting rule from the probed fact stated in KTD8's branch
+# instruction; (2) condensed-range accounting, including RA3's fallback
+# banner charge. Every "the proof holds" test here is paired with at least
+# one "and it can be made to fail" mutation test — a proof nobody has seen
+# fail is a proof that might not be proving anything (the same reasoning
+# `test_gate.py`'s own module docstring states for the gate as a whole).
+
+
+class _DocHarness(App[None]):
+    """Mounts one EntryMarkdown so the ownership proof can be probed
+    directly, without a full TalariaApp/domain replay."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self._text = text
+
+    def compose(self) -> ComposeResult:
+        yield EntryMarkdown(self._text)
+
+
+@asynccontextmanager
+async def mounted_document(text: str) -> AsyncIterator[EntryMarkdown]:
+    app = _DocHarness(text)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        yield app.query_one(EntryMarkdown)
+
+
+# ── the blank-line accounting rule, stated and tested ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_blank_line_probe_is_exactly_what_the_branch_instruction_states() -> None:
+    """``"a\\n\\n# h\\n"`` yields ranges (0, 1) and (2, 3); line 1, the blank
+    between them, sits inside neither span. The exact probed fact this
+    unit's KTD8 branch-hold instruction names — pinned here as ground truth
+    for :func:`document_ownership`'s blank-line accounting rule, not merely
+    asserted in a docstring.
+    """
+    from textual.widgets._markdown import MarkdownBlock as _Block
+
+    async with mounted_document("a\n\n# h\n") as widget:
+        blocks = [c for c in widget.children if isinstance(c, _Block)]
+        spans = [(type(c).__name__, c.source_range) for c in blocks]
+        assert spans == [("MarkdownParagraph", (0, 1)), ("MarkdownH1", (2, 3))]
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+
+def test_prove_span_coverage_accounts_the_inter_block_blank_to_the_entry_not_a_block() -> None:
+    """The pure half of the rule, isolated from any live Textual widget: a
+    blank line between two covered spans passes; the same blank line
+    reclassified as non-blank text (nothing rendered it) fails.
+    """
+    lines = ["a", "", "# h"]
+    spans: list[tuple[str, tuple[int, int]]] = [
+        ("MarkdownParagraph", (0, 1)),
+        ("MarkdownH1", (2, 3)),
+    ]
+    ok, reason = _prove_span_coverage(lines, spans)
+    assert ok, reason
+
+    # The same shape, but the "blank" line actually carries text no block
+    # claims -- the accounting rule must not wave this through.
+    ok, reason = _prove_span_coverage(["a", "not blank", "# h"], spans)
+    assert ok is False
+    assert "owned by no block" in reason
+
+
+# ── mutation tests: the proof can fail ─────────────────────────────────────
+
+
+def test_dropped_text_makes_span_coverage_fail() -> None:
+    """A block whose span shrank so it no longer covers its own non-blank
+    content — the "dropped text" mutation named in KTD8's branch
+    instruction, tested at the pure layer directly.
+    """
+    lines = ["first line", "second line"]
+    healthy: list[tuple[str, tuple[int, int]]] = [("MarkdownParagraph", (0, 2))]
+    ok, reason = _prove_span_coverage(lines, healthy)
+    assert ok, reason
+
+    dropped: list[tuple[str, tuple[int, int]]] = [("MarkdownParagraph", (0, 1))]
+    ok, reason = _prove_span_coverage(lines, dropped)
+    assert ok is False
+    assert "second line" in reason
+
+
+def test_a_hidden_construct_makes_span_coverage_fail_by_being_absent_entirely() -> None:
+    """A construct dropped from the mounted sequence altogether — no span at
+    all claims its lines — fails the same way as a shrunk span.
+    """
+    lines = ["heading text", "", "paragraph text"]
+    only_one: list[tuple[str, tuple[int, int]]] = [("MarkdownH1", (0, 1))]
+    ok, reason = _prove_span_coverage(lines, only_one)
+    assert ok is False
+    assert "paragraph text" in reason
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_block_class_makes_document_ownership_fail() -> None:
+    """Span coverage alone cannot see a block mounted as the wrong
+    construct, since two adjacent same-length spans can still cover every
+    line correctly. The semantic oracle's class check is what catches it —
+    proven here by reassigning a real mounted paragraph's class to the
+    heading class next to it (source_range and text left untouched).
+    """
+    async with mounted_document("first para\n\n# h\n") as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+        paragraph, heading = widget.children[0], widget.children[1]
+        assert type(paragraph).__name__ == "MarkdownParagraph"
+        paragraph.__class__ = type(heading)
+
+        ok, reason = document_ownership(widget)
+        assert ok is False
+        assert "wrong block class" in reason
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_construct_inside_a_fence_makes_the_fence_oracle_fail() -> None:
+    """Span coverage and the class check both pass for a fence whose
+    *content* was silently swapped or dropped after mounting — Textual's
+    ``MarkdownFence.code`` is the exact code text the fence widget actually
+    holds, so corrupting it directly is the "hidden construct" mutation:
+    the right class, the right span, the wrong (or missing) content.
+    """
+    from textual.widgets._markdown import MarkdownFence as _Fence
+
+    async with mounted_document("```py\nreal code\n```\n") as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+        fence = widget.children[0]
+        assert isinstance(fence, _Fence)
+        original = fence.code
+        fence.code = "substituted, not the real fence body"
+
+        ok, reason = document_ownership(widget)
+        assert ok is False
+        assert "does not match source body" in reason
+
+        fence.code = ""
+        ok, reason = document_ownership(widget)
+        assert ok is False
+
+        fence.code = original
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_table_cell_makes_the_table_grid_oracle_fail() -> None:
+    """R1's table construct, proven exact: Textual mounts one widget per
+    cell (header and body alike), so removing one from the live tree is a
+    hidden/dropped cell the span-coverage check cannot see (the table's own
+    top-level span is untouched) but the cell-count oracle can.
+    """
+    from textual.widgets._markdown import MarkdownTableCellContents
+
+    async with mounted_document("| a | b |\n| - | - |\n| 1 | 2 |\n") as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+        table = widget.children[0]
+        cells = list(table.query(MarkdownTableCellContents))
+        assert len(cells) == 4  # 2 header + 2 body, exact
+        await cells[0].remove()
+
+        ok, reason = document_ownership(widget)
+        assert ok is False
+        assert "dropped or hidden cell" in reason
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_list_item_makes_the_list_oracle_fail() -> None:
+    """Both list types (R1) mount one ``Horizontal`` row per item (probed:
+    Textual's own ``MarkdownBulletList.compose``/``MarkdownOrderedList
+    .compose``) — removing one row is a dropped item the span-coverage
+    check cannot see, since the list's own top-level span is untouched.
+    """
+    from textual.containers import Horizontal
+
+    async with mounted_document("- a\n- b\n- c\n") as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+        the_list = widget.children[0]
+        rows = list(the_list.query(Horizontal))
+        assert len(rows) == 3
+        await rows[0].remove()
+
+        ok, reason = document_ownership(widget)
+        assert ok is False
+        assert "dropped or hidden item" in reason
+
+
+@pytest.mark.asyncio
+async def test_a_flattened_quote_makes_the_blockquote_oracle_fail() -> None:
+    """A block quote whose nested content was silently flattened away —
+    mounted as the right class, spanning the right lines, but empty
+    underneath. Constructed by removing the quote's only nested child.
+    """
+    async with mounted_document("> quoted text\n") as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+        from textual.widget import Widget as _Widget
+
+        quote = widget.children[0]
+        assert type(quote).__name__ == "MarkdownBlockQuote"
+        nested = [c for c in quote.walk_children() if isinstance(c, _Widget)]
+        assert nested, "the fixture must have nested content to strip for this to be a test"
+        for child in nested:
+            await child.remove()
+
+        ok, reason = document_ownership(widget)
+        assert ok is False
+        assert "hidden construct" in reason
+
+
+# ── per-construct oracle: every R1 construct proven positively too ────────
+
+
+@pytest.mark.asyncio
+async def test_document_ownership_holds_across_every_r1_construct_at_once() -> None:
+    """Heading, both list types, table, fence, and block quote in one
+    document — the positive case every mutation test above is a negative
+    twin of.
+    """
+    source = (
+        "# heading\n\n"
+        "a paragraph\n\n"
+        "> a quote\n\n"
+        "- bullet one\n- bullet two\n\n"
+        "1. ordered one\n2. ordered two\n\n"
+        "| a | b |\n| - | - |\n| 1 | 2 |\n\n"
+        "```py\ncode body\n```\n"
+    )
+    async with mounted_document(source) as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+        classes = [type(c).__name__ for c in widget.children]
+        assert classes == [
+            "MarkdownH1",
+            "MarkdownParagraph",
+            "MarkdownBlockQuote",
+            "MarkdownBulletList",
+            "MarkdownOrderedList",
+            "MarkdownTable",
+            "MarkdownFence",
+        ]
+
+
+# ── zero-block sources fall under the window comparison, not the proof ────
+
+
+def test_expected_top_level_blocks_is_empty_for_a_zero_block_source() -> None:
+    """An empty/whitespace/newline-only source parses to zero top-level
+    blocks — :func:`block_documents_are_owned` never has to special-case
+    this, because :class:`~talaria.ui.transcript.TranscriptPane` never
+    mounts an ``EntryMarkdown`` for one (KTD2's ``is_zero_block``); it stays
+    line-rendered and is proven under the retained window comparison.
+    """
+    for blank in ("", "\n", "   \n\n  \n", "\n\n\n"):
+        assert _expected_top_level_blocks(blank) == []
+
+
+@pytest.mark.asyncio
+async def test_block_documents_are_owned_over_committed_entries_and_both_live_tails() -> None:
+    """"applies to both provisional tail documents at every checkpoint, not
+    only committed entries" — driven end to end through the real
+    :class:`~talaria.ui.transcript.TranscriptPane`, not just the per-widget
+    proof, so the pane actually mounting a tail's document is exercised
+    too, not only the shape of a hand-built widget.
+    """
+    from talaria.domain.projection import EntryScopedView, ProvisionalTail, TranscriptEntryRecord
+    from talaria.ui.transcript import TranscriptPane
+
+    class _PaneHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TranscriptPane(id="t")
+
+    committed = TranscriptEntryRecord(
+        entry_id=1,
+        kind="assistant",
+        raw_body="# committed heading\n",
+        committed=True,
+        line_span=(0, 1),
+    )
+    entries = EntryScopedView(
+        entries=(committed,),
+        assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=0),
+        reasoning_tail=ProvisionalTail(
+            kind="reasoning", raw_text="## live reasoning tail\n", generation=1
+        ),
+    )
+    view = TranscriptView(
+        lines=("# committed heading", "· ## live reasoning tail"),
+        entry_count=1,
+    )
+
+    app = _PaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(TranscriptPane)
+        await pane.apply(view, entries)
+        await pilot.pause()
+
+        documents = list(pane.query(EntryMarkdown))
+        assert len(documents) == 2, "the committed entry and the reasoning tail must both mount"
+
+        ok, reason = block_documents_are_owned(pane)
+        assert ok, reason
+
+
+@pytest.mark.asyncio
+async def test_a_zero_block_entry_line_renders_and_mounts_no_entry_markdown() -> None:
+    from talaria.domain.projection import EntryScopedView, ProvisionalTail, TranscriptEntryRecord
+    from talaria.ui.transcript import TranscriptPane
+
+    class _PaneHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TranscriptPane(id="t")
+
+    blank_entry = TranscriptEntryRecord(
+        entry_id=1,
+        kind="assistant",
+        raw_body="\n\n",
+        committed=True,
+        line_span=(0, 3),
+    )
+    entries = EntryScopedView(
+        entries=(blank_entry,),
+        assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=0),
+        reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="", generation=0),
+    )
+    view = TranscriptView(lines=("", "", ""), entry_count=1)
+
+    app = _PaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(TranscriptPane)
+        await pane.apply(view, entries)
+        await pilot.pause()
+
+        assert list(pane.query(EntryMarkdown)) == []
+        ok, reason = block_documents_are_owned(pane)
+        assert ok, reason  # vacuously true -- nothing to prove
+        assert pane.rendered_lines == ("", "", "")
+
+
+# ── RA3: the fallback banner proof ─────────────────────────────────────────
+
+
+class _FakeClassed:
+    def __init__(self, *classes: str) -> None:
+        self.classes = frozenset(classes)
+
+
+class _FakePane:
+    """Duck-typed stand-in for the one thing `fallback_banner_accounting`
+    reads: ``.children``, an ordered sequence of objects with ``.classes``.
+    """
+
+    def __init__(self, children: list[_FakeClassed]) -> None:
+        self.children = children
+
+
+def test_fallback_banner_accounting_passes_for_a_run_with_its_banner() -> None:
+    pane = _FakePane(
+        [
+            _FakeClassed("transcript--nowrap"),
+            _FakeClassed("transcript--nowrap"),
+            _FakeClassed("transcript--fallback-banner"),
+        ]
+    )
+    ok, reason = fallback_banner_accounting(pane)  # type: ignore[arg-type]
+    assert ok, reason
+
+
+def test_fallback_banner_accounting_fails_when_the_banner_is_missing() -> None:
+    """A fallen-back run with no banner after it -- the fold rule's own
+    "a banner never stands alone" clause, inverted: content standing
+    without its charge.
+    """
+    pane = _FakePane([_FakeClassed("transcript--nowrap"), _FakeClassed("transcript--nowrap")])
+    ok, reason = fallback_banner_accounting(pane)  # type: ignore[arg-type]
+    assert ok is False
+    assert "no banner" in reason
+
+
+def test_fallback_banner_accounting_fails_when_a_banner_stands_alone() -> None:
+    """A banner with no fallback content run in front of it -- charged to
+    nothing, which is exactly the accounting RA3 forbids.
+    """
+    pane = _FakePane([_FakeClassed("transcript--fallback-banner")])
+    ok, reason = fallback_banner_accounting(pane)  # type: ignore[arg-type]
+    assert ok is False
+    assert "standing alone" in reason
+
+
+# ── progressiveness, including R18's two-tail overlap ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_mounted_window_ownership_holds_mid_stream_for_two_growing_tails_at_once() -> None:
+    """R18: within one turn, reasoning precedes the reply it explains, and
+    the domain holds both buffers at once — neither may steal the other's
+    progressive rendering. This proves the mounted-window half of the
+    ownership proof (unlike the line-window half) is not a race mid-stream:
+    both tail documents are checked while each is still growing, at three
+    successive intermediate snapshots that overlap in time, not only once
+    both have settled.
+    """
+    from talaria.domain.projection import EntryScopedView, ProvisionalTail
+    from talaria.ui.transcript import TranscriptPane
+
+    class _PaneHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TranscriptPane(id="t")
+
+    # Three snapshots of the same turn, each tail mid-construct at a
+    # different point -- a heading still being typed, then a completed
+    # heading with a paragraph starting, then both further along. Neither
+    # snapshot is a settled document, and the two tails overlap at every one
+    # of them.
+    snapshots = [
+        ("# reasoning heading", "assistant text growin"),
+        ("# reasoning heading\n\nmore reasoning", "assistant text growing more"),
+        ("# reasoning heading\n\nmore reasoning still", "assistant text growing more still"),
+    ]
+
+    app = _PaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(TranscriptPane)
+        for generation, (reasoning_text, assistant_text) in enumerate(snapshots):
+            entries = EntryScopedView(
+                entries=(),
+                assistant_tail=ProvisionalTail(
+                    kind="assistant", raw_text=assistant_text, generation=generation
+                ),
+                reasoning_tail=ProvisionalTail(
+                    kind="reasoning", raw_text=reasoning_text, generation=generation
+                ),
+            )
+            view = TranscriptView(
+                lines=tuple(reasoning_text.split("\n")) + tuple(assistant_text.split("\n")),
+                entry_count=0,
+            )
+            await pane.apply(view, entries)
+            await pilot.pause()
+
+            documents = list(pane.query(EntryMarkdown))
+            assert len(documents) == 2, (
+                f"snapshot {generation}: both tails must be mounted as block documents "
+                f"simultaneously, got {len(documents)}"
+            )
+            ok, reason = block_documents_are_owned(pane)
+            assert ok, f"snapshot {generation}: {reason}"
+
+
+# ── R11a guard: content_is_complete's callers still compose correctly ─────
+
+
+@pytest.mark.asyncio
+async def test_ownership_report_composes_all_three_halves_and_names_which_failed() -> None:
+    """`interface_shows_everything` collapses this to a bool for the gate's
+    existing call sites; this pins that the composed, named-reason surface
+    (`ownership_report`) is what a mutation test or a future gate-results
+    document would actually read to say *which* half failed.
+    """
+    from talaria.replay.controls import ReplayControls
+    from talaria.replay.source import ReplaySource
+    from talaria.ui.app import TalariaApp
+
+    controls = ReplayControls(paused=True)
+    source = ReplaySource((), controls=controls)
+    app = TalariaApp(source, mode="replay", controls=controls)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        ok, reasons = ownership_report(app, settled=True)
+        # An empty replay: nothing mounted, nothing condensed, nothing owed.
+        assert ok, reasons
+        assert reasons == ()
+        await app.shutdown_sources()

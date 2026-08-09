@@ -4332,5 +4332,6 @@ class TalariaApp(App[None]):
             "elapsed_seconds": elapsed,
             "render_ticks_per_second": self.render_ticks / elapsed,
             "peak_mounted_widgets": self.transcript.peak_mounted,
+            "peak_descendant_widgets": self.transcript.peak_descendants,
             "condensed_lines": self.transcript.condensed_count,
         }
