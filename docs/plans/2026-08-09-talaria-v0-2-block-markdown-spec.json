@@ -62,7 +62,7 @@
         "transient_resume_never_duplicates",
         "cancel_turn_commit_pinned_and_stripping_removed",
         "content_channel_preserved_exactly_with_whitespace_pins",
-        "entry_view_carries_id_raw_body_span_and_two_tails_with_generations",
+        "entry_view_id_raw_body_span_and_two_tails_with_generations",
         "interim_respects_boundary_and_bumps_generation",
         "line_buffer_and_v01_pin_unchanged"
       ],
@@ -155,7 +155,7 @@
         "interim_replacement_renders_exactly_once_via_generation",
         "both_tails_stream_independently",
         "commit_hands_tail_to_entry_by_id_without_rebuild",
-        "rendered_lines_reconstruction_keeps_content_claim_and_existing_suites",
+        "rendered_lines_reconstruction_keeps_content_claim_and_suites",
         "two_condition_trigger_holds_with_line_fallback_folding",
         "condensed_line_arithmetic_still_sums",
         "stale_stream_and_terminal_path_write_rules_pinned",
@@ -166,7 +166,7 @@
     "banner_rows_charged_to_fold_arithmetic_aggregate_ceiling_held",
     "odd_cut_rounds_forward_banner_never_stands_alone",
     "partial_retention_keeps_one_content_row_and_exactly_one_banner",
-        "fallback_non_wrapping_one_widget_per_line_with_boundary_and_resize_fixtures"
+        "fallback_non_wrapping_one_widget_per_line_boundary_resize_pins"
       ],
       "depends_on": [
         "CR1",
@@ -259,12 +259,12 @@
         "ra3_banner_and_exact_row_count_proven",
         "mutation_tests_prove_the_proof_can_fail",
         "content_is_complete_untouched_and_v01_pin_verbatim",
-        "sideband_timeline_replays_cancel_and_typed_disconnect_deterministically",
+        "sideband_timeline_replays_cancel_and_typed_disconnect",
         "per_construct_oracles_fail_when_flattened",
         "progressiveness_at_timed_checkpoints_incl_two_tail_overlap",
         "adversarial_workloads_hold_ceilings_with_high_water",
         "replay_determinism_on_normalized_block_structure",
-        "gate_green_over_existing_and_feature_corpora_with_pinned_environment"
+        "gate_green_over_existing_and_feature_corpora"
       ],
       "depends_on": [
         "CR5"
