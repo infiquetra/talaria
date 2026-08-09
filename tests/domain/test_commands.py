@@ -126,7 +126,17 @@ def test_a_registry_command_reusing_a_tui_name_is_not_marked_unsupported() -> No
     """The gateway's own dedup guard says the registry entry is canonical when
     a ``_TUI_EXTRA`` name collides (``methods_tools.py:290-297``, ``/sessions``
     is the example it gives). Classifying on the name alone would mark that
-    dispatchable command unsupported."""
+    dispatchable command unsupported.
+
+    **``/sessions`` gained a second reason to not be plain ``dispatch``, as of
+    U7 (KTD6).** Talaria's own local session picker now shadows the name too
+    — see :func:`test_the_local_set_shadows_a_gateway_command_of_the_same_name`
+    — and that shadow wins over the classification this test is about, so the
+    entry's *final* availability is ``talaria-local``. What this case still
+    isolates is the dedup guard alone: the entry is never ``unsupported``,
+    which is what the TUI-extra collision would produce if the name-and-
+    category conjunction fell back to matching on name only.
+    """
     reply = catalog_reply(
         pairs=[["/sessions", "Switch between live TUI sessions"]],
         categories=[
@@ -136,7 +146,8 @@ def test_a_registry_command_reusing_a_tui_name_is_not_marked_unsupported() -> No
     entry = decode_catalog(reply).entry_for("/sessions")
     assert entry is not None
     assert "/sessions" in CLIENT_LOCAL_NAMES
-    assert entry.availability == "dispatch"
+    assert entry.availability != "unsupported"
+    assert entry.availability == "talaria-local"
 
 
 def test_a_tui_categorised_command_that_is_not_one_of_the_four_dispatches() -> None:
@@ -159,9 +170,27 @@ def test_a_tui_categorised_command_that_is_not_one_of_the_four_dispatches() -> N
     assert entry.availability == "dispatch"
 
 
-@pytest.mark.parametrize("name", ["/density", "/logs", "/mouse", "/sessions"])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("/density", "unsupported"),
+        ("/logs", "unsupported"),
+        ("/mouse", "unsupported"),
+        # ``/sessions`` is the odd one out as of U7 (KTD6): Talaria's own
+        # local session picker shadows the name for a reason that has nothing
+        # to do with the TUI-extra collision this test is about, and that
+        # shadow is checked first (see
+        # ``test_the_local_set_shadows_a_gateway_command_of_the_same_name``),
+        # so this fixture — the name filed under the client-local ``TUI``
+        # category, simulating the collision — now resolves to
+        # ``talaria-local`` rather than ``unsupported``. It stays in this
+        # parametrization rather than moving out: dropping it from
+        # :data:`CLIENT_LOCAL_NAMES` must still break its own case.
+        ("/sessions", "talaria-local"),
+    ],
+)
 def test_each_of_the_four_client_local_names_is_refused_under_its_own_category(
-    name: str,
+    name: str, expected: str
 ) -> None:
     """One per name, so dropping any single one from the set is a failing test.
 
@@ -182,7 +211,7 @@ def test_each_of_the_four_client_local_names_is_refused_under_its_own_category(
     )
     entry = decode_catalog(reply).entry_for(name)
     assert entry is not None
-    assert entry.availability == "unsupported"
+    assert entry.availability == expected
 
 
 def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() -> None:
@@ -190,10 +219,11 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
     assert catalog.available is False
     assert "refused" in catalog.failure
     assert catalog.gateway_entries == ()
-    # The six that never needed a gateway to be *listed* are still there
-    # (``/models`` still needs one to actually select — see U2 — and
-    # ``/profiles`` needs one to have listed anything at all, see U4), so an
-    # operator whose gateway is down can still leave.
+    # The seven that never needed a gateway to be *listed* are still there
+    # (``/models`` still needs one to actually select — see U2 —
+    # ``/profiles`` needs one to have listed anything at all, see U4, and
+    # ``/sessions`` likewise needs one to list anything to switch to, see U7),
+    # so an operator whose gateway is down can still leave.
     assert {entry.name for entry in catalog.local_entries} == {
         "/quit",
         "/pause",
@@ -201,6 +231,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
         "/speed",
         "/models",
         "/profiles",
+        "/sessions",
     }
 
 
@@ -244,6 +275,48 @@ def test_the_local_set_shadows_a_gateway_command_of_the_same_name() -> None:
     matches = [entry for entry in catalog.entries if entry.name == "/quit"]
     assert len(matches) == 1
     assert matches[0].availability == "talaria-local"
+
+
+def test_ktd6_the_local_sessions_command_shadows_the_registrys_dispatchable_one() -> None:
+    """KTD6, asserted against the catalogue this module's own docstring cites.
+
+    The registry defines ``CommandDef("sessions", "Browse and resume previous
+    sessions", "Session")`` (``hermes_cli/commands.py:180`` at ``7f4d15515``)
+    — a real, dispatchable, non-``TUI`` entry, not the four-name TUI-extra
+    collision :func:`test_a_registry_command_reusing_a_tui_name_is_not_marked_unsupported`
+    covers. Built from that exact citation rather than an invented fixture, so
+    a future catalogue change that actually removed the registry row (leaving
+    nothing here to shadow) would not silently make this test meaningless —
+    the reply still carries the row, and what is asserted is that Talaria
+    never reaches it.
+    """
+    reply = catalog_reply(
+        pairs=[["/sessions", "Browse and resume previous sessions"]],
+        categories=[
+            {
+                "name": "Session",
+                "pairs": [["/sessions", "Browse and resume previous sessions"]],
+            }
+        ],
+    )
+    catalog = decode_catalog(reply)
+
+    # The listing itself: one row, shadowed rather than duplicated.
+    matches = [entry for entry in catalog.entries if entry.name == "/sessions"]
+    assert len(matches) == 1
+    assert matches[0].availability == "talaria-local"
+
+    # Resolution: a typed ``/sessions`` never reaches ``GatewayInvocation`` —
+    # the local set is checked before the catalogue (PC6's rule, extended by
+    # U7) — even though the catalogue above lists a real, dispatchable row
+    # under the row's own real category.
+    resolution = resolve_command("/sessions", catalog)
+    assert isinstance(resolution, LocalInvocation)
+    assert resolution.command.action == "sessions"
+
+    # And the same holds with no catalogue at all — the gateway being
+    # unreachable must not un-shadow the name.
+    assert isinstance(resolve_command("/sessions", None), LocalInvocation)
 
 
 # ── parsing (what is and is not a command) ───────────────────────────────
@@ -360,7 +433,7 @@ def test_dispatch_has_exactly_one_method_and_it_is_the_pinned_one() -> None:
 # ── the local control set ────────────────────────────────────────────────
 
 
-def test_the_local_set_is_pc6s_four_plus_u2s_models_and_u4s_profiles() -> None:
+def test_the_local_set_is_pc6s_four_plus_u2_u4_and_u7s_pickers() -> None:
     assert {command.name for command in TALARIA_LOCAL_COMMANDS} == {
         "/quit",
         "/pause",
@@ -368,6 +441,7 @@ def test_the_local_set_is_pc6s_four_plus_u2s_models_and_u4s_profiles() -> None:
         "/speed",
         "/models",
         "/profiles",
+        "/sessions",
     }
 
 
@@ -384,8 +458,9 @@ def test_both_picker_commands_are_plural_and_the_gateway_owns_the_singulars() ->
 
 
 def test_only_the_pacing_three_are_replay_only() -> None:
-    """``/quit``, ``/models`` and ``/profiles`` work in both modes; the pacing
-    three scale a recorded clock a live session does not have."""
+    """``/quit``, ``/models``, ``/profiles`` and ``/sessions`` work in both
+    modes; the pacing three scale a recorded clock a live session does not
+    have."""
     replay_only = {
         command.name for command in TALARIA_LOCAL_COMMANDS if command.replay_only
     }

@@ -31,6 +31,13 @@ Three things do get names, and each is a closed set with evidence behind it:
   ``/profiles`` (U4) joins the set on the same terms: the gateway owns the
   singular ``/profile``, and the plural opens a local region whose selection
   dials a different gateway rather than sending anything to this one.
+  ``/sessions`` (U7, 2026-08-08 v0.2 plan) joins too, and on different terms
+  again: it is not free the way the two pickers above were when Talaria took
+  them. The registry already defines a dispatchable ``/sessions`` under
+  category ``Session`` (see below), and Talaria's local modal session picker
+  deliberately takes the name anyway — a deliberate shadow, KTD6, not a gap
+  fill. The cost is stated plainly: the gateway's own ``/sessions`` output is
+  unreachable from Talaria from this unit onward.
 * **The official-client-local entries** — ``/density``, ``/logs``, ``/mouse``,
   ``/sessions``, the four ``_TUI_EXTRA`` rows at ``tui_gateway/server.py:11514``
   (``7f4d15515``). The gateway advertises them in ``commands.catalog`` and
@@ -57,8 +64,18 @@ already defines ``CommandDef("sessions", "Browse and resume previous sessions",
 the ``/sessions`` extra and a real catalogue serves ``/sessions`` under category
 ``Session`` — dispatchable, not unsupported. The plan's list of four is one name
 out of date, and this module follows the source rather than the list: three
-render unsupported and ``/sessions`` renders as an ordinary command. That is not
-an open question awaiting a live run; it is settled by the pinned registry.
+render unsupported and, at the pin, ``/sessions`` renders as an ordinary
+command. That is not an open question awaiting a live run; it is settled by
+the pinned registry.
+
+**That last clause held through v0.1 and stops holding here.** U7 of the
+2026-08-08 v0.2 plan adds ``/sessions`` to :data:`TALARIA_LOCAL_COMMANDS`
+(KTD6), and the local set is resolved before the catalogue on every lookup —
+see :func:`resolve_command` below. From U7 onward, ``/sessions`` therefore
+never reaches ``GatewayInvocation`` no matter what the catalogue says about
+it: it is always a :class:`LocalInvocation` opening the modal picker. The
+registry's own dispatchable entry is real and still exists at the gateway;
+Talaria simply no longer sends anything to it.
 
 **Ordinary commands go out over ``slash.exec``, not ``command.dispatch``.**
 ``command.dispatch``'s last line is ``_err(rid, 4018, f"not a
@@ -326,7 +343,7 @@ def _is_client_local(name: str, category: str) -> bool:
 
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
-LocalAction = Literal["quit", "pause", "resume", "speed", "models", "profiles"]
+LocalAction = Literal["quit", "pause", "resume", "speed", "models", "profiles", "sessions"]
 
 
 @dataclass(frozen=True)
@@ -387,6 +404,21 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "profiles",
         "Open the profile picker, or switch to a listed profile by its number",
         argument_hint="[index]",
+    ),
+    # v0.2's U7 (2026-08-08 answerability-and-session-story plan), and this one
+    # is not filling a gap the way ``/models``/``/profiles`` do — the gateway's
+    # own registry already serves a dispatchable ``/sessions`` under category
+    # ``Session`` (see the module docstring above). Talaria's local command
+    # shadows it deliberately (KTD6): a modal listing beats the gateway's own
+    # text output for the switching task, at the cost of the registry's own
+    # ``/sessions`` becoming unreachable from Talaria. No ``<n>`` shorthand —
+    # unlike ``/models``/``/profiles``, the listing is never cached, so there
+    # is no held row for a typed index to resolve against; see
+    # ``talaria/ui/picker.py:SessionPickerSource``.
+    LocalCommand(
+        "/sessions",
+        "sessions",
+        "Open the session picker and switch to a listed session",
     ),
 )
 

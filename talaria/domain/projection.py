@@ -24,6 +24,7 @@ from typing import Any
 
 from talaria.domain.models import (
     ConnectionStatus,
+    PendingPrompt,
     PromptKind,
     RunMode,
     SubagentRow,
@@ -343,6 +344,32 @@ def subagent_view(state: SessionState, *, now: float | None = None) -> SubagentV
     return SubagentView(rows=tuple(rows), active_count=active, terminal_count=terminal)
 
 
+def _focused_prompts(state: SessionState) -> tuple[PendingPrompt, ...]:
+    """Every prompt belonging to the focused session, or naming no session at
+    all — the retention rule :func:`prompt_view` documents in full, pulled
+    out so every reader of ``state.prompts`` applies the identical filter
+    rather than a second, driftable copy of it (U7 round two).
+
+    **Why this exists at all.** CR3's fix made ``focus_session`` RETAIN
+    ``state.prompts`` across a switch, rather than clearing it, so that an
+    outstanding prompt in a session switched away from stays answerable if
+    the operator switches back — the gateway never re-announces it, and
+    clearing it would orphan the control for good. That is correct for the
+    *registry*. But :func:`turn_status` and :func:`status_payload` used to
+    read ``state.prompts`` unfiltered, so a prompt parked in a session that
+    is no longer focused kept reporting ``waiting`` — and counting toward
+    ``pending_prompts`` — for a session that, on screen, has nothing
+    outstanding at all.
+    """
+    return tuple(
+        p
+        for p in state.prompts
+        if state.focused_session_id is None
+        or p.session_id is None
+        or p.session_id == state.focused_session_id
+    )
+
+
 def prompt_view(state: SessionState) -> PromptView:
     """Project the registry, marking any prompt whose answer cannot be aimed.
 
@@ -360,9 +387,27 @@ def prompt_view(state: SessionState) -> PromptView:
     arriving inside that window is exactly as unaimable as one arriving beside
     it — and it is the case the operator is *most* likely to hit, because the
     interface invites the second press the moment the first one is sent.
+
+    **Only the focused session's prompts are projected.** The registry is not
+    guaranteed to hold one session's prompts alone: :func:`restore_prompt` puts
+    a prompt back by identity, without consulting the focus, so a control
+    belonging to a session Talaria is no longer showing could reach the screen
+    — and it would be answerable-looking while
+    :func:`~talaria.domain.state.respond_to_prompt` refuses every answer aimed
+    at it (``REFUSED_WRONG_SESSION``). The switcher makes that reachable, so
+    the filter is here rather than left to each caller. It is a second line of
+    defence, not the first: :func:`~talaria.domain.state.focus_session` refuses
+    to switch while an answer is in flight, which is what keeps the restore
+    from crossing sessions at all.
+
+    A prompt that names no session at all is shown. It arrived before any
+    session id was on the wire — a replayed recording is the usual case — and
+    withholding it would leave the operator a question they can see in the
+    transcript and cannot answer.
     """
+    prompts = _focused_prompts(state)
     ambiguous: set[str] = set()
-    for session in {p.session_id for p in state.prompts if p.kind == "approval"}:
+    for session in {p.session_id for p in prompts if p.kind == "approval"}:
         queued = state.outstanding_approvals(session)
         if len(queued) > 1:
             ambiguous.update(p.request_id for p in queued)
@@ -382,7 +427,7 @@ def prompt_view(state: SessionState) -> PromptView:
                     UNCORRELATED_APPROVAL if p.request_id in ambiguous else ""
                 ),
             )
-            for p in state.prompts
+            for p in prompts
         ),
         withdrawn=state.withdrawn_approvals,
         notice=state.thinking_notice,
@@ -396,8 +441,16 @@ def turn_status(state: SessionState) -> TurnStatus:
     ``streaming``. R8 asks that a session waiting on the operator never look
     like a session that is working, and this is the one field an external status
     consumer reads to tell the difference.
+
+    **Reads only the focused session's prompts** (:func:`_focused_prompts`,
+    U7 round two). CR3's fix keeps a switched-away session's outstanding
+    prompt in ``state.prompts`` rather than orphaning it, which means a
+    prompt belonging to a session that is no longer focused can sit in the
+    registry indefinitely — reading the registry unfiltered reported
+    ``waiting`` for a session that, on screen, has nothing outstanding at
+    all.
     """
-    if state.prompts and state.turn != "cancelled":
+    if _focused_prompts(state) and state.turn != "cancelled":
         return "waiting"
     if state.turn == "streaming":
         return "streaming"
@@ -412,6 +465,11 @@ def status_payload(state: SessionState, *, mode: RunMode) -> StatusPayload:
     No terminal-framework type and no credential-bearing value can appear here,
     because every field is either a counter, an enum member, or a session
     identifier the gateway already published (R20).
+
+    ``pending_prompts`` counts only the focused session's prompts
+    (:func:`_focused_prompts`), the same reason :func:`turn_status` does —
+    otherwise a prompt parked in an unfocused session (CR3's retention fix)
+    inflates the count for a session that has nothing outstanding.
     """
     view = subagent_view(state)
     return StatusPayload(
@@ -421,7 +479,7 @@ def status_payload(state: SessionState, *, mode: RunMode) -> StatusPayload:
         session_id=state.focused_session_id or "",
         session_title=state.session_title,
         turn=turn_status(state),
-        pending_prompts=len(state.prompts),
+        pending_prompts=len(_focused_prompts(state)),
         subagents_active=view.active_count,
         subagents_terminal=view.terminal_count,
         input_tokens=state.usage.input_tokens if state.usage.observed else None,

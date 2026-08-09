@@ -25,12 +25,17 @@ from talaria.domain.state import (
     APPROVAL_COMMAND_LABEL,
     APPROVAL_STALE_AFTER,
     REFUSED_NOT_OUTSTANDING,
+    REFUSED_SWITCH_WHILE_ANSWERING,
     REFUSED_UNCORRELATED_APPROVAL,
+    REFUSED_WRONG_SESSION,
     age_out_approvals,
+    focus_session,
+    latch_resolved_prompts,
     respond_to_all_approvals,
     respond_to_prompt,
     restore_prompt,
     settle_prompt,
+    switch_refusal,
 )
 
 from .conftest import BASE_TIME, raw_event, replay
@@ -269,7 +274,8 @@ def test_an_expiry_during_an_in_flight_answer_still_leaves_a_marker() -> None:
 
     markers = [e.text for e in expired.transcript if e.kind == "prompt-expired"]
     assert markers == ["sudo prompt expired unanswered: sudo password required"]
-    assert "u-1" in expired.flushed_prompt_ids
+    # Session-qualified (sess-focus:u-1), not bare — see ``_flush_key``.
+    assert "sess-focus:u-1" in expired.flushed_prompt_ids
     assert expired.answering == ()
 
 
@@ -662,4 +668,483 @@ def test_the_age_out_is_driven_by_the_clock_its_prompt_was_stamped_with() -> Non
     assert age_out_approvals(state, now=state.last_observed_at) is state
     assert age_out_approvals(state, now=state.last_observed_at) == age_out_approvals(
         state, now=state.last_observed_at
+    )
+
+
+# ── switching sessions: what must be cleared, kept, and refused (R8) ──────
+
+
+def test_a_switch_clears_the_withdrawal_count_it_cannot_speak_for() -> None:
+    """``withdrawn_approvals`` says "an approval was taken off this session's
+    screen and what happens next is unknown". Carried into the session switched
+    to, it makes that session's activity line hedge about a withdrawal that
+    never happened there — and nothing in that session will ever clear it,
+    because the counter is retired by the *agent* moving
+    (``_clear_withdrawal_on_progress``) and the withdrawn approval belongs to a
+    conversation no longer on screen."""
+    state = replay(
+        [raw_event("approval.request", {"description": "stale", "command": "rm -rf /old"})]
+    )
+    withdrawn = age_out_approvals(state, now=BASE_TIME + APPROVAL_STALE_AFTER + 1.0)
+    assert withdrawn.withdrawn_approvals == 1
+    assert prompt_view(withdrawn).withdrawn == 1
+
+    # Three, as the queue's measured failing case had it, so the reset is not
+    # confused with a decrement.
+    switched = focus_session(replace(withdrawn, withdrawn_approvals=3), "sess-b")
+    assert switched.withdrawn_approvals == 0
+    assert prompt_view(switched).withdrawn == 0
+
+
+def test_a_switch_is_refused_while_an_answer_is_travelling() -> None:
+    """A late outcome is applied to whatever state exists when the call returns.
+    Switch inside that window and session A's answer writes session B's
+    transcript, or puts session A's control back on session B's screen
+    (``restore_prompt``). The refusal costs one RPC round trip."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"})])
+    answering, refusal = respond_to_prompt(state, "req-1")
+    assert refusal is None
+    assert [p.request_id for p in answering.answering] == ["req-1"]
+
+    assert switch_refusal(answering) == REFUSED_SWITCH_WHILE_ANSWERING
+    # Refused, and nothing at all changed — not the focus, not the registry.
+    assert focus_session(answering, "sess-b") is answering
+
+    settled = settle_prompt(answering, "req-1")
+    assert switch_refusal(settled) == ""
+    switched = focus_session(settled, "sess-b")
+    assert switched.focused_session_id == "sess-b"
+    assert switched.prompts == ()
+
+
+def test_a_latched_prompt_id_cannot_be_restored_after_a_switch() -> None:
+    """``flushed_prompt_ids`` is the only thing standing between an answer that
+    reached no socket and a resurrected control, and the gateway never sends a
+    second expiry. Clearing the latch on switch is what lets a prompt the
+    operator was told had expired come back."""
+    state = replay(
+        [
+            raw_event("sudo.request", {"request_id": "req-1"}),
+            raw_event("sudo.expire", {"request_id": "req-1"}),
+        ]
+    )
+    expired = state.transcript[-1]
+    assert expired.kind == "prompt-expired"
+    # Session-qualified (sess-focus:req-1), not bare — see ``_flush_key``.
+    assert "sess-focus:req-1" in state.flushed_prompt_ids
+    prompt = replay([raw_event("sudo.request", {"request_id": "req-1"})]).prompts[0]
+
+    switched = focus_session(state, "sess-b")
+    assert "sess-focus:req-1" in switched.flushed_prompt_ids, (
+        "the tombstone survives the switch"
+    )
+    assert restore_prompt(switched, prompt).prompts == ()
+
+
+def test_a_prompt_survives_a_switch_away_and_back() -> None:
+    """The high finding (CR3 #1): clearing ``prompts`` on every
+    ``focus_session`` call orphaned an outstanding prompt the gateway was
+    still blocking on and never re-announced — switching away and back used
+    to come back to an empty registry with no way to ever answer the control
+    again. Retaining the registry is safe because ``prompt_view``'s session
+    filter (:func:`~talaria.domain.projection.prompt_view`) keeps a foreign
+    session's prompt off screen without discarding it."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"})])
+    assert [p.request_id for p in state.prompts] == ["req-1"]
+    assert [row.request_id for row in prompt_view(state).rows] == ["req-1"]
+
+    away = focus_session(state, "sess-b")
+    assert [p.request_id for p in away.prompts] == ["req-1"], "the registry keeps it"
+    assert prompt_view(away).rows == (), "but session B does not render session A's prompt"
+
+    back = focus_session(away, "sess-focus")
+    assert [row.request_id for row in prompt_view(back).rows] == ["req-1"], (
+        "the prompt renders again once session A is refocused"
+    )
+    answering, refusal = respond_to_prompt(back, "req-1")
+    assert refusal is None, "and it is still answerable, not merely visible"
+    assert [p.request_id for p in answering.answering] == ["req-1"]
+
+
+def test_turn_status_and_pending_count_ignore_an_unfocused_sessions_prompt() -> None:
+    """U7 round two, a direct consequence of CR3's fix above. Now that
+    ``prompts`` survives a switch instead of being cleared,
+    :func:`~talaria.domain.projection.turn_status` and
+    :func:`~talaria.domain.projection.status_payload`'s ``pending_prompts``
+    must filter to the focused session the same way
+    :func:`~talaria.domain.projection.prompt_view` already does — reading
+    the registry unfiltered reported ``waiting`` (and counted a phantom
+    pending prompt) for a session that has nothing outstanding on screen at
+    all.
+    """
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"})])
+    assert turn_status(state) == "waiting"
+    assert status_payload(state, mode="live").pending_prompts == 1
+
+    away = focus_session(state, "sess-b")
+    assert turn_status(away) == "idle", "session B has nothing outstanding"
+    assert status_payload(away, mode="live").pending_prompts == 0
+
+    back = focus_session(away, "sess-focus")
+    assert turn_status(back) == "waiting", "session A's own prompt is outstanding again"
+    assert status_payload(back, mode="live").pending_prompts == 1
+
+
+def test_a_tombstone_in_one_session_does_not_block_the_same_id_in_another() -> None:
+    """The medium finding (CR3 #2): tombstones used to be keyed by bare
+    ``request_id``, so with ``flushed_prompt_ids`` now retained across a
+    switch (the fix above), session A's expired ``req-1`` would permanently
+    block session B's own, independently arrived ``req-1`` — a control the
+    gateway is still holding open could never be restored after its own
+    answer reached no socket."""
+    state = replay(
+        [
+            raw_event("sudo.request", {"request_id": "req-1"}),
+            raw_event("sudo.expire", {"request_id": "req-1"}),
+        ]
+    )
+    assert "sess-focus:req-1" in state.flushed_prompt_ids
+
+    switched = focus_session(state, "sess-b")
+    in_b = replay(
+        [raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-b")],
+        switched,
+    )
+    prompt_b = in_b.prompt_for("req-1")
+    assert prompt_b is not None
+    answering, refusal = respond_to_prompt(in_b, "req-1")
+    assert refusal is None
+
+    restored = restore_prompt(answering, prompt_b)
+    assert [p.request_id for p in restored.prompts] == ["req-1"], (
+        "session A's tombstone must not block session B's own req-1"
+    )
+
+
+def test_a_synthesized_id_latched_in_one_session_does_not_block_the_next() -> None:
+    """Approval keys are synthesized because ``approval.request`` carries no
+    request id. They are session-qualified, but the counter is what keeps them
+    unique across a *return* to a session already visited: reset per landing, a
+    second visit to ``sess-focus`` would mint ``approval:sess-focus#1`` again
+    and the tombstone from the first visit would swallow the new prompt — no
+    card, for a command the gateway is holding."""
+    state = replay([raw_event("approval.request", {"description": "first", "command": "ls"})])
+    latched = age_out_approvals(state, now=BASE_TIME + APPROVAL_STALE_AFTER + 1.0)
+    assert "approval:sess-focus#1" in latched.flushed_prompt_ids
+
+    switched = focus_session(latched, "sess-b")
+    in_b = replay(
+        [
+            raw_event(
+                "approval.request",
+                {"description": "second", "command": "ls"},
+                session_id="sess-b",
+            )
+        ],
+        switched,
+    )
+    assert [p.request_id for p in in_b.prompts] == ["approval:sess-b#2"]
+    assert not in_b.flushed_prompt_ids & {"approval:sess-b#2"}
+    assert [row.summary for row in prompt_view(in_b).rows] == ["second"]
+
+    # And back again: the counter climbs rather than restarting, so the
+    # returned-to session cannot mint a key its own tombstone already holds.
+    # ``prompts`` now also carries session B's still-outstanding second
+    # approval (retained across the switch, CR3 finding 1) — filtering
+    # through ``prompt_view`` is what isolates session A's own registration.
+    back = focus_session(in_b, "sess-focus")
+    in_a_again = replay(
+        [raw_event("approval.request", {"description": "third", "command": "ls"})], back
+    )
+    assert in_a_again.prompt_for("approval:sess-focus#3") is not None
+    assert [row.summary for row in prompt_view(in_a_again).rows] == ["third"]
+
+
+def test_synthesized_ids_can_never_collide_across_sessions_by_construction() -> None:
+    """Discharges U5's plan scenario 4 (docs/plans/2026-08-08-talaria-v0-2-
+    answerability-and-session-story-plan.md, U5's test list): "a synthesized
+    approval id latched in session A does not block the identically numbered
+    synthesized id arriving in session B."
+
+    That exact state cannot be built: ``approvals_seen`` is a single,
+    monotonic, cross-session counter (:attr:`SessionState.approvals_seen`), so
+    no two ``approval:<session>#<n>`` ids minted in one process ever carry the
+    same number — there is no "session B's own #1" for session A's tombstoned
+    #1 to collide with. What this test pins instead is the property that
+    makes the plan's scenario unreachable rather than merely untested:
+    revisiting a session, directly or by round-tripping through another one,
+    always mints the next number in the sequence and never a number already
+    spent — including one a retained tombstone already holds.
+    """
+    state = replay([raw_event("approval.request", {"description": "a1", "command": "ls"})])
+    assert [p.request_id for p in state.prompts] == ["approval:sess-focus#1"]
+    latched = age_out_approvals(state, now=BASE_TIME + APPROVAL_STALE_AFTER + 1.0)
+    assert "approval:sess-focus#1" in latched.flushed_prompt_ids
+
+    switched = focus_session(latched, "sess-b")
+    in_b = replay(
+        [
+            raw_event(
+                "approval.request", {"description": "b1", "command": "ls"}, session_id="sess-b"
+            )
+        ],
+        switched,
+    )
+    # Session B's first approval mints #2, never #1 — the number session A's
+    # tombstone already holds is never reissued, in this session or any other.
+    assert [p.request_id for p in in_b.prompts] == ["approval:sess-b#2"]
+
+    back_in_a = focus_session(in_b, "sess-focus")
+    revisited = replay(
+        [raw_event("approval.request", {"description": "a2", "command": "ls"})], back_in_a
+    )
+    # Returning to session A a second time does not restart the counter
+    # either — #3, not #1 — so the tombstone retained from the first visit can
+    # never swallow a later prompt that happens to share its old number.
+    # (``prompts`` also still carries session B's own outstanding #2, kept
+    # rather than cleared per CR3 finding 1 — the exact id is what matters
+    # here, not the registry's full contents.)
+    assert revisited.prompt_for("approval:sess-focus#3") is not None
+    assert revisited.prompt_for("approval:sess-b#2") is not None
+
+
+def test_a_prompt_belonging_to_another_session_never_reaches_the_screen() -> None:
+    """The state built here is the one the in-flight refusal exists to prevent —
+    a prompt from ``sess-focus`` sitting in the registry while ``sess-b`` is
+    focused, as a late ``restore_prompt`` would leave it. The projection filters
+    it out anyway: an answer aimed at it is refused by the registry
+    (``REFUSED_WRONG_SESSION``), so a card offering one is an invitation to a
+    keystroke that can only fail."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"})])
+    stranded = replace(focus_session(state, "sess-b"), prompts=state.prompts)
+
+    assert [p.request_id for p in stranded.prompts] == ["req-1"]
+    assert prompt_view(stranded).rows == ()
+    assert prompt_view(state).rows != ()
+
+    # A prompt that names no session at all is still shown: it arrived before
+    # any session id was on the wire, and withholding it would leave a question
+    # visible in the transcript and unanswerable on screen.
+    unattributed = replace(
+        stranded, prompts=(replace(state.prompts[0], session_id=None),)
+    )
+    assert [row.request_id for row in prompt_view(unattributed).rows] == ["req-1"]
+
+
+# ── U2/KTD8: the latch a whole-queue resolution leaves behind ────────────
+
+
+def test_a_latched_id_is_refused_a_restore_its_own_call_would_have_earned() -> None:
+    """The queued defect, at the level the rule lives.
+
+    An approval whose single answer is in flight is *also* resolved by a
+    ``all: true`` denial, because the gateway applies that choice to every
+    entry in the queue. When the single answer then comes back a definite
+    ``not_sent``, :func:`restore_prompt` is right in isolation — nothing
+    reached a socket — and wrong in fact: the deny-all resolved that entry, and
+    the gateway sends no second expiry, so the control it puts back never
+    leaves again.
+    """
+    state = replay(
+        [
+            raw_event("approval.request", {"description": "first", "command": "ls"}),
+            raw_event("approval.request", {"description": "second", "command": "rm -rf /"}),
+        ]
+    )
+    approvals = state.outstanding_approvals(None)
+    ids = tuple(p.request_id for p in approvals)
+    assert len(ids) == 2
+
+    # One approval's own answer goes out; the other is what a deny-all takes.
+    answering, refusal = respond_to_prompt(state, ids[0])
+    assert refusal == REFUSED_UNCORRELATED_APPROVAL, "two queued cannot be aimed at"
+    swept, scope = respond_to_all_approvals(state, session_id=None)
+    assert scope.denied == 2
+
+    latched = latch_resolved_prompts(swept, approvals)
+    # Approval keys stay bare — see latch_resolved_prompts's own docstring.
+    assert set(ids) <= latched.flushed_prompt_ids
+
+    # The restore its own ``not_sent`` would have earned is refused, and the
+    # in-flight entry is still settled — the latch withholds resurrection, not
+    # bookkeeping.
+    back = restore_prompt(latched, state.prompts[0])
+    assert back.prompt_for(ids[0]) is None
+    assert back.answering_for(ids[0]) is None
+
+
+def test_latching_nothing_changes_nothing() -> None:
+    """Called on every resolved deny-all, including the ones with an empty
+    sweep, so the no-op has to be exactly that."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"})])
+    assert latch_resolved_prompts(state, ()) is state
+    prompt = state.prompt_for("req-1")
+    assert prompt is not None
+    # A non-approval kind's key is session-qualified (A4), not the bare id —
+    # see latch_resolved_prompts's own docstring and _flush_key.
+    assert latch_resolved_prompts(state, (prompt,)).flushed_prompt_ids == frozenset(
+        {f"{prompt.session_id or ''}:req-1"}
+    )
+
+
+# ── Round three, Root A: prompt retention rippled into single-session code ──
+
+
+def test_a_second_sessions_own_prompt_registers_under_a_shared_bare_id() -> None:
+    """A1 (HIGH, state.py:1653 in the reviewer's line numbering): registration
+    used to dedupe by bare ``request_id`` alone. With session A's ``req-1``
+    retained across a switch (CR3), session B's own, independently arrived
+    ``req-1`` collided with it and was silently dropped as a duplicate — B's
+    gateway prompt got no control in Talaria at all. Registration identity is
+    (session, request id)."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-a")])
+    switched = focus_session(state, "sess-b")
+    in_b = replay(
+        [raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-b")],
+        switched,
+    )
+    assert in_b.duplicate_prompts_ignored == 0, "B's own req-1 must not read as a duplicate"
+    prompt_a = in_b.prompt_for("req-1", session_id="sess-a")
+    prompt_b = in_b.prompt_for("req-1", session_id="sess-b")
+    assert prompt_a is not None and prompt_a.session_id == "sess-a"
+    assert prompt_b is not None and prompt_b.session_id == "sess-b"
+    assert prompt_a is not prompt_b
+
+
+def test_respond_to_prompt_finds_the_asking_sessions_entry_when_ids_collide() -> None:
+    """A1 continued: once two sessions may each hold their own prompt under
+    the same bare id, a session-blind lookup would answer whichever one
+    happens to be first in the registry rather than the one the caller
+    actually meant."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-a")])
+    switched = focus_session(state, "sess-b")
+    in_b = replay(
+        [raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-b")],
+        switched,
+    )
+    answering, refusal = respond_to_prompt(in_b, "req-1", session_id="sess-b")
+    assert refusal is None
+    assert answering.answering_for("req-1", session_id="sess-b") is not None
+    # Session A's own req-1 is untouched — still outstanding, not answered.
+    assert answering.prompt_for("req-1", session_id="sess-a") is not None
+
+
+def test_respond_to_prompt_still_names_wrong_session_when_only_one_entry_exists() -> None:
+    """The common case — only one entry, in a session other than the one
+    asking — must keep its precise refusal reason rather than degrading to
+    the less informative "not outstanding"."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-a")])
+    _, refusal = respond_to_prompt(state, "req-1", session_id="sess-b")
+    assert refusal == REFUSED_WRONG_SESSION
+
+
+def test_a_tool_completion_flushes_only_its_own_sessions_clarify() -> None:
+    """A2 (MEDIUM, state.py:1590): the clarify-completion flush used to
+    iterate ``state.prompts`` globally, so session B's own tool completing
+    could flush session A's retained, still-outstanding clarify — a control
+    the operator could still see and answer, cleared out by an unrelated
+    conversation."""
+    state = replay(
+        [
+            raw_event(
+                "clarify.request",
+                {"request_id": "req-1", "question": "Which file?"},
+                session_id="sess-a",
+            )
+        ]
+    )
+    switched = focus_session(state, "sess-b")
+    after = replay(
+        [raw_event("tool.complete", {"name": "clarify"}, session_id="sess-b")], switched
+    )
+    assert after.prompt_for("req-1", session_id="sess-a") is not None, (
+        "session B's tool completion must not flush session A's clarify"
+    )
+
+
+def test_age_out_approvals_defers_a_foreign_sessions_stale_approval() -> None:
+    """A3 (MEDIUM, state.py:1124): aging used to mutate the FOCUSED session's
+    own withdrawal counter and transcript for a DIFFERENT session's stale
+    approval — the merged multi-session view the plan's non-goals forbid
+    (docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-
+    plan.md:519). A foreign session's approval is left alone until that
+    session is focused again."""
+    state = replay(
+        [raw_event("approval.request", {"description": "x", "command": "ls"}, session_id="sess-a")]
+    )
+    switched = focus_session(state, "sess-b")
+    aged = age_out_approvals(switched, now=BASE_TIME + APPROVAL_STALE_AFTER + 10.0)
+    assert aged is switched, "a foreign session's approval must not age out while unfocused"
+    assert aged.withdrawn_approvals == 0
+
+    # Refocusing session A and aging again does withdraw it — deferred, not
+    # dropped.
+    back_on_a = focus_session(aged, "sess-a")
+    aged_on_a = age_out_approvals(back_on_a, now=BASE_TIME + APPROVAL_STALE_AFTER + 10.0)
+    assert aged_on_a.withdrawn_approvals == 1
+
+
+def test_an_expiry_only_clears_its_own_sessions_colliding_entry() -> None:
+    """Root-A sweep: ``_on_prompt_expire`` also matched by bare id. With
+    session A's retained ``req-1`` and session B's own, independently
+    arrived ``req-1``, an expiry naming B's session could clear and
+    tombstone A's unrelated entry instead of B's — or clear both when only
+    one actually expired."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-a")])
+    switched = focus_session(state, "sess-b")
+    in_b = replay(
+        [raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-b")],
+        switched,
+    )
+    expired = replay(
+        [raw_event("sudo.expire", {"request_id": "req-1"}, session_id="sess-b")], in_b
+    )
+    assert expired.prompt_for("req-1", session_id="sess-b") is None, "B's own entry expired"
+    assert expired.prompt_for("req-1", session_id="sess-a") is not None, (
+        "A's unrelated, still-outstanding entry must survive B's expiry"
+    )
+
+
+def test_answering_one_sessions_prompt_does_not_drop_a_colliding_id_elsewhere() -> None:
+    """Root-A sweep: ``_start_answering`` removed from ``state.prompts`` by
+    bare id, so answering session B's own ``req-1`` would also silently drop
+    session A's unrelated, still-outstanding ``req-1`` from the registry — a
+    control nobody ever touched, simply gone."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-a")])
+    switched = focus_session(state, "sess-b")
+    in_b = replay(
+        [raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-b")],
+        switched,
+    )
+    answering, refusal = respond_to_prompt(in_b, "req-1", session_id="sess-b")
+    assert refusal is None
+    assert answering.prompt_for("req-1", session_id="sess-a") is not None, (
+        "answering B's prompt must not remove A's unrelated same-id entry"
+    )
+
+
+def test_latching_one_sessions_prompt_does_not_tombstone_anothers_same_id() -> None:
+    """A4 (MEDIUM, app.py:1631): ``latch_resolved_prompts`` used to write
+    bare ids, so latching session A's ``req-1`` (as an interrupt sweep does)
+    tombstoned session B's own, unrelated ``req-1`` too — refusing forever to
+    restore a control the gateway was still holding open for B."""
+    state = replay([raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-a")])
+    switched = focus_session(state, "sess-b")
+    in_b = replay(
+        [raw_event("sudo.request", {"request_id": "req-1"}, session_id="sess-b")],
+        switched,
+    )
+    prompt_a = in_b.prompt_for("req-1", session_id="sess-a")
+    prompt_b = in_b.prompt_for("req-1", session_id="sess-b")
+    assert prompt_a is not None and prompt_b is not None
+
+    # A's own req-1 is latched, the way an interrupt sweep for session A would.
+    latched = latch_resolved_prompts(in_b, (prompt_a,))
+
+    # B's req-1 answer goes out, and then reaches no socket at all.
+    answering, refusal = respond_to_prompt(latched, "req-1", session_id="sess-b")
+    assert refusal is None
+    restored = restore_prompt(answering, prompt_b)
+    assert restored.prompt_for("req-1", session_id="sess-b") is not None, (
+        "A's latch must not block B's own req-1 from being restored"
     )

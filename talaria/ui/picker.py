@@ -49,6 +49,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
 from talaria.domain.models_catalog import (
@@ -57,6 +58,7 @@ from talaria.domain.models_catalog import (
     ProviderCatalog,
 )
 from talaria.domain.selection import Choice, Selection, Stage
+from talaria.domain.session_list import SessionDirectory
 
 #: Which listing the dialog was opened on. ``"models"`` is U2's and stays the
 #: default, so nothing about the model picker changes for an operator who never
@@ -513,6 +515,119 @@ class ProfilePickerSource:
         if row.is_current:
             return f"already connected to {row.name}"
         return row.undialable_reason
+
+    def descend(self, depth: int, choice: Choice) -> Stage | str:
+        return choice.payload
+
+
+# ── U7's session picker (KTD6) ────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SessionRow:
+    """One session as the picker shows it, current-session marked (R7).
+
+    Carries the **stored** id ``session.list`` returns
+    (``tui_gateway/methods_session.py:197``) as :attr:`session_id` — never a
+    row position — because that id is the picker's whole selection contract:
+    it is what a chosen row emits, what a later ``session.resume`` asks for,
+    and what :attr:`~talaria.domain.state.SessionState.session_key` names a
+    landed session by (R6/R7).
+    """
+
+    session_id: str
+    title: str
+    preview: str
+    started_at: float
+    message_count: int
+    source: str
+    is_current: bool
+
+
+def flatten_sessions(
+    directory: SessionDirectory, *, current: str = ""
+) -> tuple[SessionRow, ...]:
+    """Every session, in the listing order the gateway sent, current one marked.
+
+    Pure, the same contract :func:`flatten_selectable` and :func:`flatten_profiles`
+    keep: nothing here reads a screen, so a test asserts the marking without one.
+    """
+    return tuple(
+        SessionRow(
+            session_id=entry.session_id,
+            title=entry.title,
+            preview=entry.preview,
+            started_at=entry.started_at,
+            message_count=entry.message_count,
+            source=entry.source,
+            is_current=bool(current) and entry.session_id == current,
+        )
+        for entry in directory.sessions
+    )
+
+
+#: Said on the row naming the session already in focus.
+SESSION_ALREADY_FOCUSED: str = "already the focused session"
+
+#: Shown in place of a session with no title — the gateway sends ``""`` for
+#: one rather than omitting the key (``tui_gateway/methods_session.py:196``).
+UNTITLED_SESSION: str = "(untitled session)"
+
+
+def format_session_label(row: SessionRow) -> str:
+    """The session's own title, or a named placeholder when it has none."""
+    title = row.title.strip()
+    return title or UNTITLED_SESSION
+
+
+def format_session_detail(row: SessionRow) -> str:
+    """The id and when it started — the "id/recency" half of R7's three fields.
+
+    Rendered as an absolute UTC timestamp rather than a relative one ("3h
+    ago"): a relative rendering needs the current time, and nothing else in
+    this module reads a clock — the picker's rows are a pure function of the
+    reply alone, the same purity :func:`flatten_selectable` and
+    :func:`flatten_profiles` keep.
+    """
+    when = datetime.fromtimestamp(row.started_at, tz=UTC).strftime("%Y-%m-%d %H:%M")
+    return f"{row.session_id} · {when}"
+
+
+class SessionPickerSource:
+    """Flat: every session, current one marked (R7 — the ``/profiles`` shape).
+
+    One level, the same reason :class:`ProfilePickerSource` is flat: a session
+    listing has no second stage to descend into, unlike ``/models``'
+    provider-then-model staging.
+
+    Unlike the model and profile listings, **nothing here is cached across a
+    typed shorthand.** ``/sessions`` has no ``/sessions <n>`` form — the
+    listing is fetched fresh every time the picker opens
+    (:meth:`~talaria.ui.app.TalariaApp.open_sessions_picker`) rather than held
+    in app state the way :attr:`~talaria.ui.app.TalariaApp.model_catalog` and
+    :attr:`~talaria.ui.app.TalariaApp.profiles` are, so there is no cached row
+    a composer-typed index could resolve against.
+    """
+
+    def __init__(self, directory: SessionDirectory, *, current: str = "") -> None:
+        self._rows = flatten_sessions(directory, current=current)
+
+    def root(self) -> Stage:
+        choices = tuple(
+            Choice(
+                key=row.session_id,
+                label=format_session_label(row),
+                payload=row.session_id,
+                detail=format_session_detail(row),
+                marked=row.is_current,
+                selectable=not row.is_current,
+                refusal=SESSION_ALREADY_FOCUSED if row.is_current else "",
+            )
+            for row in self._rows
+        )
+        return Stage(
+            title="sessions — choose one to switch to", selection=Selection.opened(choices)
+        )
 
     def descend(self, depth: int, choice: Choice) -> Stage | str:
         return choice.payload

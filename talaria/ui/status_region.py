@@ -41,14 +41,33 @@ class StatusRegion(Vertical):
     StatusRegion > .status--marker {
         color: $warning;
     }
+    StatusRegion > .status--caret {
+        /* U3/KTD5: a dedicated, fixed-height, one-row slot for the caret
+           location word, mounted unconditionally so its presence never
+           changes StatusRegion's height (R5). Never reuse
+           ``.status--marker`` here — that Static is overwritten by every
+           status tick (``apply`` below) and by command failures, so a
+           shared slot would either lose the caret word on the next tick
+           or suppress a failure the operator needs to see. Non-wrapping
+           for the same reason the marker's neighbour rows are: a folded
+           second row that ``height: 1`` then hides is a silent
+           truncation, not a caret name. */
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+        color: $text-muted;
+    }
     """
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._rows: list[Static] = []
         self._marker: Static | None = None
+        self._caret: Static | None = None
 
     def compose(self) -> ComposeResult:
+        self._caret = Static(literal_text(""), markup=False, classes="status--caret")
+        yield self._caret
         self._marker = Static(literal_text(""), markup=False, classes="status--marker")
         yield self._marker
 
@@ -59,6 +78,28 @@ class StatusRegion(Vertical):
     @property
     def marker_text(self) -> str:
         return "" if self._marker is None else str(self._marker.content)
+
+    @property
+    def caret_text(self) -> str:
+        """The current caret-location word (R5/KTD5), empty when the
+        composer holds the caret."""
+        return "" if self._caret is None else str(self._caret.content)
+
+    def set_caret(self, location: str) -> None:
+        """Write where the caret is, or clear the slot when it is the composer.
+
+        ``location`` is empty (never ``"caret: composer"``) when the
+        composer holds the caret — R5 requires this slot to *name where
+        else* the caret went, and the composer is the caret's home rather
+        than a destination worth announcing. Writing here never mounts or
+        unmounts anything: the slot exists unconditionally from
+        :meth:`compose`, so this can only ever change its text, never the
+        region's height.
+        """
+        if self._caret is None:  # pragma: no cover - compose always runs first
+            return
+        text = f"caret: {location}" if location else ""
+        self._caret.update(literal_text(text))
 
     async def apply(self, result: StatusTickResult) -> None:
         rows = list(result.rows)

@@ -14,8 +14,10 @@ replied" deterministically from a keypress.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -24,7 +26,7 @@ from textual.widgets import Button, Input
 
 from talaria.domain import state as domain_state
 from talaria.domain.commands import CATALOG_METHOD
-from talaria.domain.models import PromptKind
+from talaria.domain.models import PendingPrompt, PromptKind
 from talaria.domain.projection import PromptRow, PromptView, project
 from talaria.domain.state import (
     APPROVAL_AGED_OUT,
@@ -32,6 +34,7 @@ from talaria.domain.state import (
     APPROVAL_STALE_AFTER,
     DELIVERY_NOTES,
     REFUSED_UNCORRELATED_APPROVAL,
+    switch_refusal,
 )
 from talaria.recorder.redact import _DENY_BY_METHOD
 from talaria.replay.controls import INERT_NOTICE, MUTATION_CONTROLS, ReplayControls
@@ -46,9 +49,12 @@ from talaria.transport.rpc import (
 from talaria.transport.source import FrameRecord
 from talaria.ui.app import (
     ANSWER_ALREADY_TRAVELLING,
+    DECLINE_NOT_OFFERED_HERE,
     DENIED_EVERY_APPROVAL,
+    PROMPT_KIND_CHANGED,
     PROMPT_NO_LONGER_LIVE,
     PROMPT_RESPOND_CONTROL,
+    SUBMIT_METHOD,
     TERMINAL_READ_UNAVAILABLE,
     UNCOUNTED_RESOLUTION,
     TalariaApp,
@@ -56,10 +62,14 @@ from talaria.ui.app import (
 )
 from talaria.ui.literal import INVISIBLE_MARK, PRESENTATION_SELECTORS, defang
 from talaria.ui.prompts import (
+    ANSWER_HINT,
+    CHOICE_HINT,
     COMMAND_MIN_WIDTH,
     COMMAND_PREVIEW_LINES,
     CONTROL_OFFSCREEN_TITLE,
+    DECLINE_VALUES,
     DENY_ALL_CHOICE,
+    DENY_ALL_HINT,
     GATEWAY_DISCARDED_ANSWER,
     GATEWAY_HAD_NO_APPROVAL,
     HIDDEN_KINDS,
@@ -73,6 +83,7 @@ from talaria.ui.prompts import (
     activity_line,
     attended_rows,
     command_overflow_line,
+    decline_value,
     echoable_answer,
     respond_params,
     withdrawn_activity_line,
@@ -373,6 +384,106 @@ async def test_a_free_text_control_shows_its_prompt_and_what_is_typed() -> None:
         typed = screen_text(app)
         assert "main" in typed
         assert "which branch?" in typed
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_the_hint_line_names_a_choice_cards_keys() -> None:
+    """R1/KTD1: a card that answers with buttons names ``enter``/``esc`` too.
+
+    ``CHOICE_HINT`` covers both an approval and a multiple-choice clarify —
+    they render identically (``choices`` is what turns any bridge into a
+    closed question), so one card kind stands in for both here.
+    """
+    app = live_app(RecordingDispatcher())
+    async with app.run_test() as pilot:
+        feed(
+            app,
+            event("approval.request", {"description": "rm -rf build", "choices": ["once", "deny"]}),
+        )
+        await settle(app, pilot)
+        assert CHOICE_HINT in screen_text(app)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_the_hint_line_names_a_free_text_cards_keys() -> None:
+    """The other card shape: an ``Input``-backed clarify, secret or sudo."""
+    app = live_app(RecordingDispatcher())
+    async with app.run_test() as pilot:
+        feed(app, event("clarify.request", {"request_id": "c-1", "question": "which branch?"}))
+        await settle(app, pilot)
+        assert ANSWER_HINT in screen_text(app)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_the_unanswerable_card_shows_only_its_own_hint() -> None:
+    """The deny-all-only card names its one key and nothing it does not carry.
+
+    Two approvals queued makes both cards unanswerable (the uncorrelated-
+    approval rule), so neither offers the general choose/decline hint — only
+    :data:`DENY_ALL_HINT`, which is the one control still on the card.
+    """
+    app = live_app(RecordingDispatcher())
+    async with app.run_test() as pilot:
+        two_approvals(app)
+        await settle(app, pilot)
+        screen = screen_text(app)
+        assert DENY_ALL_HINT in screen
+        assert CHOICE_HINT not in screen
+        assert ANSWER_HINT not in screen
+        await app.shutdown_sources()
+
+
+def _new_rect_fills(before: str, after: str) -> set[str]:
+    """Fill colours present in ``after`` and absent from ``before``.
+
+    ``screen_text`` cannot see this — it strips every tag, colour included —
+    so this reads the raw SVG :func:`~talaria.ui.app.TalariaApp.export_screenshot`
+    returns, the same convention this file already uses for anything
+    ``screen_text`` throws away (see the CANARY masking test above).
+    """
+    pattern = r'<rect fill="(#[0-9a-fA-F]{6})"'
+    return set(re.findall(pattern, after)) - set(re.findall(pattern, before))
+
+
+@pytest.mark.asyncio
+async def test_a_focused_card_is_visually_distinct() -> None:
+    """R2: legible against the default terminal theme, not only ``Button``'s
+    own reverse video or the agent-row tint that already existed (KTD1).
+
+    Reads the CARD's own computed background — the value Textual's CSS
+    cascade resolves for the ``PromptCard`` widget itself, not a whole-screen
+    screenshot diff. The screenshot version of this assertion passed even
+    with the ``PromptCard:focus-within { background: $accent 20% }`` rule
+    deleted, because Textual's built-in ``Input`` focus styling introduces a
+    new fill colour of its own — this reads the card's background directly,
+    so it is unaffected by the ``Input``'s styling and fails when the card's
+    own rule is gone.
+
+    The composer holds text first so the card mounts **without** the
+    existing mount-time auto-focus claiming it — the card's own transition
+    into ``:focus-within`` has to be caused by the act this test performs,
+    not by a side effect of the prompt arriving.
+    """
+    app = live_app(RecordingDispatcher())
+    async with app.run_test() as pilot:
+        await pilot.press("h", "i")
+        await pilot.pause()
+        feed(app, event("clarify.request", {"request_id": "c-1", "question": "which branch?"}))
+        await settle(app, pilot)
+        assert app.screen.focused is app.composer.text_area
+
+        card = app.prompts.card_for("c-1")
+        assert card is not None
+        before = card.styles.background
+
+        card.focus_answer()
+        await pilot.pause()
+
+        after = card.styles.background
+        assert after != before, "the card's own background did not change — it looks unfocused"
         await app.shutdown_sources()
 
 
@@ -726,7 +837,11 @@ async def test_an_expiry_during_the_call_leaves_a_marker_and_no_resurrected_cont
 
         markers = [e.text for e in app.state.transcript if e.kind == "prompt-expired"]
         assert markers == ["sudo prompt expired unanswered: sudo password required"]
-        assert "u-1" in app.state.flushed_prompt_ids
+        # Session-qualified ("s1:u-1"), not bare: sudo's tombstone is written
+        # by the same session-qualified key ``restore_prompt`` reads back
+        # (``_flush_key``), now that ``flushed_prompt_ids`` survives a
+        # session switch and a bare id is no longer unique across one.
+        assert "s1:u-1" in app.state.flushed_prompt_ids
         assert list(app.prompts.card_ids) == []
         assert app.state.prompt_for("u-1") is None
         assert app.state.answering == ()
@@ -777,6 +892,36 @@ async def test_an_answer_that_may_have_arrived_is_not_offered_again() -> None:
         assert list(app.prompts.card_ids) == []
         assert app.state.prompt_for("u-1") is None
         assert any("delivery unconfirmed" in e.text for e in app.state.transcript)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_single_approvals_not_sent_answer_settles_instead_of_restoring() -> None:
+    """Round six's no-restore policy reaches the ordinary single-answer path
+    too, not only the deny-all's own follow-up mechanism — the same
+    unaimed-wire risk is present whenever one approval's own answer never
+    reaches a socket, deny-all or not: ``approval.respond`` carries no
+    request id, so a restored card here is exposed to the same
+    unkillable-zombie risk. Unlike this, a non-approval kind (sudo, clarify,
+    secret) carries a real request id and keeps restoring on ``not_sent``
+    correctly — see :func:`test_an_answer_that_reached_no_socket_puts_the_control_back`
+    for the sudo case this leaves unchanged.
+    """
+    dispatcher = RecordingDispatcher(
+        unknown_outcome("approval.respond", NOT_CONNECTED, epoch=0)
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("ls", "listing"), seq=100)
+        await settle(app, pilot)
+
+        await app.respond_live("approval:s1#1", "once")
+        await settle(app, pilot)
+
+        assert app.state.prompt_for("approval:s1#1") is None
+        assert app.prompts.card_for("approval:s1#1") is None, "no zombie card"
+        assert "approval:s1#1" in app.state.flushed_prompt_ids
         await app.shutdown_sources()
 
 
@@ -849,7 +994,11 @@ async def test_a_second_approval_appears_and_both_lose_their_affirmatives() -> N
         # And the affirmative is gone from both, replaced by the reason.
         assert "once" not in screen
         assert "cannot be aimed" in screen
-        assert screen.count("deny all") == 2
+        # Two cards, each carrying "deny all" twice — once on the button, once
+        # in the card's own hint line (U1's ``DENY_ALL_HINT``, which names the
+        # one key this unanswerable card offers rather than the general
+        # answer/decline pair).
+        assert screen.count("deny all") == 4
 
         outcome = await app.respond_live("approval:s1#1", "once")
 
@@ -2697,4 +2846,1269 @@ async def test_a_withdrawal_survives_an_event_that_is_not_the_agent_working(
         screen = screen_text(app)
         assert "1 approval withdrawn" in screen
         assert "working…" not in screen
+        await app.shutdown_sources()
+
+
+# ── U2/R3: declining, and what a decline is allowed to put on the wire ───
+
+
+def test_no_bridge_talaria_answers_itself_can_be_declined() -> None:
+    """``terminal_read`` renders no card, so there is no blocked human to
+    release and nothing for an escape key to refuse. It is absent from the
+    table rather than mapped to an empty answer, so every caller skips it
+    instead of sending one."""
+    assert set(DECLINE_VALUES) == {"approval", "clarify", "secret", "sudo"}
+    assert set(DECLINE_VALUES) | UNATTENDED_KINDS == set(RESPOND_METHODS)
+    assert decline_value("terminal_read") is None
+
+
+def test_an_approval_decline_is_the_explicit_deny_and_never_an_empty_choice() -> None:
+    """R3's safety clause, stated where it can be read without a screen.
+
+    The gateway's approval consumer blocks on ``None`` and on ``"deny"`` and
+    returns *approved* for every other resolved choice
+    (``tools/approval.py:3291``, ``:3320``). So the empty field value that
+    declines the other three bridges would, on approval, authorize the command
+    the operator pressed escape to refuse.
+    """
+    assert decline_value("approval") == DENY_ALL_CHOICE == "deny"
+    assert decline_value("approval") != ""
+    for kind in ("clarify", "secret", "sudo"):
+        assert decline_value(kind) == ""
+
+
+@pytest.mark.asyncio
+async def test_escape_on_a_sudo_control_sends_an_empty_password_and_clears_it() -> None:
+    """R3/KTD4 on the bridge where waiting is worst: a sudo prompt blocks the
+    gateway until it expires, and before U2 the only way out was to wait."""
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("sudo.request", {"request_id": "u-1"}))
+        await settle(app, pilot)
+
+        card = app.prompts.card_for("u-1")
+        assert card is not None
+        answer = card.query_one("#answer", Input)
+        answer.focus()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await settle(app, pilot)
+        await settle(app, pilot)
+
+        assert dispatcher.operator_calls == [
+            ("sudo.respond", {"request_id": "u-1", "password": ""})
+        ]
+        assert list(app.prompts.card_ids) == []
+        assert app.state.prompt_for("u-1") is None
+        # The transcript says the operator refused it — not that they answered
+        # it, which is a false entry in the record of what was allowed.
+        assert any("sudo declined" in e.text for e in app.state.transcript), [
+            e.text for e in app.state.transcript
+        ]
+        assert not any("sudo answered" in e.text for e in app.state.transcript)
+        focused = app.screen.focused
+        assert focused is app.composer.text_area
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_escape_on_an_approval_sends_the_deny_the_gateway_reads_as_a_refusal() -> None:
+    """The wire value is the whole test. An empty choice reaches the gateway's
+    consumer as a *resolved* choice that is not ``deny``, and that consumer
+    returns approved for it (``tools/approval.py:3320``) — so a decline sent
+    the way the other three bridges decline would run the command."""
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("rm -rf /data"))
+        await settle(app, pilot)
+
+        card = app.prompts.card_for("approval:s1#1")
+        assert card is not None
+        card.query_one("#choice-0", Button).focus()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await settle(app, pilot)
+        await settle(app, pilot)
+
+        assert dispatcher.operator_calls == [
+            ("approval.respond", {"session_id": "s1", "choice": "deny"})
+        ]
+        params = dispatcher.operator_calls[0][1]
+        assert params["choice"] != ""
+        assert "all" not in params, "one approval is aimable; this is not a queue denial"
+        assert list(app.prompts.card_ids) == []
+        assert any("approval declined" in e.text for e in app.state.transcript)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_decline_that_reached_no_socket_puts_the_control_back() -> None:
+    """The answer-outcome discipline is unchanged by declining (R3/KTD4).
+    ``not_sent`` is the one outcome definite about non-delivery, so the gateway
+    is still waiting and the operator must keep their only control over it."""
+    dispatcher = RecordingDispatcher(
+        unknown_outcome("sudo.respond", NOT_CONNECTED, epoch=0)
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("sudo.request", {"request_id": "u-1"}))
+        await settle(app, pilot)
+
+        await app.respond_live("u-1", "", declined=True)
+        await settle(app, pilot)
+
+        assert list(app.prompts.card_ids) == ["u-1"]
+        assert app.state.prompt_for("u-1") is not None
+        assert any("sudo not declined" in e.text for e in app.state.transcript), [
+            e.text for e in app.state.transcript
+        ]
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_decline_whose_fate_is_unknown_is_not_offered_again() -> None:
+    """Every other outcome latches: a decline that may have arrived must not be
+    re-offered, because a second value for one question is exactly what
+    clearing-before-sending exists to prevent."""
+    dispatcher = RecordingDispatcher(
+        unknown_outcome("clarify.respond", LOST_WITH_TRANSPORT, epoch=1)
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("clarify.request", {"request_id": "c-1", "question": "which?"}))
+        await settle(app, pilot)
+
+        await app.respond_live("c-1", "", declined=True)
+        await settle(app, pilot)
+
+        assert list(app.prompts.card_ids) == []
+        assert app.state.prompt_for("c-1") is None
+        assert any("delivery unconfirmed" in e.text for e in app.state.transcript)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_decline_refuses_to_send_when_the_registry_kind_has_changed() -> None:
+    """CR4 finding 5. ``on_prompt_card_declined`` computes the wire VALUE from
+    the kind its own message carried; :meth:`~talaria.ui.app.TalariaApp.respond_live`
+    picks the wire METHOD from a later, independent read of the registry's
+    kind for the same id. If that id is now live under a DIFFERENT kind —
+    the old one expired and the id was reused — sending would pair one
+    kind's value with another kind's method, so the send is refused instead.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("clarify.request", {"request_id": "reused-id", "question": "which?"}))
+        await settle(app, pilot)
+        assert app.state.prompt_for("reused-id") is not None
+
+        # The registry's own read at send time would find this id live under
+        # a DIFFERENT kind — the decline in flight was computed against
+        # "clarify", not "sudo".
+        app.state = replace(
+            app.state,
+            prompts=tuple(
+                PendingPrompt(
+                    request_id="reused-id",
+                    kind="sudo",
+                    summary="sudo password required",
+                    opened_at=p.opened_at,
+                    seq=p.seq,
+                    session_id=p.session_id,
+                )
+                if p.request_id == "reused-id"
+                else p
+                for p in app.state.prompts
+            ),
+        )
+
+        outcome = await app.respond_live("reused-id", "", declined=True, expected_kind="clarify")
+
+        assert outcome is None
+        assert dispatcher.operator_calls == []
+        assert PROMPT_KIND_CHANGED in app.composer.notice
+        # The prompt now live under this id — a real, unrelated question — is
+        # left exactly as it was.
+        live = app.state.prompt_for("reused-id")
+        assert live is not None
+        assert live.kind == "sudo"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_answer_refuses_to_send_when_the_registry_kind_has_changed() -> None:
+    """B4 (HIGH, app.py:1698): the kind-mismatch guard landed on DECLINES
+    only (CR4 finding 5, the test above) — an ordinary ANSWER from a stale
+    card still sent the typed value under whatever kind the registry now
+    held for its id, pairing a sudo password with ``clarify.respond``.
+    ``on_prompt_card_answered`` now threads its own message's kind through
+    to :meth:`~talaria.ui.app.TalariaApp.respond_live` the same way the
+    decline path already does.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("clarify.request", {"request_id": "reused-id", "question": "which?"}))
+        await settle(app, pilot)
+        assert app.state.prompt_for("reused-id") is not None
+
+        # Reused under a different kind by the time the answer would send.
+        app.state = replace(
+            app.state,
+            prompts=tuple(
+                PendingPrompt(
+                    request_id="reused-id",
+                    kind="sudo",
+                    summary="sudo password required",
+                    opened_at=p.opened_at,
+                    seq=p.seq,
+                    session_id=p.session_id,
+                )
+                if p.request_id == "reused-id"
+                else p
+                for p in app.state.prompts
+            ),
+        )
+
+        app.on_prompt_card_answered(PromptCard.Answered("reused-id", "clarify", "some-file.py"))
+        await settle(app, pilot)
+
+        assert dispatcher.operator_calls == [], (
+            "a clarify answer must never be sent as sudo.respond"
+        )
+        assert PROMPT_KIND_CHANGED in app.composer.notice
+        live = app.state.prompt_for("reused-id")
+        assert live is not None
+        assert live.kind == "sudo"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_escape_on_the_unanswerable_card_sends_nothing_but_says_so() -> None:
+    """Two approvals queued makes both cards unaimable, and the one control
+    either of them carries is ``deny all`` — which the hint line names and
+    which is already the decline for the whole queue. Escape promises nothing
+    the card does not offer, so it sends nothing — but it is no longer
+    silent about it (CR4 finding 6b): a key that does nothing must say so
+    (AE11), the same rule every other refused control in this suite follows.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        two_approvals(app)
+        await settle(app, pilot)
+
+        card = app.prompts.card_for("approval:s1#1")
+        assert card is not None
+        card.query_one("#deny-all", Button).focus()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await settle(app, pilot)
+
+        assert dispatcher.operator_calls == []
+        assert len(list(app.prompts.card_ids)) == 2
+        # Positive from the screen: the card is still there, still offering the
+        # one key it names.
+        assert DENY_ALL_HINT in screen_text(app)
+        assert DECLINE_NOT_OFFERED_HERE in app.composer.notice
+        await app.shutdown_sources()
+
+
+# ── U2/R4/KTD8: a confirmed interrupt finishes the job, per kind ─────────
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_interrupt_declines_a_mixed_set_per_kind() -> None:
+    """KTD8's sweep. Two uncorrelated approvals cannot be answered one at a
+    time — ``approval.respond`` pops the queue head with no discriminator — so
+    they resolve with one ``all: true`` denial, while the sudo carries a real
+    request id and gets its own empty answer."""
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}))
+        two_approvals(app)
+        feed(app, event("sudo.request", {"request_id": "u-1"}), seq=102)
+        await settle(app, pilot)
+        assert len(list(app.prompts.card_ids)) == 3
+
+        await pilot.press("f4")
+        await settle(app, pilot)
+        await settle(app, pilot)
+
+        assert dispatcher.operator_calls == [
+            ("session.interrupt", {"session_id": "s1"}),
+            ("approval.respond", {"session_id": "s1", "choice": "deny", "all": True}),
+            ("sudo.respond", {"request_id": "u-1", "password": ""}),
+        ]
+        assert list(app.prompts.card_ids) == []
+        assert app.state.outstanding_approvals("s1") == ()
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_interrupt_clears_the_card_the_next_message_would_queue_behind() -> None:
+    """R4: the prompt belonged to the turn that just died. Left on screen it is
+    a control for a dead turn, and the gateway blocks on it until its own
+    timeout — so the next thing the operator sends waits behind it."""
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}))
+        feed(app, event("clarify.request", {"request_id": "c-1", "question": "which?"}), seq=101)
+        await settle(app, pilot)
+        assert list(app.prompts.card_ids) == ["c-1"]
+
+        await pilot.press("f4")
+        await settle(app, pilot)
+        await settle(app, pilot)
+
+        assert list(app.prompts.card_ids) == []
+        assert app.state.prompt_for("c-1") is None
+
+        await app.submit_live("what next?")
+        assert dispatcher.operator_calls == [
+            ("session.interrupt", {"session_id": "s1"}),
+            ("clarify.respond", {"request_id": "c-1", "answer": ""}),
+            (SUBMIT_METHOD, {"session_id": "s1", "text": "what next?"}),
+        ]
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_interrupt_whose_outcome_is_lost_declines_nothing() -> None:
+    """The turn may still be alive, which is why ``cancelled`` is not applied
+    either. Denying its approvals would refuse commands for work that is still
+    running, so an unknown interrupt sweeps nothing and says only what it
+    already said."""
+    dispatcher = RecordingDispatcher(
+        unknown_outcome("session.interrupt", LOST_WITH_TRANSPORT, epoch=1)
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}))
+        two_approvals(app)
+        feed(app, event("sudo.request", {"request_id": "u-1"}), seq=102)
+        await settle(app, pilot)
+
+        await pilot.press("f4")
+        await settle(app, pilot)
+        await settle(app, pilot)
+
+        assert dispatcher.operator_calls == [("session.interrupt", {"session_id": "s1"})]
+        assert len(list(app.prompts.card_ids)) == 3
+        assert len(app.state.outstanding_approvals("s1")) == 2
+        assert app.state.turn != "cancelled"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_interrupt_latches_before_the_sweep_sends() -> None:
+    """CR4 findings 1 and 4. The installed gateway's own ``session.interrupt``
+    clears every pending prompt and deny-alls the approval queue BEFORE it
+    replies, so by the time Talaria observes ``outcome.confirmed`` the
+    gateway has already resolved everything for this session. A sudo answer
+    already in flight when the interrupt lands is not swept at all (its own
+    owner will settle it) — but its id must be latched *before* that owner's
+    reply arrives, so a late definite ``not_sent`` cannot restore a card the
+    gateway has already released.
+    """
+    dispatcher = ScriptedHoldingDispatcher(
+        held=unknown_outcome("sudo.respond", NOT_CONNECTED, epoch=0),
+        later=RpcOutcome(
+            status="ok", method="session.interrupt", request_id="1", epoch=1, result={}
+        ),
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}))
+        feed(app, event("sudo.request", {"request_id": "u-1"}), seq=101)
+        await settle(app, pilot)
+
+        answer = asyncio.create_task(app.respond_live("u-1", "secret-pw"))
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+        assert app.state.answering_for("u-1") is not None
+        assert app.state.prompt_for("u-1") is None, "answered prompt leaves the registry at once"
+
+        await app.interrupt_live()
+        await settle(app, pilot)
+
+        # Latched before the in-flight answer's own reply ever lands. The
+        # key is session-qualified (A4) — sudo is not an approval kind, so
+        # its tombstone is `_flush_key(session_id, request_id)`, not the
+        # bare wire id.
+        assert f"{app.state.focused_session_id or ''}:u-1" in app.state.flushed_prompt_ids
+
+        dispatcher.gate.set()
+        await answer
+        await settle(app, pilot)
+
+        assert app.state.prompt_for("u-1") is None, (
+            "a late not_sent restored an already-released card"
+        )
+        assert app.prompts.card_for("u-1") is None
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_focus_switch_mid_interrupt_never_sweeps_the_new_sessions_prompt() -> None:
+    """CR4 finding 2. ``interrupt_live`` used to embed the focused session id
+    in the RPC params and then re-read it after the await for the sweep — a
+    slow reply plus a focus change would decline the WRONG session's
+    prompts. Capturing the target once, before the await, and using it for
+    both means a session that raises its own prompt after the switch is left
+    alone by a sweep that belongs to the session that was interrupted.
+    """
+    dispatcher = HoldingDispatcher(
+        RpcOutcome(status="ok", method="session.interrupt", request_id="1", epoch=1, result={})
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1")
+        await settle(app, pilot)
+
+        call = asyncio.create_task(app.interrupt_live())
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+
+        # Focus switches to a different session while the interrupt's reply
+        # is still on the wire (today's reconnect path, and the ``/sessions``
+        # switcher once it lands), and the new session raises its own prompt.
+        app.state = replace(app.state, focused_session_id="s2")
+        feed(app, event("sudo.request", {"request_id": "u-2"}, session="s2"), seq=101)
+        await app.render_snapshot()
+        await pilot.pause()
+        assert app.state.prompt_for("u-2") is not None
+
+        dispatcher.gate.set()
+        await call
+        await settle(app, pilot)
+
+        assert dispatcher.operator_calls == [("session.interrupt", {"session_id": "s1"})]
+        assert app.state.prompt_for("u-2") is not None, "the new session's prompt was swept"
+        assert "u-2" not in app.state.flushed_prompt_ids
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_focus_switch_mid_interrupt_never_cancels_the_new_sessions_turn() -> None:
+    """B1 (HIGH, app.py:1577): the delayed-interrupt fix captured the target
+    session for the sweep, but ``cancel_turn`` still marked the CURRENT
+    state interrupted regardless of that capture — session A's late confirm
+    could mark a live, still-streaming session B interrupted. ``cancel_turn``
+    now only runs while the interrupted session is still the one displayed.
+    """
+    dispatcher = HoldingDispatcher(
+        RpcOutcome(status="ok", method="session.interrupt", request_id="1", epoch=1, result={})
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1")
+        await settle(app, pilot)
+
+        call = asyncio.create_task(app.interrupt_live())
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+
+        # Focus moves to a different, genuinely streaming session while A's
+        # interrupt reply is still on the wire.
+        app.state = replace(app.state, focused_session_id="s2")
+        feed(app, event("message.start", {}, session="s2"), seq=101)
+        feed(app, event("message.delta", {"text": "hello"}, session="s2"), seq=102)
+        await app.render_snapshot()
+        await pilot.pause()
+        assert app.state.turn == "streaming"
+
+        dispatcher.gate.set()
+        await call
+        await settle(app, pilot)
+
+        assert app.state.turn == "streaming", (
+            "session A's delayed interrupt confirm must not cancel session B's live turn"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_focus_switch_between_sequential_sweep_sends_still_declines_the_target() -> None:
+    """B2 (HIGH, app.py:1960 in the reviewer's numbering): the non-approval
+    sweep is sequential — each decline awaits its own round trip before the
+    next one sends — and each send used to re-read
+    ``self.state.focused_session_id`` instead of the sweep's own captured
+    target. A focus change between two sequential sends in the same sweep
+    made the later one refuse session A's own prompt as though it belonged
+    to whatever session the switch had landed on, leaving A's resolved
+    prompt stuck in the registry.
+    """
+    dispatcher = ScriptedHoldingDispatcher(
+        held=RpcOutcome(status="ok", method="sudo.respond", request_id="1", epoch=1, result={}),
+        later=RpcOutcome(status="ok", method="sudo.respond", request_id="1", epoch=1, result={}),
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1")
+        feed(app, event("sudo.request", {"request_id": "u-1"}, session="s1"), seq=100)
+        feed(app, event("sudo.request", {"request_id": "u-2"}, session="s1"), seq=101)
+        await settle(app, pilot)
+
+        sweep = asyncio.create_task(app.decline_outstanding_prompts("s1"))
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+
+        # Focus moves to a different session while the sweep's first
+        # sequential send is still on the wire — the second, still queued
+        # behind it, is for session s1 regardless of what is focused when
+        # it actually runs.
+        app.state = replace(app.state, focused_session_id="s2")
+
+        dispatcher.gate.set()
+        await sweep
+        await settle(app, pilot)
+
+        assert app.state.prompt_for("u-1", session_id="s1") is None, (
+            "u-1's decline must have gone through"
+        )
+        assert app.state.prompt_for("u-2", session_id="s1") is None, (
+            "u-2's decline must have gone through, not been refused as the wrong session"
+        )
+        await app.shutdown_sources()
+
+
+# ── U2: the deny-all that re-offered a control the gateway had resolved ──
+
+
+class ScriptedHoldingDispatcher(RecordingDispatcher):
+    """Holds the first operator call, and answers it differently from the rest.
+
+    :class:`HoldingDispatcher` returns one outcome for every call, which cannot
+    express the case this section is about: a deny-all that *lands* while a
+    single answer that reached *no socket* is still parked on the wire. The two
+    outcomes have to differ, and the held one has to be released after the
+    deny-all has already been read.
+    """
+
+    def __init__(self, held: RpcOutcome, later: RpcOutcome) -> None:
+        super().__init__(None)
+        self.gate = asyncio.Event()
+        self.held = held
+        self.later = later
+        self._hold_next = True
+
+    async def call(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> RpcOutcome:
+        self.calls.append((method, dict(params or {})))
+        if self._hold_next and method != CATALOG_METHOD:
+            self._hold_next = False
+            await self.gate.wait()
+            return self.held
+        return self.later
+
+
+@pytest.mark.asyncio
+async def test_a_deny_all_that_landed_latches_every_id_it_swept() -> None:
+    """The queued defect: a deny-all that succeeds can re-offer a control the
+    gateway already resolved.
+
+    ``all: true`` resolves the whole queue, including the approval whose own
+    single answer is still travelling. That answer comes back a definite
+    ``not_sent`` — nothing reached a socket — and its owner correctly puts the
+    control back for a question the gateway has stopped waiting on. No second
+    expiry is ever sent, so the card stays live-looking for the rest of the
+    session. Latching every id the sweep resolved is what closes it.
+    """
+    dispatcher = ScriptedHoldingDispatcher(
+        held=unknown_outcome("approval.respond", NOT_CONNECTED, epoch=0),
+        later=RpcOutcome(
+            status="ok",
+            method="approval.respond",
+            request_id="1",
+            epoch=1,
+            result={"resolved": 3},
+        ),
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("rm -rf /data", "destructive delete"))
+        await settle(app, pilot)
+
+        first = asyncio.create_task(app.respond_live("approval:s1#1", "once"))
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+
+        feed(app, approval_frame("ls", "directory listing"), seq=101)
+        feed(app, approval_frame("cat /etc/shadow", "credential read"), seq=102)
+        await app.render_snapshot()
+        await pilot.pause()
+        swept = tuple(p.request_id for p in app.state.outstanding_approvals("s1"))
+        assert len(swept) == 3
+
+        await app.deny_all_approvals_live("s1")
+
+        # All three, not only the two this call took: the gateway's ``all``
+        # reached the in-flight one too.
+        assert set(swept) <= app.state.flushed_prompt_ids
+
+        dispatcher.gate.set()
+        await first
+        await settle(app, pilot)
+
+        assert app.state.prompt_for("approval:s1#1") is None
+        assert list(app.prompts.card_ids) == []
+        assert app.state.outstanding_approvals("s1") == ()
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_deny_all_does_not_sweep_an_approval_that_registered_after_its_own_reply() -> None:
+    """B3 (HIGH, app.py:1844): the deny-all's post-reply re-scope had no
+    causal boundary — it took *everything* answerable the instant the reply
+    landed, including an approval that registered on a frame arriving
+    strictly after the reply's own frame. The gateway's ``all: true`` cannot
+    have resolved a queue entry that did not exist yet when it acted, so
+    sweeping it removed and tombstoned a control the gateway was still
+    holding open. ``RpcOutcome.seq`` (the reply's own frame position) now
+    bounds the sweep to approvals whose own ``seq`` is at or before it.
+    """
+    dispatcher = ScriptedHoldingDispatcher(
+        held=RpcOutcome(
+            status="ok",
+            method="approval.respond",
+            request_id="1",
+            epoch=1,
+            result={"resolved": 1},
+            seq=150,
+        ),
+        later=RpcOutcome(
+            status="ok", method="approval.respond", request_id="1", epoch=1, result={}
+        ),
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("ls", "directory listing"), seq=100)
+        await settle(app, pilot)
+
+        call = asyncio.create_task(app.deny_all_approvals_live("s1"))
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+
+        # A brand new approval registers on a frame strictly after the
+        # reply's own frame (seq=150) — the gateway's ``all: true`` never
+        # saw it, because it did not exist when the gateway acted on it.
+        feed(app, approval_frame("rm -rf /data", "destructive delete"), seq=200)
+        await app.render_snapshot()
+        await pilot.pause()
+
+        dispatcher.gate.set()
+        await call
+        await settle(app, pilot)
+
+        # The pre-existing approval is denied and gone.
+        assert app.state.prompt_for("approval:s1#1") is None
+        # The late-arriving one is untouched: still on screen, not settled,
+        # not tombstoned — the deny-all this call sent never covered it.
+        late = app.state.prompt_for("approval:s1#2")
+        assert late is not None, "an approval that arrived after the reply was swept anyway"
+        assert "approval:s1#2" not in app.state.flushed_prompt_ids
+        await app.shutdown_sources()
+
+
+class SequencedDispatcher(RecordingDispatcher):
+    """Answers each non-catalogue call with the next outcome in a fixed
+    list, for a flow that needs two DIFFERENT ``approval.respond`` replies
+    in one test — the deny-all's own reply, then a follow-up's."""
+
+    def __init__(self, outcomes: list[RpcOutcome]) -> None:
+        super().__init__(None)
+        self._outcomes = list(outcomes)
+
+    async def call(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> RpcOutcome:
+        self.calls.append((method, dict(params or {})))
+        if method == CATALOG_METHOD:
+            return RpcOutcome(status="ok", method=method, request_id="1", epoch=1, result={})
+        return self._outcomes.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_a_deny_all_follows_up_the_replys_uncovered_candidates() -> None:
+    """P1 (round five finding 1, app.py:1953 in the reviewer's numbering —
+    redesigning round four's fix). Restoring the candidates beyond the
+    reply's own ``resolved`` count guessed which ones the gateway actually
+    covered (oldest-first, locally) — if an independent removal (a
+    gateway-side timeout, another client's own respond) popped a DIFFERENT
+    snapshot member, that guess misidentifies, and restoring an approval the
+    gateway already resolved puts a live-looking card back for a command
+    that will never actually deliver, and can loop.
+
+    Verified against the installed gateway before this was written
+    (``tui_gateway/methods_prompt.py:958-977``, ``tools/approval.py:2486-
+    2519``) that an ``approval.respond`` for a session whose queue is
+    already empty answers ``{"resolved": 0}`` through the ordinary
+    confirmed-reply path — no exception, no mis-resolution of an unrelated
+    entry — which is what makes a follow-up deny safe to use instead of a
+    guess: three candidates, reply says ``resolved: 2`` → the third gets an
+    individual follow-up ``approval.respond`` on the wire, and its own
+    "nothing waiting" reply (test (b)) still leaves it settled and latched,
+    not restored, and raises nothing.
+    """
+    dispatcher = SequencedDispatcher(
+        [
+            RpcOutcome(
+                status="ok",
+                method="approval.respond",
+                request_id="1",
+                epoch=1,
+                result={"resolved": 2},
+            ),
+            # The follow-up's own reply: nothing left in the queue for it —
+            # test (b), the harmless arm of the ambiguity.
+            RpcOutcome(
+                status="ok",
+                method="approval.respond",
+                request_id="2",
+                epoch=1,
+                result={"resolved": 0},
+            ),
+        ]
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("ls", "first"), seq=100)
+        feed(app, approval_frame("cat file", "second"), seq=101)
+        feed(app, approval_frame("rm -rf /data", "third"), seq=102)
+        await settle(app, pilot)
+
+        await app.deny_all_approvals_live("s1")
+        await settle(app, pilot)
+
+        respond_calls = [
+            (method, params)
+            for method, params in dispatcher.operator_calls
+            if method == "approval.respond"
+        ]
+        assert len(respond_calls) == 2, "the excess candidate must get its own follow-up call"
+        deny_all_call, followup_call = respond_calls
+        assert deny_all_call[1].get("all") is True
+        assert followup_call[1].get("all") is not True, (
+            "the follow-up is an ordinary single deny, not a second all:true"
+        )
+
+        # Nothing restored: all three end up settled and latched.
+        assert app.state.prompt_for("approval:s1#1") is None
+        assert app.state.prompt_for("approval:s1#2") is None
+        assert app.state.prompt_for("approval:s1#3") is None, (
+            "the follow-up's own reply must settle the third, not restore it"
+        )
+        assert "approval:s1#1" in app.state.flushed_prompt_ids
+        assert "approval:s1#2" in app.state.flushed_prompt_ids
+        assert "approval:s1#3" in app.state.flushed_prompt_ids
+        assert app.prompts.card_for("approval:s1#3") is None, "no zombie card"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_deny_alls_recorded_note_states_the_followup_it_actually_sent() -> None:
+    """P2 (round five finding 2, app.py:1988 in the reviewer's numbering).
+    The recorded note used to claim "denied every waiting approval: 3
+    waiting, 2 resolved" for this exact scenario — a number the wire
+    contradicts, since the reply itself only vouches for 2 of the 3 and the
+    third's fate depends on its own, separate follow-up reply. The note now
+    names both counts once the follow-up has actually been awaited.
+    """
+    dispatcher = SequencedDispatcher(
+        [
+            RpcOutcome(
+                status="ok",
+                method="approval.respond",
+                request_id="1",
+                epoch=1,
+                result={"resolved": 2},
+            ),
+            RpcOutcome(
+                status="ok",
+                method="approval.respond",
+                request_id="2",
+                epoch=1,
+                result={"resolved": 0},
+            ),
+        ]
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("ls", "first"), seq=100)
+        feed(app, approval_frame("cat file", "second"), seq=101)
+        feed(app, approval_frame("rm -rf /data", "third"), seq=102)
+        await settle(app, pilot)
+
+        await app.deny_all_approvals_live("s1")
+        await settle(app, pilot)
+
+        line = next(e.text for e in app.state.transcript if DENIED_EVERY_APPROVAL in e.text)
+        assert line == (
+            f"{DENIED_EVERY_APPROVAL}: 3 waiting, 2 resolved, 1 followed up individually"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_deny_all_reply_covering_every_candidate_sends_no_followup() -> None:
+    """Round five, test (c): when the reply's own count already covers
+    every candidate there is no ambiguity to resolve, and the redesign must
+    not add follow-up traffic that round four's behaviour never sent."""
+    dispatcher = RecordingDispatcher(
+        RpcOutcome(
+            status="ok",
+            method="approval.respond",
+            request_id="1",
+            epoch=1,
+            result={"resolved": 2},
+        )
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("ls", "first"), seq=100)
+        feed(app, approval_frame("cat file", "second"), seq=101)
+        await settle(app, pilot)
+
+        await app.deny_all_approvals_live("s1")
+        await settle(app, pilot)
+
+        respond_calls = [
+            method for method, _ in dispatcher.operator_calls if method == "approval.respond"
+        ]
+        assert respond_calls == ["approval.respond"], "a covering count must send no follow-up"
+        assert app.state.prompt_for("approval:s1#1") is None
+        assert app.state.prompt_for("approval:s1#2") is None
+        assert "approval:s1#1" in app.state.flushed_prompt_ids
+        assert "approval:s1#2" in app.state.flushed_prompt_ids
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_not_sent_followup_latches_and_the_note_says_unreachable() -> None:
+    """P2 (round six finding 2, app.py:2041 in the reviewer's numbering).
+
+    Round five restored the follow-up's own candidate on a definite
+    ``not_sent`` while the recorded note still counted it under "followed up
+    individually" — a restored card sitting next to a note that claimed it
+    was denied. Round six's no-restore policy settles and latches this
+    candidate instead, and the note gets a clause of its own so it stops
+    claiming a denial the wire never confirmed.
+    """
+    dispatcher = SequencedDispatcher(
+        [
+            RpcOutcome(
+                status="ok",
+                method="approval.respond",
+                request_id="1",
+                epoch=1,
+                result={"resolved": 2},
+            ),
+            # The follow-up's own reply: this call itself never reached a
+            # socket, the one outcome the policy treats specially.
+            unknown_outcome("approval.respond", NOT_CONNECTED, epoch=0),
+        ]
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("ls", "first"), seq=100)
+        feed(app, approval_frame("cat file", "second"), seq=101)
+        feed(app, approval_frame("rm -rf /data", "third"), seq=102)
+        await settle(app, pilot)
+
+        await app.deny_all_approvals_live("s1")
+        await settle(app, pilot)
+
+        # Latched, not restored: no zombie card for the candidate the
+        # follow-up call never actually reached.
+        assert app.state.prompt_for("approval:s1#3") is None
+        assert "approval:s1#3" in app.state.flushed_prompt_ids
+        assert app.prompts.card_for("approval:s1#3") is None, "no zombie card"
+
+        line = next(e.text for e in app.state.transcript if DENIED_EVERY_APPROVAL in e.text)
+        assert line == (
+            f"{DENIED_EVERY_APPROVAL}: 3 waiting, 2 resolved, 1 unreachable and withdrawn"
+        )
+        await app.shutdown_sources()
+
+
+class HoldFirstThenSequencedDispatcher(RecordingDispatcher):
+    """Holds the first operator call, so the test can feed a late frame
+    before it lands, then answers every later call from a fixed sequence —
+    needed here because the deny-all's own reply, the follow-up's own
+    reply, and a later single answer's reply must all differ.
+    """
+
+    def __init__(self, held: RpcOutcome, then: list[RpcOutcome]) -> None:
+        super().__init__(None)
+        self.gate = asyncio.Event()
+        self.held = held
+        self._then = list(then)
+        self._hold_next = True
+
+    async def call(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> RpcOutcome:
+        self.calls.append((method, dict(params or {})))
+        if method == CATALOG_METHOD:
+            return RpcOutcome(status="ok", method=method, request_id="1", epoch=1, result={})
+        if self._hold_next:
+            self._hold_next = False
+            await self.gate.wait()
+            return self.held
+        return self._then.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_a_followup_that_pops_a_late_arrival_settles_it_without_a_zombie() -> None:
+    """P1 (round six finding 1, app.py:2093 in the reviewer's numbering).
+
+    C left the gateway's queue by some other path before this deny-all ran
+    (a concurrent timeout, another client's own respond) — Talaria has no
+    way to know that, so C is still one of ``scope.taken``'s candidates and
+    becomes the follow-up. D registers on a frame strictly after the
+    deny-all's own reply, so B3's boundary correctly excludes it from every
+    candidate set the sweep touches — D's card is untouched. C's follow-up
+    deny is the one unaimed wire call this method sends; the gateway's FIFO
+    queue no longer holds C, so the call pops whatever IS there: D. This is
+    the accepted, documented residual — under the round-six policy it
+    leaves no permanent zombie: D's card is not restored by anything, and
+    settles+latches the next time the operator answers it, through the same
+    "gateway already discarded this" path any approval takes when the
+    gateway resolves it out from under Talaria.
+    """
+    dispatcher = HoldFirstThenSequencedDispatcher(
+        held=RpcOutcome(
+            status="ok",
+            method="approval.respond",
+            request_id="1",
+            epoch=1,
+            result={"resolved": 1},
+            seq=150,
+        ),
+        then=[
+            # The follow-up meant for C: the gateway's queue no longer has
+            # C in it, so this pops D instead — an ordinary confirmed
+            # reply, indistinguishable on the wire from denying C.
+            RpcOutcome(
+                status="ok",
+                method="approval.respond",
+                request_id="2",
+                epoch=1,
+                result={"resolved": 1},
+            ),
+            # D's own later answer: the gateway has already resolved it, so
+            # this comes back "nothing waiting" — the pre-existing
+            # discarded-outcome path, exercised end to end here.
+            RpcOutcome(
+                status="ok",
+                method="approval.respond",
+                request_id="3",
+                epoch=1,
+                result={"resolved": 0},
+            ),
+        ],
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, approval_frame("ls", "first"), seq=100)  # A
+        feed(app, approval_frame("rm -rf /data", "second"), seq=101)  # C, already gone
+        await settle(app, pilot)
+
+        call = asyncio.create_task(app.deny_all_approvals_live("s1"))
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+
+        # D registers on a frame strictly after the reply's own frame
+        # (seq=150) — the deny-all's initial scope already took A and C
+        # before D existed, mirroring the B3 test's own construction.
+        feed(app, approval_frame("cat /etc/shadow", "third"), seq=200)
+        await app.render_snapshot()
+        await pilot.pause()
+
+        dispatcher.gate.set()
+        await call
+        await settle(app, pilot)
+
+        d_id = "approval:s1#3"
+        # D was never swept: the follow-up popped it at the wire, but
+        # Talaria's own bookkeeping only ever names C, so D's card is
+        # exactly as it was before the deny-all ran.
+        assert app.prompts.card_for(d_id) is not None, "D's card should remain visible"
+        assert app.state.prompt_for(d_id) is not None
+        assert d_id not in app.state.flushed_prompt_ids
+
+        # The operator's next interaction with D settles it — no restore,
+        # no zombie, and no wasted second keypress beyond the one this
+        # residual accepts.
+        await app.respond_live(d_id, "once")
+        await settle(app, pilot)
+
+        assert app.state.prompt_for(d_id) is None
+        assert app.prompts.card_for(d_id) is None, "no zombie card"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_focus_switch_mid_interrupt_leaves_bs_transcript_untouched_by_as_sweep() -> None:
+    """P1 (round four finding 2, app.py:2247 in the reviewer's numbering):
+    when session A's interrupt confirms after a switch to B, the sweep's
+    decline outcomes used to append "sudo declined"-style lines into B's —
+    the focused session's — transcript, because ``self.state`` holds
+    exactly one transcript and the sweep's own outcome-recording never
+    checked whether its captured session was still the one displayed.
+    Settlement still happens unconditionally; only the misdirected
+    presentation is dropped (the same choice B1 made for ``cancel_turn``).
+    """
+    dispatcher = HoldingDispatcher(
+        RpcOutcome(status="ok", method="session.interrupt", request_id="1", epoch=1, result={})
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1")
+        feed(app, event("sudo.request", {"request_id": "u-1"}, session="s1"))
+        await settle(app, pilot)
+
+        call = asyncio.create_task(app.interrupt_live())
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+
+        # Focus moves to a different, genuinely live session before A's
+        # interrupt confirms and its sweep runs.
+        app.state = replace(app.state, focused_session_id="s2")
+        feed(app, event("message.start", {}, session="s2"), seq=101)
+        feed(app, event("message.delta", {"text": "hello"}, session="s2"), seq=102)
+        await app.render_snapshot()
+        await pilot.pause()
+        before = app.state.transcript
+
+        dispatcher.gate.set()
+        await call
+        await settle(app, pilot)
+
+        assert app.state.transcript == before, (
+            "session A's sweep outcome must not append to session B's transcript"
+        )
+        # A's own sudo prompt is still declined and settled — only the
+        # transcript line is skipped, not the bookkeeping.
+        assert app.state.prompt_for("u-1", session_id="s1") is None
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_settling_one_sessions_in_flight_answer_leaves_the_others_intact() -> None:
+    """P1 (round four finding 3, app.py:2188 in the reviewer's numbering):
+    prompt settlement inside ``_record_prompt_outcome`` called the domain's
+    ``settle_prompt`` without a session, so with session A's and session
+    B's identical ``req-1`` both in flight, settling B's outcome could find
+    and remove A's unscoped entry instead — leaving A (or B) permanently
+    parked in ``state.answering`` and every future switch refused, since
+    :func:`~talaria.domain.state.switch_refusal` fires on any non-empty
+    ``answering``. Settlement identity is now (session, request id), the
+    same rule round three gave ``_start_answering`` and
+    ``_on_prompt_expire``.
+    """
+    dispatcher = RecordingDispatcher(
+        RpcOutcome(status="ok", method="sudo.respond", request_id="1", epoch=1, result={})
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        await settle(app, pilot)
+
+        prompt_a = PendingPrompt(
+            request_id="req-1",
+            kind="sudo",
+            summary="sudo password required",
+            opened_at=1.0,
+            seq=100,
+            session_id="sess-a",
+        )
+        prompt_b = PendingPrompt(
+            request_id="req-1",
+            kind="sudo",
+            summary="sudo password required",
+            opened_at=2.0,
+            seq=101,
+            session_id="sess-b",
+        )
+        app.state = replace(
+            app.state, answering=(prompt_a, prompt_b), focused_session_id="sess-b"
+        )
+        await settle(app, pilot)
+        assert switch_refusal(app.state) != "", "both entries in flight must still refuse a switch"
+
+        outcome = RpcOutcome(status="ok", method="sudo.respond", request_id="1", epoch=1, result={})
+        app._record_prompt_outcome(prompt_b, "secret-pw", outcome, declined=False)
+        await settle(app, pilot)
+
+        assert prompt_b not in app.state.answering, "B's own entry must have settled"
+        assert prompt_a in app.state.answering, (
+            "settling B's req-1 must not remove A's unrelated, still-in-flight req-1"
+        )
+        assert switch_refusal(app.state) != "", "A is still in flight — a switch must stay refused"
+
+        app._record_prompt_outcome(prompt_a, "secret-pw", outcome, declined=False)
+        await settle(app, pilot)
+
+        assert prompt_a not in app.state.answering
+        assert switch_refusal(app.state) == "", "both settled — a switch must clear"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_deny_all_that_reached_no_socket_still_latches_every_swept_approval() -> None:
+    """The round-six policy, at its most direct site. Round five put every
+    swept approval back on screen when the deny-all's own reply was a genuine
+    ``not_sent`` — nothing reached a socket at all. Round six supersedes
+    that: an approval-kind not_sent never restores, because restoring risks
+    the unkillable zombie the class docstring describes (every later answer
+    for the same, unaimed approval comes back the same ambiguous way and
+    restores it again). Latching instead is safe even though the gateway
+    genuinely never saw this call, because the gateway's own approval
+    timeout unblocks the waiting agent thread regardless of what Talaria's
+    screen shows, and that timeout is itself the denial the operator asked
+    for."""
+    dispatcher = RecordingDispatcher(
+        unknown_outcome("approval.respond", NOT_CONNECTED, epoch=0)
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        two_approvals(app)
+        await settle(app, pilot)
+        swept = tuple(p.request_id for p in app.state.outstanding_approvals("s1"))
+
+        await app.deny_all_approvals_live("s1")
+        await settle(app, pilot)
+
+        assert set(swept) <= app.state.flushed_prompt_ids
+        assert list(app.prompts.card_ids) == []
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_approval_arriving_mid_deny_all_is_latched_and_its_card_leaves() -> None:
+    """CR4 finding 3. The gateway's ``all: true`` resolves its queue as it
+    stands *there*, when the call executes — not as ``scope`` stood *here*,
+    when the call was built. A third approval that registers while the reply
+    is still on the wire is in that resolved queue too, and used to be left
+    mounted forever: no gateway entry behind it, and no expiry ever coming to
+    take it away.
+    """
+    dispatcher = HoldingDispatcher(
+        RpcOutcome(
+            status="ok",
+            method="approval.respond",
+            request_id="1",
+            epoch=1,
+            result={"resolved": 3},
+        )
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        two_approvals(app)
+        await settle(app, pilot)
+        swept = set(p.request_id for p in app.state.outstanding_approvals("s1"))
+        assert len(swept) == 2
+
+        call = asyncio.create_task(app.deny_all_approvals_live("s1"))
+        while not dispatcher.operator_calls:
+            await asyncio.sleep(0)
+
+        # A third approval registers while the deny-all's own reply is still
+        # on the wire.
+        feed(app, approval_frame("cat /etc/shadow", "credential read"), seq=103)
+        await app.render_snapshot()
+        await pilot.pause()
+        third = next(
+            p.request_id
+            for p in app.state.outstanding_approvals("s1")
+            if p.request_id not in swept
+        )
+        assert app.state.prompt_for(third) is not None
+        assert app.prompts.card_for(third) is not None
+
+        dispatcher.gate.set()
+        await call
+        await settle(app, pilot)
+
+        assert third in app.state.flushed_prompt_ids, "the late arrival was never latched"
+        assert app.state.prompt_for(third) is None, "its card should have left the registry"
+        assert app.prompts.card_for(third) is None, "its card is still mounted on screen"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_declining_a_prompt_in_replay_refuses_visibly_and_sends_nothing() -> None:
+    """AE11 again, on the key U2 adds. A decline is a mutation like any other
+    answer, so it gets the same visible refusal — and the card stays, because
+    nothing was sent and nothing was resolved."""
+    controls = ReplayControls(paused=True)
+    source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
+    app = TalariaApp(source, mode="replay", controls=controls, coalesce_interval=3600.0)
+
+    async with app.run_test() as pilot:
+        feed(app, event("sudo.request", {"request_id": "u-1"}))
+        await settle(app, pilot)
+
+        card = app.prompts.card_for("u-1")
+        assert card is not None
+        card.query_one("#answer", Input).focus()
+        await pilot.press("m", "a", "i", "n")
+        await pilot.press("escape")
+        await settle(app, pilot)
+
+        assert INERT_NOTICE in app.composer.notice
+        assert PROMPT_RESPOND_CONTROL in app.composer.notice
+        assert app.state.prompt_for("u-1") is not None
+        assert list(app.prompts.card_ids) == ["u-1"]
+        # CR4 finding 6a: the refusal claims escape did nothing, and the
+        # operator's half-typed answer must not have been destroyed while
+        # that claim was true — an early clear contradicted its own notice.
+        assert card.query_one("#answer", Input).value == "main"
         await app.shutdown_sources()

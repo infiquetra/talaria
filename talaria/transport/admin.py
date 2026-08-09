@@ -114,11 +114,12 @@ UI-level test asserts the first is always ``False``.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import IO, Any, Literal
 from urllib.parse import urlencode, urljoin, urlsplit
 
 from talaria.domain.models_catalog import (
@@ -186,6 +187,7 @@ PROFILES_PATH = "/api/profiles"
 AdminFailure = Literal[
     "unauthorized",
     "absent_capability",
+    "unknown_profile",
     "unreachable",
     "refused_origin",
     "oversized_response",
@@ -274,7 +276,9 @@ def fetch_admin_json(
     Every failure mode the plan enumerates becomes a named ``reason`` here rather
     than an exception from ``urllib`` reaching the caller: 401 is
     ``unauthorized``, 404 is ``absent_capability`` (the gateway is too old to
-    carry the endpoint — R8's absent-capability branch), a refused connection is
+    carry the endpoint — R8's absent-capability branch) *unless* the request
+    carried a ``profile`` param, in which case the 404 is disambiguated first
+    (U4, see :func:`_disambiguate_absent_capability`) — a refused connection is
     ``unreachable``, a body that is not JSON is ``malformed_response``, and a
     body that hits the cap is ``oversized_response``. See :func:`_perform_admin_request`
     for the shared read/decode path a POST takes too.
@@ -290,7 +294,23 @@ def fetch_admin_json(
         headers={"Accept": "application/json", **_credential_headers(token)},
         method="GET",
     )
-    return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
+    try:
+        return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
+    except AdminError as exc:
+        profile = (params or {}).get("profile")
+        # ``is not None`` — presence, not truthiness. ``?profile=`` (an empty
+        # value) is still a profile-carrying request from the gateway's point
+        # of view; a truthiness check treated it as if no ``profile`` param
+        # had been sent at all, so the required disambiguation was skipped
+        # and a bare-route-exists case reported ``absent_capability`` instead
+        # of ``unknown_profile``.
+        if exc.reason == "absent_capability" and profile is not None:
+            resolved = _disambiguate_absent_capability(
+                exc, origin=origin, path=path, profile=profile, token=token, timeout=timeout
+            )
+            if resolved is not exc:
+                raise resolved from exc
+        raise
 
 
 def post_admin_json(
@@ -329,7 +349,174 @@ def post_admin_json(
         },
         method="POST",
     )
-    return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
+    try:
+        return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
+    except AdminError as exc:
+        profile = (params or {}).get("profile")
+        # ``is not None`` — presence, not truthiness. ``?profile=`` (an empty
+        # value) is still a profile-carrying request from the gateway's point
+        # of view; a truthiness check treated it as if no ``profile`` param
+        # had been sent at all, so the required disambiguation was skipped
+        # and a bare-route-exists case reported ``absent_capability`` instead
+        # of ``unknown_profile``.
+        if exc.reason == "absent_capability" and profile is not None:
+            resolved = _disambiguate_absent_capability(
+                exc, origin=origin, path=path, profile=profile, token=token, timeout=timeout
+            )
+            if resolved is not exc:
+                raise resolved from exc
+        raise
+
+
+def _disambiguate_absent_capability(
+    exc: AdminError,
+    *,
+    origin: str,
+    path: str,
+    profile: str,
+    token: str,
+    timeout: float,
+) -> AdminError:
+    """U4: a 404 that carried ``profile`` might mean "unknown profile", not
+    "this gateway predates the endpoint".
+
+    Probes the bare path once with a bare **GET** (KTD7) — never the original
+    request's method, because a bare POST to ``MODEL_SET_PATH`` would perform
+    the write this module exists to guard. The probe is read method-aware
+    (R9): 2xx or 405 both prove the route is registered — 405 is the answer
+    ``/api/model/set`` (POST-only) gives a bare GET — so a profile-carrying
+    request 404ing against a route that demonstrably exists means the profile
+    is what's missing, not the endpoint. A bare 404 on the probe confirms the
+    endpoint really is absent, matching today's behavior. Any other probe
+    outcome (401, 5xx, unreachable) is not evidence either way, so the
+    original ``absent_capability`` error is returned unchanged rather than
+    guessed at.
+    """
+    if _probe_route_exists(origin, path, token=token, timeout=timeout):
+        return AdminError(
+            "unknown_profile",
+            f"the gateway does not recognize profile {profile!r} at {path}",
+        )
+    return exc
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Refuses every redirect, for the probe only.
+
+    A bare GET's 3xx answer is not evidence the profiled route exists — it is
+    evidence of a *different* route, possibly on a *different origin*, and
+    ``urlopen``'s default opener does not know that: it installs
+    :class:`urllib.request.HTTPRedirectHandler`, which follows a redirect by
+    building a new request from the old one's headers (including both
+    :data:`CREDENTIAL_HEADERS`) and sending it to wherever ``Location``
+    names, with no same-origin check at all. That is exactly the credential
+    exfiltration :func:`_build_url` was written to stop on the *first*
+    request; the probe's *second*, gateway-generated request bypassed it
+    entirely. Returning ``None`` here (the documented way to decline a
+    redirect) makes :class:`urllib.error.HTTPError` propagate with the 3xx
+    status instead — no second request is ever sent, to this origin or any
+    other.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
+#: Built once: a redirect refuses at the handler level, not per call, and
+#: reusing one opener across probes costs nothing since it holds no
+#: request-specific state.
+_PROBE_OPENER = urllib.request.build_opener(_NoRedirects)
+
+
+def _probe_route_exists(origin: str, path: str, *, token: str, timeout: float) -> bool:
+    """The disambiguation probe itself (U4): a single bare GET, nothing else.
+
+    GET only, on purpose — this function must never be called with a method
+    other than GET, and takes no method parameter so it cannot be. Returns
+    ``True`` when the response is a *complete* 2xx or the route answers 405
+    (proving it is registered even though this profile-carrying call was
+    rejected), and ``False`` for a bare 404, a redirect, a truncated body, an
+    unreachable host, or any other outcome that does not settle the
+    question — the caller treats ``False`` as "keep the original error
+    unchanged".
+
+    **Never follows a redirect** — see :class:`_NoRedirects`. A 3xx is read
+    through the ``HTTPError`` branch below like any other non-2xx status and
+    is not 405, so it returns ``False``, the safe default: the original
+    error stands rather than being reclassified from an answer that came
+    from a route this call never actually confirmed.
+
+    **A truncated body is not proof either — on the success path.** For a
+    ``Content-Length`` response, ``response.read(n)`` clips its request to
+    the declared length and returns whatever arrived before the socket
+    closed, without raising — comparing what was actually read against what
+    was declared is what turns that silent case into ``False``. A *chunked*
+    response takes the opposite path: closing mid-chunk makes ``read`` raise
+    :class:`http.client.IncompleteRead` (an :class:`http.client.HTTPException`,
+    not an :class:`OSError`, so it needs its own ``except`` clause below)
+    instead of returning a short result — caught here for the same reason,
+    so neither truncation shape ever reaches the caller as a raw exception.
+
+    **A truncated body IS still proof, on the error path — deliberately.**
+    ``exc.read()`` below only drains the HTTPError's body off the socket; the
+    classification is ``exc.code == 405`` and reads nothing from that body,
+    so a 405 whose body arrives truncated (chunked or not) has still
+    transmitted the one thing that matters: its status line. The drain read
+    is wrapped so *neither* :class:`OSError` nor
+    :class:`http.client.HTTPException` from it can stop the classification
+    below from running — the socket may be left slightly less cleanly
+    drained, which is a cost this module already accepts for an ordinary
+    :class:`OSError` there, not a reason to lose the answer.
+    """
+    url = _build_url(origin, path, None)
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", **_credential_headers(token)},
+        method="GET",
+    )
+    try:
+        # nosec B310 - origin was already validated by the caller's
+        # require_fetchable_origin, and _build_url forbids leaving it; this is
+        # the same allowlisted GET shape _perform_admin_request already sends,
+        # through an opener that refuses to follow a redirect off that origin.
+        with _PROBE_OPENER.open(request, timeout=timeout) as response:  # nosec B310
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            declared = response.headers.get("Content-Length")
+        if declared is not None:
+            try:
+                expected = int(declared)
+            except ValueError:
+                expected = None
+            if expected is not None and len(body) < min(expected, MAX_RESPONSE_BYTES + 1):
+                return False
+        return True
+    except urllib.error.HTTPError as exc:
+        try:
+            exc.read(MAX_RESPONSE_BYTES)
+        except (OSError, http.client.HTTPException):
+            # A truncated error body (chunked or otherwise) does not change
+            # the answer — see the docstring's "still proof, on the error
+            # path" note. The status line already arrived; only the body
+            # drain failed.
+            pass
+        return exc.code == 405
+    except OSError:
+        return False
+    except http.client.HTTPException:
+        # Covers `IncompleteRead` (a truncated chunked body — the
+        # `Content-Length` case above never reaches this branch, since
+        # `read(n)` just returns short there) and any other protocol-level
+        # parse failure `http.client` raises that isn't an `OSError`. None of
+        # them is proof the route exists; the original error stands.
+        return False
 
 
 def _perform_admin_request(
@@ -343,8 +530,23 @@ def _perform_admin_request(
 
     The one place the urlopen/read/decode sequence lives, so
     :func:`fetch_admin_json` and :func:`post_admin_json` cannot drift on how a
-    401, a 404, a 400, an oversized body or a non-JSON body becomes a
-    ``reason`` — only how the request itself is built differs between them.
+    401, a 404, a 400, an oversized body, a truncated body or a non-JSON body
+    becomes a ``reason`` — only how the request itself is built differs
+    between them.
+
+    **A truncated 2xx body is ``malformed_response``, not a raw exception.**
+    Unlike the disambiguation probe's success read
+    (:func:`_probe_route_exists`), this read's result is the reply — there is
+    no boolean fallback to compute if it comes back short, so a truncation
+    here cannot be treated as a `False`-shaped "inconclusive" the way the
+    probe treats it. The only honest answer left is the one already used for
+    a body that arrived complete but was not valid JSON: either way the
+    gateway's reply could not be turned into usable data. A chunked body that
+    hangs up mid-chunk raises :class:`http.client.IncompleteRead` (an
+    :class:`http.client.HTTPException`, not an :class:`OSError`) from
+    ``response.read`` itself, before ``json.loads`` is ever reached, so it
+    needs its own ``except`` clause rather than falling into the JSON-decode
+    branch below.
     """
     try:
         # nosec B310 - both callers already ran require_fetchable_origin and
@@ -357,13 +559,29 @@ def _perform_admin_request(
             # cannot tell a full read from a truncated one.
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             charset = response.headers.get_content_charset() or "utf-8"
+    except http.client.HTTPException as exc:
+        raise AdminError(
+            "malformed_response",
+            f"{path} answered with a truncated body — the connection closed "
+            "before the reply finished",
+        ) from exc
     except urllib.error.HTTPError as exc:
         # Read and discard: an unread HTTPError body holds the socket open.
         # The body is never surfaced — Hermes's 400/401 detail is fixed text,
         # but a 500 handler's detail can quote request state.
+        #
+        # The drain read can fail two different ways, and neither should
+        # stop `_http_error(exc.code, path)` below from running: `exc.code`
+        # is all that classification reads, and it already arrived with the
+        # status line, before a single body byte was read. `OSError` covers
+        # a connection dropped outright; `http.client.HTTPException` (most
+        # concretely `IncompleteRead`) covers a *chunked* error body that
+        # advertises more than it sends and then hangs up mid-chunk — the
+        # same gap :func:`_probe_route_exists` had on its own error-body
+        # drain, fixed here for every admin call rather than just the probe.
         try:
             exc.read(MAX_RESPONSE_BYTES)
-        except OSError:
+        except (OSError, http.client.HTTPException):
             pass
         raise _http_error(exc.code, path) from exc
     except OSError as exc:
