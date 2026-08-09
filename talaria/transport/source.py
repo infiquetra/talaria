@@ -163,6 +163,45 @@ RECONNECT_DELAYS: Final[tuple[float, ...]] = (0.0, 0.5, 1.0, 2.0, 5.0)
 #: ``None``, because ``None`` is a legal decoded frame body.
 _END = object()
 
+
+@dataclass(frozen=True)
+class _ConnectionNotice:
+    """A terminal connection notification, queued in the same FIFO order as frames.
+
+    **This is CR2 finding 1's fix.** :meth:`LiveSource._set_state` used to call
+    ``on_connection`` inline, from whichever task noticed the terminal
+    condition — usually :meth:`LiveSource._handle_disconnect`, running on the
+    reader task, concurrently with a consumer draining :attr:`LiveSource._queue`
+    on its own task. A terminal cause fired from there could reach the domain
+    (which commits ``streaming_text``/``reasoning_text`` on a terminal cause,
+    KTD7) *before* frames already sitting in the queue — received before the
+    drop, not yet drained — had been folded in. The domain then committed the
+    stale partial buffer as one entry, and the consumer went on to drain the
+    still-queued frames and commit the completed reply as a second, separate
+    entry: the same content twice.
+
+    So a terminal cause discovered while something is actively iterating this
+    source (:attr:`LiveSource._iterating`) is wrapped in one of these and put
+    on the *same* queue frames travel on, instead of being delivered inline.
+    :meth:`LiveSource.__aiter__` invokes ``on_connection`` itself, at the point
+    this is dequeued — which is only after every frame enqueued ahead of it has
+    already been yielded to, and presumably folded by, the caller.
+
+    Not a :class:`FrameRecord`: the class docstring's promise that connection
+    state is published by callback and never by a synthetic frame still holds
+    — this never reaches a consumer's ``async for`` as a yielded item, and
+    never touches the recorded corpus.
+
+    When nothing is iterating (a test that drives :meth:`LiveSource.start` and
+    :meth:`LiveSource.close` directly, with no consumer ever pulling from the
+    queue), the old inline delivery is kept exactly as it was — there is no
+    queue-ordering race to fix when nothing is racing the queue.
+    """
+
+    state: LiveConnectionState
+    detail: str
+    cause: TerminalCause | None
+
 #: How an endpoint switch ended (U4, KTD5/KTD6). Every member is a state the
 #: operator can be told about and act on, which is the whole requirement: a
 #: switch that fails leaves the previous connection closed and the new one
@@ -309,6 +348,12 @@ class LiveSource:
         self._closed = False
         self._ended = False
         self._started = False
+        #: Whether something is actively pulling frames from :attr:`_queue`
+        #: (set at the top of :meth:`__aiter__`, never cleared). Read by
+        #: :meth:`_set_state` to decide whether a terminal cause must be
+        #: queued in FIFO order with frames rather than delivered inline —
+        #: see :class:`_ConnectionNotice`.
+        self._iterating = False
         self._seq = 0
         #: Serialises endpoint switches against each other. A switch drops a
         #: connection and dials a new one across several awaits; two of them
@@ -385,6 +430,7 @@ class LiveSource:
         detail: str = "",
         *,
         cause: TerminalCause | None = None,
+        deliver_inline: bool = False,
     ) -> None:
         """Publish a state change, and a typed terminal cause when this is one.
 
@@ -396,12 +442,46 @@ class LiveSource:
         ``on_connection`` so the typed cause is never silently dropped, even
         though acting on it a second time is a no-op once the domain's
         buffers are already empty.
+
+        **A terminal cause is queued, not delivered inline, while something
+        is iterating this source (CR2 finding 1).** ``on_connection`` for a
+        terminal cause is what makes the domain commit
+        ``streaming_text``/``reasoning_text`` (KTD7), and this method is often
+        called from :meth:`_handle_disconnect`, on the reader task — a
+        different task from whatever is draining :attr:`_queue`. Calling
+        ``on_connection`` straight from here could commit the domain's
+        current buffer *before* frames already sitting in the queue, received
+        before the drop, had been folded in — and the consumer would then
+        commit the same content again once it got to them. Wrapping the
+        notification in a :class:`_ConnectionNotice` and queuing it puts it
+        in the same FIFO order those frames are in, so :meth:`__aiter__`
+        cannot reach it before they are drained. A cause-less call is never
+        queued: nothing it does is order-sensitive against frame content, and
+        connecting/reconnecting notices reaching the screen promptly is worth
+        keeping.
+
+        **``deliver_inline`` is :meth:`close`'s escape hatch from that
+        queuing, and only ``close()`` passes it.** ``close()`` — directly, or
+        via :meth:`~talaria.ui.app.TalariaApp.shutdown_sources`, which cancels
+        the frame-consumer task *before* calling it — is teardown: whatever is
+        still queued when it runs will never be drained by anything, cancelled
+        consumer or not, so there is no future duplicate commit to protect
+        against by queuing here, and queuing anyway would risk the opposite
+        failure — a notice left sitting after the one task that would have
+        dequeued it has already wound down, silently dropping the very
+        content R6 exists to preserve. Every other terminal-cause call site
+        runs on a stream that is still being actively consumed, where that
+        risk does not apply.
         """
         if state == self._state and not detail and cause is None:
             return
         self._state = state
-        if self._on_connection is not None:
-            self._on_connection(state, detail, cause)
+        if self._on_connection is None:
+            return
+        if cause is not None and self._iterating and not deliver_inline:
+            self._queue.put_nowait(_ConnectionNotice(state, detail, cause))
+            return
+        self._on_connection(state, detail, cause)
 
     # ── dialling ─────────────────────────────────────────────────────────
 
@@ -487,12 +567,25 @@ class LiveSource:
     # ── the seam ─────────────────────────────────────────────────────────
 
     async def __aiter__(self) -> AsyncIterator[FrameRecord]:
-        """Yield frames as they arrive, in wire order."""
+        """Yield frames as they arrive, in wire order.
+
+        Marks :attr:`_iterating` before doing anything else — including
+        before :meth:`start`, whose own first-dial failure can itself carry a
+        terminal cause. Set here, and only here, because this is the one
+        place that establishes there is now something pulling from
+        :attr:`_queue` for :meth:`_set_state` to order a terminal cause
+        against (see :class:`_ConnectionNotice`).
+        """
+        self._iterating = True
         await self.start()
         while True:
             item = await self._queue.get()
             if item is _END:
                 return
+            if isinstance(item, _ConnectionNotice):
+                if self._on_connection is not None:
+                    self._on_connection(item.state, item.detail, item.cause)
+                continue
             record, size = item
             self._queued_bytes = max(0, self._queued_bytes - size)
             self._resume_reads_if_drained()
@@ -545,7 +638,9 @@ class LiveSource:
             # On the genuine operator-teardown-while-connected path
             # ``last_failure`` is already ``""`` (cleared on the last
             # successful attach), so this changes nothing there.
-            self._set_state("disconnected", self.last_failure, cause="orderly_close")
+            self._set_state(
+                "disconnected", self.last_failure, cause="orderly_close", deliver_inline=True
+            )
         self._end()
 
         if self._recorder is not None:
