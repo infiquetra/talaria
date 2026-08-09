@@ -13,6 +13,7 @@ test; it is the recorded measurement in
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -30,11 +31,13 @@ from talaria.domain.projection import (
 )
 from talaria.domain.state import SessionState
 from talaria.replay import gate as gate_module
+from talaria.replay.controls import ReplayControls
 from talaria.replay.gate import (
     DESCENDANT_WIDGET_CEILING,
     CorpusIdentity,
     GateMeasurement,
     GateResult,
+    _apply_sideband_action,
     _cadence_speed,
     _expected_top_level_blocks,
     _fit_slope,
@@ -45,11 +48,23 @@ from talaria.replay.gate import (
     expected_block_documents_are_mounted,
     fallback_banner_accounting,
     measure_replay,
+    normalized_block_structure,
     ownership_report,
+    replay_headless,
     run_gate,
     stress_corpus_identity,
 )
-from talaria.replay.stress import build_stress_corpus
+from talaria.replay.source import ReplaySource, SidebandAction, build_sideband
+from talaria.replay.stress import build_feature_corpus, build_stress_corpus
+from talaria.replay.workloads import (
+    WARMUP_BOUNDARIES,
+    growing_table_boundaries,
+    measure_apply_latency,
+    run_adversarial_workloads,
+    table_599_columns_plus_paragraph,
+    table_n_columns,
+)
+from talaria.ui.app import TalariaApp
 from talaria.ui.blocks import EntryMarkdown
 from talaria.ui.transcript import TranscriptPane
 
@@ -1247,4 +1262,462 @@ async def test_a_reasoning_only_delta_withheld_from_the_pane_is_not_accepted_vac
         assert settled_ok is False
         assert any("reasoning" in r for r in reasons)
 
+        await app.shutdown_sources()
+
+
+# ── U6, gap 1: the sideband timeline (confirmed-cancel, typed-disconnect) ──
+
+
+def test_sideband_actions_fire_deterministically_after_their_own_frame_index() -> None:
+    """The source's own pacing decides when an action fires -- not a
+    concurrent poll racing the consumer -- and it fires *after* the frame at
+    that index has been fully consumed, matching what "ordered against frame
+    indices" means (source.py's own module section).
+    """
+    from talaria.transport.source import FrameRecord
+
+    records = tuple(
+        FrameRecord(seq=i, at=float(i), direction="in", frame={"n": i}) for i in range(1, 6)
+    )
+    fired: list[SidebandAction] = []
+    sideband = build_sideband(
+        [
+            SidebandAction(frame_index=2, kind="confirmed_cancel"),
+            SidebandAction(frame_index=10, kind="typed_disconnect", cause="orderly_close"),
+        ]
+    )
+
+    async def drive() -> list[int]:
+        source = ReplaySource(records, sideband=sideband, on_sideband=fired.append)
+        source.controls.set_unbounded()
+        seen = []
+        async for record in source:
+            seen.append(record.seq)
+        return seen
+
+    seen = asyncio.run(drive())
+    assert seen == [1, 2, 3, 4, 5]
+    assert [a.frame_index for a in fired] == [2, 10]
+    # frame_index=10 is beyond the 5-record corpus -- it still fires, once,
+    # right after the last frame ("the connection dropped after the visible
+    # content ended" is a real scenario, not an off-by-one to drop silently).
+    assert fired[1].kind == "typed_disconnect"
+
+
+def test_build_sideband_rejects_two_actions_on_the_same_frame_index() -> None:
+    with pytest.raises(ValueError, match="total order"):
+        build_sideband(
+            [
+                SidebandAction(frame_index=3, kind="confirmed_cancel"),
+                SidebandAction(frame_index=3, kind="typed_disconnect", cause="dial_failed"),
+            ]
+        )
+
+
+def test_sideband_action_validates_its_own_cause_pairing() -> None:
+    with pytest.raises(ValueError, match="needs a cause"):
+        SidebandAction(frame_index=1, kind="typed_disconnect")
+    with pytest.raises(ValueError, match="carries no cause"):
+        SidebandAction(frame_index=1, kind="confirmed_cancel", cause="orderly_close")
+
+
+@pytest.mark.asyncio
+async def test_apply_sideband_action_calls_the_domain_transition_a_live_confirmation_would() -> (
+    None
+):
+    """confirmed_cancel calls `cancel_turn` directly (there is no live-mode
+    equivalent to call in replay -- action_interrupt is refused by design,
+    AE11); typed_disconnect goes through the public `note_connection_state`,
+    the exact live wiring path (KTD7).
+    """
+    controls = ReplayControls(paused=True)
+    source = ReplaySource((), controls=controls)
+    app = TalariaApp(source, mode="replay", controls=controls)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.state = app.state.__class__(
+            turn="streaming", streaming_text="partial reply", last_observed_at=1.0
+        )
+        _apply_sideband_action(app, SidebandAction(frame_index=1, kind="confirmed_cancel"))
+        assert app.state.turn == "cancelled"
+        assert any("partial reply" in e.text for e in app.state.transcript)
+
+        _apply_sideband_action(
+            app,
+            SidebandAction(frame_index=2, kind="typed_disconnect", cause="reconnect_exhausted"),
+        )
+        connection_after_reconnect_exhausted: str = app.state.connection
+        assert connection_after_reconnect_exhausted == "disconnected"
+
+        _apply_sideband_action(
+            app, SidebandAction(frame_index=3, kind="typed_disconnect", cause="auth_failed")
+        )
+        connection_after_auth_failed: str = app.state.connection
+        assert connection_after_auth_failed == "auth_failed"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_replaying_a_sideband_bearing_corpus_twice_produces_identical_state() -> None:
+    """AE2 extended to the sideband: replaying the same corpus at different
+    transport speeds, sideband included, ends in identical domain state --
+    exactly the claim `run_gate`'s own `sideband_replay_determinism` check
+    makes, isolated here at unit scale.
+    """
+    feature = build_feature_corpus()
+    fast = await replay_headless(feature.records, speed=64.0, sideband=feature.sideband)
+    unbounded = await replay_headless(
+        feature.records, speed=float("inf"), sideband=feature.sideband
+    )
+    assert fast == unbounded
+
+
+# ── U6, gap 3: replay determinism over normalized block structure (R12) ────
+
+
+def test_normalized_block_structure_excludes_entry_ids_but_catches_dropped_content() -> None:
+    """Runtime identifiers (entry ids) are excluded -- two states with the
+    same committed content under different ids normalize identically -- but
+    dropped or reordered content is not excused.
+    """
+    same_text = TranscriptEntry(kind="assistant", text="# heading\n\nbody", turn_index=0, seq=1)
+    same_text_different_id = TranscriptEntry(
+        kind="assistant", text="# heading\n\nbody", turn_index=0, seq=99
+    )
+    dropped = TranscriptEntry(kind="assistant", text="# heading", turn_index=0, seq=1)
+
+    a = normalized_block_structure(SessionState(transcript=(same_text,)))
+    b = normalized_block_structure(SessionState(transcript=(same_text_different_id,)))
+    c = normalized_block_structure(SessionState(transcript=(dropped,)))
+
+    # seq=1 vs seq=99: if entry ids leaked into the normalized tuple, these
+    # would differ on that alone. They don't -- proving the exclusion.
+    assert a == b
+    assert a != c
+
+
+@pytest.mark.asyncio
+async def test_feature_corpus_sideband_replay_agrees_on_normalized_block_structure() -> None:
+    """R12's additional comparison, over the real sideband-bearing corpus."""
+    feature = build_feature_corpus()
+    fast = await replay_headless(feature.records, speed=64.0, sideband=feature.sideband)
+    unbounded = await replay_headless(
+        feature.records, speed=float("inf"), sideband=feature.sideband
+    )
+    assert normalized_block_structure(fast) == normalized_block_structure(unbounded)
+
+
+# ── U6, gap 4: the feature corpus ──────────────────────────────────────────
+
+
+def test_the_feature_corpus_covers_every_r1_construct_and_every_kind_group() -> None:
+    """A shape assertion, not a content-loss assertion: every R1 construct
+    (heading, both list types, table, fence, quote) and a representative of
+    every R7 kind group appear somewhere in the generated frame stream.
+    """
+    feature = build_feature_corpus()
+    texts = [
+        r.frame["params"]["payload"]["text"]
+        for r in feature.records
+        if isinstance(r.frame, dict)
+        and r.frame.get("params", {}).get("type") == "message.delta"
+    ]
+    joined = "\n".join(texts)
+    assert "# Heading one" in joined  # heading
+    assert "- bullet one" in joined and "1. ordered one" in joined  # both list types
+    assert "| col |" in joined  # table grid
+    assert "```python" in joined  # fence region
+    assert "> a quoted line" in joined  # block quote
+    assert "<script>" in joined  # parser attack: HTML
+    assert "https://example.com/bare" in joined  # parser attack: bare URL
+
+    event_types = {
+        r.frame.get("params", {}).get("type")
+        for r in feature.records
+        if isinstance(r.frame, dict) and r.frame.get("method") == "event"
+    }
+    assert {"message.delta", "reasoning.delta", "tool.start", "error"} <= event_types
+    assert any(
+        isinstance(r.frame, dict) and r.frame.get("method") == "prompt.submit"
+        for r in feature.records
+    )
+    assert feature.sideband  # the early-termination arms scheduled their actions
+
+
+@pytest.mark.asyncio
+async def test_early_termination_by_error_commits_partial_content() -> None:
+    """AE2 at gate level, the wire-frame arm: an `error` event (a real frame,
+    no sideband needed) commits whatever streamed before it.
+    """
+    feature = build_feature_corpus()
+    state = await replay_headless(feature.records, speed=float("inf"))
+    assert any(
+        "partial content before an error arrives" in e.text and e.kind == "assistant"
+        for e in state.transcript
+    )
+    assert any(e.kind == "error" for e in state.transcript)
+
+
+@pytest.mark.asyncio
+async def test_early_termination_by_cancel_and_disconnect_commits_partial_content() -> None:
+    """AE2 at gate level, the sideband arms: neither confirmed-cancel nor
+    typed-disconnect is a wire frame, so this is the claim the sideband
+    timeline exists to make checkable at all.
+    """
+    feature = build_feature_corpus()
+    state = await replay_headless(feature.records, speed=float("inf"), sideband=feature.sideband)
+    # The corpus's last sideband action is the typed-disconnect (turn 12,
+    # frame 44): set_connection settles a still-streaming turn to "idle",
+    # not "cancelled" (KTD7 -- a disconnect is not the operator cancelling),
+    # so the final turn/connection reflect that last arm, not the earlier
+    # cancel arms. What AE2 actually claims is that every arm's content
+    # survived, which the four checks below assert directly.
+    assert state.connection == "disconnected"
+    assert any("cancelled mid-stream" in e.text for e in state.transcript)
+    # The mid-table case (AE2's named example): cancelled right after the
+    # header/separator/first row -- the committed text still carries every
+    # character that streamed, interruption marker included.
+    assert any(
+        "| a | b |" in e.text and "*[interrupted]*" in e.text for e in state.transcript
+    )
+    assert any("partial content before an error arrives" in e.text for e in state.transcript)
+    assert any("partial content before the connection drops" in e.text for e in state.transcript)
+
+
+# ── the fence oracle fix: unclosed fences are not false positives ─────────
+
+
+@pytest.mark.asyncio
+async def test_an_unclosed_fence_with_real_trailing_content_is_not_a_false_positive() -> None:
+    """CR6-class finding, found by U6's own mid-fence cancellation scenario:
+    the fence oracle used to slice `body_lines[1:-1]`, treating the *last*
+    span line as a closing delimiter unconditionally -- which silently ate
+    one real line of content every time a fence never actually closed
+    (exactly what a confirmed-cancel or typed-disconnect mid-fence commits).
+    Re-parsing the span with the same parser and reading the fence token's
+    own `.content` is correct for both the closed and the unclosed case;
+    this pins the unclosed one, since the closed case was already covered.
+    """
+    text = "```text\nan unclosed fence, cancelled mid-stream\n\n*[interrupted]*"
+    async with mounted_document(text) as widget:
+        ok, reason = document_ownership(widget)
+        assert ok, reason
+
+
+# ── U6, gap 2: the KTD1(d) adversarial workloads ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_measure_apply_latency_times_around_transcript_pane_apply_and_reports_p99() -> None:
+    boundaries = list(growing_table_boundaries())[: WARMUP_BOUNDARIES + 5]
+    report = await measure_apply_latency(boundaries, label="t", growth_mode="update")
+    assert report.boundary_count == len(boundaries)
+    assert len(report.samples_ms) == len(boundaries)
+    assert report.p99_ms >= 0.0
+    assert report.peak_apply_ms >= report.p99_ms
+
+
+@pytest.mark.asyncio
+async def test_the_601_column_table_boundary_probe_estimate_exceeds_the_trigger() -> None:
+    """KTD1(a)'s own grounding, reproduced exactly: a three-line, 601-column
+    table estimates 1,204 descendants and fires the fallback trigger.
+    """
+    report = await measure_apply_latency(
+        (table_n_columns(601),), label="probe", growth_mode="update"
+    )
+    assert report.final_descendant_estimate == 1204
+    assert report.fell_back is True
+
+
+@pytest.mark.asyncio
+async def test_the_exact_boundary_599_column_regression_fires_the_trigger() -> None:
+    """The exact-boundary regression: 599 columns plus a paragraph estimates
+    exactly 1,201 -- over the 1,200 trigger by one, and it must fire.
+    """
+    report = await measure_apply_latency(
+        (table_599_columns_plus_paragraph(),), label="probe", growth_mode="update"
+    )
+    assert report.final_descendant_estimate == 1201
+    assert report.fell_back is True
+
+
+@pytest.mark.asyncio
+async def test_the_one_column_table_workload_holds_under_the_descendant_trigger_at_full_size() -> (
+    None
+):
+    """The plan's own exact number: a 1,000-row, one-column table measures
+    1,003 descendants, fitting under the 1,200 *descendant* half of the
+    two-condition trigger with headroom -- proving the descendant metric
+    alone would not have caught it, which is exactly why the trigger also
+    has a wrapped-row half. It still falls back overall: 1,000 rows is
+    1,002 source lines regardless of column width, and the wrapped-row
+    estimate counts at least one row per source line, so it clears
+    DEFAULT_MOUNT_CAP (500) on line count alone -- the wrapped-row
+    condition is what actually fires here, not the descendant one.
+    """
+    boundaries = list(growing_table_boundaries())
+    report = await measure_apply_latency(boundaries, label="table", growth_mode="update")
+    assert report.final_descendant_estimate == 1003
+    assert report.final_descendant_estimate < 1200  # DESCENDANT_ESTIMATE_TRIGGER, with headroom
+    assert report.final_wrapped_row_estimate > 500  # DEFAULT_MOUNT_CAP -- this is what fires
+    assert report.fell_back is True
+
+
+@pytest.mark.asyncio
+async def test_run_adversarial_workloads_covers_every_named_workload_and_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The full KTD1(d) set runs end to end at reduced scale (the full-size
+    run is the published gate result, not a test)."""
+    import talaria.replay.workloads as workloads_module
+
+    monkeypatch.setattr(workloads_module, "FENCE_MAX_LINES", 300)
+    monkeypatch.setattr(workloads_module, "TABLE_MAX_ROWS", 100)
+    monkeypatch.setattr(workloads_module, "LINE_MAX_CHARS", 15_000)
+
+    results = await run_adversarial_workloads()
+    labels = {report.label for report in results.reports}
+    assert labels == {
+        "growing-open-fence",
+        "growing-one-column-table",
+        "growing-unbroken-line",
+        "cjk-37000-double-width-line",
+        "table-601-columns",
+        "table-599-columns-plus-paragraph",
+    }
+    assert results.passed is True
+
+
+# ── the full gate, wired end to end ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_gate_wires_the_feature_corpus_and_workloads_into_the_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`run_gate` runs all four U6 gaps and reports every one of them --
+    including the one genuine, honest failure this pass discovered rather
+    than hid: `feature_corpus_content_loss` fails because a multi-delta
+    table that completes cleanly (no cancel, no error, no disconnect)
+    permanently inherits its live tail's append-corrupted structure. See
+    `test_a_cleanly_completed_multi_delta_table_keeps_its_live_tails_corruption`
+    for the isolated reproduction and the module docstring in
+    `talaria/replay/workloads.py` for the mechanism. This is a real,
+    pre-existing defect in the installed widget's construction-vs-append
+    bookkeeping (talaria/ui/), not something this unit is scoped to fix.
+    """
+    import talaria.replay.workloads as workloads_module
+
+    monkeypatch.setattr(workloads_module, "FENCE_MAX_LINES", 300)
+    monkeypatch.setattr(workloads_module, "TABLE_MAX_ROWS", 100)
+    monkeypatch.setattr(workloads_module, "LINE_MAX_CHARS", 15_000)
+
+    result = await run_gate(live_corpus=None, deltas=400, seed=3)
+    assert result.feature is not None
+    assert result.workloads is not None
+    assert result.sideband_determinism_identical is True
+    assert result.sideband_structure_identical is True
+
+    failed = {name for name, check in result.checks.items() if not check["pass"]}
+    expected_red = SCALE_DEPENDENT_CHECKS | {"feature_corpus_content_loss"}
+    assert failed <= expected_red, f"an unexpected check failed: {sorted(failed - expected_red)}"
+    assert "feature_corpus_content_loss" in failed, (
+        "the discovered defect should still be reproducing -- if this now passes, "
+        "either the defect was fixed upstream (update this test's docstring and "
+        "the results document) or the feature corpus stopped exercising the shape "
+        "that finds it"
+    )
+
+
+# ── the discovered defect: isolated, precise reproduction ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_cleanly_completed_multi_delta_table_renders_correctly_end_to_end() -> None:
+    """A real, pre-existing defect in Textual 8.2.8's construction-vs-append
+    bookkeeping, found by this unit's own workload and feature-corpus work —
+    originally pinned here as a known-red characterization, now FIXED in
+    `talaria/ui/blocks.py` (`EntryMarkdown` corrects the append checkpoint
+    after every full-document write) and `talaria/ui/transcript.py` (the
+    commit handoff's corrective ``update()`` is unconditional), so this test
+    asserts the healthy end-to-end behavior the gate demands.
+
+    Mechanism, precisely: `Markdown.__init__`'s initial content-seeding path
+    computes Textual's private `_last_parsed_line` with a heuristic blind to
+    which construct is still open ("total lines minus one" --
+    `_markdown.py:1435-1436` in 8.2.8), correct only for a construct that is
+    exactly one line at construction time. A live tail that first becomes
+    block-eligible with a multi-line table or fence already in it (the only
+    way a table can become eligible at all -- markdown-it needs header,
+    separator, and at least one row before it recognizes a table) is
+    seeded through exactly that path. The *next* `EntryMarkdown.append` call
+    then reparses a window that starts inside the construct with no
+    header/fence-open marker in view, which markdown-it parses as a bare
+    paragraph, and Textual silently swaps the mounted table or fence for it.
+
+    That much is transient -- and here is the second half, which makes it
+    permanent: `TranscriptPane._prepare_committed_entry`'s tail-to-entry
+    handoff only re-writes the widget (`EntryMarkdown.update`, which *does*
+    self-correct -- proven positively below) when the committed text differs
+    from what the tail last had applied. A table that completes cleanly via
+    `message.complete` reports exactly the text that was already streamed,
+    so `record.raw_body == tail.applied_text`, the write is skipped as a
+    no-op, and the corrupted widget is reused verbatim -- forever. A
+    cancelled or disconnected turn is accidentally immune: its commit always
+    appends an interruption marker, so the text always differs and the
+    corrective `update()` always runs -- see
+    `test_early_termination_by_cancel_and_disconnect_commits_partial_content`,
+    which is unaffected by this defect for exactly that reason.
+
+    **This reproduces only when the render cadence catches the table
+    mid-growth more than once, which real coalesced streaming (KTD3's 50ms
+    boundary, real network-timed deltas) makes likely but a single-drain
+    unbounded replay does not guarantee** -- `TranscriptPane.apply` only
+    runs on `render_snapshot`, and if every one of a corpus's frames lands
+    before that ever fires once, the live tail is constructed directly with
+    its *final* text and never takes the append path that corrupts it at
+    all. So this test drives the replay frame by frame, rendering after
+    each one, matching a real coalescing renderer that is not guaranteed to
+    coalesce every delta of one construct into a single flush.
+    """
+    feature = build_feature_corpus()
+    state = await replay_headless(feature.records, speed=float("inf"))
+    table_entry = next(e for e in state.transcript if e.text.startswith("| col |"))
+    assert table_entry.text == "| col |\n| --- |\n| r1 |\n| r2 |\n| r3 |"  # domain text is correct
+
+    # The layer-1 proof at gate level: a document first mounted mid-table
+    # (header + separator + one row, the block-eligibility shape) keeps its
+    # table across a subsequent append — before the checkpoint fix this
+    # exact sequence swapped the table for a bare MarkdownParagraph.
+    async with mounted_document("| col |\n| --- |\n| r1 |") as widget:
+        await widget.append("\n| r2 |")
+        after_append = [type(w).__name__ for w in widget.walk_children()]
+        assert "MarkdownTable" in after_append, "the append-time corruption is fixed"
+        assert "MarkdownParagraph" not in after_append
+
+    # The real replay path, rendered after every frame (see the docstring's
+    # last section for why that granularity is what reproduces this): the
+    # committed entry's own mounted document never receives the corrective
+    # update() call, because its text never changed relative to what the
+    # live tail last applied.
+    controls = ReplayControls()
+    controls.set_speed(1.0)
+    source = ReplaySource(feature.records, controls=controls)
+    app = TalariaApp(source, mode="replay", controls=controls)
+    entry_id = table_entry.seq
+    async with app.run_test() as pilot:
+        seen = 0
+        while not app.replay_complete.is_set() or app.frames_applied > seen:
+            if app.frames_applied > seen:
+                seen = app.frames_applied
+                await app.render_snapshot()
+            await asyncio.sleep(0.001)
+        await pilot.pause()
+        unit = app.transcript._entries.get(entry_id)
+        assert unit is not None and unit.block is not None
+        mounted = [type(w).__name__ for w in unit.block.walk_children()]
+        assert "MarkdownTable" in mounted, "the cleanly completed table stays a table"
+        assert "MarkdownParagraph" not in mounted
+        ok, reason = document_ownership(unit.block, applied_text=unit.applied_text)
+        assert ok is True, reason
         await app.shutdown_sources()

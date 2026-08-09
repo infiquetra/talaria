@@ -48,17 +48,23 @@ from typing import Any, Final
 from textual.containers import Horizontal
 from textual.widgets._markdown import MarkdownBlock, MarkdownFence
 
-from talaria.domain.models import TranscriptKind
+from talaria.domain.models import ConnectionStatus, TerminalCause, TranscriptKind
 from talaria.domain.projection import (
     ProvisionalTail,
     TranscriptView,
     entry_scoped_view,
     transcript_view,
 )
-from talaria.domain.state import SessionState
+from talaria.domain.state import SessionState, cancel_turn
 from talaria.replay.controls import MAX_SPEED, MIN_SPEED, ReplayControls
-from talaria.replay.source import ReplaySource, load_frame_records, load_header
-from talaria.replay.stress import StressCorpus, build_stress_corpus
+from talaria.replay.source import ReplaySource, SidebandAction, load_frame_records, load_header
+from talaria.replay.stress import (
+    FeatureCorpus,
+    StressCorpus,
+    build_feature_corpus,
+    build_stress_corpus,
+)
+from talaria.replay.workloads import WARMUP_BOUNDARIES, WorkloadResults, run_adversarial_workloads
 from talaria.transport.source import FrameRecord
 from talaria.ui.app import TalariaApp
 from talaria.ui.blocks import EntryMarkdown, parser_factory
@@ -203,6 +209,22 @@ class GateResult:
     inert_controls_refused: tuple[str, ...]
     matrix: dict[str, str]
     checks: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: U6, gap 4: the scripted feature corpus's own measurement — None only
+    #: if a caller constructs a GateResult by hand without running it (every
+    #: real run_gate() call populates it; there is no "skip the feature
+    #: corpus" mode, unlike live_corpus which is genuinely optional).
+    feature: GateMeasurement | None = None
+    #: U6, gap 1 (AE2 at gate level): full domain-state equality across the
+    #: sideband-bearing feature corpus, replayed at three transport
+    #: treatments — the same claim `determinism_identical` makes for the
+    #: live corpus, extended to include the scripted sideband actions.
+    sideband_determinism_identical: bool | None = None
+    #: U6, gap 3 (R12): the additional normalized-block-structure comparison
+    #: over the same three sideband-bearing replays.
+    sideband_structure_identical: bool | None = None
+    #: U6, gap 2: every KTD1(d) adversarial workload's latency/high-water
+    #: report.
+    workloads: WorkloadResults | None = None
 
     @property
     def passed(self) -> bool:
@@ -220,8 +242,12 @@ class GateResult:
             "stress": self.stress.to_dict(),
             "cadence": self.cadence.to_dict(),
             "live": self.live.to_dict() if self.live is not None else None,
+            "feature": self.feature.to_dict() if self.feature is not None else None,
             "determinism_identical": self.determinism_identical,
+            "sideband_determinism_identical": self.sideband_determinism_identical,
+            "sideband_structure_identical": self.sideband_structure_identical,
             "inert_controls_refused": list(self.inert_controls_refused),
+            "workloads": self.workloads.to_dict() if self.workloads is not None else None,
         }
 
 
@@ -371,10 +397,34 @@ def _construct_oracle(
         if not isinstance(block, MarkdownFence):
             return False, f"{construct_type} block is a {type(block).__name__}, not MarkdownFence"
         # The fence body is every span line strictly between the two ``` (or
-        # indented-code) delimiter lines for a `fence`; a `code_block` (an
-        # indented code block, no delimiters) is the whole span verbatim.
-        body_lines = span_text.split("\n")
-        expected_body = "\n".join(body_lines[1:-1] if construct_type == "fence" else body_lines)
+        # indented-code) delimiter lines for a *closed* `fence`; a
+        # `code_block` (an indented code block, no delimiters) is the whole
+        # span verbatim. An *unclosed* fence (R14's own adversarial shape,
+        # and exactly what a confirmed-cancel or typed-disconnect mid-fence
+        # commits — U6's sideband scenarios) has no closing delimiter line at
+        # all, so slicing off "the first and last line" as delimiters
+        # (this function's own earlier shape) silently ate one real content
+        # line every time the fence never closed — found live, reproduced by
+        # U6's mid-fence cancellation scenario, a false failure this
+        # function was producing against a widget that was rendering
+        # correctly. markdown-it's own `fence` token already knows the
+        # difference (its `.content` is the body either way, delimiter
+        # stripping included, closed or not) — so this re-parses `span_text`
+        # with the identical parser rather than hand-rolling delimiter
+        # arithmetic that has to get the closed/unclosed distinction right
+        # twice.
+        if construct_type == "fence":
+            span_tokens = parser_factory().parse(span_text)
+            fence_tokens = [t for t in span_tokens if t.type == "fence"]
+            if len(fence_tokens) != 1:
+                return False, (
+                    f"fence at lines {(start, end)}: span {span_text!r} does not "
+                    f"re-parse to exactly one fence token ({len(fence_tokens)} found) "
+                    "— the span itself is wrong, not just the mounted content"
+                )
+            expected_body = fence_tokens[0].content
+        else:
+            expected_body = span_text
         if block.code.rstrip("\n") != expected_body.rstrip("\n"):
             return False, (
                 f"fence at lines {(start, end)}: mounted code {block.code!r} does not match "
@@ -585,14 +635,19 @@ def block_documents_are_owned(pane: TranscriptPane) -> tuple[bool, str]:
     for entry_id, unit in pane._entries.items():
         if unit.kind != "block":
             continue
-        assert unit.block is not None
+        if unit.block is None:
+            # _MountedUnit's own invariant is that kind == "block" implies a
+            # mounted block widget; a violation is a bookkeeping defect this
+            # proof reports rather than crashes on.
+            return False, f"entry {entry_id}: kind is 'block' but no block widget is mounted"
         ok, reason = document_ownership(unit.block, applied_text=unit.applied_text)
         if not ok:
             return False, f"entry {entry_id}: {reason}"
     for tail_kind, tail_unit in pane._tails.items():
         if tail_unit is None or tail_unit.kind != "block":
             continue
-        assert tail_unit.block is not None
+        if tail_unit.block is None:
+            return False, f"{tail_kind} tail: kind is 'block' but no block widget is mounted"
         ok, reason = document_ownership(tail_unit.block, applied_text=tail_unit.applied_text)
         if not ok:
             return False, f"{tail_kind} tail: {reason}"
@@ -925,6 +980,108 @@ def stress_corpus_identity(corpus: StressCorpus) -> CorpusIdentity:
     )
 
 
+def feature_corpus_identity(corpus: FeatureCorpus) -> CorpusIdentity:
+    return CorpusIdentity(
+        label=corpus.label,
+        sha256=corpus.sha256,
+        frame_count=corpus.frame_count,
+        kind="synthetic-feature",
+        note=(
+            "scripted, deterministic: every R1 construct, early termination by "
+            "cancel/error/typed-disconnect (mid-table included), parser attacks, "
+            "one representative of every R7 kind group, sideband timeline included"
+        ),
+    )
+
+
+# ── U6: the sideband timeline, applied (gap 1) ───────────────────────────
+#
+# Confirmed-cancel and typed-disconnect are not wire frames (see
+# talaria/replay/source.py's own module section); this is where the two
+# scripted action kinds actually touch domain state, mirroring the one real
+# call path each has live. A typed disconnect goes through the exact same
+# public method the live wiring uses (TalariaApp.note_connection_state,
+# wired from LiveSource.bind in talaria/cli.py) — full fidelity, nothing
+# reached into. A confirmed cancel has no such live-mode equivalent to call:
+# TalariaApp.action_interrupt is refused in replay mode by design (AE11 —
+# there is no gateway to interrupt), and that refusal is correct for "the
+# operator pressed interrupt during this replay", which is not what a
+# sideband cancel means. It means the *history being replayed* already
+# contains a confirmed cancellation, so this calls the domain transition
+# directly (cancel_turn) — the same function interrupt_live() itself calls
+# on a real confirmation — and sets `_dirty` by hand, the one place this
+# module reaches an underscore-prefixed TalariaApp attribute, for the same
+# reason `document_ownership` reaches TranscriptPane._entries: no public
+# surface does this, and it is exactly the fact this proof needs.
+
+
+def _sideband_status_for_cause(cause: TerminalCause) -> ConnectionStatus:
+    """Mirrors talaria/transport/source.py's own mapping: every terminal
+    cause reports ``"disconnected"`` except ``auth_failed``, which is its
+    own connection status (R35's four-state contract has no fifth member for
+    it — see ``ConnectionStatus``'s own docstring).
+    """
+    return "auth_failed" if cause == "auth_failed" else "disconnected"
+
+
+def _apply_sideband_action(app: TalariaApp, action: SidebandAction) -> None:
+    if action.kind == "confirmed_cancel":
+        app.state = cancel_turn(app.state, at=app.state.last_observed_at)
+        app._dirty = True
+        return
+    if action.cause is None:
+        # SidebandAction.__post_init__ guarantees a typed_disconnect action
+        # always carries a cause -- reaching this means that guarantee broke,
+        # which is a defect in this module's own construction, not a replay
+        # outcome to report gracefully.
+        raise ValueError(f"typed_disconnect action {action!r} has no cause")
+    app.note_connection_state(_sideband_status_for_cause(action.cause), cause=action.cause)
+
+
+# ── U6: replay determinism over normalized block structure (gap 3) ───────
+#
+# AE11's existing check (replay_determinism, below) compares full domain
+# SessionState equality — the strongest claim, and it stays. R12 additionally
+# asks for a claim stated over *block structure*: ordered block classes,
+# source ranges, and semantic content, with runtime identifiers excluded.
+# Derived from the final SessionState alone (no live pane needed) by
+# re-parsing every committed block-eligible entry's own raw body with the
+# same construct-detection rule the pane itself applies
+# (_ktd2_selects_block) and the same parser _expected_top_level_blocks
+# already uses for the ownership proof — entry ids are deliberately absent
+# from the tuple this returns, which is what "runtime identifiers excluded"
+# means: two replays that commit the same content in the same order produce
+# the same normalized structure even if internal bookkeeping differs.
+#: The content width R12's comparison is stated under — the gate's own
+#: pinned terminal geometry (GATE_SIZE), matching TranscriptPane._content_width's
+#: own four-column padding subtraction.
+_NORMALIZED_STRUCTURE_WIDTH: Final[int] = GATE_SIZE[0] - 4
+
+NormalizedBlock = tuple[TranscriptKind, str, int, int, str]
+
+
+def normalized_block_structure(state: SessionState) -> tuple[NormalizedBlock, ...]:
+    """R12's additional replay-determinism comparison: ordered block classes,
+    source ranges, and semantic content, runtime identifiers excluded,
+    sideband included (a committed entry produced by cancel_turn or a typed
+    disconnect is an ordinary transcript entry — it flows through
+    entry_scoped_view like any other, so no special-casing is needed for the
+    sideband to be "included").
+    """
+    entries_view = entry_scoped_view(state)
+    out: list[NormalizedBlock] = []
+    for record in entries_view.entries:
+        if not _ktd2_selects_block(
+            record.kind, record.raw_body, content_width=_NORMALIZED_STRUCTURE_WIDTH
+        ):
+            continue
+        lines = record.raw_body.split("\n")
+        for block in _expected_top_level_blocks(record.raw_body):
+            span_text = "\n".join(lines[block.start : block.end])
+            out.append((record.kind, block.class_name, block.start, block.end, span_text))
+    return tuple(out)
+
+
 # ── the replay runs ──────────────────────────────────────────────────────
 
 
@@ -935,6 +1092,7 @@ async def measure_replay(
     mount_cap: int = DEFAULT_MOUNT_CAP,
     timeout: float = 900.0,
     speed: float | None = None,
+    sideband: tuple[SidebandAction, ...] = (),
 ) -> tuple[GateMeasurement, SessionState, tuple[str, ...]]:
     """Replay one corpus through the real app and measure it.
 
@@ -944,6 +1102,16 @@ async def measure_replay(
     renderer under sustained streaming long enough to measure it: at unbounded
     speed the domain reducer drains a 50,000-frame corpus in a few seconds, so
     the render loop is never the thing under load.
+
+    ``sideband`` is U6's scripted, non-wire-frame action track (confirmed
+    cancels, typed disconnects). Applied by :func:`_apply_sideband_action`,
+    fired by :class:`~talaria.replay.source.ReplaySource` itself at the exact
+    frame index each action targets — see that module's own section for why
+    this is deterministic rather than a race against the sampler below. The
+    app has to exist before the callback that reaches into it can be built,
+    so the source is constructed first with no sideband, then re-armed once
+    ``app`` exists — the callback itself is never invoked until the
+    ``async for`` loop inside ``app.run_test()`` starts pulling frames.
     """
     controls = ReplayControls()
     if speed is None:
@@ -952,6 +1120,8 @@ async def measure_replay(
         controls.set_speed(speed)
     source = ReplaySource(records, controls=controls)
     app = TalariaApp(source, mode="replay", controls=controls, mount_cap=mount_cap)
+    if sideband:
+        source.bind_sideband(sideband, lambda action: _apply_sideband_action(app, action))
 
     rss_series: list[tuple[int, float]] = [(0, _rss_mb())]
     checkpoints = 0
@@ -1064,19 +1234,27 @@ async def measure_replay(
 
 
 async def replay_headless(
-    records: tuple[FrameRecord, ...], *, speed: float, pause_after: int | None = None
+    records: tuple[FrameRecord, ...],
+    *,
+    speed: float,
+    pause_after: int | None = None,
+    sideband: tuple[SidebandAction, ...] = (),
 ) -> SessionState:
     """Replay through the app at a given speed and return the final domain state.
 
     Used for AE11's determinism claim. Runs the real app rather than the reducer
     alone, because the claim under test is that *the interface* produces the
     same state at any speed, and a reducer-only comparison would prove something
-    weaker.
+    weaker. ``sideband`` extends that claim to include U6's scripted actions
+    (R12: "sideband included") — see :func:`measure_replay`'s own docstring
+    for why the source is armed after the app exists rather than before.
     """
     controls = ReplayControls()
     controls.set_speed(speed)
     source = ReplaySource(records, controls=controls)
     app = TalariaApp(source, mode="replay", controls=controls)
+    if sideband:
+        source.bind_sideband(sideband, lambda action: _apply_sideband_action(app, action))
     async with app.run_test(size=GATE_SIZE) as pilot:
         if pause_after is not None:
             while app.frames_applied < pause_after and not app.replay_complete.is_set():
@@ -1150,6 +1328,42 @@ async def run_gate(
         mount_cap=mount_cap,
         speed=_cadence_speed(stress.records),
     )
+
+    # U6, gap 4: the scripted feature corpus — every R1 construct, early
+    # termination by cancel/error/typed-disconnect (mid-table included),
+    # parser attacks, one representative of every R7 kind group. Run
+    # unconditionally (unlike live_corpus): it needs no operator-supplied
+    # recording, and gap 4's whole point is that this corpus exists.
+    feature = build_feature_corpus()
+    feature_identity = feature_corpus_identity(feature)
+    feature_measurement, _, _ = await measure_replay(
+        feature.records, feature_identity, mount_cap=mount_cap, sideband=feature.sideband
+    )
+
+    # U6, gap 1 (AE2 at gate level) + gap 3 (R12): the sideband-bearing
+    # corpus replayed at three transport treatments, compared both on full
+    # domain-state equality (the same claim determinism_identical makes) and
+    # on normalized block structure (R12's additional comparison).
+    sideband_fast = await replay_headless(feature.records, speed=64.0, sideband=feature.sideband)
+    sideband_paused = await replay_headless(
+        feature.records,
+        speed=64.0,
+        pause_after=len(feature.records) // 2,
+        sideband=feature.sideband,
+    )
+    sideband_unbounded = await replay_headless(
+        feature.records, speed=float("inf"), sideband=feature.sideband
+    )
+    sideband_determinism_identical = sideband_fast == sideband_paused == sideband_unbounded
+    sideband_structure_identical = (
+        normalized_block_structure(sideband_fast)
+        == normalized_block_structure(sideband_paused)
+        == normalized_block_structure(sideband_unbounded)
+    )
+
+    # U6, gap 2: the KTD1(d) adversarial workloads (growth curves plus the
+    # boundary probes), run once at their exact specified sizes.
+    workloads = await run_adversarial_workloads()
 
     live_measurement: GateMeasurement | None = None
     #: None means "not measured", which is not the same as True. This defaulted
@@ -1259,7 +1473,62 @@ async def run_gate(
             "description": "same check taken while the stream is still moving",
             "pass": cadence_measurement.content_loss_failures == 0,
         },
+        # U6, gap 4: the feature corpus's own accounting and content-loss
+        # checks, the same shape as the stress corpus's own pair above.
+        "feature_corpus_frames_accounted_for": {
+            "description": "frames applied equals frames in the feature corpus",
+            "measured": feature_measurement.frames_applied,
+            "threshold": feature_identity.frame_count,
+            "comparison": "==",
+            "pass": feature_measurement.frames_applied == feature_identity.frame_count,
+        },
+        "feature_corpus_content_loss": {
+            "measured": feature_measurement.content_loss_failures,
+            "threshold": 0,
+            "comparison": "<=",
+            "description": "content-loss and ownership-proof checkpoints against the feature "
+            "corpus — includes talaria/replay/workloads.py's discovered append-vs-construction "
+            "defect if a sampled checkpoint lands inside the streamed table's growth window",
+            "pass": feature_measurement.content_loss_failures == 0,
+        },
+        # U6, gap 1 (AE2 at gate level): early termination by cancel, error,
+        # and typed-disconnect all rendered their received content — proven
+        # by the feature corpus's own content-loss check above (its
+        # early-termination turns are inside that same corpus) plus this
+        # replay-determinism check, which additionally proves the sideband
+        # itself is deterministic (R30/AE2's "replay it twice, get the same
+        # state", extended to the two non-wire-frame action kinds).
+        "sideband_replay_determinism": {
+            "measured": sideband_determinism_identical,
+            "threshold": True,
+            "comparison": "==",
+            "description": "64x, 64x-with-pause and unbounded replays of the sideband-bearing "
+            "feature corpus end in identical domain state",
+            "pass": sideband_determinism_identical,
+        },
+        # U6, gap 3 (R12): the additional normalized-block-structure
+        # comparison, sideband included.
+        "sideband_normalized_structure_determinism": {
+            "measured": sideband_structure_identical,
+            "threshold": True,
+            "comparison": "==",
+            "description": "ordered block classes, source ranges and semantic content "
+            "(runtime identifiers excluded) agree across the same three sideband-bearing "
+            "replays (R12)",
+            "pass": sideband_structure_identical,
+        },
     }
+    # U6, gap 2: one latency check per KTD1(d) workload, p99 against the
+    # 50ms coalescing-interval ceiling.
+    for report in workloads.reports:
+        checks[f"workload_latency_{report.label}"] = {
+            "measured": round(report.p99_ms, 3),
+            "threshold": workloads.latency_ceiling_ms,
+            "comparison": "<=",
+            "description": f"p99 TranscriptPane.apply latency for the {report.label} workload "
+            f"(ms), first {WARMUP_BOUNDARIES} boundaries excluded as warm-up",
+            "pass": report.p99_ms <= workloads.latency_ceiling_ms,
+        }
     if live_measurement is not None:
         checks["live_corpus_content_loss"] = {
             "measured": live_measurement.content_loss_failures,
@@ -1298,6 +1567,10 @@ async def run_gate(
         inert_controls_refused=refusals,
         matrix=build_matrix(),
         checks=checks,
+        feature=feature_measurement,
+        sideband_determinism_identical=sideband_determinism_identical,
+        sideband_structure_identical=sideband_structure_identical,
+        workloads=workloads,
     )
 
 

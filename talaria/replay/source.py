@@ -17,13 +17,16 @@ rather than a hope.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections import deque
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from talaria.domain.normalize import parse_frame_time
 from talaria.recorder.reader import FrameLogEntry, FrameLogHeader, iter_frame_log, read_header
 from talaria.replay.controls import ReplayControls
-from talaria.transport.source import Direction, FrameRecord
+from talaria.transport.source import Direction, FrameRecord, TerminalCause
 
 #: How many zero-delay frames the source emits before handing control back to
 #: the event loop. Small enough that a 50ms render tick is never missed by more
@@ -34,11 +37,79 @@ YIELD_EVERY = 64
 __all__ = [
     "YIELD_EVERY",
     "ReplaySource",
+    "SidebandAction",
+    "SidebandActionKind",
+    "build_sideband",
     "load_frame_records",
     "load_header",
     "parse_frame_time",
     "record_from_entry",
 ]
+
+
+# ── U6: the sideband timeline (KTD8's branch-hold, AE2 at gate level) ───────
+#
+# Confirmed-cancel and typed-disconnect are not wire frames: an interrupt
+# reply decodes to a `NonEventFrame` the reducer ignores (state.py:1246), and
+# a transport callback like `note_connection_state` is never recorded to
+# begin with (there is no `gateway.disconnected` event type — inventing one
+# would put words in the gateway's mouth, exactly what `note_connection_state`'s
+# own docstring in `talaria/ui/app.py` refuses to do). A replay corpus that
+# genuinely contained one of these cannot reproduce it from the frame log
+# alone, so the gate carries a second, deterministic timeline beside it: one
+# scripted, non-wire-frame action per entry, tied to the index of the frame it
+# follows. Scope is exactly the two action kinds named below — nothing richer.
+
+SidebandActionKind = Literal["confirmed_cancel", "typed_disconnect"]
+
+
+@dataclass(frozen=True)
+class SidebandAction:
+    """One scripted, non-wire-frame injection, ordered against a frame index.
+
+    ``frame_index`` is 1-based and means "immediately after the frame at this
+    position in the corpus has been applied" — matching
+    :attr:`ReplaySource.emitted`'s own count, which increments before a frame
+    is handed to the consumer. An index at or beyond the corpus length is not
+    an error: the action fires once the corpus is exhausted, which is exactly
+    right for "the connection dropped after the visible content ended".
+
+    ``cause`` is KTD7's typed end-of-stream cause (only meaningful for
+    ``typed_disconnect`` — a confirmed cancel carries no cause, it is the
+    operator's own turn ending, not the transport's).
+    """
+
+    frame_index: int
+    kind: SidebandActionKind
+    cause: TerminalCause | None = None
+
+    def __post_init__(self) -> None:
+        if self.frame_index < 1:
+            raise ValueError(f"frame_index must be >= 1, got {self.frame_index}")
+        if self.kind == "typed_disconnect" and self.cause is None:
+            raise ValueError("a typed_disconnect action needs a cause (KTD7)")
+        if self.kind == "confirmed_cancel" and self.cause is not None:
+            raise ValueError("a confirmed_cancel action carries no cause")
+
+
+def build_sideband(actions: Iterable[SidebandAction]) -> tuple[SidebandAction, ...]:
+    """Validate and order a scripted action track by frame index.
+
+    Two actions cannot target the same frame index — "ordered against frame
+    indices" is only a real ordering if it is total, and a tie would make
+    replay order (dict/set iteration, insertion order after a rebuild...)
+    decide something that is supposed to be a deliberate script instead.
+    """
+    ordered = tuple(sorted(actions, key=lambda action: action.frame_index))
+    seen: set[int] = set()
+    for action in ordered:
+        if action.frame_index in seen:
+            raise ValueError(
+                f"two sideband actions target frame index {action.frame_index} — "
+                "the track must be a total order"
+            )
+        seen.add(action.frame_index)
+    return ordered
 
 
 def record_from_entry(entry: FrameLogEntry) -> FrameRecord:
@@ -94,18 +165,44 @@ class ReplaySource:
         records: Sequence[FrameRecord] | Iterable[FrameRecord],
         *,
         controls: ReplayControls | None = None,
+        sideband: Sequence[SidebandAction] = (),
+        on_sideband: Callable[[SidebandAction], None] | None = None,
     ) -> None:
         self._records: tuple[FrameRecord, ...] = tuple(records)
         self.controls = controls if controls is not None else ReplayControls()
         self._closed = False
         self._sleep_task: asyncio.Task[None] | None = None
         self._emitted = 0
+        #: U6's sideband timeline. Kept as a deque so firing an action pops it
+        #: from the front in order — the track is already sorted by
+        #: :func:`build_sideband`, and a caller that hands in an already-sorted
+        #: tuple (as every builder in this package does) pays nothing extra.
+        self._sideband: deque[SidebandAction] = deque(sideband)
+        self._on_sideband = on_sideband
 
     @classmethod
     def from_path(
         cls, path: str | Path, *, controls: ReplayControls | None = None
     ) -> ReplaySource:
         return cls(load_frame_records(path), controls=controls)
+
+    def bind_sideband(
+        self, actions: Sequence[SidebandAction], callback: Callable[[SidebandAction], None]
+    ) -> None:
+        """Arm the sideband timeline after construction.
+
+        Exists for exactly one shape of caller: something that needs the app
+        this source feeds to exist *before* it can build the callback (the
+        callback closes over the app to apply an action to its state) but
+        needs the source to exist *before* the app can be constructed
+        (``TalariaApp.__init__`` takes the source as its first argument).
+        Safe to call any time before iteration starts — nothing here reads
+        ``self._sideband``/``self._on_sideband`` except ``__aiter__`` itself,
+        and iteration cannot have started before this method's caller has
+        finished constructing both objects.
+        """
+        self._sideband = deque(actions)
+        self._on_sideband = callback
 
     def __len__(self) -> int:
         return len(self._records)
@@ -158,6 +255,29 @@ class ReplaySource:
             previous = record.at
             self._emitted += 1
             yield record
+            # Resumes here once the consumer has fully processed the frame
+            # just yielded (an `async for … : self.ingest(record)` loop does
+            # not ask this generator for the next item until its own loop
+            # body — the `ingest` call — has returned), which is exactly what
+            # "ordered against frame indices" means: a sideband action tied to
+            # this frame's index fires immediately *after* that frame has
+            # been applied, deterministically, because it is this source's
+            # own pacing that decides it — not a concurrent poll racing
+            # against the consumer.
+            self._fire_due_sideband()
+        # A trailing action scheduled at or beyond the corpus length still
+        # fires, once, right after the last frame — "the connection dropped
+        # after the visible content ended" is a real scenario this timeline
+        # must be able to express, not an off-by-one to silently drop.
+        self._fire_due_sideband(flush=True)
+
+    def _fire_due_sideband(self, *, flush: bool = False) -> None:
+        if self._closed:
+            return
+        while self._sideband and (flush or self._sideband[0].frame_index == self._emitted):
+            action = self._sideband.popleft()
+            if self._on_sideband is not None:
+                self._on_sideband(action)
 
     async def _sleep(self, delay: float) -> None:
         """Sleep in a cancellable task so ``close()`` interrupts it at once."""
