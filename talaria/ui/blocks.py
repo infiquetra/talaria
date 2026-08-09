@@ -567,9 +567,81 @@ class EntryMarkdown(Markdown):
         )
 
     def update(self, markdown: str) -> AwaitComplete:
-        """Replace the document's content, defanged before it is parsed."""
-        return super().update(defang(markdown))
+        """Replace the document's content, defanged before it is parsed.
+
+        **Corrects Textual 8.2.8's ``_last_parsed_line`` seeding defect
+        (KTD3), immediately after every ``update()`` completes.** Textual's
+        own ``Markdown.update`` — the same code path ``_on_mount`` calls to
+        seed a widget's *initial* content, so this covers construction too —
+        sets the private append checkpoint ``_last_parsed_line`` from "total
+        source lines minus one, if the last line is non-empty"
+        (``_markdown.py:1435-1436``). That is correct only when the
+        document's last construct happens to be exactly one line long at
+        the moment ``update()`` runs. A live tail first mounted with a
+        multi-line table or fence already in it — the *only* way a table
+        can become block-eligible at all, since markdown-it needs a header,
+        a separator, and at least one row before it recognizes one — is
+        seeded through exactly this path, with the checkpoint left pointing
+        partway *into* the construct rather than at its start. The next
+        :meth:`append` then reparses a window with no header or
+        fence-opening delimiter in view, which markdown-it parses as a bare
+        paragraph, and Textual silently swaps the mounted table or fence for
+        it (reproduced against a bare, unwrapped ``textual.widgets.Markdown``
+        too — not something this module introduced).
+
+        :meth:`_correct_last_parsed_line` fixes the checkpoint using the
+        identical technique Textual's own :meth:`append` already uses to
+        correct *itself* after every reparse (``_markdown.py:1472-1476``):
+        parse the full source with the same parser this document renders
+        with, then walk the tokens in reverse for the first one at
+        ``level == 0`` carrying a source ``map`` — the last top-level
+        block's own start line, whatever that block is, open or already
+        closed. This is what keeps the incremental ``append`` path intact
+        rather than forcing an ``update()`` on every write: the seed is
+        fixed once, here, so every subsequent ``append`` reparses from the
+        true block boundary the way it always should have.
+        """
+        clean = defang(markdown)
+        parent_update = super().update(clean)
+
+        async def _update_then_correct() -> None:
+            await parent_update
+            self._correct_last_parsed_line(clean)
+
+        return AwaitComplete(_update_then_correct())
+
+    def _correct_last_parsed_line(self, markdown: str) -> None:
+        """Recomputes ``_last_parsed_line`` from the real last top-level
+        block's own start line (see :meth:`update`'s docstring for why this
+        is necessary and the mechanism this mirrors).
+
+        A source with no top-level block carrying a ``map`` at all (empty,
+        or whitespace-only) leaves Textual's own computed value alone —
+        there is no better answer than what it already set, and
+        :data:`~talaria.ui.transcript.is_zero_block` sources never take this
+        path as a block document in the first place.
+
+        This touches a private Textual attribute deliberately, per
+        ADR-0006's KTD3 append/update contract — guarded by the Textual
+        8.2.8 pin test in ``tests/ui/test_blocks.py``, which pins both this
+        attribute's existence and Textual's own uncorrected seeding
+        behavior, so an upgrade that changes either fails loudly rather than
+        silently leaving this correction wired to a fact that stopped being
+        true.
+        """
+        tokens = parser_factory().parse(markdown)
+        for token in reversed(tokens):
+            if token.level == 0 and token.map is not None:
+                self._last_parsed_line = token.map[0]
+                return
 
     def append(self, markdown: str) -> AwaitComplete:
-        """Append a fragment, defanged before it is parsed."""
+        """Append a fragment, defanged before it is parsed.
+
+        No correction needed here: Textual's own :meth:`Markdown.append`
+        already recomputes ``_last_parsed_line`` correctly after every
+        reparse (the same technique :meth:`_correct_last_parsed_line`
+        mirrors) — the defect lives only in how the checkpoint gets seeded
+        by :meth:`update`, never in how ``append`` maintains it afterward.
+        """
         return super().append(defang(markdown))

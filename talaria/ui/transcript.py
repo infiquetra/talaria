@@ -854,6 +854,25 @@ class TranscriptPane(VerticalScroll):
         the tail's own text is a prefix of (or equal to) the entry's final
         body; a mismatch (the tail was reset without ever reaching this
         text) falls through to building fresh.
+
+        **The corrective ``update()`` on this handoff is unconditional.**
+        This used to skip the write whenever ``record.raw_body`` already
+        equalled ``tail.applied_text`` — a text-equality no-op optimization
+        that was, unintentionally, also the one gap through which a
+        structurally corrupted tail widget (Textual 8.2.8's
+        ``_last_parsed_line`` seeding defect, corrected on the live-tail
+        write path in ``talaria/ui/blocks.py``'s ``EntryMarkdown.update``)
+        could reach the *committed*, settled transcript permanently: a table
+        that streams and completes cleanly via ``message.complete`` reports
+        exactly the text the tail already had applied, so
+        ``record.raw_body == tail.applied_text`` on every clean completion,
+        which is exactly the condition the old skip fired on. Queuing the
+        write unconditionally — one bounded ``update()`` parse per committed
+        entry, never a pane rebuild — means the committed transcript is
+        correct regardless of whatever structural state the tail widget
+        happens to be in, not only when blocks.py's own fix already caught
+        it upstream. Belt and suspenders: this is the defense against any
+        future tail-side rendering bug, not a substitute for the fix above.
         """
         tail = self._tails.get(record.kind)
         if (
@@ -861,16 +880,15 @@ class TranscriptPane(VerticalScroll):
             and tail.kind == "block"
             and record.raw_body.startswith(tail.applied_text)
         ):
-            if record.raw_body != tail.applied_text:
-                # Queued, not awaited here: _prepare_committed_entry is
-                # synchronous (the whole point of the batching fix is
-                # queuing every new widget before the one
-                # `await self.mount_all(...)` in the caller), but R16
-                # clause 2 still requires this write to have actually
-                # landed before `apply()` returns — the caller awaits every
-                # entry in `deferred_writes` right after the batch mount.
-                deferred_writes.append((tail.block, record.raw_body))
-                tail.applied_text = record.raw_body
+            # Queued, not awaited here: _prepare_committed_entry is
+            # synchronous (the whole point of the batching fix is queuing
+            # every new widget before the one `await self.mount_all(...)` in
+            # the caller), but R16 clause 2 still requires this write to
+            # have actually landed before `apply()` returns — the caller
+            # awaits every entry in `deferred_writes` right after the batch
+            # mount.
+            deferred_writes.append((tail.block, record.raw_body))
+            tail.applied_text = record.raw_body
             unit = tail
             self._tails[record.kind] = None
         elif tail is not None and tail.kind == "line" and record.raw_body == tail.applied_text:

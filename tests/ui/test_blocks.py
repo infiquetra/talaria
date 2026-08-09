@@ -429,6 +429,86 @@ async def test_update_replaces_the_whole_document_rather_than_extending_it() -> 
 
 
 @pytest.mark.asyncio
+async def test_textual_last_parsed_line_seeding_is_a_total_lines_minus_one_heuristic() -> None:
+    """Pins Textual 8.2.8's own, *uncorrected* ``_last_parsed_line`` seeding
+    heuristic, directly against the stock, unwrapped ``textual.widgets.
+    Markdown`` widget — not :class:`EntryMarkdown`, whose
+    :meth:`~EntryMarkdown.update` corrects this value immediately after
+    every update completes (see that method's docstring for the full
+    mechanism this pins the upstream half of).
+
+    ``Markdown.update`` (the same code path ``_on_mount`` takes to seed a
+    widget's *initial* content) sets the private append checkpoint
+    ``_last_parsed_line`` from "total source lines minus one, if the last
+    line is non-empty" (``_markdown.py:1435-1436``) — correct only when the
+    document's last construct happens to be exactly one line long at that
+    moment. This is the exact fact
+    :meth:`EntryMarkdown._correct_last_parsed_line` exists to fix. If a
+    future Textual release changes this seeding — the heuristic itself, or
+    removes the attribute entirely — this fails loudly rather than leaving
+    the correction in ``talaria/ui/blocks.py`` silently wired to a fact
+    that stopped being true.
+    """
+
+    class StockHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Markdown(id="doc")
+
+    app = StockHost()
+    async with app.run_test() as pilot:
+        widget = app.query_one("#doc", Markdown)
+        assert hasattr(widget, "_last_parsed_line"), (
+            "Textual removed the private append checkpoint this module "
+            "corrects — EntryMarkdown._correct_last_parsed_line in "
+            "talaria/ui/blocks.py has nothing left to fix"
+        )
+
+        # A single-line construct: the heuristic happens to land correctly,
+        # by coincidence rather than by tracking which block is open.
+        await widget.update("plain paragraph")
+        await pilot.pause()
+        assert widget._last_parsed_line == 0
+
+        # The defect's exact shape: a three-line, still-growable table,
+        # seeded through the same `update()` path `_on_mount` uses for a
+        # widget's initial content. "Total lines minus one" points at the
+        # table's *last row* (line 2), not the table's own start (line 0).
+        table_text = "| col |\n| --- |\n| r1 |"
+        await widget.update(table_text)
+        await pilot.pause()
+        assert widget._last_parsed_line == 2, (
+            "Textual's uncorrected seeding heuristic changed — re-review "
+            "whether EntryMarkdown._correct_last_parsed_line in "
+            "talaria/ui/blocks.py is still necessary and still correct"
+        )
+        assert widget._last_parsed_line != 0, (
+            "if this is now 0, Textual fixed the seeding defect upstream — "
+            "re-review whether talaria/ui/blocks.py's correction is still needed"
+        )
+
+
+@pytest.mark.asyncio
+async def test_entry_markdown_corrects_last_parsed_line_after_every_update() -> None:
+    """The fix itself, pinned at the private-attribute level rather than
+    only by its rendered consequence two tests down: :meth:`EntryMarkdown.
+    update` recomputes ``_last_parsed_line`` to the last top-level block's
+    own start line, not Textual's uncorrected "total lines minus one"
+    value (2, pinned by the test above for this exact source) — a
+    regression here is caught before it manifests as a swapped block class.
+    """
+    app = Host()
+    async with app.run_test() as pilot:
+        document = app.doc()
+        table_text = "| col |\n| --- |\n| r1 |"
+        await document.update(table_text)
+        await pilot.pause()
+        assert document._last_parsed_line == 0, (
+            "the corrected checkpoint must point at the table's own start "
+            "line, not its last row (Textual's own uncorrected value, 2)"
+        )
+
+
+@pytest.mark.asyncio
 async def test_markdown_get_stream_is_public_and_returns_a_markdown_stream() -> None:
     """The corrected KTD3 evidence: Textual 8.2.8 does expose a public
     streaming surface. Talaria's own factory chooses direct ``append`` at the
