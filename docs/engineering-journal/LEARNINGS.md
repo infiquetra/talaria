@@ -2,6 +2,164 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-09
+
+### A session has two ids and only the durable one survives the process — and "most recent" belongs to whoever spawned last
+
+**Evidence.** The U8 live acceptance run,
+[docs/plans/2026-08-09-u8-live-acceptance-results.md](../plans/2026-08-09-u8-live-acceptance-results.md)
+observations 1 and 2, recordings `a1583ff3…` and `3934ee30…` (sha256-cited there). Resuming by the
+runtime id the `session.create` reply returned (`07e299c5`) was refused with gateway code 4007;
+the durable `stored_session_id` (`20260809_084412_b08629`) resumed correctly. Separately,
+`--resume` attached to a session a background webhook automation had spawned seconds earlier,
+because `session.most_recent` answers for the whole gateway, not for the operator's own activity.
+
+**Mechanism.** The gateway issues a fresh runtime id per attachment and keys durable storage by
+`stored_session_id`; the runtime id dies with the process that held it. `session.most_recent` is
+global: any spawner — webhook, cron, another client — moves it. The v0.2 `/sessions` picker
+already respects this split (it lists, highlights, and resumes by durable id — verified in leg 7).
+
+**Generalizable rule.** Address sessions by durable id everywhere a session outlives a process,
+and treat "most recent" as nondeterministic on any machine where automations spawn sessions —
+scripted drives must capture the durable id at create time and resume by it explicitly.
+
+### A race you can reason about but cannot lose on demand still needs a test that fails — drive the sequence instead of hoping to lose the schedule
+
+**Author.** unit U6 of the v0.2 plan, adding KTD2's landing barrier to
+`talaria/ui/app.py:_land_session`
+
+**Evidence.** The window is real and structural: `LiveSource._ingest` resolves the RPC future
+(`talaria/transport/source.py:589`) and then enqueues the frame record (`:601`), while the app's
+frame pump (`talaria/ui/app.py:_pump`) drains that queue in a separate task. An event the gateway
+sent immediately after a `session.resume` reply can therefore reach `apply_frame` before the
+coroutine awaiting the reply has seeded the history that event follows. The plan asked for a
+"reply-then-event back-to-back transport test" to pin it. That test was written — the stub gateway
+gained a `follow_ups` hook that writes the reply and the next event with no await between them
+(`tests/transport/conftest.py`) — and **it passes with the barrier removed**, measured across five
+runs. Instrumenting `ingest` showed why: with both processes on one event loop, only the JSON-RPC
+reply frame arrives inside the landing window; the event is read off the socket a loop turn later,
+after `_land_session` has already run.
+
+**Mechanism.** How many await layers sit between the resolved future and the seeding coroutine
+decides who wins, and here there are two (`asyncio.wait_for(asyncio.shield(future), timeout)`) —
+enough for the awaiting side to be scheduled before the frame that would beat it has even been
+read. The schedule is an accident of the harness, not a property of the code, so a test that hopes
+to lose the race asserts nothing on every run where it wins. The fix was to keep the end-to-end test
+for what it *can* prove (the outcome is right, and the barrier is engaged — it asserts inbound
+frames were actually held) and add a second test that holds the landing open with `app._landing()`,
+delivers the frame inside it, and seeds — the same sequence with the timing taken out. That one
+fails without the barrier, and the failure is the exact defect: the reducer adopts the event's
+session id, and the resumed history is appended *below* a line from the turn that came after it.
+
+**Generalizable rule.** Before trusting a concurrency test, delete the thing it tests and watch it
+fail. If it still passes, it is pinning an outcome, not a mechanism — keep it, label it as such, and
+write a second test that drives the interleaving directly.
+
+### A fixture that cannot exist on the wire hides the feature it was supposed to cover
+
+**Author.** unit U6 of the v0.2 plan, repairing `RESUMED` in
+`tests/transport/test_session_startup.py`
+
+**Evidence.** The `session.resume` stub fixture read `"message_count": 3` with `"messages": []`.
+No gateway sends that: an empty array is the *omission* shape and it arrives with
+`"messages_omitted": true` (`tui_gateway/methods_session.py:494-500`). Because every startup test in
+the suite ran against that fixture, no test in the repository had ever seen a resumed message, and
+`--resume` shipped rendering an empty transcript with nothing red anywhere.
+
+**Mechanism.** The fixture was internally inconsistent in a direction that made the untested path
+*look* covered: the count said there was history, the array said there was nothing to render, and
+assertions written against "the session was focused" passed either way. An impossible fixture does
+not fail — it silently narrows what the suite can observe.
+
+**Generalizable rule.** Check a fixture against the code that *produces* it, not only against the
+code that consumes it. A reply shape no server can emit is a coverage hole wearing a test's clothes.
+
+### mypy narrows a variadic tuple to `tuple[()]` after an emptiness assert, and the next comprehension over it stops type-checking
+
+**Author.** unit U6 of the v0.2 plan
+
+**Evidence.** In one test, `assert app.state.transcript == ()` (and equally `assert
+len(...) == 0`) narrowed `tuple[TranscriptEntry, ...]` to `tuple[()]`; a later comprehension over
+the same expression then failed with `Need type annotation for "entry" [var-annotated]`, pointing at
+a line that had nothing wrong with it. `reveal_type` was what found it.
+
+**Mechanism.** Tuple-length narrowing is sound for the assert and wrong for everything after it,
+because the attribute is re-read and mypy keeps the narrowed type for the member expression.
+
+**Generalizable rule.** Assert emptiness through a value you have already extracted
+(`rows = [e.text for e in x]; assert rows == []`), not against the tuple attribute itself.
+
+
+### A per-session counter and a retained per-session tombstone set are safe apart and unsafe together, and the switcher is what puts them together
+
+**Author.** unit U5 of the v0.2 plan, hardening `talaria/domain/state.py:focus_session` before the
+`/sessions` switcher makes it reachable
+
+**Evidence.** Approval prompts carry no request id on the wire, so Talaria synthesizes one:
+`approval:<session>#<n>`, numbered by `SessionState.approvals_seen` (`state.py`,
+`_on_prompt_request`). `focus_session` reset that counter to zero on every switch and cleared
+`flushed_prompt_ids`, the set of prompt ids Talaria has already told the operator are gone. U5 had
+to keep the tombstone set across a switch — dropping it is what lets a late `restore_prompt` put a
+closed control back on screen, and the gateway never emits a second expiry to close it again. With
+the set retained and the counter still restarting, switching away from a session and back to it
+mints `approval:<that session>#1` a second time, the retained tombstone from the first visit matches
+it, and the returning session's first approval is swallowed as an already-closed prompt: no card,
+for a command the gateway is still holding.
+
+**Mechanism.** Session-qualifying the key looks like the whole fix and is not. Qualification
+separates *concurrent* sessions; it does nothing about the same session being focused twice, which
+is exactly what a switcher introduces and what a reconnect-only caller never did. The uniqueness
+property the retained set actually needs is uniqueness over the lifetime of the retention, not over
+the set of session names. A counter that only ever climbs supplies that; qualification then just
+makes the key legible in a log. The fix is one line — stop resetting `approvals_seen` — and it is
+invisible without asking what the *retained* set is keyed on.
+
+**Consequence.** `focus_session` now keeps `approvals_seen` and `flushed_prompt_ids`, resets
+`withdrawn_approvals` (which describes the session being left, and made the switched-to session's
+activity line hedge about a withdrawal that never happened there), and refuses the switch entirely
+while an answer is in flight. `prompt_view` (`talaria/domain/projection.py`) gained the focused
+session filter as second-line defence: a prompt belonging to a session Talaria no longer shows would
+render an answer control that `respond_to_prompt` refuses every keystroke into.
+
+**Generalizable rule.** When a dedupe or tombstone set outlives the scope its keys are minted in,
+check what makes the keys unique over the *set's* lifetime rather than over the scope's. A key that
+is unique per scope and a set that survives across scopes is a collision waiting for the first
+caller that revisits a scope.
+
+### A whole-queue resolution has to latch the ids it swept but did not take, or a failed single answer resurrects a control the gateway already resolved
+
+**Author.** unit U2 of the v0.2 plan, while binding `escape` to decline
+(`talaria/ui/app.py:deny_all_approvals_live`, `talaria/domain/state.py:latch_resolved_prompts`)
+
+**Evidence.** `approval.respond {all: true}` resolves every entry in the gateway's queue, and
+Talaria's own accounting already knew that: `DenyAllScope` splits what the call *took* out of the
+registry from the approvals `already_in_flight`, whose own single `approval.respond` has not come
+back yet, precisely so the transcript can name the second group without claiming they were denied.
+What no code did was act on it. When one of those in-flight answers returned a definite `not_sent`,
+its own owner did the correct thing for a call that reached no socket — `restore_prompt` put the
+control back — for an approval the deny-all had already resolved at the gateway. The gateway emits no
+second expiry for an approval, so the resurrected card stays on screen, live-looking and unanswerable
+in fact, for the rest of the session.
+
+**Mechanism.** Two owners for one prompt, each locally correct. The single answer owns the prompt's
+outcome; the deny-all owns the gateway's queue. `not_sent` is a true statement about the *call* — it
+reached no socket — and a false statement about the *question*, which a different call resolved. The
+existing tombstone set, `flushed_prompt_ids`, is exactly the mechanism for "this may not come back",
+and `restore_prompt` already consults it; nothing was writing into it from the resolution path. The
+fix is one pure transition (`latch_resolved_prompts`) applied to `taken` **and**
+`already_in_flight`, and only when the deny-all was not itself a definite `not_sent` — the one
+outcome where the gateway resolved nothing and the cards must go back.
+
+**Consequence.** A resolved deny-all latches every id its `all` flag reached. The same latch covers
+F4's interrupt sweep for free, because that sweep resolves approvals through the same deny-all call.
+A single decline keeps the unchanged discipline: restore on definite `not_sent`, latch on every other
+known outcome.
+
+**Generalizable rule.** When one call resolves work that other in-flight calls also own, the
+resolution must tombstone every id it covered — not only the ones it took. A per-call outcome is a
+statement about that call, and a rollback driven by it is only safe while no other call can have
+settled the same question.
+
 ## 2026-08-08
 
 ### "The project is abandoned" and "the owner is unreachable" are separate questions, and only the second one decides what to do about it

@@ -25,7 +25,7 @@ a terminal state" testable rather than vacuous.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal
 
@@ -35,6 +35,7 @@ from talaria.domain.decode import (
     ProtocolErrorFrame,
     UnknownEventFrame,
 )
+from talaria.domain.history import decode_history, element_count
 from talaria.domain.models import (
     ConnectionStatus,
     GatewayEvent,
@@ -84,6 +85,18 @@ class SessionState:
     """Everything the UI and the status payload are projections of."""
 
     focused_session_id: str | None = None
+    #: The gateway's **durable** identity for the focused session (R6/R7).
+    #:
+    #: Kept alongside :attr:`focused_session_id`, not instead of it, because the
+    #: two answer different questions and a resume reply can carry different
+    #: values for each (``tui_gateway/methods_session.py:494-506``). The runtime
+    #: id is what events are stamped with, so it is what
+    #: :func:`applies_to_focused_session` must compare against; the
+    #: ``session_key`` is what survives the process, so it is what the picker
+    #: names a session by and what a later ``session.resume`` asks for. Reading
+    #: the durable id off ``focused_session_id`` would silently point the
+    #: switcher at an id the gateway forgets when the socket closes.
+    session_key: str | None = None
     session_title: str | None = None
     connection: ConnectionStatus = "disconnected"
 
@@ -139,6 +152,13 @@ class SessionState:
     protocol_noise_announced: bool = False
     #: Prompt ids already recorded as abandoned, so the expiry path and the
     #: tool-completion path cannot both write the same trace.
+    #:
+    #: Not one shape of key. ``clarify``/``secret``/``sudo``/``terminal_read``
+    #: entries are session-qualified (:func:`_flush_key`) because those ids
+    #: come from the gateway with no cross-session uniqueness promise;
+    #: ``approval`` entries stay bare because their synthesized id
+    #: (``approval:<session>#<n>``) is already globally unique. See
+    #: :func:`restore_prompt`, which is the one place both shapes are read.
     flushed_prompt_ids: frozenset[str] = frozenset()
 
     #: Approvals :func:`age_out_approvals` withdrew whose fate is still unknown.
@@ -176,22 +196,44 @@ class SessionState:
     #: silently discarded a second approval, so the two are now separated and
     #: this one is counted rather than invisible.
     duplicate_prompts_ignored: int = 0
-    #: How many ``approval.request`` events this session has raised. Approval
+    #: How many ``approval.request`` events this *process* has seen. Approval
     #: carries no request id on the wire, so this counter is what makes each
     #: arrival a distinct registry entry instead of the second one colliding
     #: with the first and being thrown away.
+    #:
+    #: It counts across sessions rather than per session, and
+    #: :func:`focus_session` deliberately leaves it alone. The synthesized id is
+    #: session-qualified already, but a switcher can return to a session it has
+    #: visited before; a counter that restarted per landing would then mint an
+    #: id that session's retained tombstone in ``flushed_prompt_ids`` already
+    #: holds, and the returning session's first approval would be swallowed as
+    #: an already-closed prompt.
     approvals_seen: int = 0
 
-    def prompt_for(self, request_id: str) -> PendingPrompt | None:
+    def prompt_for(self, request_id: str, session_id: str | None = None) -> PendingPrompt | None:
+        """The outstanding prompt for this id, optionally scoped to a session.
+
+        **``session_id`` defaults to ``None``, meaning "any session".** That
+        keeps every caller that predates cross-session retention unchanged.
+        Once :func:`focus_session` stopped clearing ``prompts`` on a switch,
+        two sessions can each hold their own, independently arrived prompt
+        under the same bare ``request_id`` (the gateway makes no
+        cross-session uniqueness promise for it) — a caller that knows which
+        session it means passes it, and gets that session's entry rather than
+        whichever one happens to be first in the tuple.
+        """
         for prompt in self.prompts:
-            if prompt.request_id == request_id:
+            if prompt.request_id == request_id and _prompt_matches_session(prompt, session_id):
                 return prompt
         return None
 
-    def answering_for(self, request_id: str) -> PendingPrompt | None:
-        """The prompt with an answer in flight under this id, if any."""
+    def answering_for(self, request_id: str, session_id: str | None = None) -> PendingPrompt | None:
+        """The prompt with an answer in flight under this id, if any.
+
+        See :meth:`prompt_for` for what ``session_id`` does.
+        """
         for prompt in self.answering:
-            if prompt.request_id == request_id:
+            if prompt.request_id == request_id and _prompt_matches_session(prompt, session_id):
                 return prompt
         return None
 
@@ -271,14 +313,99 @@ def _final_tail(final_text: str, committed: tuple[str, ...]) -> str:
 # ── Local (non-wire) transitions ─────────────────────────────────────────
 
 
+#: Why a switch is refused while an answer is still travelling.
+#:
+#: Named here rather than in the UI because the rule is the registry's: the
+#: domain decides that a session may not be swapped out from under a call that
+#: is still on the wire, and the caller only repeats the sentence.
+REFUSED_SWITCH_WHILE_ANSWERING: Final[str] = (
+    "an answer is still travelling to the gateway — the session was not "
+    "switched; try again in a moment"
+)
+
+
+def switch_refusal(state: SessionState) -> str:
+    """Why a session switch must not happen right now, or ``""``.
+
+    **The one refusal is an answer already on the wire.**
+    :func:`respond_to_prompt` parks the prompt in ``answering`` before the call
+    goes out and the outcome is applied when the call returns — to *whatever*
+    state exists by then. Switch in that window and the late outcome is applied
+    to the session that was switched to: ``restore_prompt`` puts session A's
+    control on session B's screen, and the answered/failed line lands in
+    session B's transcript (``talaria.ui.app.TalariaApp.respond_live``). No
+    ordering of the clears inside :func:`focus_session` can prevent that,
+    because the mutation happens after the switch, so the switch is what has to
+    wait. The window it costs is one RPC round trip, bounded by the call
+    timeout.
+
+    Callers ask before dispatching so the refusal can be surfaced without a
+    wire call; :func:`focus_session` enforces it again, so a caller that
+    forgets cannot corrupt the transcript.
+    """
+    if state.answering:
+        return REFUSED_SWITCH_WHILE_ANSWERING
+    return ""
+
+
 def focus_session(state: SessionState, session_id: str | None) -> SessionState:
     """Point the state at a session, clearing anything that belonged to the last.
 
     Re-encodes ``turnController.reset()`` (``:918-938``) — its comment names the
-    failure it prevents, session A's state bleeding into session B. v0.1 has no
-    session switcher (R2), so the caller here is reconnect, not a UI control.
+    failure it prevents, session A's state bleeding into session B. Every
+    landing calls it, not just reconnect: ``_land_session``
+    (``talaria/ui/app.py:2641-2660``) is the single path startup, ``--resume``
+    and the ``/sessions`` switcher all reach the focused session through, so
+    this runs on the first landing of a process as well as on every switch
+    after it. (The docstring here used to name reconnect as the only caller,
+    which was false the day it was written.)
+
+    **A switch is refused outright while an answer is in flight** — see
+    :func:`switch_refusal` for the transcript corruption that buys. The refusal
+    returns the state unchanged, which is also what an unchanged focus returns;
+    a caller that needs to tell "refused" from "already there" asks
+    :func:`switch_refusal` first.
+
+    **Three things deliberately survive the switch: ``prompts``,
+    ``flushed_prompt_ids`` and ``approvals_seen``.** ``withdrawn_approvals``
+    does not — see the end of this docstring for why.
+
+    ``prompts`` is kept. The gateway does not re-announce an outstanding
+    bridge across a switch — it started blocking on ``.request`` and has no
+    reason to know Talaria stopped showing it — so clearing the registry here
+    used to orphan the control forever: switching away and back found an empty
+    ``prompts`` for a question the gateway was still holding open, with no
+    second ``.request`` ever coming to restore it. Safe to keep only because
+    :func:`~talaria.domain.projection.prompt_view` filters *rendering* to the
+    focused session: a prompt belonging to the session just switched away from
+    stays in the registry, answerable again the moment that session is
+    refocused, but is not shown while it is not.
+
+    ``flushed_prompt_ids`` is kept. It is the tombstone set that stops a late
+    outcome resurrecting a control the operator has already been told is gone
+    (:func:`restore_prompt`), and dropping it is what makes a closed prompt
+    come back. Keeping it is only safe because the ids in it stay unique across
+    a switch, which is what ``approvals_seen`` below is for.
+
+    ``approvals_seen`` is kept, and that is what keeps the synthesized approval
+    ids unique. The ids are session-qualified (``approval:<session>#<n>``,
+    :func:`_on_prompt_request`), but qualification alone is not enough once the
+    switcher can return to a session it has already visited: with the counter
+    reset per landing, coming back to session A would mint ``approval:A#1`` a
+    second time and the retained tombstone from the first visit would swallow
+    the new prompt. A counter that only ever climbs cannot collide with its own
+    past.
+
+    ``withdrawn_approvals`` does **not** survive: it is a count of approvals
+    *this* session had withdrawn from under it, and carrying it into the next
+    session makes that session's screen hedge about a withdrawal that never
+    happened there. It is reset (the defect this function shipped with — it
+    cleared ``prompts`` but left the counter, so the switched-to session opened
+    saying an approval had been withdrawn).
     """
     if session_id == state.focused_session_id:
+        return state
+    if switch_refusal(state):
         return state
     return replace(
         state,
@@ -291,12 +418,143 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
         segments=(),
         interim_boundary=0,
         subagents=(),
-        prompts=(),
+        # ``prompts`` deliberately absent — see the docstring above.
+        # Already empty — the refusal above is what guarantees it — and stated
+        # anyway, so the invariant is visible where the clears are read.
         answering=(),
-        approvals_seen=0,
-        flushed_prompt_ids=frozenset(),
+        withdrawn_approvals=0,
         last_status_note="",
     )
+
+
+#: How the transcript says the gateway did not send the whole history.
+#:
+#: A resume that withheld its messages is not the same thing as a session with
+#: no messages, and a client that renders both as an empty pane is telling the
+#: operator something false about their own conversation.
+WITHHELD_HISTORY_PREFIX: Final[str] = "earlier history withheld:"
+
+
+def withheld_history_line(count: int) -> str:
+    """Name the messages the reply did not carry, counting them when it can.
+
+    ``count`` is how many elements are missing — ``message_count`` minus the
+    elements actually delivered. The gateway's omission shape sends an **empty**
+    ``messages`` array with the full ``message_count``
+    (``tui_gateway/methods_session.py:494-500``), so the ordinary case is the
+    whole history and the subtraction is the whole history's size.
+
+    A non-positive count still gets a line. ``messages_omitted`` is the
+    gateway's own statement that something was held back; contradicting it with
+    silence because the arithmetic did not agree would drop the one fact this
+    line exists to carry.
+    """
+    if count <= 0:
+        return f"{WITHHELD_HISTORY_PREFIX} the gateway did not send this session's earlier messages"
+    noun = "message" if count == 1 else "messages"
+    return f"{WITHHELD_HISTORY_PREFIX} the gateway did not send {count} earlier {noun}"
+
+
+def land_session(
+    state: SessionState, session_id: str | None, *, session_key: str | None = None
+) -> SessionState:
+    """Focus a session the gateway just handed back, keeping both its ids (KTD3).
+
+    The one path startup, ``--resume`` and the ``/sessions`` switcher all reach
+    a focused session through, and the only caller that clears the transcript.
+
+    **A different session begins a fresh transcript buffer.**
+    :func:`focus_session` deliberately keeps the transcript, because its other
+    reading is a reconnect to the *same* session, where the history on screen is
+    still this session's history and throwing it away would blank the pane on
+    every dropped socket. Landing a different session is the opposite case:
+    seeding session B's history onto session A's retained transcript produces
+    the merged two-session view the project's non-goals forbid, with no marker
+    saying where one conversation ended and the next began.
+
+    So the distinction lives here rather than inside :func:`focus_session`:
+    same id keeps everything (the reconnect reading), different id starts
+    empty (the switch reading).
+
+    **The first landing of a process clears nothing**, because there is no
+    previous session to have belonged to. What the transcript holds at that
+    point is Talaria's own local notes from before any session existed — the
+    compatibility check's blocking verdicts, "there is no previous session to
+    resume" — and those describe *this launch*, not a conversation being
+    switched away from. Clearing them made the one line explaining a degraded
+    startup vanish at the moment the session opened.
+
+    ``entry_seq`` keeps climbing across the clear rather than restarting at
+    zero. The counter is an identity, not a position — the renderer keys
+    widgets off it — and a fresh buffer that reissues ``seq=0`` hands the pane
+    two different entries with the same key inside one process.
+
+    **A refused switch changes nothing at all**, including the transcript. The
+    refusal is :func:`switch_refusal`'s — an answer already travelling to the
+    gateway — and clearing history for a switch that then does not happen would
+    destroy the operator's conversation to no purpose.
+    """
+    if switch_refusal(state):
+        return state
+    key = session_key or None
+    if session_id == state.focused_session_id:
+        return replace(state, session_key=key or state.session_key)
+    previous = state if state.focused_session_id is None else replace(state, transcript=())
+    return replace(focus_session(previous, session_id), session_key=key)
+
+
+def seed_history(
+    state: SessionState,
+    messages: Any,
+    *,
+    omitted: bool = False,
+    count: int = 0,
+) -> SessionState:
+    """Project a resume reply's history into committed transcript entries (KTD2).
+
+    A dedicated pure transition, not synthesized ``GatewayEvent``s pushed
+    through :func:`apply_frame`. Fabricating events would run the reducers'
+    turn, prompt and segment bookkeeping over history that already happened:
+    ``message.start`` would advance :attr:`SessionState.turn_index` once per
+    resumed turn, ``message.complete`` would run the final-tail dedupe against
+    segments from a different process, and a resumed approval request would put
+    a control on screen for a question the gateway stopped waiting on hours
+    ago. The entries are what survived; the machinery that produced them is
+    not.
+
+    Committed entries are the whole of what the projection serves as history
+    (:func:`~talaria.domain.projection.transcript_view` reads
+    ``state.transcript`` and nothing else for committed content), so appending
+    here is sufficient for the seeded conversation to be on screen.
+
+    **Append-only, and no deduplication.** A live event that repeats a seeded
+    message appends a second entry. The gateway owns history truth; a client
+    that silently swallowed a "duplicate" would be deciding that its own guess
+    about identity beats what the gateway just said, and the failure mode is
+    invisible — a real repeated message vanishing.
+
+    ``count`` is the reply's ``message_count`` and ``omitted`` its
+    ``messages_omitted``. They are read together: the withheld line names
+    ``count`` minus the elements delivered, so the ordinary omission shape
+    (empty array, full count) names the whole history and a partial delivery
+    names the difference.
+
+    **The withheld notice is appended before the delivered lines, not after.**
+    It describes messages that precede the delivered ones in time — the
+    gateway held back the *earlier* part of the conversation, not the later
+    part — so a notice appended last would sit below messages it is supposed
+    to introduce, reading as though it followed them instead of preceding
+    them.
+    """
+    lines = decode_history(messages)
+    next_state = state
+    if omitted:
+        next_state = _append(
+            next_state, "system", withheld_history_line(count - element_count(messages))
+        )
+    for kind, text in lines:
+        next_state = _append(next_state, kind, text)
+    return next_state
 
 
 def set_connection(state: SessionState, status: ConnectionStatus) -> SessionState:
@@ -574,8 +832,21 @@ def respond_to_prompt(
     Every refusal increments ``rejected_responses`` rather than raising. A
     refused response is an ordinary race, not a fault.
     """
-    prompt = state.prompt_for(request_id)
+    # Looked up scoped to ``session_id`` (A1 sweep): with two sessions each
+    # holding their own prompt under the same bare id, an unscoped lookup
+    # would return whichever is first in ``prompts`` regardless of which
+    # session actually asked, misrouting the correlation check below against
+    # the wrong entry. Scoping the lookup finds the asking session's own
+    # entry directly.
+    prompt = state.prompt_for(request_id, session_id=session_id)
     if prompt is None:
+        # Nothing of this id belongs to ``session_id``. A same-id prompt
+        # elsewhere still names the real reason (R9) rather than the less
+        # precise "not outstanding" — checked unscoped only to pick the
+        # refusal's wording, never to let an unscoped match through to an
+        # answer.
+        if session_id is not None and state.prompt_for(request_id) is not None:
+            return _refuse(state), REFUSED_WRONG_SESSION
         return _refuse(state), REFUSED_NOT_OUTSTANDING
     if session_id is not None and prompt.session_id is not None and prompt.session_id != session_id:
         return _refuse(state), REFUSED_WRONG_SESSION
@@ -682,27 +953,131 @@ def _refuse(state: SessionState) -> SessionState:
 def _start_answering(
     state: SessionState, prompts: tuple[PendingPrompt, ...]
 ) -> SessionState:
-    """Move prompts out of the registry and into the in-flight set."""
-    taken = {p.request_id for p in prompts}
+    """Move prompts out of the registry and into the in-flight set.
+
+    **Removed by identity, not by bare id (A1 sweep).** ``prompts`` is
+    already the exact set of objects being moved — a caller-scoped selection
+    from :func:`respond_to_prompt` or :func:`respond_to_all_approvals`. A
+    bare-id removal would also drop a *different* session's unrelated entry
+    that happens to share the same wire id, silently losing a control that
+    was never being answered at all.
+    """
+    taken_ids = {id(p) for p in prompts}
     return replace(
         state,
-        prompts=tuple(p for p in state.prompts if p.request_id not in taken),
+        prompts=tuple(p for p in state.prompts if id(p) not in taken_ids),
         answering=(*state.answering, *prompts),
     )
 
 
-def settle_prompt(state: SessionState, request_id: str) -> SessionState:
+def settle_prompt(
+    state: SessionState, request_id: str, session_id: str | None = None
+) -> SessionState:
     """Drop an in-flight answer once its outcome is known. Idempotent.
 
     Called for every terminal outcome, including the ones that put the control
     back — an id left in ``answering`` forever would let a much later expiry
     write a marker for a question that was answered minutes ago.
+
+    ``session_id``, when given, scopes both the check and the removal to that
+    session's own entry (A1 sweep): two sessions can each have their own
+    answer in flight under the same bare id, and an unscoped removal would
+    drop both when only one call actually settled.
     """
-    if state.answering_for(request_id) is None:
+    target = state.answering_for(request_id, session_id=session_id)
+    if target is None:
         return state
     return replace(
-        state, answering=tuple(p for p in state.answering if p.request_id != request_id)
+        state,
+        answering=tuple(
+            p for p in state.answering if not (p.request_id == request_id and p is target)
+        ),
     )
+
+
+def latch_resolved_prompts(
+    state: SessionState, prompts: Iterable[PendingPrompt]
+) -> SessionState:
+    """Tombstone the prompts a single resolution already covered. Pure.
+
+    **This is the queued defect "a deny-all that succeeds can re-offer a
+    control the gateway already resolved".** ``approval.respond {all: true}``
+    resolves *every* entry in the gateway's queue
+    (``resolve_gateway_approval(..., resolve_all=True)`` over ``list(queue)``),
+    including an approval whose own single answer is still on the wire. That
+    single answer keeps its own owner, and when it comes back a definite
+    ``not_sent`` its owner does the correct thing for a call that reached no
+    socket: :func:`restore_prompt` puts the control back. Correct in isolation
+    and wrong here — the deny-all already resolved that entry, so the operator
+    is handed a live-looking control for a question the gateway has stopped
+    waiting on, and the gateway sends no second expiry to take it away again.
+    The ids the sweep resolved are latched instead, which is the same mechanism
+    an expiry uses and the same one :func:`restore_prompt` already consults.
+    (KTD4/KTD8, U2.)
+
+    Only the ``flushed_prompt_ids`` set is touched. Nothing is removed from
+    ``prompts`` or ``answering``: an id whose own call is still travelling is
+    still that call's to settle, and taking it away here would leave the reply
+    with nothing to land on. The latch is a refusal to *resurrect*, not a
+    clear.
+
+    Idempotent, and safe to call with ids that were never outstanding —
+    ``flushed_prompt_ids`` is only ever read as "may this come back", and an id
+    that never left cannot come back.
+
+    **Takes prompts, not bare ids, and qualifies each key itself (A4).**
+    Every non-approval bridge's tombstone must be session-qualified the same
+    way :func:`_flush_key` qualifies one and :func:`restore_prompt` reads it
+    back — a bare non-approval key here would let one session's latch block a
+    different session's own, independently arrived id of the same kind.
+    Taking the prompt rather than a caller-supplied id and session means the
+    qualification always matches the prompt's *own* recorded session, not
+    whatever the caller happened to be tracking. Approval ids stay bare:
+    their synthesized ``approval:<session>#<n>`` shape is already globally
+    unique, and qualifying it a second time would just be a longer bare id.
+    """
+    keys = frozenset(
+        p.request_id if p.kind == "approval" else _flush_key(p.session_id, p.request_id)
+        for p in prompts
+    )
+    if not keys:
+        return state
+    return replace(state, flushed_prompt_ids=state.flushed_prompt_ids | keys)
+
+
+def _prompt_matches_session(prompt: PendingPrompt, session_id: str | None) -> bool:
+    """Whether ``prompt`` is a candidate for a lookup scoped to ``session_id``.
+
+    ``None`` on either side means "unscoped" — a query with no session to
+    correlate against matches anything, and a prompt with no session of its
+    own (replay with no ``session_id`` on its events, or before
+    :attr:`SessionState.focused_session_id` was ever learned) matches any
+    query. This is the identity half of the same rule
+    :func:`~talaria.domain.projection._focused_prompts` applies to display:
+    a prompt is *shown* under this rule, and now it is also *found* under it.
+    """
+    return session_id is None or prompt.session_id is None or prompt.session_id == session_id
+
+
+def _flush_key(session_id: str | None, request_id: str) -> str:
+    """Session-qualify a tombstone key for a bridge whose ``request_id`` comes
+    from the gateway unmodified — ``clarify``, ``secret``, ``sudo`` and
+    ``terminal_read``.
+
+    Now that :func:`focus_session` retains ``flushed_prompt_ids`` across a
+    switch, a bare ``request_id`` is not enough: the gateway hands these ids
+    out per session with no global-uniqueness promise, so session A's
+    ``req-1`` expiring must not tombstone session B's own, independently
+    arrived ``req-1``. Qualifying by the prompt's own session is the same
+    discipline the synthesized approval id already has
+    (``approval:<session>#<n>``, :func:`_on_prompt_request`) — which is also
+    why ``approval`` ids are never passed through here: they are already
+    globally unique via the monotonic ``approvals_seen`` counter, so
+    :func:`latch_resolved_prompts` and :func:`age_out_approvals` (both
+    approval-only) write and are read back as bare ids, and this helper is
+    only ever consulted for the other four bridges.
+    """
+    return f"{session_id or ''}:{request_id}"
 
 
 def restore_prompt(state: SessionState, prompt: PendingPrompt) -> SessionState:
@@ -730,14 +1105,28 @@ def restore_prompt(state: SessionState, prompt: PendingPrompt) -> SessionState:
     gateway had closed, forever, because no second expiry is ever emitted. The
     ``answering`` set is what closed that hole; see its field docstring.
 
+    **The check reads both a bare and a session-qualified key** — see
+    :func:`_flush_key` — because the writers are not uniform: ``clarify``,
+    ``secret``, ``sudo`` and ``terminal_read`` tombstones are qualified by the
+    prompt's own session, while ``approval`` tombstones stay bare because their
+    synthesized id is already globally unique. Checking both is cheap and
+    correct for either shape; checking only one would let the other bridge's
+    tombstone go unread.
+
     No transcript entry is written. The ``prompt`` line was appended when the
     request first arrived and the transcript is append-only, so a second one
     would show the agent asking twice.
     """
-    state = settle_prompt(state, prompt.request_id)
+    state = settle_prompt(state, prompt.request_id, session_id=prompt.session_id)
     if prompt.request_id in state.flushed_prompt_ids:
         return state
-    if state.prompt_for(prompt.request_id) is not None:
+    if _flush_key(prompt.session_id, prompt.request_id) in state.flushed_prompt_ids:
+        return state
+    # Scoped to this prompt's own session (A1 sweep): an unscoped check would
+    # refuse to restore session B's prompt because session A happens to hold
+    # an outstanding entry under the same bare id, even though B's own id is
+    # not outstanding at all.
+    if state.prompt_for(prompt.request_id, session_id=prompt.session_id) is not None:
         return state
     return replace(state, prompts=(*state.prompts, prompt))
 
@@ -807,13 +1196,29 @@ def age_out_approvals(state: SessionState, *, now: float) -> SessionState:
     The withdrawal is recorded in ``flushed_prompt_ids`` for the same reason an
     expiry is: it is the latch that stops a late ``restore_prompt`` putting the
     control back after Talaria has told the operator it is gone.
+
+    **Only the focused session's approvals age out here (A3).** ``prompts``
+    can hold a foreign session's retained approval since
+    :func:`focus_session` stopped clearing it, and this function's *effects*
+    — ``withdrawn_approvals`` and the transcript line — have nowhere to go
+    but the one session ``state`` represents. Aging session A's approval
+    while B is focused would increment B's withdrawal counter and write A's
+    command into B's transcript: exactly the merged multi-session view the
+    plan's non-goals forbid (``docs/plans/2026-08-08-talaria-v0-2-
+    answerability-and-session-story-plan.md:519``). Deferred rather than
+    reattributed elsewhere — there is no other transcript to write it to —
+    so a foreign approval ages out on the first tick after its own session
+    is focused again, still against the same ``opened_at`` it arrived with.
     """
     if now <= 0.0:
         return state
     stale = tuple(
         p
         for p in state.prompts
-        if p.kind == "approval" and p.opened_at > 0.0 and now - p.opened_at >= APPROVAL_STALE_AFTER
+        if p.kind == "approval"
+        and p.opened_at > 0.0
+        and now - p.opened_at >= APPROVAL_STALE_AFTER
+        and (p.session_id is None or p.session_id == state.focused_session_id)
     )
     if not stale:
         return state
@@ -1223,7 +1628,11 @@ def _on_tool_complete(state: SessionState, event: GatewayEvent) -> SessionState:
     while the agent's follow-up still refers to it.
     """
     name = coerce_text(event.payload.get("name"))
-    next_state = _flush_abandoned_clarify(state) if name == "clarify" else state
+    next_state = (
+        _flush_abandoned_clarify(state, event.session_id or state.focused_session_id)
+        if name == "clarify"
+        else state
+    )
 
     if next_state.turn == "cancelled":
         return replace(next_state, late_events_ignored=next_state.late_events_ignored + 1)
@@ -1262,23 +1671,41 @@ def _strip_diff_chrome(diff_text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _flush_abandoned_clarify(state: SessionState) -> SessionState:
+def _flush_abandoned_clarify(
+    state: SessionState, session_id: str | None
+) -> SessionState:
     """Record an abandoned clarify once, from whichever path notices first.
 
     The dedupe set re-encodes ``persistedAbandonedClarify``
     (``createGatewayEventHandler.ts:399-402``), which exists because two
     independent paths — the clarify tool's own completion and the end of the
     message — can both notice the same abandonment.
+
+    The tombstone is session-qualified (:func:`_flush_key`): ``clarify``'s
+    ``request_id`` comes from the gateway unmodified, and now that
+    :func:`focus_session` retains ``flushed_prompt_ids`` across a switch, an
+    unqualified key would let one session's abandoned clarify block a later,
+    unrelated session's clarify that happens to reuse the same id.
+
+    **``session_id`` scopes which clarify this call may flush at all (A2).**
+    The caller is a ``tool.complete`` for one specific session; without this,
+    the loop below took the *first* clarify anywhere in ``prompts``, so
+    session B's own tool completing could flush session A's retained,
+    still-outstanding clarify — a control the operator can still see and
+    answer, cleared out from under them by a different conversation entirely.
     """
     for prompt in state.prompts:
-        if prompt.kind != "clarify" or prompt.request_id in state.flushed_prompt_ids:
+        if prompt.kind != "clarify" or not _prompt_matches_session(prompt, session_id):
             continue
-        remaining = tuple(p for p in state.prompts if p.request_id != prompt.request_id)
+        key = _flush_key(prompt.session_id, prompt.request_id)
+        if key in state.flushed_prompt_ids:
+            continue
+        remaining = tuple(p for p in state.prompts if p is not prompt)
         flushed = _append(
             replace(
                 state,
                 prompts=remaining,
-                flushed_prompt_ids=state.flushed_prompt_ids | {prompt.request_id},
+                flushed_prompt_ids=state.flushed_prompt_ids | {key},
             ),
             "prompt-expired",
             f"clarify prompt timed out unanswered: {prompt.summary}",
@@ -1313,18 +1740,41 @@ def _on_prompt_request(state: SessionState, event: GatewayEvent) -> SessionState
     :func:`respond_to_prompt`, not here.
 
     The dedupe that remains is the reconnect case (F6): a ``request_id`` already
-    outstanding is the gateway re-announcing a live prompt, and keeping the
-    first record is correct. It is counted so it stays visible.
+    outstanding **in this same session** is the gateway re-announcing a live
+    prompt, and keeping the first record is correct. It is counted so it
+    stays visible.
+
+    **Registration identity is (session, request id), not request id alone
+    (A1).** Now that :func:`focus_session` retains ``prompts`` across a
+    switch, session A's ``req-1`` can still be outstanding when session B's
+    own, independently arrived ``req-1`` registers — the gateway makes no
+    cross-session uniqueness promise for these ids. A bare-id dedupe read
+    that as the reconnect case above and threw B's prompt away: no card, no
+    counter, and the gateway left holding a control nothing in Talaria would
+    ever answer. Scoping the check to ``session_id`` — the same value this
+    registration stores on the ``PendingPrompt`` below — lets both entries
+    coexist, the same way two sessions' approvals already coexist under
+    their own synthesized keys.
     """
     kind = _PROMPT_EVENTS[event.type]
     request_id = coerce_text(event.payload.get("request_id"))
     approvals_seen = state.approvals_seen
+    session_id = event.session_id or state.focused_session_id
     if not request_id and kind == "approval":
+        # Session-qualified *and* monotonically counted. The qualifier is the
+        # event's own session when it names one, so the key says which
+        # conversation blocked; the counter never restarts (see
+        # ``SessionState.approvals_seen``), so returning to a session cannot
+        # mint a key its own tombstone in ``flushed_prompt_ids`` already holds.
         approvals_seen += 1
-        request_id = f"approval:{state.focused_session_id or 'session'}#{approvals_seen}"
+        session_key = session_id or "session"
+        request_id = f"approval:{session_key}#{approvals_seen}"
     if not request_id:
         return state
-    if state.prompt_for(request_id) is not None or state.answering_for(request_id) is not None:
+    if (
+        state.prompt_for(request_id, session_id=session_id) is not None
+        or state.answering_for(request_id, session_id=session_id) is not None
+    ):
         return replace(
             state, duplicate_prompts_ignored=state.duplicate_prompts_ignored + 1
         )
@@ -1345,7 +1795,7 @@ def _on_prompt_request(state: SessionState, event: GatewayEvent) -> SessionState
         opened_at=event.at,
         seq=event.seq,
         choices=choices,
-        session_id=event.session_id or state.focused_session_id,
+        session_id=session_id,
         command=command,
         read_start=_optional_index(event.payload.get("start")) if kind == "terminal_read" else None,
         read_count=_optional_index(event.payload.get("count")) if kind == "terminal_read" else None,
@@ -1455,19 +1905,37 @@ def _on_prompt_expire(state: SessionState, event: GatewayEvent) -> SessionState:
     ``waiting``. ``answering`` is searched for exactly this window. The marker
     is the same marker, because from the operator's side the same thing
     happened: the question timed out unanswered.
+
+    The tombstone is session-qualified (:func:`_flush_key`). None of the four
+    bridges this handles carry a request id the gateway promises is unique
+    across sessions, and now that :func:`focus_session` retains
+    ``flushed_prompt_ids`` across a switch, an unqualified key would let
+    session A's expired ``req-1`` block session B's own, independently
+    arrived ``req-1`` forever.
     """
     request_id = coerce_text(event.payload.get("request_id"))
     if not request_id:
         return state
-    prompt = state.prompt_for(request_id) or state.answering_for(request_id)
+    # Scoped to the event's own session (A1 sweep — this handler was still
+    # matching by bare id): with session A's retained prompt and session B's
+    # own arrival sharing an id, an unscoped match could clear and tombstone
+    # the WRONG session's entry, or clear both when only one actually
+    # expired. Identity (``is prompt``), not id, drives the removal, so only
+    # the entry this expiry actually names is taken out.
+    session_id = event.session_id or state.focused_session_id
+    prompt = state.prompt_for(request_id, session_id=session_id) or state.answering_for(
+        request_id, session_id=session_id
+    )
     if prompt is None:
         return state
     return _append(
         replace(
             state,
-            prompts=tuple(p for p in state.prompts if p.request_id != request_id),
-            answering=tuple(p for p in state.answering if p.request_id != request_id),
-            flushed_prompt_ids=state.flushed_prompt_ids | {request_id},
+            prompts=tuple(p for p in state.prompts if p is not prompt),
+            answering=tuple(p for p in state.answering if p is not prompt),
+            flushed_prompt_ids=(
+                state.flushed_prompt_ids | {_flush_key(prompt.session_id, request_id)}
+            ),
         ),
         "prompt-expired",
         f"{prompt.kind} prompt expired unanswered: {prompt.summary}",
@@ -1632,6 +2100,21 @@ def _on_subagent_complete(state: SessionState, event: GatewayEvent) -> SessionSt
 
 
 def _on_session_info(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Fold a ``session.info`` update in. Already filtered to the focused
+    session by :func:`_apply_event`'s cross-talk guard, so nothing here
+    re-checks which session this is about.
+
+    **``session_key`` is refreshed from the event's ``stored_session_id``
+    (P1, U7 round two).** The installed gateway sends a fresh one whenever
+    the durable key changes under a live session — most concretely, a
+    compression rotation (``tui_gateway/server.py:5200``) — and until this
+    read existed the picker kept comparing rows against the *old* key
+    forever: the freshly-current row never matched, stayed selectable, and
+    choosing it retained the transcript before seeding the same history a
+    second time. Folded the same way ``title`` already is: an empty or
+    missing value keeps what is there rather than blanking a real key with a
+    blank one.
+    """
     title = coerce_text(event.payload.get("title")) or state.session_title
     usage_payload = event.payload.get("usage")
     usage = (
@@ -1639,7 +2122,8 @@ def _on_session_info(state: SessionState, event: GatewayEvent) -> SessionState:
         if isinstance(usage_payload, dict)
         else state.usage
     )
-    return replace(state, session_title=title, usage=usage)
+    session_key = coerce_text(event.payload.get("stored_session_id")) or state.session_key
+    return replace(state, session_title=title, usage=usage, session_key=session_key)
 
 
 def _on_gateway_ready(state: SessionState, event: GatewayEvent) -> SessionState:
@@ -1758,6 +2242,7 @@ __all__ = [
     "APPROVAL_STALE_AFTER",
     "DELIVERY_NOTES",
     "EXPIRE_EVENT_KINDS",
+    "WITHHELD_HISTORY_PREFIX",
     "DeliveryState",
     "DenyAllScope",
     "SessionState",
@@ -1767,6 +2252,8 @@ __all__ = [
     "cancel_turn",
     "focus_session",
     "is_terminal_status",
+    "land_session",
+    "latch_resolved_prompts",
     "prompt_registration_line",
     "record_local_note",
     "record_replayed_submission",
@@ -1775,5 +2262,8 @@ __all__ = [
     "respond_to_all_approvals",
     "respond_to_prompt",
     "restore_prompt",
+    "seed_history",
     "set_connection",
+    "switch_refusal",
+    "withheld_history_line",
 ]

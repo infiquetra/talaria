@@ -2,7 +2,251 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-09
+
+### Resumed history is decoded by a typed decoder and appended as committed entries, never replayed as synthesized events
+
+**Decision.** `session.resume`'s `messages` array is turned into transcript entries by
+`talaria/domain/history.py:decode_history` and appended through
+`talaria/domain/state.py:seed_history`, a pure transition. No `GatewayEvent` is fabricated and
+nothing goes through `apply_frame`.
+
+**Rationale.** The event reducers carry turn, prompt and segment bookkeeping that history has
+already been through: replaying a resumed conversation as events would advance `turn_index` once
+per resumed turn, run the final-tail dedupe against segments from a different process, and put an
+approval card on screen for a question the gateway stopped waiting on hours ago. The projection
+serves committed content from `state.transcript` alone
+(`talaria/domain/projection.py:transcript_view`), so appending entries is sufficient for the seeded
+conversation to reach the screen.
+
+The decoder is typed rather than a `role`-to-kind cast because the array is not uniform. Four row
+shapes reach the wire from `tui_gateway/server.py:_history_to_messages`: text rows
+(`role`/`text`/`row_id`), tool rows (`role`/`name`/`context`, carrying **no** `text` key at all),
+assistant rows kept for their reasoning with empty visible text, and rows typed by `display_kind`
+whose role is deliberately wrong — a model switch is persisted as a *user* row because strict
+providers reject a late system message. A cast renders three of the four incorrectly, and two of
+them as blank lines.
+
+**Rejected alternatives.** Putting the element shapes in `MethodBaseline`
+(`talaria/domain/compat.py:379`) — that structure is top-level by design and these shapes are nested
+one level down; they live in a decoder contract test instead, with each fixture labelled `recorded`
+or `source-transcribed` so a shape read from the gateway's source cannot masquerade as one a gateway
+actually sent. Dropping elements the decoder does not understand — a malformed element and an
+unknown role both take the `unknown-event` posture with their literal text preserved, because a
+history the client cannot fully interpret must still show the operator that something was there.
+
+**Revisit when.** The gateway adds a row shape whose content is structured rather than textual (the
+`inflight` field is the near candidate, deliberately out of scope here), or when pagination of long
+histories arrives and `messages_omitted` stops being a single boolean.
+
+### Landing clears the transcript only when moving between two sessions, never on the first landing of a process
+
+**Decision.** `talaria/domain/state.py:land_session` starts a fresh transcript buffer when the
+focused session id changes from one session to a different one. It clears nothing when the id is
+unchanged (the reconnect reading) and nothing when there was no focused session at all (the first
+landing of a process). `focus_session` keeps its existing retain-everything behaviour.
+
+**Rationale.** Three cases, three different right answers, and the middle one was the shipped
+default for all three. Appending session B's seeded history onto session A's retained transcript is
+the merged two-session view the project's non-goals forbid, with no marker saying where one
+conversation ended. Blanking the pane on a reconnect to the *same* session destroys history the
+operator can still see. And clearing on the first landing destroyed something subtler, caught by an
+existing test: the transcript at that moment holds Talaria's own notes about *this launch* — the
+compatibility check's blocking verdicts, "there is no previous session to resume" — so the one line
+explaining a degraded startup vanished at the instant the session opened.
+
+**Rejected alternative.** Putting the distinction inside `focus_session`. Its other caller reads it
+as a reconnect, where retention is correct; splitting the meaning there would make one function
+answer two questions. The distinction belongs to landing, which is the only operation that knows a
+seed is about to follow.
+
+**Revisit when.** A future multi-session view is wanted on purpose, at which point the non-goal
+itself is what changes.
+
+### A session carries two identities, and the state keeps both
+
+**Decision.** `SessionState` gained `session_key` alongside `focused_session_id`. Landing reads the
+runtime `session_id` from the reply for event correlation and the durable `session_key` (falling
+back to `resumed`) for identity.
+
+**Rationale.** A resume reply can carry different values for each
+(`tui_gateway/methods_session.py:494-506`). Events are stamped with the runtime id, so that is what
+the cross-session guard must compare against; the `session_key` is what survives the process, so it
+is what the `/sessions` picker names a session by and what a later resume asks for. Reading the
+durable id off `focused_session_id` points the switcher at an id the gateway forgets when the socket
+closes.
+
+**Revisit when.** The gateway stops returning both, or the picker needs a third identity (a title
+that is stable across renames would be one).
+
+### A session switch is refused while an answer is on the wire, rather than the answer being tracked across the switch
+
+**Author.** unit U5 of
+[the v0.2 plan](../plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md) (R8),
+hardening `focus_session` before the `/sessions` switcher makes it reachable
+
+**Decision.** `focus_session` refuses outright while `SessionState.answering` is non-empty, and
+`switch_refusal` is the predicate a caller asks first so the refusal can be surfaced without a wire
+call. The alternative considered — and written into the earlier queue note as "settle, don't drop" —
+was to keep the in-flight prompt correlated across the switch so its outcome could still be applied
+to the session it came from. It was rejected because Talaria's state holds exactly one session at a
+time: `respond_live` applies the outcome to `self.state` when the call returns, so honouring a late
+outcome across a switch would mean either a second per-session state to write it into, or
+transcript writes aimed at a session the projection no longer serves. Refusing costs one RPC round
+trip, and that window is bounded by the call timeout Talaria already sets.
+
+The corollary is that `flushed_prompt_ids` is now retained across a switch (dropping the tombstone
+set is what resurrects a closed prompt) and `approvals_seen` is no longer reset by a switch, so the
+synthesized approval keys it numbers cannot repeat when the switcher returns to a session it has
+already visited.
+
+**Revisit when** Talaria holds more than one session's state at once. A merged multi-session view is
+explicitly out of scope for v0.2, and it is the only shape in which tracking the answer across the
+switch becomes cheaper than refusing.
+
+### Declining a prompt is the reference client's own escape answer, sent down the ordinary answer path
+
+**Author.** unit U2 of
+[the v0.2 plan](../plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md)
+(R3/R4, KTD4/KTD8)
+
+**Decision.** `escape` on a focused prompt control declines the prompt, and what goes on the wire is
+exactly what the gateway's own terminal client sends down its escape path: the empty field value for
+clarify, sudo and secret, and the explicit `deny` choice for an approval. No new method, no protocol
+change, and no second set of rules — a decline is sent, cleared, restored and latched by the existing
+answer-outcome discipline, with only the transcript verb changing from "answered" to "declined".
+
+An empty *approval* choice was rejected as the decline, and the asymmetry is the point: the gateway's
+approval consumer blocks on `None` and on `"deny"` and returns approved for every other resolved
+choice, so the value that refuses the other three bridges would authorize the command on this one.
+The per-kind values live in one table (`DECLINE_VALUES`, `talaria/ui/prompts.py`) and the decline
+message carries no value at all, so the widget layer has no way to post the wrong one.
+
+Three narrower calls sit inside this one. `escape` in the composer stays unbound, so a double-press
+can never be destructive. `escape` on an **unanswerable** card — two approvals queued, so neither can
+be aimed at — does nothing: that card's decline is the `deny all` button its hint line names, and it
+is the same call the interrupt sweep makes. And a confirmed `session.interrupt` (F4) sweeps per kind:
+one `approval.respond {all: true, choice: "deny"}` for the approvals, each kind's empty answer for
+clarify/sudo/secret, nothing for `terminal_read`. An interrupt whose outcome is unknown declines
+nothing, for the same reason it does not apply the cancelled state — the turn may still be running,
+and denying its approvals would refuse commands for live work.
+
+**Revisit when** the gateway grows a decline method of its own, or when `approval.respond` gains a
+discriminator — the second would make a per-approval decline aimable and remove the reason the
+unanswerable card offers only a queue-wide one.
+
+### `/sessions` is Talaria's own local command, and it shadows the gateway's dispatchable one of the same name (KTD6)
+
+**Author.** unit U7 of
+[the v0.2 plan](../plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md) (R7),
+implementing the switcher
+
+**Decision.** `/sessions` was added to `TALARIA_LOCAL_COMMANDS`
+(`talaria/domain/commands.py`), and because the local set is resolved before the catalogue on every
+lookup (`resolve_command`, PC6's rule), a typed `/sessions` now always opens Talaria's modal session
+picker and never reaches the gateway. This is a genuine shadow, not a gap fill the way `/models` and
+`/profiles` were when Talaria took those names: the registry already defines a real, dispatchable
+`CommandDef("sessions", "Browse and resume previous sessions", "Session")`
+(`hermes_cli/commands.py:180` at `7f4d15515`), under its own category, not one of the four `_TUI_EXTRA`
+names `commands.py`'s module docstring discusses separately. From this unit onward that registry
+command is unreachable from Talaria — `commands.catalog`'s own listing marks the entry
+`talaria-local` rather than `dispatch`, the identical mechanism that already shadows a gateway's own
+`/quit`.
+
+**Rationale.** The name already says what the feature does, and a modal picker showing title, stored
+id and recency, with the focused session marked, is strictly better for the switching task than the
+gateway's own text listing. Taking the name is what makes `/sessions` discoverable without inventing a
+second name an operator has to learn — the same argument that motivated the plural `/models`/`/profiles`
+names not colliding with the gateway's singular `/model`/`/profile`, applied here to an actual
+collision instead of an avoided one.
+
+**Cost, stated plainly.** Whatever the gateway's own `/sessions` command shows becomes unreachable
+from Talaria. Nothing in Hermes changes; an operator who wants the gateway's own listing has to reach
+it from a different client.
+
+**Revisit when.** The gateway's own `/sessions` listing gains information the picker does not show —
+at that point the shadow is costing more than the modal is worth, and the fix is either to surface
+that information in the picker or to stop shadowing the name.
+
+### An approval-kind outcome that comes back "gateway not waiting" or a definite not_sent never restores; it settles and latches
+
+**Decision.** `approval.respond` carries no request id (R9) — a single deny pops whatever sits at the
+session queue's FIFO head, and `all: true` clears the whole queue — so no client-side scheme can aim a
+wire call at one specific approval. Every place `talaria/ui/app.py` reads an outcome for an approval
+prompt now treats a genuine `not_sent` (the call itself never reached a socket) the same way it already
+treated a confirmed "nothing waiting" reply (`{"resolved": 0}`, `disposition == "discarded"`): the
+prompt settles and latches, never restores. This applies uniformly across the three sites that can
+receive an approval-kind `AnswerVerdict`: the ordinary single-answer path (`_record_prompt_outcome`),
+the deny-all's own reply (`deny_all_approvals_live`'s `scope.taken` loop), and the deny-all's per-id
+follow-up deny (`_deny_one_approval_followup`). Non-approval kinds (clarify, sudo, secret) are
+unaffected — they carry real request ids on the wire, so their existing restore-on-`not_sent`
+discipline stays aimed and correct.
+
+**Rationale.** Every earlier attempt at this problem (the seq boundary, the resolved-count bound, the
+per-id follow-up deny) redesigned the mechanism that decides which candidate a reply covers, and each
+one only relocated the same underlying race one layer down, because the wire itself gives no id to
+correlate against. Restoring on ambiguity is the dangerous direction: a card the gateway has actually
+already resolved, restored to screen, sends every later answer attempt back through the same ambiguous
+reply shape, restoring it again — an unkillable zombie that never clears itself. Settling and latching
+is safe even when it is wrong about one specific card, because it self-heals through a channel outside
+Talaria's own bookkeeping: if the gateway genuinely still holds that approval, its own unannounced
+approval timeout (`tools/approval.py`) unblocks the waiting agent thread regardless of what Talaria's
+screen shows, and the gateway fails closed on that timeout — which is itself the denial the operator's
+deny-all or single decline asked for. The two failure directions are not symmetric: a restored zombie
+compounds (it re-restores on every subsequent answer attempt), while an over-eager latch costs at most
+one wasted keypress and self-corrects through the gateway's own timeout.
+
+**Accepted residual.** An unaimed follow-up deny meant for one candidate can pop a different, genuinely
+later approval off the gateway's FIFO queue instead. That later approval's own card is untouched by
+Talaria's bookkeeping (correctly — Talaria has no way to know this happened) and stays on screen until
+the operator's own next interaction with it, at which point the gateway's "nothing waiting" reply
+settles and latches it through the same discarded-outcome path any approval takes when the gateway
+resolves it out from under Talaria. One wasted keypress, no permanent zombie.
+
+**Rejected alternative.** Continuing to redesign the correlation mechanism — another attempt at
+guessing which candidate a reply's count or timing actually covers. Rejected because the wire gives no
+id to correlate against under any scheme; every guess is provably subject to the same class of race
+earlier attempts hit, just moved to a different boundary condition.
+
+**Revisit when.** The gateway wire gains per-approval request ids, at which point every one of these
+sites can correlate a reply to the specific approval it answers, and this whole policy collapses back
+to ordinary aimed restore-on-`not_sent`.
+
 ## 2026-08-08
+
+### v0.2's scope is chosen, and the four operability forks are settled by the operator
+
+**Author.** the operator, choosing from the option space in the
+[v0.2 handoff](../plans/2026-08-08-v0-2-session-handoff.md); planned in
+[the v0.2 plan](../plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md)
+
+**Decision.** v0.2 takes candidates A (make the interface answerable) and B (make `--resume` render
+the conversation) plus the session switcher from the v0.1 brainstorm's deferred list and the
+`absent_capability` misdiagnosis fix. Candidate C — block-level markdown — is *in the release scope*
+but not in this plan: it is a requirement change with an open bounded-rendering question and gets
+its own `/brainstorm` and an ADR first, honouring the operator's own recorded sequencing (defects
+before markdown). Candidate D (the evidence-gap spine) is not taken; acceptance runs ride under a
+real emulator where cheap.
+
+Four interface forks were put to the operator on 2026-08-08 and settled:
+
+- **Blocking prompts become reachable by a jump key with card hint lines and focus styling** —
+  not a modal answering flow (prompts arrive mid-typing; a keyboard-owning modal steals the
+  composer at the worst moment) and not focus-steal on mount (the `focus_new` guard exists
+  deliberately). Revisit if the jump key proves insufficient live — the modal is the recorded
+  second choice.
+- **A confirmed F4 interrupt declines outstanding prompts.** The turn they belong to is dead;
+  releasing the gateway's blocking wait beats letting it expire. A lost interrupt outcome still
+  changes nothing.
+- **The caret marker lives in the status region** — zero layout risk by construction. The
+  composer-border alternative costs two permanent rows; revisit only if the marker proves too far
+  from where the operator looks.
+- **`/sessions` shadows the gateway's dispatchable command of the same name.** The name matches the
+  intent and the modal picker beats the text listing. Revisit if the gateway's `/sessions` output
+  gains information the picker does not show.
+
+**Revisit when** any single fork's falsifier fires (each is named above and in the plan's KTDs) —
+the scope itself is settled for v0.2.
 
 ### The `talaria` name on the Python Package Index is not asked for yet, because the project cannot yet promise it will keep it
 
@@ -1504,3 +1748,15 @@ Two things generalize past the incident. First, **an agent's model of "who else 
 **Cost.** The operator can be left disconnected with nothing dialled. That is a real state and the decision is to *name* it, not to prevent it: the alternative hides the same state behind a second failure.
 
 **Revisit when.** The transport grows a way to hold two connections at once, which would let the new one be proved before the old one is dropped.
+
+## 2026-08-09
+
+### Block markdown renders through Textual's widget family behind an ADR-first bounded-rendering claim
+
+**Author.** v0.2 block-markdown planning session (the block-markdown-plan leaf of outcome talaria-v0-2).
+
+**Decision.** The block-markdown plan (`docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md`) locks eight choices; the load-bearing four: (1) the pane's bounded-rendering claim is restated as three measurable ceilings — mounted top-level renderables ≤ 600 read from Textual's own tree, per-boundary reconcile work proportional to the tail plus newly committed entries, and p99 append/apply latency under one 50 ms boundary on the adversarial workloads — recorded in ADR-0006 **before** implementation (R13's target-precedes-implementation rule). (2) The pane goes hybrid: one `Markdown` document per committed assistant/reasoning entry (entry = parser document is R15's isolation boundary), line widgets for every other kind, one live tail widget streamed via public `Markdown.append` at the 50 ms boundary with `update` for replace-wins interim paths — the unexported `MarkdownStream` is not depended on. (3) The parser configuration is part of the forgery boundary: `MarkdownIt("gfm-like")` with `html=False` and `linkify=False`, `open_links=False`, defang before parse — all three widget defaults are unsafe and each forbidden channel gets a proving test. (4) The styled-line-run fallback is invoked only by a red restated gate with measured evidence attached, and taking it amends R4 explicitly.
+
+**Rejected alternatives.** *Commit-time-only block rendering* — rejected by operator choice in the brainstorm; streaming is fully progressive with accepted fence flicker. *Pinning the internal `MarkdownStream`* — buys backpressure Talaria's 50 ms coalescing already provides, at the price of a private-API dependency. *Restating the flattened line buffer* — would break `terminal_read` (v0.1 KTD10) and the projection pin `test_every_transcript_entry_survives_into_the_line_buffer`; instead the projection grows a second, entry-scoped surface and the line buffer moves zero bytes.
+
+**Revisit when.** U6's gate re-run measures the widget family's cost against the ceilings — a red run with numbers attached is the only trigger for the fallback; or Textual is upgraded past 8.2.8, which trips the U3 pin test.

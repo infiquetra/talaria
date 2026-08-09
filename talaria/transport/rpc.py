@@ -112,6 +112,20 @@ class RpcOutcome:
     error_code: int | None = None
     error_message: str | None = None
     reason: str | None = None
+    #: The frame-log sequence number the reply itself was read on, or
+    #: ``None`` when the outcome never had a reply frame to read one from
+    #: (``unknown``: no connection, a send that raised, or a timed-out
+    #: wait). Mirrors :attr:`~talaria.domain.models.GatewayEvent.seq`,
+    #: which is stamped from the same counter (``TalariaSource._seq``) — so
+    #: a caller that also has a ``PendingPrompt.seq`` can compare the two
+    #: to ask "did this exist before or after my reply arrived", the
+    #: causal boundary :func:`~talaria.ui.app.TalariaApp.deny_all_approvals_live`
+    #: needs and asyncio's own scheduling order does not reliably give (B3):
+    #: the reply's wakeup and a concurrently-arriving event's wakeup both
+    #: reach the loop through a different number of ``call_soon`` hops, so
+    #: which one actually runs first is not something either coroutine may
+    #: assume.
+    seq: int | None = None
 
     @property
     def confirmed(self) -> bool:
@@ -224,12 +238,16 @@ class RpcCorrelator:
 
     # ── replies ──────────────────────────────────────────────────────────
 
-    def resolve(self, frame: Any, *, epoch: int) -> bool:
+    def resolve(self, frame: Any, *, epoch: int, seq: int | None = None) -> bool:
         """Resolve the call a reply belongs to. Returns whether it matched.
 
         ``epoch`` is the epoch of the connection the frame was **read from**,
         supplied by the reader loop. Passing the correlator's own epoch here
         would defeat the entire guard, which is why it is a required keyword.
+
+        ``seq`` is the frame-log sequence number the reply itself was read
+        on, threaded straight onto the resulting :class:`RpcOutcome` (B3) —
+        see its own field docstring for what it is for.
 
         **The envelope is checked, not just the members.** A frame is a reply
         only if it declares ``jsonrpc: "2.0"`` and carries neither ``method`` nor
@@ -272,7 +290,7 @@ class RpcCorrelator:
         if pending.future.done():  # pragma: no cover - defensive
             return False
 
-        pending.future.set_result(_outcome_from_frame(pending.request, frame))
+        pending.future.set_result(_outcome_from_frame(pending.request, frame, seq=seq))
         return True
 
     # ── loss ─────────────────────────────────────────────────────────────
@@ -332,7 +350,9 @@ def unknown_outcome(method: str, reason: str, *, epoch: int = 0) -> RpcOutcome:
     )
 
 
-def _outcome_from_frame(request: RpcRequest, frame: Mapping[str, Any]) -> RpcOutcome:
+def _outcome_from_frame(
+    request: RpcRequest, frame: Mapping[str, Any], *, seq: int | None
+) -> RpcOutcome:
     error = frame.get("error")
     if isinstance(error, Mapping):
         raw_code = error.get("code")
@@ -344,6 +364,7 @@ def _outcome_from_frame(request: RpcRequest, frame: Mapping[str, Any]) -> RpcOut
             epoch=request.epoch,
             error_code=raw_code if isinstance(raw_code, int) else None,
             error_message=message if isinstance(message, str) else None,
+            seq=seq,
         )
     if "error" in frame:
         # An ``error`` member that is not an object is malformed. It is still a
@@ -355,6 +376,7 @@ def _outcome_from_frame(request: RpcRequest, frame: Mapping[str, Any]) -> RpcOut
             request_id=request.id,
             epoch=request.epoch,
             error_message="the gateway returned a malformed error",
+            seq=seq,
         )
 
     result = frame.get("result")
@@ -364,4 +386,5 @@ def _outcome_from_frame(request: RpcRequest, frame: Mapping[str, Any]) -> RpcOut
         request_id=request.id,
         epoch=request.epoch,
         result=result if isinstance(result, Mapping) else None,
+        seq=seq,
     )

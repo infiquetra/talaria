@@ -94,3 +94,83 @@ async def test_every_failure_shows_its_categorical_marker(outcome: str) -> None:
 def test_defang_leaves_ordinary_text_alone() -> None:
     assert defang("branch: main · 3 ahead") == "branch: main · 3 ahead"
     assert defang("端末 é עברית 🜁") == "端末 é עברית 🜁"
+
+
+# ── U3: the caret slot (R5, KTD5) ─────────────────────────────────────────
+#
+# talaria/ui/app.py wires focus changes to StatusRegion.set_caret through
+# _refresh_caret_slot; tests/ui/test_focus_returns.py covers that wiring end
+# to end (tabbing into the transcript, the F1 jump). This section is what
+# CR5 found missing: the slot's OWN two properties, independent of how the
+# caret got there — that it survives a status tick sharing the region with
+# it, and that naming the caret never moves a single row of anything else.
+
+
+@pytest.mark.asyncio
+async def test_the_caret_word_survives_a_status_tick_that_also_fails() -> None:
+    """The caret slot is a dedicated ``Static``, deliberately never the
+    shared ``.status--marker`` one — that Static is overwritten by every
+    tick (KTD5's own reason for the split, see ``StatusRegion``'s
+    docstring). A caret word set before a failing tick must still be there
+    after it, and the failure marker must still be shown beside it.
+    """
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 30)) as pilot:
+        # Mount-time focus settles onto the composer asynchronously; waited
+        # out first so that settling does not fire afterward and clobber the
+        # caret word this test sets by hand.
+        await pilot.pause()
+        app.status_region.set_caret("transcript")
+        await pilot.pause()
+        assert app.status_region.caret_text == "caret: transcript"
+
+        await app.status_region.apply(StatusTickResult(outcome="timeout", marker="status: timeout"))
+        await pilot.pause()
+
+        assert app.status_region.marker_text == "status: timeout"
+        assert app.status_region.caret_text == "caret: transcript"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_status_region_geometry_is_invariant_across_caret_states() -> None:
+    """R5: the caret slot is mounted unconditionally at a fixed height, so
+    writing into it must never move a single row of the rest of the
+    interface. Checked against every region's own geometry rather than
+    screen height alone, which cannot see ``#body``'s rows move under it —
+    the same falsifier ``talaria/ui/composer.py:181-189``'s regression
+    needed, applied here to the caret slot instead of focus.
+    """
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 30)) as pilot:
+
+        def regions() -> dict[str, object]:
+            return {
+                "status": app.status_region.region,
+                "body": app.query_one("#body").region,
+                "prompts": app.prompts.region,
+                "transcript": app.transcript.region,
+                "composer": app.composer.region,
+            }
+
+        await pilot.pause()
+        baseline = regions()
+
+        app.status_region.set_caret("transcript")
+        await pilot.pause()
+        assert regions() == baseline, "naming the transcript moved a region"
+
+        app.status_region.set_caret("prompts")
+        await pilot.pause()
+        assert regions() == baseline, "naming the prompts region moved a region"
+
+        # The R5 falsifier: a caret word beside a failure marker, the one
+        # state where the region is showing the most it ever shows at once.
+        await app.status_region.apply(StatusTickResult(outcome="timeout", marker="status: timeout"))
+        await pilot.pause()
+        assert regions() == baseline, "a failure marker beside the caret word moved a region"
+
+        app.status_region.set_caret("")
+        await pilot.pause()
+        assert regions() == baseline, "clearing the caret slot moved a region"
+        await app.shutdown_sources()

@@ -130,6 +130,24 @@ COMPAT_BASELINE: tuple[MethodBaseline, ...] = (
             "warning": "str",
         },
     ),
+    MethodBaseline(
+        method="session.list",
+        classification="read-only",
+        evidence="tui_gateway/methods_session.py:162-208",
+        purpose="The /sessions picker's listing (R7, R10, U7).",
+        # The handler's own default (``params.get("limit", 200)``,
+        # ``methods_session.py:181``), sent explicitly rather than omitted —
+        # a startup probe should not depend on a server-side default it never
+        # names.
+        request_fixture={"limit": 200},
+        # Top-level only, per this module's own scope note above: the reply is
+        # ``{"sessions": [{id, title, preview, started_at, message_count,
+        # source}, ...]}`` (``methods_session.py:195-207``). The row shape is
+        # not pinned here — it lives in the decoder contract test instead
+        # (``talaria/domain/session_list.py``, mirroring how U6 keeps
+        # ``session.resume``'s ``messages`` element shapes out of this file).
+        response_shape={"sessions": "list"},
+    ),
     # ── evidence-only: never probed ──────────────────────────────────────
     MethodBaseline(
         method="session.create",
