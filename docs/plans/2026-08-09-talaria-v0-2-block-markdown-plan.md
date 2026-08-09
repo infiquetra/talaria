@@ -565,7 +565,12 @@ rows and hold the folded window at ≤ 500 accounted rows and ≤ 600 descendant
 **odd-cut regression** — 250 one-line fallen-back entries plus one ordinary line (501 accounted
 rows), where `desired_top` = 1 lands inside the oldest entry's two-row span: the fold must
 round forward and take the whole entry, banner included — never a bannerless clipped row, never
-an orphan banner — and the arithmetic still sums; condensation
+an orphan banner — and the arithmetic still sums — and the **partial-retention regression** —
+a two-line fallen-back entry plus 498 ordinary lines (501 accounted rows), where `desired_top`
+= 1 folds exactly one content row: the entry retains one content row **plus exactly one
+banner** (painted rows = retained projected lines + 1 = 2), leaving 500 accounted rows plus
+the condensation banner — an implementation that always rounds forward passes the odd-cut
+regression and fails this one, which is why both arms are pinned; condensation
 folds whole units with the round-up
 rule, a **block-rendered** newest entry survives whole (a fallen-back line-rendered one may fold
 under the cap), and the banner's line arithmetic still sums; a reader
@@ -632,7 +637,8 @@ each proven to fail when flattened; line-rendered kinds keep the existing window
 progressiveness asserted at timed intermediate checkpoints, not only settled (R5/R14), including
 the two-tail overlap case (R18); the adversarial workloads — the KTD1(d) fence, table, and
 unbroken mega-line (through resize) plus the double-width-character, 601-column-table,
-exact-boundary 599-column, and aggregate-ceiling 302-fallen-back-entry probes, exact
+exact-boundary 599-column, aggregate-ceiling 302-fallen-back-entry, and odd-cut pair
+(round-forward and partial-retention) probes, exact
 sizes as specified — hold the latency and descendant ceilings with high-water figures recorded;
 replay determinism compares normalized block structure (ordered classes, source ranges, semantic
 content; runtime identifiers excluded) under the pinned width, theme, and framework version (R12),
