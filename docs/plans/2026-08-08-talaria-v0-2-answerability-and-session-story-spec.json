@@ -1,0 +1,390 @@
+{
+  "name": "talaria-v0-2-answerability-and-session-story",
+  "description": "v0.2 phases 1-2: answerable prompts (jump key, decline, caret marker), --resume history, session switcher, absent_capability fix; every build unit cross-reviewed by the Codex engine; closed by a live acceptance run.",
+  "repo": "infiquetra/talaria",
+  "concurrency": {
+    "max_concurrent": 3,
+    "readonly_max_concurrent": 3,
+    "aggregate_max_concurrent": 3
+  },
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "Reach and see: the F1 jump, card hint lines, focus styling",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: Make every blocking-prompt card reachable in one F1 press and visibly focused when reached - extend focus_answer() to button cards, add the hint line and card focus styling. Verification includes driving F1 under tmux and one real terminal emulator (KTD9); if F1 is intercepted, record the ctrl+space fallback decision with the measurement. Read docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md (unit U1, KTD1/KTD9, R1/R2) as your authoritative spec.",
+      "returns": [
+        "f1_reaches_first_unanswered_control_in_one_press",
+        "hint_line_rendered_per_card_kind",
+        "focused_card_visibly_distinct_on_screen",
+        "caret_returns_to_composer_after_answer",
+        "f1_driven_in_tmux_and_one_real_emulator"
+      ],
+      "depends_on": [],
+      "files": [
+        "talaria/ui/prompts.py",
+        "talaria/ui/app.py",
+        "tests/ui/test_prompts.py",
+        "tests/ui/test_focus_returns.py"
+      ]
+    },
+    {
+      "unit_id": "CR1",
+      "label": "Codex review of U1's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR1: Drive the operator's herdr-managed Codex reviewer pane to review U1's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (R11: an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md unit U1 (KTD10).",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U4",
+      "label": "absent_capability stops blaming the gateway for a typo",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U4: In talaria/transport/admin.py, disambiguate a 404 on a profile-carrying request by probing the bare path once with a bare GET, read method-aware: 2xx or 405 proves the route exists -> unknown_profile; 404 -> absent_capability; anything else reports the original error unchanged. NEVER probe with POST - a bare POST to /api/model/set would perform the mutation. Read docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md (unit U4, KTD7, R9) as your authoritative spec.",
+      "returns": [
+        "unknown_profile_named_when_bare_path_answers_or_405s",
+        "absent_capability_only_on_bare_404",
+        "probe_is_get_only_and_never_mutates",
+        "no_probe_without_profile_param"
+      ],
+      "depends_on": [],
+      "files": [
+        "talaria/transport/admin.py",
+        "tests/transport/test_admin.py"
+      ]
+    },
+    {
+      "unit_id": "CR4",
+      "label": "Codex review of U4's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR4: Drive the operator's herdr-managed Codex reviewer pane to review U4's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (R11: an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md unit U4 (KTD10).",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U4",
+        "CR1"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U5",
+      "label": "focus_session is made safe to call twice",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "The settle-don't-drop policy for in-flight answer bookkeeping is the fix to the recorded uncorrelated-approval hole; getting it wrong renders a foreign session's prompt or makes a travelling approval stop counting - domain-invariant judgment, not mechanical edits.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U5: Harden focus_session before the switcher makes it live - reset withdrawn_approvals; REFUSE a switch while any answer RPC is in flight (a late outcome would mutate the wrong session's transcript); retain flushed_prompt_ids with synthesized approval ids qualified by session (the synthesis counter restarts per landing, so unqualified retention collides); session filter on prompt_view; correct the false docstring. Read docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md (unit U5, R8) as your authoritative spec.",
+      "returns": [
+        "withdrawn_approvals_resets_on_switch",
+        "switch_refused_while_answer_in_flight",
+        "latched_ids_survive_switch",
+        "synthesized_ids_session_qualified",
+        "foreign_session_prompt_never_renders"
+      ],
+      "depends_on": [],
+      "files": [
+        "talaria/domain/state.py",
+        "talaria/domain/projection.py",
+        "tests/domain/test_prompt_registry.py",
+        "tests/domain/test_transcript_state.py"
+      ]
+    },
+    {
+      "unit_id": "CR5",
+      "label": "Codex review of U5's diff",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "U5 is pure domain-invariant work where a plausible-looking policy can be subtly wrong; the chaperone judging the external findings needs the same depth the unit needed.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR5: Drive the operator's herdr-managed Codex reviewer pane to review U5's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (R11: an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md unit U5 (KTD10).",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U5",
+        "CR4"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U2",
+      "label": "Decline: escape on a card, and F4 finishing the job",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "The only unit that changes what reaches the wire for credential prompts and approvals; the decline latch interacts with the restore path whose misdesign already produced two recorded defects, and an empty-choice approval decline needs semantics judged against the live bridge contract.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: Escape on a focused card declines with the kind's client-escape answer - explicit deny for approvals (the gateway's consumer treats any resolved non-deny choice, including empty, as APPROVED - never send an empty approval choice), empty field value for clarify/sudo/secret; decline follows the unchanged answer-outcome discipline (restore on definite not_sent, latch otherwise); a confirmed F4 interrupt sweeps per kind (one deny-all for approvals, empty answers for the rest, nothing for terminal_read); fold in the deny-all sweep latch. Read docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md (unit U2, KTD4/KTD8, R3/R4) as your authoritative spec.",
+      "returns": [
+        "escape_declines_and_clears_and_returns_caret",
+        "approval_decline_sends_explicit_deny",
+        "declined_prompt_restores_only_on_definite_not_sent",
+        "confirmed_f4_sweeps_per_kind",
+        "lost_interrupt_outcome_declines_nothing",
+        "deny_all_sweep_latches_swept_ids"
+      ],
+      "depends_on": [
+        "U1",
+        "CR1"
+      ],
+      "files": [
+        "talaria/ui/prompts.py",
+        "talaria/ui/app.py",
+        "talaria/domain/state.py",
+        "tests/ui/test_prompts.py",
+        "tests/domain/test_prompt_registry.py",
+        "tests/transport/test_bridges.py"
+      ]
+    },
+    {
+      "unit_id": "CR2",
+      "label": "Codex review of U2's diff",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "U2's diff is the credential-adjacent wire path; the chaperone judging external findings on it carries the same risk the unit does.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR2: Drive the operator's herdr-managed Codex reviewer pane to review U2's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (R11: an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md unit U2 (KTD10).",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U2",
+        "CR5"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U3",
+      "label": "The caret marker in the status region",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: Write the caret's location into a NEW dedicated fixed-height caret slot in StatusRegion whenever the caret is not in the composer - do not reuse the existing .status--marker Static (status ticks overwrite it and command failures render there); nothing may change any widget's height. Read docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md (unit U3, KTD5, R5) as your authoritative spec.",
+      "returns": [
+        "caret_slot_names_caret_holder_on_screen",
+        "caret_slot_clears_when_composer_holds_caret",
+        "caret_word_survives_status_ticks_and_failures",
+        "region_geometry_identical_across_all_caret_states"
+      ],
+      "depends_on": [
+        "U1",
+        "U2",
+        "CR2"
+      ],
+      "files": [
+        "talaria/ui/app.py",
+        "talaria/ui/status_region.py",
+        "tests/ui/test_status_region.py",
+        "tests/ui/test_focus_returns.py"
+      ]
+    },
+    {
+      "unit_id": "CR3",
+      "label": "Codex review of U3's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR3: Drive the operator's herdr-managed Codex reviewer pane to review U3's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (R11: an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md unit U3 (KTD10).",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U3",
+        "CR2"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U6",
+      "label": "--resume renders the conversation",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "The release's central design question: projecting reply-carried history into the same transcript state the event stream feeds, with the messages element shape pinned from a live recording first - the compat baseline stops at the top level and the stub fixture is internally inconsistent.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U6: seed_history projects the session.resume reply's messages into committed transcript entries through a TYPED history decoder (text/tool/reasoning/display-metadata rows; malformed elements and unknown roles -> unknown-event posture, literal text, nothing dropped), with element fixtures pinned in a decoder contract test from recorded live replies (three exist in the local recordings set; capture fresh in the operator's testing terminal only for shapes they lack, cited by digest). _land_session reads messages/message_count/messages_omitted (the gateway's omission shape is an EMPTY messages array with the full message_count), retains BOTH the runtime session id and the durable resumed/session_key identity, seeds behind the landing barrier (seed before the pump consumes any event that followed the reply - pin with a reply-then-event back-to-back transport test), and begins a fresh transcript buffer when landing a different session (reconnect retention stays; update the reconciliation pin to distinguish the two). Read docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md (unit U6, KTD2/KTD3/KTD11, R6) as your authoritative spec.",
+      "returns": [
+        "decoder_contract_pinned_from_recorded_replies",
+        "seeded_entries_precede_live_entries_behind_barrier",
+        "withheld_history_line_names_count",
+        "both_session_identities_retained",
+        "fresh_transcript_on_cross_session_landing",
+        "resume_renders_history_on_screen"
+      ],
+      "depends_on": [
+        "U5",
+        "U2",
+        "U3",
+        "CR3"
+      ],
+      "files": [
+        "talaria/domain/state.py",
+        "talaria/domain/compat.py",
+        "talaria/ui/app.py",
+        "tests/domain/test_transcript_state.py",
+        "tests/domain/test_projection.py",
+        "tests/domain/test_reconciliation.py",
+        "tests/transport/test_session_startup.py",
+        "tests/transport/test_compat_baseline.py"
+      ]
+    },
+    {
+      "unit_id": "CR6",
+      "label": "Codex review of U6's diff",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "U6 carries the release's hardest design decision; a review chaperone that cannot weigh the projection design against the append-only invariants would ratify rather than judge.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR6: Drive the operator's herdr-managed Codex reviewer pane to review U6's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (R11: an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md unit U6 (KTD10).",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U6",
+        "CR3"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U7",
+      "label": "The session switcher",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U7: /sessions opens the modal picker over session.list (new read-only MethodBaseline first - updating the derived startup probe set and its pinned counts deliberately); rows identified and the focused session highlighted by the STORED session id; selection switches through session.resume -> _land_session; a switch refused while an answer is in flight surfaces as a notice; the local command shadows the catalogue's deliberately - extend the closed LocalAction type and its routing tests; record the KTD6 shadowing decision in DECISIONS.md in this unit's diff. Read docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md (unit U7, KTD3/KTD6, R7/R10) as your authoritative spec.",
+      "returns": [
+        "session_list_baseline_pinned_with_probe_counts_updated",
+        "picker_marks_focused_by_stored_id",
+        "switch_lands_and_renders_history",
+        "inflight_switch_refusal_surfaced_as_notice",
+        "shadowing_asserted_against_catalogue",
+        "ktd6_decision_recorded"
+      ],
+      "depends_on": [
+        "U6",
+        "CR6"
+      ],
+      "files": [
+        "talaria/domain/compat.py",
+        "talaria/domain/state.py",
+        "talaria/domain/commands.py",
+        "talaria/ui/app.py",
+        "tests/ui/test_sessions.py",
+        "tests/domain/test_selection.py",
+        "tests/domain/test_commands.py",
+        "tests/transport/test_commands.py",
+        "tests/transport/test_session_startup.py",
+        "tests/transport/test_compat_baseline.py",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    },
+    {
+      "unit_id": "CR7",
+      "label": "Codex review of U7's diff",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "CR7: Drive the operator's herdr-managed Codex reviewer pane to review U7's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (R11: an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md unit U7 (KTD10).",
+      "returns": [
+        "pane_reply_captured_verbatim",
+        "surviving_findings_with_file_line",
+        "verdict_pass_or_findings"
+      ],
+      "depends_on": [
+        "U7",
+        "CR6"
+      ],
+      "files": []
+    },
+    {
+      "unit_id": "U8",
+      "label": "The live acceptance run",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U8: Author the live acceptance checklist for R1-R7 (naming the expected observation per leg), then drive it in the operator's herdr-managed testing pane - launch talaria there and exercise each requirement with `herdr pane send-keys` / `send-text`, reading the screen back with `herdr pane read --source recent-unwrapped` - with the operator supervising; produce the dated evidence document with recordings cited by digest. Safety envelope (mandatory): throwaway sessions only, never the operator's working sessions; no real credential is ever typed (the sudo leg declines; any answered leg uses a canary command that grants nothing); recordings are redaction-checked before citation; stop on the first failing leg rather than improvising; close what the run opened. The testing pane's machine-local identity is injected by the driver from the saga state. Read docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md (unit U8, KTD11, R12) as your authoritative spec.",
+      "returns": [
+        "checklist_authored_with_expected_observations",
+        "evidence_document_written",
+        "recordings_cited_by_digest",
+        "one_leg_run_under_real_emulator",
+        "safety_envelope_held"
+      ],
+      "depends_on": [
+        "U2",
+        "U3",
+        "U4",
+        "U6",
+        "U7",
+        "CR6",
+        "CR7"
+      ],
+      "files": [
+        "docs/plans/2026-08-08-talaria-v0-2-live-acceptance-results.md"
+      ]
+    }
+  ]
+}
