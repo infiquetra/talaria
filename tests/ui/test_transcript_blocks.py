@@ -38,6 +38,7 @@ from textual.widgets._markdown import (
     MarkdownH1,
     MarkdownOrderedList,
     MarkdownParagraph,
+    MarkdownTable,
     MarkdownTableCellContents,
 )
 
@@ -305,6 +306,244 @@ async def test_fence_streams_progressively_at_boundaries() -> None:
         assert document is not None
         fences = list(document.query(MarkdownFence))
         assert len(fences) == 1, "closed fence is one bounded region"
+
+
+@pytest.mark.asyncio
+async def test_table_first_mounted_mid_table_survives_every_append_and_clean_commit() -> None:
+    """The defect this pass was asked to fix
+    (docs/analysis/2026-08-09-block-markdown-gate-results.md, "A real defect
+    this work found"): Textual 8.2.8's `Markdown.update` — the same code
+    path a widget's initial mount takes via `_on_mount` — seeds the private
+    append checkpoint `_last_parsed_line` from "total lines minus one",
+    correct only when the last construct is exactly one line long at that
+    moment. A table can only ever become block-eligible with a header, a
+    separator, and at least one row already present, so the tail's *first*
+    mounted text is never just the table's opening line — every table tail
+    takes this path. Uncorrected, the next `append` reparses a window
+    missing the header, which parses as a bare paragraph.
+
+    Three deltas (a real gateway streams one row at a time), then a clean
+    `message.complete` commit reporting exactly the streamed text — the
+    exact shape that used to leave a corrupted `MarkdownParagraph` in the
+    *committed*, settled transcript forever, because the commit handoff
+    used to skip its corrective `update()` whenever the committed text
+    already equalled what the tail had applied (always true for a clean
+    completion). Verified to fail against the unfixed code: reverting
+    `EntryMarkdown._correct_last_parsed_line` (blocks.py) fails this at the
+    second delta with a lone `MarkdownParagraph`; reverting the
+    unconditional commit-handoff `update()` (transcript.py) alone, with the
+    live-tail fix still in place, does not reproduce it (layer one already
+    keeps the tail correct here) — the two-layer coverage is why the
+    dedicated corruption test below forces layer one's failure mode by hand
+    to prove layer two independently.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        gen = 1
+
+        first = ProvisionalTail(
+            kind="assistant", raw_text="| col |\n| --- |\n| r1 |", generation=gen
+        )
+        await _apply(pane, (), assistant_tail=first)
+        await pilot.pause()
+        tail = pane._tails["assistant"]
+        assert tail is not None and tail.kind == "block"
+        widget = tail.block
+        assert widget is not None
+        assert list(widget.query(MarkdownTable)), "the first mounted delta must be a table"
+
+        second = ProvisionalTail(
+            kind="assistant", raw_text="| col |\n| --- |\n| r1 |\n| r2 |", generation=gen
+        )
+        await _apply(pane, (), assistant_tail=second)
+        await pilot.pause()
+        tail = pane._tails["assistant"]
+        assert tail is not None
+        assert tail.block is widget, "same generation appends in place, no rebuild"
+        assert list(widget.query(MarkdownTable)), "delta two must still be a table"
+
+        third = ProvisionalTail(
+            kind="assistant",
+            raw_text="| col |\n| --- |\n| r1 |\n| r2 |\n| r3 |",
+            generation=gen,
+        )
+        await _apply(pane, (), assistant_tail=third)
+        await pilot.pause()
+        tail = pane._tails["assistant"]
+        assert tail is not None
+        assert tail.block is widget
+        assert list(widget.query(MarkdownTable)), "delta three must still be a table"
+
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1,
+                kind="assistant",
+                raw_body=third.raw_text,
+                committed=True,
+                line_span=(0, 5),
+            ),
+        )
+        await _apply(
+            pane,
+            entries,
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=gen + 1),
+        )
+        await pilot.pause()
+        committed_unit = pane._entries[1]
+        assert committed_unit.block is widget, "commit reuses the tail's widget"
+        assert list(widget.query(MarkdownTable)), (
+            "the committed, settled document must still be a table after "
+            "clean completion — this is the defect's permanent half"
+        )
+
+
+@pytest.mark.asyncio
+async def test_fence_first_mounted_mid_fence_survives_every_append_and_clean_commit() -> None:
+    """The open-construct variant of the same defect: a fence tail whose
+    first mounted text already has more than the opening delimiter line —
+    ordinary once a coalescing render tick catches a fence after its first
+    few lines have already streamed — is seeded the same wrong way,
+    pointing the append checkpoint at the fence's last content line rather
+    than its own opening ```` ``` ```` line.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        gen = 1
+
+        first = ProvisionalTail(
+            kind="assistant", raw_text="```python\nx = 1\ny = 2", generation=gen
+        )
+        await _apply(pane, (), assistant_tail=first)
+        await pilot.pause()
+        tail = pane._tails["assistant"]
+        assert tail is not None and tail.kind == "block"
+        widget = tail.block
+        assert widget is not None
+        assert list(widget.query(MarkdownFence)), "the first mounted delta must be a fence"
+
+        second = ProvisionalTail(
+            kind="assistant", raw_text="```python\nx = 1\ny = 2\nz = 3", generation=gen
+        )
+        await _apply(pane, (), assistant_tail=second)
+        await pilot.pause()
+        tail = pane._tails["assistant"]
+        assert tail is not None
+        assert tail.block is widget, "same generation appends in place, no rebuild"
+        assert list(widget.query(MarkdownFence)), "delta two must still be a fence"
+
+        closed_text = "```python\nx = 1\ny = 2\nz = 3\n```\ntrailing paragraph\n"
+        third = ProvisionalTail(kind="assistant", raw_text=closed_text, generation=gen)
+        await _apply(pane, (), assistant_tail=third)
+        await pilot.pause()
+        tail = pane._tails["assistant"]
+        assert tail is not None
+        assert tail.block is widget
+        fences = list(widget.query(MarkdownFence))
+        assert len(fences) == 1, "closing the fence must still be one bounded region"
+        assert fences[0].code == "x = 1\ny = 2\nz = 3"
+
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1,
+                kind="assistant",
+                raw_body=closed_text,
+                committed=True,
+                line_span=(0, 7),
+            ),
+        )
+        await _apply(
+            pane,
+            entries,
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=gen + 1),
+        )
+        await pilot.pause()
+        committed_unit = pane._entries[1]
+        assert committed_unit.block is widget
+        assert list(widget.query(MarkdownFence)), (
+            "the committed, settled document must still contain the fence "
+            "after clean completion"
+        )
+
+
+@pytest.mark.asyncio
+async def test_commit_handoff_rebuilds_a_structurally_corrupted_tail_unconditionally() -> None:
+    """Layer two's own proof, independent of blocks.py's live-tail fix: even
+    a tail widget that somehow carries structural corruption at commit time
+    must still hand off a structurally correct committed document, because
+    the corrective `update()` on the tail-to-entry handoff
+    (`TranscriptPane._prepare_committed_entry`) now runs unconditionally —
+    not only when the committed text differs from what the tail last had
+    applied.
+
+    The corruption here is forced by hand rather than reproduced through
+    real streaming (the test above already does that for layer one): set
+    the private append checkpoint to the exact wrong value Textual 8.2.8's
+    own uncorrected seeding heuristic would have produced, then append
+    directly against the widget — bypassing `EntryMarkdown.update`'s
+    correction entirely, since only `update()` corrects the checkpoint, not
+    `append()`. This isolates layer two: even with layer one's fix
+    unable to help (because nothing here calls `update()` before the
+    append), the commit handoff must still repair it. Verified to fail
+    against the unfixed code: restoring the old `if record.raw_body !=
+    tail.applied_text:` guard makes this a no-op, since `record.raw_body`
+    is set equal to `tail.applied_text` below — exactly the clean-
+    completion shape the guard used to treat as "nothing to do".
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        table_text = "| col |\n| --- |\n| r1 |"
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=table_text, generation=1),
+        )
+        await pilot.pause()
+        tail = pane._tails["assistant"]
+        assert tail is not None and tail.kind == "block"
+        widget = tail.block
+        assert widget is not None
+        assert list(widget.query(MarkdownTable)), "starts correct (layer one already fixed this)"
+
+        # Force the pre-fix corruption directly, bypassing update()'s
+        # correction: point the append checkpoint at the table's last row
+        # instead of its own start line, then append — reparsing a window
+        # with no header/separator in view, exactly Textual's own
+        # uncorrected `total lines - 1` heuristic would have done.
+        widget._last_parsed_line = len(table_text.splitlines()) - 1
+        await widget.append("\n| r2 |")
+        await pilot.pause()
+        tail.applied_text = table_text + "\n| r2 |"
+        corrupted_types = {type(w).__name__ for w in widget.walk_children()}
+        assert "MarkdownTable" not in corrupted_types, "the forced corruption itself"
+
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1,
+                kind="assistant",
+                raw_body=tail.applied_text,
+                committed=True,
+                line_span=(0, 4),
+            ),
+        )
+        await _apply(
+            pane,
+            entries,
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=2),
+        )
+        await pilot.pause()
+
+        committed_unit = pane._entries[1]
+        assert committed_unit.block is widget, "commit still hands off the same widget object"
+        committed_types = {type(w).__name__ for w in widget.walk_children()}
+        assert "MarkdownTable" in committed_types, (
+            "the commit handoff must rebuild a structurally correct "
+            "document even from a corrupted tail — the corrective update() "
+            "now runs unconditionally rather than being skipped as a "
+            "text-equality no-op"
+        )
 
 
 @pytest.mark.asyncio
