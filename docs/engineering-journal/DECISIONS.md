@@ -4,6 +4,40 @@
 
 ## 2026-08-08
 
+### v0.2's scope is chosen, and the four operability forks are settled by the operator
+
+**Author.** the operator, choosing from the option space in the
+[v0.2 handoff](../plans/2026-08-08-v0-2-session-handoff.md); planned in
+[the v0.2 plan](../plans/2026-08-08-talaria-v0-2-answerability-and-session-story-plan.md)
+
+**Decision.** v0.2 takes candidates A (make the interface answerable) and B (make `--resume` render
+the conversation) plus the session switcher from the v0.1 brainstorm's deferred list and the
+`absent_capability` misdiagnosis fix. Candidate C — block-level markdown — is *in the release scope*
+but not in this plan: it is a requirement change with an open bounded-rendering question and gets
+its own `/brainstorm` and an ADR first, honouring the operator's own recorded sequencing (defects
+before markdown). Candidate D (the evidence-gap spine) is not taken; acceptance runs ride under a
+real emulator where cheap.
+
+Four interface forks were put to the operator on 2026-08-08 and settled:
+
+- **Blocking prompts become reachable by a jump key with card hint lines and focus styling** —
+  not a modal answering flow (prompts arrive mid-typing; a keyboard-owning modal steals the
+  composer at the worst moment) and not focus-steal on mount (the `focus_new` guard exists
+  deliberately). Revisit if the jump key proves insufficient live — the modal is the recorded
+  second choice.
+- **A confirmed F4 interrupt declines outstanding prompts.** The turn they belong to is dead;
+  releasing the gateway's blocking wait beats letting it expire. A lost interrupt outcome still
+  changes nothing.
+- **The caret marker lives in the status region** — zero layout risk by construction. The
+  composer-border alternative costs two permanent rows; revisit only if the marker proves too far
+  from where the operator looks.
+- **`/sessions` shadows the gateway's dispatchable command of the same name.** The name matches the
+  intent and the modal picker beats the text listing. Revisit if the gateway's `/sessions` output
+  gains information the picker does not show.
+
+**Revisit when** any single fork's falsifier fires (each is named above and in the plan's KTDs) —
+the scope itself is settled for v0.2.
+
 ### The `talaria` name on the Python Package Index is not asked for yet, because the project cannot yet promise it will keep it
 
 **Author.** the operator, on reading the S5 research
