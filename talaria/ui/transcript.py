@@ -86,6 +86,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
@@ -491,6 +492,11 @@ class _MountedUnit:
 
     kind: UnitKind
     entry_id: int | TranscriptKind
+    #: The transcript kind this unit renders — what selects the weld prefix
+    #: in the ``rendered_lines`` reconstruction. A block document itself is
+    #: built from the *unwelded* body (KTD6), so the weld can only be
+    #: re-applied at reconstruction time, and that requires knowing the kind.
+    entry_kind: TranscriptKind | None = None
     block: EntryMarkdown | None = None
     lines: list[TranscriptLine] = field(default_factory=list)
     banner: Static | None = None
@@ -636,29 +642,46 @@ class TranscriptPane(VerticalScroll):
     @property
     def rendered_lines(self) -> tuple[str, ...]:
         """Content reconstruction (U4): line widgets contribute their line;
-        block entries contribute their projected source lines via the
-        entry's own raw body, split on newlines — never the banner, which
-        is chrome and stays out of this identity (KTD2). This is what keeps
+        block entries contribute their projected source lines — welded, the
+        prefix re-applied to the first line exactly as the projection's own
+        `_entry_lines` welds it, because the block document itself is built
+        from the unwelded body (KTD6) — never the banner, which is chrome
+        and stays out of this identity (KTD2). Tails mirror the flattened
+        buffer's deliberate shape: the assistant tail contributes its lines
+        (unwelded, matching `transcript_view`), and the reasoning tail
+        contributes nothing, because `TranscriptView.lines` does not carry
+        it — it is on screen, but the identity is defined against the
+        flattened buffer (R18's projection half lives in the entry-scoped
+        view instead). This is what keeps
         ``pane.rendered_lines == view.lines[pane.condensed_count:]`` true
         under mixed mounting, exactly as it was true under pure line
         mounting.
         """
+        return self._reconstruct(lambda widget: widget.source)
+
+    def _reconstruct(self, line_of: Callable[[TranscriptLine], str]) -> tuple[str, ...]:
         out: list[str] = []
         for entry_id in self._entry_order:
             unit = self._entries[entry_id]
             if unit.kind == "block":
-                out.extend(unit.applied_text.split("\n"))
+                out.extend(self._welded_block_lines(unit))
             else:
-                out.extend(widget.source for widget in unit.lines)
-        for kind in _TAIL_KINDS:
-            tail_unit = self._tails[kind]
-            if tail_unit is None:
-                continue
+                out.extend(line_of(widget) for widget in unit.lines)
+        tail_unit = self._tails["assistant"]
+        if tail_unit is not None:
             if tail_unit.kind == "block":
-                out.extend(tail_unit.applied_text.split("\n"))
+                out.extend(self._welded_block_lines(tail_unit))
             else:
-                out.extend(widget.source for widget in tail_unit.lines)
+                out.extend(line_of(widget) for widget in tail_unit.lines)
         return tuple(out)
+
+    @staticmethod
+    def _welded_block_lines(unit: _MountedUnit) -> list[str]:
+        lines = unit.applied_text.split("\n")
+        prefix = _ENTRY_PREFIX.get(unit.entry_kind or "", "")
+        if prefix and lines:
+            lines[0] = f"{prefix}{lines[0]}"
+        return lines
 
     @property
     def drawn_lines(self) -> tuple[str, ...]:
@@ -671,23 +694,10 @@ class TranscriptPane(VerticalScroll):
         back to its projected source lines, same as :attr:`rendered_lines`.
         Consumers that need the literal painted characters of a block entry
         should read the document's own blocks instead of this property.
+        Same weld and same assistant-only tail region as
+        :attr:`rendered_lines`, for the same flattened-buffer parity.
         """
-        out: list[str] = []
-        for entry_id in self._entry_order:
-            unit = self._entries[entry_id]
-            if unit.kind == "block":
-                out.extend(unit.applied_text.split("\n"))
-            else:
-                out.extend(str(widget.content) for widget in unit.lines)
-        for kind in _TAIL_KINDS:
-            tail_unit = self._tails[kind]
-            if tail_unit is None:
-                continue
-            if tail_unit.kind == "block":
-                out.extend(tail_unit.applied_text.split("\n"))
-            else:
-                out.extend(str(widget.content) for widget in tail_unit.lines)
-        return tuple(out)
+        return self._reconstruct(lambda widget: str(widget.content))
 
     # ── content width (RA2 / KTD1(a)) ───────────────────────────────────
 
@@ -922,7 +932,13 @@ class TranscriptPane(VerticalScroll):
             # being a line-only affordance.
             widget = EntryMarkdown(text, classes=kind_group_css_class(kind))
             pending.append(widget)
-            return _MountedUnit(kind="block", entry_id=entry_id, block=widget, applied_text=text)
+            return _MountedUnit(
+                kind="block",
+                entry_id=entry_id,
+                entry_kind=kind,
+                block=widget,
+                applied_text=text,
+            )
 
         # Line rendering: either an ordinary non-markdown kind, a zero-block
         # markdown source, or one that tripped the fallback trigger. Welded
@@ -949,6 +965,7 @@ class TranscriptPane(VerticalScroll):
         return _MountedUnit(
             kind="line",
             entry_id=entry_id,
+            entry_kind=kind,
             lines=widgets,
             banner=banner,
             is_fallback=is_fallback,
