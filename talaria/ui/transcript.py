@@ -40,6 +40,36 @@ longer positional — it is by entry id, published by
 below that walks entries reads that id, never a line offset, and the one
 place a widget survives unchanged across a state transition — a stream
 handing its document to the entry it just became — is keyed on it too.
+
+**Kind differentiation (U5, KTD5, R7/R8).** Every mounted unit — a
+:class:`TranscriptLine` or an :class:`~talaria.ui.blocks.EntryMarkdown`
+document — carries exactly one ``transcript--group-*`` CSS class, chosen by
+:func:`kind_group` from :data:`_KIND_GROUPS`, R7's verbatim twelve-to-group
+table. The channel is background tint plus a left-edge border (the "gutter
+marker"), never a change to the body text's own foreground colour — a fence's
+own syntax highlighting inside a reasoning or assistant document paints
+foreground spans, and a channel carried by foreground colour would be exactly
+what that highlighting could erase (R8). Every colour named in
+:data:`_GROUP_VARIABLES` is a variable the installed theme already defines
+(``$primary``, ``$success``, ``$secondary``, ``$accent``, ``$panel``,
+``$error``) — no new theme variable is introduced, pinned by a test that
+reads ``App.get_css_variables()`` and asserts every ``$name`` this module's
+``DEFAULT_CSS`` uses is a member of that live set, not a hand-maintained list
+of what this module *thinks* the theme defines. ``$text-muted`` was tried
+first for the "session-record" group and rejected: it resolves to
+``"auto 60%"``, an auto-contrast scalar, not a colour, and Textual's CSS
+parser rejects it outright as a ``background``/``border`` value — caught by
+actually mounting a pane with it before writing the pin test, not by reading
+the theme dict and assuming every name in it is colour-shaped. The
+one-column border consumes one column of wrap width, so
+:class:`EntryMarkdown` — whose stock ``padding: 0 2 0 2`` has a spare column
+to give up — loses ``padding-left`` down to ``1`` in the same rule that adds
+the border, keeping its total left inset at 2 columns either way and its
+wrapped height unaffected; :class:`TranscriptLine` starts with no padding to
+trade, so a wrapping (non-``no_wrap``) line loses exactly one column of
+available width when styled — invisible for the short, single-projected-line
+content every fixture in ``tests/ui/test_kind_styles.py`` uses, and already
+moot for a ``no_wrap`` (fallen-back) line, which never wraps regardless.
 """
 
 from __future__ import annotations
@@ -137,6 +167,131 @@ _ENTRY_PREFIX: Final[dict[str, str]] = {
     "protocol-error": "! ",
     "unknown-event": "! ",
 }
+
+
+# ── kind differentiation (U5, KTD5, R7/R8) ──────────────────────────────────
+
+#: R7's own enumeration names **six** labelled buckets, not five, counting
+#: the middle-dot-separated items in its requirement sentence, verbatim:
+#: "operator (`user`) · assistant prose (`assistant`) · reasoning
+#: (`reasoning`) · activity (`tool`, `subagent`) · session record (`system`,
+#: `prompt`, `prompt-expired`, `cancelled`) · faults (`error`,
+#: `protocol-error`, `unknown-event`)". The plan text (KTD5, the U5 goal, and
+#: the requirement-traceability table) all say "the five kind groups R7
+#: fixes" instead, and the Requirements Amendments section carries no RA
+#: renumbering R7's grouping — this module follows R7's own explicit
+#: enumeration, the one place the twelve-to-group mapping is actually
+#: spelled out kind-by-kind, over the plan's un-itemized "five" recap, and
+#: names the mismatch here rather than silently picking one without saying
+#: so. Whoever next touches KTD5 should reconcile the count.
+KindGroup = Literal["operator", "assistant", "reasoning", "activity", "session-record", "fault"]
+
+#: R7's twelve-to-group table, transcribed kind-by-kind from the requirement
+#: sentence above. A ``dict`` literal (not a ``match`` over
+#: :data:`~talaria.domain.models.TranscriptKind`) so :func:`kind_group` can
+#: fail loudly — a ``KeyError`` turned ``ValueError`` — on any kind this
+#: table does not name, which is what makes the U5 "mapping is total" test
+#: meaningful: a new :data:`TranscriptKind` member added without a matching
+#: entry here fails that test rather than rendering with no group class.
+_KIND_GROUPS: Final[dict[TranscriptKind, KindGroup]] = {
+    "user": "operator",
+    "assistant": "assistant",
+    "reasoning": "reasoning",
+    "tool": "activity",
+    "subagent": "activity",
+    "system": "session-record",
+    "prompt": "session-record",
+    "prompt-expired": "session-record",
+    "cancelled": "session-record",
+    "error": "fault",
+    "protocol-error": "fault",
+    "unknown-event": "fault",
+}
+
+#: The existing theme's vocabulary this module borrows from, one variable
+#: name per group — no new ``$name`` is invented, and the pin test in
+#: ``tests/ui/test_kind_styles.py`` asserts every name here (and every
+#: ``$name`` :class:`TranscriptPane`'s ``DEFAULT_CSS`` actually uses) is a
+#: member of the *live* ``App.get_css_variables()`` set rather than trusting
+#: this comment to stay accurate.
+_GROUP_VARIABLES: Final[dict[KindGroup, str]] = {
+    "operator": "primary",
+    "assistant": "success",
+    "reasoning": "secondary",
+    "activity": "accent",
+    "session-record": "panel",
+    "fault": "error",
+}
+
+#: The kind-group CSS rules, generated from :data:`_GROUP_VARIABLES` rather
+#: than hand-duplicated per group in :class:`TranscriptPane`'s
+#: ``DEFAULT_CSS`` — one background-tint-plus-border-left rule per group
+#: (matching both :class:`TranscriptLine` and
+#: :class:`~talaria.ui.blocks.EntryMarkdown`, since both carry the same
+#: class name), plus one ``EntryMarkdown``-scoped ``padding-left`` rule per
+#: group. The second rule matters: :class:`~talaria.ui.blocks.EntryMarkdown`
+#: ships ``padding: 0 2 0 2`` (Textual's stock ``Markdown`` CSS), so the
+#: one-column border this module adds would shrink its wrap width by one
+#: column relative to an *unstyled* document (no class, stock padding) if
+#: left alone — this rule gives back exactly the column the border took,
+#: scoped to ``EntryMarkdown.transcript--group-*`` specifically so an
+#: unclassed document (the "styling disabled" comparison
+#: ``tests/ui/test_kind_styles.py`` builds) keeps its stock 2-column inset
+#: rather than being shrunk to 1 by a blanket rule that does not check for
+#: the class carrying the border in the first place. :class:`TranscriptLine`
+#: (a ``Static``) has no such spare padding to give back — see the module
+#: docstring's note on why that is left alone rather than compensated.
+#:
+#: The ``EntryMarkdown``-scoped rule spells out the **full** ``padding``
+#: shorthand (``0 2 0 1``, not a bare ``padding-left: 1``) on purpose —
+#: probed live: a subclass rule that sets only the ``padding-left`` longhand
+#: does not cascade against the base ``Markdown`` class's ``padding: 0 2 0
+#: 2`` per side the way plain CSS would; Textual's stylesheet engine treats
+#: ``padding`` as one atomic value, and the more specific rule (a two-part
+#: selector beats the base class's one-part selector) replaces it entirely,
+#: silently zeroing ``padding-right`` and ``padding-top``/``-bottom`` along
+#: with it — found by mounting a real widget and reading ``.styles.padding``
+#: rather than by trusting per-side CSS cascade to behave as it would in a
+#: browser. Restating all four sides is what keeps the other three matching
+#: the stock widget's own values.
+_GROUP_CSS_RULES: Final[str] = "\n".join(
+    f"""
+    TranscriptPane .transcript--group-{group} {{
+        background: ${variable} 10%;
+        border-left: thick ${variable};
+    }}
+    TranscriptPane EntryMarkdown.transcript--group-{group} {{
+        padding: 0 2 0 1;
+    }}"""
+    for group, variable in _GROUP_VARIABLES.items()
+)
+
+
+def kind_group(kind: TranscriptKind) -> KindGroup:
+    """R7's twelve-to-group mapping (KTD5), total by construction.
+
+    Raises rather than guessing for a kind :data:`_KIND_GROUPS` does not
+    name — the mapping-is-total requirement means a new
+    :data:`~talaria.domain.models.TranscriptKind` member with no matching
+    entry here must fail loudly, never render ungrouped.
+    """
+    try:
+        return _KIND_GROUPS[kind]
+    except KeyError:
+        raise ValueError(
+            f"TranscriptKind {kind!r} has no R7 kind-group mapping (KTD5) — "
+            "add it to _KIND_GROUPS in talaria/ui/transcript.py rather than "
+            "letting it render with no transcript--group-* class."
+        ) from None
+
+
+def kind_group_css_class(kind: TranscriptKind) -> str:
+    """The one ``transcript--group-*`` class every mounted unit for ``kind``
+    carries — the same class name for a line widget and a block document, so
+    both channels compose identically regardless of which one a kind mounts
+    as (KTD2's per-kind rendering choice is orthogonal to R7's grouping).
+    """
+    return f"transcript--group-{kind_group(kind)}"
 
 
 # ── construct-aware descendant estimate (KTD1(a)) ──────────────────────────
@@ -274,8 +429,15 @@ class TranscriptLine(Static):
             renderable = inline_markdown(source)
         else:
             renderable = literal_text(source)
-        css_class = "transcript--nowrap" if no_wrap else None
-        super().__init__(renderable, markup=False, classes=css_class)
+        # R7/KTD5 (U5): every line-rendered kind carries its group class
+        # alongside the nowrap class -- ``kind`` is only ``None`` for a
+        # direct construction outside this module's own call sites (none
+        # exist today), which renders with no group channel rather than
+        # guessing one.
+        css_classes = [kind_group_css_class(kind)] if kind is not None else []
+        if no_wrap:
+            css_classes.append("transcript--nowrap")
+        super().__init__(renderable, markup=False, classes=" ".join(css_classes) or None)
         #: The projection line, verbatim — not the text that ends up on screen.
         self.source = source
 
@@ -337,23 +499,24 @@ def _fallback_banner(line_count: int) -> Static:
 class TranscriptPane(VerticalScroll):
     """Scrollable, bounded transcript: block documents plus line widgets."""
 
-    DEFAULT_CSS = """
-    TranscriptPane {
+    DEFAULT_CSS = f"""
+    TranscriptPane {{
         height: 1fr;
         scrollbar-size-vertical: 1;
-    }
-    TranscriptPane > Static {
+    }}
+    TranscriptPane > Static {{
         width: 100%;
-    }
-    TranscriptPane > .transcript--condensed {
+    }}
+    TranscriptPane > .transcript--condensed {{
         color: $text-muted;
-    }
-    TranscriptPane > .transcript--fallback-banner {
+    }}
+    TranscriptPane > .transcript--fallback-banner {{
         color: $text-warning;
-    }
-    TranscriptPane .transcript--nowrap {
+    }}
+    TranscriptPane .transcript--nowrap {{
         height: 1;
-    }
+    }}
+    {_GROUP_CSS_RULES}
     """
 
     def __init__(self, *, mount_cap: int = DEFAULT_MOUNT_CAP, **kwargs: object) -> None:
@@ -378,6 +541,13 @@ class TranscriptPane(VerticalScroll):
         }
         self._tail_generation: dict[TranscriptKind, int] = {"assistant": 0, "reasoning": 0}
         self._pending_removed_height = 0
+        #: High-water mark of :attr:`descendant_count` (U6). Tracked
+        #: separately from :attr:`peak_mounted` because the two ceilings
+        #: KTD1(a) states are different budgets over different counts: a
+        #: single table can mount hundreds of per-cell descendants from one
+        #: top-level ``mounted_count`` entry, so a peak over the top-level
+        #: count alone cannot see that spike.
+        self.peak_descendants = 0
 
     # ── measurement surface ──────────────────────────────────────────────
 
@@ -493,6 +663,7 @@ class TranscriptPane(VerticalScroll):
 
         self._lines = view.lines
         self.peak_mounted = max(self.peak_mounted, self.mounted_count)
+        self.peak_descendants = max(self.peak_descendants, self.descendant_count)
         self._restore_anchor()
 
     # ── hard reset (a focus switch, not a continuation) ─────────────────
@@ -662,7 +833,11 @@ class TranscriptPane(VerticalScroll):
         if eligible and not is_zero_block(text) and not trips_fallback_trigger(
             text, content_width=width
         ):
-            widget = EntryMarkdown(text)
+            # R7/KTD5 (U5): a block-rendered entry carries its group class
+            # the same way a line-rendered one does (kind_group_css_class),
+            # so the channel composes with block rendering rather than
+            # being a line-only affordance.
+            widget = EntryMarkdown(text, classes=kind_group_css_class(kind))
             pending.append(widget)
             return _MountedUnit(kind="block", entry_id=entry_id, block=widget, applied_text=text)
 
