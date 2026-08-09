@@ -223,6 +223,53 @@ async def test_line_widget_height_unchanged_by_group_styling() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("pane_width", [40, 60, 80, 120])
+async def test_line_widget_height_unchanged_at_the_wrap_boundary(pane_width: int) -> None:
+    """CR5's exact regression: content that fills the wrap width to the last
+    cell must render at the same height whether or not a group class -- and
+    therefore the border-left gutter marker -- is present.
+
+    ``test_line_widget_height_unchanged_by_group_styling`` above only
+    exercises short content, which the one column a border-left gutter
+    marker costs can never push across a wrap boundary. This test instead
+    measures the *unstyled* widget's own content width live, at more than
+    one terminal width, then builds content sized to exactly that width
+    (and one cell past it) -- a border consuming a column nobody reserved
+    for it would show up here as a height-two styled line next to a
+    height-one unstyled one, at whichever width exposes it, not only at the
+    80-column pane the reviewer happened to probe.
+    """
+    app = _Harness()
+    async with app.run_test(size=(pane_width, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        probe = TranscriptLine("x")
+        await pane.mount_all([probe])
+        await pilot.pause()
+        content_width = probe.content_size.width
+        await probe.remove()
+
+        for fill in (content_width, content_width + 1):
+            text = "a" * fill
+            unstyled = TranscriptLine(text)
+            styled = TranscriptLine(text, kind="assistant")
+            await pane.mount_all([unstyled, styled])
+            await pilot.pause()
+            assert unstyled.content_size.width == styled.content_size.width, (
+                f"pane_width={pane_width} fill={fill}: styled and unstyled "
+                "TranscriptLine widgets disagree on content width -- the "
+                "border-left gutter marker is consuming a column the "
+                "unstyled baseline never reserved (CR5)"
+            )
+            assert unstyled.outer_size.height == styled.outer_size.height, (
+                f"pane_width={pane_width} fill={fill}: content that exactly "
+                "fills the wrap width renders at a different height styled "
+                "vs unstyled (CR5's exact regression)"
+            )
+            await unstyled.remove()
+            await styled.remove()
+
+
+@pytest.mark.asyncio
 async def test_block_document_height_unchanged_by_group_styling() -> None:
     """Same claim, for a block-rendered entry: a moderate paragraph mounted
     with no class versus mounted with a group class wraps to the same
