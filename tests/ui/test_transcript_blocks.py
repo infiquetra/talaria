@@ -47,10 +47,12 @@ from talaria.domain.projection import (
     TranscriptEntryRecord,
     TranscriptView,
 )
+from talaria.ui.blocks import EntryMarkdown
 from talaria.ui.transcript import (
     _ENTRY_PREFIX,
     DEFAULT_MOUNT_CAP,
     DESCENDANT_ESTIMATE_TRIGGER,
+    TranscriptLine,
     TranscriptPane,
     descendant_estimate,
     is_zero_block,
@@ -331,6 +333,64 @@ async def test_interim_replacement_renders_exactly_once_via_generation() -> None
 
 
 @pytest.mark.asyncio
+async def test_block_tail_collapsing_to_zero_blocks_demotes_to_line_rendering() -> None:
+    """A block-rendered tail whose *next* generation collapses it to zero
+    blocks (a bare newline) must demote to line rendering, not stay mounted
+    as an invisible height-zero :class:`~talaria.ui.blocks.EntryMarkdown`
+    forever.
+
+    ``_reconcile_tail``'s block-kind branch used to re-check only
+    ``trips_fallback_trigger`` after writing the grown/replaced text --
+    exactly what ``is_zero_block`` on the line-kind branch already guards
+    against, but missing here. ``is_zero_block("\\n")`` is ``True`` while
+    ``trips_fallback_trigger("\\n", ...)`` is ``False`` (nowhere near the
+    size trigger), so the old code never rebuilt: the tail stayed a
+    ``block``-kind unit pointing at a document Textual mounts at height 0
+    for zero parsed blocks (KTD2's own zero-block rule, proven for
+    committed entries by ``test_zero_block_entry_line_renders_preserving_
+    blank_rows`` above but not, until this fix, for a tail that *became*
+    zero-block after already being a block document).
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        await _apply(
+            pane,
+            (),
+            reasoning_tail=ProvisionalTail(
+                kind="reasoning",
+                raw_text="# heading\n\nsome reasoning prose here\n",
+                generation=1,
+            ),
+        )
+        await pilot.pause()
+        grown = pane._tails["reasoning"]
+        assert grown is not None and grown.kind == "block"
+
+        # A new generation replaces the block wholesale with a bare newline
+        # -- zero parsed blocks, same shape as message.interim discarding a
+        # stream's content outright.
+        await _apply(
+            pane,
+            (),
+            reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="\n", generation=2),
+        )
+        await pilot.pause()
+        collapsed = pane._tails["reasoning"]
+        assert collapsed is not None
+        assert collapsed.kind == "line", (
+            "still block-rendered -- the zero-block collapse was missed"
+        )
+        assert collapsed.lines, "the blank row vanished instead of becoming a visible line widget"
+        assert all(isinstance(widget, TranscriptLine) for widget in collapsed.lines)
+        for widget in collapsed.lines:
+            assert widget.outer_size.height >= 1
+
+        # No stray height-zero EntryMarkdown left mounted anywhere in the pane.
+        assert not list(pane.query(EntryMarkdown))
+
+
+@pytest.mark.asyncio
 async def test_both_tails_stream_independently_in_the_same_turn() -> None:
     """R18: reasoning and assistant can stream in the same turn; neither may
     steal the other's progressive rendering.
@@ -441,6 +501,34 @@ async def test_oversized_entry_falls_back_to_nonwrapping_lines_plus_one_banner()
         assert unit.banner is not None
         assert unit.accounted_rows == 2, "painted rows == projected lines + one banner row"
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pane_width", [40, 80, 100])
+async def test_fallback_banner_paints_exactly_one_row(pane_width: int) -> None:
+    """The RA3 banner must paint exactly one row at every width, matching
+    the plan's exact-row formula, the replay gate's
+    ``fallback_banner_accounting`` check, and this module's own
+    ``accounted_rows`` charge (one banner row per fallen-back entry, see
+    the test above). An unconstrained ``Static`` wraps
+    :data:`~talaria.ui.transcript.FALLBACK_BANNER_TEMPLATE`'s fixed
+    sentence across multiple rows once the terminal narrows enough (2 rows
+    at 100 columns, 4 at 40) -- a mismatch none of ``accounted_rows``, the
+    fold arithmetic, or the gate's static count would catch on their own,
+    since none of them read back what the banner widget actually painted.
+    """
+    app = _Harness()
+    async with app.run_test(size=(pane_width, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        entries = _fallback_entries(1, body_len=100_000)
+        await _apply(pane, entries)
+        unit = pane._entries[1]
+        assert unit.banner is not None
+        assert unit.banner.outer_size.height == 1, (
+            f"pane_width={pane_width}: fallback banner painted "
+            f"{unit.banner.outer_size.height} rows, not the single row RA3 "
+            "and accounted_rows both assume"
+        )
 
 
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
