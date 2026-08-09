@@ -166,14 +166,20 @@ ADR-0006 before implementation:**
   count is not the metric either: a probed single 100,000-character source line mounts as **one
   descendant** yet renders 1,353 wrapped rows. The estimate covers all three probed degenerate
   shapes: the 10,000-line open fence (one block, two descendants, 10,004 rows), the mega-line,
-  and the double-width line. **The fallback itself hard-wraps**: a fallen-back entry's lines are
-  split at display-cell width into **one-row-per-widget** `TranscriptLine`s before mounting —
-  never one wrapping widget per source line, because a probed single fallback line widget paints
-  1,283 rows on its own, which would defeat the bound the fallback exists to restore. One widget
-  = one painted row, so the existing widget cap bounds painted rows directly; fold boundaries
-  land on projected-line boundaries and the banner accounts whole projected lines as today. The
-  entry-level fallback both restores the count and height bounds and ends the growing-reparse
-  work of clause (c). The boundary
+  and the double-width line. **The fallback renders non-wrapping, one widget per projected
+  line**: a fallen-back entry keeps exactly one `TranscriptLine` per projected line with wrapping
+  **off** — the widget paints one row and clips at the viewport edge, with a banner note on the
+  entry saying the on-screen tail is clipped (the full line is always in the terminal-read
+  buffer, so no content is dropped — the screen clips, the buffer doesn't). Wrapping was
+  rejected twice over, both probed: a single wrapping fallback widget paints 1,283 rows on its
+  own, and pre-splitting into hard-wrapped fragments makes a 100,000-character line ~1,283
+  widgets (its own cap violation), breaks the `rendered_lines` reconstruction (fragments are not
+  projected lines), forces fragment-aware condensation, and un-wraps differently on every
+  resize. Non-wrapping keeps painted rows == widgets == projected lines, so the existing
+  500-widget cap bounds height directly, condensation stays whole-projected-lines, the
+  reconstruction is trivially exact, and resize moves only the clip point (one row per widget at
+  every width). The entry-level fallback both restores the count and height bounds and ends the
+  growing-reparse work of clause (c). The boundary
   observation point is deliberate:
   `Markdown.update` parses off the pump and mounts in batches of 200, transiently holding old and
   new blocks, so "at every instant" is not enforceable against the widget's own mechanics; the
@@ -499,9 +505,13 @@ keyed by entry id without a pane rebuild; a terminal path stops and awaits pendi
 updates nothing and raises nothing (R16 clause 3 — exactly the mount-cap interaction); the
 descendant count under KTD1(a)'s ceiling at every coalescing boundary, including across an
 oversized-newest-entry overage (the KTD2 rule), with the three boundary probes as fixtures —
-the 100,000-character mega-line (hard-wrapped fallback, one row per widget), the 37,000-character
-double-width line (display-cell estimate, not character count), and the 601-column table
-(construct-aware estimate); condensation folds whole units with the round-up
+the 100,000-character mega-line (non-wrapping fallback: one widget, one painted row, clipped at
+the viewport with the banner note, stable across resize with the anchor held), the
+37,000-character double-width line (display-cell estimate, not character count), the 601-column
+table (construct-aware estimate), and the **exact-boundary regression** — a 599-column table plus
+one paragraph, where top-level blocks plus cells estimate exactly 1,200 while the installed
+widget mounts 1,201 descendants: the calibrated estimate (containers included) must exceed 1,200
+and fire the trigger; condensation folds whole units with the round-up
 rule, a **block-rendered** newest entry survives whole (a fallen-back line-rendered one may fold
 under the cap), and the banner's line arithmetic still sums; a reader
 scrolled above the stream holds position through reinterpretation, resize, and condensation (R17)
@@ -566,7 +576,7 @@ visual oracles for every R1 construct (heading, both list types, table grid, fen
 each proven to fail when flattened; line-rendered kinds keep the existing window comparison;
 progressiveness asserted at timed intermediate checkpoints, not only settled (R5/R14), including
 the two-tail overlap case (R18); the adversarial workloads — the KTD1(d) fence, table, and
-unbroken mega-line plus the double-width-character and 601-column-table boundary probes, exact
+unbroken mega-line (through resize) plus the double-width-character, 601-column-table, and exact-boundary 599-column probes, exact
 sizes as specified — hold the latency and descendant ceilings with high-water figures recorded;
 replay determinism compares normalized block structure (ordered classes, source ranges, semantic
 content; runtime identifiers excluded) under the pinned width, theme, and framework version (R12),
