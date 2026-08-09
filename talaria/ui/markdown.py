@@ -1,5 +1,20 @@
 """Inline markdown for transcript prose: emphasis and code spans, nothing else.
 
+**Retired from the live rendering path by U4 (KTD8).** ``TranscriptPane``
+(``talaria/ui/transcript.py``) no longer calls :func:`inline_markdown` for
+assistant or reasoning entries — those are block-rendered through
+``talaria/ui/blocks.py`` (U3) instead, and ``MARKDOWN_KINDS`` (the set of
+kinds eligible for that) now lives on ``transcript.py``, which is where the
+"line widget or block document" decision is made. This module is kept in
+the tree, unmodified in its parsing behaviour, as the styling half of KTD8's
+branch-held fallback: if the restated gate (U6) comes back red and the
+operator invokes the fallback rather than iterating further, the fallback
+reintroduces this module as a live caller — so it stays correct and tested
+rather than being deleted and rewritten under pressure later. Its
+pane-level assertions (what a mounted ``TranscriptLine`` shows) moved to
+``tests/ui/test_transcript_blocks.py``'s reconstruction checks; this module
+keeps only its own parser-level tests, unmodified.
+
 R6 puts markdown presentation out of scope for v0.1, and this module is a
 deliberate, narrow amendment to it rather than an oversight being corrected. The
 part being amended is presentational only; the part R6 actually guarantees —

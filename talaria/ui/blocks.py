@@ -262,7 +262,8 @@ class _InertContentMixin(MarkdownBlock):
 
 
 def _safe_block_classes() -> dict[str, type[MarkdownBlock]]:
-    """Every stock block class, with :class:`_InertContentMixin` ahead of it.
+    """Every stock block class, single-inheriting from itself with the one
+    method patched onto its own class dict (U4 fix).
 
     Built from ``Markdown.BLOCKS`` itself — the live mapping token names use
     to select a widget class — rather than importing each class by name from
@@ -271,13 +272,39 @@ def _safe_block_classes() -> dict[str, type[MarkdownBlock]]:
     removes entirely is exactly what the Textual-version pin test in
     ``tests/ui/test_blocks.py`` exists to notice, not something this function
     should paper over.
+
+    **Not** ``type(name, (_InertContentMixin, block_cls), {})`` — that was
+    U3's original shape, and it crashes on every table (found live while
+    building U4). Textual's ``DOMNode._css_bases`` derives a class's CSS type
+    chain by walking ``__bases__`` and, at each step, following the *first*
+    base that is itself a ``DOMNode`` subclass
+    (``textual/dom.py:647-667``). With the mixin listed first, that walk
+    picks ``_InertContentMixin`` — whose own base is plain ``MarkdownBlock``
+    — and never reaches ``block_cls`` at all, so a wrapped
+    ``MarkdownTableContent`` loses every construct-specific CSS type name
+    including ``"MarkdownTable"``. ``MarkdownTableContent.pre_layout`` calls
+    ``self.query_ancestor(MarkdownTable)`` (``_markdown.py:664``), which
+    resolves the type to that same string and raises ``NoMatches`` the
+    instant a table is laid out — probed live against Textual 8.2.8,
+    traceback confirmed. Subclassing ``block_cls`` directly and patching
+    ``_token_to_content`` straight into the new class's own ``__dict__``
+    keeps ``__bases__ == (block_cls,)``, so ``_css_bases`` walks the real
+    chain (``MarkdownTable`` → ``MarkdownBlock`` → …) and every
+    construct-specific selector Textual's own layout code depends on still
+    matches. The class-dict assignment (not inheritance order) is what makes
+    the override win regardless: ``type(widget)`` is checked before any base
+    in an attribute lookup, so putting the method directly in the leaf
+    class's ``__dict__`` doesn't depend on getting mixin order right a
+    second time.
     """
     wrapped: dict[type[MarkdownBlock], type[MarkdownBlock]] = {}
     safe: dict[str, type[MarkdownBlock]] = {}
     for name, block_cls in Markdown.BLOCKS.items():
         if block_cls not in wrapped:
             wrapped[block_cls] = type(
-                f"Inert{block_cls.__name__}", (_InertContentMixin, block_cls), {}
+                block_cls.__name__,
+                (block_cls,),
+                {"_token_to_content": _InertContentMixin._token_to_content},
             )
         safe[name] = wrapped[block_cls]
     return safe

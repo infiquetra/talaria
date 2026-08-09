@@ -91,6 +91,7 @@ from talaria.domain.projection import (
     PromptRow,
     Snapshot,
     TranscriptView,
+    entry_scoped_view,
     project,
     terminal_read,
 )
@@ -1319,7 +1320,12 @@ class TalariaApp(App[None]):
         self.snapshot = snapshot
 
         if "transcript" in snapshot.changed:
-            await self.transcript.apply(snapshot.transcript)
+            # KTD6: the pane needs entry identity and raw (unwelded) bodies
+            # that TranscriptView's flattened line buffer does not carry, so
+            # U4 computes the entry-scoped surface here rather than growing
+            # Snapshot's frozen shape — entry_scoped_view is a pure function
+            # of the same SessionState project() already read this tick.
+            await self.transcript.apply(snapshot.transcript, entry_scoped_view(self.state))
         if "subagents" in snapshot.changed:
             await self.agents.apply(snapshot.subagents)
         if {"prompts", "status"} & snapshot.changed:
