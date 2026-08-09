@@ -4,24 +4,26 @@ type: review
 date: 2026-08-09
 target: docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md
 also_reviewed: docs/plans/2026-08-09-talaria-v0-2-block-markdown-spec.json
-reviewed_revision: main @ ae8e36d (plan revision 1); fixes produced revision 2
+reviewed_revision: main @ ae8e36d (plan revision 1); fixes produced revision 2, hardened to 94b2507 across eleven Codex confirm rounds
 origin_requirements: docs/brainstorms/2026-08-08-block-markdown-and-transcript-differentiation-requirements.md
 blocked: false
-outcome: all findings fixed in place (plan revision 2 + spec revision); two operator-vetoable requirements amendments recorded (RA1, RA2)
+outcome: all findings fixed in place (plan revision 2 + spec revision); eleven Codex confirm rounds converged to PASS at 94b2507; three operator-vetoable requirements amendments recorded (RA1, RA2, RA3)
 ---
 
 # Doc-review — the v0.2 block-markdown plan and execution spec
 
 **Verdict: the plan as first written was not implementation-ready — thirty-five distinct defects,
-three of them execution-stopping — and every one is resolved in revision 2, at the cost of two
+three of them execution-stopping — and every one is resolved in revision 2, at the cost of three
 explicit requirements amendments the operator may veto.** The reviewed revision was `main` at
 commit `ae8e36d`. Four reviewers ran: three panel lenses (citation verification, adversarial
 readiness, requirements coverage) plus the operator's Codex engine, whose live probes against the
 installed Textual 8.2.8 produced the review's most consequential findings. The Codex reply is
 archived verbatim in the machine-local saga evidence, sha256
-`86150cd955eff7f4c5c5f374cca9e8d14775aa0d45bcaa2cc1223b6e3dec92cb`.
+`86150cd955eff7f4c5c5f374cca9e8d14775aa0d45bcaa2cc1223b6e3dec92cb`. After the thirty-five fixes,
+eleven scoped Codex confirm rounds hardened the revision further (see the convergence section
+below); the eleventh returned PASS with no new findings at commit `94b2507`.
 
-## The two operator-vetoable amendments
+## The three operator-vetoable amendments
 
 - **RA1 — underscore emphasis and strikethrough enter scope.** The parser preset ships both;
   disabling underscore emphasis would disable asterisk emphasis too (one `emphasis` rule covers
@@ -31,6 +33,15 @@ archived verbatim in the machine-local saga evidence, sha256
   fails R3 today (non-focusable ellipsis-plus-tooltip cells, live-probed at 80 columns). Cell
   focus would build a data-grid caret model inside the transcript and collide with the
   answerability focus order. Veto path: demand per-cell keyboard focus — a materially larger U4.
+- **RA3 — on fallen-back entries only, on-screen visibility narrows to the clipped rows plus a
+  banner.** Recorded during the confirm rounds, not the initial review: the non-wrapping fallback
+  for degenerate content (a 100,000-character line, past-ceiling estimates) clips at the viewport,
+  and no presentation of such a line shows its tail. R11's projection-to-screen visibility is
+  satisfied for that entry class by one painted row per projected line plus a banner naming the
+  clip and cause; the gate proves banner presence and exact row count, not clipped-cell
+  reachability; the content stays byte-exact in the terminal-read buffer. Veto path: demand a
+  keyboard expand/inspect affordance now — U4 grows the per-entry horizontal-navigation machinery
+  RA2 declined; it is otherwise queued follow-up work.
 
 ## Findings and dispositions
 
@@ -76,6 +87,52 @@ defect.
 | F34 | P1 | X | Normalization strips markdown-significant whitespace (indented code committed by cancel becomes prose) | Exact content preservation with a whitespace scenario set; stripping stays diagnostic-only (KTD7, U2) |
 | F35 | P2 | X | KTD3's rationale rejected the wrong API boundary — `Markdown.get_stream` is public | Corrected evidence in Grounding and KTD3; direct append kept on the corrected comparison; pin covers `get_stream` |
 
+## The Codex confirm-fix convergence
+
+After the thirty-five findings were fixed, the revision went through eleven scoped Codex confirm
+rounds — each one a fresh read of the pushed branch with live probes against the installed
+Textual 8.2.8 and, in the later rounds, executable re-runs of the plan's own fold arithmetic.
+Rounds one through ten each returned FAIL with progressively narrower findings; every finding was
+fixed on the branch and re-confirmed; round eleven returned PASS with no new findings at commit
+`94b2507`. The commit chain: `da304cb` (revision 2) → `9a2c63e` → `3889fd3` → `4f2a6b4` →
+`6ad94b2` → `1dab934` → `1aca0e6` → `94ac876` → `23b2d84` → `18802f2` → `94b2507`.
+
+The rounds' most consequential catches, in arc order:
+
+- **Counting defects the initial review missed**: the descendant estimate had to count table
+  cells and per-construct containers (a probed three-line 601-column table mounts 1,204
+  descendants); reconcile work had to be measured in parser-input bytes (append's reparse window
+  grows with the unfinished block); wrapped-row estimates had to use display cells, never
+  `len()` (37,000 double-width characters paint 949 rows where a character count says 475).
+- **The wrapping fallback was itself a cap violation**: a single wrapping fallback widget paints
+  1,283 rows for the 100,000-character line, and pre-split hard-wrap fragments break the
+  reconstruction — which forced the non-wrapping one-widget-per-projected-line fallback and,
+  because a clipped row genuinely hides its tail, produced amendment RA3.
+- **The banner budget was arithmetically unsound twice over**: paying one banner per fallen-back
+  entry from a fixed 100-widget margin fails at 302 one-line entries (602 widgets in a window
+  whose 301 projected lines never trigger a lines-only fold), so banner rows are now charged to
+  the fold arithmetic itself; and the charge rule then needed an odd-cut definition (a partially
+  retained entry keeps exactly one banner; a cut retaining zero content rows rounds forward — a
+  banner never stands alone), with both arms pinned as regressions after Codex showed an
+  always-round-forward implementation would pass the first fixture alone.
+
+Every round's pane reply is archived verbatim in the machine-local saga evidence
+(never committed), cited here by sha256:
+
+| Round | Verdict | sha256 |
+| --- | --- | --- |
+| 1 | FAIL (7) | `db170aa2bc6f5b72079eecc4730a877ad31dab7baabfca1f5f7b72fa5123d7f2` |
+| 2 | FAIL | `a0f58cefa036540be4c935e08707d11a77b5affbf4a43a0ddb15b1bfe013967d` |
+| 3 | FAIL | `37b5f4073dc161e3cf30436c20f54572e0d4130ddfe6c293f7c87ce9e7b89c66` |
+| 4 | FAIL | `542901585122ad68eafb9af542cc9077eae0d39a7a85edad46d66dcb105b84a1` |
+| 5 | FAIL | `d41a90e5201556a4d8aaaa65bb3b1b566eb06874877dc08997d2ada3ad52e4ed` |
+| 6 | FAIL | `06efac235fe77631b28d06bc90c07eff908e4a163801f6467b938e2f5a2b1b16` |
+| 7 | FAIL (RA3 propagation) | `316dfa2e0be1781c35cbb5b91d630323558d3c178e1f99571d94fd3d0860e348` |
+| 8 | FAIL (banner budget counterexample) | `743f7e6b0a7600f34141b60c9fc39263bfbd55669e2281fcfbc1650750a6bd19` |
+| 9 | FAIL (odd-cut undefined) | `c2fba485804c3536db3865c935a63a8c201d5fa7dd92c8f7eeae5a26af542d42` |
+| 10 | FAIL (partial-retention arm unpinned) | `22edf44b661ecd138efc8580a79f7cb226cac9001e6afb1b2d7cbbe951423588` |
+| 11 | **PASS** | `7ed314966154d35623169f931b440a9ed61bc188d0a6e00364d6122bdbdb3527` |
+
 ## What the review verified as true
 
 The citation lens confirmed every behavioral claim in the Grounding section against the source and
@@ -91,6 +148,11 @@ failures.
 - The sideband timeline (F30's fix) is new replay machinery specified at the plan level; its
   design is bounded to two action kinds, but it is the revision's largest new surface and CR6
   reviews it against exactly that boundary.
-- RA1 and RA2 are judgment calls made under review evidence; both are recorded in the plan's
-  Requirements Amendments section and mirrored to DECISIONS.md by U1, and either can be vetoed
-  before the build gate opens.
+- RA1, RA2, and RA3 are judgment calls made under review evidence; all three are recorded in the
+  plan's Requirements Amendments section and mirrored to DECISIONS.md by U1, and any can be
+  vetoed before the build gate opens. The operator accepted RA1 and RA2 during the review; RA3
+  arose later, in the confirm rounds, and awaits the operator's accept-or-veto at the build gate.
+- The fold arithmetic (accounted rows, the banner charge rule, the odd-cut arms) is the
+  revision's subtlest surface — it survived executable re-runs in confirm rounds nine through
+  eleven, and its regressions (aggregate-ceiling, odd-cut, partial-retention) exist precisely
+  because plausible implementations pass without them.
