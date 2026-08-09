@@ -116,12 +116,17 @@ grid — new bindings, a caret model inside entries, and a collision with U8's a
 order. Instead: the block factory styles table cells to wrap (no ellipsis, no tooltip dependence)
 **with a column-allocation rule**, because wrapping alone does not survive Textual's
 `grid-columns: auto` layout — a live five-column probe at 80 columns assigned data widths
-[0, 0, 58, 1, 1], starving four columns entirely. The rule: bounded fractional columns — every
-column is guaranteed at least its minimum content width (its longest word, capped at a fixed
-per-column maximum), and the remaining width is distributed proportionally; the factory's table
-subclass computes the widths rather than trusting the auto layout. Every cell's full content is
-then readable at 80 columns by ordinary transcript scrolling — no hover, no mouse, no per-cell
-focus — and the test asserts the **actual painted content** of every cell, not just the style.
+[0, 0, 58, 1, 1], starving four columns entirely. The rule, exactly — for a table of N columns in
+a pane whose content width is W: available content width `A = W − (3N + 1)` (one cell-padding
+column each side of every cell plus one gutter per boundary); per-column cap
+`CAP = max(8, floor(A / N))`; each column's minimum `m_i = min(longest_word_i, CAP)`. If
+`sum(m_i) ≤ A`, every column gets its `m_i` and the remainder is distributed proportionally to
+each column's total content length. If `sum(m_i) > A`, every column gets the equal split
+`floor(A / N)` with a hard floor of 3 cells; a word longer than its column character-wraps. The
+factory's table subclass computes these widths and sets them explicitly rather than trusting the
+auto layout. Every cell's full content is then readable at 80 columns by ordinary transcript
+scrolling — no hover, no mouse, no per-cell focus — and the test asserts the **actual painted
+content** of every cell (the five-column probe case included), not just the style.
 The amended R3 reads: "table content is fully legible at 80 columns without a mouse; no construct
 depends on hover or focus to show its content." AE4's assertion follows the amended text.
 
@@ -136,20 +141,28 @@ ADR-0006 before implementation:**
   committed entry document and line widget except the newest entry and the live tails — stays
   ≤ 600 descendants, enforced by KTD2's fold rule (fold decisions read the measured descendant
   counts of already-mounted entries, and a pre-parse top-level token count estimates an incoming
-  entry). Tier two: the newest entry and each live tail carry a **per-entry ceiling of 1,200
-  descendants** — chosen so the gate's own 1,000-row table workload (measured: 1,003 descendants
-  for the minimal one-column version) fits with headroom — beyond which **that entry alone falls
-  back to line rendering** (one `TranscriptLine` per projected line, bounded by the existing line
-  machinery, with a banner note); the entry-level fallback both restores the count bound and ends
-  the growing-reparse work of clause (c). The boundary observation point is deliberate:
+  entry). Tier two: the newest entry and each live tail carry a **per-entry ceiling with a
+  two-condition trigger** — the entry falls back to line rendering when its descendant count (or
+  pre-parse top-level token estimate) exceeds **1,200** (the gate's 1,000-row table workload
+  measures 1,003 descendants, fitting with headroom) **or** when its projected line span exceeds
+  **`mount_cap` (500) lines**. The second condition exists because descendants alone cannot see
+  the other degenerate shape: a 10,000-line open fence is a **single block with two descendants**
+  while standing 10,004 rows tall — probed — so a descendant-only trigger would bound neither its
+  height nor its reparse window. A line-rendered entry is **not** exempt from folding: it is
+  ordinary line content under today's cap machinery, `desired_top` may land inside it (exactly as
+  it does today for a 4,000-line tool dump), and the banner accounts its folded lines — so the
+  fallback can never itself mount more than the line cap allows. The entry-level fallback both
+  restores the count bound and ends the growing-reparse work of clause (c). The boundary
+  observation point is deliberate:
   `Markdown.update` parses off the pump and mounts in batches of 200, transiently holding old and
   new blocks, so "at every instant" is not enforceable against the widget's own mechanics; the
   ceilings are enforced at the point talaria controls — before each apply — and verified at
   boundaries.
 - **(b) Rendered height.** Bounded by the same two tiers: the folded window's height follows from
-  its line arithmetic as today, and a single entry's height is bounded by the 1,200-descendant
-  per-entry ceiling with the line-render fallback beyond it. The gate measures the tallest mounted
-  entry document and records it as a high-water figure.
+  its line arithmetic as today, and a single block-rendered entry's height is bounded by the
+  two-condition trigger of (a) — the 500-line span condition is what bounds the tall-but-few-blocks
+  shapes the descendant count cannot see. The gate measures the tallest mounted entry document and
+  records it as a high-water figure.
 - **(c) Reconcile work.** Per-boundary parse work is measured as **parser-input bytes** — the
   reparse window `Markdown.append` actually processes, from the last unfinished top-level block to
   the end (probed fact: five constant 500-byte appends into an open fence produce parser inputs of
@@ -184,17 +197,23 @@ documents** — the domain holds both buffers simultaneously (state.py:106) and 
 the other's progressive rendering (R18). On commit, each tail's final source becomes its committed
 entry's document without a full-pane rebuild, keyed by the entry identity KTD6 publishes.
 
+Two mounting rules precede condensation. A committed assistant/reasoning entry (or a tail state)
+whose parse yields **zero blocks** — empty, whitespace-only, newline-only — line-renders: a
+zero-block document mounts at height zero (probed), which would silently drop the blank rows a
+line widget shows today. And an entry that trips KTD1(a)'s two-condition trigger (descendants or
+estimate > 1,200, or line span > `mount_cap`) line-renders with a banner note.
+
 Condensation over mixed units, exactly: `desired_top` is computed in projected lines as today
-(transcript.py:223); when it lands inside a block entry's line span, it rounds **up** to the next
-unit boundary — the cap prefers evicting more over keeping a cap-buster — with one exception: the
-newest entry is always mounted whole, even when its span alone exceeds `mount_cap`, subject to
-KTD1(a)'s per-entry ceiling: past 1,200 descendants the newest entry line-renders instead, so the
-overage is always bounded and recorded in the high-water instrumentation (the ceiling claim in
-KTD1(a) is stated over this rule: folded window ≤ 600, plus at most one block-rendered newest
-entry ≤ 1,200, plus the tails under the same per-entry ceiling). The banner keeps counting
-**lines**; the
-entry line spans KTD6 publishes are what keep `condensed_count + lines-accounted-for == total`
-computable over folded block units.
+(transcript.py:223); when it lands inside a **block** entry's line span, it rounds **up** to the
+next unit boundary — the cap prefers evicting more over keeping a cap-buster — with one
+exception: a block-rendered newest entry is mounted whole (its size is already bounded by the
+two-condition trigger, and the residual overage is recorded in the high-water instrumentation).
+A **line-rendered** entry — including a fallen-back newest entry — is ordinary line content:
+`desired_top` may land inside it and fold its head, exactly as today. The ceiling claim in
+KTD1(a) is stated over these rules: folded window ≤ 600 descendants, plus at most one
+block-rendered newest entry and the tails, each bounded by the two-condition trigger. The banner
+keeps counting **lines**; the entry line spans KTD6 publishes are what keep
+`condensed_count + lines-accounted-for == total` computable over folded block units.
 
 Rationale: this confines variable-height widgets to entry-scoped regions, keeps the stable-prefix
 diff meaningful for line-rendered kinds, and gives the gate a per-entry region to prove ownership
@@ -504,11 +523,13 @@ sha256, and the reproduction commands.
 ownership proof — (1) mounted-window ownership: every projected line inside the mounted window of
 a block entry is covered by that entry's document blocks' `source_range` spans, with the
 blank-line accounting rule stated (a probe shows inter-block blank lines are owned by neither
-block — the proof accounts them to the entry's span, not to a block), with **document-level
-ownership for zero-block sources** (an empty or whitespace-only entry mounts a document with no
-blocks — probed — so the document widget itself owns the entry's span, asserted by its presence
-and span), and applied to **both provisional tail documents at every checkpoint**, not only
-committed entries; (2) condensed-range
+block — the proof accounts them to the entry's span, not to a block), and applied to **both
+provisional tail documents at every checkpoint**, not only committed entries. Zero-block sources
+get no document at all: an empty, whitespace-only, or newline-only body parses to zero blocks and
+the resulting document mounts at **height zero** — probed — so widget presence would claim
+visibility R11 doesn't get; instead, an entry (or tail state) whose parse yields no blocks
+**line-renders**, preserving its blank rows as visible line widgets exactly as today, and falls
+under the existing window comparison rather than the block proof; (2) condensed-range
 accounting: folded units are accounted by their line spans in the banner arithmetic — plus the
 semantic comparison (defanged source versus rendered content per construct) and mutation tests
 (dropped text, a wrong block class, a hidden construct each make the gate fail); construct-specific
