@@ -21,7 +21,7 @@ Three defects motivate this file, and each gets its own section below:
 from __future__ import annotations
 
 from talaria.domain.projection import entry_scoped_view, transcript_view
-from talaria.domain.state import SessionState, cancel_turn, set_connection
+from talaria.domain.state import SessionState, cancel_turn, focus_session, set_connection
 
 from .conftest import BASE_TIME, raw_event, replay
 
@@ -433,3 +433,36 @@ def test_a_cancelled_turn_ignores_late_interim_without_bumping_anything() -> Non
     after = replay([raw_event("message.interim", {"text": "late"})], cancelled)
     assert after.assistant_stream_generation == generation
     assert after.late_events_ignored == 1
+
+
+def test_focus_session_bumps_both_generations_when_it_clears_the_tails() -> None:
+    """CR2 finding 2: every other site in this file that clears
+    ``streaming_text``/``reasoning_text`` bumps both stream generations
+    (KTD3) — ``focus_session`` was the one gap. Left unbumped, a
+    block-rendering consumer reads the unchanged generation as "the same tail
+    grew" and appends session B's (empty) tail onto whatever it already had
+    on screen for session A, rather than being told to re-render from
+    scratch — so session A's stale text could keep showing after the switch.
+    """
+    state = replay(
+        [
+            raw_event("message.start"),
+            raw_event("reasoning.delta", {"text": "thinking for A"}),
+            raw_event("message.delta", {"text": "typing for A"}),
+        ]
+    )
+    assert state.streaming_text == "typing for A"
+    assert state.reasoning_text == "thinking for A"
+    assistant_generation = state.assistant_stream_generation
+    reasoning_generation = state.reasoning_stream_generation
+
+    switched = focus_session(state, "sess-b")
+
+    assert switched.streaming_text == ""
+    assert switched.reasoning_text == ""
+    assert switched.assistant_stream_generation == assistant_generation + 1, (
+        "focus_session cleared the assistant tail without bumping its generation"
+    )
+    assert switched.reasoning_stream_generation == reasoning_generation + 1, (
+        "focus_session cleared the reasoning tail without bumping its generation"
+    )

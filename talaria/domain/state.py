@@ -455,6 +455,18 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
     happened there. It is reset (the defect this function shipped with — it
     cleared ``prompts`` but left the counter, so the switched-to session opened
     saying an approval had been withdrawn).
+
+    **``assistant_stream_generation``/``reasoning_stream_generation`` are
+    bumped, exactly as every other site in this file that clears
+    ``streaming_text``/``reasoning_text`` already does (KTD3, CR2 finding
+    2).** Session A's tail is cleared to empty here, but a generation left
+    unchanged tells a block-rendering consumer of
+    :class:`~talaria.domain.projection.ProvisionalTail` "the same tail grew" —
+    append, don't re-render — which is the wrong instruction for a tail that
+    just changed identity from session A's to session B's. Left alone, session
+    B's pane could keep showing session A's stale text after the switch. This
+    was the one buffer-clearing site in the diff that introduced the
+    generation counters without also bumping them.
     """
     if session_id == state.focused_session_id:
         return state
@@ -477,6 +489,8 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
         answering=(),
         withdrawn_approvals=0,
         last_status_note="",
+        assistant_stream_generation=state.assistant_stream_generation + 1,
+        reasoning_stream_generation=state.reasoning_stream_generation + 1,
     )
 
 

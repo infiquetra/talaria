@@ -17,6 +17,7 @@ nothing extra and the eventual content lands exactly once.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, get_args
 
 import pytest
@@ -202,6 +203,70 @@ async def test_reconnect_exhausted_commits_the_partial_reply(gateway: StubGatewa
             "partial reply"
         ], "reconnect_exhausted did not commit the partial reply"
         assert source.reconnects == 0
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_exhaustion_does_not_overtake_queued_frames(
+    gateway: StubGateway,
+) -> None:
+    """CR2 finding 1: the terminal cause must not race ahead of frames the
+    reader already received but the frame-consumer task has not drained yet.
+
+    Before the fix, ``LiveSource._set_state`` called ``on_connection`` inline
+    from :meth:`~talaria.transport.source.LiveSource._handle_disconnect`,
+    which runs on the reader task — a different task from the one draining
+    ``LiveSource``'s frame queue (:meth:`TalariaApp._pump`, driven off
+    ``async for record in self.source``). A ``message.delta`` for 'old' is
+    applied first. A further delta for 'new' and a ``message.complete``
+    carrying the full 'oldnew' arrive next and are enqueued — received before
+    the drop, exactly as the finding describes — but not yet drained when the
+    reconnect schedule exhausts. The old code let the typed
+    ``reconnect_exhausted`` cause commit the domain's current
+    ``streaming_text`` ('old') as its own transcript entry immediately; the
+    frame-consumer task then drained the still-queued 'new'/'complete' frames
+    afterwards and committed 'oldnew' as a *second* entry — 'old' twice.
+
+    The two racing frames are injected with :meth:`LiveSource._ingest`
+    directly rather than sent over the socket, so the race is constructed by
+    hand instead of hoped for: nothing yields control back to the
+    frame-consumer task between enqueuing them and firing the terminal cause,
+    so they are deterministically still queued, every run, when it fires.
+    """
+    source = live_source(gateway)
+    app = live_app(source)
+
+    async with app.run_test():
+        await drain_into(app, until=1)
+        await gateway.send_all(
+            [event("message.start", {}), event("message.delta", {"text": "old"})]
+        )
+        await drain_into(app, until=3)
+        assert app.state.streaming_text == "old"
+
+        epoch = source._connection_epoch
+        source._ingest(json.dumps(event("message.delta", {"text": "new"})), epoch)
+        source._ingest(
+            json.dumps(event("message.complete", {"text": "oldnew"})), epoch
+        )
+        # No await between the two lines above and these two: the
+        # frame-consumer task cannot have run in between, so 'new' and
+        # 'message.complete' are still sitting in the queue, undrained, right
+        # here — exactly the moment the finding says the old code let the
+        # terminal cause overtake them.
+        source._set_state(
+            "disconnected", "gateway unreachable", cause="reconnect_exhausted"
+        )
+        source._end()
+
+        await settle(lambda: bool(app.state.transcript))
+
+        assert [
+            e.text for e in app.state.transcript if e.kind == "assistant"
+        ] == ["oldnew"], (
+            "the terminal cause committed 'old' before the already-queued "
+            "'new'/'complete' frames were drained, duplicating it"
+        )
         await app.shutdown_sources()
 
 
