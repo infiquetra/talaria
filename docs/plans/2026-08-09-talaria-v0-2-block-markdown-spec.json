@@ -1,6 +1,6 @@
 {
   "name": "talaria-v0-2-block-markdown",
-  "description": "v0.2 block-level markdown + transcript differentiation: ADR-first bounded-rendering claim, domain terminal-path commits, safe parser boundary, hybrid pane, kind channels, restated gate re-run green; every unit cross-reviewed by the Codex engine before its dependents run.",
+  "description": "v0.2 block-level markdown + transcript differentiation (plan revision 2, post doc-review): ADR-first bounded-rendering claim (four ceilings, descendant-counted), domain terminal-path commits under a typed cause with exact content preservation, safe parser+rendering boundary, hybrid pane with two live tails, kind channels, restated two-part gate proof with a sideband timeline, re-run green. Every build unit is cross-reviewed by the Codex engine before its dependents run, and dependents consume the review VERDICT, not its completion: a review returning findings blocks its dependents until the findings are fixed and re-reviewed. U4-U6 commit to the branch feat/v0-2-block-markdown-build (KTD8 branch-hold), merged to main only after U6's gate runs green and CR6 passes; U1-U3 merge independently.",
   "repo": "infiquetra/talaria",
   "concurrency": {
     "max_concurrent": 3,
@@ -15,11 +15,12 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "U1: Write ADR-0006 recording the block-aware bounded-rendering claim BEFORE any implementation: the three ceilings (mounted top-level renderables <= 600 read from Textual's own tree; per-boundary reconcile work proportional to tail + newly committed entries; p99 append/apply latency under one 50ms boundary on the adversarial workloads) with their exact measurement points, the amendment to ADR-0005's literal_text-only rule, and the gate-triggered styled-line-run fallback with what evidence invokes it. Mirror the decision to docs/engineering-journal/DECISIONS.md. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U1, KTD1/KTD8, R13) as your authoritative spec.",
+      "prompt": "U1: Write ADR-0006 recording the block-aware bounded-rendering claim BEFORE any widget work: the FOUR ceilings of KTD1 with their exact measurement points - (a) mounted DESCENDANT count <= 600 (a table mounts one widget per cell, so top-level blocks bound nothing) observed at every 50ms coalescing boundary via Textual's own tree, with the recorded reason why 'every instant' is not the enforcement point (Markdown.update parses off the pump and mounts in batches of 200, transiently holding old and new blocks); (b) rendered height bounded via KTD2's fold rule (no mounted entry exceeds mount_cap projected lines except the single newest entry, overage recorded); (c) reconcile work proportional to tail + newly committed entries, measured as source bytes per boundary; (d) p99 apply latency under 50ms on the exact workloads (unclosed fence fed 100 lines/boundary to 10,000 lines; table fed 10 rows/boundary to 1,000 rows; time.monotonic around TranscriptPane.apply; first 10 boundaries warm-up-excluded). Amend ADR-0005 decision 3 (the 500-line-widget 'at every instant' cap - state that 500 stays DEFAULT_MOUNT_CAP as the pane's enforcement cap while 600 is the gate ceiling with headroom, both counted in descendants) AND decision 7 (literal_text-only - untrusted text may additionally reach the screen through the KTD4-configured parser and rendering hooks and nothing else). Record requirements amendments RA1 (underscore emphasis + strikethrough in scope) and RA2 (R3 met by cell wrapping, not cell focus) and the KTD8 fallback trigger with its branch-hold mechanism. Mirror to docs/engineering-journal/DECISIONS.md. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U1, KTD1/KTD8, RA1/RA2, R13) as your authoritative spec.",
       "returns": [
-        "adr_records_three_ceilings_with_measurement_points",
-        "adr_amends_literal_text_rule_explicitly",
-        "fallback_trigger_recorded",
+        "adr_records_four_ceilings_with_measurement_points",
+        "adr_amends_adr0005_decisions_3_and_7",
+        "ra1_and_ra2_amendments_recorded",
+        "fallback_trigger_and_branch_hold_recorded",
         "decisions_md_mirrored"
       ],
       "depends_on": [],
@@ -35,7 +36,7 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "CR1: Drive the operator's herdr-managed Codex reviewer pane to review U1's diff (ADR-0006 and its DECISIONS.md mirror), judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U1.",
+      "prompt": "CR1: Drive the operator's herdr-managed Codex reviewer pane to review U1's diff (ADR-0006 and its DECISIONS.md mirror), judge its findings, and return the ones that survive with file:line. Review against U1's returns: the four ceilings with measurement points (descendant count at boundaries, height via fold rule, work in source bytes, latency with exact workloads/clock/warm-up/quantile), BOTH ADR-0005 amendments (decisions 3 and 7), RA1/RA2 recorded, the fallback trigger and branch-hold. Your verdict GATES U3 and U4: findings block dependents until fixed and re-reviewed - dependents consume the verdict, not completion. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle by agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U1.",
       "returns": [
         "pane_reply_captured_verbatim",
         "surviving_findings_with_file_line",
@@ -48,24 +49,31 @@
     },
     {
       "unit_id": "U2",
-      "label": "Domain: terminal-path commits + entry-scoped projection",
+      "label": "Domain: terminal-path commits, exact preservation, entry-scoped projection",
       "tier": {
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "U2: In the domain only (ADR-0002: no framework import), commit partial streaming and reasoning buffers as entries on turn-terminal paths (_on_error at talaria/domain/state.py:1181, confirmed cancellation, terminal disconnect) while a transient resume never duplicates; grow TranscriptView with per-entry records (kind, raw body, committed flag, line span) while the flattened decorated line buffer stays byte-identical for terminal_read and content_is_complete - tests/domain/test_projection.py::test_every_transcript_entry_survives_into_the_line_buffer must pass UNMODIFIED. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U2, KTD6/KTD7, R6/R18) as your authoritative spec.",
+      "prompt": "U2: In the domain plus the transport cause seam (ADR-0002: the domain imports no framework), do four things. (1) Typed terminal cause: the transport's four disconnect sites (talaria/transport/source.py:383 credential failure, :404 failed dial, :445 orderly close, :708 exhausted reconnect) feed a typed end-of-stream cause; terminal causes (auth_failed, dial_failed, orderly_close, reconnect_exhausted, operator teardown) and _on_error (talaria/domain/state.py:1586 - NOT :1181, that citation was stale) commit partial streaming AND reasoning buffers as entries before clearing; a transient reconnect resuming the same response commits nothing and never duplicates (the segment/interim machinery is the dedupe backstop, pinned). cancel_turn ALREADY commits both buffers (state.py:580-585) - pin it as a regression test, do not change it. (2) Exact content preservation: content-channel strings are preserved exactly (coerce_text's stripping at talaria/domain/normalize.py:224 stays for diagnostics only; the interim path state.py:1435, the final-body left-strip :1510, and cancel_turn's strips :579-583 stop mutating content) - leading indentation, trailing blank lines, whitespace-only bodies, and open fences survive across interim, final-replacement, error, cancellation, and disconnect, each pinned. (3) Entry-scoped projection: TranscriptView grows per-entry records (stable monotonic entry id stable under condensation, kind, raw body, committed flag, line span) plus TWO provisional tails (assistant and reasoning, each with raw text and a stream generation counter that increments on message.interim or any replace-wins path) - today projection.py:276 projects only the assistant buffer; R18's projection half lands here. message.interim respects the committed/interim boundary and bumps the generation. A cancellation mid-table (after the header row) commits the partial table (R14's mid-table leg). (4) The reasoning weld stays decoration on line-rendered surfaces only; the flattened decorated line buffer stays byte-identical for terminal_read and content_is_complete - tests/domain/test_projection.py::test_every_transcript_entry_survives_into_the_line_buffer must pass UNMODIFIED. Note: the stress corpus's projected counts change when error paths commit partials; the re-baseline is U6's, not yours. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U2, KTD6/KTD7, R6/R14/R16/R18) as your authoritative spec.",
       "returns": [
-        "terminal_paths_commit_partial_buffers",
+        "typed_terminal_causes_commit_partial_buffers",
         "transient_resume_never_duplicates",
-        "entry_view_carries_raw_undecorated_bodies",
+        "cancel_turn_pinned_as_regression_not_changed",
+        "content_channel_preserved_exactly_with_whitespace_pins",
+        "entry_view_carries_id_raw_body_span_and_two_tails_with_generations",
+        "interim_respects_boundary_and_bumps_generation",
         "line_buffer_and_v01_pin_unchanged"
       ],
       "depends_on": [],
       "files": [
         "talaria/domain/state.py",
         "talaria/domain/projection.py",
-        "tests/domain/test_state.py",
-        "tests/domain/test_projection.py"
+        "talaria/domain/normalize.py",
+        "talaria/transport/source.py",
+        "tests/domain/test_transcript_state.py",
+        "tests/domain/test_turn_lifecycle.py",
+        "tests/domain/test_projection.py",
+        "tests/transport/test_source.py"
       ]
     },
     {
@@ -75,7 +83,7 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "CR2: Drive the operator's herdr-managed Codex reviewer pane to review U2's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U2.",
+      "prompt": "CR2: Drive the operator's herdr-managed Codex reviewer pane to review U2's diff, judge its findings, and return the ones that survive with file:line. Review against U2's returns: typed terminal causes commit partials, transient dedupe, cancel_turn regression-pinned not changed, exact whitespace preservation, entry id + two tails with generations, interim boundary + generation bump, v0.1 pin unmodified. Your verdict GATES U4: findings block dependents until fixed and re-reviewed - dependents consume the verdict, not completion. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle by agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U2.",
       "returns": [
         "pane_reply_captured_verbatim",
         "surviving_findings_with_file_line",
@@ -93,15 +101,20 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "U3: Create talaria/ui/blocks.py - the single constructor for safely configured Markdown entry documents: parser_factory returning MarkdownIt('gfm-like') with html=False and linkify=False, open_links=False, defang before parse at parity with talaria/ui/literal.py. Prove every forbidden channel with a test: HTML literalized visible (never dropped), Rich console markup unparsed, ANSI defanged, links styled but inert with nothing opened or fetched, bare URLs stay text, entry isolation across an unclosed fence, and a Textual 8.2.8 pin test on append/update semantics that fails loudly on upgrade drift. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U3, KTD3/KTD4, R9/R10/R15) as your authoritative spec.",
+      "prompt": "U3: Create talaria/ui/blocks.py - the single constructor for safely configured Markdown entry documents. Parser side: parser_factory returning MarkdownIt('gfm-like') with html=False and linkify=False, open_links=False, defang before parse at parity with talaria/ui/literal.py, and an ALLOWLIST PIN: a snapshot test of the parser's exact enabled rule set (RA1's underscore emphasis and strikethrough are in it; any preset drift or new rule fails the pin). Rendering side (the parser config is NOT the whole boundary): Textual installs @click action metadata for links unconditionally (_markdown.py:342) and emits Markdown.LinkClicked regardless of open_links (:1194), and renders images as alt text with the target dropped (:346) - so the factory's document subclass renders links styled but with NO action metadata (test: clicking emits no LinkClicked and opens/fetches nothing) and renders images as 'alt (target)' text per R10. Prove every forbidden channel: HTML literalized visible (never dropped), Rich console markup unparsed, ANSI defanged, bare URLs stay text, entry isolation across an unclosed fence (R15), and the Textual 8.2.8 pin test - append reparses from the last unfinished block, update replaces, and the public Markdown.get_stream (:1155) exists (the corrected KTD3 evidence) - failing loudly on upgrade drift. R4 scope note: configuration and subclassed rendering hooks only; no parser or block-assembly engine. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U3, KTD3/KTD4, RA1, R4/R9/R10/R15) as your authoritative spec.",
       "returns": [
         "html_literalized_visible_never_dropped",
-        "links_and_bare_urls_inert_text",
+        "links_inert_no_linkclicked_emitted",
+        "images_render_alt_and_target_as_text",
+        "bare_urls_stay_text",
         "rich_markup_and_ansi_never_interpreted",
+        "allowlist_rule_set_pinned",
         "entry_isolation_holds_across_unclosed_fence",
-        "textual_pin_test_fails_on_drift"
+        "textual_pin_test_covers_append_update_getstream"
       ],
-      "depends_on": [],
+      "depends_on": [
+        "CR1"
+      ],
       "files": [
         "talaria/ui/blocks.py",
         "tests/ui/test_blocks.py"
@@ -114,7 +127,7 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "CR3: Drive the operator's herdr-managed Codex reviewer pane to review U3's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U3.",
+      "prompt": "CR3: Drive the operator's herdr-managed Codex reviewer pane to review U3's diff, judge its findings, and return the ones that survive with file:line. Review against U3's returns: no LinkClicked on click, image alt+target as text, allowlist rule-set pin, entry isolation, the append/update/get_stream pin, and the R4 glue-only claim (no parsing or assembly engine written). Your verdict GATES U4: findings block dependents until fixed and re-reviewed - dependents consume the verdict, not completion. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle by agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U3.",
       "returns": [
         "pane_reply_captured_verbatim",
         "surviving_findings_with_file_line",
@@ -132,15 +145,19 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "U4: Rebuild TranscriptPane as the hybrid: committed assistant/reasoning entries mount one Markdown document each (built by talaria/ui/blocks.py), every other kind keeps one TranscriptLine per line, the in-flight stream renders in a single live Markdown tail widget driven by public Markdown.append at the 50ms boundary with Markdown.update for interim replacement (replace wins, exactly once); commit hands the tail source to the entry document without a pane rebuild; restate cap, condensation (banner keeps line arithmetic), and reader anchor over mixed units per ADR-0006's ceilings; tables keyboard-reachable at 80 columns. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U4, KTD1/KTD2/KTD3, R1/R2/R5/R16/R17) as your authoritative spec.",
+      "prompt": "U4: Rebuild TranscriptPane as the hybrid, committing to the feat/v0-2-block-markdown-build branch (KTD8 branch-hold). Committed assistant/reasoning entries mount one Markdown document each (built by talaria/ui/blocks.py), every other kind keeps one TranscriptLine per line, and the in-flight streams render in TWO independently keyed live tail documents (assistant and reasoning can stream in the same turn - R18) driven by public Markdown.append at the 50ms boundary using the projection's stream generation: same generation appends the suffix beyond what was last applied, changed generation calls update() with the authoritative text - NEVER a prefix guess. Commit hands each tail's source to its entry document keyed by entry id, no pane rebuild. Restate rendered_lines as a content reconstruction (line widgets contribute their line; block entries contribute their projected source lines via line spans) so pane.rendered_lines == view.lines[condensed_count:] stays true, and update the three existing suites that assert it IN PLACE (tests/ui/test_markdown.py:297, tests/transport/test_session_startup.py:607, tests/transport/test_source_equivalence.py:277+299) - never delete them. Condensation over mixed units: desired_top computed in lines, rounds UP to the next unit boundary, except the newest entry is always mounted whole with overage recorded (KTD2's rule); banner line arithmetic still sums. Enforce KTD1(a)'s DESCENDANT ceiling at every coalescing boundary including the oversized-newest overage. R16 clauses 2-3: a terminal path stops and awaits pending widget writes; a stale stream write after its widget was condensed away or removed updates nothing and raises nothing. Retire the inline styler from the live path (MARKDOWN_KINDS moves to blocks; talaria/ui/markdown.py is retained as the KTD8 fallback's styling half with a comment saying why; its pane-level assertions move to the reconstruction). Per-construct render oracles: heading, bullet list, ordered list, block quote, fence, table each asserted by block class and geometry and each proven to fail when flattened (R1). Tables per RA2: cells wrap (no ellipsis/tooltip dependence), fully legible at 80 columns. Reader anchor and follow-bottom survive reinterpretation, resize, condensation (R17). Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U4, KTD1/KTD2/KTD3, RA2, R1/R2/R3/R5/R16/R17/R18) as your authoritative spec.",
       "returns": [
         "fence_streams_progressively_at_boundaries",
-        "interim_replacement_renders_exactly_once",
-        "commit_hands_tail_to_entry_without_rebuild",
-        "mounted_renderables_under_cap_at_every_instant",
+        "interim_replacement_renders_exactly_once_via_generation",
+        "both_tails_stream_independently",
+        "commit_hands_tail_to_entry_by_id_without_rebuild",
+        "rendered_lines_reconstruction_keeps_content_claim_and_existing_suites",
+        "descendant_ceiling_holds_at_boundaries_with_oversized_newest_rule",
         "condensed_line_arithmetic_still_sums",
-        "reader_anchor_and_follow_bottom_survive_blocks",
-        "table_cells_keyboard_reachable_at_80_columns"
+        "stale_stream_and_terminal_path_write_rules_pinned",
+        "per_construct_oracles_fail_when_flattened",
+        "tables_wrap_legible_at_80_columns",
+        "reader_anchor_and_follow_bottom_survive_blocks"
       ],
       "depends_on": [
         "CR1",
@@ -150,8 +167,12 @@
       "files": [
         "talaria/ui/transcript.py",
         "talaria/ui/app.py",
+        "talaria/ui/markdown.py",
         "tests/ui/test_transcript_blocks.py",
-        "tests/ui/test_transcript_bounds.py"
+        "tests/ui/test_transcript_bounds.py",
+        "tests/ui/test_markdown.py",
+        "tests/transport/test_session_startup.py",
+        "tests/transport/test_source_equivalence.py"
       ]
     },
     {
@@ -161,7 +182,7 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "CR4: Drive the operator's herdr-managed Codex reviewer pane to review U4's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U4.",
+      "prompt": "CR4: Drive the operator's herdr-managed Codex reviewer pane to review U4's diff, judge its findings, and return the ones that survive with file:line. Review against U4's returns: generation-driven append/update (no prefix guessing), two independent tails, rendered_lines reconstruction with the three existing suites updated in place, descendant ceiling at boundaries with the oversized-newest rule, condensation round-up rule, R16 stale-stream and terminal-path rules, per-construct oracles that fail when flattened, RA2 table wrapping, anchor/follow-bottom. Your verdict GATES U5: findings block dependents until fixed and re-reviewed - dependents consume the verdict, not completion. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle by agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U4.",
       "returns": [
         "pane_reply_captured_verbatim",
         "surviving_findings_with_file_line",
@@ -177,13 +198,14 @@
       "label": "Kind differentiation channels",
       "tier": {
         "model": "sonnet",
-        "effort": "medium"
+        "effort": "high"
       },
-      "prompt": "U5: Map the twelve TranscriptKind members to the five kind groups with per-widget CSS classes and theme variables; carry the channel by background tint and gutter marker so a fence's syntax colours cannot erase it; assert by computed styles with zero per-widget height delta against the same screen unstyled; the mapping test is total (a new kind fails it rather than rendering ungrouped). Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U5, KTD5, R7/R8) as your authoritative spec.",
+      "prompt": "U5: On the feat/v0-2-block-markdown-build branch (KTD8 branch-hold), map the twelve TranscriptKind members to the five kind groups with per-widget CSS classes and theme variables FROM THE EXISTING THEME'S VOCABULARY (no new theme variables - asserted against the stylesheet); carry the channel by background tint and gutter marker so a fence's syntax colours cannot erase it; assert by computed styles with zero per-widget height delta against the same screen unstyled; the mapping test is total (a new kind fails it rather than rendering ungrouped). Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U5, KTD5, R7/R8) as your authoritative spec.",
       "returns": [
         "adjacent_groups_distinguishable_by_computed_style",
         "reasoning_fence_keeps_kind_channel",
         "styling_changes_no_widget_height",
+        "no_new_theme_variables",
         "twelve_kind_mapping_is_total"
       ],
       "depends_on": [
@@ -202,7 +224,7 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "CR5: Drive the operator's herdr-managed Codex reviewer pane to review U5's diff, judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U5.",
+      "prompt": "CR5: Drive the operator's herdr-managed Codex reviewer pane to review U5's diff, judge its findings, and return the ones that survive with file:line. Review against U5's returns: computed-style distinguishability, kind channel surviving fence colours, zero height delta, NO new theme variables, total twelve-member mapping. Your verdict GATES U6: findings block dependents until fixed and re-reviewed - dependents consume the verdict, not completion. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle by agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U5.",
       "returns": [
         "pane_reply_captured_verbatim",
         "surviving_findings_with_file_line",
@@ -215,19 +237,23 @@
     },
     {
       "unit_id": "U6",
-      "label": "The restated gate, the feature corpus, and the green re-run",
+      "label": "The restated gate, the sideband timeline, and the green re-run",
       "tier": {
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "U6: Replace interface_shows_everything's one-line-one-widget claim with the region-ownership proof (every projected source region of a committed block entry owned by a mounted visible block whose source_range covers it, construct-specific visual assertions; line-rendered kinds keep the window comparison); grow the deterministic feature corpus the plan's R14 scopes (every construct, early termination by cancel/error/disconnect, parser attacks, kind groups, 80-column resize, long-unclosed-fence and growing-table workloads with latency thresholds); assert progressiveness at timed checkpoints; compare replay determinism on normalized block structure under pinned width/theme/framework; re-run the gate green over existing AND feature corpora and record the measured verdict with high-water figures. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U6, KTD1/KTD8, R5/R11/R12/R13/R14/R17) as your authoritative spec.",
+      "prompt": "U6: On the feat/v0-2-block-markdown-build branch (KTD8 branch-hold), replace interface_shows_everything's one-line-one-widget claim with the TWO-PART ownership proof: (1) mounted-window ownership - every projected line inside the mounted window of a committed block entry is covered by that entry's document blocks' source_range spans, with the blank-line accounting rule stated explicitly (probed fact: 'a\\n\\n# h\\n' yields ranges (0,1) and (2,3) with the blank line owned by neither block; the proof accounts inter-block blanks to the entry's span; an empty document yields no blocks); (2) condensed-range accounting - folded units accounted by line spans in the banner arithmetic. Add the semantic comparison (defanged source vs rendered content per construct) and MUTATION TESTS: dropped text, a wrong block class, and a hidden construct must each make the gate fail. Per-construct oracles for every R1 construct, each proven to fail when flattened. R11a GUARD: content_is_complete (gate.py:290) and its callers are untouched - the diff must not touch the function and the v0.1 projection pin passes verbatim. Confirmed-cancel and terminal disconnect are NOT wire frames (interrupt replies decode to NonEventFrame ignored at state.py:1246; transport callbacks are unrecorded) - build the deterministic SIDEBAND TIMELINE: a scripted action track (timestamped confirmed-cancel and typed-disconnect injections ordered against frame indices) the replay source applies alongside the frame log; determinism includes the sideband; scope is exactly these two action kinds, nothing richer. Grow the feature corpus (every construct, early termination by cancel/error/typed-disconnect INCLUDING the mid-table case, parser attacks, kind groups, 80-column resize, the KTD1(d) workloads at their exact sizes); assert progressiveness at timed checkpoints including the two-tail overlap case (R18); replay determinism on normalized block structure under pinned width/theme/framework, sideband included; re-run the gate green over existing AND feature corpora (the U2 re-baseline of the stress corpus lands here); record the verdict in docs/analysis/2026-08-09-block-markdown-gate-results.md pinning theme textual-dark, exact terminal sizes including 80 columns, Textual 8.2.8, corpus identities by sha256, and reproduction commands. Read docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md (unit U6, KTD1/KTD8, R5/R11b/R12/R13/R14/R18 with the R11a guard; AE6) as your authoritative spec.",
       "returns": [
-        "region_ownership_proof_replaces_line_window_claim",
-        "progressiveness_asserted_at_timed_checkpoints",
+        "two_part_ownership_proof_replaces_line_window_claim",
+        "blank_line_accounting_rule_stated_and_tested",
+        "mutation_tests_prove_the_proof_can_fail",
+        "content_is_complete_untouched_and_v01_pin_verbatim",
+        "sideband_timeline_replays_cancel_and_typed_disconnect_deterministically",
+        "per_construct_oracles_fail_when_flattened",
+        "progressiveness_at_timed_checkpoints_incl_two_tail_overlap",
         "adversarial_workloads_hold_ceilings_with_high_water",
         "replay_determinism_on_normalized_block_structure",
-        "early_termination_renders_all_received_content",
-        "gate_green_over_existing_and_feature_corpora"
+        "gate_green_over_existing_and_feature_corpora_with_pinned_environment"
       ],
       "depends_on": [
         "CR5"
@@ -235,9 +261,10 @@
       "files": [
         "talaria/replay/gate.py",
         "talaria/replay/stress.py",
+        "talaria/replay/source.py",
         "tests/replay/test_gate.py",
         "tests/ui/test_transcript_bounds.py",
-        "docs/measurements/2026-08-XX-block-markdown-gate-results.md"
+        "docs/analysis/2026-08-09-block-markdown-gate-results.md"
       ]
     },
     {
@@ -247,7 +274,7 @@
         "model": "sonnet",
         "effort": "high"
       },
-      "prompt": "CR6: Drive the operator's herdr-managed Codex reviewer pane to review U6's diff (the restated gate and corpus), judge its findings, and return the ones that survive with file:line. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle with `herdr pane wait-output` or agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U6.",
+      "prompt": "CR6: Drive the operator's herdr-managed Codex reviewer pane to review U6's diff (the restated gate, sideband timeline, and corpus), judge its findings, and return the ones that survive with file:line. Review against U6's returns: the two-part proof with the blank-line rule, mutation tests, the R11a guard (content_is_complete untouched, v0.1 pin verbatim), the sideband timeline scoped to exactly two action kinds, per-construct oracles, the pinned environment in the results doc. Your verdict GATES the outcome leaf's completion AND the feat/v0-2-block-markdown-build branch merge to main: findings block completion until fixed and re-reviewed; the branch merges only on your pass verdict over a green gate. Mechanics: resolve the reviewer pane via `herdr agent list` / `herdr tab list` using the machine-local identity the driver injects from the saga state; send the review request with `herdr pane send-text` (then `send-keys` Enter), wait for the agent to settle by agent_status polling, and read the reply with `herdr pane read --source recent-unwrapped` (a `visible` read presents stale content as a confident answer - do not use it). Capture the pane's reply verbatim as the review evidence (an uncaptured review is treated as not having run). The unit's spec is docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md unit U6.",
       "returns": [
         "pane_reply_captured_verbatim",
         "surviving_findings_with_file_line",
