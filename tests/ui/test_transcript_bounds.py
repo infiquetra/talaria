@@ -251,11 +251,22 @@ async def test_an_entry_committed_mid_stream_shifts_the_provisional_block_correc
 async def test_the_stable_floor_never_advances_into_the_provisional_block() -> None:
     """The invariant behind the fix, asserted directly rather than inferred.
 
-    The test above checks the symptom on one sequence. This checks the rule that
-    makes every such sequence safe, so a future refactor that reintroduces the
-    bug by another route still fails: a line the pane treats as settled must be
-    one the projection has committed, because committed lines are the only ones
-    that can never move.
+    The test above checks the symptom on one sequence. This checks the rule
+    that makes every such sequence safe, so a future refactor that
+    reintroduces the bug by another route still fails: content the pane
+    treats as settled (mounted into ``_entries``, keyed by a committed
+    entry id) must be content the domain has actually committed, because
+    committed entries are the only ones that can never move.
+
+    U4 restates the mechanism this pins: v0.1 tracked settledness as a
+    single line-index floor (``_stable``) compared against
+    ``committed_lines``; U4 tracks it per entry id instead
+    (``TranscriptPane._entries`` is populated only from
+    ``EntryScopedView.entries``, KTD6's *committed* surface — a live,
+    uncommitted stream lives only in ``TranscriptPane._tails``). No frame
+    in this fixture ever commits (there is no ``message.complete``), so
+    the invariant this pins is that growing streamed content never leaks
+    into ``_entries`` while it stays provisional.
     """
     frames: list[dict[str, Any]] = [
         event("message.start", {}),
@@ -269,14 +280,16 @@ async def test_the_stable_floor_never_advances_into_the_provisional_block() -> N
         for record in records(frames):
             app.ingest(record)
             await app.render_snapshot()
-            view = transcript_view(app.state)
-            assert app.transcript._stable <= view.committed_lines
+            assert not app.transcript._entries, (
+                "no entry may be treated as committed before the domain commits it"
+            )
             seen += 1
         # A run in which the streaming block never grew would satisfy the
         # assertion vacuously, so prove the block was really there.
         assert seen == len(frames)
         assert transcript_view(app.state).committed_lines == 0
         assert transcript_view(app.state).total_lines == 3
+        assert app.transcript._tails["assistant"] is not None, "the block was really there"
         await app.shutdown_sources()
 
 
@@ -347,14 +360,14 @@ async def test_two_renders_can_never_reconcile_the_pane_at_the_same_time(
         peak = 0
         entered = asyncio.Event()
 
-        async def counting_apply(view: Any) -> None:
+        async def counting_apply(view: Any, entries: Any) -> None:
             nonlocal depth, peak
             depth += 1
             peak = max(peak, depth)
             entered.set()
             try:
                 await asyncio.sleep(0)
-                await original(view)
+                await original(view, entries)
             finally:
                 depth -= 1
 

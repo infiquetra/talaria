@@ -1,0 +1,615 @@
+"""U4's hybrid pane: block documents, line widgets, two live tails, and
+condensation over mixed units (KTD1, KTD2, KTD3; R1, R2, R5, R16, R17, R18).
+
+Every test here drives :meth:`TranscriptPane.apply` directly with hand-built
+:class:`~talaria.domain.projection.TranscriptView` and
+:class:`~talaria.domain.projection.EntryScopedView` snapshots, rather than
+through a live app — the pane's contract is exactly "given these two
+projections, mount and fold correctly", and testing at that seam is what
+lets a fixture describe an exact accounted-row shape (the aggregate-ceiling,
+odd-cut, and partial-retention regressions each need one) without assembling
+a gateway transcript that happens to produce it.
+
+**One caveat this suite makes visible rather than hiding.** ``view.lines`` —
+what :func:`~talaria.domain.projection.transcript_view` (a U2 function, not
+touched here) produces — never includes the in-flight *reasoning* buffer;
+only the assistant tail is folded into that flattened line buffer, a gap
+this unit's grounding read found and could not close without editing
+``talaria/domain/projection.py``, outside U4's file list. The reconstruction
+invariant ``pane.rendered_lines == view.lines[pane.condensed_count:]`` is
+therefore proven here for every scenario where the two projections actually
+agree (committed content, and assistant-tail streaming) and *not* claimed for
+a concurrently streaming reasoning tail — that gap is a real, open follow-up,
+not a rendering defect in this pane.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+import pytest
+from textual.app import App, ComposeResult
+from textual.widgets._markdown import (
+    MarkdownBlockQuote,
+    MarkdownBulletList,
+    MarkdownFence,
+    MarkdownH1,
+    MarkdownOrderedList,
+    MarkdownParagraph,
+)
+
+from talaria.domain.projection import (
+    EntryScopedView,
+    ProvisionalTail,
+    TranscriptEntryRecord,
+    TranscriptView,
+)
+from talaria.ui.transcript import (
+    _ENTRY_PREFIX,
+    DEFAULT_MOUNT_CAP,
+    DESCENDANT_ESTIMATE_TRIGGER,
+    TranscriptPane,
+    descendant_estimate,
+    is_zero_block,
+    trips_fallback_trigger,
+    wrapped_row_estimate,
+)
+
+
+class _Harness(App[None]):
+    def __init__(self, mount_cap: int = DEFAULT_MOUNT_CAP) -> None:
+        super().__init__()
+        self._mount_cap = mount_cap
+
+    def compose(self) -> ComposeResult:
+        yield TranscriptPane(mount_cap=self._mount_cap, id="t")
+
+
+def _empty_tail(kind: str) -> ProvisionalTail:
+    return ProvisionalTail(kind=kind, raw_text="", generation=0)  # type: ignore[arg-type]
+
+
+def _view_for(
+    entries: Sequence[TranscriptEntryRecord], assistant_tail: ProvisionalTail | None = None
+) -> TranscriptView:
+    """Mirrors ``transcript_view()``'s actual shape: committed entries plus
+    (only) the assistant tail — see the module docstring's caveat.
+    """
+    lines: list[str] = []
+    kinds: list[str] = []
+    for record in entries:
+        welded = f"{_ENTRY_PREFIX.get(record.kind, '')}{record.raw_body}"
+        body_lines = welded.split("\n") if welded else [""]
+        lines.extend(body_lines)
+        kinds.extend([record.kind] * len(body_lines))
+    committed = len(lines)
+    tail = assistant_tail or _empty_tail("assistant")
+    if tail.raw_text:
+        tail_lines = tail.raw_text.split("\n")
+        lines.extend(tail_lines)
+        kinds.extend(["assistant"] * len(tail_lines))
+    return TranscriptView(
+        lines=tuple(lines), entry_count=len(entries), committed_lines=committed, kinds=tuple(kinds)
+    )
+
+
+async def _apply(
+    pane: TranscriptPane,
+    entries: Sequence[TranscriptEntryRecord],
+    *,
+    assistant_tail: ProvisionalTail | None = None,
+    reasoning_tail: ProvisionalTail | None = None,
+) -> TranscriptView:
+    view = _view_for(entries, assistant_tail)
+    esv = EntryScopedView(
+        entries=tuple(entries),
+        assistant_tail=assistant_tail or _empty_tail("assistant"),
+        reasoning_tail=reasoning_tail or _empty_tail("reasoning"),
+    )
+    await pane.apply(view, esv)
+    return view
+
+
+def _fallback_entries(
+    n: int, *, start_id: int = 1, body_len: int = 100_000
+) -> tuple[TranscriptEntryRecord, ...]:
+    out = []
+    for i in range(n):
+        out.append(
+            TranscriptEntryRecord(
+                entry_id=start_id + i,
+                kind="assistant",
+                raw_body="x" * body_len,
+                committed=True,
+                line_span=(i, 1),
+            )
+        )
+    return tuple(out)
+
+
+# ── construct-aware estimate calibration (KTD1(a)) ──────────────────────────
+
+
+def _table(rows: int, cols: int) -> str:
+    header = "|" + "|".join("h" for _ in range(cols)) + "|"
+    delim = "|" + "|".join("---" for _ in range(cols)) + "|"
+    body = "\n".join("|" + "|".join("x" for _ in range(cols)) + "|" for _ in range(rows))
+    return f"{header}\n{delim}\n{body}\n"
+
+
+def test_601_column_table_descendant_estimate_trips_the_trigger() -> None:
+    """Probed live against Textual 8.2.8: a 3-line, 601-column table mounts
+    1,204 descendants. The estimate must reproduce that exactly (1,202 cells
+    plus 2 table-container overhead), not merely exceed the trigger by luck.
+    """
+    text = _table(1, 601)
+    assert descendant_estimate(text) == 1_204
+    assert descendant_estimate(text) > DESCENDANT_ESTIMATE_TRIGGER
+
+
+def test_exact_boundary_599_column_table_plus_paragraph() -> None:
+    """The pinned exact-boundary regression: top-level blocks plus cells
+    estimate to exactly 1,201 (1,200 table + 1 paragraph), matching the
+    installed widget's own probed 1,201 descendants, and 1,201 > 1,200 fires
+    the trigger — a naive top-level-block count (2) would not.
+    """
+    text = _table(1, 599) + "\n" + ("word " * 20) + "\n"
+    estimate = descendant_estimate(text)
+    assert estimate == 1_201
+    assert estimate > DESCENDANT_ESTIMATE_TRIGGER
+
+
+def test_10000_line_fence_trips_on_wrapped_rows_not_descendants() -> None:
+    """A 10,000-line open fence mounts as one block (two descendants,
+    probed) yet paints 10,000+ rows — the descendant condition alone would
+    never catch it, which is exactly why the trigger is two conditions,
+    either sufficient.
+    """
+    fence = "```\n" + "\n".join(f"line{i}" for i in range(10_000)) + "\n```\n"
+    assert descendant_estimate(fence) <= DESCENDANT_ESTIMATE_TRIGGER
+    assert wrapped_row_estimate(fence, 80) > DEFAULT_MOUNT_CAP
+    assert trips_fallback_trigger(fence, content_width=80)
+
+
+def test_double_width_line_estimated_in_display_cells_not_characters() -> None:
+    """A double-width-character line must not be undercounted by a character
+    count — the module's own docstring names a 37,000-character CJK line
+    painting 949 rows against a 475-row character estimate; this pins the
+    *direction* of the fix (display cells, not ``len()``) against a smaller
+    reproducible fixture.
+    """
+    cjk = "中" * 25_000
+    cell_estimate = wrapped_row_estimate(cjk, 80)
+    naive_char_estimate = -(-len(cjk) // 80)
+    assert cell_estimate > naive_char_estimate
+    assert trips_fallback_trigger(cjk, content_width=80)
+
+
+def test_ordinary_short_entry_does_not_trip_the_trigger() -> None:
+    assert not trips_fallback_trigger("# heading\n\nshort paragraph\n", content_width=80)
+
+
+def test_zero_block_sources_are_recognized() -> None:
+    assert is_zero_block("")
+    assert is_zero_block("   \n  \n")
+    assert not is_zero_block("# heading\n")
+
+
+# ── mounting: block vs. line, per KTD2's rules ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_committed_assistant_entry_mounts_one_markdown_document() -> None:
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1,
+                kind="assistant",
+                raw_body="# Title\n\nBody text.",
+                committed=True,
+                line_span=(0, 3),
+            ),
+        )
+        view = await _apply(pane, entries)
+        unit = pane._entries[1]
+        assert unit.kind == "block"
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_zero_block_entry_line_renders_preserving_blank_rows() -> None:
+    """An empty/whitespace-only assistant entry never mounts a height-zero
+    document (probed) — it line-renders, and every blank row it had stays a
+    visible line widget, no banner (this is not a fallback, just empty
+    content).
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body="   \n\n  ", committed=True, line_span=(0, 3)
+            ),
+        )
+        view = await _apply(pane, entries)
+        unit = pane._entries[1]
+        assert unit.kind == "line"
+        assert unit.banner is None
+        assert len(unit.lines) == 3
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_non_markdown_kind_stays_line_rendered_with_its_weld() -> None:
+    """``user``/``tool`` never enter MARKDOWN_KINDS; ``rendered_lines`` still
+    has to match ``TranscriptView.lines``, weld included (a real bug found
+    while building this unit: entry_scoped_view's raw_body is deliberately
+    unwelded, and the pane has to re-apply the weld itself for line-rendered
+    surfaces or this equality silently breaks for every non-agent kind).
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="user", raw_body="what changed?", committed=True, line_span=(0, 1)
+            ),
+        )
+        view = await _apply(pane, entries)
+        assert view.lines[0] == "› what changed?"
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+# ── streaming: progressive fences, generation-based replace, two tails ─────
+
+
+@pytest.mark.asyncio
+async def test_fence_streams_progressively_at_boundaries() -> None:
+    """A fence streamed opener, then body, then closer renders structure at
+    each surviving boundary (AE1) — the tail is a real block document from
+    the first delta, growing by ``append``, never re-parsed from scratch.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        gen = 1
+        opener = ProvisionalTail(kind="assistant", raw_text="```python\n", generation=gen)
+        await _apply(pane, (), assistant_tail=opener)
+        tail = pane._tails["assistant"]
+        assert tail is not None and tail.kind == "block"
+        opener_widget = tail.block
+
+        body = ProvisionalTail(kind="assistant", raw_text="```python\nx = 1\n", generation=gen)
+        await _apply(pane, (), assistant_tail=body)
+        tail = pane._tails["assistant"]
+        assert tail.block is opener_widget, "same generation appends in place, no rebuild"
+        assert tail.applied_text == body.raw_text
+
+        closer = ProvisionalTail(
+            kind="assistant", raw_text="```python\nx = 1\n```\n", generation=gen
+        )
+        await _apply(pane, (), assistant_tail=closer)
+        tail = pane._tails["assistant"]
+        assert tail.block is opener_widget
+        fences = list(tail.block.query(MarkdownFence))
+        assert len(fences) == 1, "closed fence is one bounded region"
+
+
+@pytest.mark.asyncio
+async def test_interim_replacement_renders_exactly_once_via_generation() -> None:
+    """A changed generation calls ``update()`` with the authoritative text —
+    never a prefix guess appended on top of stale content (AE7).
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="draft one", generation=1),
+        )
+        # message.interim replaces wholesale with unrelated text and a bumped
+        # generation -- appending would silently corrupt this into "draft
+        # oneinterim replacement, authoritative".
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(
+                kind="assistant", raw_text="interim replacement, authoritative", generation=2
+            ),
+        )
+        tail = pane._tails["assistant"]
+        assert tail.applied_text == "interim replacement, authoritative"
+        painted = "\n".join(str(p.render()) for p in tail.block.query(MarkdownParagraph))
+        assert "draft one" not in painted
+        assert "interim replacement, authoritative" in painted
+
+
+@pytest.mark.asyncio
+async def test_both_tails_stream_independently_in_the_same_turn() -> None:
+    """R18: reasoning and assistant can stream in the same turn; neither may
+    steal the other's progressive rendering.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="answering", generation=1),
+            reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="thinking", generation=1),
+        )
+        a_widget = pane._tails["assistant"].block
+        r_widget = pane._tails["reasoning"].block
+        assert a_widget is not r_widget
+
+        # Advance only the reasoning tail -- the assistant tail's widget and
+        # text must not move.
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="answering", generation=1),
+            reasoning_tail=ProvisionalTail(
+                kind="reasoning", raw_text="thinking more", generation=1
+            ),
+        )
+        assert pane._tails["assistant"].block is a_widget
+        assert pane._tails["assistant"].applied_text == "answering"
+        assert pane._tails["reasoning"].applied_text == "thinking more"
+
+
+@pytest.mark.asyncio
+async def test_commit_hands_tail_source_to_entry_document_without_rebuild() -> None:
+    """KTD2: on commit, the tail's final source becomes its entry's document
+    — the same widget object, keyed by entry id, no pane rebuild.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="final reply", generation=1),
+        )
+        tail_widget = pane._tails["assistant"].block
+
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=7,
+                kind="assistant",
+                raw_body="final reply",
+                committed=True,
+                line_span=(0, 1),
+            ),
+        )
+        await _apply(
+            pane,
+            entries,
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="", generation=2),
+        )
+        assert pane._tails["assistant"] is None
+        committed_unit = pane._entries[7]
+        assert committed_unit.block is tail_widget, "commit reuses the tail's widget, no rebuild"
+
+
+@pytest.mark.asyncio
+async def test_stale_tail_write_after_removal_updates_nothing_and_raises_nothing() -> None:
+    """R16 clause 3: a write against a widget that is no longer mounted is a
+    silent no-op.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="hello", generation=1),
+        )
+        widget = pane._tails["assistant"].block
+        await widget.remove()
+        # No exception -- the guard checks is_mounted before writing.
+        await pane._safe_write(widget, "append", " more")
+        await pane._safe_write(widget, "update", "replacement")
+
+
+# ── fallback rendering (KTD1(a), RA3) ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_oversized_entry_falls_back_to_nonwrapping_lines_plus_one_banner() -> None:
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1,
+                kind="assistant",
+                raw_body="x" * 100_000,
+                committed=True,
+                line_span=(0, 1),
+            ),
+        )
+        view = await _apply(pane, entries)
+        unit = pane._entries[1]
+        assert unit.kind == "line" and unit.is_fallback
+        assert len(unit.lines) == 1
+        assert unit.banner is not None
+        assert unit.accounted_rows == 2, "painted rows == projected lines + one banner row"
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+# ── condensation over mixed units (KTD2) — the four pinned regressions ─────
+
+
+@pytest.mark.asyncio
+async def test_aggregate_ceiling_regression_folds_on_accounted_rows() -> None:
+    """302 one-line fallen-back entries: a lines-only fold (302 content
+    lines, under any per-line cap of 500) would never fire, mounting 604
+    widgets. Folding on accounted rows (content + banner, 2 per entry) must
+    hold the folded window at <=500 accounted rows and <=600 descendants.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        entries = _fallback_entries(302)
+        await _apply(pane, entries)
+        assert pane.descendant_count <= 600
+        accounted = sum(u.accounted_rows for u in pane._entries.values())
+        assert accounted <= DEFAULT_MOUNT_CAP
+
+
+@pytest.mark.asyncio
+async def test_odd_cut_regression_rounds_forward_never_orphans_a_banner() -> None:
+    """250 one-line fallen-back entries plus one ordinary line = 501
+    accounted rows; desired_top lands inside the *oldest* entry's two-row
+    span (one content row, one banner). The fold must take the whole entry,
+    banner included, rather than leave a bannerless clipped row or an
+    orphan banner.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        fallback = _fallback_entries(250, start_id=1)
+        ordinary = TranscriptEntryRecord(
+            entry_id=251, kind="tool", raw_body="ordinary", committed=True, line_span=(250, 1)
+        )
+        entries = fallback + (ordinary,)
+        await _apply(pane, entries)
+
+        assert 1 not in pane._entries, "the oldest fallen-back entry folds whole (rounds forward)"
+        assert pane.condensed_count == 1, "exactly one real content line folded away"
+        assert 2 in pane._entries
+        survivor = pane._entries[2]
+        assert survivor.banner is not None and len(survivor.lines) == 1, (
+            "no orphan banner, no bannerless row"
+        )
+
+
+@pytest.mark.asyncio
+async def test_partial_retention_regression_keeps_one_content_row_and_one_banner() -> None:
+    """A two-line fallen-back entry (oldest) plus 498 ordinary single-line
+    entries = 501 accounted rows; folding exactly one row must retain one
+    content row plus exactly one banner (painted rows = 2), not round
+    forward and drop the whole entry — the always-round-forward
+    implementation that satisfies the odd-cut regression fails this one.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        two_line = TranscriptEntryRecord(
+            entry_id=1,
+            kind="assistant",
+            raw_body="x" * 100_000 + "\n" + "y" * 100_000,
+            committed=True,
+            line_span=(0, 2),
+        )
+        ordinary = tuple(
+            TranscriptEntryRecord(
+                entry_id=2 + i,
+                kind="tool",
+                raw_body=f"line{i}",
+                committed=True,
+                line_span=(2 + i, 1),
+            )
+            for i in range(498)
+        )
+        entries = (two_line,) + ordinary
+        await _apply(pane, entries)
+
+        assert pane.condensed_count == 1
+        assert 1 in pane._entries, "the entry survives with a partial retention, not a full fold"
+        survivor = pane._entries[1]
+        assert len(survivor.lines) == 1
+        assert survivor.banner is not None
+        accounted = sum(u.accounted_rows for u in pane._entries.values())
+        assert accounted == DEFAULT_MOUNT_CAP
+
+
+@pytest.mark.asyncio
+async def test_block_rendered_newest_entry_is_mounted_whole_and_exempted() -> None:
+    """A block-rendered newest entry is mounted whole regardless of the
+    folded window's own budget; ordinary lines around it fold under the cap
+    like any line content (KTD2's qualified newest-entry rule).
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        ordinary = tuple(
+            TranscriptEntryRecord(
+                entry_id=1 + i, kind="tool", raw_body=f"line{i}", committed=True, line_span=(i, 1)
+            )
+            for i in range(600)
+        )
+        block_entry = TranscriptEntryRecord(
+            entry_id=601,
+            kind="assistant",
+            raw_body="# heading\n\nbody text",
+            committed=True,
+            line_span=(600, 3),
+        )
+        entries = ordinary + (block_entry,)
+        await _apply(pane, entries)
+
+        assert 601 in pane._entries and pane._entries[601].kind == "block"
+        assert (
+            pane.descendant_count <= 600 + 10
+        )  # the exempted block entry's own few descendants, on top
+
+
+# ── per-construct render oracles (R1) ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_per_construct_oracles_fail_when_flattened() -> None:
+    """Heading, bullet list, ordered list, block quote, and fence each
+    render as their own block class -- proven by asserting each class is
+    present, which a flattened (paragraph-only) rendering could not satisfy.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        body = (
+            "# Heading\n\n"
+            "- bullet one\n- bullet two\n\n"
+            "1. ordered one\n2. ordered two\n\n"
+            "> a quoted line\n\n"
+            "```\ncode fence\n```\n"
+        )
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body=body, committed=True, line_span=(0, 11)
+            ),
+        )
+        await _apply(pane, entries)
+        unit = pane._entries[1]
+        assert unit.kind == "block"
+        doc = unit.block
+        assert list(doc.query(MarkdownH1))
+        assert list(doc.query(MarkdownBulletList))
+        assert list(doc.query(MarkdownOrderedList))
+        assert list(doc.query(MarkdownBlockQuote))
+        assert list(doc.query(MarkdownFence))
+        # The failure-when-flattened half: a plain paragraph carrying the
+        # same visible characters mounts none of these block classes.
+        flat = "\n\n".join(
+            [
+                "Heading",
+                "bullet one bullet two",
+                "ordered one ordered two",
+                "a quoted line",
+                "code fence",
+            ]
+        )
+        flat_entries = (
+            TranscriptEntryRecord(
+                entry_id=2, kind="assistant", raw_body=flat, committed=True, line_span=(11, 9)
+            ),
+        )
+        await _apply(pane, entries + flat_entries)
+        flat_unit = pane._entries[2]
+        assert not list(flat_unit.block.query(MarkdownH1))
+        assert not list(flat_unit.block.query(MarkdownBulletList))
+        assert not list(flat_unit.block.query(MarkdownBlockQuote))
+        assert not list(flat_unit.block.query(MarkdownFence))
