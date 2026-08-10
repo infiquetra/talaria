@@ -109,7 +109,9 @@
       ],
       "leaf_saga_id": "",
       "child_spec_ref": "",
-      "github": {},
+      "github": {
+        "pr": "https://github.com/infiquetra/talaria/pull/50"
+      },
       "worktree": {},
       "evidence": {},
       "cost": {}
