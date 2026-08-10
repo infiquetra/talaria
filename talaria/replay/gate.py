@@ -680,6 +680,61 @@ def _ktd2_selects_block(kind: TranscriptKind, text: str, *, content_width: int) 
     )
 
 
+def _progress_fingerprint(state: SessionState) -> tuple[int, int, int, int, int]:
+    """A monotone fingerprint of the domain's transcript-facing progress:
+    committed entry count, and each tail's (generation, buffer length).
+    Every component only climbs under the domain's own invariants — entries
+    are append-only, a generation is bumped on every replace, and within
+    one generation the buffer only appends — which is what makes
+    :func:`_snapshot_covers` a sound partial order rather than a guess.
+    """
+    return (
+        len(state.transcript),
+        state.assistant_stream_generation,
+        len(state.streaming_text),
+        state.reasoning_stream_generation,
+        len(state.reasoning_text),
+    )
+
+
+def _snapshot_covers(
+    snapshot: EntryScopedView | None, fingerprint: tuple[int, int, int, int, int]
+) -> bool:
+    """Has the pane applied a projection at least as new as ``fingerprint``?
+
+    The bounded catch-up half of progressive reachability (CR6 confirm): a
+    snapshot-consistent ownership proof cannot see a domain update the pane
+    never consumed at all — a reasoning-only delta that never reaches
+    ``TranscriptPane.apply`` leaves the previous snapshot proving itself
+    forever. The sampler therefore requires each quiescent checkpoint's
+    snapshot to cover the domain fingerprint captured at the PREVIOUS
+    quiescent checkpoint: the pane may lag the live stream by design
+    (coalescing), but across a whole checkpoint interval it must have
+    consumed at least everything the domain had a full interval ago.
+
+    ``None`` (nothing applied yet) covers only a fingerprint with no
+    content — before the first apply there is nothing owed, but any
+    committed entry or non-empty tail a full interval old means the pane
+    is not consuming.
+    """
+    entries_len, a_gen, a_len, r_gen, r_len = fingerprint
+    if snapshot is None:
+        return entries_len == 0 and a_len == 0 and r_len == 0
+    if len(snapshot.entries) < entries_len:
+        return False
+    assistant = snapshot.assistant_tail
+    if assistant.generation < a_gen or (
+        assistant.generation == a_gen and len(assistant.raw_text) < a_len
+    ):
+        return False
+    reasoning = snapshot.reasoning_tail
+    if reasoning.generation < r_gen or (
+        reasoning.generation == r_gen and len(reasoning.raw_text) < r_len
+    ):
+        return False
+    return True
+
+
 def expected_block_documents_are_mounted(
     app: TalariaApp, *, entries_view: EntryScopedView | None = None
 ) -> tuple[bool, str]:
@@ -1158,6 +1213,7 @@ async def measure_replay(
         async def sample() -> None:
             nonlocal checkpoints, ownership_checkpoints, failures
             next_mark = RSS_SAMPLE_EVERY
+            prev_progress: tuple[int, int, int, int, int] | None = None
             while not stop.is_set():
                 await asyncio.sleep(0.02)
                 applied = app.frames_applied
@@ -1226,7 +1282,21 @@ async def measure_replay(
                             expected_ok, _ = expected_block_documents_are_mounted(
                                 app, entries_view=snapshot
                             )
-                        if not (block_ok and banner_ok and expected_ok):
+                        # Progressive reachability's other half (CR6
+                        # confirm): the snapshot proof above is
+                        # self-consistent, so a domain update the pane
+                        # never consumed at all — a reasoning-only delta
+                        # that never reached apply() — leaves a stale
+                        # snapshot proving itself forever. Bounded
+                        # catch-up: this checkpoint's snapshot must cover
+                        # the domain fingerprint captured a full
+                        # checkpoint interval ago (_snapshot_covers'
+                        # partial order).
+                        progressed_ok = prev_progress is None or _snapshot_covers(
+                            snapshot, prev_progress
+                        )
+                        prev_progress = _progress_fingerprint(app.state)
+                        if not (block_ok and banner_ok and expected_ok and progressed_ok):
                             failures += 1
                     # The line-window half runs only at the settled
                     # checkpoint, not here. A coalescing renderer is, by

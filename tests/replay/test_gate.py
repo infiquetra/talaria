@@ -1301,6 +1301,42 @@ async def test_a_reasoning_only_delta_withheld_from_the_pane_is_not_accepted_vac
         await app.shutdown_sources()
 
 
+def test_the_progress_fingerprint_partial_order_detects_an_unconsumed_update() -> None:
+    """The bounded catch-up half of progressive reachability (CR6 confirm):
+    the sampler's snapshot proof is self-consistent, so a reasoning-only
+    delta the pane never consumed leaves a stale snapshot proving itself
+    forever. _snapshot_covers is the partial order that notices — the
+    pane's last-applied snapshot must cover the domain fingerprint from a
+    full checkpoint interval ago.
+    """
+    from talaria.domain.projection import entry_scoped_view
+    from talaria.domain.state import SessionState
+    from talaria.replay.gate import _progress_fingerprint, _snapshot_covers
+
+    advanced = SessionState(reasoning_text="thinking", reasoning_stream_generation=1)
+    fingerprint = _progress_fingerprint(advanced)
+
+    assert not _snapshot_covers(None, fingerprint), (
+        "nothing ever applied cannot cover a domain with content"
+    )
+    stale = entry_scoped_view(SessionState())
+    assert not _snapshot_covers(stale, fingerprint), (
+        "the withheld reasoning-only delta: an empty snapshot must not cover it"
+    )
+    assert _snapshot_covers(entry_scoped_view(advanced), fingerprint), "caught up exactly"
+    grown = SessionState(reasoning_text="thinking more", reasoning_stream_generation=1)
+    assert _snapshot_covers(entry_scoped_view(grown), fingerprint), (
+        "a same-generation append strictly ahead still covers"
+    )
+    replaced = SessionState(reasoning_text="", reasoning_stream_generation=2)
+    assert _snapshot_covers(entry_scoped_view(replaced), fingerprint), (
+        "a generation bump covers regardless of buffer length (replace wins)"
+    )
+    assert _snapshot_covers(None, _progress_fingerprint(SessionState())), (
+        "an empty stream owes no apply"
+    )
+
+
 # ── U6, gap 1: the sideband timeline (confirmed-cancel, typed-disconnect) ──
 
 
