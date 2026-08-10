@@ -1159,11 +1159,28 @@ async def measure_replay(
                     # than deferred to settled. RA3's banner accounting is
                     # likewise a same-pass invariant (a banner is mounted
                     # alongside its content, never after), so it is checked
-                    # here too.
-                    block_ok, _ = block_documents_are_owned(app.transcript)
-                    banner_ok, _ = fallback_banner_accounting(app.transcript)
-                    if not (block_ok and banner_ok):
-                        failures += 1
+                    # here too — but only at an instant when no apply() is
+                    # mid-flight. Textual's Markdown.update sets a
+                    # document's source before its children finish
+                    # remounting, so inside an apply the "blocks cover the
+                    # text" claim is legitimately, transiently false; this
+                    # sampler landed in that window once or twice per
+                    # full-scale stress run and reported scheduling as
+                    # content loss. Yield until the pane is quiescent
+                    # (applies are bounded-latency, KTD1(d)); if it never
+                    # goes quiescent within the bound, skip this ownership
+                    # sample rather than fail it — the settled checkpoint
+                    # below asserts the marker actually clears, so a stuck
+                    # marker cannot hide a real defect behind skips.
+                    for _ in range(10_000):
+                        if not app.transcript.apply_in_flight:
+                            break
+                        await asyncio.sleep(0)
+                    if not app.transcript.apply_in_flight:
+                        block_ok, _ = block_documents_are_owned(app.transcript)
+                        banner_ok, _ = fallback_banner_accounting(app.transcript)
+                        if not (block_ok and banner_ok):
+                            failures += 1
                     # The line-window half runs only at the settled
                     # checkpoint, not here. A coalescing renderer is, by
                     # design, an unknown number of flushes behind the
@@ -1201,7 +1218,12 @@ async def measure_replay(
         await pilot.pause()
         checkpoints += 1
         final_view = transcript_view(app.state)
-        if not content_is_complete(app.state, final_view):
+        if app.transcript.apply_in_flight:
+            # The drain finished and two pauses ran; an apply still marked
+            # in-flight here is a stuck marker, and a stuck marker would
+            # have silently excused every mid-stream ownership sample above.
+            failures += 1
+        elif not content_is_complete(app.state, final_view):
             failures += 1
         elif not interface_shows_everything(app, settled=True):
             failures += 1
