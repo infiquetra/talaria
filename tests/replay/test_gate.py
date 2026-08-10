@@ -261,9 +261,14 @@ async def test_every_product_claim_holds_at_reduced_scale() -> None:
     An xfail whose stated reason is not the only reason is a comment that lies.
 
     What is asserted instead is exact and reachable: every check that is a claim
-    about the product passes, and the only ones that do not are the two scale
-    floors, named. A content-loss regression puts ``content_loss`` in the failing
-    set, which is not a subset of the named floors, so this still turns red.
+    about the product passes, and the failing set is bounded by two named groups
+    — the two scale floors (always red at this size, asserted red below) and the
+    three load-sensitive latency checks (tolerated, never required, red under
+    pytest's shared-machine load). A content-loss regression puts
+    ``content_loss`` in the failing set, which is not a subset of either group,
+    so this still turns red. And every named check must EXIST in the results:
+    a deleted check would vanish from the failing set rather than fail, passing
+    the subset assertion vacuously.
 
     The original gate could not detect a rendering defect at all: its content
     check compared ``transcript_view(app.state)`` against ``app.state`` — the
@@ -272,6 +277,11 @@ async def test_every_product_claim_holds_at_reduced_scale() -> None:
     result = await run_gate(live_corpus=None, deltas=600, seed=7)
     failed = {name for name, check in result.checks.items() if not check["pass"]}
     allowed = SCALE_DEPENDENT_CHECKS | LOAD_SENSITIVE_CHECKS
+    # Existence before tolerance: a check deleted from run_gate disappears
+    # from the failing set instead of failing (CR4 finding 2).
+    assert allowed <= result.checks.keys(), (
+        f"a named check is missing entirely: {sorted(allowed - result.checks.keys())}"
+    )
     assert failed <= allowed, f"a product claim failed: {sorted(failed - allowed)}"
     assert result.stress.content_loss_failures == 0
     assert result.cadence.content_loss_failures == 0
@@ -1540,21 +1550,30 @@ def test_p99_enforces_the_steady_state_phase_and_records_the_block_phase() -> No
     quantile — the block phase's peak and the demotion's own cost are
     reported verbatim instead, so the limit is recorded, never hidden.
     """
+    # Heterogeneous values in every phase, so a wrong selector cannot hide:
+    # identical samples let a min, mean, or first-element bug return the
+    # same number the correct nearest-rank max would (CR4 finding 3).
     demoted = LatencyReport(label="table")
-    demoted.samples_ms = [1.0] * 10 + [190.0] * 39 + [255.0] + [9.0] * 50
+    demoted.samples_ms = (
+        [1.0] * 10  # warm-up
+        + [120.0] * 20 + [190.0] + [150.0] * 18  # block phase: peak mid-phase
+        + [255.0]  # the demotion boundary itself
+        + [4.0] * 30 + [6.0] * 19 + [9.0]  # steady state: max at the tail
+    )
     demoted.boundary_count = 100
     demoted.demotion_boundary = 49
     demoted.demotion_apply_ms = 255.0
-    assert demoted.p99_ms == 9.0
-    assert demoted.block_phase_peak_ms == 190.0
+    assert demoted.p99_ms == 9.0, "nearest-rank p99 of 50 samples is the max, not min or mean"
+    assert demoted.block_phase_peak_ms == 190.0, "the phase PEAK, not its first or last value"
     assert demoted.peak_apply_ms == 255.0
     payload = demoted.to_dict()
     assert payload["block_phase_peak_ms"] == 190.0
     assert payload["demotion_boundary"] == 49
+    assert payload["demotion_apply_ms"] == 255.0
 
     never_demoted = LatencyReport(label="line")
-    never_demoted.samples_ms = [100.0] * 10 + [10.0] * 90
-    assert never_demoted.p99_ms == 10.0, "warm-up alone is excluded when nothing demoted"
+    never_demoted.samples_ms = [100.0] * 10 + [10.0] * 89 + [12.0]
+    assert never_demoted.p99_ms == 12.0, "warm-up alone is excluded when nothing demoted"
     assert never_demoted.block_phase_peak_ms == 0.0
 
 
@@ -1636,16 +1655,19 @@ async def test_run_adversarial_workloads_covers_every_named_workload_and_probe(
 async def test_run_gate_wires_the_feature_corpus_and_workloads_into_the_verdict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`run_gate` runs all four U6 gaps and reports every one of them --
-    including the one genuine, honest failure this pass discovered rather
-    than hid: `feature_corpus_content_loss` fails because a multi-delta
-    table that completes cleanly (no cancel, no error, no disconnect)
-    permanently inherits its live tail's append-corrupted structure. See
-    `test_a_cleanly_completed_multi_delta_table_keeps_its_live_tails_corruption`
-    for the isolated reproduction and the module docstring in
-    `talaria/replay/workloads.py` for the mechanism. This is a real,
-    pre-existing defect in the installed widget's construction-vs-append
-    bookkeeping (talaria/ui/), not something this unit is scoped to fix.
+    """`run_gate` runs all four U6 gaps and reports every one of them.
+
+    The feature corpus once carried a genuine failure here —
+    `feature_corpus_content_loss`, a cleanly-completed multi-delta table
+    permanently inheriting its live tail's append-corrupted structure —
+    and this docstring used to present that red as expected. Both halves
+    of that defect are now fixed (talaria/ui/blocks.py's checkpoint
+    correction and transcript.py's welded reconstruction; see
+    `test_a_cleanly_completed_multi_delta_table_renders_correctly_end_to_end`),
+    so the assertion below REQUIRES the feature corpus to replay
+    content-clean, and the failing set is bounded by the named scale
+    floors and load-sensitive latency checks — every one of which must
+    also exist, so a deleted check cannot pass by vanishing (CR4).
     """
     import talaria.replay.workloads as workloads_module
 
@@ -1661,6 +1683,9 @@ async def test_run_gate_wires_the_feature_corpus_and_workloads_into_the_verdict(
 
     failed = {name for name, check in result.checks.items() if not check["pass"]}
     expected_red = SCALE_DEPENDENT_CHECKS | LOAD_SENSITIVE_CHECKS
+    assert expected_red <= result.checks.keys(), (
+        f"a named check is missing entirely: {sorted(expected_red - result.checks.keys())}"
+    )
     assert failed <= expected_red, f"an unexpected check failed: {sorted(failed - expected_red)}"
     assert "feature_corpus_content_loss" not in failed, (
         "the streamed-table checkpoint defect and the reasoning-weld "

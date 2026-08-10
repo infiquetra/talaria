@@ -46,6 +46,12 @@ from textual.widgets._markdown import (
 
 from talaria.domain.models import TranscriptKind
 from talaria.domain.projection import (
+    # The weld prefixes come from the DOMAIN projection, not from
+    # transcript.py: _view_for computes the expected view, and expecting the
+    # pane's own prefix table would let a pane-side drift move both sides of
+    # every assertion together (CR4 finding 4). The pane must match the
+    # projection; the projection is what the fixture mirrors.
+    _ENTRY_PREFIX,
     EntryScopedView,
     ProvisionalTail,
     TranscriptEntryRecord,
@@ -53,7 +59,6 @@ from talaria.domain.projection import (
 )
 from talaria.ui.blocks import EntryMarkdown
 from talaria.ui.transcript import (
-    _ENTRY_PREFIX,
     DEFAULT_MOUNT_CAP,
     DESCENDANT_ESTIMATE_TRIGGER,
     TranscriptLine,
@@ -1182,24 +1187,29 @@ async def test_a_late_reasoning_tail_still_paints_above_the_assistant_tail() -> 
         first, second = tail_positions()
         assert first < second, "a rebuilt reasoning tail must stay above the assistant tail"
 
-        # Terminal commit: the assistant tail's block widget is adopted in
-        # place, so the committed painted order is whatever the tails
-        # painted — which the anchor above just made correct.
+        # Terminal commit: both tails are committed EXACTLY as they streamed
+        # (the domain never rewrites reasoning at commit — CR4 finding 6),
+        # so both tail widgets are adopted in place and the committed
+        # painted order is whatever the tails painted — which the anchor
+        # above just made correct. The reasoning body "\n" spans two
+        # committed rows, so its adoption also exercises the retarget.
         committed = (
             TranscriptEntryRecord(
-                entry_id=1, kind="reasoning", raw_body="rethought", committed=True, line_span=(0, 1)
+                entry_id=1, kind="reasoning", raw_body="\n", committed=True, line_span=(0, 2)
             ),
             TranscriptEntryRecord(
                 entry_id=2,
                 kind="assistant",
                 raw_body="answering more",
                 committed=True,
-                line_span=(1, 1),
+                line_span=(2, 1),
             ),
         )
         view = await _apply(pane, committed)
         children = list(pane.children)
         assert list(pane._entry_order) == [1, 2]
+        assert pane._entries[1] is rebuilt, "the reasoning tail is adopted, retargeted in place"
+        assert len(rebuilt.lines) == 2, "the two-row committed span, split the committed way"
         assert children.index(pane._entries[1].widgets()[0]) < children.index(
             pane._entries[2].widgets()[0]
         ), "the committed painted order must match the entry order"
@@ -1266,7 +1276,6 @@ async def test_a_capped_monster_tail_is_still_adopted_at_commit() -> None:
         tail_unit = pane._tails["assistant"]
         assert tail_unit is not None and tail_unit.kind == "line" and tail_unit.is_fallback
         assert len(tail_unit.lines) == DEFAULT_MOUNT_CAP - 1
-        peak_before = pane.peak_mounted
 
         committed = (
             TranscriptEntryRecord(
@@ -1277,9 +1286,23 @@ async def test_a_capped_monster_tail_is_still_adopted_at_commit() -> None:
                 line_span=(0, 1201),
             ),
         )
-        view = await _apply(pane, committed)
+        # A mount spy, not peak_mounted: that metric samples after
+        # condensation and cannot see a mid-apply transient (CR4 finding 5).
+        mounted_fresh: list[int] = []
+        original_mount_all = pane.mount_all
+
+        def spying_mount_all(widgets, **kwargs):  # type: ignore[no-untyped-def]
+            batch = list(widgets)
+            mounted_fresh.append(len(batch))
+            return original_mount_all(batch, **kwargs)
+
+        pane.mount_all = spying_mount_all  # type: ignore[method-assign]
+        try:
+            view = await _apply(pane, committed)
+        finally:
+            pane.mount_all = original_mount_all  # type: ignore[method-assign]
         assert pane._entries[1] is tail_unit, "the capped tail must be adopted, not rebuilt"
-        assert pane.peak_mounted == peak_before, (
+        assert sum(mounted_fresh) == 0, (
             "adoption mounts nothing fresh — no full-body widget transient at commit"
         )
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
@@ -1466,6 +1489,43 @@ async def test_a_block_tail_completing_into_a_monster_body_demotes_at_commit() -
         assert pane._tails["assistant"] is None
         assert pane.rendered_lines == view.lines
 
+        # The pre-cap arm needs a MULTILINE demoting body: a single
+        # 100,005-character line caps trivially at its one source row, so
+        # removing the committed-entry mount cap would leave the arm above
+        # green (CR4 finding 1). A 1,201-row fence must mount at most
+        # mount_cap widgets in one batch — cap-1 content rows plus the
+        # banner — observed at the mount seam, where transients live.
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200))
+        both = committed + (
+            TranscriptEntryRecord(
+                entry_id=2,
+                kind="assistant",
+                raw_body=fence,
+                committed=True,
+                line_span=(1, 1201),
+            ),
+        )
+        mounted_fresh: list[int] = []
+        original_mount_all = pane.mount_all
+
+        def spying_mount_all(widgets, **kwargs):  # type: ignore[no-untyped-def]
+            batch = list(widgets)
+            mounted_fresh.append(len(batch))
+            return original_mount_all(batch, **kwargs)
+
+        pane.mount_all = spying_mount_all  # type: ignore[method-assign]
+        try:
+            view = await _apply(pane, both)
+        finally:
+            pane.mount_all = original_mount_all  # type: ignore[method-assign]
+        monster = pane._entries[2]
+        assert monster.kind == "line" and monster.is_fallback
+        assert len(monster.lines) == DEFAULT_MOUNT_CAP - 1
+        assert mounted_fresh and max(mounted_fresh) <= DEFAULT_MOUNT_CAP, (
+            "a pre-capped demoting build mounts at most cap-1 rows plus the banner"
+        )
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
 
 @pytest.mark.asyncio
 async def test_the_demotion_frame_collection_actually_frees_the_document() -> None:
@@ -1493,6 +1553,7 @@ async def test_the_demotion_frame_collection_actually_frees_the_document() -> No
         del unit
 
         fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200))
+        was_enabled = gc.isenabled()  # restore, don't assume (CR4 finding 7)
         gc.disable()
         try:
             await _apply(
@@ -1506,7 +1567,8 @@ async def test_the_demotion_frame_collection_actually_frees_the_document() -> No
                 "the demotion-frame collection must free the demoted document"
             )
         finally:
-            gc.enable()
+            if was_enabled:
+                gc.enable()
 
 
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
