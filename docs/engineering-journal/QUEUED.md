@@ -549,6 +549,33 @@ So the operator types a password into a focused control that draws nothing, with
 
 ## P2
 
+### A streaming table's block phase hitches past ~340 rows — demote open tables early, or append rows incrementally
+
+**Author.** RA5, 2026-08-09 — the one red check the v0.2 gate loop recorded instead of fixed
+**Priority.** P2
+**Effort.** Medium (early demotion) / Large (incremental row-append)
+
+**What is true.** A still-open, block-rendered markdown table re-renders wholesale on every
+streamed append — an open construct's reparse window is the whole construct — so per-delta cost
+grows with the table: past the 50 ms coalescing interval at ~340 rows, 54–59 ms plateau, one
+observed 190 ms outlier, until the two-condition trigger demotes it at ~500 rows. After demotion
+every append is bounded (≤ 44 ms measured; the fence's ring steady state is 4–9 ms). The gate
+enforces the steady-state phase and records `block_phase_peak_ms` verbatim (RA5); a user
+streaming a 400-row table today feels the hitch.
+
+**Fix shapes, in preference order.** (1) A streaming-tail-only trigger: an open table beyond
+~300 rows demotes before the crossing — one RA4-excluded demotion, then ring appends; needs the
+two-sided ownership proof's expected-set derivation (`_ktd2_selects_block`) to learn the tail
+trigger, and the commit handoff to re-promote a demoted-early table whose committed body is
+under the committed trigger (one bounded update at commit). Rejected tonight only for review
+surface, not design doubt. (2) Incremental row-append inside `_BoundedMarkdownTableContent`
+(RA2's own widget): no claim or behavior change, deepest surgery. An adaptive measured-cost
+trigger was rejected outright: demotion would depend on machine load, and replay determinism
+compares structure across replays.
+
+**Worth it when.** A real corpus streams tables past ~300 rows, or the next gate hardening pass
+wants the block phase enforced rather than recorded.
+
 ### Committing a monster line-rendered entry still mounts every row in one apply before condensation folds it
 
 **Author.** the tail-cap fix, 2026-08-09 — the sibling transient the cap did not close

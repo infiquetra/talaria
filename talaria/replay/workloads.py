@@ -304,32 +304,48 @@ class LatencyReport:
 
     @property
     def p99_ms(self) -> float:
-        """Nearest-rank p99 over every boundary past :data:`WARMUP_BOUNDARIES`,
-        excluding the at-most-one demotion boundary (RA4).
+        """Nearest-rank p99 over the steady-state phase: every boundary past
+        :data:`WARMUP_BOUNDARIES` and, when the workload demoted, past the
+        demotion boundary too (RA4 + RA5).
 
         With ~90 post-warmup samples, nearest-rank p99 is arithmetically the
         maximum — so the quantile as originally stated demanded that the
         one-time representation switch (mounting a capped run of line widgets
         in one apply) cost under 50 ms, which no amount of steady-state work
-        can deliver. RA4 treats that single flagged boundary the way warm-up
-        is treated: excluded from the quantile, reported verbatim in
-        :attr:`demotion_apply_ms` instead of hidden in a tolerance. Zero for
-        a run too short to have any measured samples at all — never a
-        fabricated number, matching this package's own "never claim a
-        measurement you did not take" discipline (``gate.py``'s
-        ``MIN_RSS_SAMPLES``/``MIN_CONTENT_CHECKPOINTS`` are the same
-        instinct for a different measurement).
+        can deliver. RA4 excluded that single flagged boundary, reported
+        verbatim in :attr:`demotion_apply_ms`. RA5 (operator-decided
+        2026-08-09, on the third full-scale run) narrows enforcement to the
+        post-demotion phase entirely: a still-open, block-rendered table
+        re-renders wholesale on every append, crossing the ceiling at ~340
+        rows (54–59 ms plateau, 190 ms outlier observed) until the 500-row
+        trigger demotes it — a real, recorded limit
+        (:attr:`block_phase_peak_ms`), not an enforced one; the early
+        demotion of open tables is queued follow-up. Zero for a run too
+        short to have any measured samples at all — never a fabricated
+        number, matching this package's own "never claim a measurement you
+        did not take" discipline (``gate.py``'s ``MIN_RSS_SAMPLES``/
+        ``MIN_CONTENT_CHECKPOINTS`` are the same instinct for a different
+        measurement).
         """
-        measured = [
-            sample
-            for index, sample in enumerate(self.samples_ms)
-            if index >= WARMUP_BOUNDARIES and index != self.demotion_boundary
-        ]
-        measured.sort()
+        start = WARMUP_BOUNDARIES
+        if self.demotion_boundary is not None:
+            start = max(start, self.demotion_boundary + 1)
+        measured = sorted(self.samples_ms[start:])
         if not measured:
             return 0.0
         index = max(0, math.ceil(0.99 * len(measured)) - 1)
         return measured[min(index, len(measured) - 1)]
+
+    @property
+    def block_phase_peak_ms(self) -> float:
+        """Peak apply latency of the block-rendered phase — post-warm-up
+        samples strictly before the demotion boundary. RA5's recorded limit:
+        reported everywhere, enforced nowhere. Zero when the workload never
+        demoted or its block phase ended inside warm-up.
+        """
+        if self.demotion_boundary is None:
+            return 0.0
+        return max(self.samples_ms[WARMUP_BOUNDARIES : self.demotion_boundary], default=0.0)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -346,6 +362,7 @@ class LatencyReport:
             "final_wrapped_row_estimate": self.final_wrapped_row_estimate,
             "demotion_boundary": self.demotion_boundary,
             "demotion_apply_ms": round(self.demotion_apply_ms, 3),
+            "block_phase_peak_ms": round(self.block_phase_peak_ms, 3),
         }
 
 

@@ -58,6 +58,7 @@ from talaria.replay.source import ReplaySource, SidebandAction, build_sideband
 from talaria.replay.stress import build_feature_corpus, build_stress_corpus
 from talaria.replay.workloads import (
     WARMUP_BOUNDARIES,
+    LatencyReport,
     growing_table_boundaries,
     measure_apply_latency,
     run_adversarial_workloads,
@@ -1531,6 +1532,30 @@ async def test_measure_apply_latency_times_around_transcript_pane_apply_and_repo
     assert len(report.samples_ms) == len(boundaries)
     assert report.p99_ms >= 0.0
     assert report.peak_apply_ms >= report.p99_ms
+
+
+def test_p99_enforces_the_steady_state_phase_and_records_the_block_phase() -> None:
+    """RA4 + RA5's quantile arithmetic, pinned exactly: warm-up, the block
+    phase, and the demotion boundary are all excluded from the enforced
+    quantile — the block phase's peak and the demotion's own cost are
+    reported verbatim instead, so the limit is recorded, never hidden.
+    """
+    demoted = LatencyReport(label="table")
+    demoted.samples_ms = [1.0] * 10 + [190.0] * 39 + [255.0] + [9.0] * 50
+    demoted.boundary_count = 100
+    demoted.demotion_boundary = 49
+    demoted.demotion_apply_ms = 255.0
+    assert demoted.p99_ms == 9.0
+    assert demoted.block_phase_peak_ms == 190.0
+    assert demoted.peak_apply_ms == 255.0
+    payload = demoted.to_dict()
+    assert payload["block_phase_peak_ms"] == 190.0
+    assert payload["demotion_boundary"] == 49
+
+    never_demoted = LatencyReport(label="line")
+    never_demoted.samples_ms = [100.0] * 10 + [10.0] * 90
+    assert never_demoted.p99_ms == 10.0, "warm-up alone is excluded when nothing demoted"
+    assert never_demoted.block_phase_peak_ms == 0.0
 
 
 @pytest.mark.asyncio

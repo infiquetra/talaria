@@ -170,6 +170,21 @@ demand amortized demotion (spreading the mount across coalescing intervals keeps
 under 50 ms but adds catch-up machinery to the reconcile path and the banner row-accounting the
 gate checks mid-stream).
 
+**RA5 — KTD1(d)'s ceiling is enforced over the steady-state phase; the growing table's
+block-rendered phase is a recorded limit, not an enforced one (amends KTD1(d)'s sample base a
+second time; operator-decided 2026-08-09 on the third full-scale gate run's evidence).** A
+still-open, block-rendered table re-renders wholesale on every streamed append — the reparse
+window of an open construct is the whole construct — so its per-delta cost grows with the table:
+it crosses the 50 ms ceiling at roughly 340 rows, plateaus at 54–59 ms, and showed a 190 ms
+outlier, until the 500-row trigger demotes it, after which every append is bounded (measured
+≤ 44 ms; fence steady state 4–9 ms). The quantile now measures the post-demotion phase; the
+block phase's peak is reported verbatim (`block_phase_peak_ms`) in the report and the results
+document. The rejected-for-now alternatives, both queued: demoting an open table early (~300
+rows, before the crossing — touches the two-condition trigger, the gate's two-sided ownership
+proof, and the commit handoff's re-promotion), and incremental row-append inside the RA2
+bounded-table wrapper (no claim change, deepest surgery). Veto path: demand either now — the
+early demotion is the design-consistent completion and is written up in QUEUED.md.
+
 ## Key Technical Decisions
 
 **KTD1 — The bounded-rendering claim is restated as four measurable ceilings, recorded in
@@ -256,8 +271,9 @@ ADR-0006 before implementation:**
   unbroken line grown 5,000 characters per boundary to 100,000 characters (the wrapped-rows
   degenerate shape). Clock:
   `time.monotonic()` around `TranscriptPane.apply`. The first 10 boundaries are warm-up and
-  excluded; the quantile is the 99th percentile of the remaining samples, minus the at-most-one
-  flagged demotion boundary per workload, which is reported verbatim instead (RA4). High-water
+  excluded; the quantile is the 99th percentile of the steady-state samples — past warm-up and,
+  when the workload demotes, past the flagged demotion boundary, whose own cost and whose
+  block-phase peak are reported verbatim instead (RA4, RA5). High-water
   instrumentation (peak descendant count per tier, peak parser-input bytes, peak apply
   milliseconds, tallest entry document) is exposed the way `peak_mounted` is today
   (transcript.py:130).
