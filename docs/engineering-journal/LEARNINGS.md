@@ -4,6 +4,14 @@
 
 ## 2026-08-09
 
+### A reset check keyed on mounted state has a hole exactly where eviction is most aggressive
+
+**Evidence.** CR1 confirm round (Codex re-review, 2026-08-09, evidence cited by sha256 `3749408165adbe75…` in the git-ignored saga dir): a live probe drove a monster fallback tail that folded every committed entry (`_top=1`, `_tail_top=596`, `_entries` empty), then switched sessions — the new session came up with `condensed_count=1` and `rendered_lines=()`, its first row treated as already folded. Fixed in `talaria/ui/transcript.py` (`_reset_if_history_changed` + the `_last_entry_id` watermark), pinned by `tests/ui/test_transcript_blocks.py::test_a_session_switch_after_a_monster_tail_folded_everything_still_resets`, which fails on the pre-fix code at the mount assertion.
+
+**Mechanism.** The session-switch reset detected a swapped history by looking for a *mounted* entry id absent from the new records — but folding is precisely the process that empties the mounted set, so the check went blind in the one state where the pane carried the most cross-session residue (a stale `_top` describing the outgoing session's line arithmetic, under which the new session's line spans, restarting at zero, all read as folded). The fix keeps a one-integer lineage watermark — the newest entry id of the last accepted records set — which survives folding and is lineage-sound by two invariants `land_session` documents: entries are never deleted within a lineage, and `entry_seq` climbs across a session clear rather than restarting, so a swapped-in history can never contain the outgoing lineage's newest id.
+
+**Generalizable rule.** State that summarizes evicted content (a fold counter, a condensed prefix) must be guarded by an identity that survives the eviction; a guard that reads only what is still present goes blind at maximum eviction, which is exactly when the summarized state is largest and stalest.
+
 ### The "escape valve" was the hot path: a fallback branch treated as rare carried quadratic growth and no bound at all
 
 **Evidence.** The first full-scale replay gate run (stress corpus `talaria-stress-v1-50000d-seed20260802`, 2026-08-09) failed `workload_latency_growing-open-fence` at p99 **17,697 ms** against KTD1(d)'s 50 ms ceiling, with `peak_descendants` **10,002** for a single live tail. After the fix pair — incremental append in the fallback growth path plus the tail mount-cap — the same workload's steady-state applies measure ~35 ms with mounted tail widgets bounded by `mount_cap`. Commits: the incremental-growth fix, the RA4 measurement amendment, and the tail-cap change on `feat/v0-2-block-markdown-build`.
