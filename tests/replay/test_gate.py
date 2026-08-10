@@ -230,7 +230,16 @@ async def test_the_gate_runs_end_to_end_and_records_corpus_identity() -> None:
 #: many times — which a 600-delta corpus at unbounded replay speed never is; it
 #: drains between two polls. They are calibrated for KTD14's real 50,000-delta
 #: run and are reported by the published evidence, not by this test.
-SCALE_DEPENDENT_CHECKS = frozenset({"enough_memory_samples", "enough_content_checkpoints"})
+SCALE_DEPENDENT_CHECKS = frozenset(
+    {
+        "enough_memory_samples",
+        "enough_content_checkpoints",
+        # Ownership proofs run at a subset of the content checkpoints (only
+        # quiescent ones), so wherever the checkpoint floor is unreachable
+        # at reduced scale, this floor is too.
+        "enough_ownership_checkpoints",
+    }
+)
 
 #: The KTD1(d) p99 apply-latency ceilings are wall-clock measurements, and a
 #: reduced-scale in-suite run shares the machine with the rest of pytest —
@@ -1576,6 +1585,10 @@ def test_p99_enforces_the_steady_state_phase_and_records_the_block_phase() -> No
     assert payload["block_phase_peak_ms"] == 190.0
     assert payload["demotion_boundary"] == 49
     assert payload["demotion_apply_ms"] == 255.0
+    assert payload["measured_samples"] == 100, (
+        "measured_samples and the quantile share one steady-state start index — "
+        "subtracting only warm-up published 140 beside a quantile over 100 (CR6)"
+    )
 
     never_demoted = LatencyReport(label="line")
     never_demoted.samples_ms = [100.0] * 10 + [10.0] * 80 + [14.0] + [12.0] + [11.0] * 18

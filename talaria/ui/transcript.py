@@ -689,6 +689,12 @@ class TranscriptPane(VerticalScroll):
             "reasoning": None,
         }
         self._tail_generation: dict[TranscriptKind, int] = {"assistant": 0, "reasoning": 0}
+        #: The entries snapshot the most recent :meth:`apply` reconciled —
+        #: what the gate's mid-stream ownership sampler proves the mounted
+        #: window against at a quiescent instant. The live domain state is
+        #: a moving projection mid-stream; this is the exact input the pane
+        #: last caught up to (CR6).
+        self.last_applied_entries: EntryScopedView | None = None
         self._pending_removed_height = 0
         #: High-water mark of :attr:`descendant_count` (U6). Tracked
         #: separately from :attr:`peak_mounted` because the two ceilings
@@ -837,6 +843,7 @@ class TranscriptPane(VerticalScroll):
             await self._render_condensed()
 
             self._lines = view.lines
+            self.last_applied_entries = entries
             self.peak_mounted = max(self.peak_mounted, self.mounted_count)
             self.peak_descendants = max(self.peak_descendants, self.descendant_count)
             self._restore_anchor()

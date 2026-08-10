@@ -164,8 +164,10 @@ work can deliver (mounting the capped widget run alone costs ~250 ms). The amend
 latency report records `demotion_boundary` and `demotion_apply_ms`; the quantile excludes that
 one flagged sample exactly as it excludes warm-up; the demotion cost is enforced nowhere but
 reported everywhere (results document included), because hiding it in a tolerance was the
-alternative and that reads as tuning the measurement. Every other sample — the entire
-steady-state streaming path — remains under the 50 ms ceiling with no exclusions. Veto path:
+alternative and that reads as tuning the measurement. Every post-demotion sample — the
+steady-state streaming path — remains under the 50 ms ceiling; RA5 below narrows the enforced
+population a second time, so for a workload with a block-rendered phase the enforced samples are
+exactly the post-demotion phase, with the block phase recorded rather than enforced. Veto path:
 demand amortized demotion (spreading the mount across coalescing intervals keeps every apply
 under 50 ms but adds catch-up machinery to the reconcile path and the banner row-accounting the
 gate checks mid-stream).

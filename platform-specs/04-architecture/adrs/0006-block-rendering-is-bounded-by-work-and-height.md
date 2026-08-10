@@ -170,11 +170,16 @@ coalescing interval. The workloads, exactly:
 - a single unbroken line grown 5,000 characters per boundary up to 100,000 characters (the
   wrapped-rows degenerate shape).
 
-The clock is `time.monotonic()` wrapped around `TranscriptPane.apply`. The first 10 boundaries of
-each workload are warm-up and excluded from the sample; the reported quantile is the 99th
-percentile of the remaining samples. High-water instrumentation — peak descendant count per tier,
-peak parser-input bytes, peak apply milliseconds, tallest entry document — is exposed the way
-`peak_mounted` is exposed today (`transcript.py:130`).
+The clock is `time.monotonic()` wrapped around `TranscriptPane.apply`. The enforced quantile is
+the 99th percentile of the **steady-state phase** (RA4 + RA5, recorded in the plan): the first 10
+boundaries of each workload are warm-up and excluded, and when a workload demotes to line
+rendering, every boundary through the demotion — the block-rendered phase and the demotion apply
+itself — is excluded too. The excluded costs are not hidden: the block phase's peak
+(`block_phase_peak_ms`) and the demotion's own cost (`demotion_apply_ms`) are recorded verbatim
+in the latency report and published in the results document, recorded rather than enforced.
+High-water instrumentation — peak descendant count per tier, peak parser-input bytes, peak apply
+milliseconds, tallest entry document — is exposed the way `peak_mounted` is exposed today
+(`transcript.py:130`).
 
 ### The KTD8 fallback trigger and its branch-hold mechanism
 

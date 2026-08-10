@@ -328,14 +328,25 @@ class LatencyReport:
         ``MIN_CONTENT_CHECKPOINTS`` are the same instinct for a different
         measurement).
         """
-        start = WARMUP_BOUNDARIES
-        if self.demotion_boundary is not None:
-            start = max(start, self.demotion_boundary + 1)
-        measured = sorted(self.samples_ms[start:])
+        measured = sorted(self.samples_ms[self.steady_start :])
         if not measured:
             return 0.0
         index = max(0, math.ceil(0.99 * len(measured)) - 1)
         return measured[min(index, len(measured) - 1)]
+
+    @property
+    def steady_start(self) -> int:
+        """First sample index of the enforced steady-state phase: past
+        warm-up and, when the workload demoted, past the demotion boundary
+        too (RA4 + RA5). The ONE index both the quantile and the serialized
+        ``measured_samples`` count derive from — deriving them separately
+        published 140 "measured" samples beside a quantile computed over
+        100 (CR6).
+        """
+        start = WARMUP_BOUNDARIES
+        if self.demotion_boundary is not None:
+            start = max(start, self.demotion_boundary + 1)
+        return start
 
     @property
     def block_phase_peak_ms(self) -> float:
@@ -352,7 +363,7 @@ class LatencyReport:
         return {
             "label": self.label,
             "boundary_count": self.boundary_count,
-            "measured_samples": max(0, len(self.samples_ms) - WARMUP_BOUNDARIES),
+            "measured_samples": max(0, len(self.samples_ms) - self.steady_start),
             "p99_ms": round(self.p99_ms, 3),
             "peak_apply_ms": round(self.peak_apply_ms, 3),
             "peak_descendants": self.peak_descendants,
@@ -423,12 +434,14 @@ async def measure_apply_latency(
     ``"update"`` bumps the generation every boundary instead, forcing a full
     replace (``EntryMarkdown.update``) each time.
 
-    The fence and table workloads use ``"update"`` for a discovered, real
-    reason, not a convenience — see the module docstring's "A real,
-    pre-existing defect" section: appending to an already-mounted multi-line
-    construct does not reliably keep it that construct in this installed
-    Textual version, so ``"update"`` is what lets those two workloads measure
-    the real fence/table's cost rather than a paragraph's.
+    The fence and table workloads pass ``"append"``
+    (:func:`run_adversarial_workloads`), matching the real streaming path
+    they model. An earlier revision of this docstring said they used
+    ``"update"`` because appending to a mounted multi-line construct did not
+    reliably keep it that construct — that defect was fixed in
+    ``talaria/ui/blocks.py`` (the checkpoint correction) and the workloads
+    switched to append in the same pass; the stale claim inverted how a
+    reader would interpret the recorded latency (CR6).
     """
     report = LatencyReport(label=label)
     resize_map = {index: (width, height) for index, width, height in resize_at}

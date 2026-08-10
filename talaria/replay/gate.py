@@ -50,6 +50,7 @@ from textual.widgets._markdown import MarkdownBlock, MarkdownFence
 
 from talaria.domain.models import ConnectionStatus, TerminalCause, TranscriptKind
 from talaria.domain.projection import (
+    EntryScopedView,
     ProvisionalTail,
     TranscriptView,
     entry_scoped_view,
@@ -172,6 +173,13 @@ class GateMeasurement:
     rss_growth_mb: float = 0.0
     rss_slope_mb_per_1k_frames: float = 0.0
     content_loss_checkpoints: int = 0
+    #: Mid-stream checkpoints at which the pane actually went quiescent and
+    #: the ownership proofs actually RAN — counted separately from
+    #: ``content_loss_checkpoints`` because a checkpoint whose bounded wait
+    #: never saw quiescence skips ownership, and a stream busy enough to
+    #: defeat every wait would otherwise satisfy the checkpoint floor with
+    #: zero progressive proofs behind it (CR6).
+    ownership_checkpoints: int = 0
     content_loss_failures: int = 0
     transcript_entries: int = 0
     transcript_lines: int = 0
@@ -190,6 +198,7 @@ class GateMeasurement:
             "rss_growth_mb": round(self.rss_growth_mb, 2),
             "rss_slope_mb_per_1k_frames": round(self.rss_slope_mb_per_1k_frames, 4),
             "content_loss_checkpoints": self.content_loss_checkpoints,
+            "ownership_checkpoints": self.ownership_checkpoints,
             "content_loss_failures": self.content_loss_failures,
             "transcript_entries": self.transcript_entries,
             "transcript_lines": self.transcript_lines,
@@ -671,9 +680,23 @@ def _ktd2_selects_block(kind: TranscriptKind, text: str, *, content_width: int) 
     )
 
 
-def expected_block_documents_are_mounted(app: TalariaApp) -> tuple[bool, str]:
+def expected_block_documents_are_mounted(
+    app: TalariaApp, *, entries_view: EntryScopedView | None = None
+) -> tuple[bool, str]:
     """The other half of mounted-window ownership: is everything that
     *should* be a block document actually mounted as one?
+
+    ``entries_view`` selects the ground truth. The settled checkpoint omits
+    it and derives the expected set from the domain's live state — the pane
+    has caught up, so the stronger comparison is exact. A mid-stream caller
+    passes the pane's own last-applied snapshot instead
+    (:attr:`~talaria.ui.transcript.TranscriptPane.last_applied_entries`):
+    mid-stream the live domain is a moving projection an unknown number of
+    flushes ahead of the pane, and deriving the expected set from it fails
+    a correct pane for not having flushed yet, while the snapshot is
+    exactly what the pane just reconciled (CR6 — without a mid-stream run
+    of this proof, an eligible tail wrongly line-rendered throughout
+    streaming and repaired before settlement passed every checkpoint).
 
     :func:`block_documents_are_owned` only walks what is currently mounted —
     if a delta never reaches :meth:`TranscriptPane.apply` at all (a
@@ -693,7 +716,8 @@ def expected_block_documents_are_mounted(app: TalariaApp) -> tuple[bool, str]:
     absent from the mounted window.
     """
     pane = app.transcript
-    entries_view = entry_scoped_view(app.state)
+    if entries_view is None:
+        entries_view = entry_scoped_view(app.state)
     width = pane._content_width
 
     for record in entries_view.entries:
@@ -1125,13 +1149,14 @@ async def measure_replay(
 
     rss_series: list[tuple[int, float]] = [(0, _rss_mb())]
     checkpoints = 0
+    ownership_checkpoints = 0
     failures = 0
 
     async with app.run_test(size=GATE_SIZE) as pilot:
         stop = asyncio.Event()
 
         async def sample() -> None:
-            nonlocal checkpoints, failures
+            nonlocal checkpoints, ownership_checkpoints, failures
             next_mark = RSS_SAMPLE_EVERY
             while not stop.is_set():
                 await asyncio.sleep(0.02)
@@ -1170,16 +1195,38 @@ async def measure_replay(
                     # (applies are bounded-latency, KTD1(d)); if it never
                     # goes quiescent within the bound, skip this ownership
                     # sample rather than fail it — the settled checkpoint
-                    # below asserts the marker actually clears, so a stuck
-                    # marker cannot hide a real defect behind skips.
+                    # below asserts the marker actually clears, AND the
+                    # ownership samples that actually ran are counted
+                    # separately (``enough_ownership_checkpoints``), so a
+                    # stream busy enough to defeat quiescence at every
+                    # checkpoint fails the floor instead of passing with
+                    # every progressive proof silently skipped (CR6).
                     for _ in range(10_000):
                         if not app.transcript.apply_in_flight:
                             break
                         await asyncio.sleep(0)
                     if not app.transcript.apply_in_flight:
+                        ownership_checkpoints += 1
                         block_ok, _ = block_documents_are_owned(app.transcript)
                         banner_ok, _ = fallback_banner_accounting(app.transcript)
-                        if not (block_ok and banner_ok):
+                        # The expected-documents half runs mid-stream against
+                        # the pane's own LAST-APPLIED entries snapshot, never
+                        # the live domain state: mid-stream the domain is a
+                        # moving projection an unknown number of flushes
+                        # ahead, and deriving the expected set from it fails
+                        # a correct pane for not having flushed yet. The
+                        # snapshot is exactly what the pane just reconciled,
+                        # so at a quiescent instant the proof is exact — an
+                        # eligible tail wrongly line-rendered during
+                        # streaming fails here instead of being repaired
+                        # before the settled checkpoint ever looks (CR6).
+                        snapshot = app.transcript.last_applied_entries
+                        expected_ok = True
+                        if snapshot is not None:
+                            expected_ok, _ = expected_block_documents_are_mounted(
+                                app, entries_view=snapshot
+                            )
+                        if not (block_ok and banner_ok and expected_ok):
                             failures += 1
                     # The line-window half runs only at the settled
                     # checkpoint, not here. A coalescing renderer is, by
@@ -1248,6 +1295,7 @@ async def measure_replay(
         rss_growth_mb=growth,
         rss_slope_mb_per_1k_frames=_fit_slope(rss_series),
         content_loss_checkpoints=checkpoints,
+        ownership_checkpoints=ownership_checkpoints,
         content_loss_failures=failures,
         transcript_entries=len(final_state.transcript),
         transcript_lines=final_view.total_lines,
@@ -1444,6 +1492,19 @@ async def run_gate(
             "comparison": ">=",
             "pass": stress_measurement.content_loss_checkpoints >= MIN_CONTENT_CHECKPOINTS,
         },
+        # The ownership proofs run only at checkpoints where the pane went
+        # quiescent inside the bounded wait — a skipped wait is a skipped
+        # proof, and a stream busy enough to defeat every wait would satisfy
+        # the checkpoint floor above with zero progressive ownership proofs
+        # behind it. This floor counts the proofs that actually ran (CR6).
+        "enough_ownership_checkpoints": {
+            "description": "mid-stream ownership was actually proven at quiescent "
+            "checkpoints, not merely scheduled and skipped",
+            "measured": stress_measurement.ownership_checkpoints,
+            "threshold": MIN_CONTENT_CHECKPOINTS,
+            "comparison": ">=",
+            "pass": stress_measurement.ownership_checkpoints >= MIN_CONTENT_CHECKPOINTS,
+        },
         "mounted_widgets": _check(
             "mounted line widgets at any point of the stress corpus",
             stress_measurement.peak_mounted_widgets,
@@ -1547,8 +1608,12 @@ async def run_gate(
             "measured": round(report.p99_ms, 3),
             "threshold": workloads.latency_ceiling_ms,
             "comparison": "<=",
-            "description": f"p99 TranscriptPane.apply latency for the {report.label} workload "
-            f"(ms), first {WARMUP_BOUNDARIES} boundaries excluded as warm-up",
+            "description": f"steady-state p99 TranscriptPane.apply latency for the "
+            f"{report.label} workload (ms): the first {WARMUP_BOUNDARIES} boundaries are "
+            "excluded as warm-up, and when the workload demoted, the entire block phase "
+            "through the demotion boundary is excluded too (RA4/RA5) — the block-phase "
+            "peak and the demotion cost are reported verbatim in the report, recorded "
+            "rather than enforced",
             "pass": report.p99_ms <= workloads.latency_ceiling_ms,
         }
     if live_measurement is not None:
