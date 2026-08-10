@@ -25,7 +25,9 @@ not a rendering defect in this pane.
 
 from __future__ import annotations
 
+import gc
 import re
+import weakref
 from collections.abc import Sequence
 
 import pytest
@@ -1421,6 +1423,90 @@ async def test_a_budget_exact_zero_block_tail_keeps_every_row() -> None:
         assert len(rebuilt.lines) == DEFAULT_MOUNT_CAP, "the full span, not span minus a banner"
         assert pane.condensed_count == 0
         assert pane.rendered_lines == view.lines
+
+
+@pytest.mark.asyncio
+async def test_a_block_tail_completing_into_a_monster_body_demotes_at_commit() -> None:
+    """message.complete may carry a body far past what streamed. Adopting
+    the block document on the prefix check alone kept an uncapped,
+    bannerless EntryMarkdown painting 1,339 wrapped rows as settled
+    transcript — the trigger was never rechecked against the final body
+    (CR3 re-review). The handoff now rechecks both demotion conditions:
+    a demoting body never adopts a block tail, and its fresh build is
+    pre-capped line rendering with the banner.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="hello", generation=0),
+        )
+        tail_unit = pane._tails["assistant"]
+        assert tail_unit is not None and tail_unit.kind == "block"
+        block_widget = tail_unit.block
+        assert block_widget is not None
+
+        body = "hello" + "x" * 100_000
+        committed = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body=body, committed=True, line_span=(0, 1)
+            ),
+        )
+        view = await _apply(pane, committed)
+        unit = pane._entries[1]
+        assert unit is not tail_unit, "a demoting final body never adopts the block tail"
+        assert unit.kind == "line" and unit.is_fallback
+        assert unit.banner is not None
+        assert len(unit.lines) == 1, "one source row, painted no-wrap and clipped"
+        # Structural detachment, not is_mounted: Textual flips that flag on
+        # the widget's own message pump, which can lag the awaited removal.
+        assert block_widget.parent is None, "the streamed document leaves the pane"
+        assert pane._tails["assistant"] is None
+        assert pane.rendered_lines == view.lines
+
+
+@pytest.mark.asyncio
+async def test_the_demotion_frame_collection_actually_frees_the_document() -> None:
+    """The demotion-frame gc.collect() exists to reclaim the destroyed
+    block document inside the RA4-excluded frame — but the frame's own
+    locals (the loop variable, the unit binding) still referenced the
+    document at the collect, so all its widgets survived into a later
+    collection that ambushed a steady-state apply (CR3 re-review). The
+    removal loop now lives in its own frame and the unit binding is
+    dropped first; the document must be gone the moment apply returns.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(
+                kind="assistant", raw_text="a short streamed block", generation=0
+            ),
+        )
+        unit = pane._tails["assistant"]
+        assert unit is not None and unit.kind == "block" and unit.block is not None
+        doc_ref = weakref.ref(unit.block)
+        del unit
+
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200))
+        gc.disable()
+        try:
+            await _apply(
+                pane,
+                (),
+                assistant_tail=ProvisionalTail(kind="assistant", raw_text=fence, generation=1),
+            )
+            demoted = pane._tails["assistant"]
+            assert demoted is not None and demoted.kind == "line"
+            assert doc_ref() is None, (
+                "the demotion-frame collection must free the demoted document"
+            )
+        finally:
+            gc.enable()
 
 
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
