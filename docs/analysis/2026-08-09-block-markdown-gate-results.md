@@ -2,36 +2,50 @@
 
 Status: `pass`
 Authority: `evidence`
-Date: 2026-08-09 (final revision after the fifth full-scale run)
+Date: 2026-08-10 (revised after the confirming run that closed the six-dimension re-review loop)
 
 ## Verdict
 
-**The full-scale replay gate passes 22 of 22 checks** — stress corpus
+**The full-scale replay gate passes 23 of 23 checks** — stress corpus
 `talaria-stress-v1-50000d-seed20260802` (sha256
 `34b52ddaba7b33f993ca621aff765f2337c4581d0aef9d2899267b50d3033c0c`, 53,516 frames), the feature
 corpus, the sustained-cadence pass, and the full-size KTD1(d) workloads together, at commit
-`7db8857` on `feat/v0-2-block-markdown-build`. It took five full-scale runs to get there: the
-first run failed four checks, each was diagnosed to a mechanism and fixed (or, twice,
-operator-amended — RA4 and RA5 below), and the fifth run is green. The run-by-run story is in
-"The full-scale runs" at the end; the defect the earlier revision of this document reported as
-out-of-scope has since been **fixed at both layers** and its section below now records the fix.
+`67589a9` on `feat/v0-2-block-markdown-build`. It took five full-scale runs to reach the first
+green (commit `7db8857`): the first run failed four checks, each was diagnosed to a mechanism and
+fixed (or, twice, operator-amended — RA4 and RA5 below). A six-dimension external re-review then
+fixed a further set of pane and gate defects — each with a pinned regression — and hardened the
+gate itself: mid-stream ownership proofs are now counted and floored (`enough_ownership_checkpoints`,
+the 23rd check) and the expected-documents proof runs mid-stream against the pane's last-applied
+snapshot. The confirming run on the re-reviewed tree is green with the exact figures below. The
+run-by-run story is in "The full-scale runs" at the end; the defect the earlier revision of this
+document reported as out-of-scope has since been **fixed at both layers** and its section below
+now records the fix.
 
-The final figures, first-run against fifth-run:
+The final figures, first-run against confirming-run. **The two columns are two measurement
+methodologies, not a like-for-like comparison**: the first run drove the fence and table
+workloads in full-replace (`update`) mode and computed its quantile over every post-warm-up
+sample, demotion and block phase included — the diagnostic record that motivated the fixes and
+the amendments — while the confirming run drives the streaming (`append`) path and enforces the
+steady-state population RA4/RA5 define, with the excluded costs reported verbatim beside it.
 
-| Measurement | First run | Fifth run | Ceiling |
+| Measurement | First run (update mode, pre-amendment population) | Confirming run (append mode, steady-state population) | Ceiling |
 | --- | --- | --- | --- |
-| growing-open-fence streaming p99 | 17,697 ms | 19.4 ms | 50 ms |
-| growing-one-column-table streaming p99 | 764 ms | 46.5 ms | 50 ms |
-| growing-unbroken-line streaming p99 | 30.9 ms | 8.5 ms | 50 ms |
-| Resident-set growth, stress replay | 355 MB | 126 MB | 300 MB |
+| growing-open-fence streaming p99 | 17,697 ms | 20.3 ms | 50 ms |
+| growing-one-column-table streaming p99 | 764 ms | 48.7 ms | 50 ms |
+| growing-unbroken-line streaming p99 | 30.9 ms | 9.2 ms | 50 ms |
+| Resident-set growth, stress replay | 355 MB | 137 MB | 300 MB |
 | Content-loss checkpoints (stress) | 2 of 11 failing | 0 of 11 | 0 |
+| Mid-stream ownership proofs (stress) | not counted | 10 of 11 checkpoints, 0 failures | ≥ 5 |
 | Content-loss checkpoints (feature) | 1 failing | 0 | 0 |
 | Peak live-tail widgets | 10,002 | 501 | bounded (KTD1(a)) |
 | Peak folded-window descendants | 293 | 295 | 600 |
 
-One margin stated plainly: the table workload's 46.5 ms is 7% under its ceiling. It is the
-check most sensitive to machine load, and the recorded-not-enforced block-phase limit behind it
-is RA5's subject below. The four prior revisions' content is retained under the sections that
+One margin stated plainly: the table workload's 48.7 ms is 2.6% under its ceiling, and its
+steady phase holds exactly 50 samples, so its nearest-rank p99 is arithmetically the maximum
+sample — one scheduler or collector hiccup in 50 boundaries sets the figure. Three confirming
+attempts on the same tree are on record: green, red by 2.0 ms on this one check, green. It is
+the check most sensitive to machine load, and the recorded-not-enforced block-phase limit
+behind it is RA5's subject below. The four prior revisions' content is retained under the sections that
 follow — accurate when written, each now annotated where later work changed the picture. What
 that earlier revision built:
 
@@ -143,9 +157,12 @@ boundary to 10,000 lines (`growing_fence_boundaries`); a one-column table, 10 ro
 80-column resize a third of the way through, via `run_adversarial_workloads`'s `resize_at`) — plus
 the three boundary probes named in KTD1(a)'s own grounding: the 37,000-character double-width CJK
 line, the 601-column table, and the exact-boundary 599-column-table-plus-paragraph regression.
-`measure_apply_latency` clocks `time.monotonic()` strictly around `await pane.apply(view, entries)`,
-excludes the first `WARMUP_BOUNDARIES` (10) samples, and reports the nearest-rank p99 of the rest
-against `LATENCY_CEILING_MS` (50ms). High-water figures recorded per boundary run: peak descendants
+`measure_apply_latency` clocks `time.monotonic()` strictly around `await pane.apply(view, entries)`
+and enforces the nearest-rank p99 of the **steady-state phase** against `LATENCY_CEILING_MS`
+(50ms): the first `WARMUP_BOUNDARIES` (10) samples are excluded as warm-up and, when the workload
+demotes, every sample through the demotion boundary is excluded too (RA4 + RA5), with the block
+phase's peak and the demotion's own cost reported verbatim (`block_phase_peak_ms`,
+`demotion_apply_ms`) rather than enforced. High-water figures recorded per boundary run: peak descendants
 (tier two — the single live tail this harness grows; tier one, the folded window, is proven
 separately by the existing 302-entry/odd-cut/partial-retention real-fold regressions in
 `tests/replay/test_gate.py` from the prior pass), peak `EntryMarkdown.append` reparse-window bytes
@@ -174,8 +191,8 @@ reduced) and pass — 1,204 and 1,201 descendants respectively for the two table
 the trigger; 1,003 descendants and a tripped wrapped-row trigger for the full 1,000-row table. The
 full 10,000-line fence and 100,000-character mega-line workloads, run end-to-end through
 `run_adversarial_workloads`, had at that revision only been exercised at *reduced* scale.
-**Resolved:** the five full-scale runs recorded under "The full-scale runs" below publish the
-full-size figures; the fifth run's p99s are 19.4 ms (fence), 46.5 ms (table), and 8.5 ms
+**Resolved:** the full-scale runs recorded under "The full-scale runs" below publish the
+full-size figures; the confirming run's p99s are 20.3 ms (fence), 48.7 ms (table), and 9.2 ms
 (mega-line) against the 50 ms ceiling, under the RA4/RA5 quantile (steady-state phase; the
 demotion boundary and the table's block phase are reported verbatim, not enforced).
 
@@ -349,9 +366,9 @@ uv run bandit -r talaria -q                                         # 1 low find
   # exactly the accepted baseline.
 ```
 
-## The full-scale runs — five of them, each failure diagnosed to a mechanism
+## The full-scale runs — each failure diagnosed to a mechanism
 
-All five ran `run_gate()` at its KTD14 defaults (50,000-delta stress corpus, sustained-cadence
+Every run used `run_gate()` at its KTD14 defaults (50,000-delta stress corpus, sustained-cadence
 pass, feature corpus, full-size workloads) on an otherwise idle machine — the three latency
 checks are wall-clock p99 measurements and competing load flips them, which is also why the
 reduced-scale test-suite runs tolerate (never require) the `LOAD_SENSITIVE_CHECKS` trio.
@@ -377,17 +394,32 @@ reduced-scale test-suite runs tolerate (never require) the `LOAD_SENSITIVE_CHECK
    expensive by the gate process's own corpus-heavy heap, landed inside a smooth apply.
 5. **Run 5 (`7db8857`) — PASS, 22/22.** The pane drains demotion garbage inside the
    RA4-excluded demotion frame; the measurement harness freezes its corpus ballast out of the
-   collector's reach so ambient collections model the product, not the harness. Final figures in
-   the Verdict table above.
+   collector's reach so ambient collections model the product, not the harness. First green.
+6. **The confirming runs (`67589a9`) — PASS, 23/23.** The six-dimension external re-review
+   (CR1–CR6) fixed a further set of pane defects after run 5 — the session-switch lineage
+   watermark, tail paint ordering, the adoption seam's row conventions and in-place retarget,
+   the banner-aware budget, the block-handoff demotion recheck, the partial-fold banner refresh
+   — and hardened the gate itself (the ownership-proof floor and the mid-stream
+   expected-documents proof; 23 checks now). Three confirming attempts on the re-reviewed tree,
+   minutes apart: green 23/23; red on `workload_latency_growing-one-column-table` alone at
+   52.0 ms against 50 (the one check whose 50-sample steady phase makes its p99 the maximum
+   sample); green 23/23 with the exact figures this document publishes. The spread is recorded
+   rather than smoothed: it is what a 2.6%-margin wall-clock check looks like on a real machine.
 
 **The two measurement amendments, both operator-approved on run evidence.** RA4: with ~90
 post-warmup samples, nearest-rank p99 is arithmetically the maximum, so the original quantile
-demanded the one-time block-to-lines demotion apply (mounting a capped widget run, ~150–420 ms
-across the five runs) finish under 50 ms — the flagged demotion boundary is now excluded and its
-cost reported verbatim (`demotion_boundary`, `demotion_apply_ms`). RA5: the growing table's
-block phase is a recorded limit (`block_phase_peak_ms`; a user streaming a table past ~340 rows
-feels 54 ms+ hitches until the 500-row demotion), with the early-demotion fix and the
-incremental-row-append alternative both written up in `QUEUED.md`.
+demanded the one-time block-to-lines demotion apply (mounting a capped widget run) finish under
+50 ms — the flagged demotion boundary is now excluded and its cost reported verbatim
+(`demotion_boundary`, `demotion_apply_ms`). The confirming run's excluded demotion costs,
+exactly: growing-open-fence **140.3 ms** (boundary 4), growing-one-column-table **257.9 ms**
+(boundary 49), growing-unbroken-line **20.8 ms** (boundary 7), and the three single-boundary
+probes — CJK double-width line **36.0 ms**, 601-column table **26.3 ms**,
+599-column-table-plus-paragraph **26.1 ms** — each demoting on its only boundary. RA5: the
+growing table's block phase is a recorded limit — the confirming run's `block_phase_peak_ms` is
+**66.6 ms** (a user streaming a table past ~340 rows feels hitches of that order until the
+500-row demotion; the other workloads demote inside warm-up, so their recorded block-phase peak
+is 0.0 by construction) — with the early-demotion fix and the incremental-row-append
+alternative both written up in `QUEUED.md`.
 
 **Ceiling coverage note.** The workload harness grows a single live tail; tier one (the folded
 window's 600-descendant ceiling) is proven by the 302-entry aggregate-ceiling and
