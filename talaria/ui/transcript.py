@@ -773,7 +773,7 @@ class TranscriptPane(VerticalScroll):
             await self._reconcile_committed(entries.entries)
             await self._reconcile_tail("reasoning", entries.reasoning_tail)
             await self._reconcile_tail("assistant", entries.assistant_tail)
-            await self._condense(entries.entries)
+            await self._condense(entries.entries, total_lines=len(view.lines))
             await self._render_condensed()
 
             self._lines = view.lines
@@ -966,10 +966,18 @@ class TranscriptPane(VerticalScroll):
         kind: TranscriptKind,
         text: str,
         pending: list[Widget],
+        max_rows: int | None = None,
     ) -> _MountedUnit:
         """Build one fresh unit — block document, fallen-back line group, or
         ordinary line group, whichever KTD2's rules select — queuing its
         widgets in ``pending`` rather than mounting them immediately.
+
+        ``max_rows`` (tail builds only) pre-caps a line-rendered unit to its
+        *newest* rows at construction — the plan's "the tails, each bounded"
+        clause made literal. Without it, demoting a 10,000-line tail mounted
+        10,002 widgets in one apply; with it, the demotion mounts at most
+        the cap and the head rows are born folded. Committed-entry builds
+        pass ``None`` and are bounded by condensation as before.
         """
         width = self._content_width
         eligible = kind in MARKDOWN_KINDS
@@ -1005,6 +1013,8 @@ class TranscriptPane(VerticalScroll):
             text, content_width=width
         )
         source_lines = welded_body.split("\n") if welded_body else [""]
+        if max_rows is not None and len(source_lines) > max_rows:
+            source_lines = source_lines[len(source_lines) - max_rows :]
         widgets = [
             TranscriptLine(line, kind=kind, no_wrap=is_fallback) for line in source_lines
         ]
@@ -1029,12 +1039,13 @@ class TranscriptPane(VerticalScroll):
         text: str,
         *,
         mount_before_tails: bool,
+        max_rows: int | None = None,
     ) -> _MountedUnit:
         """Build and mount one fresh unit immediately — the tail path, where
         exactly one unit is built per call and there is nothing to batch.
         """
         pending: list[Widget] = []
-        unit = self._prepare_unit(entry_id, kind, text, pending)
+        unit = self._prepare_unit(entry_id, kind, text, pending, max_rows=max_rows)
         await self._mount_widgets(pending, before_tails=mount_before_tails)
         return unit
 
@@ -1071,7 +1082,9 @@ class TranscriptPane(VerticalScroll):
             return
 
         if unit is None:
-            new_unit = await self._build_unit(kind, kind, tail.raw_text, mount_before_tails=False)
+            new_unit = await self._build_unit(
+                kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
+            )
             self._tails[kind] = new_unit
             self._tail_generation[kind] = tail.generation
             return
@@ -1109,7 +1122,7 @@ class TranscriptPane(VerticalScroll):
                 for widget in unit.widgets():
                     await self._safe_remove(widget)
                 self._tails[kind] = await self._build_unit(
-                    kind, kind, tail.raw_text, mount_before_tails=False
+                    kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
                 )
             return
 
@@ -1122,7 +1135,7 @@ class TranscriptPane(VerticalScroll):
             for widget in unit.widgets():
                 await self._safe_remove(widget)
             self._tails[kind] = await self._build_unit(
-                kind, kind, tail.raw_text, mount_before_tails=False
+                kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
             )
             return
 
@@ -1143,25 +1156,40 @@ class TranscriptPane(VerticalScroll):
             and unit.banner is not None  # is_fallback mounts one; narrow, don't assert
             and tail.raw_text.startswith(unit.applied_text)
         ):
-            welded = f"{_ENTRY_PREFIX.get(kind, '')}{tail.raw_text}"
-            new_lines = welded.split("\n")
-            boundary = len(unit.lines) - 1
-            if unit.lines and unit.lines[boundary].source != new_lines[boundary]:
-                unit.lines[boundary].update_source(new_lines[boundary])
+            prefix = _ENTRY_PREFIX.get(kind, "")
+            new_lines = f"{prefix}{tail.raw_text}".split("\n")
+            # The boundary between old and new text is anchored by the OLD
+            # text's row count, never by the mounted-widget count — head
+            # rows may already be folded (the pre-capped build, or
+            # _condense's budget walk), and the newest mounted widget is
+            # always the old text's last row regardless.
+            old_rows = len(f"{prefix}{unit.applied_text}".split("\n"))
+            boundary_source = new_lines[old_rows - 1]
+            if unit.lines and unit.lines[-1].source != boundary_source:
+                unit.lines[-1].update_source(boundary_source)
             fresh = [
                 TranscriptLine(line, kind=kind, no_wrap=True)
-                for line in new_lines[len(unit.lines) :]
+                for line in new_lines[old_rows:]
             ]
             if fresh:
                 await self.mount_all(fresh, before=unit.banner)
                 unit.lines.extend(fresh)
+            # The assistant tail's cap is enforced by _condense's budget
+            # walk in this same apply() (its folded head rows must enter
+            # the condensed-prefix arithmetic); the reasoning tail has no
+            # span in the line buffer, so its bound is enforced here.
+            if kind == "reasoning":
+                while len(unit.lines) > self.mount_cap:
+                    head = unit.lines.pop(0)
+                    await self._safe_remove(head)
+            if fresh:
                 unit.banner.update(_banner_text(len(unit.lines)))
             unit.applied_text = tail.raw_text
             return
         for widget in unit.widgets():
             await self._safe_remove(widget)
         self._tails[kind] = await self._build_unit(
-            kind, kind, tail.raw_text, mount_before_tails=False
+            kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
         )
 
     async def _safe_write(self, widget: EntryMarkdown | None, verb: str, text: str) -> None:
@@ -1178,7 +1206,9 @@ class TranscriptPane(VerticalScroll):
 
     # ── condensation over mixed units (KTD2) ────────────────────────────
 
-    async def _condense(self, records: tuple[TranscriptEntryRecord, ...]) -> None:
+    async def _condense(
+        self, records: tuple[TranscriptEntryRecord, ...], *, total_lines: int
+    ) -> None:
         """Evict widgets from the top until the window starts at ``new_top``.
 
         :meth:`_compute_new_top` guarantees ``new_top`` never lands strictly
@@ -1187,9 +1217,13 @@ class TranscriptPane(VerticalScroll):
         to *partially* fold is a line-rendered one (ordinary or fallen-back),
         and at most one: the single entry, if any, whose span straddles
         ``new_top``. Every entry fully below ``new_top`` is evicted whole
-        first, in commit order, oldest first.
+        first, in commit order, oldest first. When ``new_top`` reaches past
+        every committed span into the live assistant tail's own rows (a
+        line-rendered tail is charged first in the budget walk), the tail's
+        head rows fold the same retention-based way the straddling entry's
+        do — the fold arithmetic has exactly one convention.
         """
-        new_top = self._compute_new_top(records)
+        new_top = self._compute_new_top(records, total_lines=total_lines)
         removed_top_height = 0
 
         while self._entry_order:
@@ -1223,6 +1257,17 @@ class TranscriptPane(VerticalScroll):
                         removed_top_height += max(1, widget.outer_size.height)
                         await self._safe_remove(widget)
 
+        tail = self._tails.get("assistant")
+        if tail is not None and tail.kind == "line" and tail.applied_text:
+            tail_rows = len(tail.applied_text.split("\n"))
+            tail_start = total_lines - tail_rows
+            if new_top > tail_start:
+                retain = max(1, tail_rows - (new_top - tail_start))
+                while len(tail.lines) > retain:
+                    widget = tail.lines.pop(0)
+                    removed_top_height += max(1, widget.outer_size.height)
+                    await self._safe_remove(widget)
+
         self._top = max(self._top, new_top)
         self._pending_removed_height = removed_top_height
 
@@ -1234,13 +1279,16 @@ class TranscriptPane(VerticalScroll):
                 return record
         return None
 
-    def _compute_new_top(self, records: tuple[TranscriptEntryRecord, ...]) -> int:
+    def _compute_new_top(
+        self, records: tuple[TranscriptEntryRecord, ...], *, total_lines: int
+    ) -> int:
         """``desired_top`` in real accounted-content-line units (KTD2).
 
-        Walks committed entries newest-to-oldest, accumulating accounted
-        rows (content lines, plus one banner row per fallen-back entry)
-        against :attr:`mount_cap`. The first entry that does not fully fit
-        determines the fold boundary: a block-rendered entry rounds up
+        Walks the newest unit first — a line-rendered assistant tail, when
+        one is live — then committed entries newest-to-oldest, accumulating
+        accounted rows (content lines, plus one banner row per fallen-back
+        unit) against :attr:`mount_cap`. The first unit that does not fully
+        fit determines the fold boundary: a block-rendered entry rounds up
         (evicted whole); a fallen-back entry with any remaining budget for
         at least one content row keeps its newest rows plus exactly one
         banner (partial retention) and folds the rest; a fallen-back entry
@@ -1252,10 +1300,38 @@ class TranscriptPane(VerticalScroll):
         always kept whole and is not charged against the budget at all
         (KTD2's qualified newest-entry exemption) — a fallen-back newest
         entry gets no such exemption and folds like any line content.
+
+        **The line-rendered assistant tail is charged first.** The plan's
+        ceiling sentence ("the tails, each bounded by the two-condition
+        trigger") assumed the trigger bounds a tail's widget count; it does
+        not — it only switches the rendering, after which nothing capped it,
+        and the full-scale workload mounted 10,002 line widgets for one
+        tail. The tail is the newest content on screen, so it takes budget
+        first, retains at least one content row always (a live stream never
+        folds to nothing), and when its retention consumes the entire
+        budget, everything senior folds — the exempt newest block entry
+        included, because prefix condensation admits no mid-buffer hole.
+        The reasoning tail never appears here: it has no span in the line
+        buffer (the flattened projection carries only the assistant tail),
+        so its identical bound is enforced widget-locally in
+        :meth:`_reconcile_tail`.
         """
+        budget = self.mount_cap
+        tail = self._tails.get("assistant")
+        if tail is not None and tail.kind == "line":
+            tail_rows = len(tail.applied_text.split("\n")) if tail.applied_text else 1
+            tail_start = total_lines - tail_rows
+            weight = tail_rows + (1 if tail.is_fallback else 0)
+            if budget - weight >= 0:
+                budget -= weight
+            elif tail.is_fallback:
+                retained = min(tail_rows, max(1, budget - 1))
+                return max(self._top, tail_start + (tail_rows - retained))
+            else:
+                retained = min(tail_rows, max(1, budget))
+                return max(self._top, tail_start + (tail_rows - retained))
         if not records:
             return self._top
-        budget = self.mount_cap
         newest = records[-1]
         newest_unit = self._entries.get(newest.entry_id)
         exempt_newest = newest_unit is not None and newest_unit.kind == "block"
