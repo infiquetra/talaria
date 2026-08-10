@@ -1550,20 +1550,26 @@ def test_p99_enforces_the_steady_state_phase_and_records_the_block_phase() -> No
     quantile — the block phase's peak and the demotion's own cost are
     reported verbatim instead, so the limit is recorded, never hidden.
     """
-    # Heterogeneous values in every phase, so a wrong selector cannot hide:
-    # identical samples let a min, mean, or first-element bug return the
-    # same number the correct nearest-rank max would (CR4 finding 3).
+    # Heterogeneous values in every phase, more than 100 steady samples,
+    # and the maximum AWAY from the tail: identical samples let a
+    # min/mean/first-element bug return the right number, and a
+    # max-at-the-end fixture lets a "return the last sample" bug do the
+    # same (CR4 finding 3 + confirm). At 100 steady samples the nearest
+    # rank is the SECOND-largest (ceil(0.99*100)-1 = index 98), which no
+    # shortcut — max, min, mean, first, last — reproduces.
     demoted = LatencyReport(label="table")
     demoted.samples_ms = (
         [1.0] * 10  # warm-up
         + [120.0] * 20 + [190.0] + [150.0] * 18  # block phase: peak mid-phase
         + [255.0]  # the demotion boundary itself
-        + [4.0] * 30 + [6.0] * 19 + [9.0]  # steady state: max at the tail
+        + [4.0] * 70 + [6.0] * 27 + [9.0] + [7.0] + [5.0]  # steady: max mid, small last
     )
-    demoted.boundary_count = 100
+    demoted.boundary_count = 150
     demoted.demotion_boundary = 49
     demoted.demotion_apply_ms = 255.0
-    assert demoted.p99_ms == 9.0, "nearest-rank p99 of 50 samples is the max, not min or mean"
+    assert demoted.p99_ms == 7.0, (
+        "nearest-rank p99 of 100 heterogeneous samples is the second-largest"
+    )
     assert demoted.block_phase_peak_ms == 190.0, "the phase PEAK, not its first or last value"
     assert demoted.peak_apply_ms == 255.0
     payload = demoted.to_dict()
@@ -1572,7 +1578,7 @@ def test_p99_enforces_the_steady_state_phase_and_records_the_block_phase() -> No
     assert payload["demotion_apply_ms"] == 255.0
 
     never_demoted = LatencyReport(label="line")
-    never_demoted.samples_ms = [100.0] * 10 + [10.0] * 89 + [12.0]
+    never_demoted.samples_ms = [100.0] * 10 + [10.0] * 80 + [14.0] + [12.0] + [11.0] * 18
     assert never_demoted.p99_ms == 12.0, "warm-up alone is excluded when nothing demoted"
     assert never_demoted.block_phase_peak_ms == 0.0
 

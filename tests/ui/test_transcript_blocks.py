@@ -1526,6 +1526,43 @@ async def test_a_block_tail_completing_into_a_monster_body_demotes_at_commit() -
         )
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
 
+        # The same multiline commit WITH ITS BLOCK TAIL STILL LIVE — the
+        # handoff frame itself. The arm above commits with no tail mounted,
+        # so a mutation that caps only tail-less builds (or only tailed
+        # ones) survives one arm alone; together they pin the cap on both
+        # paths (CR4 confirm).
+        await _apply(
+            pane,
+            both,
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="hello2", generation=2),
+        )
+        live_tail = pane._tails["assistant"]
+        assert live_tail is not None and live_tail.kind == "block"
+        tailed_body = "hello2\n" + "\n".join(f"row {i}" for i in range(1200))
+        all_three = both + (
+            TranscriptEntryRecord(
+                entry_id=3,
+                kind="assistant",
+                raw_body=tailed_body,
+                committed=True,
+                line_span=(1202, 1201),
+            ),
+        )
+        mounted_fresh.clear()
+        pane.mount_all = spying_mount_all  # type: ignore[method-assign]
+        try:
+            view = await _apply(pane, all_three)
+        finally:
+            pane.mount_all = original_mount_all  # type: ignore[method-assign]
+        handoff_monster = pane._entries[3]
+        assert handoff_monster is not live_tail, "a demoting final body never adopts the tail"
+        assert handoff_monster.kind == "line" and handoff_monster.is_fallback
+        assert len(handoff_monster.lines) == DEFAULT_MOUNT_CAP - 1
+        assert mounted_fresh and max(mounted_fresh) <= DEFAULT_MOUNT_CAP, (
+            "the handoff-frame demoting build is pre-capped too"
+        )
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
 
 @pytest.mark.asyncio
 async def test_the_demotion_frame_collection_actually_frees_the_document() -> None:
