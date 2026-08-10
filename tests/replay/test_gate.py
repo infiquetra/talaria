@@ -224,12 +224,14 @@ async def test_the_gate_runs_end_to_end_and_records_corpus_identity() -> None:
     assert "/" not in result.stress.corpus.label
 
 
-#: The two checks that are floors on *how much was sampled*, not claims about the
-#: product. Both ride a 20ms poll against ``RSS_SAMPLE_EVERY`` frames, so they can
-#: only be satisfied by a run long enough in wall-clock terms to be polled that
-#: many times — which a 600-delta corpus at unbounded replay speed never is; it
-#: drains between two polls. They are calibrated for KTD14's real 50,000-delta
-#: run and are reported by the published evidence, not by this test.
+#: The three checks that are floors on *how much was sampled*, not claims about
+#: the product. All ride the sampler's 20ms poll (two against
+#: ``RSS_SAMPLE_EVERY`` frame checkpoints, the ownership floor at their
+#: quiescent subset), so they can only be satisfied by a run long enough in
+#: wall-clock terms to be polled that many times — which a 600-delta corpus at
+#: unbounded replay speed never is; it drains between two polls. They are
+#: calibrated for KTD14's real 50,000-delta run and are reported by the
+#: published evidence, not by this test.
 SCALE_DEPENDENT_CHECKS = frozenset(
     {
         "enough_memory_samples",
@@ -273,7 +275,7 @@ async def test_every_product_claim_holds_at_reduced_scale() -> None:
     This used to assert ``verdict == "pass"`` under a strict xfail blamed entirely
     on ``TranscriptPane``'s reconciliation. Half of that was right — the pane did
     desynchronize, and ``tests/ui/test_transcript_bounds.py`` now pins the fix at
-    unit size — but the attribution was wrong: at 600 deltas the two sample-count
+    unit size — but the attribution was wrong: at 600 deltas the sample-count
     floors above cannot be met by any implementation, so the assertion was
     unreachable on its own terms and would have stayed red after a perfect fix.
     An xfail whose stated reason is not the only reason is a comment that lies.
@@ -1773,8 +1775,9 @@ async def test_run_gate_wires_the_feature_corpus_and_workloads_into_the_verdict(
     `test_a_cleanly_completed_multi_delta_table_renders_correctly_end_to_end`),
     so the assertion below REQUIRES the feature corpus to replay
     content-clean, and the failing set is bounded by the named scale
-    floors and load-sensitive latency checks — every one of which must
-    also exist, so a deleted check cannot pass by vanishing (CR4).
+    floors, the load-sensitive latency checks, and the duration-dependent
+    bounded-catch-up floor — every one of which must also exist, so a
+    deleted check cannot pass by vanishing (CR4).
     """
     import talaria.replay.workloads as workloads_module
 
