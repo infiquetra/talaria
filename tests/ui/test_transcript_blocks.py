@@ -1582,11 +1582,11 @@ async def test_a_block_tail_completing_into_a_monster_body_demotes_at_commit() -
             ),
         )
         mounted_fresh.clear()
-        pane.mount_all = spying_mount_all  # type: ignore[method-assign]
+        pane.mount_all = spying_mount_all
         try:
             view = await _apply(pane, all_three)
         finally:
-            pane.mount_all = original_mount_all  # type: ignore[method-assign]
+            pane.mount_all = original_mount_all
         handoff_monster = pane._entries[3]
         assert handoff_monster is not live_tail, "a demoting final body never adopts the tail"
         assert handoff_monster.kind == "line" and handoff_monster.is_fallback
