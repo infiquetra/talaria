@@ -1370,6 +1370,59 @@ async def test_a_divergent_capped_monster_commits_without_a_mount_transient() ->
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
 
 
+@pytest.mark.asyncio
+async def test_a_budget_exact_zero_block_tail_keeps_every_row() -> None:
+    """The tail budget reserved a banner row unconditionally, but only
+    fallback units mount a banner: a 500-row zero-block tail mounted 499
+    rows, folded nothing (its accounted rows fit the cap, so nothing
+    entered the condensed arithmetic), and silently dropped a row — the
+    identity broke before AND after commit, the retarget slice repeating
+    the same reservation (CR2 confirm round 4). A bannerless unit keeps
+    the full budget at construction and at retarget.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        body = " \n" * (DEFAULT_MOUNT_CAP - 1) + " "
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=body, generation=0),
+        )
+        unit = pane._tails["assistant"]
+        assert unit is not None and unit.kind == "line" and not unit.is_fallback
+        assert unit.banner is None
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP, "no banner mounts, so no row is reserved"
+        assert pane.condensed_count == 0
+        assert pane.rendered_lines == view.lines
+
+        # The retarget arm: the same shape ending in a newline commits as
+        # exactly mount_cap split-convention rows; a banner-reserving
+        # retarget slice retained one row short of the span.
+        trailing = " \n" * (DEFAULT_MOUNT_CAP - 1)
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=trailing, generation=1),
+        )
+        rebuilt = pane._tails["assistant"]
+        assert rebuilt is not None and len(rebuilt.lines) == DEFAULT_MOUNT_CAP - 1
+        committed = (
+            TranscriptEntryRecord(
+                entry_id=1,
+                kind="assistant",
+                raw_body=trailing,
+                committed=True,
+                line_span=(0, DEFAULT_MOUNT_CAP),
+            ),
+        )
+        view = await _apply(pane, committed)
+        assert pane._entries[1] is rebuilt, "retargeted in place"
+        assert len(rebuilt.lines) == DEFAULT_MOUNT_CAP, "the full span, not span minus a banner"
+        assert pane.condensed_count == 0
+        assert pane.rendered_lines == view.lines
+
+
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
 
 

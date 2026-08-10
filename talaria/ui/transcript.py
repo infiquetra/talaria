@@ -1052,7 +1052,10 @@ class TranscriptPane(VerticalScroll):
             tail_rows = _welded_tail_lines(record.kind, tail.applied_text)
             entry_rows = _welded_entry_lines(record.kind, record.raw_body)
             if tail_rows != entry_rows:
-                keep = entry_rows[-max(1, self.mount_cap - 1) :]
+                # The banner row is reserved only when a banner is mounted
+                # (CR2 confirm round 4) — same budget rule as construction.
+                capacity = max(1, self.mount_cap - 1) if tail.is_fallback else self.mount_cap
+                keep = entry_rows[-capacity:]
                 deferred_ops.append(partial(self._retarget_line_unit, tail, record.kind, keep))
             unit = tail
             self._tails[record.kind] = None
@@ -1156,8 +1159,18 @@ class TranscriptPane(VerticalScroll):
             source_lines = _welded_tail_lines(kind, text)
         else:
             source_lines = _welded_entry_lines(kind, text)
-        if max_rows is not None and len(source_lines) > max_rows:
-            source_lines = source_lines[len(source_lines) - max_rows :]
+        if max_rows is not None:
+            # The banner row is reserved out of the budget only when a
+            # banner will actually mount: a fallback unit retains
+            # max_rows-1 content rows plus its banner (CR1 finding 6),
+            # while a zero-block unit has no banner and keeps the full
+            # budget — reserving unconditionally dropped one row of a
+            # budget-exact zero-block tail with nothing folding it into
+            # the condensed arithmetic, breaking the rendered identity
+            # (CR2 confirm round 4).
+            allowed = max(1, max_rows - 1) if is_fallback else max_rows
+            if len(source_lines) > allowed:
+                source_lines = source_lines[len(source_lines) - allowed :]
         widgets = [
             TranscriptLine(line, kind=kind, no_wrap=is_fallback) for line in source_lines
         ]
@@ -1259,7 +1272,7 @@ class TranscriptPane(VerticalScroll):
                 kind,
                 tail.raw_text,
                 anchor=self._next_tail_anchor(kind),
-                max_rows=max(1, self.mount_cap - 1),
+                max_rows=self.mount_cap,
             )
             self._tails[kind] = new_unit
             self._tail_generation[kind] = tail.generation
@@ -1302,7 +1315,7 @@ class TranscriptPane(VerticalScroll):
                 kind,
                 tail.raw_text,
                 anchor=self._next_tail_anchor(kind),
-                max_rows=max(1, self.mount_cap - 1),
+                max_rows=self.mount_cap,
                 )
                 # Pay the cleanup inside the demotion frame, which RA4
                 # already excludes from the latency quantile: the block
@@ -1329,7 +1342,7 @@ class TranscriptPane(VerticalScroll):
                 kind,
                 tail.raw_text,
                 anchor=self._next_tail_anchor(kind),
-                max_rows=max(1, self.mount_cap - 1),
+                max_rows=self.mount_cap,
             )
             return
 
@@ -1414,7 +1427,7 @@ class TranscriptPane(VerticalScroll):
             kind,
             tail.raw_text,
             anchor=self._next_tail_anchor(kind),
-            max_rows=max(1, self.mount_cap - 1),
+            max_rows=self.mount_cap,
         )
 
     async def _safe_write(self, widget: EntryMarkdown | None, verb: str, text: str) -> None:
