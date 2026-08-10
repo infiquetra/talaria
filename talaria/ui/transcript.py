@@ -443,6 +443,20 @@ def trips_fallback_trigger(markdown_text: str, *, content_width: int) -> bool:
 # ── line widgets ─────────────────────────────────────────────────────────
 
 
+def _line_renderable(
+    source: str, *, kind: TranscriptKind | None, no_wrap: bool
+) -> Text:
+    """The one way a :class:`TranscriptLine`'s text becomes a renderable —
+    shared by construction and by :meth:`TranscriptLine.update_source` so an
+    in-place update can never render differently than a rebuild would.
+    """
+    if no_wrap:
+        return Text(defang(source), no_wrap=True, end="")
+    if kind in MARKDOWN_KINDS:
+        return inline_markdown(source)
+    return literal_text(source)
+
+
 class TranscriptLine(Static):
     """One projected line — unchanged from v0.1 for ordinary line-rendered
     kinds; also used, with ``no_wrap=True``, as the fallen-back entry's
@@ -452,12 +466,7 @@ class TranscriptLine(Static):
     def __init__(
         self, source: str, *, kind: TranscriptKind | None = None, no_wrap: bool = False
     ) -> None:
-        if no_wrap:
-            renderable: Text = Text(defang(source), no_wrap=True, end="")
-        elif kind in MARKDOWN_KINDS:
-            renderable = inline_markdown(source)
-        else:
-            renderable = literal_text(source)
+        renderable = _line_renderable(source, kind=kind, no_wrap=no_wrap)
         # R7/KTD5 (U5): every line-rendered kind carries its group class
         # alongside the nowrap class -- ``kind`` is only ``None`` for a
         # direct construction outside this module's own call sites (none
@@ -469,6 +478,18 @@ class TranscriptLine(Static):
         super().__init__(renderable, markup=False, classes=" ".join(css_classes) or None)
         #: The projection line, verbatim — not the text that ends up on screen.
         self.source = source
+        self._kind = kind
+        self._no_wrap = no_wrap
+
+    def update_source(self, source: str) -> None:
+        """Replace this line's projection text in place.
+
+        The fallback tail's boundary line grows character by character as a
+        stream appends without a newline; updating it beats remounting the
+        whole unit (KTD1(d)'s per-delta bound).
+        """
+        self.source = source
+        self.update(_line_renderable(source, kind=self._kind, no_wrap=self._no_wrap))
 
 
 # ── mounted-unit bookkeeping ────────────────────────────────────────────
@@ -557,10 +578,19 @@ def _fallback_banner(line_count: int) -> Static:
     report the run as bannerless. The height-1 constraint below is
     therefore its own rule, scoped to the banner's own class only.
     """
-    text = Text(
+    return Static(
+        _banner_text(line_count), markup=False, classes="transcript--fallback-banner"
+    )
+
+
+def _banner_text(line_count: int) -> Text:
+    """The banner's renderable, shared with the in-place count refresh a
+    growing fallback tail performs — same construction, same one-row
+    constraint, whichever path draws it.
+    """
+    return Text(
         defang(FALLBACK_BANNER_TEMPLATE.format(lines=line_count)), no_wrap=True, end=""
     )
-    return Static(text, markup=False, classes="transcript--fallback-banner")
 
 
 class TranscriptPane(VerticalScroll):
@@ -594,6 +624,7 @@ class TranscriptPane(VerticalScroll):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.mount_cap = max(1, mount_cap)
         self.follow = True
+        self._applies_in_flight = 0
         self._lines: tuple[str, ...] = ()
         #: Real projected content lines folded away — a pure line-index
         #: concept, never inflated by a fallback banner (KTD2).
@@ -729,17 +760,36 @@ class TranscriptPane(VerticalScroll):
         today; every mounted kind is covered by ``entries``, but ``view`` is
         the source of truth for total line count either way).
         """
-        await self._reset_if_history_changed(entries.entries)
-        await self._reconcile_committed(entries.entries)
-        await self._reconcile_tail("reasoning", entries.reasoning_tail)
-        await self._reconcile_tail("assistant", entries.assistant_tail)
-        await self._condense(entries.entries)
-        await self._render_condensed()
+        # apply() awaits Textual mounts and Markdown updates, and Textual
+        # sets a document's ``source`` before its children finish
+        # remounting — so between this method's awaits, a concurrent reader
+        # (the gate's mid-stream sampler) can observe a document whose
+        # blocks do not yet cover its own text. That torn state is
+        # scheduling, not corruption; ``apply_in_flight`` is how a reader
+        # distinguishes the two.
+        self._applies_in_flight += 1
+        try:
+            await self._reset_if_history_changed(entries.entries)
+            await self._reconcile_committed(entries.entries)
+            await self._reconcile_tail("reasoning", entries.reasoning_tail)
+            await self._reconcile_tail("assistant", entries.assistant_tail)
+            await self._condense(entries.entries)
+            await self._render_condensed()
 
-        self._lines = view.lines
-        self.peak_mounted = max(self.peak_mounted, self.mounted_count)
-        self.peak_descendants = max(self.peak_descendants, self.descendant_count)
-        self._restore_anchor()
+            self._lines = view.lines
+            self.peak_mounted = max(self.peak_mounted, self.mounted_count)
+            self.peak_descendants = max(self.peak_descendants, self.descendant_count)
+            self._restore_anchor()
+        finally:
+            self._applies_in_flight -= 1
+
+    @property
+    def apply_in_flight(self) -> bool:
+        """True while any :meth:`apply` call is between its first and last
+        await — the window in which a mounted document's children may
+        legitimately lag its already-updated text.
+        """
+        return self._applies_in_flight > 0
 
     # ── hard reset (a focus switch, not a continuation) ─────────────────
 
@@ -1080,11 +1130,34 @@ class TranscriptPane(VerticalScroll):
             return
         # Growth of a fallback tail: no markdown reparse either way (that is
         # what "ends the growing-reparse work" means — there is no parser on
-        # this path at all), but a full rebuild of the line widgets is
-        # simpler and safer than patching the deque in place, and the
-        # fallback path is already the degenerate-content escape valve, not
-        # the common case. Every widget is dropped and rebuilt from the new
-        # text.
+        # this path at all). A same-generation append patches in place —
+        # extend the boundary line, mount widgets for the wholly new lines,
+        # refresh the banner count — because the full drop-and-rebuild this
+        # branch used to do is O(total lines) per delta, and a streaming
+        # 10,000-line fence lives on exactly this path: the gate measured
+        # its p99 apply at 17.7 s against KTD1(d)'s 50 ms ceiling. Only a
+        # non-append change (same generation, text not an extension) still
+        # rebuilds, and that shape does not occur in a real stream.
+        if (
+            unit.is_fallback
+            and unit.banner is not None  # is_fallback mounts one; narrow, don't assert
+            and tail.raw_text.startswith(unit.applied_text)
+        ):
+            welded = f"{_ENTRY_PREFIX.get(kind, '')}{tail.raw_text}"
+            new_lines = welded.split("\n")
+            boundary = len(unit.lines) - 1
+            if unit.lines and unit.lines[boundary].source != new_lines[boundary]:
+                unit.lines[boundary].update_source(new_lines[boundary])
+            fresh = [
+                TranscriptLine(line, kind=kind, no_wrap=True)
+                for line in new_lines[len(unit.lines) :]
+            ]
+            if fresh:
+                await self.mount_all(fresh, before=unit.banner)
+                unit.lines.extend(fresh)
+                unit.banner.update(_banner_text(len(unit.lines)))
+            unit.applied_text = tail.raw_text
+            return
         for widget in unit.widgets():
             await self._safe_remove(widget)
         self._tails[kind] = await self._build_unit(

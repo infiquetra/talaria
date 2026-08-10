@@ -791,6 +791,89 @@ async def test_fallback_banner_paints_exactly_one_row(pane_width: int) -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_a_growing_fallback_tail_reuses_its_mounted_widgets() -> None:
+    """A same-generation append to a fallen-back tail patches in place —
+    boundary line extended, new lines mounted, banner count refreshed —
+    instead of dropping and rebuilding every widget. The rebuild was
+    O(total lines) per delta: the full-scale gate measured the growing
+    open fence's p99 apply at 17.7 s against KTD1(d)'s 50 ms ceiling.
+    Widget identity is the proof of reuse — a rebuild cannot preserve it.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(600))
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=fence, generation=0),
+        )
+        unit = pane._tails["assistant"]
+        assert unit is not None and unit.kind == "line" and unit.is_fallback
+        before = list(unit.lines)
+        last_before = before[-1]
+
+        # Extend the boundary line (no newline in the fragment) ...
+        grown = fence + " extended"
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=grown, generation=0),
+        )
+        assert pane._tails["assistant"] is unit, "the unit was rebuilt, not patched"
+        assert unit.lines[-1] is last_before, "the boundary line was remounted"
+        assert unit.lines[-1].source == "row 599 extended"
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+        # ... then grow whole new lines and prove the prefix is untouched.
+        grown2 = grown + "\n" + "\n".join(f"row {i}" for i in range(600, 700))
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=grown2, generation=0),
+        )
+        assert pane._tails["assistant"] is unit
+        assert len(unit.lines) == len(before) + 100
+        assert all(a is b for a, b in zip(unit.lines, before, strict=False)), (
+            "previously mounted line widgets were replaced during an append"
+        )
+        assert unit.banner is not None
+        assert str(len(unit.lines)) in str(unit.banner.render())
+        assert unit.accounted_rows == len(unit.lines) + 1
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_apply_in_flight_is_visible_mid_apply_and_clear_after() -> None:
+    """``apply_in_flight`` is the marker the replay gate's mid-stream
+    sampler uses to tell a torn instant (Textual's Markdown.update sets
+    ``source`` before its children finish remounting) from real
+    corruption. It must read True inside apply()'s await window and False
+    the moment apply returns — a stuck marker would excuse every
+    mid-stream ownership sample, which is why the gate's settled
+    checkpoint independently asserts it cleared.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        seen: list[bool] = []
+        original = pane._reconcile_tail
+
+        async def spy(kind: TranscriptKind, tail: ProvisionalTail) -> None:
+            seen.append(pane.apply_in_flight)
+            await original(kind, tail)
+
+        pane._reconcile_tail = spy  # type: ignore[method-assign]
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="hello", generation=0),
+        )
+        assert seen and all(seen), "apply_in_flight must be True inside apply()"
+        assert not pane.apply_in_flight, "apply_in_flight must clear when apply() returns"
+
+
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
 
 
