@@ -41,6 +41,7 @@ import hashlib
 import platform
 import resource
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -121,6 +122,15 @@ MIN_RSS_SAMPLES = 6
 #: Minimum content checkpoints. "0 of 1" and "0 of 11" are very different
 #: claims, and only the second is evidence.
 MIN_CONTENT_CHECKPOINTS = 5
+
+#: How old a progress fingerprint must be before the bounded catch-up
+#: assertion consumes it (see the sampler in :func:`measure_replay`). Twenty
+#: times the pane's 50 ms coalescing interval: far above legitimate flush
+#: staleness, far below the seconds a genuinely non-consuming pane would
+#: accumulate. Wall-clock on purpose — a checkpoint-ordinal bound fails
+#: correct panes at unbounded replay speed, where consecutive frame-indexed
+#: checkpoints land inside one coalescing window.
+CATCHUP_GRACE_SECONDS = 1.0
 
 #: Terminal geometry the gate renders at. Fixed so a measurement taken on one
 #: machine means the same thing on another.
@@ -1214,6 +1224,7 @@ async def measure_replay(
             nonlocal checkpoints, ownership_checkpoints, failures
             next_mark = RSS_SAMPLE_EVERY
             prev_progress: tuple[int, int, int, int, int] | None = None
+            prev_progress_at = 0.0
             while not stop.is_set():
                 await asyncio.sleep(0.02)
                 applied = app.frames_applied
@@ -1288,14 +1299,30 @@ async def measure_replay(
                         # never consumed at all — a reasoning-only delta
                         # that never reached apply() — leaves a stale
                         # snapshot proving itself forever. Bounded
-                        # catch-up: this checkpoint's snapshot must cover
-                        # the domain fingerprint captured a full
-                        # checkpoint interval ago (_snapshot_covers'
-                        # partial order).
-                        progressed_ok = prev_progress is None or _snapshot_covers(
-                            snapshot, prev_progress
-                        )
-                        prev_progress = _progress_fingerprint(app.state)
+                        # catch-up: the snapshot must cover a domain
+                        # fingerprint that has aged past the grace window
+                        # (_snapshot_covers' partial order). The grace is
+                        # wall-clock, never checkpoint-ordinal: checkpoints
+                        # are frame-indexed, and an unbounded-speed replay
+                        # lands consecutive checkpoints one 20 ms poll
+                        # apart — inside the pane's own 50 ms coalescing
+                        # window — so an ordinal bound failed correct panes
+                        # for being exactly as stale as coalescing allows
+                        # (run 9: three false content-loss failures). A
+                        # fingerprint is held until it has aged
+                        # CATCHUP_GRACE_SECONDS, then consumed by one
+                        # coverage check and replaced.
+                        progressed_ok = True
+                        now = time.monotonic()
+                        if (
+                            prev_progress is not None
+                            and now - prev_progress_at >= CATCHUP_GRACE_SECONDS
+                        ):
+                            progressed_ok = _snapshot_covers(snapshot, prev_progress)
+                            prev_progress = None
+                        if prev_progress is None:
+                            prev_progress = _progress_fingerprint(app.state)
+                            prev_progress_at = now
                         if not (block_ok and banner_ok and expected_ok and progressed_ok):
                             failures += 1
                     # The line-window half runs only at the settled
