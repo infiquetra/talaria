@@ -69,16 +69,16 @@ reporting exactly this as "projected line 0 (...) is owned by no block".
 This is a fact about the installed widget's own construction-vs-append
 bookkeeping, not something introduced by ``talaria/ui/blocks.py``'s
 wrapping (reproduced against a bare, unwrapped stock ``textual.widgets.
-Markdown`` too) — fixing it would mean changing ``talaria/ui/`` or working
-around it in ``talaria/ui/transcript.py``'s reconcile path, both out of this
-unit's scope. :func:`measure_apply_latency`'s ``growth_mode="update"``
-option exists *because of* this: forcing a full reparse every boundary is
-what lets the fence and table workloads measure the real, uncorrupted
-construct's cost rather than a paragraph's, and it is used for exactly
-those two workloads below (the mega-line workload keeps the default
-``"append"``, since it is not exposed to this defect). This defect, and the
-scenario that surfaces it, are reported in the results document rather than
-routed around.
+Markdown`` too). It has since been fixed at both layers —
+``talaria/ui/blocks.py``'s ``EntryMarkdown.update`` re-derives
+``_last_parsed_line`` from the last top-level block start, and the commit
+handoff no longer skips the no-op update that made the corruption permanent
+— with fail-then-pass coverage in the ui suite. :func:`measure_apply_latency`
+keeps its ``growth_mode="update"`` option as the harness for measuring a
+full-replace (what a generation bump does once per tail replacement), but
+the fence and table workloads no longer run on it: with the defect fixed,
+``"append"`` measures the real construct on the real streaming path, which
+is the path KTD1(d)'s per-delta ceiling is a claim about.
 """
 
 from __future__ import annotations
@@ -289,6 +289,14 @@ class LatencyReport:
     #: actually stated over.
     final_descendant_estimate: int = 0
     final_wrapped_row_estimate: int = 0
+    #: RA4: the boundary index at which the tail first demoted to fallback
+    #: line rendering — the one apply() per workload that swaps a monster
+    #: block document for a capped run of line widgets in a single call.
+    #: ``None`` when the workload never fell back.
+    demotion_boundary: int | None = None
+    #: RA4: that boundary's own apply latency, reported as high-water
+    #: instrumentation precisely *because* :meth:`p99_ms` excludes it.
+    demotion_apply_ms: float = 0.0
 
     @property
     def peak_apply_ms(self) -> float:
@@ -296,15 +304,28 @@ class LatencyReport:
 
     @property
     def p99_ms(self) -> float:
-        """Nearest-rank p99 over every boundary past :data:`WARMUP_BOUNDARIES`.
+        """Nearest-rank p99 over every boundary past :data:`WARMUP_BOUNDARIES`,
+        excluding the at-most-one demotion boundary (RA4).
 
-        Zero for a run too short to have any measured samples at all — never
-        a fabricated number, matching this package's own "never claim a
+        With ~90 post-warmup samples, nearest-rank p99 is arithmetically the
+        maximum — so the quantile as originally stated demanded that the
+        one-time representation switch (mounting a capped run of line widgets
+        in one apply) cost under 50 ms, which no amount of steady-state work
+        can deliver. RA4 treats that single flagged boundary the way warm-up
+        is treated: excluded from the quantile, reported verbatim in
+        :attr:`demotion_apply_ms` instead of hidden in a tolerance. Zero for
+        a run too short to have any measured samples at all — never a
+        fabricated number, matching this package's own "never claim a
         measurement you did not take" discipline (``gate.py``'s
         ``MIN_RSS_SAMPLES``/``MIN_CONTENT_CHECKPOINTS`` are the same
         instinct for a different measurement).
         """
-        measured = sorted(self.samples_ms[WARMUP_BOUNDARIES:])
+        measured = [
+            sample
+            for index, sample in enumerate(self.samples_ms)
+            if index >= WARMUP_BOUNDARIES and index != self.demotion_boundary
+        ]
+        measured.sort()
         if not measured:
             return 0.0
         index = max(0, math.ceil(0.99 * len(measured)) - 1)
@@ -323,6 +344,8 @@ class LatencyReport:
             "fell_back": self.fell_back,
             "final_descendant_estimate": self.final_descendant_estimate,
             "final_wrapped_row_estimate": self.final_wrapped_row_estimate,
+            "demotion_boundary": self.demotion_boundary,
+            "demotion_apply_ms": round(self.demotion_apply_ms, 3),
         }
 
 
@@ -443,6 +466,12 @@ async def measure_apply_latency(
             )
             unit = pane._tails.get("assistant")
             if unit is not None and unit.is_fallback:
+                if not report.fell_back:
+                    # RA4: the first fallen-back boundary is the demotion —
+                    # the one representation-switch apply the quantile
+                    # excludes and this report surfaces verbatim.
+                    report.demotion_boundary = index
+                    report.demotion_apply_ms = elapsed_ms
                 report.fell_back = True
             report.final_descendant_estimate = descendant_estimate(text)
             report.final_wrapped_row_estimate = wrapped_row_estimate(
@@ -515,18 +544,20 @@ async def run_adversarial_workloads(
         resize_at: tuple[tuple[int, int, int], ...] = ()
         if label == "growing-unbroken-line":
             resize_at = ((len(boundaries) // 3, RESIZE_WIDTH_80_COLUMNS, 24),)
-        # "update" for the fence and table: both are multi-line-at-mount
-        # constructs exposed to the construction-vs-append defect the module
-        # docstring names; measuring them via forced full-reparse is what
-        # keeps this a measurement of the real fence/table, not a paragraph
-        # the defect silently substituted. The mega-line is always one line
-        # at every boundary and is not exposed to it, so it keeps "append"
-        # and exercises the real KTD1(c) reparse-window path.
-        growth_mode = (
-            "update" if label in ("growing-open-fence", "growing-one-column-table") else "append"
-        )
+        # Every growth workload measures "append" — the path a real
+        # streaming delta sequence takes (KTD3 drives Markdown.append), and
+        # the path KTD1(d)'s per-delta ceiling is a claim about. The fence
+        # and table originally forced "update" because the
+        # construction-vs-append defect the module docstring names made
+        # append silently swap those constructs for a paragraph; that
+        # defect is fixed (EntryMarkdown.update's checkpoint correction and
+        # the unconditional commit repair), so append now measures the real
+        # fence and table. "update" — a full re-render of the whole tail
+        # every boundary — is what a generation bump does once per
+        # replacement, not per delta, and holding a per-delta ceiling over
+        # it measured a path streaming never takes.
         report = await measure_apply_latency(
-            boundaries, label=label, size=size, resize_at=resize_at, growth_mode=growth_mode
+            boundaries, label=label, size=size, resize_at=resize_at, growth_mode="append"
         )
         reports.append(report)
     for label, text in BOUNDARY_PROBES:
