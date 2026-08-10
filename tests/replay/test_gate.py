@@ -1550,8 +1550,8 @@ def test_p99_enforces_the_steady_state_phase_and_records_the_block_phase() -> No
     quantile — the block phase's peak and the demotion's own cost are
     reported verbatim instead, so the limit is recorded, never hidden.
     """
-    # Heterogeneous values in every phase, more than 100 steady samples,
-    # and the maximum AWAY from the tail: identical samples let a
+    # Heterogeneous values in every phase, 100 steady samples, and the
+    # maximum AWAY from the tail: identical samples let a
     # min/mean/first-element bug return the right number, and a
     # max-at-the-end fixture lets a "return the last sample" bug do the
     # same (CR4 finding 3 + confirm). At 100 steady samples the nearest
