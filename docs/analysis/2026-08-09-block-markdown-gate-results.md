@@ -340,7 +340,7 @@ and did.
 uv run pytest tests/domain/test_projection.py -q                    # 14 passed
 
 # Every U6 test plus the fix loops' additions; the full suite stands at
-# 1,700 passed / 7 skipped at the confirming commit, with ruff, mypy and
+# 1,701 passed / 7 skipped at the confirming commit (2e96324), with ruff, mypy and
 # bandit clean (the assertion bandit once flagged was replaced with an
 # explicit raise during the re-review loop).
 uv run pytest tests/replay/test_gate.py -q

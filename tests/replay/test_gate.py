@@ -279,14 +279,15 @@ async def test_every_product_claim_holds_at_reduced_scale() -> None:
     An xfail whose stated reason is not the only reason is a comment that lies.
 
     What is asserted instead is exact and reachable: every check that is a claim
-    about the product passes, and the failing set is bounded by two named groups
-    — the two scale floors (always red at this size, asserted red below) and the
-    three load-sensitive latency checks (tolerated, never required, red under
-    pytest's shared-machine load). A content-loss regression puts
-    ``content_loss`` in the failing set, which is not a subset of either group,
-    so this still turns red. And every named check must EXIST in the results:
-    a deleted check would vanish from the failing set rather than fail, passing
-    the subset assertion vacuously.
+    about the product passes, and the failing set is bounded by three named groups
+    — the scale floors (always red at this size, asserted red below), the three
+    load-sensitive latency checks (tolerated, never required, red under
+    pytest's shared-machine load), and the duration-dependent bounded-catch-up
+    floor (tolerated: its small-scale outcome rides replay wall-clock). A
+    content-loss regression puts ``content_loss`` in the failing set, which is
+    not a subset of any group, so this still turns red. And every named check
+    must EXIST in the results: a deleted check would vanish from the failing
+    set rather than fail, passing the subset assertion vacuously.
 
     The original gate could not detect a rendering defect at all: its content
     check compared ``transcript_view(app.state)`` against ``app.state`` — the
@@ -1315,8 +1316,8 @@ def test_the_progress_fingerprint_partial_order_detects_an_unconsumed_update() -
     the sampler's snapshot proof is self-consistent, so a reasoning-only
     delta the pane never consumed leaves a stale snapshot proving itself
     forever. _snapshot_covers is the partial order that notices — the
-    pane's last-applied snapshot must cover the domain fingerprint from a
-    full checkpoint interval ago.
+    pane's last-applied snapshot must cover a domain fingerprint that has
+    aged past the wall-clock grace (CATCHUP_GRACE_SECONDS).
     """
     from talaria.domain.projection import entry_scoped_view
     from talaria.domain.state import SessionState
@@ -1343,6 +1344,48 @@ def test_the_progress_fingerprint_partial_order_detects_an_unconsumed_update() -
     )
     assert _snapshot_covers(None, _progress_fingerprint(SessionState())), (
         "an empty stream owes no apply"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The poll-driven path itself, pinned (CR6 confirm round 3): with the
+    frame-checkpoint schedule disabled entirely (RSS_SAMPLE_EVERY beyond
+    the corpus), aged fingerprints must still be consumed on the sampler's
+    20 ms poll — moving consumption back under frame checkpoints turns the
+    count to zero and this test red. Second arm: a stale snapshot is a
+    counted failure, once per consumed fingerprint.
+    """
+    monkeypatch.setattr(gate_module, "RSS_SAMPLE_EVERY", 10**9)
+    # Comfortably above the pane's 50 ms coalescing flush so a correct,
+    # legitimately-lagging pane cannot fail the first arm (the run-9
+    # lesson), far below the replay's duration so consumptions happen.
+    monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.2)
+    corpus = build_stress_corpus(deltas=600, seed=5)
+    # speed=2.0 stretches the 2.6 s recorded span to ~1.3 s of wall-clock —
+    # several grace windows; the default unbounded drain finishes inside one.
+    measurement, _, _ = await measure_replay(
+        corpus.records, stress_corpus_identity(corpus), speed=2.0
+    )
+    assert measurement.content_loss_checkpoints == 1, (
+        "no mid-stream frame checkpoint fired — only the settled one"
+    )
+    assert measurement.ownership_checkpoints == 0, "ownership rides the checkpoint schedule"
+    assert measurement.reachability_checkpoints >= 1, (
+        "coverage must run on the poll even with the checkpoint schedule disabled"
+    )
+    assert measurement.content_loss_failures == 0
+
+    monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.02)
+    monkeypatch.setattr(gate_module, "_snapshot_covers", lambda snapshot, fingerprint: False)
+    stale, _, _ = await measure_replay(
+        corpus.records, stress_corpus_identity(corpus), speed=2.0
+    )
+    assert stale.reachability_checkpoints >= 1
+    assert stale.content_loss_failures == stale.reachability_checkpoints, (
+        "every consumed fingerprint whose coverage fails is a counted failure"
     )
 
 
