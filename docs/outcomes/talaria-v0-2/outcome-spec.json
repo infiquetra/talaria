@@ -75,7 +75,9 @@
       ],
       "leaf_saga_id": "task-talaria-v0-2-block-markdown",
       "child_spec_ref": "",
-      "github": {},
+      "github": {
+        "pr": "https://github.com/infiquetra/talaria/pull/49"
+      },
       "worktree": {},
       "evidence": {
         "execution_spec": "docs/plans/2026-08-09-talaria-v0-2-block-markdown-spec.json",
