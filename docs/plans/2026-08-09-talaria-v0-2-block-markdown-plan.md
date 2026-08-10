@@ -154,6 +154,39 @@ of this plan — building per-entry horizontal navigation for adversarial conten
 data-grid machinery RA2 declined. Veto path: demand the expand affordance now — U4 grows an
 interaction model and its focus-order integration with the answerability spine.
 
+**RA4 — KTD1(d)'s quantile excludes the at-most-one demotion boundary per workload, which is
+flagged and reported verbatim instead (amends KTD1(d)'s sample base; operator-approved
+2026-08-09 on the first full-scale gate run's evidence).** With ~90 post-warmup samples,
+nearest-rank p99 is arithmetically the maximum sample, so the ceiling as first stated demanded
+that the one-time fallback demotion — the single `apply()` that swaps a monster block document
+for a capped run of non-wrapping line widgets — complete in under 50 ms, which no steady-state
+work can deliver (mounting the capped widget run alone costs ~250 ms). The amendment: the
+latency report records `demotion_boundary` and `demotion_apply_ms`; the quantile excludes that
+one flagged sample exactly as it excludes warm-up; the demotion cost is enforced nowhere but
+reported everywhere (results document included), because hiding it in a tolerance was the
+alternative and that reads as tuning the measurement. Every post-demotion sample — the
+steady-state streaming path — remains under the 50 ms ceiling; RA5 below narrows the enforced
+population a second time, so for a workload with a block-rendered phase the enforced samples are
+exactly the post-demotion phase, with the block phase recorded rather than enforced. Veto path:
+demand amortized demotion (spreading the mount across coalescing intervals keeps every apply
+under 50 ms but adds catch-up machinery to the reconcile path and the banner row-accounting the
+gate checks mid-stream).
+
+**RA5 — KTD1(d)'s ceiling is enforced over the steady-state phase; the growing table's
+block-rendered phase is a recorded limit, not an enforced one (amends KTD1(d)'s sample base a
+second time; operator-decided 2026-08-09 on the third full-scale gate run's evidence).** A
+still-open, block-rendered table re-renders wholesale on every streamed append — the reparse
+window of an open construct is the whole construct — so its per-delta cost grows with the table:
+it crosses the 50 ms ceiling at roughly 340 rows, plateaus at 54–59 ms, and showed a 190 ms
+outlier, until the 500-row trigger demotes it, after which every append is bounded (measured
+≤ 44 ms; fence steady state 4–9 ms). The quantile now measures the post-demotion phase; the
+block phase's peak is reported verbatim (`block_phase_peak_ms`) in the report and the results
+document. The rejected-for-now alternatives, both queued: demoting an open table early (~300
+rows, before the crossing — touches the two-condition trigger, the gate's two-sided ownership
+proof, and the commit handoff's re-promotion), and incremental row-append inside the RA2
+bounded-table wrapper (no claim change, deepest surgery). Veto path: demand either now — the
+early demotion is the design-consistent completion and is written up in QUEUED.md.
+
 ## Key Technical Decisions
 
 **KTD1 — The bounded-rendering claim is restated as four measurable ceilings, recorded in
@@ -240,7 +273,9 @@ ADR-0006 before implementation:**
   unbroken line grown 5,000 characters per boundary to 100,000 characters (the wrapped-rows
   degenerate shape). Clock:
   `time.monotonic()` around `TranscriptPane.apply`. The first 10 boundaries are warm-up and
-  excluded; the quantile is the 99th percentile of the remaining samples. High-water
+  excluded; the quantile is the 99th percentile of the steady-state samples — past warm-up and,
+  when the workload demotes, past the flagged demotion boundary, whose own cost and whose
+  block-phase peak are reported verbatim instead (RA4, RA5). High-water
   instrumentation (peak descendant count per tier, peak parser-input bytes, peak apply
   milliseconds, tallest entry document) is exposed the way `peak_mounted` is today
   (transcript.py:130).
@@ -275,6 +310,12 @@ When `desired_top` lands inside a **block** entry's line span, it rounds **up** 
 next unit boundary — the cap prefers evicting more over keeping a cap-buster — with one
 exception: a block-rendered newest entry is mounted whole (its size is already bounded by the
 two-condition trigger, and the residual overage is recorded in the high-water instrumentation).
+One recorded qualification to that exception (CR1 re-review, 2026-08-09): when a live
+line-rendered tail's own retention consumes the entire budget, everything senior folds — the
+exempt newest block entry included — because prefix condensation admits no mid-buffer hole; the
+exemption is a budget-charging rule, not an immortality guarantee, and the tail's folded rows are
+tracked as a separate, provisional counter beside the monotone committed prefix, so they unfold
+when a regenerated tail shrinks the projection.
 A **line-rendered** entry — including a fallen-back newest entry — is ordinary line content:
 `desired_top` may land inside it and fold its head, exactly as today, with one
 **banner-preserving rule** for fallen-back entries: a cut inside the accounted span folds

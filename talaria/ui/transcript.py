@@ -1,321 +1,1717 @@
-"""The transcript pane: a bounded mount over an unbounded projection (KTD14).
+"""The transcript pane: a hybrid of block markdown documents and line widgets
+(U4, KTD1/KTD2/KTD3).
 
-**The bound is on widgets, not on content, and the two must not be confused.**
-The domain transcript accumulates without eviction — KTD14 says so explicitly,
-and QUEUED.md carries the deferred work item for changing that. What this widget
-promises is narrower and mechanically checkable: at most
-:data:`DEFAULT_MOUNT_CAP` line widgets exist at any moment, with everything
-older folded into one condensed block. Content stays reachable through the
-projection (``terminal_read`` serves every line whether or not it is mounted),
-so "bounded" here means bounded *rendering cost*, and the results doc says that
-in those words rather than claiming bounded memory.
+**The unit changed from "line" to "entry", for committed assistant and
+reasoning entries only.** Every other kind — user, tool, subagent, system,
+prompt, error — still mounts one :class:`TranscriptLine` per line, exactly as
+v0.1 did. A committed assistant or reasoning entry instead mounts one
+:class:`~talaria.ui.blocks.EntryMarkdown` document, built by
+``talaria/ui/blocks.py`` (U3), so headings, fences, lists, quotes, and tables
+render as themselves rather than as flat coloured text. The in-flight
+assistant and reasoning streams each get their own live document too — two,
+not one, because the domain holds both buffers at once and R18 forbids either
+stealing the other's progressive rendering.
 
-**Why the unit is a line and not an entry.** ``TranscriptView`` publishes lines;
-that is also what the terminal-read buffer serves, so a mounted-widget count and
-a served-line count are directly comparable. Mounting per entry would make the
-cap meaningless the moment one entry is a 4,000-line tool dump.
+**Two ceilings, not one (KTD1(a)).** The folded window — every committed
+entry except the newest and the two live tails — stays under a *descendant*
+budget, not a widget-count budget, because one table can mount hundreds of
+per-cell widgets from a single top-level block. The newest entry and each
+tail instead carry a per-entry two-condition trigger: an entry whose
+construct-aware descendant estimate exceeds 1,200, or whose width-aware
+wrapped-row estimate exceeds :data:`DEFAULT_MOUNT_CAP`, falls back to
+non-wrapping line rendering with one banner widget — never fully flattened,
+never silently dropped, painted rows pinned to exactly the projected line
+count plus one.
 
-**The update is a diff, not a rebuild.** Committed lines never change, so the
-pane keeps the previous line tuple and advances a stable index. The only region
-it ever re-examines is the provisional tail — the in-flight streaming block —
-which is why a 50,000-delta replay does not cost O(transcript) per 50ms tick.
+**Condensation folds whole units, with one exception per unit class.** A
+block-rendered entry is atomic: a fold boundary landing inside it rounds up
+and evicts the whole entry. A fallen-back or ordinary line-rendered entry is
+still line-content, foldable a row at a time — except a fallen-back entry's
+banner is charged to the same budget as its content rows and is never left
+standing alone: a cut that would retain zero content rows takes the banner
+with it (rounds forward); a cut that retains at least one content row keeps
+exactly one banner beside it.
 
-**"Committed" is the projection's word, not a guess made from matching text.**
-The stable index is clamped to :attr:`TranscriptView.committed_lines` for
-exactly that reason. The provisional block sits *after* the committed lines, so
-appending an entry while a turn is streaming pushes every provisional line down
-by the length of the new entry. Two consecutive snapshots can therefore agree on
-a provisional line by coincidence — the streaming text simply did not change
-between those two ticks — and inferring "settled" from that agreement is wrong.
-It was wrong here: the floor advanced into the streaming block on frame 31 of
-the stress corpus while zero entries had been committed, and the pane was
-misaligned from line 0 for the remaining 616 frames, rendering 274 lines against
-275 projected with one line of conversation on screen nowhere.
+**Why entry identity matters here and did not in v0.1.** Once a committed
+entry equals a mounted document rather than a slice of a flat line array, the
+mapping from "this projection line moved" to "this widget needs a poke" is no
+longer positional — it is by entry id, published by
+:func:`~talaria.domain.projection.entry_scoped_view` (KTD6). Every method
+below that walks entries reads that id, never a line offset, and the one
+place a widget survives unchanged across a state transition — a stream
+handing its document to the entry it just became — is keyed on it too.
+
+**Kind differentiation (U5, KTD5, R7/R8).** Every mounted unit — a
+:class:`TranscriptLine` or an :class:`~talaria.ui.blocks.EntryMarkdown`
+document — carries exactly one ``transcript--group-*`` CSS class, chosen by
+:func:`kind_group` from :data:`_KIND_GROUPS`, R7's verbatim twelve-to-group
+table. The channel is background tint plus a left-edge border (the "gutter
+marker"), never a change to the body text's own foreground colour — a fence's
+own syntax highlighting inside a reasoning or assistant document paints
+foreground spans, and a channel carried by foreground colour would be exactly
+what that highlighting could erase (R8). Every colour named in
+:data:`_GROUP_VARIABLES` is a variable the installed theme already defines
+(``$primary``, ``$success``, ``$secondary``, ``$accent``, ``$panel``,
+``$error``) — no new theme variable is introduced, pinned by a test that
+reads ``App.get_css_variables()`` and asserts every ``$name`` this module's
+``DEFAULT_CSS`` uses is a member of that live set, not a hand-maintained list
+of what this module *thinks* the theme defines. ``$text-muted`` was tried
+first for the "session-record" group and rejected: it resolves to
+``"auto 60%"``, an auto-contrast scalar, not a colour, and Textual's CSS
+parser rejects it outright as a ``background``/``border`` value — caught by
+actually mounting a pane with it before writing the pin test, not by reading
+the theme dict and assuming every name in it is colour-shaped. The
+one-column border consumes one column of wrap width, so both mounted unit
+types reserve that column unconditionally rather than only when a group
+class happens to be present — the reservation, not the border, is what
+keeps wrap width constant. :class:`EntryMarkdown` — whose stock
+``padding: 0 2 0 2`` has a spare column to give up — loses ``padding-left``
+down to ``1`` in the same rule that adds the border, keeping its total left
+inset at 2 columns either way. :class:`TranscriptLine` has no stock padding
+to trade, so this module gives it one unconditionally instead: every
+:class:`TranscriptLine`, classed or not, carries ``padding-left: 1``, and
+the per-group rule that adds the border zeroes that padding back to ``0`` in
+the same breath — the reserved column moves from padding to border rather
+than being consumed in addition to it. An *unclassed* line therefore has the
+same content width as a classed one at every wrap boundary, not just the
+short, single-projected-line fixtures ``tests/ui/test_kind_styles.py`` also
+uses for the distinguishability tests. (CR5: before this reservation
+existed, an unclassed line kept the full pane width while a classed line
+lost one column to the border alone, so a line whose content exactly filled
+the wrap width rendered one row taller styled than unstyled — the border was
+taking a column nothing had set aside for it.)
 """
 
 from __future__ import annotations
 
+import gc
+import math
 from collections import deque
-from typing import Final
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from functools import partial
+from typing import Final, Literal
 
+from rich.cells import cell_len
+from rich.text import Text
 from textual.containers import VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Static
 
 from talaria.domain.models import TranscriptKind
-from talaria.domain.projection import TranscriptView
-from talaria.ui.literal import literal_text
+from talaria.domain.projection import (
+    EntryScopedView,
+    ProvisionalTail,
+    TranscriptEntryRecord,
+    TranscriptView,
+)
+from talaria.ui.blocks import EntryMarkdown, parser_factory
+from talaria.ui.literal import defang, literal_text
 from talaria.ui.markdown import inline_markdown
 
-#: KTD14's default. Overridable per-app so the gate can measure a smaller cap
-#: without editing the source, but the shipped default is the number the
-#: threshold is stated against.
+#: KTD1(a)'s tier-two line cap and the wrapped-rows trigger threshold. The
+#: name and the number are unchanged from v0.1 (ADR-0005 decision 3, amended
+#: by ADR-0006 rather than replaced) — this is still the line-widget cap for
+#: line-rendered surfaces, and it doubles as the per-entry wrapped-row
+#: trigger. The folded-window *descendant* ceiling the gate enforces is a
+#: separate number (600), read off the live tree, not stated here.
 DEFAULT_MOUNT_CAP: Final[int] = 500
 
-#: Rendered in place of everything that has been unmounted. One widget, always,
-#: so the collapse cannot itself grow the mount count.
+#: KTD1(a) tier two: an entry (or live tail) whose construct-aware descendant
+#: estimate exceeds this falls back to line rendering. Calibrated against
+#: Textual 8.2.8 live probes (see :func:`descendant_estimate`), not guessed.
+DESCENDANT_ESTIMATE_TRIGGER: Final[int] = 1_200
+
 CONDENSED_TEMPLATE: Final[str] = "── {count} earlier lines condensed (still readable by the agent)"
 
-#: The entry kinds whose lines get inline markdown, and the only ones.
-#:
-#: Both are agent prose, which is the whole argument for styling them: a model
-#: writes ``**like this**`` and means emphasis. The kinds left out are left out
-#: for a reason each time. ``user`` is the operator's own typed text, and
-#: echoing back something other than what they typed is its own small betrayal.
-#: ``tool`` is program output — file contents, a directory listing, a diff —
-#: where an asterisk is far more likely to be a glob or a C comment than a
-#: request for italics, and restyling it would make the screen disagree with the
-#: program that produced it. Everything else is Talaria's own wording.
+#: RA3's banner: names the clip and the fallback cause, never claims the
+#: clipped cells are reachable on screen (the full line is still in the
+#: terminal-read buffer, which the banner also says).
+FALLBACK_BANNER_TEMPLATE: Final[str] = (
+    "── entry too large to render as markdown ({lines} lines clipped at the "
+    "viewport edge, full content still readable by the agent) ──"
+)
+
+#: The entry kinds that attempt block rendering. Moved here from
+#: ``talaria/ui/markdown.py`` (KTD8): this is the set U4 mounts as
+#: :class:`~talaria.ui.blocks.EntryMarkdown` documents, and it is the *only*
+#: remaining live caller of the presentational question "is this agent
+#: prose". ``talaria/ui/markdown.py`` keeps ``inline_markdown`` in the tree as
+#: the KTD8 fallback's styling half, but nothing on this pane's live path
+#: calls it any more — a kind that stays out of this set is line-rendered
+#: with :func:`~talaria.ui.literal.literal_text`, plain, same as ``tool`` or
+#: ``user``.
 MARKDOWN_KINDS: Final[frozenset[TranscriptKind]] = frozenset({"assistant", "reasoning"})
+
+#: The two independently keyed live tails (R18). A ``list`` would let a typo
+#: silently create a third; the tuple is what :meth:`TranscriptPane.apply`
+#: iterates, in this order — reasoning before assistant, because within one
+#: turn an agent's reasoning precedes the reply it explains.
+_TAIL_KINDS: Final[tuple[TranscriptKind, ...]] = ("reasoning", "assistant")
+
+#: The presentation weld a line-rendered surface still carries — a verbatim
+#: copy of ``talaria/domain/projection.py``'s private ``_ENTRY_PREFIX``,
+#: duplicated rather than imported because that name is private to a module
+#: outside U4's file list. KTD6 makes the weld decoration that applies only
+#: to line-rendered surfaces: :func:`~talaria.domain.projection.entry_scoped_view`
+#: hands this pane an *unwelded* ``raw_body`` for every entry (a block
+#: document must never receive a welded first line — ``· `` in front of a
+#: reasoning entry's own heading is invalid markdown, R18's exact defect),
+#: but ``TranscriptView.lines`` — what :attr:`TranscriptPane.rendered_lines`
+#: has to keep matching — still carries the weld for every kind, block or
+#: not, via :func:`~talaria.domain.projection.transcript_view`'s
+#: ``_entry_lines``. A unit that falls back to line rendering therefore
+#: welds this prefix onto its own first line before building widgets, the
+#: same way ``_entry_lines`` welds it before splitting. **If this table ever
+#: drifts from projection.py's, the drift is silent** — no test in this
+#: unit's list can see across that module boundary — which is exactly the
+#: caveat this comment exists to flag for whoever next edits either table.
+_ENTRY_PREFIX: Final[dict[str, str]] = {
+    "user": "› ",
+    "assistant": "",
+    "reasoning": "· ",
+    "tool": "",
+    "subagent": "  ",
+    "system": "— ",
+    "prompt": "? ",
+    "prompt-expired": "? ",
+    "cancelled": "",
+    "error": "! ",
+    "protocol-error": "! ",
+    "unknown-event": "! ",
+}
+
+
+# ── kind differentiation (U5, KTD5, R7/R8) ──────────────────────────────────
+
+#: R7's own enumeration names **six** labelled buckets, not five, counting
+#: the middle-dot-separated items in its requirement sentence, verbatim:
+#: "operator (`user`) · assistant prose (`assistant`) · reasoning
+#: (`reasoning`) · activity (`tool`, `subagent`) · session record (`system`,
+#: `prompt`, `prompt-expired`, `cancelled`) · faults (`error`,
+#: `protocol-error`, `unknown-event`)". The plan text (KTD5, the U5 goal, and
+#: the requirement-traceability table) all say "the five kind groups R7
+#: fixes" instead, and the Requirements Amendments section carries no RA
+#: renumbering R7's grouping — this module follows R7's own explicit
+#: enumeration, the one place the twelve-to-group mapping is actually
+#: spelled out kind-by-kind, over the plan's un-itemized "five" recap, and
+#: names the mismatch here rather than silently picking one without saying
+#: so. Whoever next touches KTD5 should reconcile the count.
+KindGroup = Literal["operator", "assistant", "reasoning", "activity", "session-record", "fault"]
+
+#: R7's twelve-to-group table, transcribed kind-by-kind from the requirement
+#: sentence above. A ``dict`` literal (not a ``match`` over
+#: :data:`~talaria.domain.models.TranscriptKind`) so :func:`kind_group` can
+#: fail loudly — a ``KeyError`` turned ``ValueError`` — on any kind this
+#: table does not name, which is what makes the U5 "mapping is total" test
+#: meaningful: a new :data:`TranscriptKind` member added without a matching
+#: entry here fails that test rather than rendering with no group class.
+_KIND_GROUPS: Final[dict[TranscriptKind, KindGroup]] = {
+    "user": "operator",
+    "assistant": "assistant",
+    "reasoning": "reasoning",
+    "tool": "activity",
+    "subagent": "activity",
+    "system": "session-record",
+    "prompt": "session-record",
+    "prompt-expired": "session-record",
+    "cancelled": "session-record",
+    "error": "fault",
+    "protocol-error": "fault",
+    "unknown-event": "fault",
+}
+
+#: The existing theme's vocabulary this module borrows from, one variable
+#: name per group — no new ``$name`` is invented, and the pin test in
+#: ``tests/ui/test_kind_styles.py`` asserts every name here (and every
+#: ``$name`` :class:`TranscriptPane`'s ``DEFAULT_CSS`` actually uses) is a
+#: member of the *live* ``App.get_css_variables()`` set rather than trusting
+#: this comment to stay accurate.
+_GROUP_VARIABLES: Final[dict[KindGroup, str]] = {
+    "operator": "primary",
+    "assistant": "success",
+    "reasoning": "secondary",
+    "activity": "accent",
+    "session-record": "panel",
+    "fault": "error",
+}
+
+#: The kind-group CSS rules, generated from :data:`_GROUP_VARIABLES` rather
+#: than hand-duplicated per group in :class:`TranscriptPane`'s
+#: ``DEFAULT_CSS`` — one background-tint-plus-border-left rule per group
+#: (matching both :class:`TranscriptLine` and
+#: :class:`~talaria.ui.blocks.EntryMarkdown`, since both carry the same
+#: class name), plus one width-compensation rule per group for each of the
+#: two widget types the border can land on. Both compensation rules exist
+#: for the same reason: the one-column border must never be a column nobody
+#: reserved, or a classed widget ends up narrower — and therefore taller,
+#: for content that exactly fills the wrap width — than an unclassed one
+#: (CR5's exact defect).
+#:
+#: :class:`~talaria.ui.blocks.EntryMarkdown` ships ``padding: 0 2 0 2``
+#: (Textual's stock ``Markdown`` CSS), so it already has a spare column to
+#: give back: its rule drops ``padding-left`` to ``1`` in the same breath
+#: that adds the border, scoped to ``EntryMarkdown.transcript--group-*``
+#: specifically so an unclassed document (the "styling disabled" comparison
+#: ``tests/ui/test_kind_styles.py`` builds) keeps its stock 2-column inset
+#: rather than being shrunk to 1 by a blanket rule that does not check for
+#: the class carrying the border in the first place. That rule spells out
+#: the **full** ``padding`` shorthand (``0 2 0 1``, not a bare
+#: ``padding-left: 1``) on purpose — probed live: a subclass rule that sets
+#: only the ``padding-left`` longhand does not cascade against the base
+#: ``Markdown`` class's ``padding: 0 2 0 2`` per side the way plain CSS
+#: would; Textual's stylesheet engine treats ``padding`` as one atomic
+#: value, and the more specific rule (a two-part selector beats the base
+#: class's one-part selector) replaces it entirely, silently zeroing
+#: ``padding-right`` and ``padding-top``/``-bottom`` along with it — found
+#: by mounting a real widget and reading ``.styles.padding`` rather than by
+#: trusting per-side CSS cascade to behave as it would in a browser.
+#: Restating all four sides is what keeps the other three matching the
+#: stock widget's own values.
+#:
+#: :class:`TranscriptLine` (a bare ``Static``) has no stock padding to give
+#: back, so it is given one instead: ``TranscriptPane.DEFAULT_CSS`` sets
+#: ``padding-left: 1`` unconditionally on every :class:`TranscriptLine`,
+#: classed or not (see the plain rule beside the other static rules below).
+#: The per-group rule generated here then drops that padding back to ``0``
+#: in the same breath that adds the border, exactly mirroring
+#: :class:`~talaria.ui.blocks.EntryMarkdown`'s trade — the reserved column
+#: moves from padding to border rather than being consumed on top of it.
+#: ``TranscriptLine.transcript--group-*`` is a three-part selector (ancestor
+#: plus type plus class), which is what makes it beat the two-part baseline
+#: rule (ancestor plus type) regardless of source order — the same
+#: specificity relationship already relied on for the ``EntryMarkdown``
+#: rule above.
+_GROUP_CSS_RULES: Final[str] = "\n".join(
+    f"""
+    TranscriptPane .transcript--group-{group} {{
+        background: ${variable} 10%;
+        border-left: thick ${variable};
+    }}
+    TranscriptPane EntryMarkdown.transcript--group-{group} {{
+        padding: 0 2 0 1;
+    }}
+    TranscriptPane TranscriptLine.transcript--group-{group} {{
+        padding-left: 0;
+    }}"""
+    for group, variable in _GROUP_VARIABLES.items()
+)
+
+
+def kind_group(kind: TranscriptKind) -> KindGroup:
+    """R7's twelve-to-group mapping (KTD5), total by construction.
+
+    Raises rather than guessing for a kind :data:`_KIND_GROUPS` does not
+    name — the mapping-is-total requirement means a new
+    :data:`~talaria.domain.models.TranscriptKind` member with no matching
+    entry here must fail loudly, never render ungrouped.
+    """
+    try:
+        return _KIND_GROUPS[kind]
+    except KeyError:
+        raise ValueError(
+            f"TranscriptKind {kind!r} has no R7 kind-group mapping (KTD5) — "
+            "add it to _KIND_GROUPS in talaria/ui/transcript.py rather than "
+            "letting it render with no transcript--group-* class."
+        ) from None
+
+
+def kind_group_css_class(kind: TranscriptKind) -> str:
+    """The one ``transcript--group-*`` class every mounted unit for ``kind``
+    carries — the same class name for a line widget and a block document, so
+    both channels compose identically regardless of which one a kind mounts
+    as (KTD2's per-kind rendering choice is orthogonal to R7's grouping).
+    """
+    return f"transcript--group-{kind_group(kind)}"
+
+
+# ── construct-aware descendant estimate (KTD1(a)) ──────────────────────────
+
+#: Per-item overhead for a list item, and per-container overhead for the
+#: ``bullet_list``/``ordered_list`` wrapper — probed live against Textual
+#: 8.2.8: three flat items mount 13 descendants (1 container + 3 × 4), and
+#: the same three items with one nested one level down mount 14 (2
+#: containers + 3 × 4). Both numbers are exact, not headroom.
+_LIST_ITEM_OVERHEAD: Final[int] = 4
+_LIST_CONTAINER_OVERHEAD: Final[int] = 1
+
+#: A blockquote or a fence, whatever its length, probed at exactly 2
+#: descendants each (a 10,000-line open fence included — the container plus
+#: its one content widget). A paragraph or heading is exactly 1.
+_TWO_WIDGET_BLOCK_TYPES: Final[frozenset[str]] = frozenset({"blockquote_open", "fence", "hr"})
+_ONE_WIDGET_BLOCK_TYPES: Final[frozenset[str]] = frozenset(
+    {"paragraph_open", "heading_open", "code_block", "html_block"}
+)
+
+#: Table overhead beyond its cells — probed exactly: a 3-line, 601-column
+#: table (601 header cells + 601 body cells) mounts 1,204 descendants, i.e.
+#: 1,202 cells + 2. A 599-column table plus one trailing paragraph mounts
+#: 1,201 — (599 + 599) + 2 (table) + 1 (paragraph) = 1,201, exactly, which
+#: is also the pinned exact-boundary regression: the estimate must exceed
+#: 1,200 to fire the trigger, and 1,201 does.
+_TABLE_OVERHEAD: Final[int] = 2
+
+
+def descendant_estimate(markdown_text: str) -> int:
+    """The construct-aware descendant count KTD1(a)'s trigger reads.
+
+    Parses once with the same :func:`~talaria.ui.blocks.parser_factory` an
+    entry document itself will parse with (KTD4 isolation — no shared parser
+    state), then walks the flat token stream counting exactly the widgets
+    :class:`~talaria.ui.blocks.EntryMarkdown` will mount: one per ordinary
+    top-level block, two for a blockquote or fence, per-item and
+    per-container overhead for lists, and cells-plus-overhead for a table —
+    every constant probed live against the installed Textual 8.2.8 rather
+    than assumed (see the module constants above). Returns 0 for a
+    zero-block source; callers that need "is this entry too large" should
+    check :func:`is_zero_block` first, since 0 also means "nothing to
+    fall back from".
+    """
+    tokens = parser_factory().parse(markdown_text)
+    total = 0
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.type == "table_open":
+            depth = 1
+            index += 1
+            while index < len(tokens) and depth:
+                ttype = tokens[index].type
+                if ttype == "table_open":
+                    depth += 1
+                elif ttype == "table_close":
+                    depth -= 1
+                elif ttype in ("th_open", "td_open"):
+                    total += 1
+                index += 1
+            total += _TABLE_OVERHEAD
+            continue
+        if token.type in ("bullet_list_open", "ordered_list_open"):
+            total += _LIST_CONTAINER_OVERHEAD
+        elif token.type == "list_item_open":
+            total += _LIST_ITEM_OVERHEAD
+        elif token.type in _TWO_WIDGET_BLOCK_TYPES:
+            total += 2
+        elif token.type in _ONE_WIDGET_BLOCK_TYPES:
+            total += 1
+        index += 1
+    return total
+
+
+def is_zero_block(markdown_text: str) -> bool:
+    """True for empty, whitespace-only, or newline-only sources (KTD2).
+
+    A zero-block source parses to no tokens at all and, mounted through
+    :class:`~talaria.ui.blocks.EntryMarkdown`, would be a height-zero
+    document — probed live — which would silently drop the blank rows a
+    line widget shows today. Checked by parsing rather than by
+    ``not text.strip()`` so the definition matches the parser's, not a
+    guess about it: both agree in every case that has been probed, and this
+    is the one that would keep agreeing if that ever stopped being true.
+    """
+    return len(parser_factory().parse(markdown_text)) == 0
+
+
+def wrapped_row_estimate(text: str, content_width: int) -> int:
+    """Width-aware wrapped-row count, in **display cells**, not characters.
+
+    ``sum(max(1, ceil(cell_len(line) / content_width)) for line in
+    text.split("\\n"))`` — :func:`rich.cells.cell_len` is Textual's own
+    terminal display-cell width measure, the same one the widget's own
+    layout uses, so a double-width character counts as two cells here the
+    same as it will on screen. A character count would undercount a
+    double-width line by up to half (a probed 37,000-character CJK line
+    paints 949 rows; a character count estimates 475), which is exactly
+    the gap this function exists to close.
+    """
+    if content_width <= 0:
+        return sum(1 for _ in text.split("\n"))
+    total = 0
+    for line in text.split("\n"):
+        total += max(1, math.ceil(cell_len(line) / content_width))
+    return total
+
+
+def trips_fallback_trigger(markdown_text: str, *, content_width: int) -> bool:
+    """KTD1(a)'s two-condition trigger: descendants over 1,200, or wrapped
+    rows over :data:`DEFAULT_MOUNT_CAP` — either alone is sufficient.
+    """
+    return (
+        descendant_estimate(markdown_text) > DESCENDANT_ESTIMATE_TRIGGER
+        or wrapped_row_estimate(markdown_text, content_width) > DEFAULT_MOUNT_CAP
+    )
+
+
+# ── line widgets ─────────────────────────────────────────────────────────
+
+
+def _line_renderable(
+    source: str, *, kind: TranscriptKind | None, no_wrap: bool
+) -> Text:
+    """The one way a :class:`TranscriptLine`'s text becomes a renderable —
+    shared by construction and by :meth:`TranscriptLine.update_source` so an
+    in-place update can never render differently than a rebuild would.
+    """
+    if no_wrap:
+        return Text(defang(source), no_wrap=True, end="")
+    if kind in MARKDOWN_KINDS:
+        return inline_markdown(source)
+    return literal_text(source)
 
 
 class TranscriptLine(Static):
-    """One projected line, keeping the projection's text beside the drawn text.
-
-    The two are no longer the same string. Inline markdown removes the
-    delimiters of whatever it styles, so a line projected as ``**done**`` is
-    drawn as ``done`` in bold — and every existing check that compares the pane
-    against the projection means the *projected* string. Rather than weaken
-    those checks to whatever survives rendering, each widget carries the line it
-    was built from, so "is the pane showing the right line" and "what does the
-    terminal actually paint" stay two separate, separately answerable questions.
+    """One projected line — unchanged from v0.1 for ordinary line-rendered
+    kinds; also used, with ``no_wrap=True``, as the fallen-back entry's
+    per-line content widget (KTD1(a)).
     """
 
-    def __init__(self, source: str, *, kind: TranscriptKind | None = None) -> None:
-        renderable = inline_markdown(source) if kind in MARKDOWN_KINDS else literal_text(source)
-        super().__init__(renderable, markup=False)
+    def __init__(
+        self, source: str, *, kind: TranscriptKind | None = None, no_wrap: bool = False
+    ) -> None:
+        renderable = _line_renderable(source, kind=kind, no_wrap=no_wrap)
+        # R7/KTD5 (U5): every line-rendered kind carries its group class
+        # alongside the nowrap class -- ``kind`` is only ``None`` for a
+        # direct construction outside this module's own call sites (none
+        # exist today), which renders with no group channel rather than
+        # guessing one.
+        css_classes = [kind_group_css_class(kind)] if kind is not None else []
+        if no_wrap:
+            css_classes.append("transcript--nowrap")
+        super().__init__(renderable, markup=False, classes=" ".join(css_classes) or None)
         #: The projection line, verbatim — not the text that ends up on screen.
         self.source = source
+        self._kind = kind
+        self._no_wrap = no_wrap
+
+    def update_source(self, source: str) -> None:
+        """Replace this line's projection text in place.
+
+        The fallback tail's boundary line grows character by character as a
+        stream appends without a newline; updating it beats remounting the
+        whole unit (KTD1(d)'s per-delta bound).
+        """
+        self.source = source
+        self.update(_line_renderable(source, kind=self._kind, no_wrap=self._no_wrap))
+
+
+# ── mounted-unit bookkeeping ────────────────────────────────────────────
+
+UnitKind = Literal["block", "line"]
+
+
+@dataclass
+class _MountedUnit:
+    """One committed entry's or one tail's mounted representation.
+
+    ``line_count`` is the number of *projected* content lines this unit
+    covers — for a block-rendered unit that is its whole projected span; for
+    a line/fallback unit it is ``len(lines)``, which can shrink from the
+    left as condensation folds it. ``is_fallback`` marks the KTD1(a)
+    banner-charge rule: only fallback units may carry a banner, and the
+    banner is chrome, charged to the fold arithmetic but never counted as a
+    projected content line (KTD2's "banner rows... never enter the
+    condensed_count + lines-accounted-for == total content identity").
+    """
+
+    kind: UnitKind
+    entry_id: int | TranscriptKind
+    #: The transcript kind this unit renders — what selects the weld prefix
+    #: in the ``rendered_lines`` reconstruction. A block document itself is
+    #: built from the *unwelded* body (KTD6), so the weld can only be
+    #: re-applied at reconstruction time, and that requires knowing the kind.
+    entry_kind: TranscriptKind | None = None
+    block: EntryMarkdown | None = None
+    lines: list[TranscriptLine] = field(default_factory=list)
+    banner: Static | None = None
+    is_fallback: bool = False
+    #: The full text this unit was last built from — used to compute an
+    #: append suffix for a same-generation tail update, and to detect a
+    #: same-text no-op.
+    applied_text: str = ""
+
+    @property
+    def line_count(self) -> int:
+        return len(self.lines)
+
+    @property
+    def accounted_rows(self) -> int:
+        """Content rows plus the one banner row, if any (KTD1(a) charge)."""
+        return self.line_count + (1 if self.banner is not None else 0)
+
+    def widgets(self) -> list[Widget]:
+        if self.kind == "block":
+            if self.block is None:  # a block unit is built with its document
+                raise ValueError("block-kind unit holds no document")
+            return [self.block]
+        out: list[Widget] = list(self.lines)
+        if self.banner is not None:
+            out.append(self.banner)
+        return out
+
+
+def _welded_tail_lines(kind: TranscriptKind, text: str) -> list[str]:
+    """A live tail's projected rows, split the way the projection splits them.
+
+    The projection splits the streaming buffer with ``splitlines() or [""]``
+    (projection.py's tail branch) — a trailing newline adds no row — while a
+    committed entry's ``_entry_lines`` uses ``split("\\n")``. Every piece of
+    tail arithmetic in this module (fold budgeting, growth anchoring, widget
+    construction, reconstruction) must count rows the projection's way or a
+    tail ending in a newline is off by one everywhere (CR1 finding 4). Weld
+    first, split second, so the prefix rides row 0 only.
+    """
+    prefix = _ENTRY_PREFIX.get(kind, "")
+    return f"{prefix}{text}".splitlines() or [""]
+
+
+def _welded_entry_lines(kind: TranscriptKind, text: str) -> list[str]:
+    """A committed entry's projected rows, split the committed way —
+    weld first, then ``split("\\n")`` (``transcript_view``'s
+    ``_entry_lines`` convention): the exact rows the entry's ``line_span``
+    and the rendered-lines identity are stated over. The two conventions
+    diverge on more than trailing newlines — ``splitlines()`` consumes a
+    ``\\r\\n`` (and a bare ``\\r``) as one boundary while ``split("\\n")``
+    leaves the ``\\r`` inside the row — so any seam between a tail and a
+    committed entry compares these sequences, never just their lengths
+    (CR2 confirm round 2).
+    """
+    welded = f"{_ENTRY_PREFIX.get(kind, '')}{text}"
+    return welded.split("\n") if welded else [""]
+
+
+def _fallback_banner(line_count: int) -> Static:
+    """The RA3 banner, constrained to exactly one row at every width.
+
+    Built the same way :class:`TranscriptLine` builds its own no-wrap
+    fallback content (``Text(defang(...), no_wrap=True, end="")``), not via
+    :func:`~talaria.ui.literal.literal_text`, whose default ``no_wrap=False``
+    is exactly the bug this fixes: an unconstrained ``Static`` wraps the
+    template's fixed sentence across 2 rows at 100 columns and 4 at 40,
+    while the plan's RA3 exact-row formula, the gate's
+    ``fallback_banner_accounting`` check, and this module's own fold
+    arithmetic (:attr:`_MountedUnit.accounted_rows`) all charge the banner
+    as exactly one row. ``no_wrap=True`` stops Rich from breaking the
+    sentence across lines; ``TranscriptPane``'s own
+    ``.transcript--fallback-banner`` rule pins the widget's height to 1
+    regardless, so the tail of the sentence clips at the viewport edge
+    rather than pushing a second row — the same clipped-but-still-readable
+    contract :data:`FALLBACK_BANNER_TEMPLATE`'s own text already states, and
+    unaffected by which characters happen to be cut.
+
+    Deliberately **not** the existing ``transcript--nowrap`` class the
+    fallen-back content lines beside this banner already carry, even though
+    the effect wanted (``height: 1``) is the same one that class provides:
+    ``talaria/replay/gate.py``'s ``fallback_banner_accounting`` walks
+    ``pane.children`` and defines a fallen-back run as a maximal span of
+    consecutive ``.transcript--nowrap`` widgets, terminated by the next
+    ``.transcript--fallback-banner`` widget — it depends on those two
+    classes being mutually exclusive to tell a content row from the banner
+    that follows it. Marking the banner ``transcript--nowrap`` too would
+    fold it into the content run instead of ending it, and the gate would
+    report the run as bannerless. The height-1 constraint below is
+    therefore its own rule, scoped to the banner's own class only.
+    """
+    return Static(
+        _banner_text(line_count), markup=False, classes="transcript--fallback-banner"
+    )
+
+
+def _banner_text(line_count: int) -> Text:
+    """The banner's renderable, shared with the in-place count refresh a
+    growing fallback tail performs — same construction, same one-row
+    constraint, whichever path draws it.
+    """
+    return Text(
+        defang(FALLBACK_BANNER_TEMPLATE.format(lines=line_count)), no_wrap=True, end=""
+    )
 
 
 class TranscriptPane(VerticalScroll):
-    """Scrollable, bounded, plain-text transcript."""
+    """Scrollable, bounded transcript: block documents plus line widgets."""
 
-    DEFAULT_CSS = """
-    TranscriptPane {
+    DEFAULT_CSS = f"""
+    TranscriptPane {{
         height: 1fr;
         scrollbar-size-vertical: 1;
-    }
-    TranscriptPane > Static {
+    }}
+    TranscriptPane > Static {{
         width: 100%;
-    }
-    TranscriptPane > .transcript--condensed {
+    }}
+    TranscriptPane > .transcript--condensed {{
         color: $text-muted;
-    }
+    }}
+    TranscriptPane > .transcript--fallback-banner {{
+        color: $text-warning;
+        height: 1;
+    }}
+    TranscriptPane .transcript--nowrap {{
+        height: 1;
+    }}
+    TranscriptPane TranscriptLine {{
+        padding-left: 1;
+    }}
+    {_GROUP_CSS_RULES}
     """
 
     def __init__(self, *, mount_cap: int = DEFAULT_MOUNT_CAP, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.mount_cap = max(1, mount_cap)
-        #: True while the pane pins itself to the newest line. Reading while
-        #: scrolled away clears it, and streaming must not steal the view back.
         self.follow = True
+        self._applies_in_flight = 0
+        #: Rows the tail ring-recycle folded this apply — consumed by
+        #: _condense into the restore anchor's removed-height compensation.
+        self._tail_recycled_height = 0
+        #: The current assistant line-tail's folded head rows — provisional,
+        #: recomputed every _condense, composed into condensed_count beside
+        #: the monotone committed prefix (_top). Never folded INTO _top:
+        #: tail rows leave the projection when a regeneration replaces the
+        #: tail, and a monotone counter cannot follow them back down.
+        self._tail_top = 0
         self._lines: tuple[str, ...] = ()
-        self._stable = 0
-        self._widgets: deque[TranscriptLine] = deque()
-        #: Absolute index of the first mounted line, tracked directly rather
-        #: than inferred from how many times a trim has run. It used to be
-        #: inferred: a counter incremented on every left-hand eviction served as
-        #: both "lines folded away" and "where the window starts". Those are the
-        #: same number only if no line is ever evicted twice, and correct
-        #: reconciliation evicts twice routinely — the provisional block is
-        #: dropped from the right and re-derived, so lines cross the left edge
-        #: again. On the 50,000-delta corpus the counter reached 7,493 for a
-        #: transcript that only ever had 4,454 lines, which put the window at an
-        #: index the projection does not have and made the pane render a wrong
-        #: slice of a correct projection.
+        #: Real projected content lines folded away — a pure line-index
+        #: concept, never inflated by a fallback banner (KTD2).
         self._top = 0
+        #: The newest entry id of the transcript lineage this pane's folded
+        #: state (:attr:`_top`) describes — durable where ``self._entries``
+        #: is not, because folding empties ``_entries`` but never unhappened
+        #: the entries it folded. See :meth:`_reset_if_history_changed`.
+        self._last_entry_id: int | None = None
         self._condensed: Static | None = None
-        #: Highest mounted-widget count observed. The gate reads this rather
-        #: than sampling, so a spike between two samples cannot be missed.
         self.peak_mounted = 0
+        #: Committed entries currently mounted, in commit order, keyed by
+        #: entry id (KTD6) — never by line position.
+        self._entries: dict[int, _MountedUnit] = {}
+        self._entry_order: deque[int] = deque()
+        #: The two live tails, keyed by kind (R18). ``None`` means empty —
+        #: nothing mounted, matching :attr:`ProvisionalTail.is_empty`.
+        self._tails: dict[TranscriptKind, _MountedUnit | None] = {
+            "assistant": None,
+            "reasoning": None,
+        }
+        self._tail_generation: dict[TranscriptKind, int] = {"assistant": 0, "reasoning": 0}
+        #: The entries snapshot the most recent :meth:`apply` reconciled —
+        #: what the gate's mid-stream ownership sampler proves the mounted
+        #: window against at a quiescent instant. The live domain state is
+        #: a moving projection mid-stream; this is the exact input the pane
+        #: last caught up to (CR6).
+        self.last_applied_entries: EntryScopedView | None = None
+        self._pending_removed_height = 0
+        #: High-water mark of :attr:`descendant_count` (U6). Tracked
+        #: separately from :attr:`peak_mounted` because the two ceilings
+        #: KTD1(a) states are different budgets over different counts: a
+        #: single table can mount hundreds of per-cell descendants from one
+        #: top-level ``mounted_count`` entry, so a peak over the top-level
+        #: count alone cannot see that spike.
+        self.peak_descendants = 0
 
     # ── measurement surface ──────────────────────────────────────────────
 
     @property
     def mounted_count(self) -> int:
-        """Widgets actually in the tree — ``len(self.children)``, not bookkeeping.
-
-        This used to return ``len(self._widgets) + 1``, counting the pane's own
-        private deque. The deque is what this class *believes* it has mounted,
-        and nothing reconciled it against the real tree, so any widget that left
-        the deque while staying mounted was invisible to the metric forever.
-        Deleting the two ``widget.remove()`` calls left 4,455 ``Static`` widgets
-        genuinely mounted — more than seven times the gate's 600 ceiling — while
-        this property still reported 501 and the gate passed.
-
-        A measurement the measured object supplies about itself is not a
-        measurement. ``self.children`` is Textual's own record of the tree.
-        """
+        """Widgets actually in the tree — read straight from Textual, never
+        from this class's own bookkeeping (unchanged rationale from v0.1)."""
         return len(self.children)
 
     @property
-    def condensed_count(self) -> int:
-        """Lines represented by the condensed block rather than by a widget.
+    def descendant_count(self) -> int:
+        """Every mounted widget, tables' per-cell children included (KTD1(a)
+        tier one, read the way the gate reads it: ``walk_children``, not a
+        count this class computed about itself)."""
+        return len(list(self.walk_children()))
 
-        Read as a position, which is what makes ``condensed_count + mounted``
-        equal the transcript length: it is the index the mounted window starts
-        at, so it can fall as well as rise if the window is re-derived further
-        up. A cumulative eviction tally cannot fall, and that is exactly how it
-        came to exceed the number of lines that had ever existed.
+    @property
+    def condensed_count(self) -> int:
+        """Folded rows ahead of the visible window: the monotone committed
+        prefix plus the current assistant tail's own folded head rows.
+        The second term is provisional and shrinks with the tail (CR1
+        finding 2); it is nonzero only when every committed row is folded,
+        which is what keeps the sum a contiguous prefix of the projection.
         """
-        return self._top
+        return self._top + self._tail_top
 
     @property
     def rendered_lines(self) -> tuple[str, ...]:
-        """The projection lines this pane currently holds, in order.
-
-        Read from the mounted widgets rather than from the pane's own index
-        arithmetic, for the reason :attr:`mounted_count` gives: a number the
-        measured object computes about itself is not a measurement. Each widget
-        reports the line it was built from, so a pane that mounted the wrong
-        slice still fails the comparison.
-
-        This is the projection's text, not the terminal's. The two differ
-        wherever inline markdown consumed a delimiter, and the checks that use
-        this property — ``interface_shows_everything`` in the replay gate, the
-        window assertions in the bounds suite — are asking whether the pane
-        holds the right *content*, which is the projected string. For the drawn
-        characters, read :attr:`drawn_lines`.
+        """Content reconstruction (U4): line widgets contribute their line;
+        block entries contribute their projected source lines — welded, the
+        prefix re-applied to the first line exactly as the projection's own
+        `_entry_lines` welds it, because the block document itself is built
+        from the unwelded body (KTD6) — never the banner, which is chrome
+        and stays out of this identity (KTD2). Tails mirror the flattened
+        buffer's deliberate shape: the assistant tail contributes its lines
+        (unwelded, matching `transcript_view`), and the reasoning tail
+        contributes nothing, because `TranscriptView.lines` does not carry
+        it — it is on screen, but the identity is defined against the
+        flattened buffer (R18's projection half lives in the entry-scoped
+        view instead). This is what keeps
+        ``pane.rendered_lines == view.lines[pane.condensed_count:]`` true
+        under mixed mounting, exactly as it was true under pure line
+        mounting.
         """
-        return tuple(widget.source for widget in self._widgets)
+        return self._reconstruct(lambda widget: widget.source)
+
+    def _reconstruct(self, line_of: Callable[[TranscriptLine], str]) -> tuple[str, ...]:
+        out: list[str] = []
+        for entry_id in self._entry_order:
+            unit = self._entries[entry_id]
+            if unit.kind == "block":
+                out.extend(self._welded_block_lines(unit))
+            else:
+                out.extend(line_of(widget) for widget in unit.lines)
+        tail_unit = self._tails["assistant"]
+        if tail_unit is not None:
+            if tail_unit.kind == "block":
+                # Split the projection's way for a TAIL (splitlines, CR1
+                # finding 4) — _welded_block_lines is the committed-entry
+                # rule and would add a phantom row for a trailing newline.
+                out.extend(
+                    _welded_tail_lines(
+                        tail_unit.entry_kind or "assistant", tail_unit.applied_text
+                    )
+                )
+            else:
+                out.extend(line_of(widget) for widget in tail_unit.lines)
+        return tuple(out)
+
+    @staticmethod
+    def _welded_block_lines(unit: _MountedUnit) -> list[str]:
+        lines = unit.applied_text.split("\n")
+        prefix = _ENTRY_PREFIX.get(unit.entry_kind or "", "")
+        if prefix and lines:
+            lines[0] = f"{prefix}{lines[0]}"
+        return lines
 
     @property
     def drawn_lines(self) -> tuple[str, ...]:
-        """The characters the terminal actually paints, in order.
+        """The characters the terminal actually paints, per projected line.
 
-        Equal to :attr:`rendered_lines` except on agent prose carrying inline
-        markdown, where the delimiters of a styled construct are gone. Nothing
-        else is ever removed, and the suite asserts that as a property of the
-        renderer rather than as a claim in a docstring.
+        Exact for every line-rendered unit (the drawn ``Static.content``,
+        same as v0.1). A block-rendered unit's per-line drawn text is not
+        separably knowable from the mounted document — Textual renders it
+        as blocks, not lines — so a block unit's contribution here falls
+        back to its projected source lines, same as :attr:`rendered_lines`.
+        Consumers that need the literal painted characters of a block entry
+        should read the document's own blocks instead of this property.
+        Same weld and same assistant-only tail region as
+        :attr:`rendered_lines`, for the same flattened-buffer parity.
         """
-        return tuple(str(widget.content) for widget in self._widgets)
+        return self._reconstruct(lambda widget: str(widget.content))
+
+    # ── content width (RA2 / KTD1(a)) ───────────────────────────────────
+
+    @property
+    def _content_width(self) -> int:
+        """The width the wrapped-row estimate is computed against.
+
+        Four columns narrower than the pane's own width, not equal to it: a
+        mounted ``Markdown`` document pads two columns on each side (RA2's
+        grounding probed an 80-column pane down to 76 columns of actual
+        content box). Estimating at the wider, unpadded pane width would
+        *undercount* wrapped rows relative to what the document actually
+        wraps at — the trigger needs to fire no later than the real overflow
+        does, so this errs narrow rather than trusting the pane's raw size.
+        """
+        width = self.size.width - 4
+        return width if width > 0 else 76
 
     # ── update ───────────────────────────────────────────────────────────
 
-    async def apply(self, view: TranscriptView) -> None:
-        """Reconcile the mounted widgets with a new projection snapshot."""
-        current = view.lines
-        stable = self._common_prefix(current)
+    async def apply(self, view: TranscriptView, entries: EntryScopedView) -> None:
+        """Reconcile the mounted widgets with a new projection snapshot.
 
-        removed_top_height = 0
-        # 1. Drop every mounted widget at or beyond the first divergence.
-        #    Normally only the in-flight streaming block lands here, so the loop
-        #    is short; when an entry commits mid-stream the whole provisional
-        #    block is re-derived, which is the correct amount of work rather
-        #    than an unlucky amount.
-        while self._top + len(self._widgets) > stable and self._widgets:
-            widget = self._widgets.pop()
-            await widget.remove()
-
-        # The divergence can also sit *below* the window, if a line that had
-        # already been condensed changed. Nothing un-condenses it, but the
-        # window must stop claiming a position the projection no longer has.
-        if not self._widgets:
-            self._top = min(self._top, stable)
-
-        # 2. Condense from the top *before* mounting, never after, and by
-        #    position rather than by repeated single-widget trims. The pane
-        #    keeps the newest ``mount_cap`` lines, so the widget count cannot
-        #    exceed the cap even for one frame. Trimming after the mount held
-        #    the steady-state cap while transiently mounting 667 widgets against
-        #    KTD14's ceiling of 600: a slow frame the operator can see and a
-        #    snapshot taken afterwards cannot.
-        desired_top = max(self._top, len(current) - self.mount_cap)
-        while self._top < desired_top and self._widgets:
-            widget = self._widgets.popleft()
-            removed_top_height += max(1, widget.outer_size.height)
-            await widget.remove()
-            self._top += 1
-        # Lines the window never reached are condensed without ever having been
-        # a widget, which is the whole point of condensing before mounting.
-        self._top = max(self._top, desired_top)
-
-        # 3. Mount exactly the window's missing suffix. By construction
-        #    ``len(current) - self._top <= mount_cap``, so this cannot overshoot.
-        start = self._top + len(self._widgets)
-        pending = list(current[start:])
-        if pending:
-            new_widgets = [
-                TranscriptLine(line, kind=view.kind_at(start + offset))
-                for offset, line in enumerate(pending)
-            ]
-            self._widgets.extend(new_widgets)
-            await self.mount_all(new_widgets)
-            # Sampled at the moment of maximum mount, which is now also the end
-            # of the method — there is no later trim to hide a spike behind.
-            # Keeping the sample here anyway, because a future edit that
-            # reintroduces a trim should not silently turn this metric back into
-            # an identity that can never exceed the cap whatever the pane does.
-            self.peak_mounted = max(self.peak_mounted, self.mounted_count)
-
-        await self._render_condensed()
-
-        self._lines = current
-        # The floor for the *next* scan is clamped to the committed boundary,
-        # while the truncation above used the true divergence point. The two
-        # differ on purpose. Truncating at the true divergence keeps unchanged
-        # provisional widgets mounted, so a streaming delta churns one widget
-        # rather than the whole block. Storing the true divergence as the floor
-        # was the defect: a provisional line that merely *happened* to match
-        # between two ticks was recorded as settled, and the scan never looked
-        # at it again. It then moved -- appending an entry mid-stream pushes the
-        # whole streaming block down, which the corpus does fifteen times -- and
-        # the pane stayed misaligned from that point to the end of the session.
-        # Committed lines are the only ones that can never move, so they are the
-        # only ones the floor may cover.
-        self._stable = min(stable, view.committed_lines)
-        self.peak_mounted = max(self.peak_mounted, self.mounted_count)
-        self._restore_anchor(removed_top_height)
-
-    def _common_prefix(self, current: tuple[str, ...]) -> int:
-        """How many leading lines are unchanged since the last snapshot.
-
-        Scanning starts at the previously established stable index, which
-        :meth:`apply` keeps at or below the committed boundary. The work per tick
-        is therefore proportional to the newly committed lines plus the
-        provisional streaming block, rather than to the length of the transcript
-        — and every line that can still move is looked at every time.
+        Two inputs, not one, because a block-rendering pane needs entry
+        identity and raw (unwelded) bodies that the flattened line buffer
+        does not carry (KTD6) — ``view`` is still read for
+        :attr:`condensed_count`'s line arithmetic and for the kinds that stay
+        line-rendered outside the entry-scoped surface entirely (none do
+        today; every mounted kind is covered by ``entries``, but ``view`` is
+        the source of truth for total line count either way).
         """
-        index = min(self._stable, len(current), len(self._lines))
-        limit = min(len(current), len(self._lines))
-        while index < limit and current[index] == self._lines[index]:
-            index += 1
-        return index
+        # apply() awaits Textual mounts and Markdown updates, and Textual
+        # sets a document's ``source`` before its children finish
+        # remounting — so between this method's awaits, a concurrent reader
+        # (the gate's mid-stream sampler) can observe a document whose
+        # blocks do not yet cover its own text. That torn state is
+        # scheduling, not corruption; ``apply_in_flight`` is how a reader
+        # distinguishes the two.
+        self._applies_in_flight += 1
+        try:
+            await self._reset_if_history_changed(entries.entries)
+            await self._reconcile_committed(entries.entries)
+            await self._reconcile_tail("reasoning", entries.reasoning_tail)
+            await self._reconcile_tail("assistant", entries.assistant_tail)
+            await self._condense(entries.entries, total_lines=len(view.lines))
+            await self._render_condensed()
+
+            self._lines = view.lines
+            self.last_applied_entries = entries
+            self.peak_mounted = max(self.peak_mounted, self.mounted_count)
+            self.peak_descendants = max(self.peak_descendants, self.descendant_count)
+            self._restore_anchor()
+        finally:
+            self._applies_in_flight -= 1
+
+    @property
+    def apply_in_flight(self) -> bool:
+        """True while any :meth:`apply` call is between its first and last
+        await — the window in which a mounted document's children may
+        legitimately lag its already-updated text.
+        """
+        return self._applies_in_flight > 0
+
+    # ── hard reset (a focus switch, not a continuation) ─────────────────
+
+    async def _reset_if_history_changed(
+        self, records: tuple[TranscriptEntryRecord, ...]
+    ) -> None:
+        """Clear every mounted widget when ``records`` is not a continuation
+        of what is already mounted (a session switch, not new content).
+
+        Entries are append-only *within one session's transcript* (KTD6),
+        but ``entries.entries`` is not scoped to "this pane's session" — it
+        is scoped to whatever session the domain currently has focused, and
+        switching focus swaps in an entirely different, non-overlapping
+        entry-id history (a resumed session's own entries, most often
+        starting its own numbering back near zero). v0.1's line-indexed
+        pane never needed a check like this: comparing flat line arrays by
+        stable prefix, a full swap is simply "the first line differs",
+        which its ordinary divergence handling already evicted everything
+        for. This pane's entry-id keying has no such fallback by
+        construction — every entry not yet in ``self._entries`` reads as
+        "new content to mount", which is exactly wrong for "content from a
+        session this pane is no longer showing." Found live: switching
+        sessions left the outgoing session's transcript lines (an
+        outstanding approval's summary, most visibly) mounted and on
+        screen after the switch, because nothing had ever told this pane
+        the old entries no longer belonged.
+
+        The check: any entry id this pane has processed — still mounted, or
+        already folded — that is absent from the new ``records`` means the
+        histories are not the same lineage. Entries are never deleted from a
+        live transcript, so an id going missing means the underlying
+        transcript identity changed, not that an entry was individually
+        evicted. Two ids stand in for "everything processed":
+
+        - every id still in ``self._entries`` (folding removes an id from
+          ``self._entries`` too, but never *below* :attr:`_top`);
+        - :attr:`_last_entry_id`, the newest id of the last records set this
+          method accepted, which survives folding. A mounted-ids check alone
+          has a hole exactly where folding is most aggressive: a monster
+          tail's retention can fold *every* committed entry, leaving
+          ``self._entries`` empty while :attr:`_top` still describes the
+          outgoing session's line arithmetic — a session switch then found
+          nothing mounted to compare, skipped the reset, and the new
+          session's first rows (line spans restarting at zero, under a stale
+          :attr:`_top`) were treated as already folded (CR1 re-review). The
+          watermark closes the hole because it is lineage-sound by two
+          domain invariants ``land_session`` documents: entries are
+          append-only and never deleted within a lineage (a continuation
+          always still contains the watermark), and ``entry_seq`` climbs
+          across a session clear rather than restarting (a swapped-in
+          history can never reuse it).
+        """
+        current_ids = {record.entry_id for record in records}
+        lineage_intact = (
+            self._last_entry_id is None or self._last_entry_id in current_ids
+        ) and all(entry_id in current_ids for entry_id in self._entries)
+        if not lineage_intact:
+            for entry_id in list(self._entry_order):
+                unit = self._entries.pop(entry_id, None)
+                if unit is not None:
+                    for widget in unit.widgets():
+                        await self._safe_remove(widget)
+            self._entry_order.clear()
+            for kind in _TAIL_KINDS:
+                unit = self._tails[kind]
+                if unit is not None:
+                    for widget in unit.widgets():
+                        await self._safe_remove(widget)
+                    self._tails[kind] = None
+            self._top = 0
+            self._tail_top = 0
+            self._tail_recycled_height = 0
+        self._last_entry_id = records[-1].entry_id if records else None
+
+    # ── committed entries ────────────────────────────────────────────────
+
+    async def _reconcile_committed(self, records: tuple[TranscriptEntryRecord, ...]) -> None:
+        """Mount every entry not yet mounted — except one already folded away.
+
+        Entries are append-only and immutable in the domain (KTD6): nothing
+        ever deletes ``entries.entries``, so every record this pane has ever
+        condensed keeps reappearing here on every later call, forever. The
+        pane's own eviction (:meth:`_condense`) is a *rendering* fact, not a
+        domain one, and unlike v0.1's line-indexed pane — where "below
+        ``self._top``" was a single integer comparison against the flat line
+        array — there was no positive check here at all: an entry id no
+        longer in ``self._entries`` looked exactly like an entry that had
+        never been mounted, so this method remounted it, appended it to the
+        *end* of ``self._entry_order`` regardless of its real commit
+        position, and both corrupted commit ordering (a low-numbered entry
+        could resurface after high-numbered ones) and double-charged its
+        lines — once when it was first folded, again when it came back and
+        was condensed a second time. Found live: a 40-turn corpus left
+        ``rendered_lines`` and ``condensed_count`` summing to more than the
+        projection's total line count. v0.1's own docstring already named
+        the rule this replaces: "Nothing un-condenses it" — carried forward
+        here by comparing the entry's line span against :attr:`_top` rather
+        than checking mounted-widget presence alone.
+        """
+        # Built up across every new entry and mounted in ONE call at the end
+        # (never one `mount_all` per entry). A batch of 60 individual mounts
+        # against a live pane left `scroll_end()` observing a scroll offset
+        # of 0 instead of the bottom — found live, against a real gateway
+        # fixture, not a synthetic one: Textual settles the scrollable
+        # region's height once per mount pass, and sixty separate passes
+        # each invalidate and re-settle it, racing the one `scroll_end()`
+        # call `_restore_anchor` makes at the very end of `apply()` against
+        # a virtual size that had not caught up yet. One batch mounts once,
+        # settles once, and `scroll_end()` sees the true final height —
+        # exactly v0.1's own shape ("mount exactly the window's missing
+        # suffix" in one `mount_all` call), which this restores.
+        pending: list[Widget] = []
+        deferred_writes: list[tuple[EntryMarkdown | None, str]] = []
+        deferred_ops: list[Callable[[], Awaitable[None]]] = []
+        for record in records:
+            if record.entry_id in self._entries:
+                continue
+            start, count = record.line_span
+            if start + count <= self._top:
+                continue
+            self._prepare_committed_entry(record, pending, deferred_writes, deferred_ops)
+        await self._mount_widgets(pending, before_tails=True)
+        # R16 clause 2: a terminal path stops and awaits pending widget
+        # writes -- these are queued rather than awaited inline above only
+        # to keep _prepare_committed_entry synchronous for batching, and
+        # `apply()` does not return until every one of them has actually
+        # landed. The same holds for the queued retarget ops.
+        for widget, text in deferred_writes:
+            await self._safe_write(widget, "update", text)
+        for op in deferred_ops:
+            await op()
+
+    def _prepare_committed_entry(
+        self,
+        record: TranscriptEntryRecord,
+        pending: list[Widget],
+        deferred_writes: list[tuple[EntryMarkdown | None, str]],
+        deferred_ops: list[Callable[[], Awaitable[None]]],
+    ) -> None:
+        """Build (but do not mount) one entry's unit, queuing its widgets.
+
+        R18/KTD2: hand a live tail's document straight to the entry it just
+        became, keyed by kind — no remove, no rebuild, and nothing queued
+        for mounting since the widget is already on screen. Only sound when
+        the tail's own text is a prefix of (or equal to) the entry's final
+        body; a mismatch (the tail was reset without ever reaching this
+        text) falls through to building fresh.
+
+        **The corrective ``update()`` on this handoff is unconditional.**
+        This used to skip the write whenever ``record.raw_body`` already
+        equalled ``tail.applied_text`` — a text-equality no-op optimization
+        that was, unintentionally, also the one gap through which a
+        structurally corrupted tail widget (Textual 8.2.8's
+        ``_last_parsed_line`` seeding defect, corrected on the live-tail
+        write path in ``talaria/ui/blocks.py``'s ``EntryMarkdown.update``)
+        could reach the *committed*, settled transcript permanently: a table
+        that streams and completes cleanly via ``message.complete`` reports
+        exactly the text the tail already had applied, so
+        ``record.raw_body == tail.applied_text`` on every clean completion,
+        which is exactly the condition the old skip fired on. Queuing the
+        write unconditionally — one bounded ``update()`` parse per committed
+        entry, never a pane rebuild — means the committed transcript is
+        correct regardless of whatever structural state the tail widget
+        happens to be in, not only when blocks.py's own fix already caught
+        it upstream. Belt and suspenders: this is the defense against any
+        future tail-side rendering bug, not a substitute for the fix above.
+        """
+        tail = self._tails.get(record.kind)
+        # The final body is rechecked against BOTH demotion conditions, not
+        # assumed to inherit the tail's own verdict: message.complete may
+        # carry a body far past what streamed (a short block tail completed
+        # by a 100,000-character suffix), and adopting the block document on
+        # the prefix check alone kept an uncapped, bannerless EntryMarkdown
+        # painting 1,339 rows as settled transcript (CR3 re-review). A body
+        # that demotes never adopts a block tail; its fresh build below is
+        # pre-capped, because a trigger-tripping entry is guaranteed to fold
+        # to at most the cap's retention — the regime the capped-adoption
+        # arithmetic already covers — so the full-body mount transient is
+        # bounded too.
+        final_demotes = record.kind in MARKDOWN_KINDS and (
+            is_zero_block(record.raw_body)
+            or trips_fallback_trigger(record.raw_body, content_width=self._content_width)
+        )
+        if (
+            tail is not None
+            and tail.kind == "block"
+            and not final_demotes
+            and record.raw_body.startswith(tail.applied_text)
+        ):
+            # Queued, not awaited here: _prepare_committed_entry is
+            # synchronous (the whole point of the batching fix is queuing
+            # every new widget before the one `await self.mount_all(...)` in
+            # the caller), but R16 clause 2 still requires this write to
+            # have actually landed before `apply()` returns — the caller
+            # awaits every entry in `deferred_writes` right after the batch
+            # mount.
+            deferred_writes.append((tail.block, record.raw_body))
+            tail.applied_text = record.raw_body
+            unit = tail
+            self._tails[record.kind] = None
+        elif tail is not None and tail.kind == "line" and record.raw_body == tail.applied_text:
+            # Same text, two row conventions: the tail's rows were split
+            # with splitlines() while the committed span and the rendered
+            # identity use split("\n") (_welded_entry_lines). The two
+            # diverge on a trailing newline (one row short — CR1 finding
+            # 4's cousin) and on \r\n / bare \r (equal counts, different
+            # row *content* — splitlines consumes the \r as boundary,
+            # split("\n") leaves it in the row), so the row comparison is
+            # over the COMPLETE projected sequences, never lengths (CR2
+            # confirm rounds 1-2) and never len(tail.lines) (a capped tail
+            # retains mount_cap-1 rows). A divergence RETARGETS the mounted
+            # widgets to the committed rows in place rather than falling
+            # through to a fresh build: rebuilding mounted the full body
+            # beside the still-mounted tail — a 1,704-widget transient for
+            # a 1,201-row tail (CR2 confirm round 3).
+            tail_rows = _welded_tail_lines(record.kind, tail.applied_text)
+            entry_rows = _welded_entry_lines(record.kind, record.raw_body)
+            if tail_rows != entry_rows:
+                # The banner row is reserved only when a banner is mounted
+                # (CR2 confirm round 4) — same budget rule as construction.
+                capacity = max(1, self.mount_cap - 1) if tail.is_fallback else self.mount_cap
+                keep = entry_rows[-capacity:]
+                deferred_ops.append(partial(self._retarget_line_unit, tail, record.kind, keep))
+            unit = tail
+            self._tails[record.kind] = None
+        else:
+            unit = self._prepare_unit(
+                record.entry_id,
+                record.kind,
+                record.raw_body,
+                pending,
+                max_rows=self.mount_cap if final_demotes else None,
+            )
+        unit.entry_id = record.entry_id
+        self._entries[record.entry_id] = unit
+        self._entry_order.append(record.entry_id)
+
+    async def _retarget_line_unit(
+        self, unit: _MountedUnit, kind: TranscriptKind, rows: list[str]
+    ) -> None:
+        """Rewrite an adopted line unit's mounted rows to the committed
+        convention in place (CR2 confirm round 3). Both sides hold the
+        newest rows of the same text, so the rewrite is positional:
+        surplus head widgets are removed, every retained widget's source
+        is updated, and the rare extra row (a trailing newline adds one)
+        mounts inside the unit. Zero fresh mounts on the capped-monster
+        shapes — the alternative, building the committed unit fresh while
+        the old tail was still mounted, put 1,203 new widgets beside 501
+        existing ones before condensation could fold either. The banner
+        count follows the retained rows, exactly as the growth path
+        refreshes it.
+        """
+        while len(unit.lines) > len(rows):
+            head = unit.lines.pop(0)
+            await self._safe_remove(head)
+        for widget, row in zip(unit.lines, rows, strict=False):
+            widget.update_source(row)
+        if len(rows) > len(unit.lines):
+            extras = [
+                TranscriptLine(row, kind=kind, no_wrap=unit.is_fallback)
+                for row in rows[len(unit.lines) :]
+            ]
+            if unit.banner is not None:
+                await self.mount_all(extras, before=unit.banner)
+            elif unit.lines:
+                await self.mount_all(extras, after=unit.lines[-1])
+            else:
+                await self.mount_all(extras)
+            unit.lines.extend(extras)
+        if unit.banner is not None:
+            unit.banner.update(_banner_text(len(unit.lines)))
+
+    def _prepare_unit(
+        self,
+        entry_id: int | TranscriptKind,
+        kind: TranscriptKind,
+        text: str,
+        pending: list[Widget],
+        max_rows: int | None = None,
+    ) -> _MountedUnit:
+        """Build one fresh unit — block document, fallen-back line group, or
+        ordinary line group, whichever KTD2's rules select — queuing its
+        widgets in ``pending`` rather than mounting them immediately.
+
+        ``max_rows`` (tail builds only) pre-caps a line-rendered unit to its
+        *newest* rows at construction — the plan's "the tails, each bounded"
+        clause made literal. Without it, demoting a 10,000-line tail mounted
+        10,002 widgets in one apply; with it, the demotion mounts at most
+        the cap and the head rows are born folded. Committed-entry builds
+        pass ``None`` and are bounded by condensation as before.
+        """
+        width = self._content_width
+        eligible = kind in MARKDOWN_KINDS
+        if eligible and not is_zero_block(text) and not trips_fallback_trigger(
+            text, content_width=width
+        ):
+            # R7/KTD5 (U5): a block-rendered entry carries its group class
+            # the same way a line-rendered one does (kind_group_css_class),
+            # so the channel composes with block rendering rather than
+            # being a line-only affordance.
+            widget = EntryMarkdown(text, classes=kind_group_css_class(kind))
+            pending.append(widget)
+            return _MountedUnit(
+                kind="block",
+                entry_id=entry_id,
+                entry_kind=kind,
+                block=widget,
+                applied_text=text,
+            )
+
+        # Line rendering: either an ordinary non-markdown kind, a zero-block
+        # markdown source, or one that tripped the fallback trigger. Welded
+        # exactly as transcript_view()'s _entry_lines welds it -- the prefix
+        # goes on the whole body before splitting, so it lands on the first
+        # line only. This is what keeps rendered_lines (read off each
+        # widget's own .source) matching TranscriptView.lines for a
+        # line-rendered surface (KTD6: the weld is decoration that belongs
+        # to line rendering, never to a parsed block document, so
+        # applied_text below -- used for tail-generation bookkeeping against
+        # the domain's unwelded raw_text -- stays unwelded).
+        is_fallback = eligible and not is_zero_block(text) and trips_fallback_trigger(
+            text, content_width=width
+        )
+        # A tail's rows are counted the projection's way (splitlines); a
+        # committed entry's the _entry_lines way (split) — CR1 finding 4.
+        # Tail builds are the only callers that pass max_rows, and entry ids
+        # are ints while tail ids are their kind strings.
+        if isinstance(entry_id, str):
+            source_lines = _welded_tail_lines(kind, text)
+        else:
+            source_lines = _welded_entry_lines(kind, text)
+        if max_rows is not None:
+            # The banner row is reserved out of the budget only when a
+            # banner will actually mount: a fallback unit retains
+            # max_rows-1 content rows plus its banner (CR1 finding 6),
+            # while a zero-block unit has no banner and keeps the full
+            # budget — reserving unconditionally dropped one row of a
+            # budget-exact zero-block tail with nothing folding it into
+            # the condensed arithmetic, breaking the rendered identity
+            # (CR2 confirm round 4).
+            allowed = max(1, max_rows - 1) if is_fallback else max_rows
+            if len(source_lines) > allowed:
+                source_lines = source_lines[len(source_lines) - allowed :]
+        widgets = [
+            TranscriptLine(line, kind=kind, no_wrap=is_fallback) for line in source_lines
+        ]
+        banner = _fallback_banner(len(widgets)) if is_fallback else None
+        pending.extend(widgets)
+        if banner is not None:
+            pending.append(banner)
+        return _MountedUnit(
+            kind="line",
+            entry_id=entry_id,
+            entry_kind=kind,
+            lines=widgets,
+            banner=banner,
+            is_fallback=is_fallback,
+            applied_text=text,
+        )
+
+    async def _build_unit(
+        self,
+        entry_id: int | TranscriptKind,
+        kind: TranscriptKind,
+        text: str,
+        *,
+        anchor: Widget | None,
+        max_rows: int | None = None,
+    ) -> _MountedUnit:
+        """Build and mount one fresh unit immediately — the tail path, where
+        exactly one unit is built per call and there is nothing to batch.
+
+        ``anchor`` is the widget the fresh unit mounts *before* — the next
+        tail in painted order (:func:`_next_tail_anchor`) — or ``None`` to
+        append at the pane's end. Appending unconditionally held the
+        declared reasoning-above-assistant order only when reasoning
+        happened to mount first; a reasoning tail first appearing (or
+        rebuilding) while the assistant tail was already on screen landed
+        below it, and the commit handoff then adopted both widgets in
+        place, freezing the reversed paint against ``_entry_order`` and
+        ``rendered_lines`` (CR2 re-review).
+        """
+        pending: list[Widget] = []
+        unit = self._prepare_unit(entry_id, kind, text, pending, max_rows=max_rows)
+        if pending:
+            if anchor is not None:
+                await self.mount_all(pending, before=anchor)
+            else:
+                await self.mount_all(pending)
+        return unit
+
+    async def _mount_widgets(self, widgets: list[Widget], *, before_tails: bool) -> None:
+        if not widgets:
+            return
+        if before_tails:
+            anchor = self._first_tail_widget()
+            if anchor is not None:
+                await self.mount_all(widgets, before=anchor)
+                return
+        await self.mount_all(widgets)
+
+    def _first_tail_widget(self) -> Widget | None:
+        for kind in _TAIL_KINDS:
+            unit = self._tails[kind]
+            if unit is not None:
+                widgets = unit.widgets()
+                if widgets:
+                    return widgets[0]
+        return None
+
+    def _next_tail_anchor(self, kind: TranscriptKind) -> Widget | None:
+        """The first widget of the first mounted tail *after* ``kind`` in
+        ``_TAIL_KINDS``' painted order — what a fresh unit for ``kind``
+        mounts before so a late-arriving reasoning tail lands above the
+        assistant tail, not below it. ``None`` (no later tail mounted)
+        means append at the pane's end.
+        """
+        for later in _TAIL_KINDS[_TAIL_KINDS.index(kind) + 1 :]:
+            unit = self._tails[later]
+            if unit is not None:
+                widgets = unit.widgets()
+                if widgets:
+                    return widgets[0]
+        return None
+
+    # ── live tails (KTD3, R18) ──────────────────────────────────────────
+
+    async def _reconcile_tail(self, kind: TranscriptKind, tail: ProvisionalTail) -> None:
+        unit = self._tails[kind]
+
+        if tail.is_empty:
+            if unit is not None:
+                for widget in unit.widgets():
+                    await self._safe_remove(widget)
+                self._tails[kind] = None
+            self._tail_generation[kind] = tail.generation
+            return
+
+        if unit is None:
+            new_unit = await self._build_unit(
+                kind,
+                kind,
+                tail.raw_text,
+                anchor=self._next_tail_anchor(kind),
+                max_rows=self.mount_cap,
+            )
+            self._tails[kind] = new_unit
+            self._tail_generation[kind] = tail.generation
+            return
+
+        same_generation = tail.generation == self._tail_generation[kind]
+        self._tail_generation[kind] = tail.generation
+
+        if unit.kind == "block":
+            if same_generation and tail.raw_text.startswith(unit.applied_text):
+                suffix = tail.raw_text[len(unit.applied_text) :]
+                if suffix:
+                    await self._safe_write(unit.block, "append", suffix)
+            else:
+                await self._safe_write(unit.block, "update", tail.raw_text)
+            unit.applied_text = tail.raw_text
+            # Re-check both demotion conditions on the written text, not
+            # just the size trigger: a tail that crossed the fallback
+            # threshold falls back to non-wrapping line rendering and stays
+            # there for the rest of the stream (ends the growing-reparse
+            # work, KTD1(a)); a tail that collapsed to zero blocks -- most
+            # visibly a new generation replacing committed content with a
+            # bare newline -- must demote to line rendering too, or its
+            # blank row disappears into a height-zero EntryMarkdown that
+            # mounts nothing visible ever again (KTD2's zero-block rule: an
+            # entry or tail whose parse yields zero blocks line-renders,
+            # preserving blank rows as visible line widgets). The
+            # line-rendered branch below already rebuilds on exactly this
+            # crossing (``is_zero_block(unit.applied_text) !=
+            # is_zero_block(tail.raw_text)``); this branch previously
+            # checked only the size trigger, so a block tail that shrank to
+            # nothing stayed mounted as invisible content forever.
+            if is_zero_block(tail.raw_text) or trips_fallback_trigger(
+                tail.raw_text, content_width=self._content_width
+            ):
+                await self._remove_unit_widgets(unit)
+                del unit
+                self._tails[kind] = await self._build_unit(
+                    kind,
+                    kind,
+                    tail.raw_text,
+                    anchor=self._next_tail_anchor(kind),
+                    max_rows=self.mount_cap,
+                )
+                # Pay the cleanup inside the demotion frame, which RA4
+                # already excludes from the latency quantile: the block
+                # document just destroyed (a ~500-row table is ~500 widget
+                # graphs) otherwise sits as garbage until a periodic
+                # collection ambushes a smooth steady-state apply — measured
+                # as a one-off 107 ms post-demotion boundary on the fourth
+                # full-scale gate run. One collection here, in the frame
+                # that is already the representation switch, keeps every
+                # later collection small. For that to actually reclaim the
+                # document, this frame must hold no reference to it at the
+                # collect: the removal loop lives in its own frame
+                # (_remove_unit_widgets) and ``unit`` is deleted first — a
+                # lingering local kept all ~1,005 widgets alive through
+                # this very collection (CR3 re-review).
+                gc.collect()
+            return
+
+        # Currently line-rendered (fallback or zero-block). A generation
+        # change or a trigger re-check needs a rebuild; a same-generation
+        # append that stays under the trigger just grows the line list.
+        if not same_generation or is_zero_block(unit.applied_text) != is_zero_block(
+            tail.raw_text
+        ):
+            for widget in unit.widgets():
+                await self._safe_remove(widget)
+            self._tails[kind] = await self._build_unit(
+                kind,
+                kind,
+                tail.raw_text,
+                anchor=self._next_tail_anchor(kind),
+                max_rows=self.mount_cap,
+            )
+            return
+
+        if tail.raw_text == unit.applied_text:
+            return
+        # Growth of a fallback tail: no markdown reparse either way (that is
+        # what "ends the growing-reparse work" means — there is no parser on
+        # this path at all). A same-generation append patches in place —
+        # extend the boundary line, mount widgets for the wholly new lines,
+        # refresh the banner count — because the full drop-and-rebuild this
+        # branch used to do is O(total lines) per delta, and a streaming
+        # 10,000-line fence lives on exactly this path: the gate measured
+        # its p99 apply at 17.7 s against KTD1(d)'s 50 ms ceiling. Only a
+        # non-append change (same generation, text not an extension) still
+        # rebuilds, and that shape does not occur in a real stream.
+        if (
+            unit.is_fallback
+            and unit.banner is not None  # is_fallback mounts one; narrow, don't assert
+            and tail.raw_text.startswith(unit.applied_text)
+            # A single delta bigger than the whole retained window gains
+            # nothing from patching — rebuild through the pre-capped path,
+            # which also keeps the recycle loop below simple: a popped head
+            # is then always an already-mounted widget.
+            and len(_welded_tail_lines(kind, tail.raw_text))
+            - len(_welded_tail_lines(kind, unit.applied_text))
+            < self.mount_cap - 1
+        ):
+            new_lines = _welded_tail_lines(kind, tail.raw_text)
+            # The boundary between old and new text is anchored by the OLD
+            # text's row count, never by the mounted-widget count — head
+            # rows may already be folded (the pre-capped build, or
+            # _condense's budget walk), and the newest mounted widget is
+            # always the old text's last row regardless.
+            old_rows = len(_welded_tail_lines(kind, unit.applied_text))
+            boundary_source = new_lines[old_rows - 1]
+            if unit.lines and unit.lines[-1].source != boundary_source:
+                unit.lines[-1].update_source(boundary_source)
+            # At the cap, the oldest mounted row is RECYCLED into the newest
+            # — update_source plus a synchronous move_child, a ring buffer
+            # of at most cap widgets. Creating and destroying ~100 widget
+            # graphs per boundary fed the garbage collector until its
+            # periodic collections alone spiked one apply in three past
+            # KTD1(d)'s ceiling (probed: p99 58 ms with churn, 31.6 ms
+            # without); recycling removes the churn instead of tuning the
+            # collector. Both tails retain cap-1 content rows so the banner
+            # is charged within the budget (CR1 finding 6). Unused slots
+            # are filled and MOUNTED before any recycle move, or the moved
+            # head lands ahead of still-unmounted fresh rows and the
+            # painted order diverges from unit.lines (CR1 finding 1).
+            cap = self.mount_cap - 1
+            grown = new_lines[old_rows:]
+            fill = max(0, cap - len(unit.lines))
+            fresh = [
+                TranscriptLine(line, kind=kind, no_wrap=True) for line in grown[:fill]
+            ]
+            if fresh:
+                await self.mount_all(fresh, before=unit.banner)
+                unit.lines.extend(fresh)
+                unit.banner.update(_banner_text(len(unit.lines)))
+            recycled_rows = 0
+            for line in grown[fill:]:
+                head = unit.lines.pop(0)
+                head.update_source(line)
+                self.move_child(head, before=unit.banner)
+                unit.lines.append(head)
+                recycled_rows += 1
+            if recycled_rows and kind == "assistant":
+                # Rows folded away above the retained window — surfaced to
+                # _condense for the restore anchor. Assistant only: its
+                # recycles happen when the tail is the whole visible window,
+                # so its folded head rows are the window's top; the
+                # reasoning tail sits below committed content mid-viewport,
+                # and charging its recycles as removed top height yanked an
+                # anchored reader upward (CR1 finding 5).
+                self._tail_recycled_height += recycled_rows
+            unit.applied_text = tail.raw_text
+            return
+        for widget in unit.widgets():
+            await self._safe_remove(widget)
+        self._tails[kind] = await self._build_unit(
+            kind,
+            kind,
+            tail.raw_text,
+            anchor=self._next_tail_anchor(kind),
+            max_rows=self.mount_cap,
+        )
+
+    async def _safe_write(self, widget: EntryMarkdown | None, verb: str, text: str) -> None:
+        """R16 clause 3: a stale write after the widget was condensed away
+        or removed updates nothing and raises nothing.
+        """
+        if widget is None or not widget.is_mounted:
+            return
+        await getattr(widget, verb)(text)
+
+    async def _safe_remove(self, widget: Widget) -> None:
+        if widget.is_mounted:
+            await widget.remove()
+
+    async def _remove_unit_widgets(self, unit: _MountedUnit) -> None:
+        """Remove a unit's widgets without leaving a loop variable behind:
+        the demotion frame runs ``gc.collect()`` immediately after, and a
+        lingering local reference to the removed document kept it alive
+        through the very collection meant to reclaim it (CR3 re-review) —
+        this method's frame dies before that collect runs.
+        """
+        for widget in unit.widgets():
+            await self._safe_remove(widget)
+
+    # ── condensation over mixed units (KTD2) ────────────────────────────
+
+    async def _condense(
+        self, records: tuple[TranscriptEntryRecord, ...], *, total_lines: int
+    ) -> None:
+        """Evict widgets from the top until the window starts at ``new_top``.
+
+        :meth:`_compute_new_top` guarantees ``new_top`` never lands strictly
+        inside a block-rendered (atomic) entry — it rounds such a boundary
+        up to that entry's end — so the only entry this method ever needs
+        to *partially* fold is a line-rendered one (ordinary or fallen-back),
+        and at most one: the single entry, if any, whose span straddles
+        ``new_top``. Every entry fully below ``new_top`` is evicted whole
+        first, in commit order, oldest first. When ``new_top`` reaches past
+        every committed span into the live assistant tail's own rows (a
+        line-rendered tail is charged first in the budget walk), the tail's
+        head rows fold the same retention-based way the straddling entry's
+        do — the fold arithmetic has exactly one convention.
+        """
+        new_top, tail_folded = self._compute_new_top(records, total_lines=total_lines)
+        removed_top_height = self._tail_recycled_height
+        self._tail_recycled_height = 0
+        # Every widget this fold evicts is pruned in ONE remove_children
+        # call at the end. The tail fold runs every boundary of a growing
+        # fallen-back stream, and one awaited remove() per widget put a
+        # ~100-widget fold at 47-106 ms per apply against KTD1(d)'s 50 ms
+        # ceiling; a single batched prune reflows once. Heights are read
+        # before removal, as before.
+        to_remove: list[Widget] = []
+
+        while self._entry_order:
+            entry_id = self._entry_order[0]
+            record = self._record_for(records, entry_id)
+            if record is None:
+                break
+            start, count = record.line_span
+            end = start + count
+            if end > new_top:
+                break
+            unit = self._entries[entry_id]
+            for widget in unit.widgets():
+                removed_top_height += max(1, widget.outer_size.height)
+                to_remove.append(widget)
+            self._entry_order.popleft()
+            del self._entries[entry_id]
+
+        if self._entry_order:
+            entry_id = self._entry_order[0]
+            record = self._record_for(records, entry_id)
+            if record is not None:
+                start, count = record.line_span
+                end = start + count
+                if start < new_top < end:
+                    # Guaranteed line-rendered by _compute_new_top's contract.
+                    unit = self._entries[entry_id]
+                    retain = end - new_top
+                    trimmed = False
+                    while len(unit.lines) > retain:
+                        widget = unit.lines.pop(0)
+                        removed_top_height += max(1, widget.outer_size.height)
+                        to_remove.append(widget)
+                        trimmed = True
+                    # The banner count follows the retained rows here too —
+                    # every other path that changes a fallback unit's row
+                    # count (growth, retarget) already refreshes it, and a
+                    # partial fold that leaves "2 lines clipped" over one
+                    # remaining row makes the banner lie (CR5 re-review).
+                    if trimmed and unit.banner is not None:
+                        unit.banner.update(_banner_text(len(unit.lines)))
+
+        tail = self._tails.get("assistant")
+        if tail is not None and tail.kind == "line" and tail_folded:
+            tail_rows = len(_welded_tail_lines("assistant", tail.applied_text))
+            retain = max(1, tail_rows - tail_folded)
+            trimmed = False
+            while len(tail.lines) > retain:
+                widget = tail.lines.pop(0)
+                removed_top_height += max(1, widget.outer_size.height)
+                to_remove.append(widget)
+                trimmed = True
+            if trimmed and tail.banner is not None:
+                tail.banner.update(_banner_text(len(tail.lines)))
+
+        mounted = [widget for widget in to_remove if widget.is_mounted]
+        if mounted:
+            await self.remove_children(mounted)
+
+        # Two counters, never merged: the committed prefix is monotone (an
+        # entry, once folded, stays folded), but the tail's folded rows are
+        # PROVISIONAL and vanish when a regenerated tail shrinks the
+        # projection — recomputed from scratch every apply so
+        # condensed_count can shrink back with them (CR1 finding 2).
+        self._tail_top = tail_folded
+        self._top = max(self._top, new_top)
+        self._pending_removed_height = removed_top_height
+
+    def _record_for(
+        self, records: tuple[TranscriptEntryRecord, ...], entry_id: int | TranscriptKind
+    ) -> TranscriptEntryRecord | None:
+        for record in records:
+            if record.entry_id == entry_id:
+                return record
+        return None
+
+    def _compute_new_top(
+        self, records: tuple[TranscriptEntryRecord, ...], *, total_lines: int
+    ) -> tuple[int, int]:
+        """``desired_top`` in real accounted-content-line units (KTD2).
+
+        Walks the newest unit first — a line-rendered assistant tail, when
+        one is live — then committed entries newest-to-oldest, accumulating
+        accounted rows (content lines, plus one banner row per fallen-back
+        unit) against :attr:`mount_cap`. The first unit that does not fully
+        fit determines the fold boundary: a block-rendered entry rounds up
+        (evicted whole); a fallen-back entry with any remaining budget for
+        at least one content row keeps its newest rows plus exactly one
+        banner (partial retention) and folds the rest; a fallen-back entry
+        with zero budget for content rounds forward (evicted whole, banner
+        included — a banner never stands alone); an ordinary line-rendered
+        entry folds exactly the rows over budget, same as v0.1.
+
+        The very newest entry, if it is a *block-rendered* atomic unit, is
+        always kept whole and is not charged against the budget at all
+        (KTD2's qualified newest-entry exemption) — a fallen-back newest
+        entry gets no such exemption and folds like any line content.
+
+        **The line-rendered assistant tail is charged first, and its fold is
+        returned separately.** The plan's ceiling sentence ("the tails, each
+        bounded by the two-condition trigger") assumed the trigger bounds a
+        tail's widget count; it does not — it only switches the rendering,
+        after which nothing capped it, and the full-scale workload mounted
+        10,002 line widgets for one tail. The tail is the newest content on
+        screen, so it takes budget first, retains at least one content row
+        always (a live stream never folds to nothing), and when its
+        retention consumes the entire budget, everything senior folds — the
+        exempt newest block entry included, because prefix condensation
+        admits no mid-buffer hole. The tail's folded rows are returned as
+        the second element and never merged into the committed ``new_top``:
+        tail rows are *provisional*, and folding them into the monotone
+        committed prefix broke the condensed identity the moment a
+        regenerated tail shrank the projection (CR1 finding 2) —
+        :attr:`condensed_count` composes the two counters instead. The
+        reasoning tail never appears here: it has no span in the line
+        buffer (the flattened projection carries only the assistant tail),
+        so its identical bound is enforced widget-locally in
+        :meth:`_reconcile_tail`.
+        """
+        budget = self.mount_cap
+        tail = self._tails.get("assistant")
+        if tail is not None and tail.kind == "line":
+            tail_rows = len(_welded_tail_lines("assistant", tail.applied_text))
+            tail_start = total_lines - tail_rows
+            weight = tail_rows + (1 if tail.is_fallback else 0)
+            if budget - weight >= 0:
+                budget -= weight
+            else:
+                keep = budget - 1 if tail.is_fallback else budget
+                retained = min(tail_rows, max(1, keep))
+                return max(self._top, tail_start), tail_rows - retained
+        if not records:
+            return self._top, 0
+        newest = records[-1]
+        newest_unit = self._entries.get(newest.entry_id)
+        exempt_newest = newest_unit is not None and newest_unit.kind == "block"
+
+        for index in range(len(records) - 1, -1, -1):
+            record = records[index]
+            unit = self._entries.get(record.entry_id)
+            start, count = record.line_span
+            if exempt_newest and record.entry_id == newest.entry_id:
+                continue
+            is_fallback = unit is not None and unit.kind == "line" and unit.is_fallback
+            is_block = unit is not None and unit.kind == "block"
+            weight = count + (1 if is_fallback else 0)
+            if budget - weight >= 0:
+                budget -= weight
+                continue
+            if is_block:
+                return max(self._top, start + count), 0
+            if is_fallback:
+                available_for_content = budget - 1
+                if available_for_content <= 0:
+                    return max(self._top, start + count), 0
+                retained = min(count, available_for_content)
+                return max(self._top, start + (count - retained)), 0
+            # Ordinary line-rendered entry: fold exactly the overage.
+            retained = max(0, budget)
+            return max(self._top, start + (count - retained)), 0
+        return max(self._top, 0), 0
+
+    # ── condensation banner ──────────────────────────────────────────────
 
     async def _render_condensed(self) -> None:
-        # The block goes away when the window is re-derived far enough up that
-        # nothing is below it any more. Leaving a "0 earlier lines condensed"
-        # banner mounted would be both wrong on screen and an extra widget in
-        # every count that is supposed to mean "lines".
-        if self._top == 0:
+        if self.condensed_count == 0:
             if self._condensed is not None:
                 await self._condensed.remove()
                 self._condensed = None
             return
-        text = literal_text(CONDENSED_TEMPLATE.format(count=self._top))
+        text = literal_text(CONDENSED_TEMPLATE.format(count=self.condensed_count))
         if self._condensed is None:
             self._condensed = Static(text, markup=False, classes="transcript--condensed")
             await self.mount(self._condensed, before=0)
         else:
             self._condensed.update(text)
 
-    def _restore_anchor(self, removed_top_height: int) -> None:
-        """Follow the bottom, or hold the reader's place (R38's anchor clause).
-
-        When lines are unmounted off the top the content above the viewport
-        shrinks, so an unadjusted scroll offset would jump the reader forward by
-        exactly that much. Subtracting the removed height is what makes
-        "scrolled away and reading" survive a condense.
-        """
+    def _restore_anchor(self) -> None:
+        removed_top_height = self._pending_removed_height
+        self._pending_removed_height = 0
         if self.follow:
-            self.scroll_end(animate=False, immediate=True)
+            # `immediate=True` reads `max_scroll_y` synchronously, before
+            # Textual's own layout pass has necessarily run over widgets
+            # `await self.mount_all(...)` only just mounted -- `mount_all`
+            # awaits the *mount*, not a settled layout, so `max_scroll_y`
+            # can still read the pane's pre-mount height. Found live: a
+            # batch of 60 newly mounted line widgets left `scroll_offset`
+            # at (0, 0) instead of the bottom. `immediate=False` uses
+            # Textual's own `call_after_refresh` -- deferred to run once the
+            # layout has actually settled, which is what this widget needs
+            # every time, not only for a batch this size.
+            self.scroll_end(animate=False, immediate=False)
         elif removed_top_height:
             self.scroll_to(y=max(0, self.scroll_offset.y - removed_top_height), animate=False)
 
     # ── follow-bottom control ────────────────────────────────────────────
 
     def hold_anchor(self) -> None:
-        """Stop following the newest line — the operator is reading."""
         self.follow = False
 
     def follow_bottom(self) -> None:

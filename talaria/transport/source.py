@@ -105,6 +105,24 @@ LiveConnectionState = Literal[
     "disconnected", "connecting", "connected", "reconnecting", "auth_failed"
 ]
 
+#: KTD7's typed end-of-stream cause, re-declared (not imported) from
+#: :data:`talaria.domain.models.TerminalCause` for the same reason
+#: :data:`LiveConnectionState` is — the transport package does not import the
+#: domain to name an enum. ``tests/transport/test_source.py`` pins the two
+#: spellings identical.
+#:
+#: Carried on :meth:`LiveSource.bind`'s ``on_connection`` callback beside the
+#: state and the detail, and set only at the four sites where this source
+#: gives up on the stream for good: a credential could not be acquired
+#: (``dial_failed``), a dial that answered but refused or never connected
+#: (``auth_failed`` or ``dial_failed``), :meth:`LiveSource.close` running its
+#: real teardown body (``orderly_close``), and the reconnect schedule running
+#: out (``reconnect_exhausted``). Every other state change — ``connecting``,
+#: ``connected``, ``reconnecting``, or a mid-reconnect dial attempt that will
+#: retry — carries ``None``: the stream might still resume, so the domain
+#: must not treat it as the end of one.
+TerminalCause = Literal["auth_failed", "dial_failed", "orderly_close", "reconnect_exhausted"]
+
 #: How R35's four *conditions* map onto the five states above, since the frozen
 #: status contract (KTD5) has no ``connect_failed`` member and adding one would
 #: be a ``version: 2`` change to a document external consumers already read:
@@ -144,6 +162,45 @@ RECONNECT_DELAYS: Final[tuple[float, ...]] = (0.0, 0.5, 1.0, 2.0, 5.0)
 #: Pushed onto the frame queue to end iteration. A distinct object rather than
 #: ``None``, because ``None`` is a legal decoded frame body.
 _END = object()
+
+
+@dataclass(frozen=True)
+class _ConnectionNotice:
+    """A terminal connection notification, queued in the same FIFO order as frames.
+
+    **This is CR2 finding 1's fix.** :meth:`LiveSource._set_state` used to call
+    ``on_connection`` inline, from whichever task noticed the terminal
+    condition — usually :meth:`LiveSource._handle_disconnect`, running on the
+    reader task, concurrently with a consumer draining :attr:`LiveSource._queue`
+    on its own task. A terminal cause fired from there could reach the domain
+    (which commits ``streaming_text``/``reasoning_text`` on a terminal cause,
+    KTD7) *before* frames already sitting in the queue — received before the
+    drop, not yet drained — had been folded in. The domain then committed the
+    stale partial buffer as one entry, and the consumer went on to drain the
+    still-queued frames and commit the completed reply as a second, separate
+    entry: the same content twice.
+
+    So a terminal cause discovered while something is actively iterating this
+    source (:attr:`LiveSource._iterating`) is wrapped in one of these and put
+    on the *same* queue frames travel on, instead of being delivered inline.
+    :meth:`LiveSource.__aiter__` invokes ``on_connection`` itself, at the point
+    this is dequeued — which is only after every frame enqueued ahead of it has
+    already been yielded to, and presumably folded by, the caller.
+
+    Not a :class:`FrameRecord`: the class docstring's promise that connection
+    state is published by callback and never by a synthetic frame still holds
+    — this never reaches a consumer's ``async for`` as a yielded item, and
+    never touches the recorded corpus.
+
+    When nothing is iterating (a test that drives :meth:`LiveSource.start` and
+    :meth:`LiveSource.close` directly, with no consumer ever pulling from the
+    queue), the old inline delivery is kept exactly as it was — there is no
+    queue-ordering race to fix when nothing is racing the queue.
+    """
+
+    state: LiveConnectionState
+    detail: str
+    cause: TerminalCause | None
 
 #: How an endpoint switch ended (U4, KTD5/KTD6). Every member is a state the
 #: operator can be told about and act on, which is the whole requirement: a
@@ -237,7 +294,8 @@ class LiveSource:
         dialer: Dialer | None = None,
         recorder: FrameRecorder | None = None,
         correlator: RpcCorrelator | None = None,
-        on_connection: Callable[[LiveConnectionState, str], None] | None = None,
+        on_connection: Callable[[LiveConnectionState, str, TerminalCause | None], None]
+        | None = None,
         on_reconnect: Callable[[int], None] | None = None,
         clock: Callable[[], float] = _wall_clock,
         max_queued_frames: int = MAX_QUEUED_FRAMES,
@@ -290,6 +348,12 @@ class LiveSource:
         self._closed = False
         self._ended = False
         self._started = False
+        #: Whether something is actively pulling frames from :attr:`_queue`
+        #: (set at the top of :meth:`__aiter__`, never cleared). Read by
+        #: :meth:`_set_state` to decide whether a terminal cause must be
+        #: queued in FIFO order with frames rather than delivered inline —
+        #: see :class:`_ConnectionNotice`.
+        self._iterating = False
         self._seq = 0
         #: Serialises endpoint switches against each other. A switch drops a
         #: connection and dials a new one across several awaits; two of them
@@ -343,7 +407,8 @@ class LiveSource:
     def bind(
         self,
         *,
-        on_connection: Callable[[LiveConnectionState, str], None] | None = None,
+        on_connection: Callable[[LiveConnectionState, str, TerminalCause | None], None]
+        | None = None,
         on_reconnect: Callable[[int], None] | None = None,
     ) -> None:
         """Attach the observers after construction.
@@ -359,16 +424,68 @@ class LiveSource:
         if on_reconnect is not None:
             self._on_reconnect = on_reconnect
 
-    def _set_state(self, state: LiveConnectionState, detail: str = "") -> None:
-        if state == self._state and not detail:
+    def _set_state(
+        self,
+        state: LiveConnectionState,
+        detail: str = "",
+        *,
+        cause: TerminalCause | None = None,
+        deliver_inline: bool = False,
+    ) -> None:
+        """Publish a state change, and a typed terminal cause when this is one.
+
+        The dedup guard skips a call that changes nothing — same state, no
+        new detail — **unless it carries a cause**: a repeated terminal
+        notification (``close()`` running again after the stream already
+        ended, the reconnect loop's own exhaustion re-announcing a state
+        the last failed attempt already set) must still reach
+        ``on_connection`` so the typed cause is never silently dropped, even
+        though acting on it a second time is a no-op once the domain's
+        buffers are already empty.
+
+        **A terminal cause is queued, not delivered inline, while something
+        is iterating this source (CR2 finding 1).** ``on_connection`` for a
+        terminal cause is what makes the domain commit
+        ``streaming_text``/``reasoning_text`` (KTD7), and this method is often
+        called from :meth:`_handle_disconnect`, on the reader task — a
+        different task from whatever is draining :attr:`_queue`. Calling
+        ``on_connection`` straight from here could commit the domain's
+        current buffer *before* frames already sitting in the queue, received
+        before the drop, had been folded in — and the consumer would then
+        commit the same content again once it got to them. Wrapping the
+        notification in a :class:`_ConnectionNotice` and queuing it puts it
+        in the same FIFO order those frames are in, so :meth:`__aiter__`
+        cannot reach it before they are drained. A cause-less call is never
+        queued: nothing it does is order-sensitive against frame content, and
+        connecting/reconnecting notices reaching the screen promptly is worth
+        keeping.
+
+        **``deliver_inline`` is :meth:`close`'s escape hatch from that
+        queuing, and only ``close()`` passes it.** ``close()`` — directly, or
+        via :meth:`~talaria.ui.app.TalariaApp.shutdown_sources`, which cancels
+        the frame-consumer task *before* calling it — is teardown: whatever is
+        still queued when it runs will never be drained by anything, cancelled
+        consumer or not, so there is no future duplicate commit to protect
+        against by queuing here, and queuing anyway would risk the opposite
+        failure — a notice left sitting after the one task that would have
+        dequeued it has already wound down, silently dropping the very
+        content R6 exists to preserve. Every other terminal-cause call site
+        runs on a stream that is still being actively consumed, where that
+        risk does not apply.
+        """
+        if state == self._state and not detail and cause is None:
             return
         self._state = state
-        if self._on_connection is not None:
-            self._on_connection(state, detail)
+        if self._on_connection is None:
+            return
+        if cause is not None and self._iterating and not deliver_inline:
+            self._queue.put_nowait(_ConnectionNotice(state, detail, cause))
+            return
+        self._on_connection(state, detail, cause)
 
     # ── dialling ─────────────────────────────────────────────────────────
 
-    async def _dial(self) -> bool:
+    async def _dial(self, *, terminal: bool = False) -> bool:
         """Acquire a credential and dial once. Returns whether it connected.
 
         The credential is a local: it is acquired here, handed to
@@ -376,6 +493,21 @@ class LiveSource:
         method returns. KTD11's per-dial rule is what makes that safe — there is
         never a stored credential to leak, because there is never a stored
         credential.
+
+        ``terminal`` (KTD7) says whether *this specific call* is the one after
+        which the caller gives up rather than retry. :meth:`start` always dials
+        with ``terminal=True`` — a first dial that fails is immediately
+        followed by :meth:`_end`, with nothing left to retry. The reconnect
+        loop in :meth:`_handle_disconnect` dials with the default ``False`` —
+        a failed attempt there usually means "try the next delay", so it must
+        not tell the domain the stream has ended; the loop reports its own
+        cause once it actually decides to stop (an early exit on
+        ``auth_failed``/``credential_unavailable``, or the schedule running
+        out). Credential unavailability is the one outcome that is terminal
+        **regardless** of ``terminal``: a credential this machine cannot
+        produce will not appear on a timer either, so the reconnect loop
+        never retries past it (see its own early-exit check) and a typed
+        cause is correct to attach here unconditionally.
         """
         from talaria.transport.attach import AttachSuccess, attach, scrub_urls
         from talaria.transport.credentials import CredentialError
@@ -389,7 +521,7 @@ class LiveSource:
             # mode, which sends the operator to the wrong machine entirely.
             self.last_failure = scrub_urls(str(exc))
             self.failure_kind = "credential_unavailable"
-            self._set_state("disconnected", self.last_failure)
+            self._set_state("disconnected", self.last_failure, cause="dial_failed")
             return False
 
         outcome = await attach(self.target, credential, dialer=self._dialer)
@@ -405,9 +537,13 @@ class LiveSource:
         self.failure_kind = outcome.kind
         # ``connect_failed`` has no state of its own; it is ``disconnected``
         # plus a named cause, so the frozen KTD5 enum stays frozen.
+        cause: TerminalCause | None = None
+        if terminal:
+            cause = "auth_failed" if outcome.kind == "auth_failed" else "dial_failed"
         self._set_state(
             "auth_failed" if outcome.kind == "auth_failed" else "disconnected",
             outcome.detail,
+            cause=cause,
         )
         return False
 
@@ -422,7 +558,7 @@ class LiveSource:
             return self._state
         self._started = True
         self._set_state("connecting")
-        if not await self._dial():
+        if not await self._dial(terminal=True):
             self._end()
             return self._state
         self._reader = asyncio.create_task(self._read_loop())
@@ -431,12 +567,25 @@ class LiveSource:
     # ── the seam ─────────────────────────────────────────────────────────
 
     async def __aiter__(self) -> AsyncIterator[FrameRecord]:
-        """Yield frames as they arrive, in wire order."""
+        """Yield frames as they arrive, in wire order.
+
+        Marks :attr:`_iterating` before doing anything else — including
+        before :meth:`start`, whose own first-dial failure can itself carry a
+        terminal cause. Set here, and only here, because this is the one
+        place that establishes there is now something pulling from
+        :attr:`_queue` for :meth:`_set_state` to order a terminal cause
+        against (see :class:`_ConnectionNotice`).
+        """
+        self._iterating = True
         await self.start()
         while True:
             item = await self._queue.get()
             if item is _END:
                 return
+            if isinstance(item, _ConnectionNotice):
+                if self._on_connection is not None:
+                    self._on_connection(item.state, item.detail, item.cause)
+                continue
             record, size = item
             self._queued_bytes = max(0, self._queued_bytes - size)
             self._resume_reads_if_drained()
@@ -449,6 +598,13 @@ class LiveSource:
         the close instead of parking on an event nobody will set again; the
         in-flight calls are abandoned before the socket goes, so no caller is
         left awaiting a future the closed socket can no longer answer.
+
+        **This is KTD7's ``orderly_close`` cause** — the one of the four typed
+        terminal causes that fires for an explicit teardown (most often the
+        operator quitting the app) rather than a dial or reconnect giving up
+        on its own. It is attached only on the branch that actually runs
+        ``close()``'s real body — the ``if self._closed: return`` guard above
+        already keeps a second call from re-announcing anything.
         """
         if self._closed:
             return
@@ -467,9 +623,24 @@ class LiveSource:
         # socket is shut and the credential was refused — but only one of them
         # tells the operator what to fix, and every consumer tears the source
         # down after a failed attach, so overwriting here would erase the reason
-        # on the way out every single time.
+        # on the way out every single time. The domain already committed on
+        # whichever typed cause put the source in ``auth_failed`` to begin
+        # with, so this close needs no ``orderly_close`` of its own.
         if self._state != "auth_failed":
-            self._set_state("disconnected")
+            # ``self.last_failure`` rather than ``""``: this call is often a
+            # no-op re-announcement (``_pump``'s own teardown ``finally``
+            # calls ``close()`` after a dial that already failed and already
+            # delivered its own cause). Passing the *current* detail again
+            # repeats the operator-facing notice instead of blanking it with
+            # the generic "disconnected" line — the bug a first version of
+            # this line had, caught by
+            # ``test_a_local_credential_problem_is_not_reported_as_a_gateway_rejection``.
+            # On the genuine operator-teardown-while-connected path
+            # ``last_failure`` is already ``""`` (cleared on the last
+            # successful attach), so this changes nothing there.
+            self._set_state(
+                "disconnected", self.last_failure, cause="orderly_close", deliver_inline=True
+            )
         self._end()
 
         if self._recorder is not None:
@@ -675,9 +846,10 @@ class LiveSource:
         if classify_dial_error(exc) == "auth_failed":
             # The gateway hung up with an authentication close code. Reconnecting
             # would present the same credential to the same refusal on a timer,
-            # so this stops and says which of R35's states it is in.
+            # so this stops and says which of R35's states it is in. Terminal
+            # immediately (KTD7) — nothing below this branch runs.
             self.failure_kind = "auth_failed"
-            self._set_state("auth_failed", self.last_failure)
+            self._set_state("auth_failed", self.last_failure, cause="auth_failed")
             self._end()
             return False
 
@@ -691,6 +863,11 @@ class LiveSource:
             if self._closed:
                 return False
             self._set_state("reconnecting")
+            # A mid-loop attempt dials with the default ``terminal=False``: a
+            # failed attempt here usually just means "try the next delay", so
+            # ``_dial`` itself must not tell the domain the stream has ended
+            # (KTD7) — this loop reports its own cause below, once it actually
+            # decides to stop.
             if await self._dial():
                 self.reconnects += 1
                 if self._on_reconnect is not None:
@@ -701,11 +878,17 @@ class LiveSource:
                 # being presented again on a timer, and a credential this machine
                 # cannot produce will not appear on one either — the second case
                 # would additionally re-run the interactive prompt once per retry
-                # slot. Stop, and say why.
+                # slot. Stop, and say why — and, now that this is genuinely
+                # terminal, say the typed cause the un-terminal dial above did
+                # not attach.
+                cause: TerminalCause = (
+                    "auth_failed" if self._state == "auth_failed" else "dial_failed"
+                )
+                self._set_state(self._state, self.last_failure, cause=cause)
                 self._end()
                 return False
 
-        self._set_state("disconnected")
+        self._set_state("disconnected", self.last_failure, cause="reconnect_exhausted")
         self._end()
         return False
 

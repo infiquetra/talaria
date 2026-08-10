@@ -105,7 +105,10 @@ async def test_a_successful_attach_walks_connecting_then_connected(
     gateway: StubGateway,
 ) -> None:
     seen: list[tuple[str, str]] = []
-    source = live_source(gateway, on_connection=lambda state, detail: seen.append((state, detail)))
+    source = live_source(
+        gateway,
+        on_connection=lambda state, detail, cause=None: seen.append((state, detail)),
+    )
 
     assert await source.start() == "connected"
     await source.close()
@@ -166,9 +169,9 @@ async def test_a_drop_shows_reconnecting_and_then_connected_again(
     source = live_source(gateway)
     app = live_app(source)
 
-    def _observe(state: str, detail: str) -> None:
+    def _observe(state: str, detail: str, cause: Any = None) -> None:
         seen.append(state)
-        app.note_connection_state(state, detail)  # type: ignore[arg-type]
+        app.note_connection_state(state, detail, cause)  # type: ignore[arg-type]
 
     source.bind(on_connection=_observe)
 
@@ -207,9 +210,9 @@ async def test_a_dial_failure_shows_the_operator_no_credential(endpoint: str) ->
     details: list[str] = []
     app = live_app(source)
 
-    def _observe(state: str, detail: str) -> None:
+    def _observe(state: str, detail: str, cause: Any = None) -> None:
         details.append(detail)
-        app.note_connection_state(state, detail)  # type: ignore[arg-type]
+        app.note_connection_state(state, detail, cause)  # type: ignore[arg-type]
 
     source.bind(on_connection=_observe)
 
@@ -453,7 +456,7 @@ async def test_in_flight_calls_are_abandoned_before_the_re_dial(
     """
     seen: list[tuple[str, int, int, int]] = []
 
-    def _observe(state: str, detail: str) -> None:
+    def _observe(state: str, detail: str, cause: Any = None) -> None:
         seen.append(
             (
                 state,

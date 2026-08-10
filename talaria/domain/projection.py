@@ -109,6 +109,123 @@ class TranscriptView:
 
 
 @dataclass(frozen=True)
+class TranscriptEntryRecord:
+    """One committed entry, projected for block-level rendering (KTD6).
+
+    ``entry_id`` is :class:`~talaria.domain.models.TranscriptEntry`'s own
+    ``seq`` — already a stable, monotonic-per-session identity assigned once
+    at append time and never reused, so it needs no new counter here. It
+    stays stable under condensation: condensation is a pane-side eviction of
+    *widgets*, not a domain-side removal of entries, so an entry's id never
+    changes or repeats for the life of the session.
+
+    ``raw_body`` is the entry's ``text`` exactly as committed — no ``·  ``
+    weld, no speaker prefix. The weld :func:`transcript_view` applies for the
+    line-indexed buffer is presentation for line-rendered surfaces only; a
+    block-rendered reasoning entry parses ``raw_body`` on its own, and a
+    leading ``· `` would corrupt a first-line heading into invalid markdown
+    (R18) — the exact defect this separate, unwelded surface exists to avoid.
+
+    ``line_span`` is ``(start, count)`` into the same flattened line buffer
+    :func:`transcript_view` produces — ``start`` is the first line index this
+    entry owns and ``count`` is how many lines it contributes, both computed
+    the same way :func:`transcript_view` already flattens entries, so the two
+    surfaces agree on which lines belong to which entry without either
+    reading the other.
+    """
+
+    entry_id: int
+    kind: TranscriptKind
+    raw_body: str
+    committed: bool
+    line_span: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class ProvisionalTail:
+    """One in-flight stream, not yet committed to an entry (KTD2, KTD3).
+
+    Two of these exist side by side — one keyed ``"assistant"``, one keyed
+    ``"reasoning"`` — because the domain holds both buffers simultaneously
+    (``SessionState.streaming_text`` and ``.reasoning_text``) and neither may
+    steal the other's progressive rendering (R18).
+
+    ``generation`` increments on every replacement of ``raw_text`` — sealed
+    by ``message.interim`` or any other replace-wins path, never on a plain
+    append. A block-rendering consumer appends when the generation it last
+    applied is unchanged and replaces wholesale when it is not (KTD3); the
+    pane receives snapshots, not deltas, so the generation is what tells it
+    which of the two verbs to use without guessing from a text diff.
+    """
+
+    kind: TranscriptKind
+    raw_text: str
+    generation: int
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.raw_text
+
+
+@dataclass(frozen=True)
+class EntryScopedView:
+    """The transcript as entry-scoped records plus both provisional tails
+    (KTD6), alongside — not instead of — :func:`transcript_view`'s flattened
+    line buffer.
+
+    Two consumers, two surfaces: ``terminal_read`` (KTD10 of v0.1) and
+    ``content_is_complete`` (R11a) read the unchanged decorated line buffer
+    from :class:`TranscriptView`, and move zero bytes for this unit. A
+    block-rendering pane reads this view instead, because a block document
+    parses one entry's raw markdown source, not a flattened line with a
+    speaker prefix welded onto it.
+    """
+
+    entries: tuple[TranscriptEntryRecord, ...]
+    assistant_tail: ProvisionalTail
+    reasoning_tail: ProvisionalTail
+
+
+def entry_scoped_view(state: SessionState) -> EntryScopedView:
+    """Project :class:`~talaria.domain.state.SessionState` into KTD6's
+    entry-scoped surface.
+
+    Line spans are computed with the *identical* per-entry line count
+    :func:`transcript_view` uses (``_entry_lines``, unwelded here), so the two
+    projections agree on line ownership without one reading the other's
+    output — each is a direct, independent function of ``state.transcript``.
+    """
+    entries: list[TranscriptEntryRecord] = []
+    cursor = 0
+    for entry in state.transcript:
+        line_count = len(entry.text.split("\n"))
+        entries.append(
+            TranscriptEntryRecord(
+                entry_id=entry.seq,
+                kind=entry.kind,
+                raw_body=entry.text,
+                committed=True,
+                line_span=(cursor, line_count),
+            )
+        )
+        cursor += line_count
+
+    return EntryScopedView(
+        entries=tuple(entries),
+        assistant_tail=ProvisionalTail(
+            kind="assistant",
+            raw_text=state.streaming_text,
+            generation=state.assistant_stream_generation,
+        ),
+        reasoning_tail=ProvisionalTail(
+            kind="reasoning",
+            raw_text=state.reasoning_text,
+            generation=state.reasoning_stream_generation,
+        ),
+    )
+
+
+@dataclass(frozen=True)
 class SubagentView:
     """KTD8's rows plus the count that stays visible when they collapse (R16)."""
 

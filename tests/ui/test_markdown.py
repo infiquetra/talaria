@@ -267,13 +267,33 @@ async def _drain(app: Any, pilot: Any, controls: Any) -> None:
 @pytest.mark.asyncio
 async def test_the_pane_draws_agent_prose_styled_and_tool_output_verbatim() -> None:
     """Both halves of the same claim, because either alone is satisfiable by a
-    renderer that is simply broken in a convenient direction."""
+    renderer that is simply broken in a convenient direction.
+
+    U4 replaces the v0.1 per-line delimiter-stripping styler with block
+    rendering for assistant/reasoning entries (``MARKDOWN_KINDS`` now
+    selects "mount an ``EntryMarkdown`` document", not "strip these
+    delimiters from this one line") — so "agent prose is styled" is now
+    proven by querying the mounted document's own rendered paragraph
+    content, not by ``pane.drawn_lines`` (which is documented as a
+    source-line fallback for block units, since Textual renders a block
+    document as blocks, not as separably drawable lines). The tool line's
+    half of the claim is unchanged: ``tool`` is not in ``MARKDOWN_KINDS``, so
+    it stays line-rendered verbatim and ``drawn_lines`` is still the right
+    place to read it from.
+    """
+    from textual.widgets._markdown import MarkdownParagraph
+
     app, controls = paused_app(_markdown_session())
     async with app.run_test(size=(100, 24)) as pilot:
         await _drain(app, pilot, controls)
         pane = app.transcript
 
-        painted = "\n".join(pane.drawn_lines)
+        assistant_entry = next(e for e in app.state.transcript if e.kind == "assistant")
+        unit = pane._entries[assistant_entry.seq]
+        assert unit.kind == "block", "assistant prose block-renders under U4"
+        document = unit.block
+        assert document is not None
+        painted = "\n".join(str(p.render()) for p in document.query(MarkdownParagraph))
         assert "Lead with the recommendation and cite path:line." in painted
         assert "**the recommendation**" not in painted
 
@@ -287,7 +307,19 @@ async def test_the_pane_draws_agent_prose_styled_and_tool_output_verbatim() -> N
 async def test_the_pane_still_reports_the_projection_lines_it_holds() -> None:
     """``rendered_lines`` is what the replay gate and the bounds suite compare
     against ``view.lines``, so it has to stay the projection's text even though
-    the screen now shows something shorter."""
+    the screen now shows something shorter.
+
+    U4 restates ``rendered_lines`` as a content reconstruction over mixed
+    mounting (line widgets contribute their line; block entries contribute
+    their projected source lines) — this is the invariant this test exists
+    to pin, and it is checked exactly as before. What changed is the *proof
+    that styling happened*: a per-line ``drawn_lines`` comparison no longer
+    distinguishes styled from unstyled once agent prose is block-rendered
+    (``drawn_lines`` falls back to source text for a block unit, documented
+    on the property), so the styling half of the old assertion is replaced
+    with the structural proof block rendering actually gives: the entry
+    mounted as a block document rather than as line widgets.
+    """
     app, controls = paused_app(_markdown_session())
     async with app.run_test(size=(100, 24)) as pilot:
         await _drain(app, pilot, controls)
@@ -295,7 +327,8 @@ async def test_the_pane_still_reports_the_projection_lines_it_holds() -> None:
 
         view = transcript_view(app.state)
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
-        assert pane.drawn_lines != pane.rendered_lines, "nothing was styled; this proves nothing"
+        assistant_entry = next(e for e in app.state.transcript if e.kind == "assistant")
+        assert pane._entries[assistant_entry.seq].kind == "block", "styling proven structurally"
         assert len(pane.drawn_lines) == len(pane.rendered_lines)
 
         # Through the gate's own function, not just the comparison it makes.
@@ -309,8 +342,18 @@ async def test_the_pane_still_reports_the_projection_lines_it_holds() -> None:
 @pytest.mark.asyncio
 async def test_streaming_prose_is_styled_before_the_turn_commits() -> None:
     """The provisional tail carries no entry, so its kind is asserted by the
-    projection rather than read off one. If that were wrong, markdown would snap
-    into place only when the turn ended — visible as a flicker on every reply."""
+    projection rather than read off one. If that were wrong, markdown would
+    render only when the turn ended — visible as a flicker on every reply.
+
+    U4's "styled before commit" claim is KTD3's progressive ``append``: the
+    live assistant tail is a real ``EntryMarkdown`` document from its first
+    delta, not a plain line widget waiting for commit to promote it, so the
+    proof is structural (the tail mounted as a block document) plus the
+    document's own rendered content (delimiters gone), the same two-part
+    proof the commit-time test above uses.
+    """
+    from textual.widgets._markdown import MarkdownParagraph
+
     app, controls = paused_app(
         [
             event("gateway.ready", {}),
@@ -325,5 +368,11 @@ async def test_streaming_prose_is_styled_before_the_turn_commits() -> None:
         view = transcript_view(app.state)
         assert view.kinds[-1] == "assistant"
         assert view.committed_lines < view.total_lines, "nothing was provisional"
-        assert "still arriving" in "\n".join(pane.drawn_lines)
+        tail = pane._tails["assistant"]
+        assert tail is not None and tail.kind == "block", "the live tail is a block document"
+        document = tail.block
+        assert document is not None
+        painted = "\n".join(str(p.render()) for p in document.query(MarkdownParagraph))
+        assert "still arriving" in painted
+        assert "**arriving**" not in painted
         await app.shutdown_sources()
