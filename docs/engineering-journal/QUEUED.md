@@ -598,6 +598,12 @@ far below the trigger; the workloads never commit).
 which is what makes this small; the care is in `_reconcile_committed`'s batch path, where several
 entries build against one budget, not one.
 
+**Narrowed on 2026-08-10 (CR3 re-review fix).** Markdown-kind entries whose final body trips the
+fallback trigger now build pre-capped at `mount_cap` (`_prepare_committed_entry` rechecks both
+demotion conditions and passes `max_rows`), which closes the transient for exactly the shapes the
+trigger can see — the 10,000-line fence included. Still open: non-markdown kinds (a monster
+`system` entry has no trigger check and still mounts every row), and the batch-budget nuance above.
+
 **Worth it when.** A real corpus (resume with monster history, or a commit-differs-from-tail
 stream) shows the spike, or the gate grows a workload that commits — measure first, the family's
 last two fixes both moved on evidence.

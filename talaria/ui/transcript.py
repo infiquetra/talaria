@@ -1018,9 +1018,25 @@ class TranscriptPane(VerticalScroll):
         future tail-side rendering bug, not a substitute for the fix above.
         """
         tail = self._tails.get(record.kind)
+        # The final body is rechecked against BOTH demotion conditions, not
+        # assumed to inherit the tail's own verdict: message.complete may
+        # carry a body far past what streamed (a short block tail completed
+        # by a 100,000-character suffix), and adopting the block document on
+        # the prefix check alone kept an uncapped, bannerless EntryMarkdown
+        # painting 1,339 rows as settled transcript (CR3 re-review). A body
+        # that demotes never adopts a block tail; its fresh build below is
+        # pre-capped, because a trigger-tripping entry is guaranteed to fold
+        # to at most the cap's retention — the regime the capped-adoption
+        # arithmetic already covers — so the full-body mount transient is
+        # bounded too.
+        final_demotes = record.kind in MARKDOWN_KINDS and (
+            is_zero_block(record.raw_body)
+            or trips_fallback_trigger(record.raw_body, content_width=self._content_width)
+        )
         if (
             tail is not None
             and tail.kind == "block"
+            and not final_demotes
             and record.raw_body.startswith(tail.applied_text)
         ):
             # Queued, not awaited here: _prepare_committed_entry is
@@ -1060,7 +1076,13 @@ class TranscriptPane(VerticalScroll):
             unit = tail
             self._tails[record.kind] = None
         else:
-            unit = self._prepare_unit(record.entry_id, record.kind, record.raw_body, pending)
+            unit = self._prepare_unit(
+                record.entry_id,
+                record.kind,
+                record.raw_body,
+                pending,
+                max_rows=self.mount_cap if final_demotes else None,
+            )
         unit.entry_id = record.entry_id
         self._entries[record.entry_id] = unit
         self._entry_order.append(record.entry_id)
@@ -1308,14 +1330,14 @@ class TranscriptPane(VerticalScroll):
             if is_zero_block(tail.raw_text) or trips_fallback_trigger(
                 tail.raw_text, content_width=self._content_width
             ):
-                for widget in unit.widgets():
-                    await self._safe_remove(widget)
+                await self._remove_unit_widgets(unit)
+                del unit
                 self._tails[kind] = await self._build_unit(
                     kind,
-                kind,
-                tail.raw_text,
-                anchor=self._next_tail_anchor(kind),
-                max_rows=self.mount_cap,
+                    kind,
+                    tail.raw_text,
+                    anchor=self._next_tail_anchor(kind),
+                    max_rows=self.mount_cap,
                 )
                 # Pay the cleanup inside the demotion frame, which RA4
                 # already excludes from the latency quantile: the block
@@ -1325,7 +1347,12 @@ class TranscriptPane(VerticalScroll):
                 # as a one-off 107 ms post-demotion boundary on the fourth
                 # full-scale gate run. One collection here, in the frame
                 # that is already the representation switch, keeps every
-                # later collection small.
+                # later collection small. For that to actually reclaim the
+                # document, this frame must hold no reference to it at the
+                # collect: the removal loop lives in its own frame
+                # (_remove_unit_widgets) and ``unit`` is deleted first — a
+                # lingering local kept all ~1,005 widgets alive through
+                # this very collection (CR3 re-review).
                 gc.collect()
             return
 
@@ -1441,6 +1468,16 @@ class TranscriptPane(VerticalScroll):
     async def _safe_remove(self, widget: Widget) -> None:
         if widget.is_mounted:
             await widget.remove()
+
+    async def _remove_unit_widgets(self, unit: _MountedUnit) -> None:
+        """Remove a unit's widgets without leaving a loop variable behind:
+        the demotion frame runs ``gc.collect()`` immediately after, and a
+        lingering local reference to the removed document kept it alive
+        through the very collection meant to reclaim it (CR3 re-review) —
+        this method's frame dies before that collect runs.
+        """
+        for widget in unit.widgets():
+            await self._safe_remove(widget)
 
     # ── condensation over mixed units (KTD2) ────────────────────────────
 
