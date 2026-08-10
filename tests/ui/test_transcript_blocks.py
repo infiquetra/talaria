@@ -1396,6 +1396,39 @@ async def test_a_divergent_capped_monster_commits_without_a_mount_transient() ->
 
 
 @pytest.mark.asyncio
+async def test_a_partial_fold_refreshes_the_banner_count() -> None:
+    """Partial condensation trims a fallback unit's head rows, and the
+    banner kept announcing the pre-fold count — "2 lines clipped" over
+    one remaining row (CR5 re-review). Every other path that changes a
+    fallback unit's row count (growth, retarget) refreshes the banner;
+    the fold's trim loop must too.
+    """
+    app = _Harness(mount_cap=4)
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        monster = ("x" * 100_000) + "\n" + ("y" * 100_000)
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body=monster, committed=True, line_span=(0, 2)
+            ),
+            TranscriptEntryRecord(
+                entry_id=2, kind="user", raw_body="a", committed=True, line_span=(2, 1)
+            ),
+            TranscriptEntryRecord(
+                entry_id=3, kind="user", raw_body="b", committed=True, line_span=(3, 1)
+            ),
+        )
+        view = await _apply(pane, entries)
+        unit = pane._entries[1]
+        assert unit.is_fallback and unit.banner is not None
+        assert len(unit.lines) == 1, "the straddle fold retained exactly one content row"
+        assert "(1 lines clipped" in str(unit.banner.render()), (
+            "the banner must follow the retained rows through a partial fold"
+        )
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
 async def test_a_budget_exact_zero_block_tail_keeps_every_row() -> None:
     """The tail budget reserved a banner row unconditionally, but only
     fallback units mount a banner: a 500-row zero-block tail mounted 499

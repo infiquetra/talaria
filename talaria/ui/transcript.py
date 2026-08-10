@@ -1535,19 +1535,32 @@ class TranscriptPane(VerticalScroll):
                     # Guaranteed line-rendered by _compute_new_top's contract.
                     unit = self._entries[entry_id]
                     retain = end - new_top
+                    trimmed = False
                     while len(unit.lines) > retain:
                         widget = unit.lines.pop(0)
                         removed_top_height += max(1, widget.outer_size.height)
                         to_remove.append(widget)
+                        trimmed = True
+                    # The banner count follows the retained rows here too —
+                    # every other path that changes a fallback unit's row
+                    # count (growth, retarget) already refreshes it, and a
+                    # partial fold that leaves "2 lines clipped" over one
+                    # remaining row makes the banner lie (CR5 re-review).
+                    if trimmed and unit.banner is not None:
+                        unit.banner.update(_banner_text(len(unit.lines)))
 
         tail = self._tails.get("assistant")
         if tail is not None and tail.kind == "line" and tail_folded:
             tail_rows = len(_welded_tail_lines("assistant", tail.applied_text))
             retain = max(1, tail_rows - tail_folded)
+            trimmed = False
             while len(tail.lines) > retain:
                 widget = tail.lines.pop(0)
                 removed_top_height += max(1, widget.outer_size.height)
                 to_remove.append(widget)
+                trimmed = True
+            if trimmed and tail.banner is not None:
+                tail.banner.update(_banner_text(len(tail.lines)))
 
         mounted = [widget for widget in to_remove if widget.is_mounted]
         if mounted:
