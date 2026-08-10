@@ -87,8 +87,9 @@ from __future__ import annotations
 import gc
 import math
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Final, Literal
 
 from rich.cells import cell_len
@@ -962,27 +963,31 @@ class TranscriptPane(VerticalScroll):
         # suffix" in one `mount_all` call), which this restores.
         pending: list[Widget] = []
         deferred_writes: list[tuple[EntryMarkdown | None, str]] = []
+        deferred_ops: list[Callable[[], Awaitable[None]]] = []
         for record in records:
             if record.entry_id in self._entries:
                 continue
             start, count = record.line_span
             if start + count <= self._top:
                 continue
-            self._prepare_committed_entry(record, pending, deferred_writes)
+            self._prepare_committed_entry(record, pending, deferred_writes, deferred_ops)
         await self._mount_widgets(pending, before_tails=True)
         # R16 clause 2: a terminal path stops and awaits pending widget
         # writes -- these are queued rather than awaited inline above only
         # to keep _prepare_committed_entry synchronous for batching, and
         # `apply()` does not return until every one of them has actually
-        # landed.
+        # landed. The same holds for the queued retarget ops.
         for widget, text in deferred_writes:
             await self._safe_write(widget, "update", text)
+        for op in deferred_ops:
+            await op()
 
     def _prepare_committed_entry(
         self,
         record: TranscriptEntryRecord,
         pending: list[Widget],
         deferred_writes: list[tuple[EntryMarkdown | None, str]],
+        deferred_ops: list[Callable[[], Awaitable[None]]],
     ) -> None:
         """Build (but do not mount) one entry's unit, queuing its widgets.
 
@@ -1029,26 +1034,26 @@ class TranscriptPane(VerticalScroll):
             tail.applied_text = record.raw_body
             unit = tail
             self._tails[record.kind] = None
-        elif (
-            tail is not None
-            and tail.kind == "line"
-            and record.raw_body == tail.applied_text
+        elif tail is not None and tail.kind == "line" and record.raw_body == tail.applied_text:
             # Same text, two row conventions: the tail's rows were split
             # with splitlines() while the committed span and the rendered
             # identity use split("\n") (_welded_entry_lines). The two
             # diverge on a trailing newline (one row short — CR1 finding
             # 4's cousin) and on \r\n / bare \r (equal counts, different
             # row *content* — splitlines consumes the \r as boundary,
-            # split("\n") leaves it in the row), so adoption compares the
-            # COMPLETE projected row sequences, never just their lengths
-            # (CR2 confirm rounds 1-2). Complete, not len(tail.lines): a
-            # capped monster tail retains mount_cap-1 rows, and comparing
-            # the retained count rejected every capped adoption,
-            # remounting the full body fresh at commit — the transient
-            # the cap exists to prevent.
-            and _welded_tail_lines(record.kind, tail.applied_text)
-            == _welded_entry_lines(record.kind, record.raw_body)
-        ):
+            # split("\n") leaves it in the row), so the row comparison is
+            # over the COMPLETE projected sequences, never lengths (CR2
+            # confirm rounds 1-2) and never len(tail.lines) (a capped tail
+            # retains mount_cap-1 rows). A divergence RETARGETS the mounted
+            # widgets to the committed rows in place rather than falling
+            # through to a fresh build: rebuilding mounted the full body
+            # beside the still-mounted tail — a 1,704-widget transient for
+            # a 1,201-row tail (CR2 confirm round 3).
+            tail_rows = _welded_tail_lines(record.kind, tail.applied_text)
+            entry_rows = _welded_entry_lines(record.kind, record.raw_body)
+            if tail_rows != entry_rows:
+                keep = entry_rows[-max(1, self.mount_cap - 1) :]
+                deferred_ops.append(partial(self._retarget_line_unit, tail, record.kind, keep))
             unit = tail
             self._tails[record.kind] = None
         else:
@@ -1056,6 +1061,41 @@ class TranscriptPane(VerticalScroll):
         unit.entry_id = record.entry_id
         self._entries[record.entry_id] = unit
         self._entry_order.append(record.entry_id)
+
+    async def _retarget_line_unit(
+        self, unit: _MountedUnit, kind: TranscriptKind, rows: list[str]
+    ) -> None:
+        """Rewrite an adopted line unit's mounted rows to the committed
+        convention in place (CR2 confirm round 3). Both sides hold the
+        newest rows of the same text, so the rewrite is positional:
+        surplus head widgets are removed, every retained widget's source
+        is updated, and the rare extra row (a trailing newline adds one)
+        mounts inside the unit. Zero fresh mounts on the capped-monster
+        shapes — the alternative, building the committed unit fresh while
+        the old tail was still mounted, put 1,203 new widgets beside 501
+        existing ones before condensation could fold either. The banner
+        count follows the retained rows, exactly as the growth path
+        refreshes it.
+        """
+        while len(unit.lines) > len(rows):
+            head = unit.lines.pop(0)
+            await self._safe_remove(head)
+        for widget, row in zip(unit.lines, rows, strict=False):
+            widget.update_source(row)
+        if len(rows) > len(unit.lines):
+            extras = [
+                TranscriptLine(row, kind=kind, no_wrap=unit.is_fallback)
+                for row in rows[len(unit.lines) :]
+            ]
+            if unit.banner is not None:
+                await self.mount_all(extras, before=unit.banner)
+            elif unit.lines:
+                await self.mount_all(extras, after=unit.lines[-1])
+            else:
+                await self.mount_all(extras)
+            unit.lines.extend(extras)
+        if unit.banner is not None:
+            unit.banner.update(_banner_text(len(unit.lines)))
 
     def _prepare_unit(
         self,

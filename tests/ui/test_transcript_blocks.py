@@ -1210,10 +1210,11 @@ async def test_a_committed_trailing_newline_body_never_adopts_a_short_line_tail(
     """The commit handoff adopts a line-kind tail on text equality — but the
     tail's widgets were split with splitlines() (a trailing newline adds no
     row) while the committed span counts split("\\n") rows (it adds one).
-    Equal text, unequal row counts: adopting the one-row-short widget list
-    under the entry's span broke ``rendered_lines == view.lines`` (CR1
-    finding 4's cousin on the adoption seam, found probing the CR2 fix).
-    Adoption now also requires the widget count to equal the span's rows.
+    Equal text, unequal rows: adopting the one-row-short widget list as-is
+    broke ``rendered_lines == view.lines`` (CR1 finding 4's cousin on the
+    adoption seam, found probing the CR2 fix). The divergence is retargeted
+    in place: the widgets are reused, their sources rewritten to the
+    committed rows, and the extra row mounts inside the unit.
     """
     app = _Harness()
     async with app.run_test(size=(80, 24)):
@@ -1235,6 +1236,7 @@ async def test_a_committed_trailing_newline_body_never_adopts_a_short_line_tail(
         view = await _apply(pane, committed)
         assert view.lines == ("", "")
         unit = pane._entries[1]
+        assert unit is tail_unit, "the widgets are reused — retargeted, not rebuilt"
         assert len(unit.lines) == 2, "the committed entry owns both rows of its span"
         assert pane.rendered_lines == view.lines
 
@@ -1287,9 +1289,10 @@ async def test_a_carriage_return_body_never_adopts_the_tails_row_content() -> No
     split("\\n") leaves the \\r inside the row. Equal row COUNTS, different
     row content — so a guard comparing only counts adopted the tail's
     (" ", " ") widgets under a committed view of (" \\r", " ") and broke
-    the rendered-lines identity (CR2 confirm round 2). The guard compares
-    the complete projected row sequences; this body builds fresh with the
-    committed convention's rows.
+    the rendered-lines identity (CR2 confirm round 2). The sequences are
+    compared in full, and a divergence retargets the mounted widgets to
+    the committed rows in place — the painted content is the committed
+    convention's, never the tail's.
     """
     app = _Harness()
     async with app.run_test(size=(80, 24)):
@@ -1311,8 +1314,60 @@ async def test_a_carriage_return_body_never_adopts_the_tails_row_content() -> No
         )
         view = await _apply(pane, committed)
         assert view.lines == (" \r", " ")
-        assert pane._entries[1] is not tail_unit, "content-divergent rows must build fresh"
-        assert pane.rendered_lines == view.lines
+        assert pane._entries[1] is tail_unit, "the widgets are reused — retargeted, not rebuilt"
+        assert pane.rendered_lines == view.lines, "the painted rows are the committed rows"
+
+
+@pytest.mark.asyncio
+async def test_a_divergent_capped_monster_commits_without_a_mount_transient() -> None:
+    """The retarget's whole reason to exist: a capped monster tail whose
+    row sequences legitimately diverge (a trailing newline) used to fall
+    through to an uncapped fresh build while the old tail was still
+    mounted — 1,203 new widgets beside 501 existing, 1,704 before
+    condensation could fold either (CR2 confirm round 3), invisible to
+    peak_mounted because that metric samples after condensation. The
+    commit apply must mount ZERO fresh widgets: both sides hold the
+    newest rows, so the rewrite is purely positional.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200)) + "\n"
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=fence, generation=0),
+        )
+        tail_unit = pane._tails["assistant"]
+        assert tail_unit is not None and tail_unit.kind == "line" and tail_unit.is_fallback
+        assert len(tail_unit.lines) == DEFAULT_MOUNT_CAP - 1
+
+        mounted_fresh: list[int] = []
+        original_mount_all = pane.mount_all
+
+        def spying_mount_all(widgets, **kwargs):  # type: ignore[no-untyped-def]
+            batch = list(widgets)
+            mounted_fresh.append(len(batch))
+            return original_mount_all(batch, **kwargs)
+
+        pane.mount_all = spying_mount_all  # type: ignore[method-assign]
+        committed = (
+            TranscriptEntryRecord(
+                entry_id=1,
+                kind="assistant",
+                raw_body=fence,
+                committed=True,
+                line_span=(0, 1202),
+            ),
+        )
+        try:
+            view = await _apply(pane, committed)
+        finally:
+            pane.mount_all = original_mount_all  # type: ignore[method-assign]
+        assert pane._entries[1] is tail_unit, "the capped tail is retargeted, not rebuilt"
+        assert sum(mounted_fresh) == 0, "a positional rewrite mounts nothing fresh"
+        assert len(tail_unit.lines) == DEFAULT_MOUNT_CAP - 1
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
 
 
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
