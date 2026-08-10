@@ -1076,6 +1076,53 @@ async def test_a_tail_ending_in_a_newline_counts_rows_the_projections_way() -> N
         assert pane.rendered_lines[-1] == "extra 1"
 
 
+@pytest.mark.asyncio
+async def test_a_session_switch_after_a_monster_tail_folded_everything_still_resets() -> None:
+    """A monster tail's retention can fold EVERY committed entry, leaving
+    ``_entries`` empty while ``_top`` still describes the outgoing
+    session's line arithmetic. The reset check keyed on mounted entries
+    alone then found nothing to compare and skipped the reset, so the
+    switched-to session's first rows — line spans restarting at zero,
+    under the stale ``_top`` — read as already folded and never mounted
+    (CR1 confirm round). The lineage watermark closes the hole:
+    ``entry_seq`` climbs across a session clear, so a swapped-in history
+    can never contain the outgoing lineage's newest id.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        entry = TranscriptEntryRecord(
+            entry_id=1, kind="assistant", raw_body="hello", committed=True, line_span=(0, 1)
+        )
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200))
+        await _apply(
+            pane,
+            (entry,),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=fence, generation=0),
+        )
+        assert not pane._entries, "the defect's precondition: every committed entry folded away"
+        assert pane._top == 1
+
+        switched = (
+            TranscriptEntryRecord(
+                entry_id=2,
+                kind="assistant",
+                raw_body="session B's first message",
+                committed=True,
+                line_span=(0, 1),
+            ),
+        )
+        view = await _apply(pane, switched)
+        assert 2 in pane._entries, "the new session's entry must mount, not read as folded"
+        assert pane.condensed_count == 0
+        assert pane.rendered_lines == view.lines
+
+        view = await _apply(pane, ())
+        assert not pane._entries
+        assert pane.condensed_count == 0
+        assert pane.rendered_lines == ()
+
+
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
 
 

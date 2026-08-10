@@ -539,7 +539,8 @@ class _MountedUnit:
 
     def widgets(self) -> list[Widget]:
         if self.kind == "block":
-            assert self.block is not None
+            if self.block is None:  # a block unit is built with its document
+                raise ValueError("block-kind unit holds no document")
             return [self.block]
         out: list[Widget] = list(self.lines)
         if self.banner is not None:
@@ -654,6 +655,11 @@ class TranscriptPane(VerticalScroll):
         #: Real projected content lines folded away — a pure line-index
         #: concept, never inflated by a fallback banner (KTD2).
         self._top = 0
+        #: The newest entry id of the transcript lineage this pane's folded
+        #: state (:attr:`_top`) describes — durable where ``self._entries``
+        #: is not, because folding empties ``_entries`` but never unhappened
+        #: the entries it folded. See :meth:`_reset_if_history_changed`.
+        self._last_entry_id: int | None = None
         self._condensed: Static | None = None
         self.peak_mounted = 0
         #: Committed entries currently mounted, in commit order, keyed by
@@ -855,33 +861,52 @@ class TranscriptPane(VerticalScroll):
         screen after the switch, because nothing had ever told this pane
         the old entries no longer belonged.
 
-        The check: any entry id currently mounted that is absent from the
-        new ``records`` means the histories are not the same lineage —
-        entries are never deleted from a live transcript, so an id going
-        missing means the underlying transcript identity changed, not that
-        an entry was individually evicted (folding removes an id from
-        ``self._entries`` too, but never *below* :attr:`_top`, and this
-        check only fires while the pane still holds mounted entries
-        pre-dating the new set's earliest coverage).
+        The check: any entry id this pane has processed — still mounted, or
+        already folded — that is absent from the new ``records`` means the
+        histories are not the same lineage. Entries are never deleted from a
+        live transcript, so an id going missing means the underlying
+        transcript identity changed, not that an entry was individually
+        evicted. Two ids stand in for "everything processed":
+
+        - every id still in ``self._entries`` (folding removes an id from
+          ``self._entries`` too, but never *below* :attr:`_top`);
+        - :attr:`_last_entry_id`, the newest id of the last records set this
+          method accepted, which survives folding. A mounted-ids check alone
+          has a hole exactly where folding is most aggressive: a monster
+          tail's retention can fold *every* committed entry, leaving
+          ``self._entries`` empty while :attr:`_top` still describes the
+          outgoing session's line arithmetic — a session switch then found
+          nothing mounted to compare, skipped the reset, and the new
+          session's first rows (line spans restarting at zero, under a stale
+          :attr:`_top`) were treated as already folded (CR1 re-review). The
+          watermark closes the hole because it is lineage-sound by two
+          domain invariants ``land_session`` documents: entries are
+          append-only and never deleted within a lineage (a continuation
+          always still contains the watermark), and ``entry_seq`` climbs
+          across a session clear rather than restarting (a swapped-in
+          history can never reuse it).
         """
-        if not self._entries:
-            return
         current_ids = {record.entry_id for record in records}
-        if all(entry_id in current_ids for entry_id in self._entries):
-            return
-        for entry_id in list(self._entry_order):
-            unit = self._entries.pop(entry_id, None)
-            if unit is not None:
-                for widget in unit.widgets():
-                    await self._safe_remove(widget)
-        self._entry_order.clear()
-        for kind in _TAIL_KINDS:
-            unit = self._tails[kind]
-            if unit is not None:
-                for widget in unit.widgets():
-                    await self._safe_remove(widget)
-                self._tails[kind] = None
-        self._top = 0
+        lineage_intact = (
+            self._last_entry_id is None or self._last_entry_id in current_ids
+        ) and all(entry_id in current_ids for entry_id in self._entries)
+        if not lineage_intact:
+            for entry_id in list(self._entry_order):
+                unit = self._entries.pop(entry_id, None)
+                if unit is not None:
+                    for widget in unit.widgets():
+                        await self._safe_remove(widget)
+            self._entry_order.clear()
+            for kind in _TAIL_KINDS:
+                unit = self._tails[kind]
+                if unit is not None:
+                    for widget in unit.widgets():
+                        await self._safe_remove(widget)
+                    self._tails[kind] = None
+            self._top = 0
+            self._tail_top = 0
+            self._tail_recycled_height = 0
+        self._last_entry_id = records[-1].entry_id if records else None
 
     # ── committed entries ────────────────────────────────────────────────
 

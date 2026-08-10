@@ -122,7 +122,12 @@ The exact-row formula: **painted rows == projected lines + one banner row per fa
 or, over a partially retained span, **retained projected lines + 1**. A block-rendered newest
 entry is the one exception to folding: it mounts whole, because its size is already bounded by the
 two-condition trigger above, and any residual overage is recorded as a high-water figure rather
-than folded away.
+than folded away. One recorded qualification to that exception (CR1 re-review, 2026-08-09): the
+exception is a budget-charging rule, not an immortality guarantee. When a live line-rendered
+tail's own retention consumes the entire row budget, everything senior to it folds — the exempt
+newest block entry included — because prefix condensation admits no mid-buffer hole. The tail's
+folded rows are tracked as a separate, provisional counter beside the monotone committed prefix,
+so they unfold when a regenerated tail shrinks the projection.
 
 The observation point is deliberate, not "every instant" as ADR-0005 decision 3 stated it:
 `Markdown.update` parses off the message pump and mounts in batches of 200, removing old blocks
