@@ -563,6 +563,21 @@ def _welded_tail_lines(kind: TranscriptKind, text: str) -> list[str]:
     return f"{prefix}{text}".splitlines() or [""]
 
 
+def _welded_entry_lines(kind: TranscriptKind, text: str) -> list[str]:
+    """A committed entry's projected rows, split the committed way —
+    weld first, then ``split("\\n")`` (``transcript_view``'s
+    ``_entry_lines`` convention): the exact rows the entry's ``line_span``
+    and the rendered-lines identity are stated over. The two conventions
+    diverge on more than trailing newlines — ``splitlines()`` consumes a
+    ``\\r\\n`` (and a bare ``\\r``) as one boundary while ``split("\\n")``
+    leaves the ``\\r`` inside the row — so any seam between a tail and a
+    committed entry compares these sequences, never just their lengths
+    (CR2 confirm round 2).
+    """
+    welded = f"{_ENTRY_PREFIX.get(kind, '')}{text}"
+    return welded.split("\n") if welded else [""]
+
+
 def _fallback_banner(line_count: int) -> Static:
     """The RA3 banner, constrained to exactly one row at every width.
 
@@ -1018,19 +1033,21 @@ class TranscriptPane(VerticalScroll):
             tail is not None
             and tail.kind == "line"
             and record.raw_body == tail.applied_text
-            # Same text, two row conventions: the tail's rows were counted
-            # with splitlines() (a trailing newline adds no row) while the
-            # committed span counts split("\n") rows (it adds one). Adopting
-            # across that divergence puts a one-row-short unit under the
-            # entry's span and breaks the rendered_lines identity (CR1
-            # finding 4's cousin, found on the CR2 fix), so the tail text's
-            # COMPLETE projected row count must equal the span. The complete
-            # count, never len(tail.lines): a capped monster tail retains
-            # mount_cap-1 of its rows, and comparing the retained count
-            # rejected every capped adoption, remounting the full body as
-            # fresh widgets at commit — the transient the cap exists to
-            # prevent (CR2 confirm round).
-            and len(_welded_tail_lines(record.kind, tail.applied_text)) == record.line_span[1]
+            # Same text, two row conventions: the tail's rows were split
+            # with splitlines() while the committed span and the rendered
+            # identity use split("\n") (_welded_entry_lines). The two
+            # diverge on a trailing newline (one row short — CR1 finding
+            # 4's cousin) and on \r\n / bare \r (equal counts, different
+            # row *content* — splitlines consumes the \r as boundary,
+            # split("\n") leaves it in the row), so adoption compares the
+            # COMPLETE projected row sequences, never just their lengths
+            # (CR2 confirm rounds 1-2). Complete, not len(tail.lines): a
+            # capped monster tail retains mount_cap-1 rows, and comparing
+            # the retained count rejected every capped adoption,
+            # remounting the full body fresh at commit — the transient
+            # the cap exists to prevent.
+            and _welded_tail_lines(record.kind, tail.applied_text)
+            == _welded_entry_lines(record.kind, record.raw_body)
         ):
             unit = tail
             self._tails[record.kind] = None
@@ -1088,7 +1105,6 @@ class TranscriptPane(VerticalScroll):
         # to line rendering, never to a parsed block document, so
         # applied_text below -- used for tail-generation bookkeeping against
         # the domain's unwelded raw_text -- stays unwelded).
-        welded_body = f"{_ENTRY_PREFIX.get(kind, '')}{text}"
         is_fallback = eligible and not is_zero_block(text) and trips_fallback_trigger(
             text, content_width=width
         )
@@ -1099,7 +1115,7 @@ class TranscriptPane(VerticalScroll):
         if isinstance(entry_id, str):
             source_lines = _welded_tail_lines(kind, text)
         else:
-            source_lines = welded_body.split("\n") if welded_body else [""]
+            source_lines = _welded_entry_lines(kind, text)
         if max_rows is not None and len(source_lines) > max_rows:
             source_lines = source_lines[len(source_lines) - max_rows :]
         widgets = [

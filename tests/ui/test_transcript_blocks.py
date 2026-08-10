@@ -1281,6 +1281,40 @@ async def test_a_capped_monster_tail_is_still_adopted_at_commit() -> None:
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
 
 
+@pytest.mark.asyncio
+async def test_a_carriage_return_body_never_adopts_the_tails_row_content() -> None:
+    """splitlines() consumes a \\r\\n (and a bare \\r) as one line boundary;
+    split("\\n") leaves the \\r inside the row. Equal row COUNTS, different
+    row content — so a guard comparing only counts adopted the tail's
+    (" ", " ") widgets under a committed view of (" \\r", " ") and broke
+    the rendered-lines identity (CR2 confirm round 2). The guard compares
+    the complete projected row sequences; this body builds fresh with the
+    committed convention's rows.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        body = " \r\n "
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=body, generation=0),
+        )
+        tail_unit = pane._tails["assistant"]
+        assert tail_unit is not None and tail_unit.kind == "line"
+        assert len(tail_unit.lines) == 2, "splitlines: the \\r\\n is one boundary, two rows"
+
+        committed = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body=body, committed=True, line_span=(0, 2)
+            ),
+        )
+        view = await _apply(pane, committed)
+        assert view.lines == (" \r", " ")
+        assert pane._entries[1] is not tail_unit, "content-divergent rows must build fresh"
+        assert pane.rendered_lines == view.lines
+
+
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
 
 
