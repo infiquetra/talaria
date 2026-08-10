@@ -1239,6 +1239,48 @@ async def test_a_committed_trailing_newline_body_never_adopts_a_short_line_tail(
         assert pane.rendered_lines == view.lines
 
 
+@pytest.mark.asyncio
+async def test_a_capped_monster_tail_is_still_adopted_at_commit() -> None:
+    """The adoption guard compares row conventions, not retained widgets: a
+    capped monster tail retains mount_cap-1 rows, so a guard comparing
+    len(tail.lines) against the committed span rejected every capped
+    adoption and remounted the full body as fresh widgets at commit — a
+    1,202-widget transient, the exact shape the cap exists to prevent
+    (CR2 confirm round). The complete projected row count of the tail's
+    text is what must equal the span; the trailing-newline divergence is
+    still rejected by exactly that comparison.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200))
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=fence, generation=0),
+        )
+        tail_unit = pane._tails["assistant"]
+        assert tail_unit is not None and tail_unit.kind == "line" and tail_unit.is_fallback
+        assert len(tail_unit.lines) == DEFAULT_MOUNT_CAP - 1
+        peak_before = pane.peak_mounted
+
+        committed = (
+            TranscriptEntryRecord(
+                entry_id=1,
+                kind="assistant",
+                raw_body=fence,
+                committed=True,
+                line_span=(0, 1201),
+            ),
+        )
+        view = await _apply(pane, committed)
+        assert pane._entries[1] is tail_unit, "the capped tail must be adopted, not rebuilt"
+        assert pane.peak_mounted == peak_before, (
+            "adoption mounts nothing fresh — no full-body widget transient at commit"
+        )
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
 
 
