@@ -80,6 +80,15 @@ columns assigned widths `[0, 0, 58, 1, 1]`. RA3: on fallen-back entries only, R1
 projection-to-screen visibility and R3's legibility narrow to one painted row per projected line
 plus a banner naming the clip and cause — the gate proves the banner and the exact row count, not
 clipped-cell reachability; a keyboard expand/inspect affordance is queued follow-up, not built now.
+RA4 (operator-approved 2026-08-09, on the first full-scale gate run's evidence): KTD1(d)'s
+latency quantile excludes the at-most-one flagged demotion boundary per workload — with ~90
+post-warmup samples nearest-rank p99 is the maximum, and the one-time block-to-lines
+representation switch mounts a capped widget run in a single `apply()` (~250 ms) that no
+steady-state work can bring under 50 ms; the report records `demotion_boundary` and
+`demotion_apply_ms` verbatim, so the cost is enforced nowhere but reported everywhere. The
+rejected alternative was amortizing the demotion mount across coalescing intervals — claim-pure
+but it grows catch-up machinery inside the reconcile path and the mid-stream banner
+row-accounting, the two most heavily proven surfaces in the pane.
 
 **KTD8 fallback trigger and branch hold.** A separate, whole-feature fallback — reverting to the
 existing styled-line-run renderer (`talaria/ui/markdown.py`) instead of the block-document widget
