@@ -1018,14 +1018,19 @@ class TranscriptPane(VerticalScroll):
             tail is not None
             and tail.kind == "line"
             and record.raw_body == tail.applied_text
-            # Same text, two row conventions: the tail's widgets were split
+            # Same text, two row conventions: the tail's rows were counted
             # with splitlines() (a trailing newline adds no row) while the
             # committed span counts split("\n") rows (it adds one). Adopting
-            # a one-row-short widget list under the entry's span breaks the
-            # rendered_lines identity, so equality alone is not enough — the
-            # widgets must cover exactly the rows the span owns (CR1 finding
-            # 4's cousin, found on the CR2 fix). A mismatch builds fresh.
-            and len(tail.lines) == record.line_span[1]
+            # across that divergence puts a one-row-short unit under the
+            # entry's span and breaks the rendered_lines identity (CR1
+            # finding 4's cousin, found on the CR2 fix), so the tail text's
+            # COMPLETE projected row count must equal the span. The complete
+            # count, never len(tail.lines): a capped monster tail retains
+            # mount_cap-1 of its rows, and comparing the retained count
+            # rejected every capped adoption, remounting the full body as
+            # fresh widgets at commit — the transient the cap exists to
+            # prevent (CR2 confirm round).
+            and len(_welded_tail_lines(record.kind, tail.applied_text)) == record.line_span[1]
         ):
             unit = tail
             self._tails[record.kind] = None
