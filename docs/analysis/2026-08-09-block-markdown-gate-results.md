@@ -40,7 +40,7 @@ steady-state population RA4/RA5 define, with the excluded costs reported verbati
 | Peak live-tail widgets | 10,002 | 501 | bounded (KTD1(a)) |
 | Peak folded-window descendants | 293 | 295 | 600 |
 
-One margin stated plainly: the table workload's 46.6 ms is 6.9% under its ceiling, and its
+One margin stated plainly: the table workload's 46.6 ms is 6.8% under its ceiling, and its
 steady phase holds exactly 50 samples, so its nearest-rank p99 is arithmetically the maximum
 sample — one scheduler or collector hiccup in 50 boundaries sets the figure. The confirming
 attempts are all on record (46.0, 52.0, 48.7, 59.1, 46.6 ms across five runs of the re-reviewed
@@ -356,17 +356,16 @@ uv run pytest tests/replay/test_gate.py::test_a_cleanly_completed_multi_delta_ta
 
 # The full-scale gate itself (KTD14 scale; ~10 minutes on an idle machine —
 # the three latency checks measure wall-clock p99 and flip under load):
-uv run python -c "import asyncio, dataclasses, json; from talaria.replay.gate import run_gate; print(json.dumps(dataclasses.asdict(asyncio.run(run_gate()))['checks'], indent=1, default=str))"
+uv run python -c "import asyncio, json; from talaria.replay.gate import run_gate; print(json.dumps(asyncio.run(run_gate()).to_dict()['checks'], indent=1, default=str))"
+# (.to_dict(), never dataclasses.asdict — asdict drops the property-computed
+# figures: verdict, p99_ms, block_phase_peak_ms, measured_samples.)
 
 # Checks
 uv run ruff check talaria/replay tests/replay                       # clean
 uv run mypy talaria/replay tests/replay                             # clean
-uv run bandit -r talaria -q                                         # 1 low finding: the single
-  # pre-existing baseline assert in talaria/ui/transcript.py:514 (_MountedUnit.widgets). The fix
-  # round's two new asserts in gate.py's block_documents_are_owned, and one this pass added in
-  # _apply_sideband_action, are all now explicit narrowing (an `if x is None:` branch that reports
-  # a proof failure or raises, never a bare assert in talaria/ production code) -- reported back to
-  # exactly the accepted baseline.
+uv run bandit -r talaria -q                                         # clean: the baseline assert
+  # this line once reported (in _MountedUnit.widgets) was replaced with an explicit raise during
+  # the re-review loop; no bare assert remains in talaria/ production code.
 ```
 
 ## The full-scale runs — each failure diagnosed to a mechanism
