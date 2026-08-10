@@ -547,6 +547,21 @@ class _MountedUnit:
         return out
 
 
+def _welded_tail_lines(kind: TranscriptKind, text: str) -> list[str]:
+    """A live tail's projected rows, split the way the projection splits them.
+
+    The projection splits the streaming buffer with ``splitlines() or [""]``
+    (projection.py's tail branch) — a trailing newline adds no row — while a
+    committed entry's ``_entry_lines`` uses ``split("\\n")``. Every piece of
+    tail arithmetic in this module (fold budgeting, growth anchoring, widget
+    construction, reconstruction) must count rows the projection's way or a
+    tail ending in a newline is off by one everywhere (CR1 finding 4). Weld
+    first, split second, so the prefix rides row 0 only.
+    """
+    prefix = _ENTRY_PREFIX.get(kind, "")
+    return f"{prefix}{text}".splitlines() or [""]
+
+
 def _fallback_banner(line_count: int) -> Static:
     """The RA3 banner, constrained to exactly one row at every width.
 
@@ -629,6 +644,12 @@ class TranscriptPane(VerticalScroll):
         #: Rows the tail ring-recycle folded this apply — consumed by
         #: _condense into the restore anchor's removed-height compensation.
         self._tail_recycled_height = 0
+        #: The current assistant line-tail's folded head rows — provisional,
+        #: recomputed every _condense, composed into condensed_count beside
+        #: the monotone committed prefix (_top). Never folded INTO _top:
+        #: tail rows leave the projection when a regeneration replaces the
+        #: tail, and a monotone counter cannot follow them back down.
+        self._tail_top = 0
         self._lines: tuple[str, ...] = ()
         #: Real projected content lines folded away — a pure line-index
         #: concept, never inflated by a fallback banner (KTD2).
@@ -672,7 +693,13 @@ class TranscriptPane(VerticalScroll):
 
     @property
     def condensed_count(self) -> int:
-        return self._top
+        """Folded rows ahead of the visible window: the monotone committed
+        prefix plus the current assistant tail's own folded head rows.
+        The second term is provisional and shrinks with the tail (CR1
+        finding 2); it is nonzero only when every committed row is folded,
+        which is what keeps the sum a contiguous prefix of the projection.
+        """
+        return self._top + self._tail_top
 
     @property
     def rendered_lines(self) -> tuple[str, ...]:
@@ -705,7 +732,14 @@ class TranscriptPane(VerticalScroll):
         tail_unit = self._tails["assistant"]
         if tail_unit is not None:
             if tail_unit.kind == "block":
-                out.extend(self._welded_block_lines(tail_unit))
+                # Split the projection's way for a TAIL (splitlines, CR1
+                # finding 4) — _welded_block_lines is the committed-entry
+                # rule and would add a phantom row for a trailing newline.
+                out.extend(
+                    _welded_tail_lines(
+                        tail_unit.entry_kind or "assistant", tail_unit.applied_text
+                    )
+                )
             else:
                 out.extend(line_of(widget) for widget in tail_unit.lines)
         return tuple(out)
@@ -1016,7 +1050,14 @@ class TranscriptPane(VerticalScroll):
         is_fallback = eligible and not is_zero_block(text) and trips_fallback_trigger(
             text, content_width=width
         )
-        source_lines = welded_body.split("\n") if welded_body else [""]
+        # A tail's rows are counted the projection's way (splitlines); a
+        # committed entry's the _entry_lines way (split) — CR1 finding 4.
+        # Tail builds are the only callers that pass max_rows, and entry ids
+        # are ints while tail ids are their kind strings.
+        if isinstance(entry_id, str):
+            source_lines = _welded_tail_lines(kind, text)
+        else:
+            source_lines = welded_body.split("\n") if welded_body else [""]
         if max_rows is not None and len(source_lines) > max_rows:
             source_lines = source_lines[len(source_lines) - max_rows :]
         widgets = [
@@ -1087,7 +1128,11 @@ class TranscriptPane(VerticalScroll):
 
         if unit is None:
             new_unit = await self._build_unit(
-                kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
+                kind,
+                kind,
+                tail.raw_text,
+                mount_before_tails=False,
+                max_rows=max(1, self.mount_cap - 1),
             )
             self._tails[kind] = new_unit
             self._tail_generation[kind] = tail.generation
@@ -1126,7 +1171,11 @@ class TranscriptPane(VerticalScroll):
                 for widget in unit.widgets():
                     await self._safe_remove(widget)
                 self._tails[kind] = await self._build_unit(
-                    kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
+                    kind,
+                kind,
+                tail.raw_text,
+                mount_before_tails=False,
+                max_rows=max(1, self.mount_cap - 1),
                 )
                 # Pay the cleanup inside the demotion frame, which RA4
                 # already excludes from the latency quantile: the block
@@ -1149,7 +1198,11 @@ class TranscriptPane(VerticalScroll):
             for widget in unit.widgets():
                 await self._safe_remove(widget)
             self._tails[kind] = await self._build_unit(
-                kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
+                kind,
+                kind,
+                tail.raw_text,
+                mount_before_tails=False,
+                max_rows=max(1, self.mount_cap - 1),
             )
             return
 
@@ -1173,17 +1226,17 @@ class TranscriptPane(VerticalScroll):
             # nothing from patching — rebuild through the pre-capped path,
             # which also keeps the recycle loop below simple: a popped head
             # is then always an already-mounted widget.
-            and len(tail.raw_text.split("\n")) - len(unit.applied_text.split("\n"))
+            and len(_welded_tail_lines(kind, tail.raw_text))
+            - len(_welded_tail_lines(kind, unit.applied_text))
             < self.mount_cap - 1
         ):
-            prefix = _ENTRY_PREFIX.get(kind, "")
-            new_lines = f"{prefix}{tail.raw_text}".split("\n")
+            new_lines = _welded_tail_lines(kind, tail.raw_text)
             # The boundary between old and new text is anchored by the OLD
             # text's row count, never by the mounted-widget count — head
             # rows may already be folded (the pre-capped build, or
             # _condense's budget walk), and the newest mounted widget is
             # always the old text's last row regardless.
-            old_rows = len(f"{prefix}{unit.applied_text}".split("\n"))
+            old_rows = len(_welded_tail_lines(kind, unit.applied_text))
             boundary_source = new_lines[old_rows - 1]
             if unit.lines and unit.lines[-1].source != boundary_source:
                 unit.lines[-1].update_source(boundary_source)
@@ -1194,37 +1247,47 @@ class TranscriptPane(VerticalScroll):
             # periodic collections alone spiked one apply in three past
             # KTD1(d)'s ceiling (probed: p99 58 ms with churn, 31.6 ms
             # without); recycling removes the churn instead of tuning the
-            # collector. The assistant tail's retained window is cap-1
-            # content rows (the budget walk's partial retention keeps one
-            # banner row); the reasoning tail, outside the line buffer,
-            # keeps the full cap.
-            cap = self.mount_cap - (1 if kind == "assistant" else 0)
-            to_mount: list[TranscriptLine] = []
+            # collector. Both tails retain cap-1 content rows so the banner
+            # is charged within the budget (CR1 finding 6). Unused slots
+            # are filled and MOUNTED before any recycle move, or the moved
+            # head lands ahead of still-unmounted fresh rows and the
+            # painted order diverges from unit.lines (CR1 finding 1).
+            cap = self.mount_cap - 1
+            grown = new_lines[old_rows:]
+            fill = max(0, cap - len(unit.lines))
+            fresh = [
+                TranscriptLine(line, kind=kind, no_wrap=True) for line in grown[:fill]
+            ]
+            if fresh:
+                await self.mount_all(fresh, before=unit.banner)
+                unit.lines.extend(fresh)
+                unit.banner.update(_banner_text(len(unit.lines)))
             recycled_rows = 0
-            for line in new_lines[old_rows:]:
-                if len(unit.lines) < cap:
-                    widget = TranscriptLine(line, kind=kind, no_wrap=True)
-                    to_mount.append(widget)
-                    unit.lines.append(widget)
-                    continue
+            for line in grown[fill:]:
                 head = unit.lines.pop(0)
                 head.update_source(line)
                 self.move_child(head, before=unit.banner)
                 unit.lines.append(head)
                 recycled_rows += 1
-            if to_mount:
-                await self.mount_all(to_mount, before=unit.banner)
-                unit.banner.update(_banner_text(len(unit.lines)))
-            if recycled_rows:
-                # Rows folded away at the top — surfaced to _condense so the
-                # restore anchor compensates, same as an evicted widget's.
+            if recycled_rows and kind == "assistant":
+                # Rows folded away above the retained window — surfaced to
+                # _condense for the restore anchor. Assistant only: its
+                # recycles happen when the tail is the whole visible window,
+                # so its folded head rows are the window's top; the
+                # reasoning tail sits below committed content mid-viewport,
+                # and charging its recycles as removed top height yanked an
+                # anchored reader upward (CR1 finding 5).
                 self._tail_recycled_height += recycled_rows
             unit.applied_text = tail.raw_text
             return
         for widget in unit.widgets():
             await self._safe_remove(widget)
         self._tails[kind] = await self._build_unit(
-            kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
+            kind,
+            kind,
+            tail.raw_text,
+            mount_before_tails=False,
+            max_rows=max(1, self.mount_cap - 1),
         )
 
     async def _safe_write(self, widget: EntryMarkdown | None, verb: str, text: str) -> None:
@@ -1258,7 +1321,7 @@ class TranscriptPane(VerticalScroll):
         head rows fold the same retention-based way the straddling entry's
         do — the fold arithmetic has exactly one convention.
         """
-        new_top = self._compute_new_top(records, total_lines=total_lines)
+        new_top, tail_folded = self._compute_new_top(records, total_lines=total_lines)
         removed_top_height = self._tail_recycled_height
         self._tail_recycled_height = 0
         # Every widget this fold evicts is pruned in ONE remove_children
@@ -1301,20 +1364,24 @@ class TranscriptPane(VerticalScroll):
                         to_remove.append(widget)
 
         tail = self._tails.get("assistant")
-        if tail is not None and tail.kind == "line" and tail.applied_text:
-            tail_rows = len(tail.applied_text.split("\n"))
-            tail_start = total_lines - tail_rows
-            if new_top > tail_start:
-                retain = max(1, tail_rows - (new_top - tail_start))
-                while len(tail.lines) > retain:
-                    widget = tail.lines.pop(0)
-                    removed_top_height += max(1, widget.outer_size.height)
-                    to_remove.append(widget)
+        if tail is not None and tail.kind == "line" and tail_folded:
+            tail_rows = len(_welded_tail_lines("assistant", tail.applied_text))
+            retain = max(1, tail_rows - tail_folded)
+            while len(tail.lines) > retain:
+                widget = tail.lines.pop(0)
+                removed_top_height += max(1, widget.outer_size.height)
+                to_remove.append(widget)
 
         mounted = [widget for widget in to_remove if widget.is_mounted]
         if mounted:
             await self.remove_children(mounted)
 
+        # Two counters, never merged: the committed prefix is monotone (an
+        # entry, once folded, stays folded), but the tail's folded rows are
+        # PROVISIONAL and vanish when a regenerated tail shrinks the
+        # projection — recomputed from scratch every apply so
+        # condensed_count can shrink back with them (CR1 finding 2).
+        self._tail_top = tail_folded
         self._top = max(self._top, new_top)
         self._pending_removed_height = removed_top_height
 
@@ -1328,7 +1395,7 @@ class TranscriptPane(VerticalScroll):
 
     def _compute_new_top(
         self, records: tuple[TranscriptEntryRecord, ...], *, total_lines: int
-    ) -> int:
+    ) -> tuple[int, int]:
         """``desired_top`` in real accounted-content-line units (KTD2).
 
         Walks the newest unit first — a line-rendered assistant tail, when
@@ -1348,17 +1415,23 @@ class TranscriptPane(VerticalScroll):
         (KTD2's qualified newest-entry exemption) — a fallen-back newest
         entry gets no such exemption and folds like any line content.
 
-        **The line-rendered assistant tail is charged first.** The plan's
-        ceiling sentence ("the tails, each bounded by the two-condition
-        trigger") assumed the trigger bounds a tail's widget count; it does
-        not — it only switches the rendering, after which nothing capped it,
-        and the full-scale workload mounted 10,002 line widgets for one
-        tail. The tail is the newest content on screen, so it takes budget
-        first, retains at least one content row always (a live stream never
-        folds to nothing), and when its retention consumes the entire
-        budget, everything senior folds — the exempt newest block entry
-        included, because prefix condensation admits no mid-buffer hole.
-        The reasoning tail never appears here: it has no span in the line
+        **The line-rendered assistant tail is charged first, and its fold is
+        returned separately.** The plan's ceiling sentence ("the tails, each
+        bounded by the two-condition trigger") assumed the trigger bounds a
+        tail's widget count; it does not — it only switches the rendering,
+        after which nothing capped it, and the full-scale workload mounted
+        10,002 line widgets for one tail. The tail is the newest content on
+        screen, so it takes budget first, retains at least one content row
+        always (a live stream never folds to nothing), and when its
+        retention consumes the entire budget, everything senior folds — the
+        exempt newest block entry included, because prefix condensation
+        admits no mid-buffer hole. The tail's folded rows are returned as
+        the second element and never merged into the committed ``new_top``:
+        tail rows are *provisional*, and folding them into the monotone
+        committed prefix broke the condensed identity the moment a
+        regenerated tail shrank the projection (CR1 finding 2) —
+        :attr:`condensed_count` composes the two counters instead. The
+        reasoning tail never appears here: it has no span in the line
         buffer (the flattened projection carries only the assistant tail),
         so its identical bound is enforced widget-locally in
         :meth:`_reconcile_tail`.
@@ -1366,19 +1439,17 @@ class TranscriptPane(VerticalScroll):
         budget = self.mount_cap
         tail = self._tails.get("assistant")
         if tail is not None and tail.kind == "line":
-            tail_rows = len(tail.applied_text.split("\n")) if tail.applied_text else 1
+            tail_rows = len(_welded_tail_lines("assistant", tail.applied_text))
             tail_start = total_lines - tail_rows
             weight = tail_rows + (1 if tail.is_fallback else 0)
             if budget - weight >= 0:
                 budget -= weight
-            elif tail.is_fallback:
-                retained = min(tail_rows, max(1, budget - 1))
-                return max(self._top, tail_start + (tail_rows - retained))
             else:
-                retained = min(tail_rows, max(1, budget))
-                return max(self._top, tail_start + (tail_rows - retained))
+                keep = budget - 1 if tail.is_fallback else budget
+                retained = min(tail_rows, max(1, keep))
+                return max(self._top, tail_start), tail_rows - retained
         if not records:
-            return self._top
+            return self._top, 0
         newest = records[-1]
         newest_unit = self._entries.get(newest.entry_id)
         exempt_newest = newest_unit is not None and newest_unit.kind == "block"
@@ -1396,27 +1467,27 @@ class TranscriptPane(VerticalScroll):
                 budget -= weight
                 continue
             if is_block:
-                return max(self._top, start + count)
+                return max(self._top, start + count), 0
             if is_fallback:
                 available_for_content = budget - 1
                 if available_for_content <= 0:
-                    return max(self._top, start + count)
+                    return max(self._top, start + count), 0
                 retained = min(count, available_for_content)
-                return max(self._top, start + (count - retained))
+                return max(self._top, start + (count - retained)), 0
             # Ordinary line-rendered entry: fold exactly the overage.
             retained = max(0, budget)
-            return max(self._top, start + (count - retained))
-        return max(self._top, 0)
+            return max(self._top, start + (count - retained)), 0
+        return max(self._top, 0), 0
 
     # ── condensation banner ──────────────────────────────────────────────
 
     async def _render_condensed(self) -> None:
-        if self._top == 0:
+        if self.condensed_count == 0:
             if self._condensed is not None:
                 await self._condensed.remove()
                 self._condensed = None
             return
-        text = literal_text(CONDENSED_TEMPLATE.format(count=self._top))
+        text = literal_text(CONDENSED_TEMPLATE.format(count=self.condensed_count))
         if self._condensed is None:
             self._condensed = Static(text, markup=False, classes="transcript--condensed")
             await self.mount(self._condensed, before=0)
