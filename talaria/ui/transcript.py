@@ -1014,7 +1014,19 @@ class TranscriptPane(VerticalScroll):
             tail.applied_text = record.raw_body
             unit = tail
             self._tails[record.kind] = None
-        elif tail is not None and tail.kind == "line" and record.raw_body == tail.applied_text:
+        elif (
+            tail is not None
+            and tail.kind == "line"
+            and record.raw_body == tail.applied_text
+            # Same text, two row conventions: the tail's widgets were split
+            # with splitlines() (a trailing newline adds no row) while the
+            # committed span counts split("\n") rows (it adds one). Adopting
+            # a one-row-short widget list under the entry's span breaks the
+            # rendered_lines identity, so equality alone is not enough — the
+            # widgets must cover exactly the rows the span owns (CR1 finding
+            # 4's cousin, found on the CR2 fix). A mismatch builds fresh.
+            and len(tail.lines) == record.line_span[1]
+        ):
             unit = tail
             self._tails[record.kind] = None
         else:
@@ -1108,15 +1120,29 @@ class TranscriptPane(VerticalScroll):
         kind: TranscriptKind,
         text: str,
         *,
-        mount_before_tails: bool,
+        anchor: Widget | None,
         max_rows: int | None = None,
     ) -> _MountedUnit:
         """Build and mount one fresh unit immediately — the tail path, where
         exactly one unit is built per call and there is nothing to batch.
+
+        ``anchor`` is the widget the fresh unit mounts *before* — the next
+        tail in painted order (:func:`_next_tail_anchor`) — or ``None`` to
+        append at the pane's end. Appending unconditionally held the
+        declared reasoning-above-assistant order only when reasoning
+        happened to mount first; a reasoning tail first appearing (or
+        rebuilding) while the assistant tail was already on screen landed
+        below it, and the commit handoff then adopted both widgets in
+        place, freezing the reversed paint against ``_entry_order`` and
+        ``rendered_lines`` (CR2 re-review).
         """
         pending: list[Widget] = []
         unit = self._prepare_unit(entry_id, kind, text, pending, max_rows=max_rows)
-        await self._mount_widgets(pending, before_tails=mount_before_tails)
+        if pending:
+            if anchor is not None:
+                await self.mount_all(pending, before=anchor)
+            else:
+                await self.mount_all(pending)
         return unit
 
     async def _mount_widgets(self, widgets: list[Widget], *, before_tails: bool) -> None:
@@ -1132,6 +1158,21 @@ class TranscriptPane(VerticalScroll):
     def _first_tail_widget(self) -> Widget | None:
         for kind in _TAIL_KINDS:
             unit = self._tails[kind]
+            if unit is not None:
+                widgets = unit.widgets()
+                if widgets:
+                    return widgets[0]
+        return None
+
+    def _next_tail_anchor(self, kind: TranscriptKind) -> Widget | None:
+        """The first widget of the first mounted tail *after* ``kind`` in
+        ``_TAIL_KINDS``' painted order — what a fresh unit for ``kind``
+        mounts before so a late-arriving reasoning tail lands above the
+        assistant tail, not below it. ``None`` (no later tail mounted)
+        means append at the pane's end.
+        """
+        for later in _TAIL_KINDS[_TAIL_KINDS.index(kind) + 1 :]:
+            unit = self._tails[later]
             if unit is not None:
                 widgets = unit.widgets()
                 if widgets:
@@ -1156,7 +1197,7 @@ class TranscriptPane(VerticalScroll):
                 kind,
                 kind,
                 tail.raw_text,
-                mount_before_tails=False,
+                anchor=self._next_tail_anchor(kind),
                 max_rows=max(1, self.mount_cap - 1),
             )
             self._tails[kind] = new_unit
@@ -1199,7 +1240,7 @@ class TranscriptPane(VerticalScroll):
                     kind,
                 kind,
                 tail.raw_text,
-                mount_before_tails=False,
+                anchor=self._next_tail_anchor(kind),
                 max_rows=max(1, self.mount_cap - 1),
                 )
                 # Pay the cleanup inside the demotion frame, which RA4
@@ -1226,7 +1267,7 @@ class TranscriptPane(VerticalScroll):
                 kind,
                 kind,
                 tail.raw_text,
-                mount_before_tails=False,
+                anchor=self._next_tail_anchor(kind),
                 max_rows=max(1, self.mount_cap - 1),
             )
             return
@@ -1311,7 +1352,7 @@ class TranscriptPane(VerticalScroll):
             kind,
             kind,
             tail.raw_text,
-            mount_before_tails=False,
+            anchor=self._next_tail_anchor(kind),
             max_rows=max(1, self.mount_cap - 1),
         )
 
