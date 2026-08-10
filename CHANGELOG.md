@@ -8,6 +8,62 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html),
 with the usual caveat that a `0.x` line may break anything between releases.
 
+## [0.2.0] — 2026-08-10
+
+The interface becomes answerable, `--resume` means what it says, and the
+transcript renders real markdown. Two legs, each merged behind its own
+measured gate: the answerability spine (41 external-review findings fixed,
+every fix pinned by a revert-checked test) and the block-markdown build
+(a 24-of-24 full-scale replay gate, its figures published in
+[the gate results](docs/analysis/2026-08-09-block-markdown-gate-results.md)).
+
+### Added
+
+- **Answerable prompts.** `F1` jumps to the newest unanswered prompt
+  (modal-aware), every prompt kind carries its own hint line and focus tint,
+  `Escape` declines per kind — an approval sends an explicit `deny`, because
+  the gateway treats any resolved non-deny choice, an empty one included, as
+  approved — and `F4` sweeps the answerable set. Typed text survives a
+  refused decline.
+- **A caret slot** — a dedicated status-region row that always names where
+  the caret went, geometry-invariant across states.
+- **`--resume` renders history.** A resumed session's prior conversation is
+  decoded and on screen, content-preserving: a row the decoder cannot read
+  surfaces as unreadable rather than vanishing, and history the gateway
+  withheld is named, counted where possible, never silently blank.
+- **`/sessions`** — a picker over the gateway's sessions; selecting one
+  switches the running interface to it, with the outgoing session's
+  transcript cleanly replaced, not merged.
+- **Block-level markdown.** A committed assistant or reasoning entry renders
+  as a real markdown document — headings, fenced code, lists, tables, block
+  quotes — while both in-flight streams render progressively in their own
+  live documents at the same 50 ms cadence as before. Every other kind keeps
+  line rendering, now with per-kind visual differentiation. Degenerate
+  content (a 100,000-character line, a 601-column table, a 10,000-line
+  fence) falls back to bounded, clipped line rendering behind a one-row
+  banner instead of stalling the interface.
+
+### Changed
+
+- **v0.1's "markdown presentation is out of scope" rule (R6) is amended**:
+  presentation is now in scope; the guarantee that content is never dropped
+  is unchanged and still pinned by the same projection test.
+- **The bounded-rendering claim is restated** for a block-rendering pane:
+  [ADR-0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md)
+  bounds rendering by work and height (two-tier widget ceilings, a
+  steady-state 50 ms p99 apply-latency ceiling) in place of v0.1's
+  one-line-one-widget claim, and the replay gate proves the restated claim
+  at full scale — 24 checks, mid-stream ownership and progressive
+  reachability included.
+- **A profile-carrying 404 is disambiguated honestly** — a bare probe that
+  refuses redirects and never lets the credential leave the origin — instead
+  of being read optimistically.
+- **An ambiguous approval outcome settles and latches** rather than
+  restoring the card: the wire carries no request id, so a restored card
+  could be a zombie no keystroke can kill; over-latching self-heals through
+  gateway expiry. Recorded in the engineering journal with its revisit
+  condition.
+
 ## [0.1.0] — 2026-08-08
 
 The first release. Talaria dials a Hermes gateway it did not launch, runs a
@@ -88,4 +144,5 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
+[0.2.0]: https://github.com/infiquetra/talaria/releases/tag/v0.2.0
 [0.1.0]: https://github.com/infiquetra/talaria/releases/tag/v0.1.0
