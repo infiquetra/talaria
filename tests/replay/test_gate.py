@@ -256,6 +256,15 @@ LOAD_SENSITIVE_CHECKS = frozenset(
     }
 )
 
+#: The bounded catch-up floor counts fingerprints that aged a full
+#: wall-clock second before consumption, so its reduced-scale outcome rides
+#: how long the replay happens to take on this machine — deterministically
+#: reachable at full scale (the sustained-cadence pass alone streams for
+#: minutes), genuinely either-way at 600 deltas. Tolerated red, never
+#: required red: asserting it red would flake the moment a slower machine
+#: stretched the cadence pass past the grace window.
+DURATION_DEPENDENT_CHECKS = frozenset({"enough_reachability_checkpoints"})
+
 
 @pytest.mark.asyncio
 async def test_every_product_claim_holds_at_reduced_scale() -> None:
@@ -285,7 +294,7 @@ async def test_every_product_claim_holds_at_reduced_scale() -> None:
     """
     result = await run_gate(live_corpus=None, deltas=600, seed=7)
     failed = {name for name, check in result.checks.items() if not check["pass"]}
-    allowed = SCALE_DEPENDENT_CHECKS | LOAD_SENSITIVE_CHECKS
+    allowed = SCALE_DEPENDENT_CHECKS | LOAD_SENSITIVE_CHECKS | DURATION_DEPENDENT_CHECKS
     # Existence before tolerance: a check deleted from run_gate disappears
     # from the failing set instead of failing (CR4 finding 2).
     assert allowed <= result.checks.keys(), (
@@ -1737,7 +1746,7 @@ async def test_run_gate_wires_the_feature_corpus_and_workloads_into_the_verdict(
     assert result.sideband_structure_identical is True
 
     failed = {name for name, check in result.checks.items() if not check["pass"]}
-    expected_red = SCALE_DEPENDENT_CHECKS | LOAD_SENSITIVE_CHECKS
+    expected_red = SCALE_DEPENDENT_CHECKS | LOAD_SENSITIVE_CHECKS | DURATION_DEPENDENT_CHECKS
     assert expected_red <= result.checks.keys(), (
         f"a named check is missing entirely: {sorted(expected_red - result.checks.keys())}"
     )
