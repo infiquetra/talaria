@@ -1,16 +1,39 @@
 # Block-markdown gate: the two-part ownership proof, the sideband timeline, and a real defect it found
 
-Status: `partial`
+Status: `pass`
 Authority: `evidence`
-Date: 2026-08-09
+Date: 2026-08-09 (final revision after the fifth full-scale run)
 
 ## Verdict
 
-**All four of U6's outstanding gaps are built and exercised; one of them surfaced a genuine,
-pre-existing rendering defect that this document reports rather than hides, and one full-scale
-KTD14 run has not yet been executed in this pass.** The two-part ownership proof (the previous
-revision of this document) is unchanged and still holds — see that section below. New in this
-revision:
+**The full-scale replay gate passes 22 of 22 checks** — stress corpus
+`talaria-stress-v1-50000d-seed20260802` (sha256
+`34b52ddaba7b33f993ca621aff765f2337c4581d0aef9d2899267b50d3033c0c`, 53,516 frames), the feature
+corpus, the sustained-cadence pass, and the full-size KTD1(d) workloads together, at commit
+`7db8857` on `feat/v0-2-block-markdown-build`. It took five full-scale runs to get there: the
+first run failed four checks, each was diagnosed to a mechanism and fixed (or, twice,
+operator-amended — RA4 and RA5 below), and the fifth run is green. The run-by-run story is in
+"The full-scale runs" at the end; the defect the earlier revision of this document reported as
+out-of-scope has since been **fixed at both layers** and its section below now records the fix.
+
+The final figures, first-run against fifth-run:
+
+| Measurement | First run | Fifth run | Ceiling |
+| --- | --- | --- | --- |
+| growing-open-fence streaming p99 | 17,697 ms | 19.4 ms | 50 ms |
+| growing-one-column-table streaming p99 | 764 ms | 46.5 ms | 50 ms |
+| growing-unbroken-line streaming p99 | 30.9 ms | 8.5 ms | 50 ms |
+| Resident-set growth, stress replay | 355 MB | 126 MB | 300 MB |
+| Content-loss checkpoints (stress) | 2 of 11 failing | 0 of 11 | 0 |
+| Content-loss checkpoints (feature) | 1 failing | 0 | 0 |
+| Peak live-tail widgets | 10,002 | 501 | bounded (KTD1(a)) |
+| Peak folded-window descendants | 293 | 295 | 600 |
+
+One margin stated plainly: the table workload's 46.5 ms is 7% under its ceiling. It is the
+check most sensitive to machine load, and the recorded-not-enforced block-phase limit behind it
+is RA5's subject below. The four prior revisions' content is retained under the sections that
+follow — accurate when written, each now annotated where later work changed the picture. What
+that earlier revision built:
 
 1. **The sideband timeline** (`talaria/replay/source.py`) — a scripted, non-wire-frame action
    track for confirmed-cancel and typed-disconnect, fired deterministically by `ReplaySource`
@@ -28,14 +51,9 @@ revision:
 
 Building the feature corpus's table turn honestly (streamed across three separate deltas, the way
 a real gateway would send one) found a real, previously undiscovered defect in the installed
-widget's append mechanics — not something this unit introduced or is in scope to fix. It is
-described in full under "A real defect this work found" below, and it is why
-`feature_corpus_content_loss` is an expected, named failure in every gate run below rather than a
-green checkmark. **A full 50,000-delta KTD14-scale gate run (this document's historical
-`docs/analysis/2026-08-03-textual-validation-gate-results.md` precedent) has not been executed in
-this pass** — every number below is from the test suite's own reduced-scale runs and from direct
-invocation of the new measurement functions at their plan-specified sizes, which is real evidence
-but is not the same claim as a full KTD14 pass. That gap is named, not silently absorbed.
+widget's append mechanics. It is described in full under "A real defect this work found" below —
+**since fixed at both layers**, with the fix recorded in that section, and
+`feature_corpus_content_loss` now passes at full scale.
 
 ## Part 1: the two-part ownership proof (unchanged from the prior revision)
 
@@ -155,13 +173,11 @@ their full, plan-specified sizes directly (not through `run_adversarial_workload
 reduced) and pass — 1,204 and 1,201 descendants respectively for the two table probes, both firing
 the trigger; 1,003 descendants and a tripped wrapped-row trigger for the full 1,000-row table. The
 full 10,000-line fence and 100,000-character mega-line workloads, run end-to-end through
-`run_adversarial_workloads`, have only been exercised at *reduced* scale
-(`test_run_adversarial_workloads_covers_every_named_workload_and_probe`, monkeypatched to 300
-lines / 100 rows / 15,000 characters for test speed) — a full-size `run_adversarial_workloads()`
-invocation, with its own published p99 figures at 10,000/1,000/100,000, has not been run and
-recorded in this pass. The mechanism, the sizes, and the ceiling comparison are all real and
-tested; the specific full-size latency numbers for the fence and mega-line workloads are not yet
-published.
+`run_adversarial_workloads`, had at that revision only been exercised at *reduced* scale.
+**Resolved:** the five full-scale runs recorded under "The full-scale runs" below publish the
+full-size figures; the fifth run's p99s are 19.4 ms (fence), 46.5 ms (table), and 8.5 ms
+(mega-line) against the 50 ms ceiling, under the RA4/RA5 quantile (steady-state phase; the
+demotion boundary and the table's block phase are reported verbatim, not enforced).
 
 ### Gap 3 — replay determinism over normalized block structure (R12)
 
@@ -214,7 +230,19 @@ from the 2026-08-03 or earlier 2026-08-09 revisions of this document. No hardcod
 exists anywhere in `talaria/replay/stress.py` or the test suite that needed updating; the
 re-baseline is the act of citing fresh numbers, which this document does throughout.
 
-## A real defect this work found, precisely reproduced, out of scope to fix
+## A real defect this work found, precisely reproduced — and since fixed at both layers
+
+**The fix (landed after this section was first written).** `talaria/ui/blocks.py`'s
+`EntryMarkdown.update` now re-derives `_last_parsed_line` from the last top-level block start (a
+reverse token walk), so seeding a widget with an open multi-line construct no longer poisons the
+next append's reparse window; and `TranscriptPane._prepare_committed_entry`'s tail-to-entry
+handoff queues its corrective `update()` **unconditionally**, closing the clean-completion no-op
+skip that made the corruption permanent. Both layers carry fail-then-pass coverage:
+`test_a_cleanly_completed_multi_delta_table_renders_correctly_end_to_end` (the renamed successor
+of the characterization test cited below, now asserting the table *survives*) and the blocks-level
+checkpoint tests in `tests/ui/`. `feature_corpus_content_loss` passes 0-failures at full scale.
+The paragraphs below are the original report, kept because the mechanism is the reference for
+both fixes.
 
 **Building the feature corpus's table turn honestly — streamed across three separate deltas, the
 way a real assistant response actually arrives — surfaced a genuine, pre-existing defect in the
@@ -238,7 +266,8 @@ as a bare paragraph, and Textual silently swaps the mounted table or fence for i
 That half is transient. The second half makes it **permanent**: `TranscriptPane._prepare_committed_entry`'s
 tail-to-entry handoff only re-writes the widget (`EntryMarkdown.update`, which *does* self-correct
 an already-corrupted widget when it is actually called — proven positively in
-`test_a_cleanly_completed_multi_delta_table_keeps_its_live_tails_corruption`) when the committed
+`test_a_cleanly_completed_multi_delta_table_keeps_its_live_tails_corruption`, since renamed to
+`..._renders_correctly_end_to_end` when the fix flipped its assertion) when the committed
 text differs from what the live tail last had applied. A table that completes cleanly via
 `message.complete` reports exactly the text that was already streamed, so `record.raw_body ==
 tail.applied_text`, the corrective write is skipped as a no-op, and the corrupted widget is reused
@@ -254,33 +283,35 @@ gateway streaming genuine wall-clock-timed deltas across a 50ms coalescing bound
 that likely for any construct spanning more than one delta. A single-drain unbounded replay that
 lets an entire small corpus land before the render timer ever fires once does *not* reproduce it —
 the tail is constructed directly with its already-final text and never takes the corrupting append
-path at all. `test_a_cleanly_completed_multi_delta_table_keeps_its_live_tails_corruption` drives the
-replay frame by frame, rendering after each one, to reproduce it reliably; the docstring on that
+path at all. The same test (under its post-fix name,
+`test_a_cleanly_completed_multi_delta_table_renders_correctly_end_to_end`) drives the
+replay frame by frame, rendering after each one, to exercise it reliably; the docstring on that
 test states this dependency explicitly so a future reader does not mistake an unbounded-replay pass
 for the defect being fixed.
 
-**Consequence for this gate's verdict.** `feature_corpus_content_loss` fails in every `run_gate()`
-run in this pass, and it is expected to keep failing until `talaria/ui/` is fixed. This is a real
-R1/R5 gap — a table that streams progressively and completes normally can render its final,
-committed, on-screen form incorrectly — reported plainly rather than dressed as green. It does not
-affect `content_is_complete` (the domain-side proof, R11a, untouched and still exact) — the
-**domain** text is always correct; only the **mounted document's** internal structure is wrong,
-which is precisely the class of defect the ownership proof (not the older, weaker line-window
-claim) exists to see.
+**Consequence for this gate's verdict** *(as originally written; the fix above has since landed
+and the check passes)*: `feature_corpus_content_loss` failed in every `run_gate()` run of that
+pass. This was a real R1/R5 gap — a table that streams progressively and completes normally could
+render its final, committed, on-screen form incorrectly. It never affected `content_is_complete`
+(the domain-side proof, R11a, untouched and still exact) — the **domain** text was always
+correct; only the **mounted document's** internal structure was wrong, which is precisely the
+class of defect the ownership proof (not the older, weaker line-window claim) exists to see —
+and did.
 
 ## Environment this was verified against
 
-- Textual `8.2.8`, Python `3.12.11`, `Darwin 25.5.0`/`arm64`, commit `921fe0d7ead838411fb8c6f357dd89a723be786a`
-  on `feat/v0-2-block-markdown-build` (`talaria.replay.gate.build_matrix()`).
+- Textual `8.2.8`, Python `3.12.11`, `Darwin 25.5.0`/`arm64`; the fifth (passing) full-scale run
+  at commit `7db8857` on `feat/v0-2-block-markdown-build`; the mid-pass figures earlier in this
+  document were taken at `921fe0d7ead838411fb8c6f357dd89a723be786a`
+  (`talaria.replay.gate.build_matrix()`).
 - Terminal geometry: `GATE_SIZE = (100, 40)` (gate.py's existing pin, unchanged); the mega-line
   workload additionally exercises an 80-column resize mid-growth.
 - Theme: `textual-dark` (the app's existing default; not overridden by this unit's work).
 - Corpus identities: `talaria-feature-v1`, sha256
   `de9d6f55d54e166c559dc3c7228fcfb665ef6d5cdec042b7648716de5465e12a`, 47 frames, scripted
-  (deterministic by construction, no seed). The stress corpus's own identity is unchanged in
-  mechanism (`talaria-stress-v1-{deltas}d-seed{seed}`) — re-running it against current code is
-  itself the U2 re-baseline; no digest is published here for a specific delta count because no
-  full-scale run was executed in this pass (see "What remains" below).
+  (deterministic by construction, no seed). The stress corpus at full scale:
+  `talaria-stress-v1-50000d-seed20260802`, sha256
+  `34b52ddaba7b33f993ca621aff765f2337c4581d0aef9d2899267b50d3033c0c`, 53,516 frames.
 
 ## Reproduction
 
@@ -288,12 +319,10 @@ claim) exists to see.
 # The R11a guard: the v0.1 pin, verbatim.
 uv run pytest tests/domain/test_projection.py -q                    # 14 passed
 
-# Every U6 test, this revision's additions included.
-uv run pytest tests/replay/test_gate.py -q                          # 60 passed (30 new since the
-                                                                      # prior partial revision)
-uv run pytest tests/replay -q                                       # test_gate.py, test_controls.py,
-                                                                      # test_operator_line.py,
-                                                                      # test_source.py together
+# Every U6 test plus the fix loop's additions; the ui and replay suites
+# together stood at 556 passed at commit 7db8857.
+uv run pytest tests/replay/test_gate.py -q
+uv run pytest tests/ui tests/replay -q
 
 # The full-size boundary probes and the exact-boundary regression, standalone:
 uv run pytest tests/replay/test_gate.py -k "601_column or 599_column or one_column_table_workload" -q
@@ -301,8 +330,13 @@ uv run pytest tests/replay/test_gate.py -k "601_column or 599_column or one_colu
 # The fence-oracle correctness fix:
 uv run pytest tests/replay/test_gate.py::test_an_unclosed_fence_with_real_trailing_content_is_not_a_false_positive -q
 
-# The discovered defect, isolated and reproduced:
-uv run pytest tests/replay/test_gate.py::test_a_cleanly_completed_multi_delta_table_keeps_its_live_tails_corruption -q
+# The once-discovered, since-fixed defect: the renamed successor test asserts
+# the streamed table SURVIVES commit (fail-then-pass against the fix).
+uv run pytest tests/replay/test_gate.py::test_a_cleanly_completed_multi_delta_table_renders_correctly_end_to_end -q
+
+# The full-scale gate itself (KTD14 scale; ~10 minutes on an idle machine —
+# the three latency checks measure wall-clock p99 and flip under load):
+uv run python -c "import asyncio, dataclasses, json; from talaria.replay.gate import run_gate; print(json.dumps(dataclasses.asdict(asyncio.run(run_gate()))['checks'], indent=1, default=str))"
 
 # Checks
 uv run ruff check talaria/replay tests/replay                       # clean
@@ -315,31 +349,55 @@ uv run bandit -r talaria -q                                         # 1 low find
   # exactly the accepted baseline.
 ```
 
-## What remains — stated plainly, not silently absorbed
+## The full-scale runs — five of them, each failure diagnosed to a mechanism
 
-- **A full-scale KTD14 gate run has not been executed in this pass.** `run_gate()`'s default
-  `deltas=50_000` stress-corpus pass, its sustained-cadence pass, and a full-size
-  `run_adversarial_workloads()` invocation (the fence to 10,000 lines, the table to 1,000 rows, the
-  mega-line to 100,000 characters, run together rather than individually as the standalone tests
-  above do) have not been run to completion and published with a `verdict: pass`/`fail` and
-  corpus-sha256 citation in this pass. Every number in this document is either a reduced-scale test
-  run or a direct, full-size invocation of one specific measurement function — real evidence, but
-  not the KTD14-scale claim this document's lineage (`2026-08-03-textual-validation-gate-results.md`)
-  set as precedent. `uv run python -c "import asyncio; from talaria.replay.gate import run_gate;
-  print(asyncio.run(run_gate()).to_dict())"` is the exact command to run next; expect it to take
-  several minutes and to fail on `feature_corpus_content_loss` for the reason stated above.
-- **The discovered defect is not fixed.** It lives in `talaria/ui/`, out of this unit's scope
-  (explicit instruction: report what and why rather than edit). `feature_corpus_content_loss` will
-  keep failing until it is.
-- **Tier-one descendant high-water figures under the KTD1(d) growth workloads specifically** are not
-  separately published — the workload harness grows a single live tail with no folded window, so
-  tier one (the folded window's own 600-descendant ceiling) is proven by the existing 302-entry
-  aggregate-ceiling and odd-cut/partial-retention regressions from the prior pass, not by anything
-  new in this revision.
+All five ran `run_gate()` at its KTD14 defaults (50,000-delta stress corpus, sustained-cadence
+pass, feature corpus, full-size workloads) on an otherwise idle machine — the three latency
+checks are wall-clock p99 measurements and competing load flips them, which is also why the
+reduced-scale test-suite runs tolerate (never require) the `LOAD_SENSITIVE_CHECKS` trio.
 
-The honest summary: all four gaps are built, mechanically correct, and tested — including one
-genuine correctness fix inside the ownership proof itself (the fence oracle) and one genuine defect
-this work found in code outside its scope (the table/fence append-corruption) rather than hid. What
-is outstanding is scale, not mechanism: a full KTD14-sized run has not been executed, and the
-`talaria/ui/` defect this pass found has not been fixed. Both are named here so the next pass starts
-from an accurate map.
+1. **Run 1 (commit `70afafc`) — FAIL, 18/22.** Four failures: fence p99 17,697 ms (the fallback
+   tail's growth path dropped and rebuilt every line widget per delta — O(total) each boundary,
+   quadratic over the stream — while nothing bounded the demoted tail's widget count at all:
+   10,002 mounted for one tail); table p99 764 ms (same mechanism); resident growth 355 MB over
+   the 300 MB ceiling; 2 of 11 stress content-loss checkpoints (the mid-stream ownership sampler
+   catching Textual's `Markdown.update` between setting `source` and remounting children —
+   scheduling reported as corruption).
+2. **Run 2 (`e6d7f13`) — FAIL, 19/22.** After the incremental-append fix, the
+   `apply_in_flight` sampler fix, the append-mode workload correction, RA4, and the tail
+   mount-cap: content loss 0, tail bounded at 501, demotions flagged and excluded. Latency still
+   red — the cap's fold removed ~100 widgets per boundary one awaited `remove()` at a time.
+3. **Run 3 (`be453e4`) — FAIL, 21/22.** After batched pruning and the ring recycle: fence
+   19.7 ms, memory 128 MB. The table alone red at 107 ms — its *block phase* (a still-open table
+   re-renders wholesale per append, crossing 50 ms at ~340 rows) plus a garbage collection
+   ambushing one post-demotion boundary.
+4. **Run 4 (`ec4a2c1`) — FAIL, 21/22.** RA5 narrowed enforcement to the steady-state phase and
+   records `block_phase_peak_ms` verbatim; the residual 107 ms post-demotion outlier remained —
+   the ~500 widget graphs the demotion destroys sat as garbage until a periodic collection, made
+   expensive by the gate process's own corpus-heavy heap, landed inside a smooth apply.
+5. **Run 5 (`7db8857`) — PASS, 22/22.** The pane drains demotion garbage inside the
+   RA4-excluded demotion frame; the measurement harness freezes its corpus ballast out of the
+   collector's reach so ambient collections model the product, not the harness. Final figures in
+   the Verdict table above.
+
+**The two measurement amendments, both operator-approved on run evidence.** RA4: with ~90
+post-warmup samples, nearest-rank p99 is arithmetically the maximum, so the original quantile
+demanded the one-time block-to-lines demotion apply (mounting a capped widget run, ~150–420 ms
+across the five runs) finish under 50 ms — the flagged demotion boundary is now excluded and its
+cost reported verbatim (`demotion_boundary`, `demotion_apply_ms`). RA5: the growing table's
+block phase is a recorded limit (`block_phase_peak_ms`; a user streaming a table past ~340 rows
+feels 54 ms+ hitches until the 500-row demotion), with the early-demotion fix and the
+incremental-row-append alternative both written up in `QUEUED.md`.
+
+**Ceiling coverage note.** The workload harness grows a single live tail; tier one (the folded
+window's 600-descendant ceiling) is proven by the 302-entry aggregate-ceiling and
+odd-cut/partial-retention fold regressions, and the tail itself — unbounded when run 1 measured
+it — is now capped by the budget walk (`peak_descendants` 501 = cap-1 content rows + banner +
+chrome).
+
+The honest summary: the gate's claims are now true at full scale and the instrument earned its
+keep twice over — it caught a quadratic hot path every functional test missed, an unbounded
+widget hole the plan's own wording papered over, a torn-instant race in its own sampler, and a
+quantile that was secretly a maximum. What it recorded instead of enforcing (the table's block
+phase, the demotion frames) is written down here and in the plan's RA4/RA5 amendments, with the
+follow-up work queued — so the next pass starts from an accurate map.
