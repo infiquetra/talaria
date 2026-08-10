@@ -549,6 +549,32 @@ So the operator types a password into a focused control that draws nothing, with
 
 ## P2
 
+### Committing a monster line-rendered entry still mounts every row in one apply before condensation folds it
+
+**Author.** the tail-cap fix, 2026-08-09 — the sibling transient the cap did not close
+**Priority.** P2
+**Effort.** Small to Medium
+
+**What is true.** The live tails are now bounded everywhere — pre-capped at build (`_build_unit`'s
+`max_rows`), patched incrementally on growth, folded by `_condense`'s budget walk. But a committed
+entry that arrives *without* a matching tail handoff (a resumed session's history, or a commit whose
+final body differs from the tail's applied text) goes through `_prepare_committed_entry` →
+`_prepare_unit` with `max_rows=None`: a 10,000-line fallen-back entry mounts 10,001 widgets in that
+one `apply()`, and `_condense` folds them back to the cap in the same call. Net state is bounded;
+the transient is not — it is the same one-frame spike family RA4 excludes for the tail demotion,
+but on the commit path, where nothing measures it today (the stress corpus's largest entries are
+far below the trigger; the workloads never commit).
+
+**The fix shape.** Pass the retention the budget walk would compute — or simply `mount_cap` — as
+`max_rows` for line-rendered committed builds too. The straddle fold's retention convention
+(`retain = end - new_top`, mounted lines shrink from the left) already tolerates a pre-folded unit,
+which is what makes this small; the care is in `_reconcile_committed`'s batch path, where several
+entries build against one budget, not one.
+
+**Worth it when.** A real corpus (resume with monster history, or a commit-differs-from-tail
+stream) shows the spike, or the gate grows a workload that commits — measure first, the family's
+last two fixes both moved on evidence.
+
 ### Textual's own command palette is reachable on `ctrl+p` and nothing in Talaria put it there
 
 **Author.** the picker redesign, 2026-08-07 — found by a dialog test, not by looking for it

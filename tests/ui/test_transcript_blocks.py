@@ -799,8 +799,10 @@ async def test_a_growing_fallback_tail_reuses_its_mounted_widgets() -> None:
     O(total lines) per delta: the full-scale gate measured the growing
     open fence's p99 apply at 17.7 s against KTD1(d)'s 50 ms ceiling.
     Widget identity is the proof of reuse — a rebuild cannot preserve it.
+    The raised mount_cap keeps the tail-fold arithmetic out of this test's
+    way — identity under the cap is proven separately below.
     """
-    app = _Harness()
+    app = _Harness(mount_cap=2000)
     async with app.run_test(size=(80, 24)):
         pane = app.query_one("#t", TranscriptPane)
         fence = "```text\n" + "\n".join(f"row {i}" for i in range(600))
@@ -872,6 +874,79 @@ async def test_apply_in_flight_is_visible_mid_apply_and_clear_after() -> None:
         )
         assert seen and all(seen), "apply_in_flight must be True inside apply()"
         assert not pane.apply_in_flight, "apply_in_flight must clear when apply() returns"
+
+
+@pytest.mark.asyncio
+async def test_a_monster_fallback_tail_is_capped_and_folds_into_the_condensed_prefix() -> None:
+    """The plan's "the tails, each bounded" clause, made true: a live
+    fallen-back assistant tail retains at most ``mount_cap`` accounted rows
+    (cap-1 content rows plus its one banner), and its folded head rows
+    enter the condensed-prefix arithmetic so the settled line-window
+    identity keeps holding. Before the cap, the full-scale gate's
+    growing-open-fence workload mounted 10,002 line widgets for a single
+    tail — the trigger only switched the rendering, it bounded nothing.
+    """
+    app = _Harness()  # DEFAULT_MOUNT_CAP: the real product cap
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200))
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=fence, generation=0),
+        )
+        unit = pane._tails["assistant"]
+        assert unit is not None and unit.kind == "line" and unit.is_fallback
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1, (
+            "partial retention keeps cap-1 content rows plus the banner"
+        )
+        assert unit.banner is not None
+        assert pane.condensed_count == len(view.lines) - (DEFAULT_MOUNT_CAP - 1)
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+        grown = fence + "\n" + "\n".join(f"row {i}" for i in range(1200, 1300))
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=grown, generation=0),
+        )
+        assert pane._tails["assistant"] is unit, "growth must patch, not rebuild"
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1, "growth must not outgrow the cap"
+        assert pane.condensed_count == len(view.lines) - (DEFAULT_MOUNT_CAP - 1)
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_a_monster_reasoning_tail_is_capped_without_touching_the_line_identity() -> None:
+    """The reasoning tail gets the identical bound, enforced widget-locally:
+    it has no span in the flattened line buffer (the projection carries only
+    the assistant tail), so its folded rows must never move
+    ``condensed_count`` — the cap is real but invisible to the line identity.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200))
+        view = await _apply(
+            pane,
+            (),
+            reasoning_tail=ProvisionalTail(kind="reasoning", raw_text=fence, generation=0),
+        )
+        unit = pane._tails["reasoning"]
+        assert unit is not None and unit.kind == "line" and unit.is_fallback
+        assert len(unit.lines) <= DEFAULT_MOUNT_CAP
+        assert pane.condensed_count == 0, "a reasoning-tail fold must not move the line prefix"
+        assert pane.rendered_lines == view.lines
+
+        grown = fence + "\n" + "\n".join(f"row {i}" for i in range(1200, 1300))
+        await _apply(
+            pane,
+            (),
+            reasoning_tail=ProvisionalTail(kind="reasoning", raw_text=grown, generation=0),
+        )
+        assert pane._tails["reasoning"] is unit
+        assert len(unit.lines) <= DEFAULT_MOUNT_CAP
+        assert pane.condensed_count == 0
 
 
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────

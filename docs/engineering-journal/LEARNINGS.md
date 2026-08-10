@@ -4,6 +4,22 @@
 
 ## 2026-08-09
 
+### The "escape valve" was the hot path: a fallback branch treated as rare carried quadratic growth and no bound at all
+
+**Evidence.** The first full-scale replay gate run (stress corpus `talaria-stress-v1-50000d-seed20260802`, 2026-08-09) failed `workload_latency_growing-open-fence` at p99 **17,697 ms** against KTD1(d)'s 50 ms ceiling, with `peak_descendants` **10,002** for a single live tail. After the fix pair — incremental append in the fallback growth path plus the tail mount-cap — the same workload's steady-state applies measure ~35 ms with mounted tail widgets bounded by `mount_cap`. Commits: the incremental-growth fix, the RA4 measurement amendment, and the tail-cap change on `feat/v0-2-block-markdown-build`.
+
+**Mechanism.** Three findings stacked. First, `_reconcile_tail`'s fallback growth branch dropped and rebuilt every line widget on every delta, with a comment declaring the path "the degenerate-content escape valve, not the common case" — but a model streaming a long fenced code block is the single most common heavy event this product renders, and it lives exactly on that path, so the escape valve *was* the hot path: O(total lines) per delta, quadratic over a stream. Second, the plan's ceiling sentence — "the tails, each bounded by the two-condition trigger" — read as though demotion capped the tail; demotion only *switches the rendering*, after which nothing bounded the widget count at all. Third, the quantile's tolerance was an illusion: nearest-rank p99 over ~90 post-warmup samples is arithmetically the **maximum**, so the ceiling as stated demanded the one-time block-to-lines demotion apply finish under 50 ms, which mounting a capped widget run cannot do (RA4 now excludes that one flagged boundary and reports it verbatim).
+
+**Generalizable rule.** When a "rare-case" branch is reachable from streaming input, benchmark it as the hot path — the comment saying it is rare is a hypothesis, not a measurement. And before making a quantile a ceiling, compute what it actually selects at your sample size: p99 of 90 samples is the max, and a ceiling that is secretly a max forbids every one-time cost you meant to tolerate.
+
+### A mid-stream invariant checker must know when the mutator is mid-flight
+
+**Evidence.** The same gate run failed `content_loss` with 2 of 11 stress checkpoints reporting "projected line 0 … owned by no block" — on a plain paragraph line that is always owned. The count fluctuated across identical replays (1–3), and the settled checkpoint always passed. Textual's `Markdown.update` sets a document's `source` synchronously and then *awaits* the child remount; `document_ownership` checks `source == applied_text` first, and that passed at the failure instant — the widget's text was current while its children were stale.
+
+**Mechanism.** The ownership proof was documented as "a true invariant at every instant", but the invariant spans an await boundary inside the mutator: between `source` assignment and child remount, "blocks cover the text" is legitimately, transiently false, and a concurrent sampler task landing in that window reports scheduling as corruption. The fix publishes the mutator's own state — `TranscriptPane.apply` counts itself in flight — and the sampler yields until quiescence (bounded) before proving ownership, while the settled checkpoint independently asserts the marker cleared, so a stuck marker fails loudly instead of silently excusing every mid-stream sample.
+
+**Generalizable rule.** "Invariant at every instant" is only true of code with no awaits inside the mutation; if the mutator suspends, the checker needs an in-flight signal from the mutator itself, plus a settled assertion that the signal cleared — the second half is what keeps the signal from becoming a hole.
+
 ### A session has two ids and only the durable one survives the process — and "most recent" belongs to whoever spawned last
 
 **Evidence.** The U8 live acceptance run,
