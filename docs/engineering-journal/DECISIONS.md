@@ -97,6 +97,12 @@ The block phase's peak is recorded verbatim (`block_phase_peak_ms`), never enfor
 now, both queued: early demotion of open tables (~300 rows — touches the trigger, the two-sided
 ownership proof, and the commit handoff's re-promotion) and incremental row-append inside the RA2
 bounded-table wrapper.
+The CR1 re-review qualification (2026-08-09): the newest-block condensation exemption yields to a
+monster live tail — when the tail's retention consumes the whole budget, every senior unit folds,
+the exempt block included, because prefix condensation admits no mid-buffer hole; and the tail's
+folded rows live in their own provisional counter (`_tail_top`) beside the monotone committed
+prefix (`_top`), composed by `condensed_count`, so a regenerated tail's vanished rows unfold
+instead of permanently inflating the prefix.
 
 **KTD8 fallback trigger and branch hold.** A separate, whole-feature fallback — reverting to the
 existing styled-line-run renderer (`talaria/ui/markdown.py`) instead of the block-document widget

@@ -308,6 +308,12 @@ When `desired_top` lands inside a **block** entry's line span, it rounds **up** 
 next unit boundary — the cap prefers evicting more over keeping a cap-buster — with one
 exception: a block-rendered newest entry is mounted whole (its size is already bounded by the
 two-condition trigger, and the residual overage is recorded in the high-water instrumentation).
+One recorded qualification to that exception (CR1 re-review, 2026-08-09): when a live
+line-rendered tail's own retention consumes the entire budget, everything senior folds — the
+exempt newest block entry included — because prefix condensation admits no mid-buffer hole; the
+exemption is a budget-charging rule, not an immortality guarantee, and the tail's folded rows are
+tracked as a separate, provisional counter beside the monotone committed prefix, so they unfold
+when a regenerated tail shrinks the projection.
 A **line-rendered** entry — including a fallen-back newest entry — is ordinary line content:
 `desired_top` may land inside it and fold its head, exactly as today, with one
 **banner-preserving rule** for fallen-back entries: a cut inside the accounted span folds

@@ -92,7 +92,10 @@ def _view_for(
     committed = len(lines)
     tail = assistant_tail or _empty_tail("assistant")
     if tail.raw_text:
-        tail_lines = tail.raw_text.split("\n")
+        # splitlines, matching the real projection's tail branch (a trailing
+        # newline adds no row) — split("\n") here reproduced the production
+        # off-by-one instead of catching it (CR1 finding 4).
+        tail_lines = tail.raw_text.splitlines() or [""]
         lines.extend(tail_lines)
         kinds.extend(["assistant"] * len(tail_lines))
     return TranscriptView(
@@ -945,8 +948,132 @@ async def test_a_monster_reasoning_tail_is_capped_without_touching_the_line_iden
             reasoning_tail=ProvisionalTail(kind="reasoning", raw_text=grown, generation=0),
         )
         assert pane._tails["reasoning"] is unit
-        assert len(unit.lines) <= DEFAULT_MOUNT_CAP
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1, (
+            "cap-1 content rows: the banner is charged within the budget (CR1 finding 6)"
+        )
+        assert unit.accounted_rows == DEFAULT_MOUNT_CAP
         assert pane.condensed_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_fill_and_recycle_append_keeps_the_painted_order() -> None:
+    """One delta that both fills unused ring slots and recycles head rows:
+    the fresh rows must be mounted before any head is moved, or the moved
+    head lands ahead of the still-unmounted fresh rows and the painted
+    order diverges from unit.lines while rendered_lines reports the
+    bookkeeping order (CR1 finding 1). The pane's actual child order is the
+    assertion, not the bookkeeping.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        # A 601-column table trips the fallback trigger on DESCENDANTS while
+        # only a few rows tall — the one shape that yields a fallen-back
+        # tail mounted well under the cap, so a later delta can both fill
+        # free slots and recycle in the same apply.
+        wide_row = "|" + "|".join("x" for _ in range(601)) + "|"
+        table = _table(1, 601).rstrip("\n")
+        grow1 = table + "\n" + "\n".join(wide_row for _ in range(400))
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=table, generation=0),
+        )
+        unit = pane._tails["assistant"]
+        assert unit is not None and unit.is_fallback
+        assert len(unit.lines) == 3  # far under the cap: nothing folded yet
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=grow1, generation=0),
+        )
+        assert pane._tails["assistant"] is unit
+        assert len(unit.lines) == 403
+
+        grown = grow1 + "\n" + "\n".join(wide_row for _ in range(150))
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=grown, generation=0),
+        )
+        assert pane._tails["assistant"] is unit, "growth must patch, not rebuild"
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1
+        painted = [child for child in pane.children if isinstance(child, TranscriptLine)]
+        assert painted == unit.lines, (
+            "the mounted child order must equal the bookkeeping order"
+        )
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_a_regenerated_short_tail_unfolds_its_predecessors_provisional_rows() -> None:
+    """A monster tail folds provisional rows; a regeneration replaces it
+    with a short tail and those rows leave the projection. The folded-tail
+    counter must follow them back down — folding them into the monotone
+    committed prefix left condensed_count larger than the projection and
+    hid the final response (CR1 finding 2). Committed rows stay folded
+    (nothing un-condenses); only the provisional share unfolds.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        entry = TranscriptEntryRecord(
+            entry_id=1, kind="assistant", raw_body="hello", committed=True, line_span=(0, 1)
+        )
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200))
+        view = await _apply(
+            pane,
+            (entry,),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=fence, generation=0),
+        )
+        assert pane.condensed_count == len(view.lines) - (DEFAULT_MOUNT_CAP - 1)
+        assert pane.condensed_count > 1
+
+        short = "done."
+        view = await _apply(
+            pane,
+            (entry,),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=short, generation=1),
+        )
+        assert pane.condensed_count == 1, (
+            "the committed row stays folded (monotone); every provisional row unfolds"
+        )
+        assert pane.condensed_count <= len(view.lines)
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_a_tail_ending_in_a_newline_counts_rows_the_projections_way() -> None:
+    """The projection splits the streaming buffer with splitlines() — a
+    trailing newline adds no row — while every piece of the pane's tail
+    arithmetic used split(\"\\n\") and counted one extra (CR1 finding 4).
+    A monster tail WITH a trailing newline must fold to exactly the same
+    window a trailing-newline-free tail does, and the line identity holds.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        fence = "```text\n" + "\n".join(f"row {i}" for i in range(1200)) + "\n"
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=fence, generation=0),
+        )
+        unit = pane._tails["assistant"]
+        assert unit is not None and unit.is_fallback
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1
+        assert pane.condensed_count == len(view.lines) - (DEFAULT_MOUNT_CAP - 1)
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+        grown = fence + "extra 0\nextra 1\n"
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=grown, generation=0),
+        )
+        assert pane._tails["assistant"] is unit
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+        assert pane.rendered_lines[-1] == "extra 1"
 
 
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
