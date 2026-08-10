@@ -625,6 +625,9 @@ class TranscriptPane(VerticalScroll):
         self.mount_cap = max(1, mount_cap)
         self.follow = True
         self._applies_in_flight = 0
+        #: Rows the tail ring-recycle folded this apply — consumed by
+        #: _condense into the restore anchor's removed-height compensation.
+        self._tail_recycled_height = 0
         self._lines: tuple[str, ...] = ()
         #: Real projected content lines folded away — a pure line-index
         #: concept, never inflated by a fallback banner (KTD2).
@@ -1155,6 +1158,12 @@ class TranscriptPane(VerticalScroll):
             unit.is_fallback
             and unit.banner is not None  # is_fallback mounts one; narrow, don't assert
             and tail.raw_text.startswith(unit.applied_text)
+            # A single delta bigger than the whole retained window gains
+            # nothing from patching — rebuild through the pre-capped path,
+            # which also keeps the recycle loop below simple: a popped head
+            # is then always an already-mounted widget.
+            and len(tail.raw_text.split("\n")) - len(unit.applied_text.split("\n"))
+            < self.mount_cap - 1
         ):
             prefix = _ENTRY_PREFIX.get(kind, "")
             new_lines = f"{prefix}{tail.raw_text}".split("\n")
@@ -1167,23 +1176,38 @@ class TranscriptPane(VerticalScroll):
             boundary_source = new_lines[old_rows - 1]
             if unit.lines and unit.lines[-1].source != boundary_source:
                 unit.lines[-1].update_source(boundary_source)
-            fresh = [
-                TranscriptLine(line, kind=kind, no_wrap=True)
-                for line in new_lines[old_rows:]
-            ]
-            if fresh:
-                await self.mount_all(fresh, before=unit.banner)
-                unit.lines.extend(fresh)
-            # The assistant tail's cap is enforced by _condense's budget
-            # walk in this same apply() (its folded head rows must enter
-            # the condensed-prefix arithmetic); the reasoning tail has no
-            # span in the line buffer, so its bound is enforced here.
-            if kind == "reasoning":
-                while len(unit.lines) > self.mount_cap:
-                    head = unit.lines.pop(0)
-                    await self._safe_remove(head)
-            if fresh:
+            # At the cap, the oldest mounted row is RECYCLED into the newest
+            # — update_source plus a synchronous move_child, a ring buffer
+            # of at most cap widgets. Creating and destroying ~100 widget
+            # graphs per boundary fed the garbage collector until its
+            # periodic collections alone spiked one apply in three past
+            # KTD1(d)'s ceiling (probed: p99 58 ms with churn, 31.6 ms
+            # without); recycling removes the churn instead of tuning the
+            # collector. The assistant tail's retained window is cap-1
+            # content rows (the budget walk's partial retention keeps one
+            # banner row); the reasoning tail, outside the line buffer,
+            # keeps the full cap.
+            cap = self.mount_cap - (1 if kind == "assistant" else 0)
+            to_mount: list[TranscriptLine] = []
+            recycled_rows = 0
+            for line in new_lines[old_rows:]:
+                if len(unit.lines) < cap:
+                    widget = TranscriptLine(line, kind=kind, no_wrap=True)
+                    to_mount.append(widget)
+                    unit.lines.append(widget)
+                    continue
+                head = unit.lines.pop(0)
+                head.update_source(line)
+                self.move_child(head, before=unit.banner)
+                unit.lines.append(head)
+                recycled_rows += 1
+            if to_mount:
+                await self.mount_all(to_mount, before=unit.banner)
                 unit.banner.update(_banner_text(len(unit.lines)))
+            if recycled_rows:
+                # Rows folded away at the top — surfaced to _condense so the
+                # restore anchor compensates, same as an evicted widget's.
+                self._tail_recycled_height += recycled_rows
             unit.applied_text = tail.raw_text
             return
         for widget in unit.widgets():
@@ -1224,7 +1248,15 @@ class TranscriptPane(VerticalScroll):
         do — the fold arithmetic has exactly one convention.
         """
         new_top = self._compute_new_top(records, total_lines=total_lines)
-        removed_top_height = 0
+        removed_top_height = self._tail_recycled_height
+        self._tail_recycled_height = 0
+        # Every widget this fold evicts is pruned in ONE remove_children
+        # call at the end. The tail fold runs every boundary of a growing
+        # fallen-back stream, and one awaited remove() per widget put a
+        # ~100-widget fold at 47-106 ms per apply against KTD1(d)'s 50 ms
+        # ceiling; a single batched prune reflows once. Heights are read
+        # before removal, as before.
+        to_remove: list[Widget] = []
 
         while self._entry_order:
             entry_id = self._entry_order[0]
@@ -1238,7 +1270,7 @@ class TranscriptPane(VerticalScroll):
             unit = self._entries[entry_id]
             for widget in unit.widgets():
                 removed_top_height += max(1, widget.outer_size.height)
-                await self._safe_remove(widget)
+                to_remove.append(widget)
             self._entry_order.popleft()
             del self._entries[entry_id]
 
@@ -1255,7 +1287,7 @@ class TranscriptPane(VerticalScroll):
                     while len(unit.lines) > retain:
                         widget = unit.lines.pop(0)
                         removed_top_height += max(1, widget.outer_size.height)
-                        await self._safe_remove(widget)
+                        to_remove.append(widget)
 
         tail = self._tails.get("assistant")
         if tail is not None and tail.kind == "line" and tail.applied_text:
@@ -1266,7 +1298,11 @@ class TranscriptPane(VerticalScroll):
                 while len(tail.lines) > retain:
                     widget = tail.lines.pop(0)
                     removed_top_height += max(1, widget.outer_size.height)
-                    await self._safe_remove(widget)
+                    to_remove.append(widget)
+
+        mounted = [widget for widget in to_remove if widget.is_mounted]
+        if mounted:
+            await self.remove_children(mounted)
 
         self._top = max(self._top, new_top)
         self._pending_removed_height = removed_top_height
