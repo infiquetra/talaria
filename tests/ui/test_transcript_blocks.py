@@ -1123,6 +1123,122 @@ async def test_a_session_switch_after_a_monster_tail_folded_everything_still_res
         assert pane.rendered_lines == ()
 
 
+@pytest.mark.asyncio
+async def test_a_late_reasoning_tail_still_paints_above_the_assistant_tail() -> None:
+    """The declared tail order is reasoning above assistant (_TAIL_KINDS),
+    and apply() reconciles in that order — but mounting a fresh tail by
+    appending at the pane's end holds the order only when reasoning
+    happens to mount first. A reasoning tail first appearing (or
+    rebuilding) while the assistant tail was already on screen landed
+    below it, and the commit handoff adopts tail widgets in place, so the
+    screen stayed reversed against _entry_order and rendered_lines
+    forever (CR2 re-review). A fresh tail must mount before the next
+    tail in painted order.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+
+        def tail_positions() -> tuple[int, int]:
+            children = list(pane.children)
+            reasoning = pane._tails["reasoning"]
+            assistant = pane._tails["assistant"]
+            assert reasoning is not None and assistant is not None
+            return (
+                children.index(reasoning.widgets()[0]),
+                children.index(assistant.widgets()[0]),
+            )
+
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="answering", generation=0),
+        )
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(
+                kind="assistant", raw_text="answering more", generation=0
+            ),
+            reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="thinking", generation=0),
+        )
+        first, second = tail_positions()
+        assert first < second, "a late reasoning tail must mount above the assistant tail"
+
+        # A generation bump to a zero-block source demotes the block tail
+        # and rebuilds it as line widgets — the rebuild must re-anchor too.
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(
+                kind="assistant", raw_text="answering more", generation=0
+            ),
+            reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="\n", generation=1),
+        )
+        rebuilt = pane._tails["reasoning"]
+        assert rebuilt is not None and rebuilt.kind == "line"
+        first, second = tail_positions()
+        assert first < second, "a rebuilt reasoning tail must stay above the assistant tail"
+
+        # Terminal commit: the assistant tail's block widget is adopted in
+        # place, so the committed painted order is whatever the tails
+        # painted — which the anchor above just made correct.
+        committed = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="reasoning", raw_body="rethought", committed=True, line_span=(0, 1)
+            ),
+            TranscriptEntryRecord(
+                entry_id=2,
+                kind="assistant",
+                raw_body="answering more",
+                committed=True,
+                line_span=(1, 1),
+            ),
+        )
+        view = await _apply(pane, committed)
+        children = list(pane.children)
+        assert list(pane._entry_order) == [1, 2]
+        assert children.index(pane._entries[1].widgets()[0]) < children.index(
+            pane._entries[2].widgets()[0]
+        ), "the committed painted order must match the entry order"
+        assert pane.condensed_count == 0
+        assert pane.rendered_lines == view.lines
+
+
+@pytest.mark.asyncio
+async def test_a_committed_trailing_newline_body_never_adopts_a_short_line_tail() -> None:
+    """The commit handoff adopts a line-kind tail on text equality — but the
+    tail's widgets were split with splitlines() (a trailing newline adds no
+    row) while the committed span counts split("\\n") rows (it adds one).
+    Equal text, unequal row counts: adopting the one-row-short widget list
+    under the entry's span broke ``rendered_lines == view.lines`` (CR1
+    finding 4's cousin on the adoption seam, found probing the CR2 fix).
+    Adoption now also requires the widget count to equal the span's rows.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text="\n", generation=0),
+        )
+        tail_unit = pane._tails["assistant"]
+        assert tail_unit is not None and tail_unit.kind == "line"
+        assert len(tail_unit.lines) == 1, "splitlines: the trailing newline adds no tail row"
+
+        committed = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body="\n", committed=True, line_span=(0, 2)
+            ),
+        )
+        view = await _apply(pane, committed)
+        assert view.lines == ("", "")
+        unit = pane._entries[1]
+        assert len(unit.lines) == 2, "the committed entry owns both rows of its span"
+        assert pane.rendered_lines == view.lines
+
+
 # ── condensation over mixed units (KTD2) — the four pinned regressions ─────
 
 

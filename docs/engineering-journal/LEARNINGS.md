@@ -4,6 +4,14 @@
 
 ## 2026-08-09
 
+### The same text, two row conventions: a seam between them needs a count check, not a text check
+
+**Evidence.** The CR2 re-review fix commit on `feat/v0-2-block-markdown-build`: the commit handoff adopted a line-kind tail widget-for-widget on `record.raw_body == tail.applied_text` alone. A body ending in a newline has one more committed row (`split("\n")` — the span convention) than tail rows (`splitlines()` — the projection's tail convention), so adoption mounted a one-row-short unit under the entry's two-row span and `rendered_lines == view.lines` broke — probed live (`('',)` against `('', '')`) while every existing test passed. Pinned by `tests/ui/test_transcript_blocks.py::test_a_committed_trailing_newline_body_never_adopts_a_short_line_tail`. CR1 finding 4 was the same convention split at the weld/fold seam.
+
+**Mechanism.** Text equality across a seam between two counting conventions is not row equality — they diverge exactly at bodies ending in a newline, which is a shape streams commit routinely. The adoption guard now also requires `len(tail.lines) == record.line_span[1]`, the span being the count the content identity is stated over; a mismatch builds the committed unit fresh instead of adopting.
+
+**Generalizable rule.** When an artifact is handed across a seam between two counting conventions, guard the handoff with the downstream convention's own arithmetic — upstream text equality proves nothing about the downstream count.
+
 ### A reset check keyed on mounted state has a hole exactly where eviction is most aggressive
 
 **Evidence.** CR1 confirm round (Codex re-review, 2026-08-09, evidence cited by sha256 `3749408165adbe75…` in the git-ignored saga dir): a live probe drove a monster fallback tail that folded every committed entry (`_top=1`, `_tail_top=596`, `_entries` empty), then switched sessions — the new session came up with `condensed_count=1` and `rendered_lines=()`, its first row treated as already folded. Fixed in `talaria/ui/transcript.py` (`_reset_if_history_changed` + the `_last_entry_id` watermark), pinned by `tests/ui/test_transcript_blocks.py::test_a_session_switch_after_a_monster_tail_folded_everything_still_resets`, which fails on the pre-fix code at the mount assertion.
