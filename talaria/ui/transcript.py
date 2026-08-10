@@ -84,6 +84,7 @@ taking a column nothing had set aside for it.)
 
 from __future__ import annotations
 
+import gc
 import math
 from collections import deque
 from collections.abc import Callable
@@ -1127,6 +1128,16 @@ class TranscriptPane(VerticalScroll):
                 self._tails[kind] = await self._build_unit(
                     kind, kind, tail.raw_text, mount_before_tails=False, max_rows=self.mount_cap
                 )
+                # Pay the cleanup inside the demotion frame, which RA4
+                # already excludes from the latency quantile: the block
+                # document just destroyed (a ~500-row table is ~500 widget
+                # graphs) otherwise sits as garbage until a periodic
+                # collection ambushes a smooth steady-state apply — measured
+                # as a one-off 107 ms post-demotion boundary on the fourth
+                # full-scale gate run. One collection here, in the frame
+                # that is already the representation switch, keeps every
+                # later collection small.
+                gc.collect()
             return
 
         # Currently line-rendered (fallback or zero-block). A generation

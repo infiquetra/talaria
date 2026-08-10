@@ -83,6 +83,7 @@ is the path KTD1(d)'s per-delta ceiling is a claim about.
 
 from __future__ import annotations
 
+import gc
 import math
 import time
 from collections.abc import AsyncIterator, Iterator, Sequence
@@ -432,70 +433,82 @@ async def measure_apply_latency(
     report = LatencyReport(label=label)
     resize_map = {index: (width, height) for index, width, height in resize_at}
     previous_text = ""
-    async with _pane_harness(size=size) as (pilot, pane):
-        for index, text in enumerate(boundaries):
-            if index in resize_map:
-                width, height = resize_map[index]
-                await pilot.resize_terminal(width, height)
+    # The gate process carries the 53k-record stress corpus (and earlier
+    # replays' state) in its heap; Python's periodic full collections walk
+    # all of it, landing 40-107 ms pauses inside individual boundary applies
+    # that have nothing to do with the pane's own cost. The real app's
+    # baseline heap is a fraction of this. Collect once, then freeze the
+    # survivors out of the collector's reach for the measured loop — the
+    # measurement models the product, not the harness's corpus ballast.
+    gc.collect()
+    gc.freeze()
+    try:
+        async with _pane_harness(size=size) as (pilot, pane):
+            for index, text in enumerate(boundaries):
+                if index in resize_map:
+                    width, height = resize_map[index]
+                    await pilot.resize_terminal(width, height)
+                    await pilot.pause()
+
+                generation = index if growth_mode == "update" else 0
+
+                if growth_mode == "append":
+                    tail_unit = pane._tails.get("assistant")
+                    if (
+                        tail_unit is not None
+                        and tail_unit.kind == "block"
+                        and text.startswith(previous_text)
+                        and tail_unit.block is not None
+                    ):
+                        fragment = text[len(previous_text) :]
+                        if fragment:
+                            window = reparse_window_bytes(tail_unit.block, fragment)
+                            report.peak_parser_input_bytes = max(
+                                report.peak_parser_input_bytes, window
+                            )
+
+                view = TranscriptView(lines=tuple(text.split("\n")), entry_count=0)
+                entries = EntryScopedView(
+                    entries=(),
+                    assistant_tail=ProvisionalTail(
+                        kind="assistant", raw_text=text, generation=generation
+                    ),
+                    reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="", generation=0),
+                )
+
+                start = time.monotonic()
+                await pane.apply(view, entries)
+                elapsed_ms = (time.monotonic() - start) * 1000.0
+
+                report.samples_ms.append(elapsed_ms)
+                report.boundary_count += 1
+                report.peak_descendants = max(report.peak_descendants, pane.descendant_count)
+                # Outside the timed region on purpose: `outer_size.height` needs
+                # Textual's own arrange pass to have settled, which `apply()`
+                # does not itself await -- pausing here to read it accurately
+                # would corrupt the KTD1(d) clock, which is stated as
+                # "around TranscriptPane.apply" specifically.
                 await pilot.pause()
+                report.tallest_document_rows = max(
+                    report.tallest_document_rows, _tail_rendered_rows(pane)
+                )
+                unit = pane._tails.get("assistant")
+                if unit is not None and unit.is_fallback:
+                    if not report.fell_back:
+                        # RA4: the first fallen-back boundary is the demotion —
+                        # the one representation-switch apply the quantile
+                        # excludes and this report surfaces verbatim.
+                        report.demotion_boundary = index
+                        report.demotion_apply_ms = elapsed_ms
+                    report.fell_back = True
+                report.final_descendant_estimate = descendant_estimate(text)
+                report.final_wrapped_row_estimate = wrapped_row_estimate(
+                    text, content_width=pane._content_width
+                )
 
-            generation = index if growth_mode == "update" else 0
-
-            if growth_mode == "append":
-                tail_unit = pane._tails.get("assistant")
-                if (
-                    tail_unit is not None
-                    and tail_unit.kind == "block"
-                    and text.startswith(previous_text)
-                    and tail_unit.block is not None
-                ):
-                    fragment = text[len(previous_text) :]
-                    if fragment:
-                        window = reparse_window_bytes(tail_unit.block, fragment)
-                        report.peak_parser_input_bytes = max(
-                            report.peak_parser_input_bytes, window
-                        )
-
-            view = TranscriptView(lines=tuple(text.split("\n")), entry_count=0)
-            entries = EntryScopedView(
-                entries=(),
-                assistant_tail=ProvisionalTail(
-                    kind="assistant", raw_text=text, generation=generation
-                ),
-                reasoning_tail=ProvisionalTail(kind="reasoning", raw_text="", generation=0),
-            )
-
-            start = time.monotonic()
-            await pane.apply(view, entries)
-            elapsed_ms = (time.monotonic() - start) * 1000.0
-
-            report.samples_ms.append(elapsed_ms)
-            report.boundary_count += 1
-            report.peak_descendants = max(report.peak_descendants, pane.descendant_count)
-            # Outside the timed region on purpose: `outer_size.height` needs
-            # Textual's own arrange pass to have settled, which `apply()`
-            # does not itself await -- pausing here to read it accurately
-            # would corrupt the KTD1(d) clock, which is stated as
-            # "around TranscriptPane.apply" specifically.
-            await pilot.pause()
-            report.tallest_document_rows = max(
-                report.tallest_document_rows, _tail_rendered_rows(pane)
-            )
-            unit = pane._tails.get("assistant")
-            if unit is not None and unit.is_fallback:
-                if not report.fell_back:
-                    # RA4: the first fallen-back boundary is the demotion —
-                    # the one representation-switch apply the quantile
-                    # excludes and this report surfaces verbatim.
-                    report.demotion_boundary = index
-                    report.demotion_apply_ms = elapsed_ms
-                report.fell_back = True
-            report.final_descendant_estimate = descendant_estimate(text)
-            report.final_wrapped_row_estimate = wrapped_row_estimate(
-                text, content_width=pane._content_width
-            )
-
-            previous_text = text
+                previous_text = text
+    finally:
+        gc.unfreeze()
     return report
 
 
