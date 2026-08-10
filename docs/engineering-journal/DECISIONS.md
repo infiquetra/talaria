@@ -89,6 +89,14 @@ steady-state work can bring under 50 ms; the report records `demotion_boundary` 
 rejected alternative was amortizing the demotion mount across coalescing intervals — claim-pure
 but it grows catch-up machinery inside the reconcile path and the mid-stream banner
 row-accounting, the two most heavily proven surfaces in the pane.
+RA5 (operator-decided 2026-08-09, on the third full-scale run): the ceiling is enforced over the
+steady-state phase only — a still-open block-rendered table re-renders wholesale per append
+(the reparse window of an open construct is the whole construct), crossing 50 ms at ~340 rows
+and plateauing at 54–59 ms until the 500-row demotion, after which every append measured ≤ 44 ms.
+The block phase's peak is recorded verbatim (`block_phase_peak_ms`), never enforced. Rejected for
+now, both queued: early demotion of open tables (~300 rows — touches the trigger, the two-sided
+ownership proof, and the commit handoff's re-promotion) and incremental row-append inside the RA2
+bounded-table wrapper.
 
 **KTD8 fallback trigger and branch hold.** A separate, whole-feature fallback — reverting to the
 existing styled-line-run renderer (`talaria/ui/markdown.py`) instead of the block-document widget
