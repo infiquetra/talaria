@@ -4,6 +4,30 @@
 
 ## P0
 
+### An approval cannot be answered from the keyboard on macOS
+
+**Author.** v0.2 hands-on drive, 2026-08-10
+**Priority.** P0
+**Effort.** Small for the unblock, Medium to do properly
+**Worth it when.** Before anything else in v0.3 — this is the answerability spine, shipped one release ago, not working for the only person who uses it.
+**Context.** Full write-up and the surrounding nineteen notes: [docs/analysis/2026-08-10-v0-2-hands-on-notes.md](../analysis/2026-08-10-v0-2-hands-on-notes.md).
+
+A prompt card never takes focus when it mounts unless it is input-backed — `talaria/ui/prompts.py:1171` reads `if focus_new and isinstance(card.action_widget, Input)` — and the comment above it states the consequence plainly: every other kind "is reachable exclusively through the jump". An approval card is button-backed. The jump is `F1`, and `F1` does not arrive: it was pressed repeatedly against a live approval and nothing moved. The card meanwhile prints `enter select · esc decline`; both were tested with focus in the composer and neither does anything. The card was answerable only with the mouse.
+
+`F1` is not mis-bound. `talaria/ui/app.py:770` binds it to `jump_to_prompt` with `priority=True`, the identical form used by `F8`, `F9` and `F10` on the three lines below — and `F8`/`F9` were driven successfully in the same session, so function keys as a class reach the application. `F2` is separately confirmed eaten by macOS Mission Control. What claims `F1` is not yet established, and it decides the fix: an alternate binding on a surviving key is nearly free, whereas "the desktop owns our whole hotkey row" is a redesign.
+
+**Related, same root.** The mouse is the only working path to the card, and the mouse is also mis-aimed — a double-click landed several rows above the clicked line, which is separately why the terminal's own select-and-copy never reaches through the Talaria pane. Suspect: the mixed-height widget layout v0.2 introduced. Undiagnosed.
+
+### Sort the rest of the v0.2 hands-on findings into v0.3
+
+**Author.** v0.2 hands-on drive, 2026-08-10
+**Priority.** P0 to triage, the items themselves range P1–P3
+**Effort.** Small to triage
+**Worth it when.** At the start of v0.3 planning, before scope is chosen.
+**Context.** [docs/analysis/2026-08-10-v0-2-hands-on-notes.md](../analysis/2026-08-10-v0-2-hands-on-notes.md) closes with a sorted candidate list — what passed, seven defects, four undiagnosed items, six design questions, and three findings that are not Talaria's to fix. It is deliberately not scheduled.
+
+Two things in it are worth carrying into planning rather than triaging item by item. First, a theme: four findings that look unrelated — a status row nobody can interpret, a number without its scope, a card advertising keys that do nothing, and a keypress indistinguishable from a dead one — are all one problem, which is that Talaria does not confirm what it just did. That is a tighter release theme than "readability" and absorbs most of it. Second, one defect is in the shipped release notes themselves: both `docs/releases/v0.2.0.md:21` and `CHANGELOG.md:26` say `F4` "sweeps the answerable set", omitting that it first interrupts the in-flight turn (`app.py:776` → `action_interrupt` → the sweep at `:1666`). The omitted half is the destructive one.
+
 ### ~~A blocking prompt cannot be answered without guessing how many times to press `tab`~~ — CLOSED 2026-08-09
 
 **Closed.** The v0.2 answerability spine (pull request #45, merge `529928c`) shipped the F1 jump
