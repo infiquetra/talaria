@@ -240,9 +240,9 @@ unconditionally, rather than only when fresh widgets mount.
 cap of 500 (`talaria/replay/workloads.py:113-114`, boundaries at `:155-164`), which is recycle-only
 from roughly the sixth boundary onward. And the existing growth test cannot catch a miss:
 `test_a_growing_fallback_tail_reuses_its_mounted_widgets` runs at `mount_cap=2000`
-(`tests/ui/test_transcript_blocks.py:813`), where the tail never reaches the cap and never recycles.
-**AE6 below is added for exactly this**, because every other acceptance item would pass with the
-defect present.
+(`tests/ui/test_transcript_blocks.py:815`), where the tail never reaches the cap and never recycles.
+**AE4a below is added for exactly this**, because every other acceptance item would pass with the
+defect present — including AE4, whose test never recycles.
 
 **Rejected — caching the total on `_MountedUnit`.** A stored `total_rows` must be updated in lockstep
 with every path that changes the body — growth, retarget, adoption — and a missed update reproduces
@@ -287,7 +287,7 @@ the trigger.
 `run_gate` also runs `run_adversarial_workloads()` (`talaria/replay/gate.py:1544`), a leg the corpus
 enumeration above omits. All three growth workloads drive a real `TranscriptPane.apply` and trip the
 wrapped-row trigger — `LatencyReport.fell_back` documents that as "expected and correct for all three
-growth workloads" (`talaria/replay/workloads.py:278-289`) — and the boundary probes (`workloads.py:545-549`)
+growth workloads" (`talaria/replay/workloads.py:269-280`, the sentence itself at `:270`) — and the boundary probes (`workloads.py:545-549`)
 are built to trip it. On demotion, `_prepare_unit` mounts the banner.
 
 **The conclusion below survives, for a better reason than the one first given.** It does not rest on
