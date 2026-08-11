@@ -26,11 +26,19 @@ recorded in [LEARNINGS.md](../engineering-journal/LEARNINGS.md) under 2026-08-10
 
 ## Where the repository is
 
-- `main` at `06dc858`, clean, no open pull requests, no branches other than `main` local or remote.
-- **v0.2.0 is released** — <https://github.com/infiquetra/talaria/releases/tag/v0.2.0>. Install is
-  unchanged from v0.1: `uv tool install git+https://github.com/infiquetra/talaria@v0.2.0`. The name
-  `talaria` on the Python Package Index belongs to an unrelated project and the name request stays
-  deliberately deferred.
+- `main` at `1cd176a`, clean, no open pull requests.
+- **Branches other than `main` do exist, and one of them must not be deleted.**
+  `outcome/talaria-v0-2` — local and remote — carries the v0.2 outcome specification and is
+  deliberately never merged to `main`; the specification lives nowhere else, so deleting it destroys
+  it. `feat/v0-2-block-markdown-build` is stale rather than pending: its work reached `main` by
+  another path, and `main` now holds roughly 7,000 lines the branch never got. The remaining five
+  local branches and one remote branch are fully merged and are safe to delete. Verify before acting
+  on any of this — `git merge-base --is-ancestor <branch> main` answers it per branch.
+- **v0.2.0 is released** — <https://github.com/infiquetra/talaria/releases/tag/v0.2.0>, carrying
+  `talaria-0.2.0-py3-none-any.whl` and `talaria-0.2.0.tar.gz`, both built by continuous integration
+  from the tagged tree. Install is unchanged from v0.1:
+  `uv tool install git+https://github.com/infiquetra/talaria@v0.2.0`. The name `talaria` on the Python
+  Package Index belongs to an unrelated project and the name request stays deliberately deferred.
 - **The tag points at `06dc858`, not at the release merge `d925891`.** Those two commits differ by
   documentation only — 789 lines of hands-on notes, two journal entries, and five italic markers in
   ADR-0006 — with zero changes under `talaria/`. `d925891` was chosen against because its Validate
@@ -210,27 +218,32 @@ Recorded so nobody re-investigates them.
 
 ## Loose ends left by the v0.2 release itself
 
-Four, all verified against the live repository on 2026-08-11 rather than inferred.
+Four, all verified against the live repository on 2026-08-11 rather than inferred. The first is
+**closed**; it is kept here because the rule it produced outlives it.
 
-### The v0.2.0 release has no wheel and no source distribution attached
+### ~~The v0.2.0 release has no wheel and no source distribution attached~~ — CLOSED 2026-08-11
 
-`v0.1.0` carries `talaria-0.1.0-py3-none-any.whl` and `talaria-0.1.0.tar.gz`. **`v0.2.0` carries no
-assets at all.** Cause: the release was created by hand with `gh release create` about a minute
-before the tag-triggered Release workflow reached its final step, and that step then failed with "a
-release with the same tag name already exists: v0.2.0".
+The release was created by hand with `gh release create` about a minute before the tag-triggered
+Release workflow reached its final step, and that step then failed with "a release with the same tag
+name already exists: v0.2.0". `v0.1.0` carried both distributions; `v0.2.0` carried no assets at all.
 
-The failure is confined to that one step. Steps 1 through 15 of the workflow all passed on the tagged
-tree — the tag agreed with the package version, ruff, mypy, pytest and bandit ran green on
+The failure was confined to that one step. Steps 1 through 15 of the workflow all passed on the
+tagged tree — the tag agreed with the package version, ruff, mypy, pytest and bandit ran green on
 continuous integration, the gate block read READY, the distributions built, and the built artifact
-installed clean into a fresh environment and reported its version. So the release is validated; it is
-only unfurnished.
+installed clean into a fresh environment and reported its version. The release was validated and
+merely undelivered.
 
-The fix that preserves provenance is to delete the GitHub release (**not** the tag), then re-run the
-failed workflow run so the attached artifacts are the ones continuous integration built from the
-tagged tree — matching how `v0.1.0` got its assets, and preserving the reproducible-digest property
-recorded in the previous handoff. Uploading locally-built artifacts instead would attach files nobody
-verified. **The general rule: this repository publishes releases from tags via
-`.github/workflows/release.yml`. Push the tag and let it run; never create the release by hand.**
+**Repaired the same day** by deleting the GitHub release — never the tag, which stayed at `465649e4`
+throughout — and re-running the failed workflow run, so the attached
+`talaria-0.2.0-py3-none-any.whl` and `talaria-0.2.0.tar.gz` are the ones continuous integration built
+from the tagged tree, matching how `v0.1.0` got its assets. The recreated release was checked
+byte-for-byte against a backup taken before the delete: identical body hash, title, and prerelease
+flag.
+
+**The rule this produced: this repository publishes releases from tags via
+`.github/workflows/release.yml`. Push the tag and let it run; never create the release by hand — and
+after any release, check the assets rather than the release page, because a validated-but-undelivered
+release looks completely normal from the outside.**
 
 ### `main` was red for two consecutive merges, and nothing stopped it
 
