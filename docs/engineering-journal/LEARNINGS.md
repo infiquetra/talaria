@@ -2,6 +2,32 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-11
+
+### A release published by hand and a release published by the tag are the same release, and the hand-made one wins by losing
+
+**Evidence.** The v0.2.0 release, cut 2026-08-11. The tag was pushed and the release was then created by hand with `gh release create` roughly a minute later. `.github/workflows/release.yml`, triggered by the same tag push, ran steps 1 through 15 green — tag-versus-package-version agreement, ruff, mypy, pytest, bandit, the gate block reading READY, the distributions built, and the built artifact installed clean into a fresh environment and reporting its version — then failed at step 16 with `a release with the same tag name already exists: v0.2.0`. Net effect: `v0.1.0` carries `talaria-0.1.0-py3-none-any.whl` and `talaria-0.1.0.tar.gz`; **`v0.2.0` carries no assets at all.**
+
+**Mechanism.** The workflow's create step is not merely the last step, it is the *delivery* step — the only place the artifacts built and verified in steps 14 and 15 become reachable by anyone. Doing it by hand first does not duplicate that work, it discards it, and it discards it in the one failure shape that looks harmless: a red run whose every substantive check is green, failing on a name collision. Reading the run's conclusion alone says "the release failed"; reading its steps says "the release was fully validated and then not delivered". Neither reading is available from the release page, which shows a normal-looking release with the correct notes.
+
+**Generalizable rule.** When a pipeline both validates and publishes, the publish step is load-bearing evidence, not a formality — never race it by hand, and after any release check the *assets*, not just the release. In this repository: push the tag and let `release.yml` do the rest. Where a hand-published release already exists, the provenance-preserving repair is to delete the release (never the tag) and re-run the failed workflow run, so the attached artifacts are the ones continuous integration built from the tagged tree.
+
+### A check that runs but is not required is a check that has already stopped checking
+
+**Evidence.** Branch protection on `main` requires exactly `python-check (3.12)` and `python-check (3.13)`. The Validate workflow's Node job, `check` (`npm run typecheck && npm test && npm run format:check`), is not in that set. It began failing on a Prettier violation in ADR-0006 introduced during the block-markdown build, and merged red twice — with the block-markdown work (`05ecaa6`) and again with the v0.2.0 release merge (`d925891`) — before anyone noticed. Fixed in `5211a8c`; `main` green again at `06dc858`.
+
+**Mechanism.** A non-required job still runs, still reports, and still shows a red mark next to a pull request — so it produces exactly the signal a person would notice *if they were looking at the run rather than at the merge button*. The merge button stays green, and the merge button is what gets looked at. The gap is silent by construction: nothing distinguishes "this job passes" from "this job cannot stop anything", and the difference only surfaces as a commit history where the failure is already two merges old.
+
+**Generalizable rule.** For every job in a validation workflow, decide explicitly whether it is required, and treat "runs but is not required" as a state that needs a written reason rather than a default. The audit is one call — `gh api repos/<owner>/<repo>/branches/main/protection` — and it belongs in the release checklist, because a release is exactly when the discrepancy costs the most.
+
+### Notes written for fidelity carry the operational detail a public repository forbids
+
+**Evidence.** `docs/analysis/2026-08-10-v0-2-hands-on-notes.md`, written to capture a live hands-on session in the operator's own words and merged on 2026-08-10, named the operator's Hermes profile in five places — including the full command line the gateway runs under. Requirement R12 is explicit: no profile name, profile path, or other operator-specific inventory from `GET /api/profiles` in a committed fixture, document, or commit message, because this repository is public. Redacted 2026-08-11; `git grep` for the name now returns nothing across the tracked tree.
+
+**Mechanism.** The two goals pull in opposite directions and only one of them announces itself. Fidelity is the stated purpose of a notes document — quote verbatim, name the exact command, record what was actually configured — and every one of those instincts produces operator-specific inventory. The redaction rule, meanwhile, is written for *fixtures and inventory dumps*, where the leak is obvious; it reads as inapplicable to prose. Root-causing a live configuration problem in writing is precisely where the two collide, because the root cause **is** the operator's configuration.
+
+**Generalizable rule.** Any document that narrates a live session against real infrastructure gets a redaction pass before it is committed, separate from the review of whether it is correct — correctness review does not catch this, because the leaked detail is exactly the detail that makes the account true. The mechanical check is one command per known-sensitive term (`git grep -n <term>`), run against the tracked tree rather than the file being edited.
+
 ## 2026-08-10
 
 ### Two hours in a real terminal found seven defects that 24-of-24, six review rounds and 1,700 tests could not
