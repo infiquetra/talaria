@@ -141,6 +141,27 @@ priority wins.**
 - One design decision is recorded as **open** — which scheme replaces the row. The operator has
   leaned toward mouse-first affordances and a focus-owning card; the choice is theirs to make.
 
+### D9 — the card owns focus, and click affordances layer on top of it
+
+**Decided 2026-08-11**, closing the design decision D8 left open. Of four schemes put to the operator —
+a focus-owning card, a focus-owning card with the click work deferred, mouse-first with keys
+secondary, and relocating the whole row to chords or a leader key — the answer was the first: **the
+card takes focus when it mounts and names its keys, and clickable controls layer on top where a
+control is a genuine target.**
+
+Two consequences follow directly and are already written into the charter's spine A:
+
+- **Unit A3, the mis-aimed mouse, is a hard prerequisite** rather than a parallel fix, and it is
+  diagnosed before either half of A1 is built. A clickable control in a pane whose clicks land several
+  rows off is not a control.
+- **The jump key is not replaced, it is removed.** It exists only because the card could not be
+  reached; a card that owns focus leaves nothing to jump to. Unit A4 therefore decides homes for the
+  keys that genuinely have no on-screen anchor — the sub-agent toggle, whose `F2` is eaten by the
+  desktop, and the replay controls, of which `F8` and `F9` are confirmed working — rather than
+  re-binding a jump.
+
+Chords stay in reserve for exactly those cases and are not adopted as the scheme.
+
 ## 2. Child-session register
 
 No child session has been created. The charter is preparation, and preparation is not permission.
