@@ -1,6 +1,6 @@
 # ADR-0006: Block rendering is bounded by work and height
 
-Status: `proposed`
+Status: `accepted`
 Date: 2026-08-09
 Deciders: operator
 Affected components: `talaria/ui/transcript.py`, `talaria/ui/blocks.py` (new), `talaria/ui/markdown.py`,
@@ -9,10 +9,9 @@ Affected components: `talaria/ui/transcript.py`, `talaria/ui/blocks.py` (new), `
 _Drafted by unit U1 of the
 [v0.2 block-markdown plan](../../../docs/plans/2026-08-09-talaria-v0-2-block-markdown-plan.md),
 ahead of any widget work, because that plan's R13 requires the target to precede the
-implementation. This record states the claim the later units (U2–U6) are built and gated against;
-it does not itself certify that the claim holds under the built widgets — that certification is
-U6's replay gate, and this ADR is `proposed` rather than `accepted` until that gate runs green
-under the restated claim below._
+implementation. Accepted 2026-08-11: U6's replay gate ran green, 24 of 24 checks, at commit
+`2e96324` — see the [block-markdown gate results](../../../docs/analysis/2026-08-09-block-markdown-gate-results.md),
+which record the confirming run's figures against the four measurable ceilings stated below._
 
 ## Context
 

@@ -2,6 +2,47 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-11
+
+### The fleet axis is deliberately deferred out of v0.3
+
+**Author.** the operator, recorded in the
+[v0.3 orchestration charter](../plans/2026-08-11-v0-3-orchestration-charter.md) and the
+[v0.3 decision log](../plans/2026-08-11-v0-3-decision-log.md).
+
+**Decision.** Survivors 1 through 17 and 20 through 28 of the
+[Talaria product-shape ideation](../ideation/2026-08-02-talaria-product-shape-ideation.md) — the
+typed queue across profiles, the telemetry exporter read, the append-only event ledger, the
+session registry as root object, spawn-as-sessions, the Kanban engine of record, the
+pane-manager integration, the headless core, the one-line status emitted elsewhere, and the
+remaining fleet-axis items — are deferred out of v0.3 by explicit decision, not by neglect.
+They are the substance of the ideation's Phase 2 and Later phases; nothing in v0.3's spines A,
+B, or C advances them, and the release's scope is the single-session craft.
+
+**Revisit when.** v0.3 ships and Talaria is in routine daily use against a live Hermes install
+with more than one active profile — the point at which cross-session observability moves from a
+design exercise to a live need. This is the precondition the ideation document's own phasing
+sets: the MVP ("proves the seam and is useful on day one") must hold before Phase 2 ("the
+harness starts to exist") reopens, and a single-session surface nobody uses daily does not
+satisfy it.
+
+### The ideation's boundary question Q1 has been answered in practice by shipping v0.2; Q2 remains open
+
+**Author.** the operator, on the evidence of what shipped rather than on a design argument.
+
+**Decision.** The [product-shape ideation](../ideation/2026-08-02-talaria-product-shape-ideation.md)
+posed two open boundary questions. Q1 — "Does answering a blocked agent's question count as
+driving the agent, or as authoring it?" — was assumed as *driving* throughout the ideation
+document, with the note that a ruling of *authoring* would collapse survivor 1 and four others
+with it. Shipping the v0.2 answerability spine answered it in practice: the approval card, the
+jump-key mechanism, the escape-to-decline path, and the interrupt-and-sweep all treat answering
+a blocked agent as driving — the operator steers the session, and the session's own agent
+authored the work. That answer is now recorded rather than assumed.
+
+Q2 — "May Talaria ship Hermes-side plugin code?" — **remains genuinely open.** Neither v0.2 nor
+v0.3's stated scope answers it, and survivor 25 and cut R10 of the ideation document both
+require it. It is recorded as open rather than implied settled.
+
 ## 2026-08-09
 
 ### Block-level markdown rendering is bounded by a two-tier descendant count, not a single line-widget cap, and ADR-0005 decisions 3 and 7 are amended accordingly
