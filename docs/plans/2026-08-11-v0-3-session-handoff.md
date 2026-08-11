@@ -27,13 +27,18 @@ recorded in [LEARNINGS.md](../engineering-journal/LEARNINGS.md) under 2026-08-10
 ## Where the repository is
 
 - `main` at `1cd176a`, clean, no open pull requests.
-- **Branches other than `main` do exist, and one of them must not be deleted.**
-  `outcome/talaria-v0-2` — local and remote — carries the v0.2 outcome specification and is
-  deliberately never merged to `main`; the specification lives nowhere else, so deleting it destroys
-  it. `feat/v0-2-block-markdown-build` is stale rather than pending: its work reached `main` by
-  another path, and `main` now holds roughly 7,000 lines the branch never got. The remaining five
-  local branches and one remote branch are fully merged and are safe to delete. Verify before acting
-  on any of this — `git merge-base --is-ancestor <branch> main` answers it per branch.
+- **One branch besides `main` remains, and it must not be deleted.** `outcome/talaria-v0-2` — local
+  and remote — carries the v0.2 outcome specification at `docs/outcomes/talaria-v0-2/outcome-spec.json`
+  and is deliberately never merged to `main`. The specification lives nowhere else, so deleting the
+  branch destroys it. Every other v0.2 branch was deleted on 2026-08-11 after each was re-verified as
+  an ancestor of `main` immediately beforehand.
+- **The tag `evidence/block-markdown-gate` is not a release tag and must not be deleted either.** It
+  preserves the build history that
+  [the gate results](../analysis/2026-08-09-block-markdown-gate-results.md) cite by hash — the
+  confirming runs `67589a9`, `4498bec` and `2e96324`. That work reached `main` through pull request 49
+  as a *different* set of commits, so none of the cited hashes is reachable from `main`, and the branch
+  that held them is gone. Without the tag, the evidence behind a published release would cite commits
+  nobody can check out.
 - **v0.2.0 is released** — <https://github.com/infiquetra/talaria/releases/tag/v0.2.0>, carrying
   `talaria-0.2.0-py3-none-any.whl` and `talaria-0.2.0.tar.gz`, both built by continuous integration
   from the tagged tree. Install is unchanged from v0.1:
