@@ -108,7 +108,17 @@ _UNHANDLED_BY_HERMES_TUI: frozenset[str] = frozenset(
 #: Keeping this set apart is the honest record that a source reading alone did
 #: not converge, and the place any future live capture should add to.
 _OBSERVED_ON_A_LIVE_GATEWAY: frozenset[str] = frozenset(
-    {"sessions.changed", "session.title", "session.reclaimed"}
+    {
+        "sessions.changed",
+        "session.title",
+        "session.reclaimed",
+        #: Found 2026-08-10 during a hands-on v0.2 drive — a running gateway
+        #: emitted ``platforms.changed`` 26 times in a single turn, producing 26
+        #: ``unknown event type`` rows. The type is listed here rather than in the
+        #: reading-derived sets because it was found by observation, the same
+        #: provenance as the three above.
+        "platforms.changed",
+    }
 )
 
 #: Everything Talaria recognizes. A type outside this set is surfaced by name

@@ -165,6 +165,11 @@ class SessionState:
 
     #: Unknown event types seen, in first-seen order, deduplicated.
     unknown_event_types: tuple[str, ...] = ()
+    #: How many unknown-event occurrences were suppressed after the first one
+    #: of each type. Counted but never rendered — it exists so that a future
+    #: diagnostic can answer "how much did we suppress" without the suppression
+    #: having thrown the answer away (KTD4).
+    unknown_event_repeats: int = 0
     protocol_error_count: int = 0
     protocol_noise_announced: bool = False
     #: Prompt ids already recorded as abandoned, so the expiry path and the
@@ -680,7 +685,13 @@ def set_connection(
             reasoning_stream_generation=next_state.reasoning_stream_generation + 1,
         )
 
-    return replace(next_state, connection=status, protocol_noise_announced=False)
+    return replace(
+        next_state,
+        connection=status,
+        protocol_noise_announced=False,
+        unknown_event_types=(),
+        unknown_event_repeats=0,
+    )
 
 
 def cancel_turn(state: SessionState, *, at: float) -> SessionState:
@@ -1385,6 +1396,22 @@ def apply_frame(state: SessionState, decoded: DecodedFrame) -> SessionState:
         return _apply_protocol_error(state, decoded)
 
     if isinstance(decoded, UnknownEventFrame):
+        # Apply the same cross-session guard ``_apply_event`` already enforces
+        # (normalize.py:131-145), using the frame's own type and session_id.
+        # ``UnknownEventFrame`` carries a session_id, so routing it past the
+        # guard would let a background session's unknown event write a row into
+        # the foreground session's transcript and corrupt the per-type latch's
+        # repeat count in the same motion (KTD5).
+        # ``gateway.``-prefixed types are never session-scoped and always pass.
+        if (
+            not decoded.type.startswith("gateway.")
+            and decoded.session_id is not None
+            and state.focused_session_id is not None
+            and decoded.session_id != state.focused_session_id
+        ):
+            return replace(
+                state, cross_session_events_ignored=state.cross_session_events_ignored + 1
+            )
         return _apply_unknown_event(state, decoded)
 
     return _apply_event(state, decoded)
@@ -1414,10 +1441,26 @@ def _apply_protocol_error(state: SessionState, frame: ProtocolErrorFrame) -> Ses
 
 
 def _apply_unknown_event(state: SessionState, frame: UnknownEventFrame) -> SessionState:
-    seen = state.unknown_event_types
-    if frame.type not in seen:
-        seen = (*seen, frame.type)
-    return _append(replace(state, unknown_event_types=seen), "unknown-event", frame.text)
+    """Announce an unknown event type once per connection, not once per occurrence.
+
+    Re-encodes the same latch ``_apply_protocol_error`` already uses for
+    ``protocol_noise_announced``: the first arrival of a type appends a transcript
+    row and records the type in ``unknown_event_types``; later arrivals of the
+    same type are counted in ``unknown_event_repeats`` and produce no row. The
+    latch is per type — two distinct unknown types each get their own first row
+    — and its lifetime is the connection (reset alongside
+    ``protocol_noise_announced`` in :func:`set_connection`).
+
+    R5 still holds in full: the type is surfaced by name rather than dropped.
+    It is surfaced once, and the recurrence is counted rather than discarded.
+    """
+    if frame.type in state.unknown_event_types:
+        return replace(state, unknown_event_repeats=state.unknown_event_repeats + 1)
+    return _append(
+        replace(state, unknown_event_types=(*state.unknown_event_types, frame.type)),
+        "unknown-event",
+        frame.text,
+    )
 
 
 def _apply_event(state: SessionState, event: GatewayEvent) -> SessionState:

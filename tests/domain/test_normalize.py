@@ -56,6 +56,10 @@ def test_unknown_event_type_is_surfaced_by_name() -> None:
 
 
 def test_unknown_event_reaches_the_transcript_and_is_counted_once() -> None:
+    """Updated for plan ``2026-08-11-v0-3-unit-b4-unknown-event-flood-plan.md``:
+    an unknown type is announced once per connection rather than once per
+    occurrence. The second arrival of the same type is counted in
+    ``unknown_event_repeats`` and produces no transcript row (KTD3)."""
     state = replay(
         [
             raw_event("cauldron.bubbled", {}),
@@ -64,7 +68,8 @@ def test_unknown_event_reaches_the_transcript_and_is_counted_once() -> None:
     )
     assert state.unknown_event_types == ("cauldron.bubbled",)
     unknown = [e for e in state.transcript if e.kind == "unknown-event"]
-    assert len(unknown) == 2, "every occurrence is shown; only the type list dedupes"
+    assert len(unknown) == 1, "the type is announced once per connection, not once per occurrence"
+    assert state.unknown_event_repeats == 1
 
 
 def test_unknown_event_payload_never_reaches_the_transcript() -> None:
@@ -134,6 +139,138 @@ def test_an_ordinary_live_turn_leaves_no_unknown_markers_in_the_transcript() -> 
     state = replay(list(_OBSERVED_LIVE_FRAMES))
     assert state.unknown_event_types == ()
     assert [entry for entry in state.transcript if entry.kind == "unknown-event"] == []
+
+
+# ── Unit B4: the unknown-event flood, and the latch that stops the next one ─
+
+# Acceptance evidence from plan ``2026-08-11-v0-3-unit-b4-unknown-event-flood-plan.md``.
+# AE1 through AE6 asserted below in the style of the existing domain suite.
+
+
+def test_platforms_changed_is_known_not_merely_quiet() -> None:
+    """AE1: A feed containing ``platforms.changed`` produces zero unknown-event
+    rows, and ``unknown_event_types`` does not contain it — it is known now,
+    not merely silent."""
+    state = replay(
+        [
+            raw_event("platforms.changed", {}),
+            raw_event("platforms.changed", {}),
+            raw_event("platforms.changed", {}),
+        ]
+    )
+    assert "platforms.changed" not in state.unknown_event_types
+    unknown = [e for e in state.transcript if e.kind == "unknown-event"]
+    assert unknown == []
+
+
+def test_unknown_event_announced_once_twenty_six_arrivals_is_one_row() -> None:
+    """AE2: A feed containing the same genuinely unknown type 26 times produces
+    exactly one transcript row naming that type, and ``unknown_event_repeats == 25``."""
+    frames = [raw_event("cauldron.bubbled", {"heat": i}) for i in range(26)]
+    state = replay(frames)
+    assert state.unknown_event_types == ("cauldron.bubbled",)
+    unknown = [e for e in state.transcript if e.kind == "unknown-event"]
+    assert len(unknown) == 1
+    assert state.unknown_event_repeats == 25
+
+
+def test_two_distinct_unknown_types_each_get_their_own_row() -> None:
+    """AE3: A feed containing two distinct unknown types produces two rows,
+    one per type, in arrival order. The latch is per type, not global."""
+    state = replay(
+        [
+            raw_event("cauldron.bubbled", {}),
+            raw_event("phial.fizzed", {}),
+            raw_event("cauldron.bubbled", {}),
+            raw_event("phial.fizzed", {}),
+            raw_event("cauldron.bubbled", {}),
+        ]
+    )
+    unknown = [e for e in state.transcript if e.kind == "unknown-event"]
+    assert len(unknown) == 2
+    assert unknown[0].text == "unknown event type: cauldron.bubbled"
+    assert unknown[1].text == "unknown event type: phial.fizzed"
+    assert state.unknown_event_types == ("cauldron.bubbled", "phial.fizzed")
+    # 5 arrivals total, 2 produced rows, so 3 repeats
+    assert state.unknown_event_repeats == 3
+
+
+def test_reconnect_resets_the_unknown_event_latch() -> None:
+    """AE4: A connection status change resets the latch — the same unknown type
+    announced once, then a reconnect, then the same type again, produces a second
+    row and ``unknown_event_repeats == 0``."""
+    from talaria.domain.state import set_connection
+
+    # First connection: announce the type once, then another arrival is latched.
+    state = replay(
+        [
+            raw_event("cauldron.bubbled", {}),
+            raw_event("cauldron.bubbled", {}),
+        ]
+    )
+    assert len([e for e in state.transcript if e.kind == "unknown-event"]) == 1
+    assert state.unknown_event_types == ("cauldron.bubbled",)
+    assert state.unknown_event_repeats == 1
+
+    # Reconnect resets the latch.
+    state = set_connection(state, "reconnecting")
+    assert state.unknown_event_types == ()
+    assert state.unknown_event_repeats == 0
+
+    # Second connection: the same type is announced again.
+    state = replay([raw_event("cauldron.bubbled", {})], state=state)
+    unknown = [e for e in state.transcript if e.kind == "unknown-event"]
+    assert len(unknown) == 2, "reconnect resets the latch, so the type is announced again"
+    assert state.unknown_event_repeats == 0
+
+
+def test_session_switch_does_not_reset_the_unknown_event_latch() -> None:
+    """AE5: A session switch does NOT reset the latch — the same feed with a
+    ``focus_session`` between two occurrences produces one row. AE4 and AE5 are a
+    pair, and the pair is what makes the latch's lifetime a decision on the
+    record rather than whichever behaviour fell out."""
+    from talaria.domain.state import SessionState, focus_session
+
+    # First session: announce the type once.
+    state = replay(
+        [raw_event("cauldron.bubbled", {}, session_id="sess-one")],
+        state=SessionState(focused_session_id="sess-one"),
+    )
+    assert len([e for e in state.transcript if e.kind == "unknown-event"]) == 1
+
+    # Switch to a different session — this must NOT reset the latch.
+    state = focus_session(state, "sess-two")
+    assert state.unknown_event_types == ("cauldron.bubbled",), (
+        "focus_session leaves the latch alone; see KTD3 in the B4 plan"
+    )
+
+    # The same type arrives in the new session — latched, no second row.
+    state = replay(
+        [raw_event("cauldron.bubbled", {}, session_id="sess-two")], state=state
+    )
+    unknown = [e for e in state.transcript if e.kind == "unknown-event"]
+    assert len(unknown) == 1, "session switch did not reset the latch — one row total"
+    assert state.unknown_event_repeats == 1
+
+
+def test_background_session_unknown_event_is_dropped() -> None:
+    """AE6: An unknown event naming a background session produces zero transcript
+    rows and increments ``cross_session_events_ignored`` by one — the cross-session
+    guard for ``UnknownEventFrame`` (KTD5)."""
+    from talaria.domain.state import SessionState
+
+    state = replay(
+        [
+            raw_event("gateway.ready", {}, session_id=None),
+            raw_event("cauldron.bubbled", {}, session_id="sess-background"),
+        ],
+        state=SessionState(focused_session_id="sess-focus"),
+    )
+    unknown = [e for e in state.transcript if e.kind == "unknown-event"]
+    assert unknown == [], "a background session's unknown event must not write a row"
+    assert state.cross_session_events_ignored == 1
+    assert state.unknown_event_types == ()
+    assert state.unknown_event_repeats == 0
 
 
 # ── R5: malformed frames ─────────────────────────────────────────────────
