@@ -246,9 +246,12 @@ The lifecycle **stops at merge**. Tagging, releasing, and publishing are not par
 - **Launch behaviour comes from the local agent launcher's own documented surface**, read at launch
   time rather than remembered. Its command syntax is not invented.
 - **Tabs are closed promptly** once their output is accepted and the branch or handoff is durable.
-- **Elevated permission is not used.** The local launcher exposes a permission-enabled preset rather
-  than the `--yolo` flag some older instructions describe; neither is used unless the operator
-  authorizes it for a named unit, and the grant is recorded in the decision log.
+- **Elevated permission is in use, by a standing operator setting, and this line used to deny it.**
+  Every session in this release — the root session and every child — runs with permission prompts
+  bypassed, because the operator's user-level Claude Code settings set that mode globally rather than
+  per launch. No child session requests it and none can decline it. The launcher's own
+  permission-enabled preset and the `--yolo` flag some older instructions describe are both separate
+  from this and neither is used. Corrected 2026-08-11; the reasoning is in the decision log's D6.
 
 ## Engine, model, and effort policy
 
