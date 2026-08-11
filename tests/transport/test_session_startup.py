@@ -42,6 +42,8 @@ from talaria.ui.app import (
     MOST_RECENT_METHOD,
     NO_SESSION_TO_RESUME,
     RESUME_METHOD,
+    RESUMED_SESSION_ANNOUNCEMENT,
+    RESUMED_SESSION_ANNOUNCEMENT_RUNTIME,
     SESSION_START_FAILED,
     STREAM_FAILURE_EXIT_CODE,
     TalariaApp,
@@ -600,11 +602,20 @@ async def test_resume_puts_the_resumed_conversation_on_the_rendered_screen(
         await pilot.pause()
 
         assert [(e.kind, e.text) for e in app.state.transcript] == [
+            # B5: the resumed session names itself before its history lands
+            # (plan ``2026-08-11-v0-3-unit-b5-resumed-session-names-itself``).
+            (
+                "system",
+                RESUMED_SESSION_ANNOUNCEMENT.format(session_key="s-stored-042"),
+            ),
             ("user", "what changed in the config?"),
             ("tool", "⏺ read_file config.toml"),
             ("assistant", "two keys were added."),
         ]
-        assert app.transcript.rendered_lines == RESUMED_LINES
+        assert app.transcript.rendered_lines == (
+            f"— {RESUMED_SESSION_ANNOUNCEMENT.format(session_key='s-stored-042')}",
+            *RESUMED_LINES,
+        )
         await app.shutdown_sources()
 
 
@@ -701,7 +712,12 @@ async def test_an_event_racing_the_resume_reply_lands_after_the_seeded_history()
             await until(lambda: any(e.text == live_line for e in app.state.transcript))
 
             texts = [e.text for e in app.state.transcript]
-            assert texts[:3] == [
+            # B5: the resumed session's self-announcement leads the resumed
+            # history (plan ``2026-08-11-v0-3-unit-b5-resumed-session-names-itself``).
+            assert texts[0] == RESUMED_SESSION_ANNOUNCEMENT.format(
+                session_key="s-stored-042"
+            ), texts
+            assert texts[1:4] == [
                 "what changed in the config?",
                 "⏺ read_file config.toml",
                 "two keys were added.",
@@ -710,7 +726,7 @@ async def test_an_event_racing_the_resume_reply_lands_after_the_seeded_history()
                 "the event that followed the reply landed before the history it "
                 f"follows: {texts}"
             )
-            assert len(texts) == 4, texts
+            assert len(texts) == 5, texts
             assert held, (
                 "no inbound frame arrived while the landing was in flight, so this "
                 "run did not exercise the barrier at all"
@@ -768,6 +784,10 @@ async def test_a_frame_arriving_during_a_landing_is_folded_after_the_seed() -> N
                 )
             )
         assert [entry.text for entry in app.state.transcript] == [
+            # B5: the resumed session names itself first, before the seeded
+            # history and the folded event (plan
+            # ``2026-08-11-v0-3-unit-b5-resumed-session-names-itself``).
+            RESUMED_SESSION_ANNOUNCEMENT.format(session_key="s-stored-042"),
             "what changed in the config?",
             "⏺ read_file config.toml",
             "two keys were added.",
@@ -794,8 +814,14 @@ async def test_a_resume_that_withheld_its_history_says_so_on_screen() -> None:
         app, _source = live_app(stub, StartupSelection(mode="resume"))
         async with app.run_test():
             await until(lambda: app._startup_done)
-            assert len(app.state.transcript) == 1
-            line = app.state.transcript[0]
+            assert len(app.state.transcript) == 2
+            # B5: the resumed session names itself before the withheld-history
+            # notice (plan ``2026-08-11-v0-3-unit-b5-resumed-session-names-itself``).
+            assert app.state.transcript[0].kind == "system"
+            assert app.state.transcript[0].text == RESUMED_SESSION_ANNOUNCEMENT.format(
+                session_key="s-stored-042"
+            )
+            line = app.state.transcript[1]
             assert line.kind == "system"
             assert "7 earlier messages" in line.text
             await app.shutdown_sources()
@@ -815,6 +841,153 @@ async def test_a_new_session_seeds_nothing_and_says_nothing_about_history() -> N
             await until(lambda: app._startup_done)
             assert app.state.focused_session_id == "s-new-001"
             assert app.state.transcript == ()
+            await app.shutdown_sources()
+    finally:
+        await stub.stop()
+
+
+# ── B5: a resumed session names itself on arrival ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_resume_landing_names_the_resumed_session_once(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """AE1. A confirmed ``--resume`` landing appends exactly one system row,
+    naming the resumed session by its durable id — the id the picker names a
+    session by and a later resume asks for (KTD2)."""
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="resume"))
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        system_rows = [e.text for e in app.state.transcript if e.kind == "system"]
+        assert system_rows == [
+            RESUMED_SESSION_ANNOUNCEMENT.format(session_key="s-stored-042")
+        ], system_rows
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_picker_switch_to_a_different_session_announces_the_same_row(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """AE2, both halves. A picker-driven switch to a *different* session lands
+    through the same ``session.resume`` path ``--resume`` uses (KTD3) and
+    appends the same announcement row; a ``--new`` session appends none — the
+    operator created it, so there is no identity question."""
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="new"))
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        assert app.state.focused_session_id == "s-new-001"
+        # Asserted through a local so mypy's empty-tuple narrowing cannot
+        # survive the switch and poison the comprehension below.
+        new_transcript = app.state.transcript
+        assert len(new_transcript) == 0, "--new announced a resumed session"
+
+        # The picker's own call (``switch_session`` is what the dismissal
+        # handler invokes), to a session that is not the one focused.
+        await app.switch_session("s-live-042")
+        assert app.state.focused_session_id == "s-live-042"
+        system_rows = [e.text for e in app.state.transcript if e.kind == "system"]
+        assert system_rows == [
+            RESUMED_SESSION_ANNOUNCEMENT.format(session_key="s-stored-042")
+        ], system_rows
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_switch_to_the_already_focused_session_announces_nothing(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """AE2a (KTD3b). Landing the session already focused keeps the transcript
+    exactly as it is — no announcement, no reseed — so repeated picker presses
+    cannot add rows to a transcript the release is trying to quieten."""
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="resume"))
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        before = [(e.kind, e.text) for e in app.state.transcript]
+        assert before[0] == (
+            "system",
+            RESUMED_SESSION_ANNOUNCEMENT.format(session_key="s-stored-042"),
+        )
+
+        await app.switch_session("s-live-042")
+        assert app.state.focused_session_id == "s-live-042"
+        assert [(e.kind, e.text) for e in app.state.transcript] == before, (
+            "landing the already-focused session changed the transcript"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_the_announcement_precedes_the_seeded_history(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """AE3. The announcement lands *before* the resumed conversation, never
+    interleaved with it — KTD3a's insertion point (after ``land_session``,
+    before ``seed_history``)."""
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="resume"))
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        texts = [e.text for e in app.state.transcript]
+        assert texts[0] == RESUMED_SESSION_ANNOUNCEMENT.format(
+            session_key="s-stored-042"
+        ), texts
+        assert texts[1:4] == [
+            "what changed in the config?",
+            "⏺ read_file config.toml",
+            "two keys were added.",
+        ], texts
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_resume_reply_without_a_durable_id_names_the_runtime_id() -> None:
+    """AE4. A resume reply carrying no durable id still announces, naming the
+    runtime id and labelling it as such. No silent path."""
+    no_durable = {**RESUMED}
+    no_durable.pop("session_key")
+    no_durable.pop("resumed")
+    # ``stored_session_id`` is the third durable key ``_land_session`` reads
+    # and was never present in ``RESUMED`` — after the two pops, all three
+    # are absent.
+    assert "stored_session_id" not in no_durable
+    stub = StubGateway(responder=startup_responder(resume=no_durable))
+    await stub.start()
+    try:
+        app, _source = live_app(stub, StartupSelection(mode="resume"))
+        async with app.run_test():
+            await until(lambda: app._startup_done)
+            assert app.state.focused_session_id == "s-live-042"
+            system_rows = [e.text for e in app.state.transcript if e.kind == "system"]
+            assert system_rows == [
+                RESUMED_SESSION_ANNOUNCEMENT_RUNTIME.format(session_id="s-live-042")
+            ], system_rows
+            await app.shutdown_sources()
+    finally:
+        await stub.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_refused_resume_announces_nothing() -> None:
+    """AE5. An unconfirmed landing appends nothing — the refusal still reports
+    through ``_report_startup_failure``, and no announcement row appears."""
+    stub = StubGateway(responder=startup_responder(refuse=RESUME_METHOD))
+    await stub.start()
+    try:
+        app, _source = live_app(stub, StartupSelection(mode="resume"))
+        async with app.run_test():
+            await until(lambda: app._startup_done)
+            assert app.state.focused_session_id is None
+            assert any(
+                e.text.startswith(SESSION_START_FAILED) for e in app.state.transcript
+            ), "the refusal was not reported"
+            assert all(
+                "resumed session" not in e.text for e in app.state.transcript
+            ), "a refused landing announced itself"
             await app.shutdown_sources()
     finally:
         await stub.stop()

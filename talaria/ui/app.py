@@ -372,6 +372,23 @@ NO_SESSION_TO_RESUME: Final[str] = (
 #: answered. The outcome's own notice supplies the rest.
 SESSION_START_FAILED: Final[str] = "could not open a session:"
 
+#: What a ``session.resume`` landing writes to say which session arrived (B5).
+#: The durable id is the one the picker names a session by and a later resume
+#: asks for (KTD2); the line precedes the seeded history it introduces (KTD3a).
+#: Only the real-switch branch announces — the retain branch (landing the
+#: already-focused row) stays silent deliberately (KTD3b).
+RESUMED_SESSION_ANNOUNCEMENT: Final[str] = (
+    "resumed session {session_key} — now showing this session's conversation"
+)
+
+#: The same announcement when the reply carries no durable id at all (AE4).
+#: The runtime id is named and labelled as such, because a bare string would be
+#: indistinguishable from the durable id it is not.
+RESUMED_SESSION_ANNOUNCEMENT_RUNTIME: Final[str] = (
+    "resumed session {session_id} (runtime session id) — "
+    "the gateway reported no durable session id"
+)
+
 #: Said when ``/models <n>`` is typed before anything has been fetched.
 MODELS_NOT_FETCHED: Final[str] = (
     "no model list fetched yet — open the picker with a bare /models first"
@@ -3310,6 +3327,21 @@ class TalariaApp(App[None]):
             # unconditionally re-appended the same history a second time,
             # reachable the moment a picker lets the operator choose the
             # already-focused row (``/sessions``, U7).
+            if outcome.method == RESUME_METHOD:
+                # B5: a resumed session names itself on arrival. Only the
+                # real-switch branch announces; the retain branch above is
+                # deliberately silent (KTD3b), and ``--new`` landings are
+                # silent too — the operator created the session, so there is
+                # no identity question (KTD3). The durable id is the one the
+                # picker names a session by; when the reply carries none, the
+                # runtime id is named and labelled as such (AE4).
+                if isinstance(stored, str) and stored:
+                    line = RESUMED_SESSION_ANNOUNCEMENT.format(session_key=stored)
+                else:
+                    line = RESUMED_SESSION_ANNOUNCEMENT_RUNTIME.format(session_id=raw)
+                self.state = record_local_note(
+                    self.state, line, at=self.state.last_observed_at
+                )
             count = result.get("message_count")
             self.state = seed_history(
                 self.state,
