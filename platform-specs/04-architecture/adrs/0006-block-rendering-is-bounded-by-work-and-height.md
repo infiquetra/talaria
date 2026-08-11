@@ -56,10 +56,10 @@ Textual's own tree (`walk_children`) rather than self-reported by any component,
 - **Tier one — the folded window.** Every committed entry document and line widget except the
   newest entry and the live streaming tails stays at or under **600 descendants**. This is the
   ceiling the replay gate enforces (`gate.py:69`, unchanged number, now a descendant count rather
-  than a widget-per-line count). The fold rule that keeps this tier under 600 reads the *measured*
+  than a widget-per-line count). The fold rule that keeps this tier under 600 reads the _measured_
   descendant counts of already-mounted entries — fallback banner widgets included, since a banner
   is a mounted widget like any other and the fold rule does not get to pretend otherwise — and
-  estimates an *incoming* entry's descendant cost with a **construct-aware estimate**: top-level
+  estimates an _incoming_ entry's descendant cost with a **construct-aware estimate**: top-level
   parser tokens plus table cells (rows × columns, read from the source's delimiter row) plus
   per-construct container overhead. The container overhead is calibrated against the installed
   widget's actual mounting and pinned by a test, because a top-level-token count alone
@@ -98,7 +98,7 @@ rows, widgets, and projected lines equal to each other for the entry's own conte
 those four costs recur.
 
 **Banner rows are charged to the fold arithmetic, never to a fixed headroom.** A fallen-back
-entry's accounted row span is *projected lines + 1*, and the fold rule counts that accounted span
+entry's accounted row span is _projected lines + 1_, and the fold rule counts that accounted span
 against `mount_cap` (500) — the same cap that bounds line-rendered content today. The 100-widget
 margin between the 500-row cap and the 600-descendant gate ceiling pays only for **fixed-count**
 chrome — the single condensation banner — never for a per-entry cost, because a per-entry cost
@@ -111,9 +111,9 @@ counted for the cap and the fold arithmetic, but never entering the
 `condensed_count + lines-accounted-for == total` content identity the gate proves.
 
 **The banner-preserving odd-cut rule.** Because a fallen-back entry's accounted span includes its
-banner row, a fold target can land *inside* that span. The cut folds content rows only: a
+banner row, a fold target can land _inside_ that span. The cut folds content rows only: a
 partially retained fallen-back entry keeps **exactly one** banner row, its painted rows are
-*retained projected lines + 1*, and only its content rows enter the condensed-line arithmetic. A
+_retained projected lines + 1_, and only its content rows enter the condensed-line arithmetic. A
 cut that would retain zero content rows rounds **forward**, folding the whole entry, banner
 included. A banner never stands alone in either direction — no bannerless clipped rows, no orphan
 banner.
