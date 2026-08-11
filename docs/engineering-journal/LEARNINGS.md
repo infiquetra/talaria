@@ -1796,3 +1796,38 @@ So `if epoch != self._epoch` was unsatisfiable for every frame the reader would 
 The fix is a third primitive, `scrub_urls`, which redacts URL-shaped substrings in place and leaves surrounding prose intact, plus a literal pass over the credential just used. Redaction damaging the artifact it protects has now happened twice in this module — milestone-1's userinfo fix first emitted `[redacted]@host`, which `urlsplit` could not parse, corrupting append-only frame-log headers.
 
 **Generalizable rule.** Test a redaction on both halves, always: the secret is gone **and** the message still says what went wrong. A single-half test certifies the regression. And when auditing, ask which values are credentialed *by construction* and follow those — here exactly one string was, and every surface it touched was a leak candidate.
+
+## 2026-08-11
+
+### A comment saying a claim was replaced is not evidence the code was removed
+
+**Evidence.** An independent review of the unit B4 plan returned `BLOCKED` partly on the finding that
+the replay gate's `interface_shows_everything` check "no longer exists", having been "replaced by the
+two-part ownership proof (`content_is_complete` and `block_documents_are_owned`)", and cited
+`tests/replay/test_gate.py:352-365` for it. That comment block says something narrower:
+"`interface_shows_everything`'s original claim was one-line-one-widget, true only while every mounted
+unit was a `TranscriptLine`... These tests prove the two-part ownership proof that replaced it." The
+function is defined at `talaria/replay/gate.py:996` and called by the gate at `gate.py:1382`, two lines
+after `content_is_complete`. Both checks run. A second agent, given only the mechanical job of
+resolving every citation in the same document to a file and line, independently reported
+`interface_shows_everything` present at `gate.py:996`, which is what settled it.
+
+**Mechanism.** The comment is accurate and the misreading is a reasonable one: "the two-part ownership
+proof that replaced it" leaves "it" to resolve to either *the claim* or *the function*, and the
+sentence before it makes the claim the nearer antecedent only if read carefully. What made the error
+expensive is the direction it pushed — the plan was already under-citing by naming one of the gate's
+two settled-transcript checks, and the finding asked for the wrong one to be deleted rather than for
+the missing one to be added. Acting on it would have removed a live check's name from the acceptance
+evidence of a change that moves exactly what that check measures.
+
+**A second, structural half.** The review ran on a reasoning-tier model and the citation check on a
+cheaper one with no latitude to judge anything. The cheap mechanical pass is what caught the expensive
+judgement pass's error, because resolving a symbol to a line has a right answer and interpreting a
+comment does not. The pairing was chosen for cost, and its actual value turned out to be adversarial.
+
+**Generalizable rule.** A finding that something was *removed* is a claim about a definition, so verify
+it against the definition — `grep` for the `def`, and for its callers — never against prose describing
+a change to it. Design comments narrate why something is the way it is and go stale in a direction that
+reads as deletion. And when a document's factual claims matter, run a judgement reviewer and a
+mechanical citation resolver over it separately: the one with no room to interpret is the one that can
+falsify the other.
