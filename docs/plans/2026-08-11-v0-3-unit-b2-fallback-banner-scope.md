@@ -109,7 +109,7 @@ Three properties decide it:
 2. **It fixes the inversion.** The hidden count only ever rises as more is hidden (101 → 106 when
    five more rows fold), which is the direction "hidden" promises.
 3. **The total makes the retained count derivable.** The hands-on notes' own completeness criterion
-   — "neither is 600, neither is 101" (`:518-519`) — wants the total on screen. `"101 of 600 lines
+   — "neither is 600, neither is 101" (`:505-506`) — wants the total on screen. `"101 of 600 lines
    of this entry hidden"` carries hidden *and* total in one phrase, so retained (499) is arithmetic
    the operator can do.
 
@@ -124,7 +124,7 @@ The retained count is still recoverable from the chosen wording, which drains mo
 
 **Rejected — hidden count without the total.** It answers the loss question but not the scale
 question ("how long is this entry"), which the notes name as part of the operator's actual want
-(`:518-519`). The total costs one placeholder and makes the retained count derivable.
+(`:519-521`). The total costs one placeholder and makes the retained count derivable.
 
 **Rejected — printing both counts explicitly.** Redundant: hidden-plus-total already yields retained.
 A longer sentence buys nothing and this release is separately trying to quiet the transcript.
@@ -205,7 +205,8 @@ The five call sites and the total each must supply:
 | --- | --- | --- |
 | Construction, `transcript.py:1206` | `len(widgets)` | `len(source_lines)` pre-slice — in scope at `:1190` |
 | Retarget, `:1130` | `len(unit.lines)` | `len(_welded_entry_lines(unit.entry_kind, unit.applied_text))` |
-| Tail growth, `:1438` | `len(unit.lines)` | `len(new_lines)` — see the trap below |
+| Tail growth, fresh mounts, `:1438` | `len(unit.lines)` | `len(new_lines)` — see the trap below |
+| Tail growth, recycle-only, after the loop ending `:1446` | `len(unit.lines)` | `len(new_lines)` — **a new site; see below** |
 | Committed partial fold, `:1557` | `len(unit.lines)` | `count` from `record.line_span`, or `len(_welded_entry_lines(...))` |
 | Tail fold, `:1570` | `len(tail.lines)` | `len(_welded_tail_lines("assistant", tail.applied_text))` |
 
@@ -216,6 +217,32 @@ boundary of a growing stream — the exact failure class this unit repairs. The 
 the total from `new_lines` (`:1407`, `len(_welded_tail_lines(kind, tail.raw_text))`), which is in
 scope, or the update at `:1455` must move before the banner refresh. The plan pins the requirement;
 implementation picks the cleaner of the two.
+
+**The recycle-only trap, which is the same defect one level deeper and which this plan first missed.**
+The refresh at `:1438` is inside `if fresh:` (`:1435`). Once a fallback tail reaches the mount cap —
+the steady state of any long stream — `fill` is 0, `fresh` is empty, and the growth boundary is served
+entirely by the recycle loop at `:1439-1446`, which updates widget *sources* and never touches the
+banner. `_condense` does not rescue it either: the tail-fold refresh at `:1570` is gated on `trimmed`,
+and `retain = max(1, tail_rows - tail_folded)` (`:1562`) equals the widget count the recycle already
+holds, so nothing is popped and `trimmed` stays `False`.
+
+**Under today's semantics that omission is correct**, which is why it is easy to miss: the retained
+count genuinely does not change across a recycle, so there is nothing to re-render. Under the proposed
+semantics it is a defect, because the *total* grows on every recycle-only boundary while the displayed
+number stays frozen at the last fresh-mount boundary. The hidden count would under-report by more and
+more as the stream continues — the exact failure this unit exists to repair, reintroduced by an
+implementation that followed the plan literally.
+
+**The requirement, therefore:** the banner must be refreshed at the end of every growth patch,
+unconditionally, rather than only when fresh widgets mount.
+
+**This is not an edge case.** The gate's own workload leg streams a 10,000-line fence at the default
+cap of 500 (`talaria/replay/workloads.py:113-114`, boundaries at `:155-164`), which is recycle-only
+from roughly the sixth boundary onward. And the existing growth test cannot catch a miss:
+`test_a_growing_fallback_tail_reuses_its_mounted_widgets` runs at `mount_cap=2000`
+(`tests/ui/test_transcript_blocks.py:813`), where the tail never reaches the cap and never recycles.
+**AE6 below is added for exactly this**, because every other acceptance item would pass with the
+defect present.
 
 **Rejected — caching the total on `_MountedUnit`.** A stored `total_rows` must be updated in lockstep
 with every path that changes the body — growth, retarget, adoption — and a missed update reproduces
@@ -229,7 +256,7 @@ what their call sites pass. Nothing else moves: the fallback trigger (`:435-442`
 (`:1200-1202`), `_condense` (`:1491-1583`), `_compute_new_top` (`:1593-1677`), `condensed_count`
 (`:723-730`), and the rendered-lines identity — which explicitly excludes the banner as chrome
 (`:738`, KTD2) — are all read-only to this change. Because the banner stays chrome (never a projected
-content line) and stays exactly one painted row (`no_wrap=True` at `:624` plus the `height: 1` rule
+content line) and stays exactly one painted row (`no_wrap=True` at `:625` plus the `height: 1` rule
 at `:643-646`), the one property the replay gate's `fallback_banner_accounting` asserts is preserved
 by construction even though the sentence it asserts about is now longer. `test_fallback_banner_paints_exactly_one_row`
 (`tests/ui/test_transcript_blocks.py:778`) pins it across pane widths.
@@ -254,7 +281,22 @@ and its turns assemble to a few dozen wrapped rows — comfortably enough to *co
 comment at `stress.py:49-51` says condensing happens hundreds of times), but nowhere near the fallback
 trigger of 500 wrapped rows or 1,200 descendants — and the feature corpus's constructs are short
 fences, tables, quotes, and parser attacks (`stress.py:287-303`, `:380-469`). No corpus entry trips
-the trigger, so **no fallback banner ever mounts under the gate**. The gate does exercise the
+the trigger.
+
+**Fallback banners do nevertheless mount under the gate, and this plan originally said they never do.**
+`run_gate` also runs `run_adversarial_workloads()` (`talaria/replay/gate.py:1544`), a leg the corpus
+enumeration above omits. All three growth workloads drive a real `TranscriptPane.apply` and trip the
+wrapped-row trigger — `LatencyReport.fell_back` documents that as "expected and correct for all three
+growth workloads" (`talaria/replay/workloads.py:278-289`) — and the boundary probes (`workloads.py:545-549`)
+are built to trip it. On demotion, `_prepare_unit` mounts the banner.
+
+**The conclusion below survives, for a better reason than the one first given.** It does not rest on
+the banner never existing under the gate; it rests on the gate never reading the banner's text. The
+workload leg is consumed only as p99 latency checks (`gate.py:1733-1744`), and no gate check anywhere
+reads banner wording. A wrong sentence in the banner would therefore sail through a green gate, which
+is precisely why the unit tests below are the only proof of wording and must be treated as such.
+
+The gate does exercise the
 condensed marker path (the stress corpus drives `condensed_count` and `_render_condensed` hundreds of
 times), and this change leaves `condensed_count` and the condensed marker's text untouched, so that
 leg is green for the uninteresting reason that it is unchanged. The banner's wording is proven by the
@@ -282,8 +324,8 @@ carry classes and `outer_size` but no text; they keep passing. The direct-pane f
 `fallback_banner_accounting` result — all structural, none reading the banner's text, all unchanged.
 
 **The one property that must survive is the one-row banner.** The new sentence is longer than the
-old by the total's digits, and the RA3 contract (`transcript.py:127-129`) explicitly permits the
-tail of the sentence to clip at the viewport edge — it is `no_wrap` by construction (`:624`) and
+old by the total's digits, and `_fallback_banner`'s own docstring (`transcript.py:593-598`) explicitly permits the
+tail of the sentence to clip at the viewport edge — it is `no_wrap` by construction (`:625`) and
 pinned to height 1 by CSS (`:643-646`) and by `test_fallback_banner_paints_exactly_one_row`
 (`test_transcript_blocks.py:778`). The gate's `fallback_banner_accounting` fails a banner that paints
 more than one row (`gate.py:877-884`); the unchanged construction keeps that from ever becoming
@@ -305,7 +347,14 @@ reachable.
   `banner_hidden <= pane.condensed_count` at a quiescent instant.
 - **AE4.** The growth path's hidden count is not stale: `test_a_growing_fallback_tail_reuses_its_mounted_widgets`
   is updated to assert the post-growth total and hidden count on the new wording, exercising the
-  KTD4 trap (the total must come from the new text).
+  KTD4 trap (the total must come from the new text). **This test runs at `mount_cap=2000` and so
+  never recycles** — it cannot substitute for AE4a, and it is named here so nobody mistakes it for
+  coverage of the capped path.
+- **AE4a.** *The recycle-only boundary, which every other item here would pass with the defect
+  present.* A fallback tail grown past the **default** cap, so that a growth boundary mounts no fresh
+  widgets and is served entirely by the recycle loop, still raises its hidden count across that
+  boundary. Asserted across at least two consecutive recycle-only boundaries, because a single one
+  can pass on a coincidence of the arithmetic. This is the acceptance item for the second KTD4 trap.
 - **AE5.** A descendant-triggered fallback that retains every row still renders a banner with a
   truthful `"0 of N lines of this entry hidden"` clause and the fallback cause. The silent case — a
   banner appearing without a count — is asserted not to happen.
@@ -313,9 +362,11 @@ reachable.
   stays green unmodified, and the `test_fallback_banner_accounting_*` duck-typed gate tests stay green.
 - **AE7.** The replay gate runs green over the existing gate corpus, with `content_is_complete` and
   `interface_shows_everything` both true — the condensed identity holds because `condensed_count` is
-  unchanged, and the fallback banner does not mount under the gate at all, so the gate's green
-  verdict is necessary but not sufficient evidence for this change. The banner's wording is proven by
-  AE1-AE6.
+  unchanged. **Fallback banners do mount under the gate**, in its adversarial workload leg
+  (`talaria/replay/gate.py:1544`), but the gate never reads their text: that leg is consumed only as
+  p99 latency checks (`gate.py:1733-1744`). So the gate's green verdict is necessary and not
+  sufficient — a wrong sentence in the banner would pass it. The wording is proven by AE1 through
+  AE6, and only by them.
 - **AE8.** The project check is clean: `ruff`, `mypy`, `pytest`, `bandit`, `git diff --check`.
 
 **Acceptance for a person, per the charter's evidence rule 2:** on a real gateway, the operator
