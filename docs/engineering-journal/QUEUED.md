@@ -426,6 +426,19 @@ Enumerating the redactor's call sites is the wrong direction: it can only find p
 
 ## P1
 
+### A replay-pause test asserts how fast the runner is, and fails on Linux when it is fast enough
+
+**Author.** v0.3 orchestration, 2026-08-11
+**Priority.** P1
+**Effort.** Small
+**Worth it when.** Before the next release, or sooner if it fails a second time. A test that fails on a documentation-only change is worse than a missing test, because it teaches everyone to merge past a red mark — which is exactly how the non-required Node job went red for two merges before anyone noticed.
+
+**Evidence.** `tests/ui/test_transcript_bounds.py:313`, `test_the_projection_and_the_domain_transcript_agree_at_every_pause_point`. Failed `python-check-linux (3.12)` on pull request 61 with `assert 2 >= 3`, on a branch whose entire diff is three files under `docs/`. `python-check-linux (3.13)` passed on the identical commit, so the failure is not deterministic.
+
+**Mechanism.** The test resumes and pauses a replay up to twelve times, breaking early once `app.replay_complete` is set, then asserts `checked >= 3`. That final assertion is not a property of the code under test — it is a claim that the replay takes at least three resume-pause cycles to drain, which depends on how the runner schedules `pilot.pause()` against the replay source. The guarantee the test exists to prove, `content_is_complete` at every pause point, held on both samples it managed to take. Only the did-I-sample-enough guard failed.
+
+**The fix is not simply lowering the threshold.** Three samples is a real requirement — checking a repeated invariant once is the thing this test was written to stop. The sound repair makes the sample count a property the test controls rather than one it observes: feed enough frames that the replay cannot drain in two cycles, or drive the source deterministically so each resume yields a bounded number of frames. Lowering `3` to `2` keeps the flake and weakens the check at the same time.
+
 ### ~~Make the macOS checks required status checks on `main`~~ — CLOSED 2026-08-03
 
 **Author.** v0.1 scaffold code review, 2026-08-02

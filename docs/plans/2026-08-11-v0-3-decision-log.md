@@ -85,12 +85,30 @@ carries no secrets by policy, which is a property to re-check rather than an ass
 rate-limit half binds Claude-routed sessions specifically; the three-stream total binds everything,
 because operator attention is the scarcer resource.
 
-### D6 — elevated permission is not in use
+### D6 — elevated permission is in use, and this entry originally said the opposite
 
-**Default, unchanged 2026-08-11.** No child session runs with elevated permission. The local agent
-launcher exposes a permission-enabled preset rather than the `--yolo` flag described in some older
-instructions; neither is used unless the operator authorizes it for a named unit, and any such grant
-is appended here.
+**Recorded 2026-08-11 as a default, corrected the same day.** The original entry claimed no child
+session runs with elevated permission. That was false when it was written.
+
+**What is actually true.** The operator's user-level Claude Code settings set the default permission
+mode to bypass prompts, globally. That applies to the root session and to every child session this
+release launches, whatever the launcher is asked for. No session requests it, and none can decline
+it.
+
+**How the error happened, because the shape of it matters more than the fact.** The claim was written
+from what the launcher's own flags *do* — where the permission-enabled preset and the `--yolo` flag
+some older instructions describe are both genuinely unused — without reading the settings file that
+overrides them. It is the failure this repository's rules name directly: asserting system state from
+what the tooling would do rather than from what the configuration says. One `grep` settled it.
+
+**What follows.** Nothing in the charter's authority section changes: what a session may *do* is
+bounded by its brief and by the operator's stated limits, not by whether a prompt appears. What
+changes is that briefs carry the boundary in words, since no prompt will enforce it — which is
+already how the read-only review briefs in this release are written, and why the one child session
+that wrote a file into the repository against its brief was caught by review rather than by a dialog.
+
+The launcher's permission-enabled preset and the `--yolo` flag remain separately unused. Any
+per-unit grant beyond the standing setting is still appended here.
 
 ### D7 — the four open questions, answered
 
@@ -162,12 +180,53 @@ Two consequences follow directly and are already written into the charter's spin
 
 Chords stay in reserve for exactly those cases and are not adopted as the scheme.
 
+### D10 — Antigravity is retired from this release's work
+
+**Decided 2026-08-11**, in the operator's own words: "antigravity seems to be creating a lot of
+errors, maybe we should use qwen instead of antigravity." This narrows D4's four products to three:
+the root Claude session, Qwen Code, and the Claude CLI on the DeepSeek route.
+
+**The evidence was already in the register when the operator called it.** Of two Antigravity sessions
+run to a verdict, one returned a finding that was false against the tree — it reported a live gate
+check as removed, having over-read a comment about a superseded *claim* — and the other went out of
+scope entirely. No session on either other product was rejected.
+
+**What is lost, stated plainly.** D4's argument for Antigravity was independence: a reviewer from a
+different model family than the implementer. That argument was sound and the retirement costs it.
+Independence is preserved more cheaply by the split that actually caught the error — a judgement
+reviewer and a mechanical citation resolver, on different products, where the cheap pass can falsify
+the expensive one. Qwen Code and the DeepSeek route are different families from each other and from
+the root session, so no review in this release is graded by the model that wrote the work.
+
+**Rejected: keeping Antigravity for review only.** Both of its failures were on review tasks. Holding
+a product back for exactly the job it failed at is not a narrowing.
+
+**Revisit when** an Antigravity session completes a bounded task without going out of scope, or the
+operator asks for it. This is a decision about this release's work, not a permanent judgement.
+
+### D11 — the DeepSeek route runs `deepseek-v4-flash`
+
+**Decided 2026-08-11**, in the operator's own words: "for claude-deepseek maybe use deepseek-v4-flash
+instead of pro, its a newer model." Flash is the newer of the two despite a name that reads, by
+analogy with other vendors, like a smaller tier. That analogy is what made `deepseek-v4-pro` the
+wrong intuitive default in the earlier sessions of this release.
+
+**No quality comparison is claimed in either direction.** Two units ran on `deepseek-v4-pro` and were
+accepted in full; the first unit on `deepseek-v4-flash` returned five findings that were all real.
+That is not a measurement of either model — the tasks were different — and it is recorded here so
+that nobody later reads the register as evidence for a ranking it cannot support.
+
 ## 2. Child-session register
 
 | Session name | Unit | Engine | Effort | Permission | Created | Closed | Outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `b4-doc-review` | B4 | Antigravity, Gemini 3.1 Pro | High | standard | 2026-08-11 | 2026-08-11 | **Partly accepted.** Returned `BLOCKED` with three findings; two accepted and repaired (KTD5 and the latch-lifetime correction), one **rejected on evidence** — see the correction below |
-| `b4-cite-check` | B4 | Qwen Code, `qwen3.8-max-preview` | n/a | standard | 2026-08-11 | 2026-08-11 | **Accepted in full.** Nineteen citations checked, sixteen correct and three wrong; all three confirmed by hand and repaired |
+| `b4-doc-review` | B4 | Antigravity, Gemini 3.1 Pro | High | bypass (standing) | 2026-08-11 | 2026-08-11 | **Partly accepted.** Returned `BLOCKED` with three findings; two accepted and repaired (KTD5 and the latch-lifetime correction), one **rejected on evidence** — see the correction below |
+| `b4-cite-check` | B4 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Nineteen citations checked, sixteen correct and three wrong; all three confirmed by hand and repaired |
+| `l1-l4-loose-ends` | L1, L4 | Claude CLI on DeepSeek, `deepseek-v4-pro` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** ADR-0006 flipped to `accepted` on its own stated condition and both deferral entries written; verified by hand, merged as pull request 57 |
+| `b4-implement` | B4 | Claude CLI on DeepSeek, `deepseek-v4-pro` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Implemented the latch and the cross-session guard to plan; merged as pull request 60 |
+| `b4-code-verify` | B4 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Confirmed five of five key technical decisions implemented and six of six acceptance items asserted, against the code rather than the commit message |
+| `a3-diagnosis` | A3 | Antigravity, Gemini 3.1 Pro | High | bypass (standing) | 2026-08-11 | 2026-08-11 | **Rejected.** Went out of scope — compacted past a million input tokens, wrote its output outside the repository, then began searching the operator's home directory. Interrupted. Its theory was separately refuted by hand; see R3 |
+| `b5-doc-review` | B5 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Returned `BLOCKED` with five findings, all five confirmed by hand and repaired; on re-verification returned `PROCEED` having checked each repair against the tree rather than against the plan's word. Merged as pull request 59 |
 
 **The rejected finding, recorded rather than dropped.** The Antigravity review reported that the
 replay gate's `interface_shows_everything` check "no longer exists", replaced by the two-part ownership
@@ -182,9 +241,16 @@ and the mechanical one settled a question the judgement one got wrong. That is t
 split, and it is recorded here because it is the first evidence for it in this release.
 
 **Column rules.** *Session name* is durable and names the unit, never the operator's machine or
-workspace. *Permission* records the choice explicitly, including "standard" — a blank cell is a gap,
-not a default. *Outcome* records what was accepted, not what was produced: a session whose findings
-the root session rejected is recorded as rejected, with the reason.
+workspace. *Permission* records what was actually in force, not what was asked for — a blank cell is
+a gap, not a default. Every row in this release reads "bypass (standing)" because the operator's
+user-level setting applies it to every session; see D6, which originally recorded the opposite.
+*Outcome* records what was accepted, not what was produced: a session whose findings the root session
+rejected is recorded as rejected, with the reason.
+
+**The register's own evidence, now that there are enough rows to read.** Seven sessions across three
+products. Both rejections and the only partial acceptance are Antigravity's; every session on Qwen
+Code and on the DeepSeek route was accepted in full. That is what D10 is decided on, and it is a
+count of outcomes on this repository's work rather than a claim about the products in general.
 
 ## 3. Root decisions in response to child questions
 
@@ -232,6 +298,35 @@ the same motion, so shipping the flood fix alone would ship a guarantee that is 
 **Why the sibling branch is correctly left alone.** `ProtocolErrorFrame` (`decode.py:150-155`) carries
 no session at all, so routing it past the guard is right — there is nothing to compare. The two early
 returns look alike and are not.
+
+### R3 — unit A3 is not agent-diagnosable, and the mixed-height theory is refuted
+
+**The question.** The charter opens unit A3 with a diagnosis step because the mis-aimed mouse is
+undiagnosed, and names a suspect: the mixed-height widget layout introduced in v0.2. A child session
+was pointed at it. Can a session reading the code establish the cause?
+
+**Decided: no, and the suspect is wrong.** The theory requires Talaria to convert a click's vertical
+position into a transcript row, so that rows of differing heights would shift the mapping. Talaria
+does not do that anywhere. `talaria/ui/transcript.py` contains **zero** click handlers, and its
+module docstring states that mapping is by entry id, published by `entry_scoped_view`, adding that
+every method that walks entries reads that id "never a line offset". The one click handler in the
+whole interface is in `talaria/ui/agents.py:105`. There is no offset arithmetic to be wrong.
+
+**What that leaves.** A double-click landing several rows above the clicked line, in a pane whose
+selection also does not reach through to the terminal's own copy, with no Talaria code performing the
+mapping. The remaining candidates are below Talaria — the terminal framework's own mouse handling, or
+mouse-mode negotiation between Talaria and the surrounding multiplexer — and separating them needs a
+live drive, not a reading.
+
+**Rejected: another diagnosis session.** The first one spent over a million input tokens, left the
+repository, and produced nothing that survived checking. A second reading of code that provably does
+not contain the mechanism would cost the same and conclude the same.
+
+**What happens instead.** A3's reproduction moves to the operator checklist as a hand-driven capture:
+which pane, which multiplexer, whether the offset is constant or grows down the pane, and whether it
+reproduces outside the multiplexer. **Unit A3 is blocked on that capture, and unit A1's click
+affordance is blocked on A3** — which is D9's stated prerequisite, so the release sequence already
+accounts for it. This is recorded as a blocked unit rather than a failed one.
 
 ## 4. Provenance
 
