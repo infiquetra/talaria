@@ -56,6 +56,7 @@ AMBIENT_IGNORED_EVENTS: frozenset[str] = frozenset(
         "moa.phase",
         "moa.progress",
         "notification.clear",
+        "platforms.changed",
         "reaction",
         "skin.changed",
         "voice.status",
