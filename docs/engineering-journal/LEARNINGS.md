@@ -2,6 +2,18 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-10
+
+### Two hours in a real terminal found seven defects that 24-of-24, six review rounds and 1,700 tests could not
+
+**Evidence.** The first hands-on drive of v0.2 on a real desktop, against a live gateway, immediately after the release merged: [docs/analysis/2026-08-10-v0-2-hands-on-notes.md](../analysis/2026-08-10-v0-2-hands-on-notes.md). Nineteen operator notes produced seven defects and four design questions. The two worst were invisible to every existing check. The approval card has no keyboard path on macOS at all — cards never auto-focus unless input-backed (`talaria/ui/prompts.py:1171`) and are reachable only through the `F1` jump, and `F1` never arrives because the desktop claims it; both keys the card advertises (`enter select · esc decline`) were tested and neither works. Mouse selection lands several rows above the click. Neither involves a wrong value, a dropped row or a missed deadline, so neither is expressible as a gate check.
+
+**Mechanism.** The gate's checks are all statements about the process's own state — rendered rows against projected lines, mounted widget counts, apply latency, RSS. Every defect found today is a statement about the *boundary* between that process and a human at a desk: which keystrokes the window manager delivers, where a click lands, whether a printed sentence means to a reader what it means to its author. Both v0.1 and v0.2 record "no run on either platform has used a real terminal emulator" as a known limitation, and the release was shipped with that limitation accepted — correctly, since it was named. What was not appreciated is that the limitation is not a *coverage gap of the same kind* as the others, to be closed later by more of the same instrument. It is a different class of claim: no pseudo-terminal has a window manager to intercept a key, and no assertion can tell you a status row reads as gibberish to the person it was written for. Confirmation came from within the run too — the same session falsified two of its own conclusions within minutes (a "macOS eats function keys" generalisation killed by `F8` and `F9` working, and a `platforms.changed` flood confirmed as faithful rendering only after the frame log showed 26 events on the wire).
+
+**Generalizable rule.** A verification apparatus certifies the seam it is defined over and says nothing about the seam outside it — and the more thorough it is, the more it reads as a statement about the whole product. When a known limitation names a whole class of claim the instrument cannot make (real input devices, real displays, real readers), treat it as a required second method with its own schedule, not as coverage to be extended later. Ship a release only after someone has driven it; budget the hours before the tag, not after.
+
+**Corollary, from the same run.** A design that surfaces unknown inputs rather than dropping them (`talaria/domain/decode.py:114`, unknown gateway event types drawn as named rows) is right, and its failure mode is only visible against a live peer: one ordinary turn carried 26 `platforms.changed` events, each drawn as a red row, while 204 `sessions.changed` events passed in silence purely because that type happened to be in the known set. Every gap in such a set is a flood waiting for a real peer to find it, so the set needs a live capture on a schedule — which is exactly what `_OBSERVED_ON_A_LIVE_GATEWAY` (`decode.py:110`) says in its own comment.
+
 ## 2026-08-09
 
 ### The same text, two row conventions: a seam between them needs a count check, not a text check
