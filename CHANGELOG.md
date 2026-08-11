@@ -16,7 +16,7 @@ with the usual caveat that a `0.x` line may break anything between releases.
   corrects it forward.** Both [the v0.2.0 release notes](docs/releases/v0.2.0.md)
   and the v0.2.0 entry below say `F4` "sweeps the answerable set" and stop
   there. What `F4` is actually bound to is `interrupt` — it **cancels the
-  in-flight turn**, and only *then*, and only when the gateway confirms the
+  in-flight turn**, and only _then_, and only when the gateway confirms the
   cancellation, does it decline that turn's outstanding prompts. An interrupt
   whose outcome is unknown declines nothing, deliberately, because the turn may
   still be alive.
