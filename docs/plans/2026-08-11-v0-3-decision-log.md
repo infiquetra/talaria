@@ -164,11 +164,22 @@ Chords stay in reserve for exactly those cases and are not adopted as the scheme
 
 ## 2. Child-session register
 
-No child session has been created. The charter is preparation, and preparation is not permission.
-
 | Session name | Unit | Engine | Effort | Permission | Created | Closed | Outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| _(none yet)_ | | | | | | | |
+| `b4-doc-review` | B4 | Antigravity, Gemini 3.1 Pro | High | standard | 2026-08-11 | 2026-08-11 | **Partly accepted.** Returned `BLOCKED` with three findings; two accepted and repaired (KTD5 and the latch-lifetime correction), one **rejected on evidence** — see the correction below |
+| `b4-cite-check` | B4 | Qwen Code, `qwen3.8-max-preview` | n/a | standard | 2026-08-11 | 2026-08-11 | **Accepted in full.** Nineteen citations checked, sixteen correct and three wrong; all three confirmed by hand and repaired |
+
+**The rejected finding, recorded rather than dropped.** The Antigravity review reported that the
+replay gate's `interface_shows_everything` check "no longer exists", replaced by the two-part ownership
+proof. It does exist — defined at `talaria/replay/gate.py:996` and called at `gate.py:1382` — and the
+citation check independently reported it at the same line. The review had over-read the U6 comment at
+`tests/replay/test_gate.py:351-365`, which says the function's original *claim* was replaced. The plan
+was corrected in the opposite direction from the one the finding asked for: it now names **both** gate
+checks, because it had been naming only one.
+
+**What the disagreement bought.** Two engines were pointed at the same document with different jobs,
+and the mechanical one settled a question the judgement one got wrong. That is the argument for the
+split, and it is recorded here because it is the first evidence for it in this release.
 
 **Column rules.** *Session name* is durable and names the unit, never the operator's machine or
 workspace. *Permission* records the choice explicitly, including "standard" — a blank cell is a gap,
@@ -178,9 +189,49 @@ the root session rejected is recorded as rejected, with the reason.
 ## 3. Root decisions in response to child questions
 
 Append-only. Each entry names the question, the decision, the alternative rejected, and the evidence
-that settled it. Empty until a child session asks something.
+that settled it.
 
-_No entries._
+### R1 — the unknown-event latch lives for the connection, not for the focused session
+
+**Asked 2026-08-11** by the `b4-doc-review` session, which read unit B4's phrase "announced once per
+session" against `focus_session` (`talaria/domain/state.py:475-494`), found that it clears neither
+`unknown_event_types` nor the proposed repeat counter, and called that a correctness defect requiring
+both to be cleared on a session switch.
+
+**Decided: the latch resets on a connection status change and not on a session switch**, and unit B4's
+wording is corrected from "per session" to "per connection" to say so.
+
+**The evidence that settled it** is the precedent the plan was already built on. `protocol_noise_announced`
+is cleared in exactly one place — `state.py:683`, when the connection status changes — and it is
+deliberately absent from `focus_session`'s list of cleared fields, a list that names every field it
+touches. The existing latch is per connection. A reconnect is the point after which what the gateway
+emits may genuinely have changed; switching which conversation is on screen is not.
+
+**Rejected: clearing on session switch.** It would announce the same unknown type again on every
+switch back, which is the flood the unit exists to stop, arriving more slowly. The proposed correction
+was also wrong in its details — it assigned `frozenset()` to `unknown_event_types`, which is a
+`tuple[str, ...]` at `state.py:167`.
+
+**What the finding got right, and it was the more valuable half.** The plan's wording *was* wrong. It
+claimed a per-session lifetime the code would not have delivered, and nobody had noticed. The decision
+went against the proposed fix and still came from the finding.
+
+### R2 — the cross-session guard covers unknown events
+
+**Asked 2026-08-11** by the same session: `apply_frame` routes an `UnknownEventFrame` straight to
+`_apply_unknown_event` and returns, so it never reaches the guard inside `_apply_event`.
+
+**Decided: unit B4 fixes it**, as KTD5, rather than scoping it out as pre-existing. Verified by hand
+before accepting: the guard at `state.py:1434-1437` is indeed only reachable through `_apply_event`,
+and `UnknownEventFrame` carries the `session_id` the guard needs (`decode.py:163-169`).
+
+**Rejected: leaving it as out of scope.** The unit's headline claim is that an unknown type announces
+itself once. A background session's unknown event writes an extra row and corrupts the repeat count in
+the same motion, so shipping the flood fix alone would ship a guarantee that is not true.
+
+**Why the sibling branch is correctly left alone.** `ProtocolErrorFrame` (`decode.py:150-155`) carries
+no session at all, so routing it past the guard is right — there is nothing to compare. The two early
+returns look alike and are not.
 
 ## 4. Provenance
 
