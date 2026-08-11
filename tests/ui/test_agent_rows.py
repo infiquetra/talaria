@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from talaria.ui.agents import format_row
+from talaria.ui.app import AGENTS_NOTHING_TO_TOGGLE
 from tests.ui.conftest import event, paused_app
 
 
@@ -98,6 +99,55 @@ async def test_the_region_hides_itself_when_there_are_no_sub_agents() -> None:
         await pilot.pause()
         assert app.agents.row_texts == ()
         assert app.agents.display is False
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_f2_with_no_sub_agents_says_so_and_the_region_stays_hidden() -> None:
+    """B3 (AE4 half one): an empty region gives a toggle nothing to show or
+    hide, so the keypress says so — the old silence was indistinguishable
+    from a dead key. The flag still flips (behaviour is unchanged, per B3's
+    scope discipline); only the silence is broken."""
+    app, controls = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 30)) as pilot:
+        controls.resume()
+        await app.drain(timeout=30.0)
+        await pilot.pause()
+        assert app.agents.row_texts == ()
+        assert app.agents.display is False
+
+        await pilot.press("f2")
+        await pilot.pause()
+
+        assert AGENTS_NOTHING_TO_TOGGLE in app.composer.notice
+        assert app.agents.display is False, "the region stays hidden"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_f2_with_rows_present_collapses_without_a_notice() -> None:
+    """B3 (AE4 half two): with rows on screen the collapse is visible, so a
+    notice would be noise on a release quietening the interface (B4). The
+    collapse itself is the R16 behaviour the direct-call test above
+    asserts."""
+    app, controls = paused_app(_mid_turn_frames())
+    async with app.run_test(size=(100, 30)) as pilot:
+        controls.resume()
+        await app.drain(timeout=30.0)
+        await pilot.pause()
+        rows_before = app.agents.row_texts
+        assert len(rows_before) == 3
+
+        await pilot.press("f2")
+        await pilot.pause()
+
+        assert AGENTS_NOTHING_TO_TOGGLE not in app.composer.notice, (
+            "a visible collapse owes no confirmation"
+        )
+        assert app.agents.row_texts == ()
+        assert app.agents.display is True
+        header = app.agents.header_text
+        assert "2 active" in header and "1 finished" in header
         await app.shutdown_sources()
 
 

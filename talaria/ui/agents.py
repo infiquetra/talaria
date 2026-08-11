@@ -148,6 +148,17 @@ class AgentRows(Vertical):
     def row_texts(self) -> tuple[str, ...]:
         return tuple(str(row.content) for row in self._rows)
 
+    @property
+    def is_populated(self) -> bool:
+        """Whether the region has any sub-agent rows to show or hide (B3).
+
+        The ``-populated`` class is decided from the same predicate in
+        :meth:`apply`; this is the public form of that check, so an action
+        above can tell a toggle that will be seen from one that changes
+        nothing on screen.
+        """
+        return bool(self._view.rows) if self._view is not None else False
+
     def row_for(self, subagent_id: str) -> AgentRow | None:
         """The widget currently showing one child, or ``None`` when collapsed."""
         for row in self._rows:
