@@ -28,17 +28,17 @@ A prompt card never takes focus when it mounts unless it is input-backed — `ta
 
 Two things in it are worth carrying into planning rather than triaging item by item. First, a theme: four findings that look unrelated — a status row nobody can interpret, a number without its scope, a card advertising keys that do nothing, and a keypress indistinguishable from a dead one — are all one problem, which is that Talaria does not confirm what it just did. That is a tighter release theme than "readability" and absorbs most of it. Second, one defect is in the shipped release notes themselves: both `docs/releases/v0.2.0.md:21` and `CHANGELOG.md:26` say `F4` "sweeps the answerable set", omitting that it first interrupts the in-flight turn (`app.py:776` → `action_interrupt` → the sweep at `:1666`). The omitted half is the destructive one.
 
-### The v0.2.0 release has no wheel and no source distribution attached
+### ~~The v0.2.0 release has no wheel and no source distribution attached~~ — CLOSED 2026-08-11
 
 **Author.** v0.2.0 release, 2026-08-11
-**Priority.** P0
-**Effort.** Small
-**Worth it when.** Before v0.3 work starts — a released tag whose artifacts are missing is a broken release, and the repair gets harder once other tags exist above it.
+**Closed.** 2026-08-11, same day, on the operator's explicit go-ahead.
 **Context.** [The v0.3 handoff](../plans/2026-08-11-v0-3-session-handoff.md), *Loose ends*; mechanism in [LEARNINGS.md](LEARNINGS.md) under 2026-08-11.
 
-`v0.1.0` carries `talaria-0.1.0-py3-none-any.whl` and `talaria-0.1.0.tar.gz`. `v0.2.0` carries no assets. The release was created by hand with `gh release create` about a minute before the tag-triggered `release.yml` reached its final step, which then failed with "a release with the same tag name already exists". Steps 1–15 of that run passed on the tagged tree, so the release is fully validated and merely undelivered.
+The release was created by hand with `gh release create` about a minute before the tag-triggered `release.yml` reached its final step, which then failed with "a release with the same tag name already exists". Steps 1–15 of that run passed on the tagged tree, so the release was fully validated and merely undelivered.
 
-**The repair that preserves provenance** is to delete the GitHub release — **not** the tag — and re-run the failed workflow run, so the attached artifacts are the ones continuous integration built from the tagged tree, matching how `v0.1.0` got its assets and preserving the reproducible-digest property. Uploading locally-built artifacts instead would attach files nobody verified. **Deleting a published release is outward-facing: it needs the operator's explicit go-ahead, not an inference from this entry.**
+Repaired by deleting the GitHub release — never the tag, which stayed at `465649e4` throughout — and re-running the failed workflow run. `v0.2.0` now carries `talaria-0.2.0-py3-none-any.whl` and `talaria-0.2.0.tar.gz`, built by continuous integration from the tagged tree, matching how `v0.1.0` got its assets. The recreated release was verified byte-for-byte against a backup taken before the delete: identical body hash, title, and prerelease flag.
+
+**The rule that outlives it:** push the tag and let `release.yml` publish; never create the release by hand. After any release, check the assets rather than the release page — a validated-but-undelivered release looks entirely normal from the outside.
 
 ### Decide which Validate jobs are required status checks on `main`
 
