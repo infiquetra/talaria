@@ -40,14 +40,14 @@ picker row selection that unit B5's KTD3b hands over — with the feedback each 
 | ------------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----- |
 | `ctrl+q`           | Textual's `quit`                         | visible — the app exits                                                                                 | no    |
 | `f1`               | `action_jump_to_prompt` (`app.py:1409`)  | declined by a modal: notice (`app.py:1425-1427`); nothing outstanding: **silent** (`app.py:1428`)       | yes   |
-| `f8`               | `action_toggle_pause` (`app.py:1391`)    | notice in both modes — pacing state, or the live refusal (`app.py:1376-1390`)                           | no    |
+| `f8`               | `action_toggle_pause` (`app.py:1391`)    | notice in both modes — the replay pacing state (`app.py:1395`, text from `_pacing_notice` at `:1366-1374`), or the live refusal (`_pacing_refused_live` at `:1376-1390`) | no    |
 | `f9`               | `action_slow_down` (`app.py:1403`)       | same; the notice re-states the speed even at the `MIN_SPEED` clamp (`talaria/replay/controls.py:31`)    | no    |
 | `f10`              | `action_speed_up` (`app.py:1397`)        | same, at `MAX_SPEED`/unbounded (`controls.py:32`, `:37`)                                                | no    |
 | `f2`               | `action_toggle_agents` (`app.py:1430`)   | visible when rows exist; **invisible when the region is empty** (`talaria/ui/agents.py:119-122`)        | yes   |
 | `f3`               | `action_toggle_palette` (`app.py:2769`)  | visible both ways — the region shows or hides, and shows at least its header line                       | no    |
 | `f4`               | `action_interrupt` (`app.py:1436`)       | notice in both modes — replay refusal (`app.py:1443-1445`) or the gateway's outcome (`app.py:1660`)     | no    |
 | `f5`               | `action_follow_bottom` (`app.py:1433`)   | visible when scrolled up; **silent when already following**                                             | yes   |
-| `f6`               | `action_toggle_picker` (`app.py:2774`)   | dialog opens, or one of three named refusals (`app.py:2809-2821`)                                       | no    |
+| `f6`               | `action_toggle_picker` (`app.py:2774`)   | dialog opens, or a named refusal — two on the models path (`app.py:2809`, `:2812`), four across both pickers (`:2809`, `:2812`, `:2818`, `:2821`) | no    |
 | `f7`               | `action_toggle_profiles` (`app.py:2777`) | same shape (`app.py:2818-2821`)                                                                         | no    |
 | (picker row enter) | `switch_session` (`app.py:3700`)         | dialog refuses the marked current row inline; the unmarked-current landing is **silent** (`app.py:3307`) | yes   |
 
@@ -79,10 +79,28 @@ picker row selection that unit B5's KTD3b hands over — with the feedback each 
    the same history a second time), and nothing is announced. Unit B5's merged plan names this
    branch and hands the feedback need to this unit — see KTD4.
 
-Two non-binding key paths were examined and stay out of scope. `pageup`/`home` hold the scroll
-anchor (`app.py:4314-4315`): their own scroll is the feedback, and the held state makes itself
-visible the moment new content arrives and the view stays put. Mouse scroll up does the same via
-`hold_anchor` (`app.py:4306-4307`). And every key inside the modal picker is already answered —
+Two non-binding key paths were examined. One stays out of scope and the other is out of scope for a
+different reason than this plan first gave.
+
+**`pageup` and `home` perform no scroll at all, and the first draft of this plan said they did.**
+`app.py:4314-4315` calls only `self.transcript.hold_anchor()`, which sets `self.follow = False`
+(`talaria/ui/transcript.py:1714-1715`) and nothing else. Their sibling in the same handler is the
+contrast that proves it: `end` reaches `follow_bottom()`, which calls `scroll_end`
+(`transcript.py:1717-1719`). The transcript pane has no page-key handling of its own and is never
+focused — the app's own comment at `app.py:4311-4313` says the composer holds focus — so nothing
+scrolls the view. The only test that presses `pageup`, `test_end_and_pageup_toggle_the_anchor`
+(`tests/ui/test_transcript_bounds.py:159-169`), asserts only that the flag flipped.
+
+By this unit's own standard those keys are silent, and at the bottom of a paused replay they are
+silent forever, because no new content will arrive to reveal that the anchor is held. **They are
+excluded anyway, on different ground: this is a navigation gap, not a feedback gap.** A notice
+saying "scroll position held" would confirm a keypress whose advertised effect never happens, which
+is a worse outcome than the silence — it would make a broken control look like a working one. The
+missing scroll belongs to spine A's mis-aimed-input family alongside unit A3, and is filed as its
+own defect rather than papered over here. Mouse scroll up reaches the same `hold_anchor`
+(`app.py:4306-4307`) but is genuinely fine, because the scroll wheel moves the view itself.
+
+Every key inside the modal picker is already answered —
 movement highlights, typing filters, and an unselectable row is refused in the dialog's own
 refusal line (`talaria/ui/dialog.py:389-404`, prefix at `dialog.py:70`) — which is the standard
 this unit asks the app bindings to meet.
@@ -186,7 +204,19 @@ voice on both surfaces.
 
 The two halves compose with unit B5's implementation when it merges: B5 adds a transcript row in
 the **seed** branch (focus moved), this unit adds a transient notice in the **retain** branch
-(nothing moved). The branches are disjoint at `app.py:3307`, so the two changes cannot double up.
+(nothing moved).
+
+**The invariant the composition depends on, stated rather than assumed.** B5's row must be appended
+*after* the `if previously_focused != raw:` line — inside the seed branch — and this unit's notice
+*inside* the retain branch. Only then are the two mutually exclusive. This is worth pinning because
+B5's own KTD3a expresses its insertion window as "after `land_session` and before `seed_history`", a
+range that spans that `if`: an implementer placing the row one line early would fire it on the retain
+branch as well, double-firing with this unit's notice and contradicting B5's own KTD3b and AE2a.
+
+**Verified, not predicted.** B5 was implemented while this plan was under review, and the row landed
+inside the seed branch — `feat/v0-3-unit-b5`, commit `28665d2`, guarded by `if outcome.method ==
+RESUME_METHOD:` within the moved-focus block. The invariant holds today. It is written down anyway,
+because the next change to either function is where it would quietly stop holding.
 
 ### KTD5 — feedback is tied to the action method, never to the key, because spine A is rewriting the key set
 

@@ -426,6 +426,19 @@ Enumerating the redactor's call sites is the wrong direction: it can only find p
 
 ## P1
 
+### `pageup` and `home` never scroll — they only stop the view following
+
+**Author.** v0.3 unit B3 document review, 2026-08-11
+**Priority.** P1
+**Effort.** Small
+**Worth it when.** With spine A's mis-aimed-input work, or sooner. The operator's stated way of reading back while a turn streams is to scroll up; the key advertised for that does not move the view, which makes reading back during a live turn a mouse-only operation — the same shape as the approval card that could only be answered with the mouse.
+
+**Evidence.** `talaria/ui/app.py:4314-4315` handles `pageup` and `home` by calling `self.transcript.hold_anchor()`, and that method sets `self.follow = False` and nothing else (`talaria/ui/transcript.py:1714-1715`). Its sibling in the same handler is the contrast that proves the gap: `end` reaches `follow_bottom()`, which calls `scroll_end` (`transcript.py:1717-1719`). The transcript pane declares no page-key bindings of its own, and the handler's own comment at `app.py:4311-4313` states why the keys arrive at the application at all — the composer holds focus, not the transcript — so the framework never scrolls the pane. The only test that presses `pageup`, `test_end_and_pageup_toggle_the_anchor` (`tests/ui/test_transcript_bounds.py:159-169`), asserts only that the flag flipped, so the missing scroll is invisible to the suite.
+
+**Why this was not folded into unit B3.** B3 makes silent keypresses distinguishable from effective ones, and by that standard `pageup` qualifies — pressed at the bottom of a paused replay it does nothing observable, permanently, since no new content will arrive to reveal that the anchor is held. It is excluded deliberately: adding a notice reading "scroll position held" would confirm a keypress whose advertised effect never happens, dressing a broken control as a working one. The repair is to make the key scroll, not to announce that it did not.
+
+**Worth checking at the same time.** Whether `home` should scroll to the top of the transcript rather than merely release the anchor, and whether `F5` is alive at all while scrolled up — an open item on the operator's own checklist that touches the same follow state.
+
 ### A replay-pause test asserts how fast the runner is, and fails on Linux when it is fast enough
 
 **Author.** v0.3 orchestration, 2026-08-11
