@@ -90,7 +90,7 @@ before today.
 
 - The 256k context window on `muse-spark-1.2-contributor` (note 1) — the gateway's
   model catalogue.
-- Approvals not firing (notes 6, 7) — `approvals.mode: off` on the `mimir-engineer`
+- Approvals not firing (notes 6, 7) — `approvals.mode: off` on the operator's Hermes
   profile. Flipped to `manual` for the test and **restored to `off`**, verified.
 - An expired approval defaults to **deny** (note 15 follow-up) — the safe default.
 
@@ -279,7 +279,7 @@ for v0.3; seeing the approval dialogue **is**.
 ### Note 9 — the approval card, seen for the first time outside a test
 
 Exercising: step 3, after setting `approvals.mode` to `manual` on the
-`mimir-engineer` profile. The running dashboard picked the change up live — **no
+operator's Hermes profile. The running dashboard picked the change up live — **no
 restart was needed**, and Talaria's credential stayed valid.
 
 The card as rendered:
@@ -547,8 +547,8 @@ holds against a second, wider table.
   boundary. Needs a frame log to settle — `talaria --record` on a session that runs
   a tool would capture it. Do not treat as a Talaria defect until the frames say so.
 - **Note 7 — root cause found, and it is neither Talaria nor a bug.** The gateway
-  Talaria dials runs as `hermes -p mimir-engineer dashboard --host 127.0.0.1 --port
-  8765 --no-open`, and `hermes -p mimir-engineer config get approvals.mode` resolves
+  Talaria dials runs as `hermes -p <profile> dashboard --host 127.0.0.1 --port
+  8765 --no-open`, and `hermes -p <profile> config get approvals.mode` resolves
   to **`off`**. The global `~/.hermes/config.yaml` says `approvals: mode: manual`
   (line 517), so the profile overrides the global setting and this session was never
   going to prompt for anything. `hermes approvals test` reads the global policy,
@@ -558,7 +558,7 @@ holds against a second, wider table.
   this gateway as configured.** Nothing about the prompt machinery has been driven by
   hand yet — not the card, not the hint line, not `Escape` sending an explicit
   `deny`. That whole leg of v0.2 remains unverified in a real terminal.
-  To fix, one of: set `approvals.mode` to `manual` on the `mimir-engineer` profile
+  To fix, one of: set `approvals.mode` to `manual` on that profile
   and restart the dashboard; or run a second gateway on another port under a profile
   that already prompts, and point Talaria at that. Unknown, and worth establishing
   before choosing: whether the running dashboard re-reads `approvals.mode` per
