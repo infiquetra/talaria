@@ -358,10 +358,13 @@ async def test_the_projection_and_the_domain_transcript_agree_at_every_pause_poi
     app, _ = paused_app(stress_frames, mount_cap=SMALL_CAP)
     async with app.run_test(size=(80, 24)):
         all_records = records(stress_frames)
-        # Six batches guarantees at least three checks (the original guard) for
-        # any corpus that triggers the mount cap, and for the 321-frame stress
-        # fixture it yields 6 checks of ~53 frames each — wall-clock
-        # independent and impossible to fail due to runner speed.
+        # A sixth-of-the-corpus batch guarantees at least three checks (the
+        # original guard) for any corpus that triggers the mount cap. For the
+        # 321-frame stress fixture the batch is 53 frames, which yields seven
+        # checks rather than six — integer division floors, so the remainder
+        # gets a short final batch. Either way the count is ceil(n/batch_size),
+        # a value this test computes, not one it observes: wall-clock
+        # independent and impossible to fail because of runner speed.
         batch_size = max(1, len(all_records) // 6)
         checked = 0
         for start in range(0, len(all_records), batch_size):
