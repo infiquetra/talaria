@@ -499,11 +499,17 @@ async def test_the_controls_do_not_move_when_focus_leaves_the_composer() -> None
     release, and the click landed on the card body instead of the button. Traced
     directly: the buttons sat at ``y=15`` for the ``MouseDown`` and ``y=17`` for
     the ``Click``.
+
+    A1/A2: approval cards now auto-focus on mount when the composer is empty
+    (KTD1), so this test keeps the composer non-empty to prove the layout
+    stability of an explicit focus move, not of the mount-time auto-focus.
     """
     dispatcher = RecordingDispatcher()
     app = live_app(dispatcher)
 
     async with app.run_test() as pilot:
+        await pilot.press("h", "i")
+        await pilot.pause()
         feed(app, event("approval.request", {"description": "rm -rf build"}))
         await settle(app, pilot)
 

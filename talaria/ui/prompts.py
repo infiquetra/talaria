@@ -1153,23 +1153,31 @@ class PromptRegion(VerticalScroll):
         # gateway resolves in. Index 0 is the activity line, so row ``i`` sits
         # at ``i + 1``, and every earlier row is already mounted by the time
         # this loop reaches ``i``.
+        # KTD1 (A1): the card takes focus when it mounts, but only through the
+        # existing mid-word guard and only when no card already holds focus.
+        # Extended from input-only (U1) to any focusable control (Input or first
+        # Button). The first card of a batch takes focus when the guard allows;
+        # every subsequent card in the same outstanding set does not steal it.
+        # A local flag guards the batch case where Textual's focus has not yet
+        # settled synchronously, so holds_caret would still read false for the
+        # card just focused.
+        already_holds = any(holds_caret(card) for card in self._cards.values())
+        focused_this_apply = False
         for position, row in enumerate(wanted.values()):
             if row.request_id in self._cards:
                 continue
             card = PromptCard(row)
             self._cards[row.request_id] = card
             await self.mount(card, before=position + 1)
-            # ``isinstance(..., Input)``, not a bare ``focus_new`` check:
-            # mount-time auto-focus is out of U1's scope unchanged, and
-            # :meth:`PromptCard.focus_answer` was extended in U1 to also
-            # focus a button-backed card's first Button for the F1 jump
-            # (KTD1). Calling it unconditionally here would auto-focus every
-            # new approval and multiple-choice clarify the instant it
-            # mounts — a behaviour this unit does not touch. Only an
-            # input-backed card keeps the pre-U1 auto-focus; every other
-            # kind is reachable exclusively through the jump.
-            if focus_new and isinstance(card.action_widget, Input):
-                card.focus_answer()
+            if focus_new and card.action_widget is not None:
+                if not already_holds and not focused_this_apply:
+                    if not any(
+                        holds_caret(existing)
+                        for cid, existing in self._cards.items()
+                        if cid != row.request_id
+                    ):
+                        card.focus_answer()
+                        focused_this_apply = True
 
         # ``wanted``, not ``view.rows``: the warning colour is the region
         # shouting for attention, and a terminal-read has no card here to look
