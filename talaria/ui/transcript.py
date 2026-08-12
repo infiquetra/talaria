@@ -94,6 +94,7 @@ from typing import Final, Literal
 
 from rich.cells import cell_len
 from rich.text import Text
+from textual import events
 from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static
@@ -1737,6 +1738,20 @@ class TranscriptPane(VerticalScroll):
             self.scroll_to(y=max(0, self.scroll_offset.y - removed_top_height), animate=False)
 
     # ── follow-bottom control ────────────────────────────────────────────
+
+    def on_click(self, event: events.Click) -> None:
+        """A4 KTD2: click on the transcript follows the newest line.
+
+        Primary is ``end``; ``F5`` remains as an alias where the desktop
+        delivers it. The pane itself is the click target — when not following,
+        a click anywhere in the pane re-follows, matching the bottom-edge
+        affordance the operator cited ("Jump to bottom (click) ↓").
+        """
+        if self.follow:
+            return
+        event.stop()
+        event.prevent_default()
+        self.follow_bottom()
 
     def hold_anchor(self) -> None:
         self.follow = False

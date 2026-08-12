@@ -75,7 +75,7 @@ def _has_caret_row(app: TalariaApp) -> bool:
 
 @pytest.mark.asyncio
 async def test_ae1_no_caret_row_ever_appears() -> None:
-    """AE1: tab into transcript, onto prompts container, F1 onto a card, and a
+    """AE1: tab into transcript, onto prompts container, focus helper onto a card, and a
     click on a sub-agent row each leave the status region with no caret:-
     prefixed text, and the rendered row set is identical to the composer-focused
     baseline. The absence is a text-presence check, not a substring search for
@@ -123,7 +123,10 @@ async def test_ae1_no_caret_row_ever_appears() -> None:
         #    must still be identical.
         feed(app, event("approval.request", {"description": "delete build", "command": "rm -rf build", "choices": ["once", "deny"]}), seq=102)
         await settle(app, pilot)
-        await pilot.press("f1")
+        # A4: card auto-focuses when composer empty; helper still works for the deliberate case.
+        # Pressing F1 no longer moves focus, so reach the card via the helper.
+        assert app.prompts.focus_first_unanswered()
+        await pilot.pause()
         await pilot.pause()
         assert not _has_caret_row(app), "caret row appeared after F1 jump onto card"
         assert app.status_region.row_texts == baseline_rows
@@ -369,10 +372,10 @@ async def test_ae3_latch_resets_on_composer_return() -> None:
 
 @pytest.mark.asyncio
 async def test_ae3_latch_resets_on_composer_free_reentry() -> None:
-    """AE3 composer-free re-entry: transcript → F1 (lands on card) →
+    """AE3 composer-free re-entry: transcript → helper (lands on card) →
     shift+tab (PromptRegion) → shift+tab (transcript). The composer is never
     focused on this path (compose order app.py:1063-1069 makes it structural and
-    F1 is priority). The widened latch condition (KTD2/KTD4) requires re-announce
+    helper is priority). The widened latch condition (KTD2/KTD4) requires re-announce
     after this re-entry, not only after composer return."""
     app = live_app(RecordingDispatcher())
     async with app.run_test(size=(100, 30)) as pilot:
@@ -390,8 +393,8 @@ async def test_ae3_latch_resets_on_composer_free_reentry() -> None:
         assert "transcript" in first.lower()
         assert app._discard_latch == "transcript"
 
-        # F1 jumps to card's control (Button)
-        await pilot.press("f1")
+        # Helper jumps to card's control (Button) — F1 no longer bound
+        assert app.prompts.focus_first_unanswered()
         await pilot.pause()
         # After F1, focus is on the card's button; latch should have cleared
         # because we left transcript (KTD4 widened condition)
@@ -424,7 +427,7 @@ async def test_ae3_latch_resets_on_composer_free_reentry() -> None:
 
 @pytest.mark.asyncio
 async def test_ae4_no_notice_on_focused_card() -> None:
-    """AE4: after an F1 jump to an approval card, a printable key shows no
+    """AE4: after helper jump to an approval card, a printable key shows no
     notice and the card keeps the caret — the answerability spine is untouched
     (KTD3's exclusion). A printable on a focused approval button is silently
     discarded today and stays silent under B1, because the card is visible,
@@ -433,11 +436,11 @@ async def test_ae4_no_notice_on_focused_card() -> None:
     async with app.run_test(size=(100, 30)) as pilot:
         feed(app, event("approval.request", {"description": "delete build", "command": "rm -rf build", "choices": ["once", "deny"]}), seq=101)
         await settle(app, pilot)
-        await pilot.press("f1")
+        assert app.prompts.focus_first_unanswered()
         await pilot.pause()
         # Card holds caret
         focused = app.screen.focused
-        assert isinstance(focused, Button), "F1 did not land on card button"
+        assert isinstance(focused, Button), "helper did not land on card button"
         baseline_notice = _notice(app)
         before_composer_text = app.composer.text
 
@@ -498,15 +501,15 @@ async def test_ae5_no_notice_while_composer_holds_caret() -> None:
 
 @pytest.mark.asyncio
 async def test_ae6_take_away_returns_without_discard_notice() -> None:
-    """AE6: answering a card by click, via F1+enter, and collapsing rows with
+    """AE6: answering a card by click, via helper+enter, and collapsing rows with
     F2 each return caret to composer with no discard notice — CaretReleased
     unchanged."""
     app = live_app(RecordingDispatcher())
     async with app.run_test(size=(100, 30)) as pilot:
-        # 1. Answer via F1 then enter
+        # 1. Answer via helper then enter — F1 no longer bound
         feed(app, event("approval.request", {"description": "delete build", "command": "rm -rf build", "choices": ["once", "deny"]}), seq=101)
         await settle(app, pilot)
-        await pilot.press("f1")
+        assert app.prompts.focus_first_unanswered()
         await pilot.pause()
         await pilot.press("enter")
         await settle(app, pilot)

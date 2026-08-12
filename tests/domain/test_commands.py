@@ -219,7 +219,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
     assert catalog.available is False
     assert "refused" in catalog.failure
     assert catalog.gateway_entries == ()
-    # The seven that never needed a gateway to be *listed* are still there
+    # The eight that never needed a gateway to be *listed* are still there
     # (``/models`` still needs one to actually select — see U2 —
     # ``/profiles`` needs one to have listed anything at all, see U4, and
     # ``/sessions`` likewise needs one to list anything to switch to, see U7),
@@ -232,6 +232,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
         "/models",
         "/profiles",
         "/sessions",
+        "/agents",
     }
 
 
@@ -442,6 +443,7 @@ def test_the_local_set_is_pc6s_four_plus_u2_u4_and_u7s_pickers() -> None:
         "/models",
         "/profiles",
         "/sessions",
+        "/agents",
     }
 
 

@@ -20,6 +20,7 @@ avoid.
 
 from __future__ import annotations
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -59,6 +60,29 @@ class StatusRegion(Vertical):
     @property
     def marker_text(self) -> str:
         return "" if self._marker is None else str(self._marker.content)
+
+    def on_click(self, event: events.Click) -> None:
+        """A4 KTD2: click on the status region toggles sub-agent rows.
+
+        Primary is click on the status indicator plus the chord ``ctrl+g``;
+        ``F2`` remains as an alias where the desktop delivers it. The click
+        routes through the same latch as the keyboard (AE12) via the app's
+        :meth:`action_toggle_agents`, so a latched discard notice is not
+        overwritten.
+        """
+        event.stop()
+        event.prevent_default()
+        app = self.app
+        try:
+            coro = app.action_toggle_agents()  # type: ignore[attr-defined]
+            if hasattr(coro, "__await__"):
+                if hasattr(app, "_spawn_live"):
+                    app._spawn_live(coro)
+                else:
+                    import asyncio
+                    asyncio.create_task(coro)
+        except Exception:  # nosec B110 - click handler must not raise
+            pass
 
     async def apply(self, result: StatusTickResult) -> None:
         rows = list(result.rows)

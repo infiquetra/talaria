@@ -959,7 +959,7 @@ class PromptRegion(VerticalScroll):
     DEFAULT_CSS = """
     PromptRegion {
         height: auto;
-        max-height: 70%;
+        max-height: 75%;
         scrollbar-size-vertical: 1;
     }
     PromptRegion > .prompts--activity {
