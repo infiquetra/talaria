@@ -422,7 +422,7 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "sessions",
         "Open the session picker and switch to a listed session",
     ),
-    # A4: eaten F2's redundant typed path. Primary is ctrl+g + status-region click;
+    # A4: eaten F2's redundant typed path. Primary is ctrl+g;
     # F2 remains as alias where the desktop delivers it. Listed as talaria-local
     # so the palette and help footer can name it without a gateway.
     LocalCommand(
