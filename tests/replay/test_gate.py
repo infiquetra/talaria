@@ -28,7 +28,6 @@ from talaria.domain.projection import (
     ProvisionalTail,
     TranscriptEntryRecord,
     TranscriptView,
-    transcript_view,
 )
 from talaria.domain.state import SessionState
 from talaria.replay import gate as gate_module
@@ -1362,22 +1361,11 @@ async def test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule(
     counted failure, once per consumed fingerprint.
     """
     monkeypatch.setattr(gate_module, "RSS_SAMPLE_EVERY", 10**9)
-    # Grace 0.2 was chosen as "comfortably above the pane's 50 ms coalescing
-    # flush so a correct pane cannot fail" — the run-9 lesson — but on a
-    # shared runner 4x the flush interval is not comfortable, and a
-    # legitimately-lagging pane was counted as content loss. The repair is
-    # to stop deciding correctness by elapsed time in this arm: the poll vs
-    # checkpoint property is still asserted via the checkpoint counts, while
-    # correctness is asserted against observed pane state rather than a
-    # deadline. Rejected: widening the grace (mitigation, teaches the same
-    # lesson) and injecting a deterministic clock (adds production API purely
-    # for this test when the observed-state check already proves the property
-    # without any new surface).
     monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.2)
     corpus = build_stress_corpus(deltas=600, seed=5)
     # speed=2.0 stretches the 2.6 s recorded span to ~1.3 s of wall-clock —
     # several grace windows; the default unbounded drain finishes inside one.
-    measurement, state, _ = await measure_replay(
+    measurement, _, _ = await measure_replay(
         corpus.records, stress_corpus_identity(corpus), speed=2.0
     )
     assert measurement.content_loss_checkpoints == 1, (
@@ -1387,10 +1375,17 @@ async def test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule(
     assert measurement.reachability_checkpoints >= 1, (
         "coverage must run on the poll even with the checkpoint schedule disabled"
     )
-    # Deterministic: final domain projection is complete, without relying on
-    # wall-clock grace. A correct pane that is behind for ordinary scheduling
-    # reasons is no longer counted as having lost content.
-    assert content_is_complete(state, transcript_view(state))
+    # Restored: content_loss_failures == 0 is not wall-clock-dependent here
+    # because gate.py:1367-1371 already forces a flush (render_snapshot plus
+    # pilot.pause) before the settled check. The original grace-window flake
+    # was reachability during the run; the final settled check that this
+    # assertion now exercises is deterministic after that flush. Do not widen
+    # the grace and do not replace this with content_is_complete(state,
+    # transcript_view(state)) alone — that keeps only the aggregate projection
+    # branch (gate.py:1380, which renders each entry in isolation and checks
+    # aggregate order) and drops the two pane-involving branches
+    # (apply_in_flight at :1375 and interface_shows_everything at :1382).
+    assert measurement.content_loss_failures == 0
 
     monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.02)
     monkeypatch.setattr(gate_module, "_snapshot_covers", lambda snapshot, fingerprint: False)
