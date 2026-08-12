@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
 from textual import events
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.css.query import NoMatches
@@ -3500,7 +3500,7 @@ class TalariaApp(App[None]):
         """
         try:
             palette = self.palette
-        except NoMatches:  # pragma: no cover - teardown ordering
+        except (NoMatches, ScreenStackError):  # pragma: no cover - teardown ordering
             return
         await palette.apply(self.catalog)
 

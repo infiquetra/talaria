@@ -34,6 +34,7 @@ editor, still editable, and the notice says the capability was not there.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Final
 
 from textual import events
@@ -87,6 +88,15 @@ class ChatTextArea(TextArea):
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
         #: KTD16's bounds. Replaced by :class:`Composer` from configuration.
         self.paste_threshold = PasteThreshold()
+        self._suppress_sync = False
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if getattr(self, "_suppress_sync", False):
+            return
+        try:
+            __import__("asyncio").create_task(self._sync_slash_after_typed())
+        except Exception:
+            pass
 
     async def _on_paste(self, event: events.Paste) -> None:
         """Insert the paste literally, then ask for a collapse if it is large.
@@ -111,6 +121,11 @@ class ChatTextArea(TextArea):
         """
         event.prevent_default()
         await super()._on_paste(event)
+        # After the literal insert, sync the slash palette if this was typed
+        # input (a user paste). Collapse-placeholder replacement is programmatic
+        # and must not open the palette — it is handled via composer.text
+        # assignment in app.collapse_paste_live, which does not call this path.
+        # Watch will sync via text change; no explicit schedule needed.
         if event.text and self.paste_threshold.trips(event.text):
             self.post_message(self.LargePaste(self, event.text))
 
@@ -118,14 +133,13 @@ class ChatTextArea(TextArea):
         # ── palette seam (C1/C2, ruling 1 & 3) ─────────────────────────
         # Both units claim keys in ChatTextArea._on_key, not in
         # TalariaApp.on_key. One handler site, one ordered predicate — grep
-        # for _on_key must show a single site. The honest extension point
-        # for the C2 slash palette is a single named predicate that returns
-        # False today. C2's filterable palette (typing "/" to filter,
-        # opening on typed input never on programmatic writes) will claim
-        # Up/Down/Enter/Esc/Tab while open and history will be inert.
-        # Not keyed to self.app.palette (the F3 command listing), which
-        # claims none of those keys — that listing now correctly leaves
-        # Enter to submit.
+        # for _on_key must show a single site. The palette (C2) claims
+        # Up/Down/Enter/Esc/Tab while its filtered mode is active; history
+        # (C1) is inert while the palette is open. The palette opens on
+        # typed input, never on programmatic writes to composer.text (ruling
+        # 3), so history recall's direct text assignment must not open it.
+        # The palette's active state lives in PaletteRegion (is_slash_active),
+        # driven only by typed-input paths that call sync_slash.
         if self._is_slash_palette_open() and event.key in (
             "up",
             "down",
@@ -133,13 +147,73 @@ class ChatTextArea(TextArea):
             "escape",
             "tab",
         ):
-            await super()._on_key(event)
-            return
+            # Do not delegate to super — TextArea would insert a newline for
+            # Enter or move the caret for Up/Down, which is the defect C1
+            # was repaired for (F3 listing left Enter to super and inserted a
+            # newline instead of submitting).
+            try:
+                app = self.app
+                palette = app.palette  # type: ignore[attr-defined]
+            except Exception:
+                await super()._on_key(event)
+                return
+            if event.key == "up":
+                palette.move_selection(-1)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "down":
+                palette.move_selection(1)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "enter":
+                entry = palette.selected_entry
+                if entry is not None:
+                    # Insert canonical name with trailing space, never dispatch.
+                    catalog = getattr(app, "catalog", None)
+                    if catalog is not None:
+                        canon = catalog.canonical(entry.name)
+                    else:
+                        canon = entry.name
+                    canon = canon.lstrip("/")
+                    text = f"/{canon} "
+                    self.text = text
+                    try:
+                        self.cursor_location = (0, len(text))
+                    except Exception:
+                        pass
+                    try:
+                        self.focus()
+                    except Exception:
+                        pass
+                    await palette.hide_slash()
+                # When no match, keep text as-is and keep palette open
+                # (zero-match handling). Either way, consume the key so
+                # it does not submit or insert a newline.
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "escape":
+                await palette.hide_slash()
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "tab":
+                # Consumed to keep focus in the composer while open.
+                event.stop()
+                event.prevent_default()
+                return
         # ── escape abandons a history walk but keeps the stash (KTD3) ─
         # Card-scoped escape (prompts.py:669) fires only when a card's
         # control holds the caret, never when the composer does, so there
         # is no conflict. Abandon keeps draft_stash for the next walk;
         # Down past newest is the restore path, Escape is the abandon path.
+        # Palette has priority: when both palette and walk are active, Esc
+        # closes the palette (above) and does not abandon the walk. Both
+        # being true at once requires the composer text to have become a
+        # slash prefix via typed input mid-walk, which the palette's sync
+        # allows.
         if event.key == "escape":
             try:
                 history = self.app.composer_history  # type: ignore[attr-defined]
@@ -170,11 +244,15 @@ class ChatTextArea(TextArea):
                     caret_at_top = True if not has_newline else row == 0
                     if not caret_at_top:
                         await super()._on_key(event)
+                        # Typed caret movement — sync slash after caret moved.
+                        pass  # sync via watch
                         return
                     new_state, new_text = move_up(history, text, True)
                     if new_text is not None:
                         self.app.composer_history = new_state  # type: ignore[attr-defined]
+                        self._suppress_sync = True
                         self.text = new_text
+                        self.set_timer(0.01, lambda: setattr(self, "_suppress_sync", False))  # noqa: E501
                         # Recalled text is editable with caret at the end (KTD4).
                         lines = new_text.split("\n")
                         last_row = len(lines) - 1
@@ -182,27 +260,34 @@ class ChatTextArea(TextArea):
                         self.cursor_location = (last_row, last_col)
                         event.stop()
                         event.prevent_default()
+                        # Programmatic write — do NOT sync slash (ruling 3).
                         return
                     # No history move (empty or at oldest) — let caret move.
                     await super()._on_key(event)
+                    pass  # sync via watch
                     return
                 else:  # "down"
                     caret_at_bottom = True if not has_newline else row == total_rows - 1
                     if not caret_at_bottom:
                         await super()._on_key(event)
+                        pass  # sync via watch
                         return
                     new_state, new_text = move_down(history, text, True)
                     if new_text is not None:
                         self.app.composer_history = new_state  # type: ignore[attr-defined]
+                        self._suppress_sync = True
                         self.text = new_text
+                        self.set_timer(0.01, lambda: setattr(self, "_suppress_sync", False))  # noqa: E501
                         lines = new_text.split("\n")
                         last_row = len(lines) - 1
                         last_col = len(lines[last_row])
                         self.cursor_location = (last_row, last_col)
                         event.stop()
                         event.prevent_default()
+                        # Programmatic write — do not sync slash.
                         return
                     await super()._on_key(event)
+                    pass  # sync via watch
                     return
         if event.key == "enter":
             event.stop()
@@ -213,21 +298,83 @@ class ChatTextArea(TextArea):
             event.stop()
             event.prevent_default()
             self.insert("\n")
+            pass  # sync via watch
             return
         await super()._on_key(event)
+        pass  # sync via watch
+
+    async def on_blur(self, event: events.Blur) -> None:
+        try:
+            app = self.app
+            palette = app.palette  # type: ignore[attr-defined]
+            if palette.is_slash_active:
+                await palette.hide_slash()
+        except Exception:
+            pass
+
+    async def on_focus(self, event: events.Focus) -> None:
+        # Focus alone does not open the palette — only typed input does
+        # (ruling 3). This handler is intentionally a no-op for opening;
+        # closing is handled by on_blur. Keeping it as a method ensures the
+        # focus event is consumed and not bubbled, but it does not sync.
+        return
+
+    def _schedule_sync(self) -> None:
+        self.set_timer(0, lambda: asyncio.create_task(self._sync_slash_after_typed()))
+
+    async def _sync_slash_after_typed(self) -> None:
+        """Drive the slash palette from typed input (ruling 3)."""
+        try:
+            app = self.app
+            palette = app.palette  # type: ignore[attr-defined]
+            catalog = getattr(app, "catalog", None)
+            # Only when the composer owns the caret — otherwise hide.
+            has_focus = self.has_focus
+            if not has_focus:
+                try:
+                    # Fallback check via app.focused for cases where has_focus
+                    # is stale during the key handler.
+                    focused = app.focused
+                    if focused is not self:
+                        # If focused is None or not this widget, not owned.
+                        if focused is None or self not in getattr(focused, "ancestors", []):
+                            if palette.is_slash_active:
+                                await palette.hide_slash()
+                            return
+                        has_focus = True
+                except Exception:
+                    if not has_focus and palette.is_slash_active:
+                        await palette.hide_slash()
+                    return
+            await palette.sync_slash(catalog, self.text)
+        except Exception:
+            pass
 
     def _is_slash_palette_open(self) -> bool:
         """Whether C2's slash-command palette claims Up/Down/Enter/Esc/Tab.
 
-        Returns False today — the filterable palette that opens on typed
-        "/" (never on programmatic writes to composer.text) does not exist
-        yet. When it does, it will claim those five keys while open and
-        history will be inert. This single named predicate is the honest
-        extension point C2 can replace without moving history's own handling.
-        Not keyed to self.app.palette (the F3 command listing, PaletteRegion),
-        which claims none of those keys.
+        While the filtered palette is active it claims those five keys and
+        history is inert. Not keyed to the F3 browse listing (PaletteRegion
+        showing as browse), which claims none of those keys. The active flag
+        lives in PaletteRegion and is driven only by typed input via
+        sync_slash, so programmatic writes (history recall, paste-collapse)
+        never open it — ruling 3.
         """
-        return False
+        try:
+            app = self.app
+            palette = app.palette  # type: ignore[attr-defined]
+            if not self.has_focus:
+                # Palette is non-modal and never takes focus; if we don't have
+                # the caret, we don't claim.
+                try:
+                    focused = app.focused
+                    if focused is not self and self not in getattr(focused, "ancestors", []):
+                        return False
+                except Exception:
+                    return False
+            return bool(palette.is_slash_active)
+        except (NoScreen, ScreenStackError, Exception):
+            return False
 
 
 class Composer(Vertical):
@@ -324,7 +471,23 @@ class Composer(Vertical):
 
     @text.setter
     def text(self, value: str) -> None:
+        # Programmatic write — must not open palette (ruling 3). The palette
+        # opens only on typed input, so a programmatic write that leaves the
+        # palette open from a previous typed prefix must hide it.
+        try:
+            self.text_area._suppress_sync = True
+        except Exception:
+            pass
         self.text_area.text = value
+        try:
+            pal = self.text_area.app.palette  # type: ignore[attr-defined]
+            self.text_area.set_timer(0.01, lambda: __import__("asyncio").create_task(pal.hide_slash()))  # noqa: E501
+        except Exception:
+            pass
+        try:
+            self.text_area.set_timer(0.01, lambda: setattr(self.text_area, "_suppress_sync", False))  # noqa: E501
+        except Exception:
+            pass
 
     @property
     def submitted_text(self) -> str:
@@ -345,7 +508,20 @@ class Composer(Vertical):
         send loses what the operator typed, which is the one thing a chat client
         must never do.
         """
+        try:
+            self.text_area._suppress_sync = True
+        except Exception:
+            pass
         self.text_area.text = ""
+        try:
+            pal = self.text_area.app.palette  # type: ignore[attr-defined]
+            self.text_area.set_timer(0.01, lambda: __import__("asyncio").create_task(pal.hide_slash()))  # noqa: E501
+        except Exception:
+            pass
+        try:
+            self.text_area.set_timer(0.01, lambda: setattr(self.text_area, "_suppress_sync", False))  # noqa: E501
+        except Exception:
+            pass
 
     @property
     def notice(self) -> str:
