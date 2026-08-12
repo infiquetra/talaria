@@ -126,7 +126,17 @@ def _runnable_entries(catalog: CommandCatalog | None) -> tuple[CommandEntry, ...
 def _filtered_entries(
     catalog: CommandCatalog | None, prefix: str
 ) -> tuple[CommandEntry, ...]:
-    """Prefix-filtered runnable entries, case-insensitive, sorted by category/name."""
+    """Prefix-filtered runnable entries, case-insensitive, Talaria locals first.
+
+    The plan requires this surface to group the way the F3 browse listing does,
+    "so the two surfaces do not disagree about where ``/models`` lives". Browse
+    renders ``catalog.entries`` verbatim and ``build_catalog`` seeds that tuple
+    with ``_local_entries()``, so browse shows the Talaria locals first. A plain
+    ``(category, name)`` sort does not: ``Info`` and ``Session`` both sort before
+    ``Talaria``, which put the locals last and moved ``/models`` depending on
+    which surface the operator had opened. The explicit rank restores the
+    grouping; alphabetical order within a category keeps the listing stable.
+    """
     entries = _runnable_entries(catalog)
     if prefix == "":
         filtered = entries
@@ -135,7 +145,16 @@ def _filtered_entries(
         filtered = tuple(
             e for e in entries if e.name.lower().removeprefix("/").startswith(lower)
         )
-    return tuple(sorted(filtered, key=lambda e: (e.category.lower(), e.name.lower())))
+    return tuple(
+        sorted(
+            filtered,
+            key=lambda e: (
+                0 if e.category.lower() == "talaria" else 1,
+                e.category.lower(),
+                e.name.lower(),
+            ),
+        )
+    )
 
 
 def format_entry(entry: CommandEntry) -> str:
@@ -444,13 +463,18 @@ class PaletteRegion(Vertical):
             idx = self._rows.index(target)
         else:
             # Check if target is inside a row (e.g., if rows had children)
+            # No try/except here on purpose. ``ancestors`` is a list of widgets
+            # and ``getattr`` supplies a default, so neither AttributeError nor
+            # TypeError is reachable — and a TypeError guard would swallow the
+            # exact failure this branch was repaired for (``row in event.chain``
+            # where ``chain`` is the click count, an int). Verified: with the
+            # guard present, restoring the original defect leaves
+            # test_palette_header_click_does_not_crash green; without it, the
+            # same mutation turns it red.
             for row in self._rows:
-                try:
-                    if target is not None and row in getattr(target, "ancestors", []):
-                        idx = self._rows.index(row)
-                        break
-                except (AttributeError, TypeError):
-                    continue
+                if target is not None and row in getattr(target, "ancestors", []):
+                    idx = self._rows.index(row)
+                    break
         if idx is None:
             # Click was not on a row (e.g., header or empty area) — do not
             # insert and do not crash. Previously this used `row in chain`

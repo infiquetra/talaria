@@ -869,3 +869,44 @@ async def test_palette_header_click_does_not_crash() -> None:
         assert app.composer.text.endswith(" ")
         assert not app.palette.is_slash_active
         await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_filtered_order_groups_talaria_first_like_browse() -> None:
+    """The filtered palette groups the way F3 browse does (plan KTD3, line 84).
+
+    Browse renders ``catalog.entries`` verbatim and ``build_catalog`` seeds that
+    tuple with the Talaria locals, so browse shows them first. A plain
+    ``(category, name)`` sort put them last, which moved ``/models`` depending on
+    which surface the operator had opened — the disagreement the plan forbids.
+
+    Asserts the rendered row order, not the sort key, so a future change to the
+    key that reintroduces the disagreement fails here.
+    """
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with(
+        [
+            ("/about", "Gateway info", "Info", "dispatch"),
+            ("/model", "Gateway model", "Session", "dispatch"),
+            ("/agents", "Local agents", "Talaria", "talaria-local"),
+            ("/models", "Local models", "Talaria", "talaria-local"),
+        ]
+    )
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        names = [e.name for e in app.palette.filtered_entries]
+        assert names == ["/agents", "/models", "/about", "/model"], names
+        # Grouping matches browse: every Talaria local precedes every other entry.
+        categories = [e.category for e in app.palette.filtered_entries]
+        assert categories.index("Info") > max(
+            i for i, c in enumerate(categories) if c == "Talaria"
+        ), categories
+        # The rendered rows carry the same order, not just the backing tuple.
+        rendered = [text.split()[0] for text in app.palette.row_texts]
+        assert rendered == ["/agents", "/models", "/about", "/model"], rendered
+        await app.shutdown_sources()
