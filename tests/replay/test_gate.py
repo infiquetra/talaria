@@ -1319,7 +1319,8 @@ def test_the_progress_fingerprint_partial_order_detects_an_unconsumed_update() -
     delta the pane never consumed leaves a stale snapshot proving itself
     forever. _snapshot_covers is the partial order that notices — the
     pane's last-applied snapshot must cover a domain fingerprint that has
-    aged past the wall-clock grace (CATCHUP_GRACE_SECONDS).
+    aged past the grace, counted in the pane's own re-renders
+    (CATCHUP_GRACE_RENDERS).
     """
     from talaria.domain.projection import entry_scoped_view
     from talaria.domain.state import SessionState
@@ -1361,7 +1362,11 @@ async def test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule(
     counted failure, once per consumed fingerprint.
     """
     monkeypatch.setattr(gate_module, "RSS_SAMPLE_EVERY", 10**9)
-    monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.2)
+    # Four re-renders rather than the default twenty, so several fingerprints
+    # age inside one short replay. This is not a margin over a clock: after a
+    # single completed re-render the pane's snapshot already covers anything
+    # fingerprinted before it, so four is four times a structural guarantee.
+    monkeypatch.setattr(gate_module, "CATCHUP_GRACE_RENDERS", 4)
     corpus = build_stress_corpus(deltas=600, seed=5)
     # speed=2.0 stretches the 2.6 s recorded span to ~1.3 s of wall-clock —
     # several grace windows; the default unbounded drain finishes inside one.
@@ -1375,33 +1380,29 @@ async def test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule(
     assert measurement.reachability_checkpoints >= 1, (
         "coverage must run on the poll even with the checkpoint schedule disabled"
     )
-    # STILL WALL-CLOCK-DEPENDENT, and the comment that used to sit here said
-    # otherwise. It claimed this assertion exercises only the settled check,
-    # which gate.py:1367-1371 makes deterministic by forcing a flush. That is
-    # wrong: content_loss_failures also counts the mid-stream reachability
-    # check at gate.py:1268, which fires whenever a progress fingerprint has
-    # aged past CATCHUP_GRACE_SECONDS of *wall-clock* and the pane has not yet
-    # caught up to it. A pane that is merely behind for ordinary scheduling
-    # reasons is counted as content loss.
+    # This assertion is no longer wall-clock-dependent, and the way it used to
+    # be is worth keeping in view. content_loss_failures counts five sites, and
+    # only the three settled ones are reached after the forced flush; the other
+    # two are mid-stream, and the reachability one used to fire whenever a
+    # fingerprint had aged past a number of *seconds* while the pane had not yet
+    # caught up. That counted a pane which was merely behind for ordinary
+    # scheduling reasons as content loss: it went red three times, twice on
+    # diffs consisting only of documentation, and the response each time was to
+    # widen the margin. It is now counted in the pane's own re-renders, which is
+    # a property of the pane rather than of the machine.
     #
-    # Measured, not reasoned: instrumenting all five increment sites and
-    # sweeping this arm's grace shows every failure comes from
-    # midstream:reachability and none from any settled branch — 0.02 s gives 46
-    # failures, 0.05 s and above give none on an unloaded machine. The 0.2 s
-    # here is a 4x margin over that edge, and it was still not enough on a
-    # loaded python-check-linux (3.13) runner, which produced exactly one
-    # failure out of nine reachability checks.
-    #
-    # Do not widen the grace — that is the same trade this test has already
-    # made twice. Do not replace this with content_is_complete(state,
-    # transcript_view(state)) alone either: that keeps only the aggregate
-    # projection branch (gate.py:1380, which renders each entry in isolation
-    # and checks aggregate order) and drops the two pane-involving branches
-    # (apply_in_flight at :1375 and interface_shows_everything at :1382).
-    # The repair is to stop measuring catch-up in seconds; it is queued.
+    # Do not reintroduce a seconds-based or frame-indexed grace; both fail a
+    # correct pane, for the two different reasons recorded on
+    # CATCHUP_GRACE_RENDERS. Do not replace this with content_is_complete(
+    # state, transcript_view(state)) alone either: that keeps only the
+    # aggregate projection branch (which renders each entry in isolation and
+    # checks aggregate order) and drops the two pane-involving settled branches,
+    # apply_in_flight and interface_shows_everything.
     assert measurement.content_loss_failures == 0
 
-    monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.02)
+    # One re-render: consume a fingerprint at the first opportunity, so the
+    # forced-stale arm below counts as many failures as it can.
+    monkeypatch.setattr(gate_module, "CATCHUP_GRACE_RENDERS", 1)
     monkeypatch.setattr(gate_module, "_snapshot_covers", lambda snapshot, fingerprint: False)
     stale, _, _ = await measure_replay(
         corpus.records, stress_corpus_identity(corpus), speed=2.0

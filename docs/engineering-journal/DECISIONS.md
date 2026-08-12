@@ -2,6 +2,55 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-12
+
+### The replay gate's catch-up grace is counted in re-renders, not in seconds
+
+**Author.** v0.3 orchestration, 2026-08-12
+
+**Decision.** The replay gate's mid-stream reachability check no longer ages its progress fingerprint
+against the wall clock. It ages it against `app.render_ticks` — the coalescing flushes that actually
+re-rendered the interface — with a wall-clock ceiling retained for one purpose only: catching a pane
+that has stopped rendering altogether, which a re-render counter by construction cannot see.
+
+**The defect it repairs.** `content_loss_failures` is the counter four of the gate's pass criteria
+read (`talaria/replay/gate.py:1677`, `:1684`, `:1702`, `:1752`). One of the five sites feeding it, the
+mid-stream reachability check, required the pane's last-applied snapshot to cover a fingerprint taken
+`CATCHUP_GRACE_SECONDS` ago. Under that condition a pane that is merely behind because the machine is
+busy is indistinguishable from a pane that lost content. It fired three times on CI, the third on a
+pull request whose entire diff was two files under `docs/`.
+
+**Why re-renders and not frames.** The first candidate aged the fingerprint in applied frames, and
+that is wrong for a reason worth keeping: the pane's catch-up is governed by a time-based coalescing
+timer, so at replay speed a frame-indexed grace expires inside a single flush interval and fails a
+correct pane by a different route. The stress corpus replays roughly 460 frames per second against a
+50-millisecond flush, about 23 frames per interval.
+
+Re-renders are neither unit. `_render_tick` returns early when nothing is dirty and otherwise projects
+current state, and ingestion sets the dirty flag — so one completed re-render after a fingerprint is
+taken already guarantees the pane's snapshot covers it. Twenty is a wide margin over a structural
+guarantee rather than a bet on a clock.
+
+**Rejected: widening the wall-clock grace.** It moves the false-failure threshold without removing it,
+and slows every gate run by the amount it widens. A grace wide enough to survive a loaded runner is
+wide enough to miss a pane that is genuinely a second behind. The margin had already been widened once
+for this exact failure; the test carries the scar in its own comment.
+
+**Rejected: deleting the check.** The invariant is real — the pane may lag the live stream by design,
+but it must have consumed everything the domain held a full grace ago. Deleting it trades a false
+positive for a blind spot, on the one criterion that exists to catch content loss.
+
+**Evidence, two proofs kept separate because this release has already conflated them once.** Teeth:
+with `TranscriptPane.apply` mutated to stop recording what it applied, the check reports eight
+failures and the assertion goes red. Stability: at 96 load processes on 24 cores, the repaired gate
+passed 30 of 30 and the pre-repair gate failed 3 of 35, every failure `assert 1 == 0` on
+`content_loss_failures` — the same assertion as all three CI occurrences, reproduced off a CI runner
+for the first time.
+
+**Revisit when** the pane's flush stops being time-based, or when a gate criterion needs to
+distinguish a pane that is behind from a pane that has stopped. The wall-clock ceiling is the only
+remaining time-dependent branch, and it is what would need re-thinking first.
+
 ## 2026-08-11
 
 ### The fleet axis is deliberately deferred out of v0.3
