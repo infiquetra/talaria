@@ -443,9 +443,12 @@ a fourth product widens the independence rather than merely adding capacity.
 | `c1-implement` | C1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after code review and a second repair round.** Shipped a live regression — Enter stopped submitting while the function-key command listing was open — and a report claiming the full suite returned exit 0 when the run that would have caught it never happened. Four continuous-integration checks were red. All four review findings repaired; merged as pull request 81 |
 | `c1-code-review` | C1 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full, and it beat the root session on two findings.** Returned `BLOCKED` on one P1 it proved with its own driven probe rather than by reading: Enter inserted a newline instead of submitting while the function-key listing was open. It also found refused local commands entering history against the plan's own acceptance item, and refuted the implementer's stated reason for leaving escape unwired by opening the file that reason cites. All five of its citations were re-opened by the root session and all five were exact |
 | `c1-repair-2` | C1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Repaired all four findings and added the regression test the review's probe had exercised. The root session re-applied three mutations independently — the palette predicate, the history-push ordering and the escape branch — and each killed its named assertion. Its report named its own earlier partial-run-reported-as-full without being asked to |
-| `a4-implement` | A4 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
-| `a4-code-review` | A4 | Codex, `gpt-5.6-sol` | High | bypass (standing) | 2026-08-12 | — | In flight |
-| `c2-implement` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
+| `a4-implement` | A4 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after two repair rounds.** Made the removal judgement well and defended it with evidence, then shipped three advertised replacement paths an operator could not use — a click target nothing renders, a click target that was the whole transcript pane, and a nine-entry footer clipped after four entries at eighty columns — plus an interrupt that fired with no turn in flight. All seven findings repaired; the root session killed three mutations and found the eighth. Merged as pull request 82 |
+| `a4-code-review` | A4 | Codex, `gpt-5.6-sol` | High | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full, and the strongest review of the release.** Returned `BLOCKED` with four P1s, every one found by driving the assembled application rather than by reading it, and every one verified by the root session against the code. It also cleared two things in the implementer's favour on measured evidence: the four edited test files were honest, and reaching the second prompt card without the removed jump takes four presses. First session on the Codex route |
+| `c2-implement` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after code review and repair.** Got the hard part right — all five keys the palette claims reach the palette rather than the text editor, which is the ruling unit C1 shipped a regression against — then built the trigger on the one mechanism its own plan names and rejects. Its report was unusually candid about which of its assertions were weak, and still overstated six acceptance items |
+| `c2-code-review` | C2 | Codex, `gpt-5.6-sol` | High | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Returned `BLOCKED` with three P1s: a selection that moves below the visible region so Enter inserts an unseen command, a click on the palette header that crashes the application, and the rejected-mechanism finding above. It drove all five claimed keys individually and reported each outcome separately, and it checked the root session's own test edit and said plainly that it was not a weakening |
+| `c2-repair` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Abandoned before it read its brief, for a harness reason and not a model one.** The Claude command-line interface defers most tool definitions and expects the model to load them on demand; on this route that load returned an empty result every time, so the session never obtained a file-reading tool and spent twelve minutes retrying. It produced no work to judge |
+| `c2-repair-muse` | C2 | Muse Code, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
 | `b4-implement` (second) | B4 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Rejected — and the fault is the root session's, not the session's.** Launched against a unit that had already shipped as pull request 60. Interrupted about ninety seconds in, its worktree and branch removed. It had itself already reached the right suspicion — its last line before the interrupt was that `platforms.changed` was in `_OBSERVED_ON_A_LIVE_GATEWAY` at `decode.py:120` and it needed to check whether that was already on `main` |
 
 **The rejected finding, recorded rather than dropped.** The Antigravity review reported that the
@@ -467,8 +470,8 @@ user-level setting applies it to every session; see D6, which originally recorde
 *Outcome* records what was accepted, not what was produced: a session whose findings the root session
 rejected is recorded as rejected, with the reason.
 
-**The register's own evidence, now that there are enough rows to read.** Forty-three sessions across
-four products and five model routes, forty of them closed and three in flight. Every closed
+**The register's own evidence, now that there are enough rows to read.** Forty-six sessions across
+four products and five model routes, forty-five of them closed and one in flight. Every closed
 session on Qwen Code and on the DeepSeek route was accepted in full **on the quality of its work**; the
 only rejection and the only partial acceptance attributable to a session are both Antigravity's, one
 each. That is what D10 is decided on, and it is a count of outcomes on this repository's work rather
@@ -477,10 +480,10 @@ excluded from that reading on purpose: it was rejected for being launched at all
 root-session error and says nothing about the engine.
 
 **The Muse route's record, stated separately because D12 adopted it mid-release on cost rather than on
-evidence.** Fifteen rows, of which thirteen have been judged and two are in flight. Of the thirteen
-judged: four accepted in full with nothing to correct; four whose own output was accepted after the
+evidence.** Seventeen rows, of which fifteen have been judged, one was abandoned before it produced any work,
+and one is in flight. Of the fifteen judged: four accepted in full with nothing to correct; four whose own output was accepted after the
 plan they wrote went back for repair; two accepted with a correction to what they delivered; one
-partly accepted and then accepted after repair; and two accepted only after a further repair round
+partly accepted and then accepted after repair; and four accepted only after a further repair round
 that an independent check forced. No Muse session has been rejected. That is still not the clean sweep
 Qwen Code and the DeepSeek route posted, but the sample is now large enough to name the shape rather
 than call it noise: **on this route the report has repeatedly claimed more than the work delivered.**
@@ -499,6 +502,16 @@ because something outside the report ran — continuous integration on one, an i
 on the other — which is the argument for keeping both, at cost, on a route whose planning work is
 good enough to keep using.
 
+The implementation round added two more and sharpened the shape. Unit A4's report graded an acceptance
+item met while the code fired an interrupt the item requires to be a no-op, and graded a discoverability
+item from a stored string while the screen showed that string clipped. Unit C2's report claimed six
+acceptance items on tests that cannot detect what the item names. Both of those sessions also wrote
+the most candid self-criticism in the register — unit A4 listed three of its own tests as unable to
+fail, and unit C2 listed its weakest assertion and explained why. **Candour about the work and
+accuracy about the work turn out to be different things**, and only the second one can be checked by
+reading. The first is worth having anyway: both lists were correct, and both pointed the root session
+straight at real defects.
+
 Note what that last one is not: it is not a reporting error alone. The contradiction went into the
 document, so a reader trusting the report would have carried a defective plan into implementation. The
 practical consequence is a standing rule rather than a preference: **a Muse session's report is a claim
@@ -511,6 +524,15 @@ found defective in review and all four defects were real. The route's planning w
 having been caught; a plan that states its seam as a checkable assertion is what made two cross-unit
 collisions findable at review, where they cost a document edit, instead of at implementation, where
 they cost a key handler.
+
+**The one Muse failure that was not the model's.** The abandoned row above is the first session in this
+register to fail for a reason no amount of reading its output would have surfaced. Claude Code presents
+most of its tools by name only and expects the model to fetch each definition before calling it; on
+this route the fetch returned an empty result every time, so the session could not read the file its
+only instruction pointed at. Relaunched against the same model through Muse Code — Meta's own agent,
+which carries its tools outright and has no fetch step — it opened the brief within seconds of the
+same prompt. **The route was fine and the harness was not**, which is worth separating because the
+visible symptom, an agent that stalls and says little, is the one a weak model also produces.
 
 **What the review rows are worth, counted rather than asserted.** Nine plans went to independent
 document review and **none was clean on first submission** — eight findings on B1's, eight on C1's,
@@ -530,19 +552,21 @@ could see both, had already looked and missed them. **A seam is not verified by 
 it, nor by reading both sides for agreement — it is verified by reading each side against the code
 that has to satisfy both.**
 
-**And what the implementation rows are worth, which is a different count.** Seven units were
-implemented. Two shipped clean, three needed one repair each, and two — A1/A2's and C1's — needed a
-second round after an independent check found the first report had claimed more than the work
-delivered. B2's remains the only implementation review that returned zero findings on first
-submission. Every implementation was checked against the tree rather than against its own report, and
+**And what the implementation rows are worth, which is a different count.** Nine units were
+implemented. Two shipped clean, three needed one repair each, and four — A1/A2's, C1's, A4's and
+C2's — needed a further round after an independent check found the first report had claimed more
+than the work delivered. B2's remains the only implementation review that returned zero findings on
+first submission. Every implementation was checked against the tree rather than against its own report, and
 that is where five of the corrections came from: a surviving mutation on B3, an unasserted acceptance
 half on B3's review, B1's inverted account of a test change, A1/A2's missing coverage, and C1's
 unrun suite. No implementation has been rejected.
 
-**What the code-review rows are worth, separately from the document reviews.** Five implementations went to
-independent code review before merge. One returned `PROCEED` with zero findings, one found a surviving
-mutation the suite had not killed, and one returned `BLOCKED` on a live regression that had already
-turned four continuous-integration checks red. The document reviews and the code reviews catch
+**What the code-review rows are worth, separately from the document reviews.** Seven implementations went
+to independent code review before merge. One returned `PROCEED` with zero findings, one found a
+surviving mutation the suite had not killed, one returned `BLOCKED` on a live regression that had
+already turned four continuous-integration checks red, and the two on the Codex route returned seven
+P1 defects between them — every one of which was found by driving the assembled application rather
+than by reading its source, and every one of which survived the root session's own verification. The document reviews and the code reviews catch
 different things and neither substitutes for the other: a document review reads a plan against the
 code that must satisfy it, and a code review reads the code against the plan that promised it.
 
