@@ -174,7 +174,7 @@ class AgentRows(Vertical):
 
         if self._header is not None:
             label = view.collapsed_label if populated else "no sub-agents"
-            suffix = "  (collapsed — f2 to expand)" if self.collapsed and populated else ""
+            suffix = "  (collapsed — ctrl+g/F2 to expand)" if self.collapsed and populated else ""
             self._header.update(literal_text(f"sub-agents: {label}{suffix}"))
 
         wanted = [] if self.collapsed else list(view.rows)

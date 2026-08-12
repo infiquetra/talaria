@@ -41,8 +41,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.screen import ModalScreen
 from textual.timer import Timer
+from textual.widgets import Static
 
 from talaria.domain.commands import (
     CATALOG_METHOD,
@@ -269,26 +269,6 @@ ALIAS_CIRCULAR: Final[str] = "the alias chain does not end; stopped at"
 #: chooses the wording for each of its three refusals.
 PROMPT_NO_LONGER_LIVE: Final[str] = REFUSED_NOT_OUTSTANDING
 
-#: Shown when F1 (KTD9, R1) is pressed while a modal picker holds the screen.
-#:
-#: ``PromptCard.focus_answer()`` ends in ``Widget.focus()``, which calls
-#: ``widget.screen.set_focus(...)`` — the widget's OWN (background) screen,
-#: never the active top-of-stack modal (Textual 8.2.8, ``widget.py``). With a
-#: picker open, F1 would change a background button's has-focus state with no
-#: visible or functional effect at all, and the operator has no way to tell
-#: that "worked" from "did nothing" — exactly the control AE11 exists to rule
-#: out. The jump is refused instead, and the modal keeps the focus it had.
-JUMP_BLOCKED_BY_MODAL: Final[str] = "close the picker first, then jump to the prompt"
-
-#: Shown when F1 is pressed with no outstanding prompt to jump to (B3, KTD3).
-#:
-#: ``focus_first_unanswered`` already returns the boolean the no-op is
-#: readable from, and discarding it was the whole silence: the keypress
-#: landed, nothing moved, nothing was said. The absence *is* the answer —
-#: the operator wants to know there is nothing to jump to, not merely that
-#: Talaria is listening.
-JUMP_NOTHING_OUTSTANDING: Final[str] = "no prompt is waiting to be answered — nothing to jump to"
-
 #: Shown when F5 (or ``end``) is pressed while the transcript already follows
 #: the newest line (B3, KTD3).
 #:
@@ -297,6 +277,15 @@ JUMP_NOTHING_OUTSTANDING: Final[str] = "no prompt is waiting to be answered — 
 #: exactly charter E2's observation. The ``nothing changed`` tail is the
 #: pacing register's own ("this session is live — nothing changed").
 ALREADY_FOLLOWING_BOTTOM: Final[str] = "the newest line is already followed — nothing changed"
+
+#: Shown when ctrl+c is pressed with no turn in flight (A4 P1-A).
+#:
+#: ``ctrl+c`` is a system quit binding in Textual; this unit reclaims it for
+#: the destructive interrupt, so a guard and visible feedback are load-bearing.
+#: The first press when nothing is in flight is a no-op that says so, matching
+#: :data:`ALREADY_FOLLOWING_BOTTOM` — a signal whose failure is
+#: indistinguishable from success is worse than no signal.
+NOTHING_TO_INTERRUPT: Final[str] = "nothing to interrupt — no turn is in flight"
 
 #: Shown when F2 is pressed while the sub-agent region has no rows to show or
 #: hide (B3, KTD3).
@@ -801,6 +790,53 @@ class ModelDefaultWriter(Protocol):
     ) -> ModelAssignmentResult: ...
 
 
+class HelpBar(Static):
+    """One-row binding listing, scoped to the current mode (A4 KTD4).
+
+    A eaten key sends no bytes, so the program cannot detect that it was eaten
+    and cannot warn at runtime. The correction is a redundant primary path and
+    a static listing that names both, before the key is pressed. The listing is
+    scoped so replay does not advertise live keys and live does not advertise
+    the three replay pacing keys as if they toggle something.
+    """
+
+    DEFAULT_CSS = """
+    HelpBar {
+        height: 1;
+        color: $text-muted;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
+        self._help_text = ""
+
+    def update_for_mode(self, mode: str) -> None:
+        from talaria.ui.literal import literal_text  # local import to avoid cycle
+
+        if mode == "replay":
+            # Replay: the three pacing keys are primary; live interrupt is inert.
+            # Fits 80 columns at 80x24 (P1-D) — 79 chars, no ellipsis at standard
+            # width. Cut to four entries rather than clip nine.
+            text = "F8 pause · F9 slow · F10 fast · end follow · ctrl+q quit — F1/F2 eaten on macOS"
+        else:
+            # Live: pacing keys are inert, so not advertised.
+            # Fits 80 columns (80 chars) — four primaries plus eaten note.
+            # F3/F6/F7 are slash primaries already discoverable via palette.
+            text = (
+                "ctrl+g/F2 agents · ctrl+c stop · end follow · "
+                "ctrl+q quit — F1/F2 eaten on macOS"
+            )
+        self._help_text = text
+        self.update(literal_text(text))
+
+    @property
+    def help_text(self) -> str:
+        return self._help_text
+
+
 class TalariaApp(App[None]):
     """The replay-driven shell: transcript, sub-agent rows, status region, composer."""
 
@@ -817,33 +853,35 @@ class TalariaApp(App[None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("ctrl+q", "quit", "quit", priority=True),
-        # R1/KTD9: the conventional remaining choice among the un-shadowed
-        # function keys (f2-f10 are already bound below). ``priority=True`` so
-        # the jump reaches its target "from anywhere in the interface" per R1,
-        # including while a card's own Input or Button already holds the
-        # caret. If a terminal or OS intercepts f1, KTD9 names ``ctrl+space``
-        # as the recorded fallback — see the U1 verification note in
-        # DECISIONS.md for the measurement that would trigger it.
-        Binding("f1", "jump_to_prompt", "answer", priority=True),
+        # A4 KTD1/KTD2: F1 removed — the focus-owning card (A1) is the anchor,
+        # so the jump has no job on this desktop. On macOS F1/F2 are eaten before
+        # Talaria sees them; a eaten key sends no bytes and the program cannot
+        # detect it, so every eaten action gets a non-function-key primary.
+        # F2/F4 remain as aliases where the desktop delivers them (KTD3).
+        Binding("ctrl+g", "toggle_agents", "sub-agents", priority=True),
+        Binding("f2", "toggle_agents", "sub-agents", priority=True, show=False),
+        Binding("ctrl+c", "interrupt", "interrupt", priority=True),
+        Binding("f4", "interrupt", "interrupt", priority=True, show=False),
         Binding("f8", "toggle_pause", "pause/resume", priority=True),
         Binding("f9", "slow_down", "slower", priority=True),
         Binding("f10", "speed_up", "faster", priority=True),
-        Binding("f2", "toggle_agents", "sub-agents", priority=True),
-        Binding("f3", "toggle_palette", "commands", priority=True),
-        Binding("f4", "interrupt", "interrupt", priority=True),
-        Binding("f5", "follow_bottom", "follow", priority=True),
+        # F3/F5/F6/F7 stay as secondary aliases; slash / and /models etc are
+        # the primaries (KTD2). show=False so help footer is the listing, not
+        # the auto-footer.
+        Binding("f3", "toggle_palette", "commands", priority=True, show=False),
+        Binding("f5", "follow_bottom", "follow", priority=True, show=False),
         # ``/models`` is the way in (U2); this is only for symmetry with
         # ``f3``/``toggle_palette`` — the two foldable regions are wired the
         # same way, so an operator's habit of reaching for a function key
         # works for either. Unlike the palette, this key never fetches: the
         # model catalogue is read once per connection epoch (KTD4), tied to
         # ``connected`` rather than to being asked for.
-        Binding("f6", "toggle_picker", "models", priority=True),
+        Binding("f6", "toggle_picker", "models", priority=True, show=False),
         # ``/profiles`` is the way in (U4); f7 is the same symmetry argument as
         # f6 one line up. Neither key fetches: both listings are read once per
         # connection epoch (KTD4), tied to ``connected`` rather than to being
         # asked for.
-        Binding("f7", "toggle_profiles", "profiles", priority=True),
+        Binding("f7", "toggle_profiles", "profiles", priority=True, show=False),
     ]
 
     def __init__(
@@ -1044,6 +1082,11 @@ class TalariaApp(App[None]):
         #: caret stays in that region, further printable keys or pastes are silent
         #: (KTD2). Cleared whenever the caret leaves the announced region (KTD4).
         self._discard_latch: str = ""
+        #: A4's latch for the agents-toggle empty notice (AE12): which region was
+        #: announced. Shares the same clear point as ``_discard_latch`` so a latched
+        #: discard notice is not overwritten and a second toggle in the same hold
+        #: is silent.
+        self._agents_toggle_latch: str = ""
 
         # ── gate counters ────────────────────────────────────────────────
         #: Coalescing flushes that actually re-rendered. KTD14 measures render
@@ -1079,6 +1122,7 @@ class TalariaApp(App[None]):
             paste_threshold=self.paste_threshold,
             id="composer",
         )
+        yield HelpBar(id="help")
 
     @property
     def transcript(self) -> TranscriptPane:
@@ -1104,6 +1148,10 @@ class TalariaApp(App[None]):
     def composer(self) -> Composer:
         return self.query_one("#composer", Composer)
 
+    @property
+    def help_bar(self) -> HelpBar:
+        return self.query_one("#help", HelpBar)
+
     def _idle_notice(self) -> str:
         return INERT_NOTICE if self.mode == "replay" else ""
 
@@ -1116,6 +1164,10 @@ class TalariaApp(App[None]):
         if self.status_runner is not None and self.status_runner.enabled:
             self._status_task = asyncio.create_task(self._status_loop())
         self.fetch_catalog()
+        try:
+            self.help_bar.update_for_mode(self.mode)
+        except NoMatches:
+            pass
         self.composer.text_area.focus()
 
     async def on_unmount(self) -> None:
@@ -1468,36 +1520,32 @@ class TalariaApp(App[None]):
         self.controls.slow_down()
         self._notice(self._pacing_notice())
 
-    def action_jump_to_prompt(self) -> None:
-        """Move the caret to the oldest unanswered prompt's control (R1, U1).
-
-        Delegates entirely to :meth:`PromptRegion.focus_first_unanswered` —
-        the region already knows which card is "the" one on screen (the same
-        ordering :meth:`~talaria.ui.prompts.PromptRegion.reveal_actions`
-        keeps visible), so this binding carries no ordering logic of its own.
-        With nothing outstanding the call is a no-op and the caret stays
-        exactly where it was.
-
-        **Refused while a modal picker holds the screen (CR1 finding 2).**
-        ``focus_answer()`` targets the card's own screen, which is the
-        background screen while a picker is pushed on top of it — moving
-        focus there would be invisible and would do nothing the operator
-        could act on, so no focus is changed at all and the picker keeps it.
-        """
-        if isinstance(self.screen, ModalScreen):
-            self._notice(JUMP_BLOCKED_BY_MODAL)
-            return
-        if not self.prompts.focus_first_unanswered():
-            # B3: the keypress landed and moved nothing. The no-op is a fact
-            # the operator doubted (charter E2), so it is said out loud.
-            self._notice(JUMP_NOTHING_OUTSTANDING)
-
     async def action_toggle_agents(self) -> None:
         if not self.agents.is_populated:
+            # A4 AE12: the empty-toggle notice shares the per-focus-hold latch
+            # that B1 introduced. While a discard notice is latched, a toggle
+            # that would otherwise overwrite it is silent — the toggle still
+            # flips (it decides how the next fan-out arrives) but the latched
+            # notice remains on the bar. A second empty toggle in the same hold
+            # is also silent, so the later notice wins and the earlier is not
+            # resurrected.
+            if self._discard_latch:
+                await self.agents.toggle_collapsed()
+                return
+            if self._agents_toggle_latch:
+                await self.agents.toggle_collapsed()
+                return
             # B3: the toggle still flips its flag when empty — it decides how
             # the next fan-out arrives — but the flip is invisible, so the
             # keypress says there was nothing on screen for it to act on.
             self._notice(AGENTS_NOTHING_TO_TOGGLE)
+            # Latch to the focused widget's identity, so a second toggle while
+            # the caret stays put is silent; moving the caret clears it.
+            try:
+                focused = self.focused
+                self._agents_toggle_latch = str(focused) if focused is not None else "no-focus"
+            except Exception:
+                self._agents_toggle_latch = "agents"
         await self.agents.toggle_collapsed()
 
     def action_follow_bottom(self) -> None:
@@ -1515,9 +1563,18 @@ class TalariaApp(App[None]):
         self.transcript.follow_bottom()
 
     def action_interrupt(self) -> None:
-        """Stop the in-flight turn (R4) — inert in replay (AE11)."""
+        """Stop the in-flight turn (R4) — inert in replay (AE11) and inert when idle (P1-A).
+
+        ``ctrl+c`` reclaims Textual's system quit binding, so the guard is
+        load-bearing: the first press when no turn is in flight is a no-op
+        that says so, matching :data:`ALREADY_FOLLOWING_BOTTOM`'s visible
+        nothing-happened.
+        """
         if self.mode == "replay":
             self._refuse_mutation("interrupt")
+            return
+        if self.state.turn != "streaming":
+            self._notice(NOTHING_TO_INTERRUPT)
             return
         self._spawn_live(self.interrupt_live())
 
@@ -3551,6 +3608,15 @@ class TalariaApp(App[None]):
             # cross the socket (U7, KTD6).
             self._perform_sessions(invocation.argument)
             return True
+        if command.action == "agents":
+            # A4: redundant typed path for the eaten F2. Scheduled because
+            # toggle_collapsed is async (mounts/removes rows). Clears the
+            # composer and dispatches locally, so on C1's rule it was
+            # dispatched and should enter history (same as /models /
+            # /profiles / /sessions) — return True.
+            self.composer.clear()
+            self._spawn_live(self._toggle_agents_and_discard())
+            return True
         if command.action == "pause":
             self.controls.pause()
         elif command.action == "resume":
@@ -3609,6 +3675,9 @@ class TalariaApp(App[None]):
 
     async def _open_picker_and_discard(self) -> None:
         await self.action_toggle_picker()
+
+    async def _toggle_agents_and_discard(self) -> None:
+        await self.action_toggle_agents()
 
     def _perform_profiles(self, argument: str) -> None:
         """Route ``/profiles``: no argument opens the dialog, one switches."""
@@ -4282,12 +4351,27 @@ class TalariaApp(App[None]):
         not only when the caret returns to the composer — the composer-free
         re-entry transcript → F1 → PromptRegion → transcript is reachable via
         shift+tab without ever focusing the composer (KTD2).
+
+        Also clears the agents-toggle latch (A4 AE12) when the focused widget
+        changes, so a second toggle in a new region re-announces.
         """
-        if not self._discard_latch:
-            return
-        current = self._no_text_region()
-        if current != self._discard_latch:
+        try:
+            current = self._no_text_region()
+        except Exception:
+            # Tearing down — no screen, no region. Clear both latches safely.
             self._discard_latch = ""
+            self._agents_toggle_latch = ""
+            return
+        if self._discard_latch and current != self._discard_latch:
+            self._discard_latch = ""
+        if self._agents_toggle_latch:
+            try:
+                focused = self.focused
+                focused_id = str(focused) if focused is not None else "no-focus"
+            except Exception:
+                focused_id = ""
+            if focused_id != self._agents_toggle_latch:
+                self._agents_toggle_latch = ""
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         self._clear_discard_latch_if_needed()

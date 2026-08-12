@@ -314,6 +314,11 @@ async def test_f4_in_live_mode_dispatches_session_interrupt() -> None:
     app = live_app(dispatcher)
 
     async with app.run_test() as pilot:
+        # Make the turn genuinely in flight (P1-A guard) — idle interrupt is a no-op
+        from tests.ui.conftest import event, feed, settle
+
+        feed(app, event("message.start", {}))
+        await settle(app, pilot)
         await pilot.press("f4")
         await app.settle_live()
         await pilot.pause()

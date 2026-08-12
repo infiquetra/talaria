@@ -4,6 +4,14 @@
 
 ## 2026-08-12
 
+### A redundant path that is invisible, over-broad, or clipped is the same failure it was meant to replace
+
+**Evidence.** Unit A4 was blocked on four P1s (review of commit 5110451): `action_interrupt` at `talaria/ui/app.py:1556` sent `session.interrupt` with an empty session id when no turn was in flight and left the notice empty; `StatusRegion.on_click` at `talaria/ui/status_region.py:64` advertised “click status” while `compose` yielded only an empty marker and `status_tick` at `talaria/ui/app.py` returns early when `status_runner is None` — with no status command the region is one blank row; `TranscriptPane.on_click` at `talaria/ui/transcript.py:1742` re-followed on any click anywhere while reading scrollback; `HelpBar` at `talaria/ui/app.py:823` rendered 164 and 126 characters into one 80-column row with `text-wrap: nowrap` and `ellipsis`, so at 80×24 the live footer ended at `end/F5 follow (click bo…` and the replay footer clipped the macOS note. The three P2s were a swallowed `except Exception: pass` in the status click handler, five tautological assertions (`tests/ui/test_a4_function_key_row.py:97,108,294,302,377`), and a prompt-region claim that 75% keeps both deny-all hints visible when the reviewer measured 14 rows and only the first hint visible without scrolling.
+
+**Mechanism.** The eaten-key identity (no bytes, indistinguishable from not pressed) motivated redundant paths, but a redundant path that nothing renders, that is the entire pane, or that is clipped off-screen fails the same charter E2 the eaten key does — a signal whose failure is indistinguishable from success. `ctrl+c` reclaiming Textual 8.2.8's system `help_quit` binding makes the idle guard load-bearing: without `state.turn == "streaming"` the universal “get me out” reflex fires a destructive operation with no feedback. The help footer's backing `help_text` property still held the full string while the screen showed ellipsis, so the sixth acceptance item's test passed on the property and missed the clipping. The status region's disabled marker lives in `runner.tick()` at `talaria/status/runner.py`, but `talaria/cli.py` returns no runner when no command is configured, so `status: no command configured` is never produced in the default operator experience.
+
+**Generalizable rule.** A redundant path must be visible at the size the operator actually uses, scoped to the mode that owns it, and asserted against what renders rather than the backing property — and a destructive chord that reclaims a system binding needs an explicit “nothing in flight” guard with visible feedback. When fitting 80 columns, cut entries rather than let them clip: four paths that show beat nine that show three with ellipsis.
+
 ### A stub for a collaborator that does not exist yet gets keyed to the nearest thing with a similar name
 
 **Evidence.** Unit C1 shipped the composer's key seam with a predicate meaning "is the slash palette
