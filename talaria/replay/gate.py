@@ -124,13 +124,39 @@ MIN_RSS_SAMPLES = 6
 MIN_CONTENT_CHECKPOINTS = 5
 
 #: How old a progress fingerprint must be before the bounded catch-up
-#: assertion consumes it (see the sampler in :func:`measure_replay`). Twenty
-#: times the pane's 50 ms coalescing interval: far above legitimate flush
-#: staleness, far below the seconds a genuinely non-consuming pane would
-#: accumulate. Wall-clock on purpose — a checkpoint-ordinal bound fails
-#: correct panes at unbounded replay speed, where consecutive frame-indexed
-#: checkpoints land inside one coalescing window.
-CATCHUP_GRACE_SECONDS = 1.0
+#: assertion consumes it (see the sampler in :func:`measure_replay`),
+#: measured in the pane's own completed re-renders.
+#:
+#: Two other units were tried and both fail a *correct* pane:
+#:
+#: * **Wall-clock seconds** separates a correct pane from a broken one by how
+#:   busy the machine is. Twenty coalescing intervals is comfortable on an idle
+#:   developer machine and not on a shared runner, so a pane that is behind for
+#:   ordinary scheduling reasons gets counted as content loss. That is not
+#:   hypothetical: it went red three times, twice on diffs consisting only of
+#:   documentation, and the response each time was to widen the margin.
+#: * **Frame ordinals** fail at unbounded replay speed, where consecutive
+#:   frame-indexed checkpoints land inside one 50 ms coalescing window and the
+#:   pane has had no chance to render at all — run 9's three false failures.
+#:
+#: Re-renders are the unit that actually fits the invariant, because a
+#: re-render is precisely the pane's opportunity to catch up. ``_render_tick``
+#: returns early when nothing is dirty and otherwise projects current state, so
+#: after even one completed re-render the pane's last-applied snapshot covers
+#: any fingerprint taken before it. Twenty is therefore a generous margin over
+#: a structural guarantee rather than a bet on a clock, and it keeps the old
+#: default's meaning: twenty coalescing intervals' worth of catching up.
+CATCHUP_GRACE_RENDERS = 20
+
+#: The one place wall-clock still belongs: a pane that has stopped rendering
+#: entirely never advances ``render_ticks``, so the re-render bound above would
+#: never fire and a genuinely stalled pane would go unnoticed. This ceiling
+#: exists only to catch that, and it is deliberately far larger than any
+#: scheduling delay — a pane that has not completed twenty re-renders in ten
+#: seconds while the domain kept advancing is broken by any definition, so
+#: firing the check here cannot produce the false failure the seconds-based
+#: grace produced.
+CATCHUP_STALL_SECONDS = 10.0
 
 #: Terminal geometry the gate renders at. Fixed so a measurement taken on one
 #: machine means the same thing on another.
@@ -722,16 +748,22 @@ def _snapshot_covers(
     snapshot-consistent ownership proof cannot see a domain update the pane
     never consumed at all — a reasoning-only delta that never reaches
     ``TranscriptPane.apply`` leaves the previous snapshot proving itself
-    forever. The sampler therefore holds a domain fingerprint until it has
-    aged past :data:`CATCHUP_GRACE_SECONDS` of wall-clock, then requires
-    the pane's last-applied snapshot to cover it: the pane may lag the
-    live stream by design (coalescing), but it must have consumed at
-    least everything the domain had a full grace window ago.
+    forever. The sampler therefore holds a domain fingerprint until the pane
+    has re-rendered :data:`CATCHUP_GRACE_RENDERS` times since it was taken
+    (or :data:`CATCHUP_STALL_SECONDS` have passed with the pane not rendering
+    at all), then requires the pane's last-applied snapshot to cover it: the
+    pane may lag the live stream by design (coalescing), but it must have
+    consumed at least everything the domain held that many re-renders ago.
+
+    Counting the pane's own re-renders rather than seconds is what makes this
+    a statement about the pane instead of a statement about how loaded the
+    machine is; see :data:`CATCHUP_GRACE_RENDERS` for the two units that were
+    tried first and the correct panes each of them failed.
 
     ``None`` (nothing applied yet) covers only a fingerprint with no
     content — before the first apply there is nothing owed, but any
-    committed entry or non-empty tail a full grace window old means the
-    pane is not consuming.
+    committed entry or non-empty tail that has survived a full grace of
+    re-renders means the pane is not consuming.
     """
     entries_len, a_gen, a_len, r_gen, r_len = fingerprint
     if snapshot is None:
@@ -1232,6 +1264,7 @@ async def measure_replay(
             next_mark = RSS_SAMPLE_EVERY
             prev_progress: tuple[int, int, int, int, int] | None = None
             prev_progress_at = 0.0
+            prev_progress_ticks = 0
             while not stop.is_set():
                 await asyncio.sleep(0.02)
                 applied = app.frames_applied
@@ -1241,26 +1274,29 @@ async def measure_replay(
                 # delta that never reached apply() — leaves a stale
                 # snapshot proving itself forever. Bounded catch-up: the
                 # pane's last-applied snapshot must cover a domain
-                # fingerprint that has aged past the wall-clock grace
-                # (_snapshot_covers' partial order; the grace is wall-clock
-                # because frame-indexed checkpoints at unbounded replay
-                # speed land inside one 50 ms coalescing window — run 9's
-                # three false failures). It rides the POLL, never the
-                # checkpoint schedule: consuming an aged fingerprint only
-                # at the next frame checkpoint held it forever on a fast
-                # drain — a 500-delta replay produced 26 ownership
-                # checkpoints and ZERO coverage checks (CR6 confirm 2).
-                # Consumption waits for a quiescent instant (retried one
-                # poll later); the checks that actually ran are counted
-                # and floored (``enough_reachability_checkpoints``).
+                # fingerprint that has aged (_snapshot_covers' partial
+                # order). It rides the POLL, never the checkpoint schedule:
+                # consuming an aged fingerprint only at the next frame
+                # checkpoint held it forever on a fast drain — a 500-delta
+                # replay produced 26 ownership checkpoints and ZERO
+                # coverage checks (CR6 confirm 2). Consumption waits for a
+                # quiescent instant (retried one poll later); the checks
+                # that actually ran are counted and floored
+                # (``enough_reachability_checkpoints``).
+                #
+                # "Aged" is counted in the pane's own re-renders, not in
+                # seconds and not in frames. See CATCHUP_GRACE_RENDERS for
+                # why both of the other two units fail a correct pane.
                 now = time.monotonic()
+                ticks = app.render_ticks
                 if prev_progress is None:
                     prev_progress = _progress_fingerprint(app.state)
                     prev_progress_at = now
+                    prev_progress_ticks = ticks
                 elif (
-                    now - prev_progress_at >= CATCHUP_GRACE_SECONDS
-                    and not app.transcript.apply_in_flight
-                ):
+                    ticks - prev_progress_ticks >= CATCHUP_GRACE_RENDERS
+                    or now - prev_progress_at >= CATCHUP_STALL_SECONDS
+                ) and not app.transcript.apply_in_flight:
                     reachability_checkpoints += 1
                     if not _snapshot_covers(
                         app.transcript.last_applied_entries, prev_progress
@@ -1268,6 +1304,7 @@ async def measure_replay(
                         failures += 1
                     prev_progress = _progress_fingerprint(app.state)
                     prev_progress_at = now
+                    prev_progress_ticks = ticks
                 if applied >= next_mark:
                     rss_series.append((applied, _rss_mb()))
                     # A memory sample is also a natural pause point, so the
@@ -1614,12 +1651,12 @@ async def run_gate(
             "pass": stress_measurement.ownership_checkpoints >= MIN_CONTENT_CHECKPOINTS,
         },
         # The bounded catch-up proof rides the sampler's poll and consumes a
-        # fingerprint only after it ages past the wall-clock grace — so a
-        # replay that drains before any fingerprint ages runs zero coverage
-        # checks, which this floor makes visible instead of silent (CR6
-        # confirm 2: 26 ownership checkpoints, zero coverage checks). Summed
-        # across the stress and sustained-cadence passes: the stress drain
-        # is wall-clock short by design, while the cadence pass streams for
+        # fingerprint only after the pane has re-rendered a full grace worth
+        # of times — so a replay that drains before any fingerprint ages runs
+        # zero coverage checks, which this floor makes visible instead of
+        # silent (CR6 confirm 2: 26 ownership checkpoints, zero coverage
+        # checks). Summed across the stress and sustained-cadence passes: the
+        # stress drain is short by design, while the cadence pass streams for
         # long enough to age many fingerprints.
         "enough_reachability_checkpoints": {
             "description": "the bounded catch-up proof actually consumed aged fingerprints "

@@ -439,11 +439,12 @@ Enumerating the redactor's call sites is the wrong direction: it can only find p
 
 **Worth checking at the same time.** Whether `home` should scroll to the top of the transcript rather than merely release the anchor, and whether `F5` is alive at all while scrolled up — an open item on the operator's own checklist that touches the same follow state.
 
-### A replay-gate test counts a legitimately-lagging pane as content loss when the runner is loaded
+### ~~A replay-gate test counts a legitimately-lagging pane as content loss when the runner is loaded~~ — CLOSED 2026-08-12, on the second attempt
 
 **Author.** v0.3 unit B5 implementation, 2026-08-11
-**Closed 2026-08-12, reopened the same day.** The closure was wrong and is recorded below rather than
-erased, because the way it was wrong is the reusable part.
+**Closed 2026-08-12, reopened the same day, closed again the same day.** The first closure was wrong
+and is recorded below rather than erased, because the way it was wrong is the reusable part. The
+second closure carries two separate proofs; see *How this was actually closed* at the end.
 **Priority.** P1
 **Effort.** Small to medium
 **Worth it when.** Now. It has failed three times, the third on a documentation-only pull request, and
@@ -484,6 +485,41 @@ than in seconds: if the pane has had N further applies since the fingerprint was
 not cover it, the pane is genuinely behind, and that is a property of the stream rather than of the
 runner. This changes what the release gate counts as a failure, so it wants a decision rather than a
 patch.
+
+**That candidate was wrong, and the reason generalizes.** Applied frames are the wrong unit because
+the pane's catch-up is governed by a *time-based* coalescing timer, so at replay speed many frames
+elapse inside one flush interval and a frame-indexed grace expires before the pane has had a single
+chance to render. The stress corpus replays roughly 460 frames per second against a 50-millisecond
+flush, so about 23 frames pass between flushes; any frame-based grace below that fails a correct pane
+by a different route. The constant's own comment in `gate.py` had already recorded this objection —
+found independently, then discovered to agree.
+
+**How this was actually closed.** The grace is now counted in `app.render_ticks`, the coalescing
+flushes that *actually re-rendered* the interface, with the wall clock retained only as a ceiling for
+a pane that has stopped rendering altogether. `_render_tick` returns early when nothing is dirty and
+otherwise projects current state, and ingestion sets the dirty flag, so one completed re-render after
+a fingerprint is taken already guarantees the pane's snapshot covers it. The threshold is twenty, a
+wide margin over a structural guarantee rather than a bet on a clock. Recorded as a decision in
+`DECISIONS.md`, dated 2026-08-12, because it changes what four gate pass criteria count as a failure.
+
+**The two proofs, kept separate on purpose.** This entry was closed once already on a repair that
+proved neither, so both are stated with their numbers.
+
+- *Teeth.* With `TranscriptPane.apply` mutated to stop recording what it applied — a genuinely lagging
+  pane — the repaired check reports eight failures and the assertion goes red. The guard is live.
+- *Stability.* Both gates run at the same load in the same session, 96 processes on 24 cores. The
+  repaired gate: 30 runs, zero failures. The pre-repair gate: 35 runs, **three failures**, every one
+  of them `AssertionError: assert 1 == 0` on `content_loss_failures` at `tests/replay/test_gate.py`,
+  with `reachability_checkpoints` at 30 and 32 — the same assertion, on the same counter, as all three
+  CI occurrences. This is the first time the failure has been reproduced off a CI runner.
+
+**A measurement that lied first, and the shape it lied in.** The first before/after run reported both
+arms clean. Its pre-repair arm was installed with `git stash push`, the shell's command proxy rewrote
+that into a form git rejected, the script did not check the exit status, and fifteen more runs of the
+*repaired* code were printed under the label `OLD`. Its `No stash entries found` line was reporting the
+absence of the thing the run depended on, and read as reassurance. The rerun installs the old arm with
+`git show HEAD:<path>` and refuses to run the arm at all unless `git diff --name-only` comes back
+empty. Same family as the rest of this file: a failed step whose failure is shaped like success.
 
 ### A partial reply was not committed when the credential failed mid-stream — seen once, not reproduced
 
