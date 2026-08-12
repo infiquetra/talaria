@@ -216,6 +216,35 @@ accepted in full; the first unit on `deepseek-v4-flash` returned five findings t
 That is not a measurement of either model — the tasks were different — and it is recorded here so
 that nobody later reads the register as evidence for a ranking it cannot support.
 
+### D12 — Qwen Code is retired mid-release and replaced by the Muse route, on cost
+
+**Decided 2026-08-12**, in the operator's own words: "from here on out lets stop using qwen and
+switch to claude-muse. I think we are now in qwens prime hours which costs more." Running sessions
+were explicitly left alone — "don't stop any current work" — so the two Qwen reviews already in
+flight on unit B1 ran to completion and are recorded in the register as Qwen sessions.
+
+**What the route is.** `claude --muse` and the `claude-muse` alias resolve to the same thing: the
+Claude command-line client pointed at a host serving `muse-spark-1.2-contributor`. It is the third
+model family in this release alongside the DeepSeek route and, formerly, Qwen Code.
+
+**This is a cost decision, not a capability one.** The operator states the model benchmarks at the
+level of the Qwen model it replaces. The root session raised one concern before that was known — that
+a reviewer too weak to find defects returns a clean verdict, which is indistinguishable from clean
+work — and withdrew it on the operator's answer. The concern is recorded rather than dropped because
+the failure shape it names is real and has cost this release four separate corrections; it simply
+does not apply here.
+
+**One consequence carried forward from D4.** Qwen Code did not read the organization's instruction
+file, which is how an attribution trailer reached `main` (see the register's correction note). The
+Muse route is the Claude client and reads it on every route, so that particular gap closes with this
+switch. The guard — restating prohibitions in the brief of any session on an engine that cannot
+inherit them — stays in force regardless, because the next engine change will not necessarily be back
+to a Claude route.
+
+**Cross-family independence is preserved and slightly improved.** Implementers run on the DeepSeek
+route and reviewers now run on Muse, so no plan or implementation is still graded by the model that
+wrote it.
+
 ## 2. Child-session register
 
 | Session name | Unit | Engine | Effort | Permission | Created | Closed | Outcome |
@@ -232,13 +261,17 @@ that nobody later reads the register as evidence for a ranking it cannot support
 | `b2-plan` | B2 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Merged as pull request 62 after two rounds of repair — see the two review rows below |
 | `b2-doc-review` | B2 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Returned `BLOCKED` with four findings, all four confirmed by hand and repaired. The blocking one is the unit's own defect reintroduced by a literal reading of the plan; it also caught that `prettier --check docs/` is vacuous because `.prettierignore` contains `docs/` |
 | `b2-reverify` | B2 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Confirmed all four repairs against the tree and found **three errors introduced by the repair itself**, all three the root session's; see the learning dated 2026-08-11 on citations carried from a reviewer |
-| `b2-implement` | B2 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | — | Open as pull request 66, under independent review |
-| `b2-code-review` | B2 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | — | In flight |
+| `b2-implement` | B2 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-12 | **Accepted in full.** Implemented the banner rescope to plan, including KTD4's unconditional refresh; merged as pull request 66 |
+| `b2-code-review` | B2 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-12 | **Accepted in full.** Returned `PROCEED` with zero findings — the only clean-on-first-submission result of this release. It proved AE4a genuine by temporarily re-gating the refresh and watching AE4a fail while AE4 passed; the root session reproduced that experiment independently before accepting the verdict |
 | `b3-plan` | B3 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Merged as pull request 63 after repair. Its commit carries an attribution trailer that this organization's rules prohibit — see the correction below |
 | `b3-doc-review` | B3 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Returned `BLOCKED` with three findings, all three confirmed by hand and repaired. The blocking one established that `pageup` and `home` never scroll at all, which is now filed as its own P1 defect rather than papered over |
-| `b3-implement` | B3 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | — | Open as pull request 65, under independent review |
-| `b3-code-review` | B3 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | — | In flight |
-| `b1-plan` | B1 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | — | In flight |
+| `b3-implement` | B3 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-12 | **Accepted with one repair.** Implemented the four feedback sites to plan; its review found one unasserted acceptance half, repaired by the root session. Merged as pull request 65 |
+| `b3-code-review` | B3 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-12 | **Accepted in full.** Ran five mutations against a scratch copy; four killed by the suite and one survived, which is the finding. AE4 half one asserted the notice but not the collapsed flip the plan promised to preserve. The root session reproduced the surviving mutation independently — all 575 tests in `tests/ui/` and `tests/replay/` passed with the behaviour removed |
+| `b1-plan` | B1 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-12 | **Accepted with repair pending.** Recommended removing the caret row for a transient latched notice, weighing five options; opened as pull request 68. Two reviews then found eight defects and five quotation errors |
+| `b1-doc-review` | B1 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Returned `BLOCKED` with eight findings, two at P1. Both P1s confirmed by the root session against the tree; two of the second finding's own citations were wrong and were corrected before the finding was passed on |
+| `b1-cite-check` | B1 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Found **81** citations where the plan's author reported 51 — 76 correct, five wrong, none unresolvable. All five share one shape: the location is right and the quotation is a paraphrase inside quotation marks |
+| `flake-fix` | — | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Partly accepted, then accepted after repair.** The replay-pause half was correct and well-reasoned. The gate half replaced a three-condition pane check with the one condition that never touches the pane; sent back with evidence and repaired. Merged as pull request 69 |
+| `b1-repair` | B1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
 | `b4-implement` (second) | B4 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Rejected — and the fault is the root session's, not the session's.** Launched against a unit that had already shipped as pull request 60. Interrupted about ninety seconds in, its worktree and branch removed. It had itself already reached the right suspicion — its last line before the interrupt was that `platforms.changed` was in `_OBSERVED_ON_A_LIVE_GATEWAY` at `decode.py:120` and it needed to check whether that was already on `main` |
 
 **The rejected finding, recorded rather than dropped.** The Antigravity review reported that the

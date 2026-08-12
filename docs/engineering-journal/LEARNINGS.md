@@ -1880,3 +1880,44 @@ symbol its plan introduces missing from the default branch — not by observing 
 open. Absence of an artifact about the work is not absence of the work. Where a project keeps a ledger
 of what shipped, read the ledger *before* dispatching, not while writing it up: a register that records
 outcomes is only a control if it is consulted at the moment a decision is made.
+
+## 2026-08-12
+
+### Seven passing cases cannot tell a live guard from a dead one
+
+**Evidence.** Reviewing a repair to `tests/replay/test_gate.py`, the root session claimed that the
+replay gate's middle failure branch — `elif not content_is_complete(app.state, final_view)` at
+`talaria/replay/gate.py:1380`, where `final_view` is `transcript_view(app.state)` built six lines
+earlier — was dead code that could never fire, and instructed a child session to file it as a defect.
+The claim rested on `content_is_complete`'s own docstring, which warns that
+`view == transcript_view(state)` "would pass no matter what", plus an empirical check: the call
+evaluated `True` across seven hand-built states including empty text, duplicate entries, mixed kinds
+and in-flight streaming text.
+
+The claim was wrong and was withdrawn before the filing landed. `content_is_complete` renders each
+entry **in isolation** — `transcript_view(SessionState(transcript=(entry,)))` at `gate.py:1041` — and
+then requires those lines to appear in order in the aggregate view. Mutating the aggregate projection
+to drop its last entry while leaving per-entry rendering correct returned `False`. The branch guards a
+real class of bug.
+
+**Mechanism, and why the evidence looked strong.** Every one of the seven cases ran *correct* code.
+A guard that is live and a guard that is dead behave identically when nothing is broken — both stay
+quiet. Volume of passing cases feels like evidence and is not: seventy would have been no better than
+seven. The only observation that separates the two is breaking the thing being guarded, and that
+observation was one mutation away throughout.
+
+The docstring compounded it. It warns against `view == transcript_view(state)` — an *equality*
+comparison — which is not what the function does internally. Reading the warning as applying to any
+call whose `view` argument is `transcript_view(state)` is a plausible over-read, and the surrounding
+code invites it: `interface_shows_everything`'s docstring at `gate.py:997-1005` says the call sites
+*were* effectively self-comparisons and that blanking the pane "produced a completely blank screen and
+a `pass` verdict with zero content loss." Both things are true at once — the branch cannot see the
+pane, and it can see an aggregate projection loss — and collapsing them into "dead code" loses the
+distinction that matters.
+
+**Generalizable rule.** To claim a check never fires, make it fire. A guard's liveness is only
+observable by breaking what it guards, so mutation is not the strongest evidence available — it is the
+*only* evidence, and passing cases are not weak evidence of deadness but zero evidence. The same
+session had already demanded exactly this of three child reviewers before failing to apply it to its
+own finding, which is the more useful half of the lesson: a verification standard held for others and
+not for oneself is not a standard.
