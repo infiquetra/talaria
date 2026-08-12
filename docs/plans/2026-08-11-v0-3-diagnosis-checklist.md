@@ -1,7 +1,7 @@
 ---
 title: v0.3 diagnosis checklist — the four undiagnosed items, and what each one decides
 type: checklist
-status: ready-for-operator
+status: mostly-superseded — one optional step and one live step remain; see "Reduced again, 2026-08-12"
 date: 2026-08-11
 source: docs/plans/2026-08-11-v0-3-orchestration-charter.md (units E1–E4)
 ---
@@ -121,3 +121,28 @@ negative attempts against different shapes start to argue the sighting was somet
 Hand the captures back and the charter's units get sized against them. Nothing in spines A, B or C is
 estimated on a plausible reading of the code before this checklist has been run — and a checklist that
 has not been run is not progress against the items it covers.
+
+## Reduced again, 2026-08-12 — what is still live
+
+The paragraph above was written when this checklist gated the release. It no longer does, and saying so
+plainly matters more than leaving an aspiration in place. Two operator decisions moved almost all of it
+out of the critical path:
+
+- **Decision D13** cut the click affordance from unit A1 and moved unit A3 out of v0.3. The mouse
+  capture is no longer requested for this release. It is still the right capture whenever the operator
+  is at a terminal anyway — which pane, which multiplexer, whether the offset is constant or grows down
+  the pane, and whether it reproduces with the multiplexer out of the picture — and ruling R3 keeps the
+  diagnosis that makes it sharp.
+- **Decision D14** declined steps 2 and 3. Unit A4 is planned with two of five driven keys unmeasured,
+  and its plan is required to say which cells those are and to design so that neither decides anything
+  silently.
+
+**What is still live, and neither of it blocks anything.** Step 1 remains optional, unchanged. **Step 4
+— the duplicated-content reproduction — was not covered by either decision and is still worth a run.**
+It is the only item here that probes a defect nobody has explained: sighted twice, one reproduction
+attempt already failed against a different shape, and a second negative result would start to argue the
+sighting was something else. It needs a live gateway and a recording, and no agent can make it.
+
+Spine A's remaining three units — the approval card owning focus, the card's advertised keys doing what
+the card says, and the function-key row re-decided as a whole — need nothing from this checklist and
+are in planning.
