@@ -194,9 +194,16 @@ async def test_f1_reaches_a_button_backed_card_past_agent_rows() -> None:
     Two agent rows are mounted first — the variable-tab-distance case — so
     the approval's control is not the first focusable widget on screen, which
     is exactly the arrangement a tab-order-only fix would still get wrong.
+
+    A1/A2: approval cards now auto-focus on mount when the composer is empty
+    (KTD1), so this test keeps the composer non-empty to prove the jump
+    itself, not the auto-focus, reaches past the rows.
     """
     app = live_app(RecordingDispatcher())
     async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("h", "i")
+        await pilot.pause()
+        assert app.composer.text == "hi"
         feed(app, event("message.start", {}))
         feed(app, _subagent_start(0, "indexer"), seq=101)
         feed(app, _subagent_start(1, "reviewer"), seq=102)
@@ -213,7 +220,9 @@ async def test_f1_reaches_a_button_backed_card_past_agent_rows() -> None:
             seq=103,
         )
         await settle(app, pilot)
-        assert app.screen.focused is app.composer.text_area, "mount-time auto-focus is out of scope"
+        assert app.screen.focused is app.composer.text_area, (
+            "mid-word guard keeps composer focused"
+        )
 
         await pilot.press("f1")
         await pilot.pause()
