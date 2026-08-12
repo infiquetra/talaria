@@ -1847,3 +1847,36 @@ a change to it. Design comments narrate why something is the way it is and go st
 reads as deletion. And when a document's factual claims matter, run a judgement reviewer and a
 mechanical citation resolver over it separately: the one with no room to interpret is the one that can
 falsify the other.
+
+### A plan merged on `main` looks exactly like a plan waiting to be built
+
+**Evidence.** The root session surveyed the release for an idle work slot, found
+`docs/plans/2026-08-11-v0-3-unit-b4-unknown-event-flood-plan.md` present on `main` with no open pull
+request against it, concluded unit B4 was planned-but-unimplemented, wrote a full implementation brief,
+created a worktree and a branch, and launched an agent against it. Unit B4 had already shipped —
+`unknown_event_repeats` is on `main` at `talaria/domain/state.py:172` and `platforms.changed` is in the
+ambient list at `decode.py:120`, merged as pull request 60 roughly four hours earlier. The child
+session was interrupted about ninety seconds in and its worktree and branch removed.
+
+**Mechanism.** Two signals were read as one. *A plan file exists on the default branch* and *no pull
+request is open for that unit* are both true of a unit that is finished, and both true of a unit that
+is planned and idle — the states are indistinguishable from repository metadata alone. The signal that
+does distinguish them is the code, and the signal that would have distinguished them for free is the
+release's own child-session register, which already carried a `b4-implement` row naming pull request 60.
+The register was read four minutes **after** the launch, while drafting a different edit, and that is
+what surfaced the error. The child agent independently reached the same suspicion before it was stopped:
+its last line was that `platforms.changed` was already in `_OBSERVED_ON_A_LIVE_GATEWAY` and it needed to
+check whether that was on `main`.
+
+**The shape this shares with three other failures in the same session.** A signal whose failure mode is
+indistinguishable from success — a lifecycle wait that returns instantly, an empty check rollup that
+reads as green, a pane blocked on a permission dialog that is perfectly still, and now an absent pull
+request that reads as absent work. In each case the cheap proxy fails toward "proceed", and in each case
+the fix was to require positive evidence of the thing itself rather than the absence of its
+counter-evidence.
+
+**Generalizable rule.** Before launching work against a unit, prove the unit is unbuilt by finding the
+symbol its plan introduces missing from the default branch — not by observing that no pull request is
+open. Absence of an artifact about the work is not absence of the work. Where a project keeps a ledger
+of what shipped, read the ledger *before* dispatching, not while writing it up: a register that records
+outcomes is only a control if it is consulted at the moment a decision is made.
