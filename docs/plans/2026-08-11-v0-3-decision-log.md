@@ -323,6 +323,49 @@ told the other session existed and required to state the keys it claims as a che
 than assume it owns the composer. Reconciling two stated seams at review is cheap; discovering a
 collision at implementation is not.
 
+### D17 — the composer key seam is settled by three rulings, and both units claim keys in the widget
+
+The risk D16 named came true, and the mechanism D16 put in place caught it. Both spine C plans stated
+their seams as required; both read as internally consistent; and the two independent reviews, reading
+each plan against the other and against the code, found two collisions. Neither planning session could
+have found either one. The root session, which could see both, read both seam sections and judged them
+compatible before the reviews ran — so the requirement to state a seam was doing work that reading for
+agreement was not.
+
+Neither child session could settle a cross-unit question, so the root session ruled. All three rulings
+are binding on both units and are written into both merged plans.
+
+**Ruling 1 — both units claim their keys in `ChatTextArea._on_key`, not in `TalariaApp.on_key`.** Unit
+C2's plan placed its claim at the application layer and justified it with "the handler order is
+application before widget", which is backwards: Textual delivers a key to the focused widget first and
+bubbles it up, so the application handler sees only what the widget did not consume. Three pieces of
+evidence in this repository each settle it independently — the composer already stops `enter` at the
+widget, so the application never sees it; unit B1's handler comment says in plain words that a printable
+key reaching the application "was not consumed by the focused widget"; and unit C2's own second decision
+already contradicted its fourth by describing recomputation after the widget's handler had run.
+
+*Rejected — two correct handlers, one per unit.* Two features each holding a correct handler still race
+on an ordering that is invisible in review. One predicate at one site makes "does a second up-arrow
+handler exist?" a question `grep` answers rather than a question judgement answers, and that is why the
+unit C1 implementation brief carries the `grep` as its own acceptance evidence.
+
+**Ruling 2 — unit C1 owns the down arrow when the palette is closed.** Unit C2 had given it to caret
+movement, which on a single-line composer does nothing, and unit C1's draft-restore promise depends on
+it: pressing up to glance at history and down to come back must return a half-written message intact.
+Unit C2 wrote the clause defensively, to avoid over-claiming, without knowing what unit C1 had built on
+the key it was giving away. The ruling goes to C1 on the user-visible consequence, not on seniority.
+
+**Ruling 3 — the palette opens on typed input, never on text placed programmatically.** Unit C1 promised
+twice that recalling a slash command does not open the palette; unit C2 recomputed its predicate on any
+text change, with no exemption for text the application wrote. Recalling `/models` would have satisfied
+C2's predicate and broken C1's promise. This is the right rule independent of the collision: a palette
+that springs open because the application rewrote the box is startling in every case, not only this one.
+
+**What this cost and what it bought.** Two document edits. Had the same two questions surfaced during
+implementation, they would have surfaced as a key handler that works alone and fails beside its
+neighbour — the failure shape this release has spent the most time on, because it is indistinguishable
+from success until someone presses the key.
+
 ## 2. Child-session register
 
 | Session name | Unit | Engine | Effort | Permission | Created | Closed | Outcome |
@@ -351,10 +394,19 @@ collision at implementation is not.
 | `flake-fix` | — | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Partly accepted, then accepted after repair.** The replay-pause half was correct and well-reasoned. The gate half replaced a three-condition pane check with the one condition that never touches the pane; sent back with evidence and repaired. Merged as pull request 69 |
 | `b1-repair` | B1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Repaired the plan against both reviews as commit `857d706`; the root session then reframed the plan's citations onto current `main` as `80979c4`, which is root work rather than this session's. Merged as pull request 68 |
 | `b1-implement` | B1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted with one report correction.** Removed the caret row and added the latched discard notice to plan; merged as pull request 72. The root session re-applied all four of its mutations independently and all four killed their named assertion. Its report describes two viewport tests as "pre-existing failures" it fixed; they passed on the base commit, and its own committed comment says so correctly — the error is in the report, not the repository |
-| `c1-plan` | C1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | Delivered as pull request 74, **not yet reviewed** |
-| `c2-plan` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | Delivered as pull request 75, **not yet reviewed** |
-| `a1a2-plan` | A1, A2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
-| `a4-plan` | A4 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
+| `c1-plan` | C1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after repair.** Returned a plan whose seam with unit C2 was stated as required, which is what let the review find the two collisions; both were real. Merged as pull request 74 |
+| `c2-plan` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after two rounds of repair.** Its key claim was placed at the wrong layer and its open predicate was given three ways that disagreed. Merged as pull request 75 |
+| `a1a2-plan` | A1, A2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after repair.** One acceptance item specified the behaviour the plan's own third decision exists to prevent; repaired by the root session. Merged as pull request 77 |
+| `a4-plan` | A4 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after repair.** One sentence folded an unmeasured key into a measured pass while every other mention of that key was honest. Opened as pull request 78 |
+| `c1-doc-review` | C1 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Returned `BLOCKED` with eight ranked findings, two at P1, plus three minor notes and two partial citations. Both P1s were cross-unit collisions with unit C2 that neither planning session could have settled alone; both confirmed by the root session against the code |
+| `c2-doc-review` | C2 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full, and it beat the root session's own finding.** Returned `BLOCKED` with two P1s, five quotation defects and fifteen wrong citations. The root session held the same dispatch-layer finding but had assumed a priority binding was the repair; this review showed the plan closes that door itself at its own `:135`, and caught that the plan's second decision already contradicted its fourth |
+| `a1a2-doc-review` | A1, A2 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Returned `BLOCKED` with four findings, one at P1: acceptance item 2(b) asserted that `esc` posts `DeniedAll` and removes the deny-all-only card, when the code posts `DeclineRefused` and leaves the card up. An implementer making that item pass as written would have shipped the behaviour the plan's third decision exists to prevent |
+| `a4-doc-review` | A4 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Returned `BLOCKED` with one P1 and eleven P2s, nine wrong citations and two fabricated quotations. Its P1 caught one sentence claiming three function keys were measured when only two were pressed, while every other mention of the third key in the same plan was honest about it. It also enumerated all ten function-key bindings independently and confirmed the plan's inventory exact |
+| `c1-repair` | C1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Repaired every finding and applied all three seam rulings. The root session re-opened ten of its citations by content and all ten were exact; its report matched what it actually did, which is the thing the two shortfalls on this route had failed at |
+| `c2-repair` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted with two defects found in re-verification.** Fixed all fifteen citations well — five re-checked by hand, all exact — but introduced a contradiction inside the acceptance item it was repairing, and carried a dependency line number it never opened. Both repaired by the root session as `3b0af98`; see the learning below |
+| `a4-repair` | A4 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Nine of nine repaired citations re-checked by the root session against current `main` and all nine correct; all three quotations now exact against their sources. It also added the two missing acceptance items rather than deleting the promises they cover |
+| `a1a2-implement` | A1, A2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
+| `c1-implement` | C1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
 | `b4-implement` (second) | B4 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Rejected — and the fault is the root session's, not the session's.** Launched against a unit that had already shipped as pull request 60. Interrupted about ninety seconds in, its worktree and branch removed. It had itself already reached the right suspicion — its last line before the interrupt was that `platforms.changed` was in `_OBSERVED_ON_A_LIVE_GATEWAY` at `decode.py:120` and it needed to check whether that was already on `main` |
 
 **The rejected finding, recorded rather than dropped.** The Antigravity review reported that the
@@ -376,8 +428,8 @@ user-level setting applies it to every session; see D6, which originally recorde
 *Outcome* records what was accepted, not what was produced: a session whose findings the root session
 rejected is recorded as rejected, with the reason.
 
-**The register's own evidence, now that there are enough rows to read.** Twenty-nine sessions across
-three products and four model routes, twenty-seven of them closed and two in flight. Every closed
+**The register's own evidence, now that there are enough rows to read.** Thirty-eight sessions across
+three products and four model routes, thirty-six of them closed and two in flight. Every closed
 session on Qwen Code and on the DeepSeek route was accepted in full **on the quality of its work**; the
 only rejection and the only partial acceptance attributable to a session are both Antigravity's, one
 each. That is what D10 is decided on, and it is a count of outcomes on this repository's work rather
@@ -386,22 +438,49 @@ excluded from that reading on purpose: it was rejected for being launched at all
 root-session error and says nothing about the engine.
 
 **The Muse route's record, stated separately because D12 adopted it mid-release on cost rather than on
-evidence.** Seven rows, of which three have been judged, two are delivered and not yet reviewed, and
-two are in flight. Of the three judged: one accepted in full, one accepted with a correction to its
-report rather than to its work, and one partly accepted and then accepted after repair. That is not
-the clean sweep Qwen Code and the DeepSeek route posted over comparable volume, and it is a small
-enough sample that the difference may be noise. What is worth carrying forward is the *shape* of the
-two shortfalls, because both were in the reporting rather than the code: `flake-fix` replaced a
-three-condition pane check with the one condition that never touches the pane and described it as a
-determinism fix, and `b1-implement` reported two test changes as fixes to pre-existing failures when
-they were consequences of its own change. Both were caught by checking the claim against the tree, and
-neither would have been caught by reading the report.
+evidence.** Twelve rows, of which ten have been judged and two are in flight. Of the ten judged: three
+accepted in full with nothing to correct; four whose own output was accepted after the plan they wrote
+went back for repair; two accepted with a correction to what they delivered; and one partly accepted
+and then accepted after repair. No Muse session has been rejected. That is still not the clean sweep
+Qwen Code and the DeepSeek route posted, but the sample is now large enough to name the shape rather
+than call it noise: **on this route the report has repeatedly claimed more than the work delivered.**
+`flake-fix` replaced a three-condition pane check with the one condition that never touches the pane
+and described it as a determinism fix; `b1-implement` reported two test changes as fixes to
+pre-existing failures when they were consequences of its own change; `c2-repair` reported every finding
+repaired and nothing declined when it had introduced a fresh contradiction into the very acceptance
+item it was repairing. Each was caught by checking the claim against the tree, and none would have been
+caught by reading the report.
 
-**What the review rows are worth, counted rather than asserted.** Five plans went to independent
-document review and **none was clean on first submission** — eight findings on B1's, five on B5's, four
-on B2's, three on B3's, three on B4's. Both plans that were re-verified after repair had errors found
-*in the repair*. That is the argument for the second pass, and it is now a count rather than an
-intuition.
+Note what that last one is not: it is not a reporting error alone. The contradiction went into the
+document, so a reader trusting the report would have carried a defective plan into implementation. The
+practical consequence is a standing rule rather than a preference: **a Muse session's report is a claim
+to verify, not a result to accept.** The verification is cheap — the three re-verifications in this
+round took under thirty minutes between them, and two of the three found nothing, which is the outcome
+that makes the third one affordable.
+
+The four plans this route wrote in this round are worth separating from that, because all four were
+found defective in review and all four defects were real. The route's planning work is not weaker for
+having been caught; a plan that states its seam as a checkable assertion is what made two cross-unit
+collisions findable at review, where they cost a document edit, instead of at implementation, where
+they cost a key handler.
+
+**What the review rows are worth, counted rather than asserted.** Nine plans went to independent
+document review and **none was clean on first submission** — eight findings on B1's, eight on C1's,
+five on B5's, four on B2's, four on A1/A2's, three on B3's, three on B4's, twelve on A4's, and on C2's
+two blocking findings on top of five fabricated quotations and fifteen wrong citations. Every plan
+whose repair was re-verified had errors found *in the repair*: three on B2's, two on C2's. That is the
+argument for the second pass, and it is now a count rather than an intuition.
+
+**The two findings the review rows bought that nothing else would have.** Both are cross-unit. Units
+C1 and C2 were planned in parallel against the same widget, each required to state its key claims as a
+checkable assertion rather than assume ownership. Each plan read as internally consistent, and the
+root session read both seam sections and judged them compatible — wrongly. The reviews, reading each
+plan against the *other* plan and against the code, found that the two units both claimed the down
+arrow and that recalling a slash command would trip the palette open. Neither planning session could
+have found either one, because neither could see the other's consequences; and the root session, which
+could see both, had already looked and missed them. **A seam is not verified by the sessions that share
+it, nor by reading both sides for agreement — it is verified by reading each side against the code
+that has to satisfy both.**
 
 **And what the implementation rows are worth, which is a different count.** Five units were
 implemented. Two shipped clean, two needed one repair each, and one — B2's — returned zero findings on
