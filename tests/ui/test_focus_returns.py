@@ -181,32 +181,11 @@ async def test_a_deliberate_focus_move_is_left_alone() -> None:
         await app.shutdown_sources()
 
 
-@pytest.mark.asyncio
-async def test_tabbing_into_the_transcript_names_it_in_the_caret_slot() -> None:
-    """U3's dedicated caret slot (R5, KTD5). The transcript pane gives no
-    visual sign of holding the caret on its own — this is the one on-screen
-    word that says so, and it clears again the moment the caret comes home.
-    """
-    app = live_app(RecordingDispatcher())
-    async with app.run_test(size=(100, 30)) as pilot:
-        feed(app, event("message.start", {}))
-        reply = event("message.delta", {"text": "a reply worth scrolling back through\n"})
-        feed(app, reply, seq=101)
-        await settle(app, pilot)
-        assert app.screen.focused is app.composer.text_area
-        assert app.status_region.caret_text == ""
-
-        await pilot.press("tab")
-        await pilot.pause()
-        assert app.screen.focused is not app.composer.text_area
-        assert app.status_region.caret_text == "caret: transcript"
-
-        await pilot.press("shift+tab")
-        await pilot.pause()
-        assert app.screen.focused is app.composer.text_area
-        assert app.status_region.caret_text == ""
-        await app.shutdown_sources()
-
+# B1 removed the caret status row (docs/plans/2026-08-11-v0-3-unit-b1-caret-status-row.md
+# KTD1). The two tests that asserted its content — tab-into-transcript and
+# F1-jump naming — are deleted with this note rather than silently vanishing,
+# so a reader knows the absence is deliberate and where the replacement is
+# asserted (AE1/AE2 in tests/ui/test_b1_discard_notice.py).
 
 @pytest.mark.asyncio
 async def test_f1_reaches_a_button_backed_card_past_agent_rows() -> None:
@@ -249,36 +228,7 @@ async def test_f1_reaches_a_button_backed_card_past_agent_rows() -> None:
         await app.shutdown_sources()
 
 
-@pytest.mark.asyncio
-async def test_f1_jump_names_the_prompts_region_in_the_caret_slot() -> None:
-    """U3's caret slot, driven by U1's jump key. Landing on a card's control
-    is exactly the case the slot exists for: a button holding the caret
-    looks like any other unfocused button unless something says so.
-    """
-    app = live_app(RecordingDispatcher())
-    async with app.run_test(size=(100, 30)) as pilot:
-        feed(app, event("message.start", {}))
-        feed(
-            app,
-            event(
-                "approval.request",
-                {
-                    "description": "delete the build directory",
-                    "command": "rm -rf build",
-                    "choices": ["once", "deny"],
-                },
-            ),
-            seq=101,
-        )
-        await settle(app, pilot)
-        assert app.status_region.caret_text == ""
-
-        await pilot.press("f1")
-        await pilot.pause()
-
-        assert app.status_region.caret_text == "caret: prompts"
-        await app.shutdown_sources()
-
+# B1 removed the second caret-slot assertion (see note above).
 
 @pytest.mark.asyncio
 async def test_f1_jumps_even_while_the_composer_holds_text() -> None:

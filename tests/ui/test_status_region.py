@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """R22's rendering half: multi-row literal output, ANSI shown and not obeyed.
 
 U6 owns the runner and its failure taxonomy; this suite owns what reaches the
@@ -96,50 +97,23 @@ def test_defang_leaves_ordinary_text_alone() -> None:
     assert defang("端末 é עברית 🜁") == "端末 é עברית 🜁"
 
 
-# ── U3: the caret slot (R5, KTD5) ─────────────────────────────────────────
+# ── B1: the caret slot is gone (R5' replaces R5) ─────────────────────────
 #
-# talaria/ui/app.py wires focus changes to StatusRegion.set_caret through
-# _refresh_caret_slot; tests/ui/test_focus_returns.py covers that wiring end
-# to end (tabbing into the transcript, the F1 jump). This section is what
-# CR5 found missing: the slot's OWN two properties, independent of how the
-# caret got there — that it survives a status tick sharing the region with
-# it, and that naming the caret never moves a single row of anything else.
+# B1 removed the dedicated caret slot (KTD1, docs/plans/2026-08-11-v0-3-unit-b1-
+# caret-status-row.md). The two U3 tests that asserted its properties — the
+# caret word surviving a status tick and the geometry invariant via set_caret —
+# are deleted with this note. The geometry invariant is re-asserted below
+# without the slot, so a regression that re-introduces a focus-dependent row
+# still fails loudly (AE8).
 
 
 @pytest.mark.asyncio
-async def test_the_caret_word_survives_a_status_tick_that_also_fails() -> None:
-    """The caret slot is a dedicated ``Static``, deliberately never the
-    shared ``.status--marker`` one — that Static is overwritten by every
-    tick (KTD5's own reason for the split, see ``StatusRegion``'s
-    docstring). A caret word set before a failing tick must still be there
-    after it, and the failure marker must still be shown beside it.
-    """
-    app, _ = paused_app([event("gateway.ready", {})])
-    async with app.run_test(size=(100, 30)) as pilot:
-        # Mount-time focus settles onto the composer asynchronously; waited
-        # out first so that settling does not fire afterward and clobber the
-        # caret word this test sets by hand.
-        await pilot.pause()
-        app.status_region.set_caret("transcript")
-        await pilot.pause()
-        assert app.status_region.caret_text == "caret: transcript"
-
-        await app.status_region.apply(StatusTickResult(outcome="timeout", marker="status: timeout"))
-        await pilot.pause()
-
-        assert app.status_region.marker_text == "status: timeout"
-        assert app.status_region.caret_text == "caret: transcript"
-        await app.shutdown_sources()
-
-
-@pytest.mark.asyncio
-async def test_status_region_geometry_is_invariant_across_caret_states() -> None:
-    """R5: the caret slot is mounted unconditionally at a fixed height, so
-    writing into it must never move a single row of the rest of the
-    interface. Checked against every region's own geometry rather than
-    screen height alone, which cannot see ``#body``'s rows move under it —
-    the same falsifier ``talaria/ui/composer.py:181-189``'s regression
-    needed, applied here to the caret slot instead of focus.
+async def test_status_region_geometry_is_invariant_across_focus_states() -> None:
+    """AE8: removing the caret slot cannot move any region, across all focus
+    states B1 touches (transcript pane, prompts container) and across a
+    failing status tick. The old R5 falsifier measured the same property via
+    set_caret; this measures it via real focus moves, because the slot no
+    longer exists to drive directly.
     """
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(100, 30)) as pilot:
@@ -154,23 +128,41 @@ async def test_status_region_geometry_is_invariant_across_caret_states() -> None
             }
 
         await pilot.pause()
-        baseline = regions()
+        baseline_empty = regions()
 
-        app.status_region.set_caret("transcript")
+        # Focus moves must not change geometry when the status region is empty
+        await pilot.press("tab")
         await pilot.pause()
-        assert regions() == baseline, "naming the transcript moved a region"
+        assert regions() == baseline_empty, "focus in the transcript moved a region"
 
-        app.status_region.set_caret("prompts")
+        await pilot.press("tab")
         await pilot.pause()
-        assert regions() == baseline, "naming the prompts region moved a region"
+        assert regions() == baseline_empty, "focus in the prompts container moved a region"
 
-        # The R5 falsifier: a caret word beside a failure marker, the one
-        # state where the region is showing the most it ever shows at once.
-        await app.status_region.apply(StatusTickResult(outcome="timeout", marker="status: timeout"))
+        app.composer.text_area.focus()
         await pilot.pause()
-        assert regions() == baseline, "a failure marker beside the caret word moved a region"
+        assert regions() == baseline_empty, "returning focus to the composer moved a region"
 
-        app.status_region.set_caret("")
+        # Now with status rows showing — the same focus moves must still be invariant.
+        # This is the post-B1 analogue of the old R5 falsifier: a focus-dependent
+        # row would change the status region's height, which would move every other
+        # region; asserting the geometry stays equal proves no such row exists.
+        await app.status_region.apply(
+            StatusTickResult(outcome="ok", rows=("branch: main", "tests: 296"))
+        )
         await pilot.pause()
-        assert regions() == baseline, "clearing the caret slot moved a region"
+        baseline_with_rows = regions()
+
+        app.transcript.focus()
+        await pilot.pause()
+        assert regions() == baseline_with_rows, "focus in transcript with rows moved a region"
+
+        app.prompts.focus()
+        await pilot.pause()
+        assert regions() == baseline_with_rows, "focus in prompts container with rows moved a region"
+
+        app.composer.text_area.focus()
+        await pilot.pause()
+        assert regions() == baseline_with_rows, "returning focus to composer with rows moved a region"
+
         await app.shutdown_sources()
