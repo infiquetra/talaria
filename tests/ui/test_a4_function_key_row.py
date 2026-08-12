@@ -358,20 +358,26 @@ async def test_ae6_row_is_discoverable() -> None:
     assert "F7" in descs["/profiles"]
     assert "F2" in descs["/agents"] and "ctrl+g" in descs["/agents"]
 
-    # Help bar scoped to mode and fits 80 columns — check rendered width
+    # Help bar scoped to mode and fits 80 columns — assert on what renders,
+    # not on the backing property (P2-H). len() on the stored string cannot
+    # detect a wide character that keeps len at 80 while pushing cell_len to
+    # 81 and causing ellipsis.
     app_live = live_app(RecordingDispatcher())
-    async with app_live.run_test(size=(80, 24)) as _pilot:
+    async with app_live.run_test() as pilot:
         live_text = app_live.help_bar.help_text
-        # Must fit 80 without ellipsis
         assert len(live_text) <= 80, f"live footer {len(live_text)} >80: {live_text!r}"
-        assert "…" not in live_text
         assert "F8" not in live_text, "live should not advertise replay keys"
         assert "ctrl+g" in live_text or "F2" in live_text
         assert "ctrl+c" in live_text
         assert "F1" in live_text
         assert "eaten" in live_text.lower()
-        # At 80 width the widget's rendered width is 80, so len <=80 means no clip
-        assert app_live.help_bar.size.width == 80 or live_text == str(app_live.help_bar.content)
+        await pilot.pause()
+        strips = app_live.screen._compositor.render_strips()
+        row = app_live.help_bar.region.y
+        rendered = "".join(seg.text for seg in strips[row])
+        assert "…" not in rendered, f"live footer clipped at 80x24: {rendered!r}"
+        assert "eaten on macOS" in rendered, f"live tail missing: {rendered!r}"
+        await app_live.shutdown_sources()
 
     from talaria.replay.source import ReplaySource
     from tests.ui.conftest import records
@@ -379,15 +385,20 @@ async def test_ae6_row_is_discoverable() -> None:
     controls = ReplayControls(paused=False)
     source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
     app_replay = TalariaApp(source, mode="replay", controls=controls)
-    async with app_replay.run_test(size=(80, 24)) as _pilot:
+    async with app_replay.run_test() as pilot:
         replay_text = app_replay.help_bar.help_text
         assert len(replay_text) <= 80, f"replay footer {len(replay_text)} >80: {replay_text!r}"
-        assert "…" not in replay_text
         assert "F8" in replay_text
         assert "F9" in replay_text
         assert "F10" in replay_text
-        # Replay must not advertise live interrupt
         assert "ctrl+c" not in replay_text
+        await pilot.pause()
+        strips = app_replay.screen._compositor.render_strips()
+        row = app_replay.help_bar.region.y
+        rendered = "".join(seg.text for seg in strips[row])
+        assert "…" not in rendered, f"replay footer clipped at 80x24: {rendered!r}"
+        assert "eaten on macOS" in rendered, f"replay tail missing: {rendered!r}"
+        await app_replay.shutdown_sources()
 
 
 def test_ae7_eaten_keys_documented_statically_no_detector() -> None:
