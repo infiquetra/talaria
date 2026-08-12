@@ -428,7 +428,7 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand(
         "/agents",
         "agents",
-        "Toggle sub-agent rows (F2 / ctrl+g, click status)",
+        "Toggle sub-agent rows (F2 / ctrl+g)",
     ),
 )
 

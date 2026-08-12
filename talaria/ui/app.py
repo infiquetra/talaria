@@ -278,6 +278,15 @@ PROMPT_NO_LONGER_LIVE: Final[str] = REFUSED_NOT_OUTSTANDING
 #: pacing register's own ("this session is live — nothing changed").
 ALREADY_FOLLOWING_BOTTOM: Final[str] = "the newest line is already followed — nothing changed"
 
+#: Shown when ctrl+c is pressed with no turn in flight (A4 P1-A).
+#:
+#: ``ctrl+c`` is a system quit binding in Textual; this unit reclaims it for
+#: the destructive interrupt, so a guard and visible feedback are load-bearing.
+#: The first press when nothing is in flight is a no-op that says so, matching
+#: :data:`ALREADY_FOLLOWING_BOTTOM` — a signal whose failure is
+#: indistinguishable from success is worse than no signal.
+NOTHING_TO_INTERRUPT: Final[str] = "nothing to interrupt — no turn is in flight"
+
 #: Shown when F2 is pressed while the sub-agent region has no rows to show or
 #: hide (B3, KTD3).
 #:
@@ -809,16 +818,16 @@ class HelpBar(Static):
 
         if mode == "replay":
             # Replay: the three pacing keys are primary; live interrupt is inert.
-            text = (
-                "F8 pause · F9 slower · F10 faster · end/F5 follow (click bottom) · "
-                "ctrl+q quit — F1/F2 eaten on macOS, use Tab/click for cards"
-            )
+            # Fits 80 columns at 80x24 (P1-D) — 79 chars, no ellipsis at standard
+            # width. Cut to four entries rather than clip nine.
+            text = "F8 pause · F9 slow · F10 fast · end follow · ctrl+q quit — F1/F2 eaten on macOS"
         else:
             # Live: pacing keys are inert, so not advertised.
+            # Fits 80 columns (80 chars) — four primaries plus eaten note.
+            # F3/F6/F7 are slash primaries already discoverable via palette.
             text = (
-                "ctrl+g/F2 agents (click status) · ctrl+c/F4 interrupt · "
-                "end/F5 follow (click bottom) · F3/ / commands · F6/models · "
-                "F7/profiles · ctrl+q quit — F1/F2 eaten on macOS"
+                "ctrl+g/F2 agents · ctrl+c stop · end follow · "
+                "ctrl+q quit — F1/F2 eaten on macOS"
             )
         self._help_text = text
         self.update(literal_text(text))
@@ -1554,9 +1563,18 @@ class TalariaApp(App[None]):
         self.transcript.follow_bottom()
 
     def action_interrupt(self) -> None:
-        """Stop the in-flight turn (R4) — inert in replay (AE11)."""
+        """Stop the in-flight turn (R4) — inert in replay (AE11) and inert when idle (P1-A).
+
+        ``ctrl+c`` reclaims Textual's system quit binding, so the guard is
+        load-bearing: the first press when no turn is in flight is a no-op
+        that says so, matching :data:`ALREADY_FOLLOWING_BOTTOM`'s visible
+        nothing-happened.
+        """
         if self.mode == "replay":
             self._refuse_mutation("interrupt")
+            return
+        if self.state.turn != "streaming":
+            self._notice(NOTHING_TO_INTERRUPT)
             return
         self._spawn_live(self.interrupt_live())
 

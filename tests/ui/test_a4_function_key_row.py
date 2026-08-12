@@ -17,7 +17,7 @@ import pytest
 
 from talaria.domain.commands import TALARIA_LOCAL_COMMANDS
 from talaria.replay.controls import ReplayControls
-from talaria.ui.app import AGENTS_NOTHING_TO_TOGGLE, TalariaApp
+from talaria.ui.app import AGENTS_NOTHING_TO_TOGGLE, NOTHING_TO_INTERRUPT, TalariaApp
 from tests.ui.conftest import RecordingDispatcher, event, feed, live_app, settle
 
 
@@ -53,69 +53,76 @@ async def test_ae1_jump_is_gone() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ae2_toggle_agents_via_chord_and_click_and_alias() -> None:
-    """AE2 behavioural: F2's eaten, so ctrl+g and click are the primaries, F2 remains alias.
+async def test_ae2_toggle_agents_via_chord_and_alias() -> None:
+    """AE2 behavioural: F2's eaten, so ctrl+g is the primary, F2 remains alias.
 
     With no rows, the toggle still flips its flag and the empty notice is shown,
     but the notice is latched per focus-hold (AE12) and a second press in the
-    same hold is silent. The test drives all three paths without pressing F2
-    where not needed, and also verifies the F2 alias still reaches the action.
+    same hold is silent. The test drives chord and alias, and verifies that
+    clicking the (now removed) status region does not toggle — the visible
+    collapsed hint lives in AgentRows, not in the blank status region (P1-B).
+    Slash /agents is also verified with a before/after check (P2-F).
     """
-    # Chord ctrl+g
+    # Chord ctrl+g — should toggle and show notice when empty
     app = live_app(RecordingDispatcher())
     async with app.run_test(size=(100, 30)) as pilot:
-        # Empty — chord should show AGENTS_NOTHING and flip collapsed
         assert not app.agents.is_populated
+        before = app.agents.collapsed
         await pilot.press("ctrl+g")
         await pilot.pause()
         assert AGENTS_NOTHING_TO_TOGGLE in app.composer.notice
+        assert app.agents.collapsed != before
         first_collapsed = app.agents.collapsed
-        # Second chord in same hold is silent (latch)
+        # Second chord in same hold is silent (latch) but still toggles
         await pilot.press("ctrl+g")
         await pilot.pause()
-        # Still toggled, but notice unchanged (latch held)
         assert app.agents.collapsed != first_collapsed
         await app.shutdown_sources()
 
     # Alias F2 still bound — structural proof that table edited, not desktop delivery
     app2 = live_app(RecordingDispatcher())
     async with app2.run_test(size=(100, 30)) as pilot:
+        before = app2.agents.collapsed
         await pilot.press("f2")
         await pilot.pause()
-        # F2 as alias reaches same action (toggles even when empty)
         assert AGENTS_NOTHING_TO_TOGGLE in app2.composer.notice
+        assert app2.agents.collapsed != before
         await app2.shutdown_sources()
 
-    # Click on status region — primary click path
+    # Click on status region — no longer a primary (P1-B). Clicking the blank
+    # status region must not toggle; only the chord (and F2 where delivered)
+    # and /agents do. This proves the invisible target was removed.
     app3 = live_app(RecordingDispatcher())
     async with app3.run_test(size=(100, 30)) as pilot:
+        before = app3.agents.collapsed
         await pilot.click("#status")
         await pilot.pause()
-        # Click should toggle (even when empty, it flips)
-        # We check that collapsed changed, not that notice shows (AE12 handles)
-        # For empty, click should also respect latch, so we check toggle happened
-        assert app3.agents.collapsed is True or app3.agents.collapsed is False  # toggled
+        assert app3.agents.collapsed == before
         await app3.shutdown_sources()
 
-    # Slash alias /agents
+    # Slash alias /agents — should toggle with before/after check
     app4 = live_app(RecordingDispatcher())
     async with app4.run_test() as pilot:
+        before = app4.agents.collapsed
         app4.composer.text = "/agents"
-        # Submit via enter
         await pilot.press("enter")
         await pilot.pause()
-        # /agents should have toggled (empty case shows notice via same path)
-        assert app4.agents.collapsed is True or app4.agents.collapsed is False
+        assert app4.agents.collapsed != before
         await app4.shutdown_sources()
 
 
 @pytest.mark.asyncio
-async def test_ae2_follow_bottom_via_end_and_f5_alias_and_click() -> None:
-    """AE2: F5's eaten-ambiguous, so end and bottom-edge click are primaries, F5 alias remains."""
+async def test_ae2_follow_bottom_via_end_and_f5_alias() -> None:
+    """AE2: F5's eaten-ambiguous, so end is the primary, F5 alias remains.
+
+    The whole-pane transcript click that used to re-follow anywhere in the pane
+    was removed (P1-C): it turned a scrollback read into an unexpected jump.
+    Only end (and F5 where delivered) re-follows; clicking the transcript
+    while reading must not yank to the bottom.
+    """
     # End key is primary
     app = live_app(RecordingDispatcher())
     async with app.run_test(size=(100, 30)) as pilot:
-        # Make transcript longer than viewport and scroll away
         for i in range(60):
             feed(app, event("message.delta", {"text": f"scrollback {i}\n"}), seq=100 + i)
         await settle(app, pilot)
@@ -141,7 +148,7 @@ async def test_ae2_follow_bottom_via_end_and_f5_alias_and_click() -> None:
         assert app2.transcript.follow
         await app2.shutdown_sources()
 
-    # Click on transcript when not following should re-follow (structural: click handler exists)
+    # Click on transcript when not following must NOT re-follow (P1-C)
     app3 = live_app(RecordingDispatcher())
     async with app3.run_test(size=(100, 30)) as pilot:
         for i in range(60):
@@ -152,43 +159,72 @@ async def test_ae2_follow_bottom_via_end_and_f5_alias_and_click() -> None:
         assert not app3.transcript.follow
         await pilot.click("#transcript")
         await pilot.pause()
-        assert app3.transcript.follow
+        assert not app3.transcript.follow
         await app3.shutdown_sources()
 
 
 @pytest.mark.asyncio
-async def test_ae3_interrupt_via_chord_and_f4_alias() -> None:
-    """AE3: interrupt's safe home is ctrl+c, F4 remains as alias.
+async def test_ae3_interrupt_guard_idle_shows_notice_and_does_not_dispatch() -> None:
+    """P1-A: idle ctrl+c is a no-op with visible feedback, not a dispatch.
 
-    The first press when nothing is in flight is a no-op that still shows a
-    notice (the turn is not cancelled). Outstanding prompts are declined only
-    after a confirmed interrupt. This test drives the chord and the alias
-    structurally, not via a live gateway.
+    The guard is load-bearing because ctrl+c reclaims Textual's system quit
+    binding. The first press when no turn is in flight must not send
+    session.interrupt and must show NOTHING_TO_INTERRUPT.
     """
-    # Chord ctrl+c in live mode should attempt interrupt (even when no turn)
     app = live_app(RecordingDispatcher())
     async with app.run_test() as pilot:
+        # No message.start, so turn is idle
+        assert app.state.turn == "idle"
         await pilot.press("ctrl+c")
         await app.settle_live()
         await pilot.pause()
-        # In live mode with no turn, interrupt still dispatches session.interrupt
-        # The RecordingDispatcher records operator_calls
+        assert not any(m == "session.interrupt" for m, _ in app.dispatcher.calls)  # type: ignore[union-attr]
+        assert NOTHING_TO_INTERRUPT in app.composer.notice
+        await app.shutdown_sources()
+
+    # F4 alias when idle is also guarded
+    app2 = live_app(RecordingDispatcher())
+    async with app2.run_test() as pilot:
+        assert app2.state.turn == "idle"
+        await pilot.press("f4")
+        await app2.settle_live()
+        await pilot.pause()
+        assert not any(m == "session.interrupt" for m, _ in app2.dispatcher.calls)  # type: ignore[union-attr]
+        assert NOTHING_TO_INTERRUPT in app2.composer.notice
+        await app2.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_ae3_interrupt_when_streaming_dispatches() -> None:
+    """P1-A: when a turn is streaming, ctrl+c and F4 dispatch session.interrupt."""
+    app = live_app(RecordingDispatcher())
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}))
+        await settle(app, pilot)
+        assert app.state.turn == "streaming"
+        await pilot.press("ctrl+c")
+        await app.settle_live()
+        await pilot.pause()
         assert any(m == "session.interrupt" for m, _ in app.dispatcher.calls)  # type: ignore[union-attr]
         await app.shutdown_sources()
 
-    # F4 alias structural: pressing f4 via Pilot reaches same action (binding exists)
     app2 = live_app(RecordingDispatcher())
     async with app2.run_test() as pilot:
+        feed(app2, event("message.start", {}))
+        await settle(app2, pilot)
+        assert app2.state.turn == "streaming"
         await pilot.press("f4")
         await app2.settle_live()
         await pilot.pause()
         assert any(m == "session.interrupt" for m, _ in app2.dispatcher.calls)  # type: ignore[union-attr]
         await app2.shutdown_sources()
 
-    # In replay, interrupt is inert (AE11) — chord should refuse
+
+@pytest.mark.asyncio
+async def test_ae3_interrupt_in_replay_is_inert() -> None:
+    """AE11: in replay, interrupt is inert — chord should refuse."""
     controls = ReplayControls(paused=True)
     from talaria.replay.source import ReplaySource
-    from talaria.ui.app import TalariaApp as AppClass2  # noqa: F401
     from tests.ui.conftest import records
 
     source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
@@ -282,31 +318,37 @@ async def test_ae5_palette_and_pickers_reachable_without_function_key() -> None:
         await pilot.pause()
         assert not app.palette.showing
 
-        # /models via slash
+        # /models via slash — in test with no catalog it shows a notice, but the
+        # path is slash, not F6. Verify the slash dispatch does not crash and
+        # leaves a notice (the external picker tests carry the full behaviour).
         app.composer.text = "/models"
         await pilot.press("enter")
         await pilot.pause()
-        # Should have attempted to open picker; in test with no catalog it will show notice
-        # but the path is slash, not F6. We just verify no crash and F6 alias still toggles
+        assert app.composer.notice != ""
+
+        # F6 alias still bound — pressing it also does not crash
         await pilot.press("f6")
         await pilot.pause()
-        # F6 alias reaches picker (will show notice about no catalog, but not crash)
-        assert True
+        assert isinstance(app.composer.notice, str)
 
         # /profiles via slash
         app.composer.text = "/profiles"
         await pilot.press("enter")
         await pilot.pause()
+        assert isinstance(app.composer.notice, str)
         await pilot.press("f7")
         await pilot.pause()
-        assert True
+        assert isinstance(app.composer.notice, str)
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
 async def test_ae6_row_is_discoverable() -> None:
-    """AE6 structural: palette lists slash aliases with function keys beside them;
-    help footer lists bindings scoped to mode.
+    """AE6: palette lists slash aliases with function keys; help footer fits 80.
+
+    The footer is asserted against what would render at 80x24, not just the
+    backing property: both mode strings must be <=80 and must not be clipped
+    with ellipsis at standard width. Mode-scoping is also verified.
     """
     # Palette lists local commands with function key hints in description
     descs = {c.name: c.description for c in TALARIA_LOCAL_COMMANDS}
@@ -316,15 +358,20 @@ async def test_ae6_row_is_discoverable() -> None:
     assert "F7" in descs["/profiles"]
     assert "F2" in descs["/agents"] and "ctrl+g" in descs["/agents"]
 
-    # Help bar scoped to mode — use mounted apps
+    # Help bar scoped to mode and fits 80 columns — check rendered width
     app_live = live_app(RecordingDispatcher())
-    async with app_live.run_test() as _pilot:
+    async with app_live.run_test(size=(80, 24)) as _pilot:
         live_text = app_live.help_bar.help_text
+        # Must fit 80 without ellipsis
+        assert len(live_text) <= 80, f"live footer {len(live_text)} >80: {live_text!r}"
+        assert "…" not in live_text
         assert "F8" not in live_text, "live should not advertise replay keys"
         assert "ctrl+g" in live_text or "F2" in live_text
-        assert "ctrl+c" in live_text or "F4" in live_text
+        assert "ctrl+c" in live_text
         assert "F1" in live_text
         assert "eaten" in live_text.lower()
+        # At 80 width the widget's rendered width is 80, so len <=80 means no clip
+        assert app_live.help_bar.size.width == 80 or live_text == str(app_live.help_bar.content)
 
     from talaria.replay.source import ReplaySource
     from tests.ui.conftest import records
@@ -332,26 +379,28 @@ async def test_ae6_row_is_discoverable() -> None:
     controls = ReplayControls(paused=False)
     source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
     app_replay = TalariaApp(source, mode="replay", controls=controls)
-    async with app_replay.run_test() as _pilot:
+    async with app_replay.run_test(size=(80, 24)) as _pilot:
         replay_text = app_replay.help_bar.help_text
+        assert len(replay_text) <= 80, f"replay footer {len(replay_text)} >80: {replay_text!r}"
+        assert "…" not in replay_text
         assert "F8" in replay_text
         assert "F9" in replay_text
         assert "F10" in replay_text
+        # Replay must not advertise live interrupt
+        assert "ctrl+c" not in replay_text
 
 
 def test_ae7_eaten_keys_documented_statically_no_detector() -> None:
     """AE7: eaten keys documented statically, no runtime detector."""
-    # No detector that predicts whether a future press will be eaten
     import pathlib
 
     app_text = (pathlib.Path(__file__).parents[2] / "talaria/ui/app.py").read_text()
     assert "eaten" in app_text.lower()  # static note exists
-    # Help bar and README name F1/F2 as eaten on macOS
     readme = (pathlib.Path(__file__).parents[2] / "README.md").read_text()
     assert "F1" in readme and "eaten" in readme.lower()
     assert "F2" in readme
 
-    # Ensure no code tries to detect eaten key at runtime (e.g., checking bytes)
+    # Ensure no code tries to detect eaten key at runtime
     assert "detector" not in app_text.lower() or "eaten-key detection" not in app_text.lower()
 
 
@@ -359,19 +408,25 @@ def test_ae9_no_composer_collision() -> None:
     """AE9: up-arrow history and / palette untouched; chords do not steal them."""
     from talaria.ui.app import TalariaApp as AppClass
 
-    # No binding for bare up-arrow or bare /
     keys = [b.key for b in AppClass.BINDINGS]  # type: ignore
     assert "up" not in keys
     assert "/" not in keys
     assert "ctrl+up" not in keys
-    # Provisional chords avoid those
     assert "ctrl+g" in keys
     assert "ctrl+c" in keys
 
 
 def test_ae11_project_check_is_clean() -> None:
-    """AE11 structural: BINDINGS contain no bare up-arrow or slash (already checked) and
-    help bar exists."""
+    """AE11: BINDINGS contain expected keys and help bar exists; real checks are external."""
     from talaria.ui.app import TalariaApp as AppClass
 
-    assert any(isinstance(b, object) for b in AppClass.BINDINGS)
+    keys = {b.key for b in AppClass.BINDINGS}  # type: ignore
+    # Must have the expected primary bindings
+    assert "ctrl+g" in keys
+    assert "ctrl+c" in keys
+    assert "f8" in keys
+    assert "ctrl+q" in keys
+    # Help bar must exist as a widget class
+    from talaria.ui.app import HelpBar
+
+    assert HelpBar is not None
