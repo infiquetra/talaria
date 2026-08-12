@@ -802,15 +802,134 @@ async def test_fallback_banner_paints_exactly_one_row(pane_width: int) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_fallback_banner_reports_the_hidden_count_and_the_total() -> None:
+    """AE1 (plan docs/plans/2026-08-11-v0-3-unit-b2-fallback-banner-scope.md,
+    KTD1): a 600-row fallback entry with 499 rows retained renders "101 of
+    600 lines of this entry hidden" — the hidden count and the total, never
+    the retained count. The old label ("clipped at the viewport edge") is a
+    requirement to disappear, and its absence is asserted, not omitted.
+    """
+    app = _Harness()  # DEFAULT_MOUNT_CAP: the real product cap
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        body = "\n".join(f"row {i}" for i in range(600))
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body=body, committed=True, line_span=(0, 600)
+            ),
+        )
+        view = await _apply(pane, entries)
+        unit = pane._entries[1]
+        assert unit.is_fallback and unit.banner is not None
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1, (
+            "a 600-row entry at the 500 cap retains 499 content rows"
+        )
+        banner = str(unit.banner.render())
+        assert "101 of 600 lines of this entry hidden" in banner
+        assert "clipped" not in banner, "the old label must disappear, not merely change"
+        assert "at the viewport edge" not in banner, (
+            "the viewport-edge phrase names the horizontal axis, not the vertical loss"
+        )
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_the_banners_hidden_count_is_a_subset_of_the_condensed_prefix() -> None:
+    """AE3 (plan .../2026-08-11-v0-3-unit-b2-fallback-banner-scope.md, KTD3):
+    at a settled checkpoint a committed fallback entry's hidden rows are a
+    subset of ``condensed_count`` — the banner's hidden count never exceeds
+    the top marker's, and the two labels' scope words distinguish them.
+    Here 200 one-line user rows fold entirely into the condensed prefix
+    while the 600-row fallback entry retains 499, so the banner's hidden
+    count (101) decomposes the prefix (301 = 101 + 200).
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        prefix = tuple(
+            TranscriptEntryRecord(
+                entry_id=1 + i, kind="user", raw_body="a", committed=True, line_span=(i, 1)
+            )
+            for i in range(200)
+        )
+        fallback = (
+            TranscriptEntryRecord(
+                entry_id=201,
+                kind="assistant",
+                raw_body="\n".join(f"row {i}" for i in range(600)),
+                committed=True,
+                line_span=(200, 600),
+            ),
+        )
+        view = await _apply(pane, prefix + fallback)
+        unit = pane._entries[201]
+        assert unit.is_fallback and unit.banner is not None
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1
+        hidden = 600 - len(unit.lines)
+        assert hidden == 101
+        assert f"{hidden} of 600 lines of this entry hidden" in str(unit.banner.render())
+        assert hidden <= pane.condensed_count, (
+            "the banner's hidden rows are a subset of the condensed prefix"
+        )
+        assert pane.condensed_count - hidden == 200, (
+            "the folded ordinary prefix rows are the difference"
+        )
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_a_descendant_triggered_fallback_retaining_every_row_renders_a_zero_banner() -> None:
+    """AE5 (plan .../2026-08-11-v0-3-unit-b2-fallback-banner-scope.md, KTD2):
+    a descendant-triggered fallback (a 601-column table, 1,204 descendants
+    past the 1,200 trigger) retains every row and must still render a banner
+    with a truthful "0 of N lines of this entry hidden" clause and the
+    fallback cause. The silent case — a banner appearing without a count
+    clause — is asserted not to happen.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        table = _table(1, 601)
+        entries = (
+            TranscriptEntryRecord(
+                entry_id=1, kind="assistant", raw_body=table, committed=True, line_span=(0, 4)
+            ),
+        )
+        view = await _apply(pane, entries)
+        unit = pane._entries[1]
+        assert unit.is_fallback and unit.banner is not None
+        assert len(unit.lines) == 4, "a descendant-triggered fallback retains every row"
+        banner = str(unit.banner.render())
+        assert "0 of 4 lines of this entry hidden" in banner, (
+            "a banner that retains every row must still state a zero hidden count"
+        )
+        assert "entry too large to render as markdown" in banner, (
+            "the fallback cause must survive the wording change"
+        )
+        assert re.search(r"\d+ of \d+ lines of this entry hidden", banner) is not None, (
+            "every mounted banner must carry a count clause"
+        )
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
 async def test_a_growing_fallback_tail_reuses_its_mounted_widgets() -> None:
     """A same-generation append to a fallen-back tail patches in place —
-    boundary line extended, new lines mounted, banner count refreshed —
+    boundary line extended, new lines mounted, banner refreshed —
     instead of dropping and rebuilding every widget. The rebuild was
     O(total lines) per delta: the full-scale gate measured the growing
     open fence's p99 apply at 17.7 s against KTD1(d)'s 50 ms ceiling.
     Widget identity is the proof of reuse — a rebuild cannot preserve it.
     The raised mount_cap keeps the tail-fold arithmetic out of this test's
-    way — identity under the cap is proven separately below.
+    way — identity under the cap is proven separately below. The final
+    banner assertion is the B2 growth-path check (plan
+    docs/plans/2026-08-11-v0-3-unit-b2-fallback-banner-scope.md, AE4):
+    it asserts the post-growth total on the new wording, exercising the
+    KTD4 trap that the total must come from the new text, not the stale
+    pre-growth ``applied_text``. At ``mount_cap=2000`` the tail never
+    recycles and retained equals total, so the hidden count is 0 — which
+    is exactly why this test cannot substitute for the capped-path item
+    (AE4a).
     """
     app = _Harness(mount_cap=2000)
     async with app.run_test(size=(80, 24)):
@@ -851,8 +970,64 @@ async def test_a_growing_fallback_tail_reuses_its_mounted_widgets() -> None:
             "previously mounted line widgets were replaced during an append"
         )
         assert unit.banner is not None
-        assert str(len(unit.lines)) in str(unit.banner.render())
+        # Re-expressed from the old `str(len(unit.lines)) in ...` — under
+        # the new wording that old assertion passed by coincidence, because
+        # at mount_cap=2000 retained equals total and the total string
+        # contains the retained length. This asserts the post-growth TOTAL
+        # (701, from the new text) on the B2 wording, so a stale pre-growth
+        # total would fail it.
+        assert f"0 of {len(unit.lines)} lines of this entry hidden" in str(
+            unit.banner.render()
+        ), "the post-growth banner must state the hidden count and the post-growth total"
         assert unit.accounted_rows == len(unit.lines) + 1
+        assert pane.rendered_lines == view.lines[pane.condensed_count :]
+
+
+@pytest.mark.asyncio
+async def test_a_capped_fallback_tail_raises_hidden_count_across_recycle_only_boundaries() -> None:
+    """AE4a (plan docs/plans/2026-08-11-v0-3-unit-b2-fallback-banner-scope.md,
+    KTD4): the recycle-only boundary, which every other acceptance item here
+    passes with the defect present. A fallback tail grown past the DEFAULT
+    cap mounts no fresh widgets on a growth boundary — the growth is served
+    entirely by the recycle loop, and the banner must still refresh, because
+    the total grows while the retained count is frozen. Two consecutive
+    recycle-only boundaries are asserted, because a single one can pass on a
+    coincidence of the arithmetic.
+    """
+    app = _Harness()  # DEFAULT_MOUNT_CAP: the real product cap
+    async with app.run_test(size=(80, 24)):
+        pane = app.query_one("#t", TranscriptPane)
+        body = "\n".join(f"row {i}" for i in range(600))
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=body, generation=0),
+        )
+        unit = pane._tails["assistant"]
+        assert unit is not None and unit.kind == "line" and unit.is_fallback
+        assert unit.banner is not None
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1
+        assert "101 of 600 lines of this entry hidden" in str(unit.banner.render())
+
+        grown = body + "\n" + "\n".join(f"row {i}" for i in range(600, 700))
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=grown, generation=0),
+        )
+        assert pane._tails["assistant"] is unit, "growth must patch, not rebuild"
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1
+        assert "201 of 700 lines of this entry hidden" in str(unit.banner.render())
+
+        grown2 = grown + "\n" + "\n".join(f"row {i}" for i in range(700, 800))
+        view = await _apply(
+            pane,
+            (),
+            assistant_tail=ProvisionalTail(kind="assistant", raw_text=grown2, generation=0),
+        )
+        assert pane._tails["assistant"] is unit
+        assert len(unit.lines) == DEFAULT_MOUNT_CAP - 1
+        assert "301 of 800 lines of this entry hidden" in str(unit.banner.render())
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
 
 
@@ -1401,7 +1576,12 @@ async def test_a_partial_fold_refreshes_the_banner_count() -> None:
     banner kept announcing the pre-fold count — "2 lines clipped" over
     one remaining row (CR5 re-review). Every other path that changes a
     fallback unit's row count (growth, retarget) refreshes the banner;
-    the fold's trim loop must too.
+    the fold's trim loop must too. Under the B2 wording (plan
+    docs/plans/2026-08-11-v0-3-unit-b2-fallback-banner-scope.md, KTD1)
+    the banner reports the HIDDEN count, so a fold that trims retained
+    rows from 2 to 1 raises the hidden count from 0 to 1 — the direction
+    "hidden" promises (AE2), the exact inversion the old retained-count
+    banner was the defect for.
     """
     app = _Harness(mount_cap=4)
     async with app.run_test(size=(80, 24)):
@@ -1422,8 +1602,8 @@ async def test_a_partial_fold_refreshes_the_banner_count() -> None:
         unit = pane._entries[1]
         assert unit.is_fallback and unit.banner is not None
         assert len(unit.lines) == 1, "the straddle fold retained exactly one content row"
-        assert "(1 lines clipped" in str(unit.banner.render()), (
-            "the banner must follow the retained rows through a partial fold"
+        assert "1 of 2 lines of this entry hidden" in str(unit.banner.render()), (
+            "the banner must state the hidden count on the new wording through a partial fold"
         )
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
 
