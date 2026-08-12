@@ -245,6 +245,84 @@ to a Claude route.
 route and reviewers now run on Muse, so no plan or implementation is still graded by the model that
 wrote it.
 
+### D13 — the click affordance is cut from unit A1, and unit A3 leaves v0.3
+
+**Decided 2026-08-12.** Charter unit A1 paired a focus-owning approval card with "a visible click
+affordance… a clickable jump control rather than an advertised keystroke". The click half is cut. Unit
+A3, the mis-aimed mouse, leaves this release with it.
+
+**Why the two travel together.** D9 made A3 a hard prerequisite for the click affordance, on the
+grounds that a clickable control in a pane whose clicks land several rows off is not a control. R3 then
+established that no agent can diagnose A3: Talaria performs no click-position-to-row arithmetic
+anywhere, `talaria/ui/transcript.py` holds zero click handlers, and the only click handler in the
+interface is at `talaria/ui/agents.py:105`. The remaining candidates sit below Talaria and separating
+them needs a live drive. So the click affordance's only unblocking path ran through operator time at a
+real terminal.
+
+**What made the cut clean rather than a loss.** D9's own argument is that the session picker proves
+keyboard operability works in this product when a component owns focus and names its keys. The
+focus-owning card *is* the fix; the click affordance was a second path to something that would already
+work. Cutting it costs a convenience and unblocks the whole spine.
+
+**Rejected: holding spine A until the capture happens.** It blocked three units that need nothing from
+the operator — A1's focus half, A2, and A4 — on a measurement that supports only the fourth. The root
+session had described the whole spine as blocked for several turns, which was wrong and is corrected
+here.
+
+**What happens to A3.** It stays filed with R3's diagnosis intact, out of v0.3. The capture it needs is
+unchanged and is worth taking whenever the operator is at a terminal anyway: which pane, which
+multiplexer, whether the offset is constant or grows down the pane, and whether it reproduces with the
+multiplexer out of the picture. That last one is the discriminator between the terminal framework and
+mouse-mode negotiation.
+
+### D14 — unit A4 is planned without the two measurements that would sharpen it
+
+**Decided 2026-08-12.** The diagnosis checklist's remaining steps — whether the follow-the-newest-line
+key is alive, and what the interrupt and replay-speed keys actually do — are not being taken. Unit A4
+re-decides the function-key row with two of five driven keys still unmeasured.
+
+**Why that is acceptable here.** A4's job after D9 is narrower than designing a keybinding scheme: the
+jump key is removed rather than replaced, chords are in reserve rather than adopted, and what remains
+is deciding homes for keys with no on-screen anchor. What a key is *bound* to is readable from the code
+today; what happens when it is pressed on a particular desktop is not, and only the second is missing.
+
+**What the plan is required to do about it.** Not guess and write the guess as fact, not plan a step
+that needs a person at a keyboard, and design so that an unmeasured cell decides nothing silently — a
+recommendation that survives either answer beats one that needs the measurement. More operator-only
+acceptance items than other units is the correct consequence, not a weakness.
+
+**Rejected: taking just the safe measurement.** Only the follow-the-newest-line check is risk-free; the
+interrupt key stops a running turn and wants a throwaway live session. Taking one of two would have
+removed the ambiguous cell and left the untested pair, which does not change what the plan must do
+about unmeasured cells.
+
+### D15 — units A1 and A2 are planned as one unit
+
+**Decided 2026-08-12 by the root session**, and recorded because it departs from the charter's unit
+list. The charter files them separately while itself noting that A2 "belongs to spine B as much as to
+spine A". They are one change to one widget on one code path: a card that takes focus when it mounts,
+whose advertised keys do what the card says, and which names every key that does something. Two plans
+would have edited the same mount path and had to be reconciled afterwards. The combined plan is
+required to say that it is combined.
+
+### D16 — spine C started while spine A was still blocked, ahead of the charter's sequencing note
+
+**Decided 2026-08-12 by the root session.** The charter schedules spine C "after A and B are merged".
+Spine B finished; spine A was blocked on an operator capture; the standing instruction is to keep
+moving rather than idle. Both spine C units are additive and reopen no gate, so starting them early
+costs nothing that the sequencing note was protecting.
+
+**What the note was actually protecting, and what is preserved.** Its stated purpose is priority: if
+unit A1 turns into a redesign, spine C is what gets cut rather than the repair work. Starting C early
+does not weaken that, and the ordering was restored within the hour anyway — D13 unblocked spine A and
+both its planning sessions launched the same day.
+
+**The risk this created, and how it was handled.** Both spine C units claim keys in the same composer,
+and up-arrow is exactly the key a history recall and an open palette would both want. Each brief was
+told the other session existed and required to state the keys it claims as a checkable assertion rather
+than assume it owns the composer. Reconciling two stated seams at review is cheap; discovering a
+collision at implementation is not.
+
 ## 2. Child-session register
 
 | Session name | Unit | Engine | Effort | Permission | Created | Closed | Outcome |
@@ -271,7 +349,12 @@ wrote it.
 | `b1-doc-review` | B1 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Returned `BLOCKED` with eight findings, two at P1. Both P1s confirmed by the root session against the tree; two of the second finding's own citations were wrong and were corrected before the finding was passed on |
 | `b1-cite-check` | B1 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Found **81** citations where the plan's author reported 51 — 76 correct, five wrong, none unresolvable. All five share one shape: the location is right and the quotation is a paraphrase inside quotation marks |
 | `flake-fix` | — | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Partly accepted, then accepted after repair.** The replay-pause half was correct and well-reasoned. The gate half replaced a three-condition pane check with the one condition that never touches the pane; sent back with evidence and repaired. Merged as pull request 69 |
-| `b1-repair` | B1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
+| `b1-repair` | B1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Repaired the plan against both reviews as commit `857d706`; the root session then reframed the plan's citations onto current `main` as `80979c4`, which is root work rather than this session's. Merged as pull request 68 |
+| `b1-implement` | B1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted with one report correction.** Removed the caret row and added the latched discard notice to plan; merged as pull request 72. The root session re-applied all four of its mutations independently and all four killed their named assertion. Its report describes two viewport tests as "pre-existing failures" it fixed; they passed on the base commit, and its own committed comment says so correctly — the error is in the report, not the repository |
+| `c1-plan` | C1 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | Delivered as pull request 74, **not yet reviewed** |
+| `c2-plan` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | Delivered as pull request 75, **not yet reviewed** |
+| `a1a2-plan` | A1, A2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
+| `a4-plan` | A4 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
 | `b4-implement` (second) | B4 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Rejected — and the fault is the root session's, not the session's.** Launched against a unit that had already shipped as pull request 60. Interrupted about ninety seconds in, its worktree and branch removed. It had itself already reached the right suspicion — its last line before the interrupt was that `platforms.changed` was in `_OBSERVED_ON_A_LIVE_GATEWAY` at `decode.py:120` and it needed to check whether that was already on `main` |
 
 **The rejected finding, recorded rather than dropped.** The Antigravity review reported that the
@@ -293,20 +376,39 @@ user-level setting applies it to every session; see D6, which originally recorde
 *Outcome* records what was accepted, not what was produced: a session whose findings the root session
 rejected is recorded as rejected, with the reason.
 
-**The register's own evidence, now that there are enough rows to read.** Twenty sessions across three
-products, fifteen of them closed and five in flight. Every closed session on Qwen Code and on the
-DeepSeek route was accepted in full **on the quality of its work**; the only rejection and the only
-partial acceptance attributable to a session are both Antigravity's, one each. That is what D10 is
-decided on,
-and it is a count of outcomes on this repository's work rather than a claim about the products in
-general. The third rejection, the duplicate `b4-implement`, is excluded from that reading on purpose:
-it was rejected for being launched at all, which is a root-session error and says nothing about the
-engine.
+**The register's own evidence, now that there are enough rows to read.** Twenty-nine sessions across
+three products and four model routes, twenty-seven of them closed and two in flight. Every closed
+session on Qwen Code and on the DeepSeek route was accepted in full **on the quality of its work**; the
+only rejection and the only partial acceptance attributable to a session are both Antigravity's, one
+each. That is what D10 is decided on, and it is a count of outcomes on this repository's work rather
+than a claim about the products in general. The third rejection, the duplicate `b4-implement`, is
+excluded from that reading on purpose: it was rejected for being launched at all, which is a
+root-session error and says nothing about the engine.
 
-**What the review rows are worth, counted rather than asserted.** Four plans went to independent
-document review and **none was clean on first submission** — five findings on B5's, four on B2's, three
-on B3's, three on B4's. Both plans that were re-verified after repair had errors found *in the repair*.
-That is the argument for the second pass, and it is now a count rather than an intuition.
+**The Muse route's record, stated separately because D12 adopted it mid-release on cost rather than on
+evidence.** Seven rows, of which three have been judged, two are delivered and not yet reviewed, and
+two are in flight. Of the three judged: one accepted in full, one accepted with a correction to its
+report rather than to its work, and one partly accepted and then accepted after repair. That is not
+the clean sweep Qwen Code and the DeepSeek route posted over comparable volume, and it is a small
+enough sample that the difference may be noise. What is worth carrying forward is the *shape* of the
+two shortfalls, because both were in the reporting rather than the code: `flake-fix` replaced a
+three-condition pane check with the one condition that never touches the pane and described it as a
+determinism fix, and `b1-implement` reported two test changes as fixes to pre-existing failures when
+they were consequences of its own change. Both were caught by checking the claim against the tree, and
+neither would have been caught by reading the report.
+
+**What the review rows are worth, counted rather than asserted.** Five plans went to independent
+document review and **none was clean on first submission** — eight findings on B1's, five on B5's, four
+on B2's, three on B3's, three on B4's. Both plans that were re-verified after repair had errors found
+*in the repair*. That is the argument for the second pass, and it is now a count rather than an
+intuition.
+
+**And what the implementation rows are worth, which is a different count.** Five units were
+implemented. Two shipped clean, two needed one repair each, and one — B2's — returned zero findings on
+first submission and is still the only such result. Every implementation was checked against the tree
+rather than against its own report, and that is where three of the corrections came from: a surviving
+mutation on B3, an unasserted acceptance half on B3's review, and B1's inverted account of a test
+change. No implementation has been rejected.
 
 **An attribution trailer reached merged history, and removing it is not this session's call.**
 Commit `9ac33e7`, the unit B3 plan, carries `Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>`,
@@ -396,6 +498,11 @@ which pane, which multiplexer, whether the offset is constant or grows down the 
 reproduces outside the multiplexer. **Unit A3 is blocked on that capture, and unit A1's click
 affordance is blocked on A3** — which is D9's stated prerequisite, so the release sequence already
 accounts for it. This is recorded as a blocked unit rather than a failed one.
+
+**Superseded in scope on 2026-08-12 by D13**, which cut the click affordance and moved unit A3 out of
+v0.3 rather than wait on the capture. The diagnosis above stands unchanged and is what makes the
+capture worth taking whenever the operator is at a terminal; what changed is that no v0.3 unit depends
+on it any more.
 
 ## 4. Provenance
 
