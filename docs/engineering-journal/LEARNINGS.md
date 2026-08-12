@@ -4,6 +4,14 @@
 
 ## 2026-08-12
 
+### A stash that survives arrowing is one value taken once, not a ring
+
+**Evidence.** Implementing up-arrow history for the composer (`talaria/domain/composer_history.py`, `talaria/ui/composer.py:116`, `talaria/ui/app.py:2789`) against the unit C1 plan. Three cross-unit questions were settled by root ruling before code was written: both units claim keys in `ChatTextArea._on_key` (not in `TalariaApp.on_key`), `Down` when the palette is closed belongs to history under the same caret-boundary predicate as `Up`, and the palette opens only on typed input, never on programmatic writes to `composer.text`. The implementation that made the first two green — moving `Down` from the app to the widget and capturing the draft on the first `Up` from the sentinel — failed the third until the history recall wrote `composer.text` directly and the palette's open predicate was checked before either unit's handler ran at the same site. `grep -rn "_on_key" talaria/` showing a single site was added as the review gate.
+
+**Mechanism.** History is one frozen value (`entries`, `draft_stash`, `index`) with pure transitions `push`, `move_up`, `move_down`, `abandon` in `talaria/domain/composer_history.py`; the widget computes the caret boundary from `cursor_location` and passes the boolean in, so the domain never imports the terminal framework and `tests/domain/test_boundary.py` stays green. The stash is taken once on leaving the sentinel and is thereafter read-only until the sentinel is re-reached or a submission clears it; moves inside history and edits to a recalled entry never overwrite it, which is what keeps a half-written message from being replaced by a typo after two `Up` presses. The in-memory, capped (100, `MAX_HISTORY`) store keeps operator text off disk entirely, satisfying the public-repository privacy constraint for v0.3 without a file, mode, or path to audit.
+
+**Generalizable rule.** A second `Up` handler is not a style preference — it is a review failure. When two features share a key surface, the predicate is one ordered site evaluated before either handler, and a test that drives `Up` must assert entry, index, and stash, not just that the composer text changed — a wrong entry still changes the text.
+
 ### Seven passing cases cannot tell a live guard from a dead one
 
 **Evidence.** Reviewing a repair to `tests/replay/test_gate.py`, the root session claimed that the

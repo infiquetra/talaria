@@ -43,6 +43,7 @@ from textual.message import Message
 from textual.widgets import Static, TextArea
 
 from talaria.domain.commands import PasteThreshold
+from talaria.domain.composer_history import move_down, move_up
 from talaria.ui.literal import literal_text
 
 #: Shown in the empty composer. Carries both bindings because R12 asks that
@@ -113,6 +114,75 @@ class ChatTextArea(TextArea):
             self.post_message(self.LargePaste(self, event.text))
 
     async def _on_key(self, event: events.Key) -> None:
+        # ── palette seam (C1/C2, ruling 1 & 3) ─────────────────────────
+        # Both units claim keys in ChatTextArea._on_key, not in TalariaApp.on_key.
+        # One handler site, one ordered predicate — grep for _on_key must show a
+        # single site. C2's filterable palette claims Up/Down/Enter/Esc/Tab while
+        # it is open; history is inert while it is open. History's programmatic
+        # writes to composer.text never open the palette (ruling 3), so recalling
+        # "/models" does not trigger it.
+        palette_open = False
+        try:
+            palette = self.app.palette  # type: ignore[attr-defined]
+            palette_open = bool(getattr(palette, "showing", False))
+            # C2 extends the predicate at this site without moving history's own
+            # handling — e.g., checking a palette.is_open or filtered state.
+        except Exception:
+            palette_open = False
+        if palette_open and event.key in ("up", "down", "enter", "escape", "tab"):
+            await super()._on_key(event)
+            return
+        # ── history recall (C1, KTD2) ──────────────────────────────────
+        # Single-line drafts always recall; multi-line drafts recall only at the
+        # respective caret boundary so editing a paragraph still works.
+        if event.key in ("up", "down"):
+            try:
+                history = self.app.composer_history  # type: ignore[attr-defined]
+            except Exception:
+                history = None
+            if history is not None:
+                text = self.text
+                has_newline = "\n" in text
+                row, _col = self.cursor_location
+                total_rows = text.count("\n") + 1 if text else 1
+                if event.key == "up":
+                    caret_at_top = True if not has_newline else row == 0
+                    if not caret_at_top:
+                        await super()._on_key(event)
+                        return
+                    new_state, new_text = move_up(history, text, True)
+                    if new_text is not None:
+                        self.app.composer_history = new_state  # type: ignore[attr-defined]
+                        self.text = new_text
+                        # Recalled text is editable with caret at the end (KTD4).
+                        lines = new_text.split("\n")
+                        last_row = len(lines) - 1
+                        last_col = len(lines[last_row])
+                        self.cursor_location = (last_row, last_col)
+                        event.stop()
+                        event.prevent_default()
+                        return
+                    # No history move (empty or at oldest) — let caret move.
+                    await super()._on_key(event)
+                    return
+                else:  # "down"
+                    caret_at_bottom = True if not has_newline else row == total_rows - 1
+                    if not caret_at_bottom:
+                        await super()._on_key(event)
+                        return
+                    new_state, new_text = move_down(history, text, True)
+                    if new_text is not None:
+                        self.app.composer_history = new_state  # type: ignore[attr-defined]
+                        self.text = new_text
+                        lines = new_text.split("\n")
+                        last_row = len(lines) - 1
+                        last_col = len(lines[last_row])
+                        self.cursor_location = (last_row, last_col)
+                        event.stop()
+                        event.prevent_default()
+                        return
+                    await super()._on_key(event)
+                    return
         if event.key == "enter":
             event.stop()
             event.prevent_default()

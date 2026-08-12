@@ -67,6 +67,8 @@ from talaria.domain.commands import (
     slash_exec_command,
     unavailable_catalog,
 )
+from talaria.domain.composer_history import ComposerHistory
+from talaria.domain.composer_history import push as history_push
 from talaria.domain.decode import (
     DispatchResult,
     UnknownDispatchResult,
@@ -957,6 +959,7 @@ class TalariaApp(App[None]):
         self.call_timeout = call_timeout
 
         self.state = SessionState()
+        self.composer_history = ComposerHistory()
         self.snapshot: Snapshot | None = None
 
         self._dirty = True
@@ -2806,6 +2809,12 @@ class TalariaApp(App[None]):
         invocation = resolve_command(message.text, self.catalog)
 
         if isinstance(invocation, LocalInvocation):
+            # History holds every dispatched line the operator pressed enter on,
+            # including slash commands as typed (KTD1). A local command is
+            # dispatched the moment it is recognized — even a pacing-refused
+            # one is a line the operator meant to send, so it is recorded
+            # before the perform, not after its own validation.
+            self._push_history(message.text)
             self.perform_local_command(invocation)
             return
 
@@ -2830,13 +2839,27 @@ class TalariaApp(App[None]):
             if self.mode == "replay" or self.dispatcher is None:
                 self._refuse_mutation(COMMAND_DISPATCH_CONTROL)
                 return
+            self._push_history(message.text)
             self._spawn_live(self._dispatch_and_discard(invocation))
             return
 
         if self.mode == "replay":
             self._refuse_mutation("submit")
             return
+        self._push_history(message.text)
         self._spawn_live(self._submit_and_discard(message.text))
+
+    def _push_history(self, raw_text: str) -> None:
+        """Record a dispatched line in the in-memory recall list (C1, KTD1).
+
+        The list is bounded, append-only, and never persisted to disk. Empty
+        strings after stripping never enter. This is the single place history
+        grows — the widget's Up/Down path only moves the cursor, never appends.
+        """
+        stripped = raw_text.strip()
+        if not stripped:
+            return
+        self.composer_history = history_push(self.composer_history, stripped)
 
     async def _submit_and_discard(self, text: str) -> None:
         """Adapt :meth:`submit_live` to the ``None``-returning task shape."""
