@@ -47,7 +47,7 @@ level and writes `caret: prompts` / `caret: transcript` / `caret: agents` otherw
 composer holds the caret. A plan that removes the row must say what happens to R5; this plan replaces
 the requirement rather than silently dropping it.
 
-## Mechanism — verified by reading, at `main` = `ec9abfd`
+## Mechanism — verified by reading, at `main` = `1fb804b`
 
 **The slot.** `talaria/ui/status_region.py` reserves a dedicated `Static` with `classes="status--caret"`
 (`:44-59`, `:68-72`), mounted unconditionally at `height: 1` so its presence never changes
@@ -55,7 +55,7 @@ the requirement rather than silently dropping it.
 non-empty and clears the slot otherwise. The slot is always present, which means the status region
 always renders a first row — blank when the composer holds the caret, `caret: X` otherwise.
 
-**The wiring.** `talaria/ui/app.py:4130-4139` maps the three region ids to their location words;
+**The wiring.** `talaria/ui/app.py:4196-4205` maps the three region ids to their location words;
 `_caret_location` (`:4141-4149`) walks `focused.ancestors_with_self` and returns the first matching
 word, or `""` for the composer and for nothing-focused; `_refresh_caret_slot` (`:4151-4170`) writes it
 into the slot, and is called from `on_descendant_focus` and `on_descendant_blur` (`:4172-4176`).
@@ -63,15 +63,15 @@ into the slot, and is called from `on_descendant_focus` and `on_descendant_blur`
 **Every away-state, enumerated from the focus moves that exist today.** Focus leaves the composer only
 in these cases, and each is either deliberate or by design:
 
-1. **A prompt card's control.** The F1 jump (`action_jump_to_prompt` at `app.py:1426-1445`)
+1. **A prompt card's control.** The F1 jump (`action_jump_to_prompt` at `app.py:1464-1486`)
    delegates to `focus_first_unanswered` (`talaria/ui/prompts.py:995-1017`), which lands on the card's
    action widget. The jump is deliberate — the code's own KTD1 says "a keypress this explicit is
    allowed to move the caret even mid-word" (`prompts.py:1006-1008`). An input-backed card also
-   auto-focuses at mount, guarded by `focus_new=not self.composer.text.strip()` (`app.py:1356`,
+   auto-focuses at mount, guarded by `focus_new=not self.composer.text.strip()` (`app.py:1394`,
    `prompts.py:1171-1172`).
 2. **The transcript pane.** Tab or a click lands the caret on `TranscriptPane`, a `VerticalScroll`
-   (`talaria/ui/transcript.py:629`). This pane has **no focus styling** — its `DEFAULT_CSS`
-   (`transcript.py:632-654`) contains no `:focus` rule, so nothing on the pane itself says it holds
+   (`talaria/ui/transcript.py:638`). This pane has **no focus styling** — its `DEFAULT_CSS`
+   (`transcript.py:641-663`) contains no `:focus` rule, so nothing on the pane itself says it holds
    the caret. The test suite states this directly: "The transcript pane gives no visual sign of
    holding the caret on its own" (`tests/ui/test_focus_returns.py:186-188`).
 3. **A sub-agent row.** A click (or tab) lands on an `AgentRow` with `can_focus = self.interruptible`
@@ -92,9 +92,9 @@ announcement of their own, and case 2 is the exact state the operator met and co
 
 **The return path.** When a control that holds the caret is taken away — a card is answered or
 declined (`prompts.py:1187-1188`), a sub-agent row stops being interruptible (`agents.py:96-97`), or
-F2 collapses every row (`agents.py:191-192`) — the region posts `CaretReleased`
+F2 collapses every row (`agents.py:202-203`) — the region posts `CaretReleased`
 (`talaria/ui/focus.py:37-46`), and the app answers it by focusing the composer
-(`app.py:4180-4195`). This is the narrower rule the charter wonders about, and it already exists: the
+(`app.py:4246-4261`). This is the narrower rule the charter wonders about, and it already exists: the
 caret goes back to the composer whenever Talaria takes a control away, and operator focus moves are
 untouched (focus.py:23-26). A deliberate tab-into-the-transcript is left alone across renders — that
 is the pinned invariant `test_a_deliberate_focus_move_is_left_alone` asserts
@@ -117,11 +117,11 @@ newest unanswered prompt and F4 sweeps the answerable set, and both work by putt
 so the next keystroke answers it" (hands-on notes `:465-467`). That sentence is half-wrong. F1 does
 not jump to the newest — it jumps to the *oldest* outstanding card's control in mount order
 (`talaria/ui/prompts.py:995-1003` docstring "Jump the caret to the oldest outstanding card's
-control"; `talaria/ui/app.py:1426-1427` "Move the caret to the oldest unanswered prompt's control";
+control"; `talaria/ui/app.py:1464-1465` "Move the caret to the oldest unanswered prompt's control";
 `prompts.py:1152-1157` mounts cards at explicit positions because "Order is the one thing an
 approval queue must not lie about"). The second half is also wrong: `action_interrupt`
-(`app.py:1453-1458`) runs `interrupt_live`, whose docstring describes exactly two actions — cancel
-the in-flight turn and, only when confirmed, decline its outstanding prompts (`app.py:1622-1638`) —
+(`app.py:1510-1515`) runs `interrupt_live`, whose docstring describes exactly two actions — cancel
+the in-flight turn and, only when confirmed, decline its outstanding prompts (`app.py:1679-1695`) —
 and the decline removes the cards, which posts `CaretReleased` and returns the caret to the composer
 (`prompts.py:1187-1188`). **F4 never holds the caret on a prompt for the next keystroke; its focus
 outcome is already the composer.** The snap-back tension is F1 and the deliberate pane moves, not
@@ -145,7 +145,7 @@ the operator's own tab and click — which is exactly the predicate the existing
 descendant of the operator's proposal, and it misdirects keys from the answerability spine. A
 printable key on a focused card control must **not** snap focus away — today it leaves the card
 focused so the next `enter` answers it (that is the whole shape of
-`test_answering_via_the_f1_jumped_to_control_hands_the_caret_back`, `test_focus_returns.py:384-419`).
+`test_answering_via_the_f1_jumped_to_control_hands_the_caret_back`, `test_focus_returns.py:392-427`).
 A rule that snaps focus off the card would turn an intended "answer
 this approval next" into "typed a message into the composer instead", a new failure the interface does
 not have today. Excluding card controls leaves the rule covering only the panes — which is the scope
@@ -202,7 +202,7 @@ interface says so.
 
 Delete the `.status--caret` slot (`status_region.py:44-59`, `:68-72`), `set_caret`
 (`:88-102`), `caret_text` (`:82-86`), the `_CARET_REGION_IDS` mapping and `_caret_location`
-(`app.py:4130-4149`), and `_refresh_caret_slot` (`app.py:4151-4170`). The `on_descendant_focus` /
+(`app.py:4196-4215`), and `_refresh_caret_slot` (`app.py:4217-4236`). The `on_descendant_focus` /
 `on_descendant_blur` handlers (`:4172-4176`) do not die with the row — KTD4 gives them a new job.
 R5's replacement, written the way the original was:
 
@@ -221,10 +221,10 @@ A's mis-aimed-input family, not to the status row's fate.
 
 ### KTD2 — the replacement is a latched composer notice on a discarded printable key or paste
 
-The notice rides the existing composer notice (`_notice` at `app.py:2599-2608`, the same surface every
+The notice rides the existing composer notice (`_notice` at `app.py:2656-2665`, the same surface every
 keypress refusal uses and unit B3 reuses for its no-op confirmations), and it never moves focus. The
 predicate reuses the region classification the row already computed, re-scoped in KTD5: a printable
-key reaches the app's `on_key` handler (`app.py:4342-4349`) only when the focused widget does not
+key reaches the app's `on_key` handler (`app.py:4408-4417`) only when the focused widget does not
 consume it, so the handler sees printable keys from the transcript pane, from agent rows, and from the
 prompts container, but **not** from the composer (the text area consumes them) and **not** from a
 card's input (same). The notice fires when the focused widget is a no-text region (KTD5's refined
@@ -245,9 +245,9 @@ The latch clears whenever the caret **leaves the announced region**, not only wh
 composer. The composer-only clear fails on a reachable path: focus on `TranscriptPane` → `f1` lands on
 `Button#choice-0` → `shift+tab` lands on `PromptRegion#prompts` → `shift+tab` lands back on
 `TranscriptPane`. The composer is never focused on this path. Layout order makes it structural:
-`compose` yields `#transcript`, `#agents`, `#prompts` before `#composer` (`talaria/ui/app.py:1025-1031`),
+`compose` yields `#transcript`, `#agents`, `#prompts` before `#composer` (`talaria/ui/app.py:1063-1069`),
 so backward tabbing from any card control reaches the transcript without wrapping through the composer.
-F1 is a `priority` binding that fires from any focus state (`talaria/ui/app.py:787`
+F1 is a `priority` binding that fires from any focus state (`talaria/ui/app.py:825`
 `Binding("f1", "jump_to_prompt", "answer", priority=True)`). Without the widened condition the
 sequence tab-into-transcript, type (notice fires, latch = transcript) → F1 to the card → shift+tab
 back to the transcript → type yields **no notice**, because the latch still holds "transcript" and the
@@ -256,7 +256,7 @@ and it never left, per the latch's only composer clear-point) suppresses it. Thi
 the plan's own risk section names ("A latch that never clears would silently lose the warning after
 the first focus-hold"), reached despite the composer clear-point. The repurposed
 `on_descendant_focus`/`on_descendant_blur` handlers already fire on every focus change and
-`_caret_location()` (`app.py:4141-4149`) already says where the caret is now, so KTD4's "only
+`_caret_location()` (`app.py:4207-4215`) already says where the caret is now, so KTD4's "only
 reliable clear-point" argument survives unchanged — only the condition widens. This is unit B4's
 pattern — announce once, count the repeats — applied at the UI layer to a state (which widget holds
 focus) that is presentation concern, not domain truth, so ADR-0002's boundary is untouched
@@ -308,7 +308,7 @@ The no-text regions are the transcript pane, the agent rows, and the prompt regi
 no card holds the caret — the places a printable key or a paste can arrive and mean nothing. Card
 controls are excluded by the predicate, not by construction: in Textual 8.2.8 `Button` binds only
 `enter` and the dispatch forwards every unhandled key from the focused widget up to the app
-(`talaria/ui/app.py:4130-4139` ancestor walk; measured: with focus on `Button#choice-0`, pressing `q`
+(`talaria/ui/app.py:4196-4205` ancestor walk; measured: with focus on `Button#choice-0`, pressing `q`
 reached `TalariaApp.on_key`), so the "unhandled printable key" test alone does not exclude cards. The
 exclusion comes from the region classification — the notice fires only when the focused widget
 classifies as a no-text region (transcript, agents, or the prompts container outside a card), and a
@@ -326,14 +326,14 @@ quality the transcript pane and the prompts container lack.
 
 ### KTD4 — the take-away return path is kept unchanged, and the focus handlers gain a new job
 
-`CaretReleased` (`focus.py:37-46`) and the app's answer (`app.py:4180-4195`) are the correct narrow
+`CaretReleased` (`focus.py:37-46`) and the app's answer (`app.py:4246-4261`) are the correct narrow
 rule and are not re-implemented. The existing tests that pin them survive untouched. The
-`on_descendant_focus` / `on_descendant_blur` handlers (`app.py:4172-4176`) are repurposed to clear
+`on_descendant_focus` / `on_descendant_blur` handlers (`app.py:4238-4242`) are repurposed to clear
 the notice latch whenever the caret leaves the announced region — the handlers already fire on every
-focus change and `_caret_location()` (`app.py:4141-4149`) already says where the caret is now, so
+focus change and `_caret_location()` (`app.py:4207-4215`) already says where the caret is now, so
 this is the reliable clear-point (KTD2's widened condition). The earlier "only when the caret returns
 to the composer" was too narrow for the transcript → F1 → PromptRegion → transcript re-entry that
-`compose`'s order (`app.py:1025-1031`) and the priority F1 binding (`app.py:787`) make reachable, but
+`compose`'s order (`app.py:1063-1069`) and the priority F1 binding (`app.py:825`) make reachable, but
 the mechanism survives unchanged — only the condition widens. Printable keys never reach `on_key`
 while the composer is focused, so the latch still cannot be cleared lazily from the notice itself,
 which is why a focus handler is needed at all. This keeps the removal free of dead code: the handlers
@@ -346,9 +346,9 @@ both.
 
 ### KTD5 — the region classification survives, re-scoped from naming to classifying
 
-The mapping of ancestor ids to region words (`app.py:4130-4139`) is not deleted wholesale: the notice
+The mapping of ancestor ids to region words (`app.py:4196-4205`) is not deleted wholesale: the notice
 needs to know whether the focused widget is in a no-text region, or in the prompts region but not
-inside a card — the ancestor walk (`app.py:4141-4149` over `focused.ancestors_with_self`) already
+inside a card — the ancestor walk (`app.py:4207-4215` over `focused.ancestors_with_self`) already
 distinguishes the two (a card is a `PromptCard` ancestor; the container is the region itself).
 Transcript and agents are always no-text; prompts is answer-affordant only when the focused widget
 is inside a card and is no-text when the container itself holds the caret. The plan keeps the
@@ -371,18 +371,22 @@ states it in its own risk section
 least valuable message the bar can hold losing to a later message loses nothing, the same argument B3
 KTD1 makes.
 
-**The merge with unit B3 in `app.py` and in `tests/ui/test_focus_returns.py`.** B3's plan edits three action methods and adds a branch to
-`_land_session`, and routes the `end` key in the app's raw key handler through the F5 rule
-(`docs/plans/2026-08-11-v0-3-unit-b3-keypress-feedback.md:137-159`). This unit edits `on_key`
-(`app.py:4342-4349`) at the printable-key fall-through, a branch B3 does not touch. The two changes
-meet in the same handler on disjoint branches, and neither depends on the other's — the conflict is
-merge order only, and it is named here so neither plan treats `on_key` as its private file. The two
-units also both edit `tests/ui/test_focus_returns.py` in disjoint hunks (B3 amends
-`test_f1_with_nothing_outstanding_is_a_no_op` to assert `JUMP_NOTHING_OUTSTANDING`; B1 removes
-`test_tabbing_into_the_transcript_names_it_in_the_caret_slot` and
-`test_f1_jump_names_the_prompts_region_in_the_caret_slot`), with no genuine collision —
-again merge order only. The boundary is mutual: B3's plan states it "does not take a position on
-the caret status row" and names this unit's surface
+**The overlap with unit B3 in `app.py` and in `tests/ui/test_focus_returns.py` — resolved, not
+pending.** B3 merged before this plan did, so the citations above already describe a tree that
+contains it and there is no merge order left to negotiate. What remains is what B3's landing means
+for the two sites this unit touches, and an implementer should expect both:
+
+- `on_key` (`app.py:4408-4417`) already carries B3's `end` branch, which routes through the F5 rule
+  (`self.action_follow_bottom()` at `:4417`). This unit adds the printable-key fall-through beside
+  it, touching neither that branch nor the `pageup`/`home` one.
+- `tests/ui/test_focus_returns.py` already carries B3's amendment to
+  `test_f1_with_nothing_outstanding_is_a_no_op`, which asserts `JUMP_NOTHING_OUTSTANDING`
+  (`tests/ui/test_focus_returns.py:332`). This unit removes
+  `test_tabbing_into_the_transcript_names_it_in_the_caret_slot` (`:185`) and
+  `test_f1_jump_names_the_prompts_region_in_the_caret_slot` (`:253`), neither of which B3 edited.
+
+The boundary is mutual: B3's plan states it "does not take a position on the caret status row" and
+names this unit's surface
 (`docs/plans/2026-08-11-v0-3-unit-b3-keypress-feedback.md:358-359`), and this plan returns the same
 courtesy by changing none of B3's four silent-path sites.
 
