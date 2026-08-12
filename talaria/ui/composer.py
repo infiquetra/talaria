@@ -37,12 +37,14 @@ from __future__ import annotations
 from typing import Final
 
 from textual import events
-from textual.app import ComposeResult
+from textual.app import ComposeResult, ScreenStackError
 from textual.containers import Vertical
+from textual.dom import NoScreen
 from textual.message import Message
 from textual.widgets import Static, TextArea
 
 from talaria.domain.commands import PasteThreshold
+from talaria.domain.composer_history import abandon, move_down, move_up
 from talaria.ui.literal import literal_text
 
 #: Shown in the empty composer. Carries both bindings because R12 asks that
@@ -113,6 +115,95 @@ class ChatTextArea(TextArea):
             self.post_message(self.LargePaste(self, event.text))
 
     async def _on_key(self, event: events.Key) -> None:
+        # ── palette seam (C1/C2, ruling 1 & 3) ─────────────────────────
+        # Both units claim keys in ChatTextArea._on_key, not in
+        # TalariaApp.on_key. One handler site, one ordered predicate — grep
+        # for _on_key must show a single site. The honest extension point
+        # for the C2 slash palette is a single named predicate that returns
+        # False today. C2's filterable palette (typing "/" to filter,
+        # opening on typed input never on programmatic writes) will claim
+        # Up/Down/Enter/Esc/Tab while open and history will be inert.
+        # Not keyed to self.app.palette (the F3 command listing), which
+        # claims none of those keys — that listing now correctly leaves
+        # Enter to submit.
+        if self._is_slash_palette_open() and event.key in (
+            "up",
+            "down",
+            "enter",
+            "escape",
+            "tab",
+        ):
+            await super()._on_key(event)
+            return
+        # ── escape abandons a history walk but keeps the stash (KTD3) ─
+        # Card-scoped escape (prompts.py:669) fires only when a card's
+        # control holds the caret, never when the composer does, so there
+        # is no conflict. Abandon keeps draft_stash for the next walk;
+        # Down past newest is the restore path, Escape is the abandon path.
+        if event.key == "escape":
+            try:
+                history = self.app.composer_history  # type: ignore[attr-defined]
+            except (NoScreen, ScreenStackError):
+                history = None
+            if history is not None and history.index is not None:
+                self.app.composer_history = abandon(history)  # type: ignore[attr-defined]
+                event.stop()
+                event.prevent_default()
+                return
+            # Not navigating — let the key bubble (prompt cards, app).
+            await super()._on_key(event)
+            return
+        # ── history recall (C1, KTD2) ──────────────────────────────────
+        # Single-line drafts always recall; multi-line drafts recall only at the
+        # respective caret boundary so editing a paragraph still works.
+        if event.key in ("up", "down"):
+            try:
+                history = self.app.composer_history  # type: ignore[attr-defined]
+            except (NoScreen, ScreenStackError):
+                history = None
+            if history is not None:
+                text = self.text
+                has_newline = "\n" in text
+                row, _col = self.cursor_location
+                total_rows = text.count("\n") + 1 if text else 1
+                if event.key == "up":
+                    caret_at_top = True if not has_newline else row == 0
+                    if not caret_at_top:
+                        await super()._on_key(event)
+                        return
+                    new_state, new_text = move_up(history, text, True)
+                    if new_text is not None:
+                        self.app.composer_history = new_state  # type: ignore[attr-defined]
+                        self.text = new_text
+                        # Recalled text is editable with caret at the end (KTD4).
+                        lines = new_text.split("\n")
+                        last_row = len(lines) - 1
+                        last_col = len(lines[last_row])
+                        self.cursor_location = (last_row, last_col)
+                        event.stop()
+                        event.prevent_default()
+                        return
+                    # No history move (empty or at oldest) — let caret move.
+                    await super()._on_key(event)
+                    return
+                else:  # "down"
+                    caret_at_bottom = True if not has_newline else row == total_rows - 1
+                    if not caret_at_bottom:
+                        await super()._on_key(event)
+                        return
+                    new_state, new_text = move_down(history, text, True)
+                    if new_text is not None:
+                        self.app.composer_history = new_state  # type: ignore[attr-defined]
+                        self.text = new_text
+                        lines = new_text.split("\n")
+                        last_row = len(lines) - 1
+                        last_col = len(lines[last_row])
+                        self.cursor_location = (last_row, last_col)
+                        event.stop()
+                        event.prevent_default()
+                        return
+                    await super()._on_key(event)
+                    return
         if event.key == "enter":
             event.stop()
             event.prevent_default()
@@ -124,6 +215,19 @@ class ChatTextArea(TextArea):
             self.insert("\n")
             return
         await super()._on_key(event)
+
+    def _is_slash_palette_open(self) -> bool:
+        """Whether C2's slash-command palette claims Up/Down/Enter/Esc/Tab.
+
+        Returns False today — the filterable palette that opens on typed
+        "/" (never on programmatic writes to composer.text) does not exist
+        yet. When it does, it will claim those five keys while open and
+        history will be inert. This single named predicate is the honest
+        extension point C2 can replace without moving history's own handling.
+        Not keyed to self.app.palette (the F3 command listing, PaletteRegion),
+        which claims none of those keys.
+        """
+        return False
 
 
 class Composer(Vertical):

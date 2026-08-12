@@ -67,6 +67,8 @@ from talaria.domain.commands import (
     slash_exec_command,
     unavailable_catalog,
 )
+from talaria.domain.composer_history import ComposerHistory
+from talaria.domain.composer_history import push as history_push
 from talaria.domain.decode import (
     DispatchResult,
     UnknownDispatchResult,
@@ -957,6 +959,7 @@ class TalariaApp(App[None]):
         self.call_timeout = call_timeout
 
         self.state = SessionState()
+        self.composer_history = ComposerHistory()
         self.snapshot: Snapshot | None = None
 
         self._dirty = True
@@ -2806,7 +2809,9 @@ class TalariaApp(App[None]):
         invocation = resolve_command(message.text, self.catalog)
 
         if isinstance(invocation, LocalInvocation):
-            self.perform_local_command(invocation)
+            dispatched = self.perform_local_command(invocation)
+            if dispatched:
+                self._push_history(message.text)
             return
 
         if isinstance(invocation, UnsupportedInvocation):
@@ -2830,13 +2835,27 @@ class TalariaApp(App[None]):
             if self.mode == "replay" or self.dispatcher is None:
                 self._refuse_mutation(COMMAND_DISPATCH_CONTROL)
                 return
+            self._push_history(message.text)
             self._spawn_live(self._dispatch_and_discard(invocation))
             return
 
         if self.mode == "replay":
             self._refuse_mutation("submit")
             return
+        self._push_history(message.text)
         self._spawn_live(self._submit_and_discard(message.text))
+
+    def _push_history(self, raw_text: str) -> None:
+        """Record a dispatched line in the in-memory recall list (C1, KTD1).
+
+        The list is bounded, append-only, and never persisted to disk. Empty
+        strings after stripping never enter. This is the single place history
+        grows — the widget's Up/Down path only moves the cursor, never appends.
+        """
+        stripped = raw_text.strip()
+        if not stripped:
+            return
+        self.composer_history = history_push(self.composer_history, stripped)
 
     async def _submit_and_discard(self, text: str) -> None:
         """Adapt :meth:`submit_live` to the ``None``-returning task shape."""
@@ -3485,8 +3504,13 @@ class TalariaApp(App[None]):
             return
         await palette.apply(self.catalog)
 
-    def perform_local_command(self, invocation: LocalInvocation) -> None:
+    def perform_local_command(self, invocation: LocalInvocation) -> bool:
         """Act on one of PC6's four, or U2's fifth, ``/models``.
+
+        Returns whether the line was dispatched and should enter history.
+        Refused submissions (pacing controls in live mode, malformed rate)
+        return False and leave history unchanged — the local analogue of the
+        replay-refused gateway commands that never reached dispatch.
 
         Dispatch is a table lookup on :class:`LocalCommand`'s ``action`` rather
         than a chain of name comparisons, for the same reason the gateway side
@@ -3502,11 +3526,11 @@ class TalariaApp(App[None]):
             # Refused through the same helper the function keys use, so the two
             # routes to one control cannot come to say different things about
             # it.
-            return
+            return False
 
         if command.action == "quit":
             self.exit()
-            return
+            return True
         if command.action == "models":
             # The one control here that is not synchronous end to end: opening
             # the picker renders instantly, but selecting a row dispatches
@@ -3516,17 +3540,17 @@ class TalariaApp(App[None]):
             # :meth:`_spawn_live`, the same escape :meth:`on_chat_text_area_submitted`
             # itself uses two paragraphs down for ``GatewayInvocation``.
             self._perform_models(invocation.argument)
-            return
+            return True
         if command.action == "profiles":
             # Scheduled for the same reason ``models`` is: opening the region
             # is instant, but selecting a row drops a socket and dials another.
             self._perform_profiles(invocation.argument)
-            return
+            return True
         if command.action == "sessions":
             # Scheduled for the same reason: the fetch and the switch both
             # cross the socket (U7, KTD6).
             self._perform_sessions(invocation.argument)
-            return
+            return True
         if command.action == "pause":
             self.controls.pause()
         elif command.action == "resume":
@@ -3538,11 +3562,12 @@ class TalariaApp(App[None]):
                     f"{command.name} wants a rate: a positive multiplier, or 'max' "
                     f"— nothing changed"
                 )
-                return
+                return False
             self.controls.set_speed(speed)
 
         self.composer.clear()
         self._notice(self._pacing_notice())
+        return True
 
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.
