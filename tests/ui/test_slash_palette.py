@@ -14,7 +14,11 @@ from typing import Any
 
 import pytest
 
-from talaria.domain.commands import CommandCatalog, CommandEntry
+from talaria.domain.commands import (
+    TALARIA_LOCAL_COMMANDS,
+    CommandCatalog,
+    CommandEntry,
+)
 from talaria.domain.composer_history import ComposerHistory
 from talaria.transport.rpc import RpcOutcome
 from tests.ui.conftest import event, live_app, paused_app
@@ -220,8 +224,10 @@ async def test_ae4_unavailable_and_not_yet_fetched() -> None:
         assert app.palette.is_slash_active
         assert app.palette.header_text == "commands: not fetched yet"
         assert app.palette.degraded_text == ""
-        # Should show exactly 7 locals
-        assert len(app.palette.filtered_entries) == 7
+        # Every Talaria-local command is runnable without a catalogue.
+        # Derived rather than hardcoded: unit A4 grew this set from seven
+        # to eight by adding /agents, and a literal count goes stale silently.
+        assert len(app.palette.filtered_entries) == len(TALARIA_LOCAL_COMMANDS)
         assert all(e.availability == "talaria-local" for e in app.palette.filtered_entries)
 
         # Unavailable: catalog.available is False
@@ -243,7 +249,7 @@ async def test_ae4_unavailable_and_not_yet_fetched() -> None:
         assert app.palette.is_slash_active
         assert "catalogue unavailable" in app.palette.degraded_text
         assert "gateway down" in app.palette.degraded_text
-        assert len(app.palette.filtered_entries) == 7
+        assert len(app.palette.filtered_entries) == len(TALARIA_LOCAL_COMMANDS)
 
         # Warning case
         cat = _catalog_with(
