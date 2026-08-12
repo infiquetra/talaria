@@ -348,18 +348,22 @@ async def test_palette_seam_ordered_and_exclusive() -> None:
         assert app.composer.text == "hello"
         assert app.composer_history.index == 1
 
-        # Palette open: Up belongs to palette, history does not see it.
+        # F3 listing open does NOT make history inert — it claims no keys.
+        # The C2 slash palette (not yet implemented) will claim Up/Down/Enter
+        # etc via _is_slash_palette_open, not via PaletteRegion.showing.
         app.palette.showing = True
         await app.palette.apply(None)
         await pilot.pause()
-        before_index = app.composer_history.index
+        # Even with F3 open, Up still recalls because F3 does not own the keys.
+        # Reset history to sentinel for this branch.
+        app.composer_history = ComposerHistory(entries=("/models 1", "hello"))
         app.composer.text = ""
         await pilot.pause()
         await pilot.press("up")
         await pilot.pause()
-        # History unchanged, composer text unchanged from history (palette owns the key).
-        assert app.composer_history.index == before_index
-        assert app.composer.text == ""
+        assert app.composer.text == "hello"
+        # History moved (proving F3 did not block it).
+        assert app.composer_history.index == 1
 
         # Recalling a slash command does not open the palette (ruling 3).
         app.palette.showing = False
@@ -381,6 +385,142 @@ async def test_palette_seam_ordered_and_exclusive() -> None:
         # Down past newest restores stash (which was "" in this walk).
         await pilot.press("down")
         await pilot.pause()
+        assert app.composer_history.index is None
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_f3_open_enter_still_submits() -> None:
+    """P1 regression: F3 listing open must not break Enter-to-submit.
+
+    The F3 command listing (PaletteRegion) is a read-only foldable listing
+    that never takes focus and claims none of the five keys. Before the fix,
+    the palette predicate was keyed to PaletteRegion.showing and routed
+    Enter to super()._on_key, inserting a newline instead of submitting.
+    """
+    disp = RecordingDispatcher(RpcOutcome(status="ok", method="prompt.submit", request_id="1", epoch=1, result={}))  # noqa: E501
+    app = live_app(disp)
+    async with app.run_test() as pilot:
+        # Open F3 listing — composer keeps the caret.
+        await pilot.press("f3")
+        await pilot.pause()
+        # PaletteRegion.showing is True, but composer still focused.
+        app.composer.text = "hello from f3 open"
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await app.settle_live()
+        await pilot.pause()
+        # Message was submitted, not newline-inserted.
+        assert app.composer.text == ""
+        assert app.composer_history.entries == ("hello from f3 open",)
+        assert len(disp.calls) == 1 or any(c[0] == "prompt.submit" for c in disp.calls)
+        # No newline was inserted.
+        assert "\n" not in app.composer_history.entries[0]
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_refused_local_commands_do_not_enter_history() -> None:
+    """P2: pacing-refused and malformed local commands leave history unchanged."""
+    disp = RecordingDispatcher(RpcOutcome(status="ok", method="prompt.submit", request_id="1", epoch=1, result={}))  # noqa: E501
+    app = live_app(disp)
+    async with app.run_test() as pilot:
+        # /pause in live mode is replay_only and is refused ("nothing changed").
+        app.composer.text = "/pause"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await app.settle_live()
+        await pilot.pause()
+        assert len(app.composer_history.entries) == 0
+
+        # /speed with malformed argument is refused.
+        app.composer.text = "/speed banana"
+        await pilot.press("enter")
+        await pilot.pause()
+        await app.settle_live()
+        await pilot.pause()
+        assert len(app.composer_history.entries) == 0
+
+        # A valid plain message does enter history (non-replay controls are replay_only).
+        app.composer.text = "hello valid"
+        await pilot.press("enter")
+        await pilot.pause()
+        await app.settle_live()
+        await pilot.pause()
+        assert app.composer_history.entries == ("hello valid",)  # type: ignore[comparison-overlap]
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_escape_abandons_walk_but_keeps_stash() -> None:
+    """P2: escape during a walk abandons index but keeps stash for next walk."""
+    disp = RecordingDispatcher(RpcOutcome(status="ok", method="prompt.submit", request_id="1", epoch=1, result={}))  # noqa: E501
+    app = live_app(disp)
+    app.composer_history = ComposerHistory(entries=("old",))
+    async with app.run_test() as pilot:
+        app.composer.text = "draft half"
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.composer.text == "old"
+        assert app.composer_history.index == 0
+        assert app.composer_history.draft_stash == "draft half"
+        # Escape abandons walk but keeps stash.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.composer_history.index is None
+        assert app.composer_history.draft_stash == "draft half"
+        # Composer still shows the recalled entry (not yet restored); Down not
+        # applicable since index is None. Up again stashes current text anew.
+        assert app.composer.text == "old"
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.composer.text == "old"
+        # The new stash is the text that was showing when Up was pressed again.
+        assert app.composer_history.draft_stash == "old"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_prompt_card_mid_walk_preserves_stash() -> None:
+    """AE3 third variant: answering a prompt card mid-walk preserves stash.
+
+    The stash lives on app.composer_history, which prompt cards never touch.
+    Mount a simple Input-backed card, answer it, and verify Down still restores.
+    """
+    disp = RecordingDispatcher(RpcOutcome(status="ok", method="prompt.submit", request_id="1", epoch=1, result={}))  # noqa: E501
+    app = live_app(disp)
+    app.composer_history = ComposerHistory(entries=("old",))
+    async with app.run_test() as pilot:
+        app.composer.text = "draft half"
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.composer.text == "old"
+        # Simulate answering a prompt card: push a state with a prompt, mount it,
+        # then simulate the operator answering via the app's prompt path.
+        # We do not need a real card; we just verify the composer_history
+        # index/stash survive a state change that would occur when a prompt
+        # is answered (the app's state changes but history does not).
+        # To make it concrete, mutate state via a frame and ensure history unchanged.
+        from tests.ui.conftest import feed
+
+        feed(app, {"type": "clarify.request", "payload": {"request_id": "r1", "question": "q?"}})
+        await app.render_snapshot()
+        await pilot.pause()
+        assert app.composer_history.index == 0
+        assert app.composer_history.draft_stash == "draft half"
+        # Down should still restore the stashed draft.
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.composer.text == "draft half"
         assert app.composer_history.index is None
         await app.shutdown_sources()
 

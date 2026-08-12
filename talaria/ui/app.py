@@ -2809,13 +2809,9 @@ class TalariaApp(App[None]):
         invocation = resolve_command(message.text, self.catalog)
 
         if isinstance(invocation, LocalInvocation):
-            # History holds every dispatched line the operator pressed enter on,
-            # including slash commands as typed (KTD1). A local command is
-            # dispatched the moment it is recognized — even a pacing-refused
-            # one is a line the operator meant to send, so it is recorded
-            # before the perform, not after its own validation.
-            self._push_history(message.text)
-            self.perform_local_command(invocation)
+            dispatched = self.perform_local_command(invocation)
+            if dispatched:
+                self._push_history(message.text)
             return
 
         if isinstance(invocation, UnsupportedInvocation):
@@ -3508,8 +3504,13 @@ class TalariaApp(App[None]):
             return
         await palette.apply(self.catalog)
 
-    def perform_local_command(self, invocation: LocalInvocation) -> None:
+    def perform_local_command(self, invocation: LocalInvocation) -> bool:
         """Act on one of PC6's four, or U2's fifth, ``/models``.
+
+        Returns whether the line was dispatched and should enter history.
+        Refused submissions (pacing controls in live mode, malformed rate)
+        return False and leave history unchanged — the local analogue of the
+        replay-refused gateway commands that never reached dispatch.
 
         Dispatch is a table lookup on :class:`LocalCommand`'s ``action`` rather
         than a chain of name comparisons, for the same reason the gateway side
@@ -3525,11 +3526,11 @@ class TalariaApp(App[None]):
             # Refused through the same helper the function keys use, so the two
             # routes to one control cannot come to say different things about
             # it.
-            return
+            return False
 
         if command.action == "quit":
             self.exit()
-            return
+            return True
         if command.action == "models":
             # The one control here that is not synchronous end to end: opening
             # the picker renders instantly, but selecting a row dispatches
@@ -3539,17 +3540,17 @@ class TalariaApp(App[None]):
             # :meth:`_spawn_live`, the same escape :meth:`on_chat_text_area_submitted`
             # itself uses two paragraphs down for ``GatewayInvocation``.
             self._perform_models(invocation.argument)
-            return
+            return True
         if command.action == "profiles":
             # Scheduled for the same reason ``models`` is: opening the region
             # is instant, but selecting a row drops a socket and dials another.
             self._perform_profiles(invocation.argument)
-            return
+            return True
         if command.action == "sessions":
             # Scheduled for the same reason: the fetch and the switch both
             # cross the socket (U7, KTD6).
             self._perform_sessions(invocation.argument)
-            return
+            return True
         if command.action == "pause":
             self.controls.pause()
         elif command.action == "resume":
@@ -3561,11 +3562,12 @@ class TalariaApp(App[None]):
                     f"{command.name} wants a rate: a positive multiplier, or 'max' "
                     f"— nothing changed"
                 )
-                return
+                return False
             self.controls.set_speed(speed)
 
         self.composer.clear()
         self._notice(self._pacing_notice())
+        return True
 
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.
