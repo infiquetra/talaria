@@ -4,6 +4,70 @@
 
 ## 2026-08-12
 
+### A hand-tuned timer is a timing window with two silent failure modes, not a margin
+
+**Evidence.** Unit C2's first implementation opened the slash palette from `on_text_area_changed` — the
+handler its own plan names and rejects — and suppressed the resulting programmatic-write opens with a
+`_suppress_sync` flag cleared by `set_timer(0.01, ...)` in six places. Changing only that delay, with no
+other edit, across `tests/ui/test_slash_palette.py` and `tests/ui/test_composer_history.py`: 0 seconds
+gave 20 failed / 3 passed, 0.005 seconds gave 23 passed, 0.01 seconds (as shipped) gave 23 passed, and
+0.5 seconds gave 9 failed / 14 passed. The zero-delay run also took down four of unit C1's already-merged
+history tests. Independently, the code review found that moving the caret left after typing `/mod` left
+the palette active, so Up, Down, Enter, Escape and Tab stayed rebound while the operator moved around
+inside their own text (`talaria/ui/composer.py:93` at commit `f6d042e`).
+
+**Mechanism.** Failures on both sides is the tell: clear too early and a history recall opens the palette,
+which the plan's third root ruling forbids; clear too late and typing a slash does not open it at all,
+which is the unit's entire purpose. Nothing holds the message pump inside that window on a loaded machine
+or a slow continuous-integration runner. The caret defect is the same root cause seen from the other
+side — a text-change watcher cannot observe a caret move, because no text changed. Both symptoms trace to
+one decision: the trigger was placed on the text-change event rather than the key path. The obstacle that
+pushed the first implementation there is real — `TextArea` updates its document *after* `super()._on_key`
+returns, so reading `self.text` inside the handler gives the text before the key — and the way through it
+is to *compute* the resulting text from the pending key rather than read it back: a printable character
+inserts at the caret, backspace and delete remove one character, any caret-moving key leaves the text
+alone and closes the palette, and an unanticipated key closes it. The repair (`50d31ec`) deleted the
+watcher, the flag and all six timers; `set_timer`, `_suppress_sync` and `on_text_area_changed` now return
+zero matches in `talaria/ui/composer.py` and `talaria/ui/palette.py`.
+
+**Generalizable rule.** When a workaround has a tuned constant, vary it in both directions before trusting
+it: a real margin fails on one side only, and failures on both sides mean the constant is holding a race
+rather than absorbing one. Prefer computing the state a pending event will produce over reading it back
+after the framework has processed the event.
+
+### A defensive handler must not catch the exception class the code was repaired for
+
+**Evidence.** Unit C2's header-click repair replaced `row in getattr(event, "chain", [])` — where
+`Click.chain` is Textual 8.2.8's integer click count, so the membership test raised
+`TypeError: argument of type 'int' is not iterable` — with an ancestry walk, and wrapped that walk in
+`except (AttributeError, TypeError): continue` (`talaria/ui/palette.py`, commit `50d31ec`). Mutation
+testing found the guard: with it present, restoring the original `chain` membership test left
+`test_palette_header_click_does_not_crash` green; with it removed, the same mutation turns the test red,
+and the palette and history suites still pass at 27.
+
+**Mechanism.** Neither arm was reachable — `ancestors` is a list of widgets and `getattr` supplies a
+default — so the handler's only effect was to swallow the one error class this branch exists to prevent.
+The regression test could not have detected a reintroduction. This is the release's recurring shape once
+more: a signal whose failure mode is indistinguishable from success.
+
+**Generalizable rule.** Name the exception you expect, and check that the name is not the failure you are
+guarding against. A regression test is only load-bearing if the defect it pins can still reach it —
+mutate the fix and watch the test go red, because a green test proves nothing about a mutation that never
+arrived.
+
+### TextArea's backspace is async and programmatic writes must not open the palette
+
+**Superseded 2026-08-12 by the two entries above.** The mechanism this entry recommends — driving the
+palette from `TextArea.Changed` and suppressing programmatic writes with a timer-cleared flag — was the
+rejected mechanism, and it shipped a timing window with a floor and a ceiling. The observation about
+`TextArea` updating its document after `super()._on_key` returns is still correct and is why the entry is
+kept; the conclusion drawn from it is not. Compute the predicted text on the key path instead.
+
+**Evidence.** Implementing C2's filterable slash palette (`talaria/ui/palette.py`, `talaria/ui/composer.py:132`) against the plan's three root rulings. The first implementation drove the palette from `ChatTextArea._on_key` by reading `self.text` immediately after `await super()._on_key(event)` and by checking `self.text` in `Composer.text`'s setter. Typing `/` opened, but backspace on `/` left `self.text` as `'/'` inside the handler while `app.composer.text` outside already read `''` — the palette stayed open until an extra key, and `test_ae1_leading_slash_predicate`'s programmatic `app.composer.text = "/models"` opened the palette because `on_text_area_changed` fired after the setter had already cleared the suppress flag. `test_sessions`'s `open_sessions` helper (`app.composer.text = "/sessions"` then `Enter`) inserted `"/sessions "` instead of submitting because `on_focus` reopened the palette on the programmatic text.
+
+**Mechanism.** `TextArea` updates its document for `backspace`/`delete` after `super()._on_key` returns, not during it — `await super()._on_key` still saw the old text, even after `await asyncio.sleep(0.1)`. The fix was to drive the palette from `TextArea.Changed` (`on_text_area_changed` on `ChatTextArea`), which fires after the document has actually changed, and to distinguish typed from programmatic at the setter: `ChatTextArea` sets `_suppress_sync = True` before `self.text = new_text` for history recall and `Composer.text`'s setter does the same for any `composer.text = ` write, holding the flag until `set_timer(0.01, ...)` clears it after the `Changed` message has been delivered. `on_focus` was made a no-op for opening (ruling 3) and `render_catalog` was changed to catch `ScreenStackError` as well as `NoMatches` because `self.palette` raises `ScreenStackError` before the screen is mounted, not `NoMatches`.
+
+**Generalizable rule.** A widget that mutates its own document asynchronously cannot be polled immediately after `super()._on_key` — the palette must be driven from the change event, and programmatic writes must be suppressed at the setter that does the write, not at the watcher that sees it. A timer that clears the suppress flag too early reopens the palette on the next programmatic write.
 ### A redundant path that is invisible, over-broad, or clipped is the same failure it was meant to replace
 
 **Evidence.** Unit A4 was blocked on four P1s (review of commit 5110451): `action_interrupt` at `talaria/ui/app.py:1556` sent `session.interrupt` with an empty session id when no turn was in flight and left the notice empty; `StatusRegion.on_click` at `talaria/ui/status_region.py:64` advertised “click status” while `compose` yielded only an empty marker and `status_tick` at `talaria/ui/app.py` returns early when `status_runner is None` — with no status command the region is one blank row; `TranscriptPane.on_click` at `talaria/ui/transcript.py:1742` re-followed on any click anywhere while reading scrollback; `HelpBar` at `talaria/ui/app.py:823` rendered 164 and 126 characters into one 80-column row with `text-wrap: nowrap` and `ellipsis`, so at 80×24 the live footer ended at `end/F5 follow (click bo…` and the replay footer clipped the macOS note. The three P2s were a swallowed `except Exception: pass` in the status click handler, five tautological assertions (`tests/ui/test_a4_function_key_row.py:97,108,294,302,377`), and a prompt-region claim that 75% keeps both deny-all hints visible when the reviewer measured 14 rows and only the first hint visible without scrolling.

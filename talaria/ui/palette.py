@@ -19,10 +19,21 @@ annotated with a ``warning`` (its skill scan failing, say — the gateway builds
 that field at ``methods_tools.py:346``), both leave the operator with a listing
 that is missing commands. Rendering either as a bare, shorter list would be a
 silent lie, so both appear as their own line above the rows.
+
+C2 adds a filtered mode: when the composer holds a slash prefix (``/`` or
+``/name`` with no trailing argument) the same region shows a live-filtered
+view of the runnable catalogue (local plus gateway dispatchable, unsupported
+omitted, prefix case-insensitive, sorted by category then name). The browse
+listing (``F3``) remains unchanged and reuses the same header and degraded
+handling. The two modes share one widget so they cannot disagree about counts
+or ordering.
 """
 
 from __future__ import annotations
 
+import re
+
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -49,11 +60,112 @@ CATALOG_FAILURE_PREFIX = "catalogue unavailable — "
 #: Prefix for the gateway's own warning about a catalogue it built incompletely.
 CATALOG_WARNING_PREFIX = "the gateway reported: "
 
+#: Shown when the filter has excluded every row. Lowercase, contains the
+#: phrase the plan requires tests to assert on.
+NO_MATCHING = "no matching commands"
+
+#: Regex for the slash-name class that KTD2 defines: slash, then a letter,
+#: then letters/digits/underscore/hyphen, end-anchored, no trailing space.
+_SLASH_RE = re.compile(r"^/[A-Za-z][A-Za-z0-9_-]*$")
+
+
+def is_slash_prefix_text(text: str) -> bool:
+    """Whether ``text`` satisfies KTD2's open predicate (text half only).
+
+    ``text.lstrip()`` must be ``/`` or match ``^/[A-Za-z][A-Za-z0-9_-]*$``.
+    Leading whitespace is tolerated, trailing whitespace closes. No caret
+    check — the caller decides whether the composer owns the caret.
+    """
+    stripped = text.lstrip()
+    if stripped == "/":
+        return True
+    return bool(_SLASH_RE.match(stripped))
+
+
+def slash_prefix_from_text(text: str) -> str | None:
+    """The filter prefix for ``text``, or ``None`` when the predicate is false.
+
+    Returns ``""`` for bare ``/``, otherwise the lowercased name after the
+    slash. The caller must have checked :func:`is_slash_prefix_text` or be
+    prepared for ``None``.
+    """
+    if not is_slash_prefix_text(text):
+        return None
+    stripped = text.lstrip()
+    if stripped == "/":
+        return ""
+    return stripped[1:].lower()
+
+
+def _local_entries_tuple() -> tuple[CommandEntry, ...]:
+    """The seven Talaria-local entries, built without importing a private helper."""
+    from talaria.domain.commands import TALARIA_LOCAL_COMMANDS
+
+    return tuple(
+        CommandEntry(
+            name=cmd.name,
+            description=(
+                f"{cmd.description} {cmd.argument_hint}".strip()
+                if cmd.argument_hint
+                else cmd.description
+            ),
+            category="Talaria",
+            availability="talaria-local",
+        )
+        for cmd in TALARIA_LOCAL_COMMANDS
+    )
+
+
+def _runnable_entries(catalog: CommandCatalog | None) -> tuple[CommandEntry, ...]:
+    """Runnable entries: local plus gateway dispatchable, unsupported omitted."""
+    if catalog is None:
+        return _local_entries_tuple()
+    return tuple(e for e in catalog.entries if e.availability in ("dispatch", "talaria-local"))
+
+
+def _filtered_entries(
+    catalog: CommandCatalog | None, prefix: str
+) -> tuple[CommandEntry, ...]:
+    """Prefix-filtered runnable entries, case-insensitive, Talaria locals first.
+
+    The plan requires this surface to group the way the F3 browse listing does,
+    "so the two surfaces do not disagree about where ``/models`` lives". Browse
+    renders ``catalog.entries`` verbatim and ``build_catalog`` seeds that tuple
+    with ``_local_entries()``, so browse shows the Talaria locals first. A plain
+    ``(category, name)`` sort does not: ``Info`` and ``Session`` both sort before
+    ``Talaria``, which put the locals last and moved ``/models`` depending on
+    which surface the operator had opened. The explicit rank restores the
+    grouping; alphabetical order within a category keeps the listing stable.
+    """
+    entries = _runnable_entries(catalog)
+    if prefix == "":
+        filtered = entries
+    else:
+        lower = prefix.lower()
+        filtered = tuple(
+            e for e in entries if e.name.lower().removeprefix("/").startswith(lower)
+        )
+    return tuple(
+        sorted(
+            filtered,
+            key=lambda e: (
+                0 if e.category.lower() == "talaria" else 1,
+                e.category.lower(),
+                e.name.lower(),
+            ),
+        )
+    )
+
 
 def format_entry(entry: CommandEntry) -> str:
     """One listing row. Pure, so a test asserts on it without a screen."""
     marker = f"{entry.marker:<{_MARKER_WIDTH}}"
     return f"{entry.name:<{_NAME_WIDTH}} {marker} {entry.description}".rstrip()
+
+
+def format_filtered_entry(entry: CommandEntry) -> str:
+    """One filtered row: name and description, no marker (every row is runnable)."""
+    return f"{entry.name:<{_NAME_WIDTH}} {entry.description}".rstrip()
 
 
 def header_line(catalog: CommandCatalog | None) -> str:
@@ -84,6 +196,7 @@ class PaletteRegion(Vertical):
         height: auto;
         max-height: 14;
         display: none;
+        overflow-y: auto;
     }
     PaletteRegion.-showing {
         display: block;
@@ -98,11 +211,26 @@ class PaletteRegion(Vertical):
     PaletteRegion > .palette--degraded.-said {
         display: block;
     }
+    PaletteRegion > .palette--row {
+        color: $text;
+    }
+    PaletteRegion > .palette--row.-active {
+        background: $accent;
+        color: $text;
+        text-style: bold;
+    }
+    PaletteRegion > .palette--row.-muted {
+        color: $text-muted;
+        text-style: italic;
+    }
     """
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self.showing = False
+        self._browse_showing = False
+        self._slash_prefix: str | None = None
+        self._filtered: tuple[CommandEntry, ...] = ()
+        self._selected: int | None = None
         self._header: Static | None = None
         self._degraded: Static | None = None
         self._rows: list[Static] = []
@@ -134,11 +262,56 @@ class PaletteRegion(Vertical):
     def catalog(self) -> CommandCatalog | None:
         return self._catalog
 
+    @property
+    def showing(self) -> bool:
+        """Whether the region is currently visible (browse or slash)."""
+        return self._browse_showing or self._slash_prefix is not None
+
+    @showing.setter
+    def showing(self, value: bool) -> None:
+        self._browse_showing = bool(value)
+
+    @property
+    def is_slash_active(self) -> bool:
+        return self._slash_prefix is not None
+
+    @property
+    def slash_prefix(self) -> str | None:
+        return self._slash_prefix
+
+    @property
+    def filtered_entries(self) -> tuple[CommandEntry, ...]:
+        return self._filtered
+
+    @property
+    def selected_index(self) -> int | None:
+        return self._selected
+
+    @property
+    def selected_entry(self) -> CommandEntry | None:
+        if self._slash_prefix is None or not self._filtered or self._selected is None:
+            return None
+        if 0 <= self._selected < len(self._filtered):
+            return self._filtered[self._selected]
+        return None
+
     # ── rendering ────────────────────────────────────────────────────────
 
     async def apply(self, catalog: CommandCatalog | None) -> None:
         """Render the listing. Safe to call before anything has been fetched."""
         self._catalog = catalog
+        # Recompute filtered when slash is active and catalog may have changed.
+        if self._slash_prefix is not None:
+            self._filtered = _filtered_entries(catalog, self._slash_prefix)
+            if self._filtered:
+                if self._selected is None or self._selected >= len(self._filtered):
+                    self._selected = 0
+            else:
+                self._selected = None
+        else:
+            self._filtered = ()
+            self._selected = None
+
         self.set_class(self.showing, "-showing")
 
         if self._header is not None:
@@ -152,17 +325,36 @@ class PaletteRegion(Vertical):
             # nothing at all.
             self._degraded.set_class(bool(said), "-said")
 
-        wanted = list(catalog.entries) if (self.showing and catalog is not None) else []
-        while len(self._rows) > len(wanted):
-            await self._rows.pop().remove()
-        for index, entry in enumerate(wanted):
-            text = literal_text(format_entry(entry))
-            if index < len(self._rows):
-                self._rows[index].update(text)
+        # Rebuild rows from scratch — the list is at most ~100 and the
+        # correctness of highlight and muted handling matters more than diffing.
+        for row in self._rows:
+            await row.remove()
+        self._rows = []
+
+        if self._slash_prefix is not None:
+            if self._filtered:
+                for idx, entry in enumerate(self._filtered):
+                    classes = "palette--row"
+                    if idx == self._selected:
+                        classes += " -active"
+                    text = literal_text(format_filtered_entry(entry))
+                    widget = Static(text, markup=False, classes=classes)
+                    self._rows.append(widget)
+                    await self.mount(widget)
             else:
-                widget = Static(text, markup=False)
+                widget = Static(
+                    literal_text(NO_MATCHING), markup=False, classes="palette--row -muted"
+                )
                 self._rows.append(widget)
                 await self.mount(widget)
+            return
+
+        wanted = list(catalog.entries) if (self._browse_showing and catalog is not None) else []
+        for entry in wanted:
+            text = literal_text(format_entry(entry))
+            widget = Static(text, markup=False, classes="palette--row")
+            self._rows.append(widget)
+            await self.mount(widget)
 
     @staticmethod
     def _degraded_line(catalog: CommandCatalog | None) -> str:
@@ -183,6 +375,152 @@ class PaletteRegion(Vertical):
         nobody asked for is only a listing, and the transcript is worth more
         rows than it is.
         """
-        self.showing = not self.showing
+        self._browse_showing = not self._browse_showing
         await self.apply(self._catalog)
         return self.showing
+
+    # ── slash-filtered mode ──────────────────────────────────────────────
+
+    async def show_slash(self, catalog: CommandCatalog | None, prefix: str) -> None:
+        """Open the filtered palette on ``prefix`` (``""`` for bare ``/``)."""
+        self._slash_prefix = prefix
+        self._filtered = _filtered_entries(catalog, prefix)
+        self._selected = 0 if self._filtered else None
+        await self.apply(catalog)
+
+    async def hide_slash(self) -> None:
+        """Close the filtered palette, returning to browse or hidden."""
+        if self._slash_prefix is None:
+            return
+        self._slash_prefix = None
+        self._filtered = ()
+        self._selected = None
+        await self.apply(self._catalog)
+
+    async def sync_slash(self, catalog: CommandCatalog | None, text: str) -> None:
+        """Open, update, or close the slash palette based on ``text``.
+
+        The caller is the typed-input path (a key or paste that changed the
+        composer's text). Programmatic writes must not call this — ruling 3.
+        """
+        if is_slash_prefix_text(text):
+            prefix = slash_prefix_from_text(text)
+            # ``prefix`` is None only when predicate is false, which we already
+            # ruled out, but guard defensively.
+            if prefix is None:
+                await self.hide_slash()
+                return
+            if self._slash_prefix != prefix:
+                self._slash_prefix = prefix
+                self._filtered = _filtered_entries(catalog, prefix)
+                self._selected = 0 if self._filtered else None
+                await self.apply(catalog)
+            else:
+                # Prefix unchanged but catalog may have changed externally
+                # (fetch landed while open). Re-apply to pick up new rows.
+                await self.apply(catalog)
+        else:
+            if self._slash_prefix is not None:
+                await self.hide_slash()
+
+    def move_selection(self, delta: int) -> None:
+        """Move the highlight inside the filtered palette, clamped."""
+        if self._slash_prefix is None or not self._filtered:
+            return
+        current = self._selected if self._selected is not None else 0
+        new = current + delta
+        if new < 0:
+            new = 0
+        if new >= len(self._filtered):
+            new = len(self._filtered) - 1
+        if new == current:
+            return
+        self._selected = new
+        # Update row classes synchronously — no remount needed.
+        for idx, row in enumerate(self._rows):
+            row.set_class(idx == self._selected, "-active")
+        # Scroll the selected row into view so arrow navigation does not
+        # leave the highlight off-screen. The region is capped at 14 rows,
+        # so with 20 matches the selected index 15 would otherwise be invisible.
+        try:
+            self.scroll_to_widget(self._rows[new], animate=False)
+        except (AttributeError, ValueError):
+            pass
+
+    # ── click ────────────────────────────────────────────────────────────
+
+    async def on_click(self, event: events.Click) -> None:
+        """Click on a filtered row selects it (same insert rule as Enter)."""
+        if self._slash_prefix is None or not self._filtered:
+            return
+        # Textual delivers Click with event.widget as the widget under the cursor.
+        # For a row click that is the row's Static; for a header click it is the
+        # header Static, not a row. Click.chain is an integer (click count), not
+        # an ancestry chain.
+        target = event.widget
+        idx: int | None = None
+        if isinstance(target, Static) and target in self._rows:
+            idx = self._rows.index(target)
+        else:
+            # Check if target is inside a row (e.g., if rows had children)
+            # No try/except here on purpose. ``ancestors`` is a list of widgets
+            # and ``getattr`` supplies a default, so neither AttributeError nor
+            # TypeError is reachable — and a TypeError guard would swallow the
+            # exact failure this branch was repaired for (``row in event.chain``
+            # where ``chain`` is the click count, an int). Verified: with the
+            # guard present, restoring the original defect leaves
+            # test_palette_header_click_does_not_crash green; without it, the
+            # same mutation turns it red.
+            for row in self._rows:
+                if target is not None and row in getattr(target, "ancestors", []):
+                    idx = self._rows.index(row)
+                    break
+        if idx is None:
+            # Click was not on a row (e.g., header or empty area) — do not
+            # insert and do not crash. Previously this used `row in chain`
+            # where chain is an int, raising TypeError: argument of type 'int'
+            # is not iterable.
+            return
+        if not (0 <= idx < len(self._filtered)):
+            return
+        event.stop()
+        self._selected = idx
+        # Perform the insert via the app — keep focus in the composer.
+        await self._insert_selected()
+
+    async def _insert_selected(self) -> None:
+        from textual.app import ScreenStackError
+        from textual.dom import NoScreen
+
+        entry = self.selected_entry
+        if entry is None:
+            return
+        try:
+            app = self.app
+        except (NoScreen, ScreenStackError, AttributeError):
+            return
+        try:
+            catalog: CommandCatalog | None = getattr(app, "catalog", None)
+            composer = getattr(app, "composer", None)
+            if composer is None:
+                return
+            # Canonicalise via the catalogue's own map, then ensure single slash.
+            if catalog is not None:
+                canon = catalog.canonical(entry.name)
+            else:
+                canon = entry.name
+            canon = canon.lstrip("/")
+            text = f"/{canon} "
+            composer.text = text
+            try:
+                # Place caret at end (single-line, row 0).
+                composer.text_area.cursor_location = (0, len(text))
+            except (ValueError, AttributeError, NoScreen, ScreenStackError):
+                pass
+            try:
+                composer.text_area.focus()
+            except (NoScreen, ScreenStackError, AttributeError):
+                pass
+            await self.hide_slash()
+        except (NoScreen, ScreenStackError, AttributeError):
+            return
