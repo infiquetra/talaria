@@ -485,6 +485,45 @@ not cover it, the pane is genuinely behind, and that is a property of the stream
 runner. This changes what the release gate counts as a failure, so it wants a decision rather than a
 patch.
 
+### A partial reply was not committed when the credential failed mid-stream — seen once, not reproduced
+
+**Author.** v0.3 orchestration, 2026-08-12
+**Priority.** P1 to *diagnose*, because the guarantee it touches is data preservation rather than
+tidiness. Not yet P1 to fix, because it is not yet established that there is anything to fix.
+**Effort.** Unknown — the first task is reproduction, not repair.
+**Worth it when.** On the second occurrence, immediately, and this entry exists so the second
+occurrence is recognised rather than re-diagnosed from nothing. Also worth a bounded attempt before
+the release ships, because the failing assertion is R6: a credential that stops working mid-stream
+must not throw away the text the operator already received.
+
+**Evidence.** `tests/transport/test_source.py::test_auth_failed_mid_stream_commits_the_partial_reply`
+failed `python-check (3.13)` — the macOS job, runner path `/Users/runner/...` — on pull request 71 at
+commit `513da81`, with `AssertionError: the typed auth_failed cause did not reach the domain commit`
+and `assert [] == ['partial reply']`. The transcript held no assistant entry at all where it should
+have held the partial reply. That branch changes two files under `docs/engineering-journal/` and one
+comment in `tests/replay/test_gate.py`, so it cannot reach this code. The test passes on `main`
+locally, and 25 runs of the test plus 8 runs of its whole file, all under deliberate CPU load, did not
+reproduce it.
+
+**Mechanism — not known, and one plausible theory already ruled out.** The obvious shape is the one
+the other two flakes in this file have: the test waits on a proxy signal rather than on the thing it
+asserts. It settles on `app.state.connection == "auth_failed"` and then asserts the transcript
+commit, and the commit is gated on the typed *cause*, not on the status — `set_connection` in
+`talaria/domain/state.py` runs `_commit_partial_streams` only inside `if cause is not None`. So a
+cause-less call that set the status first would satisfy the predicate before the commit existed.
+
+That theory does not survive checking. The transport reaches `auth_failed` only through calls that
+carry the cause (`talaria/transport/source.py:544`, `:852`), and the comment at `:626-628` states it
+outright: the domain already committed on whichever typed cause put the source in `auth_failed` to
+begin with. Whatever this is, it is not that. Do not re-run that reasoning; start somewhere else.
+
+**Where to start.** Reproduce first — this needs a real failing instance before anything is changed.
+A GitHub-hosted macOS runner is more contended than a developer machine, so the next attempt should
+raise concurrency rather than raw load. If it reproduces, the question to answer first is whether
+`streaming_text` was still populated at the moment the causal `set_connection` ran, which separates a
+test race from a genuine loss of the operator's text. Resist repairing the test until that is known:
+the assertion is currently the only thing standing between a real R6 regression and silence.
+
 ### ~~A replay-pause test asserts how fast the runner is, and fails on Linux when it is fast enough~~ — CLOSED 2026-08-12
 
 **Author.** v0.3 orchestration, 2026-08-11
