@@ -227,6 +227,19 @@ that nobody later reads the register as evidence for a ranking it cannot support
 | `b4-code-verify` | B4 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Confirmed five of five key technical decisions implemented and six of six acceptance items asserted, against the code rather than the commit message |
 | `a3-diagnosis` | A3 | Antigravity, Gemini 3.1 Pro | High | bypass (standing) | 2026-08-11 | 2026-08-11 | **Rejected.** Went out of scope — compacted past a million input tokens, wrote its output outside the repository, then began searching the operator's home directory. Interrupted. Its theory was separately refuted by hand; see R3 |
 | `b5-doc-review` | B5 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Returned `BLOCKED` with five findings, all five confirmed by hand and repaired; on re-verification returned `PROCEED` having checked each repair against the tree rather than against the plan's word. Merged as pull request 59 |
+| `b5-implement` | B5 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Implemented the resumed-session announcement to plan; merged as pull request 64 |
+| `b5-code-review` | B5 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Reviewed the implementation against the plan before merge; the mutual-exclusion invariant between the announcement and the retain branch was the item it was pointed at hardest |
+| `b2-plan` | B2 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Merged as pull request 62 after two rounds of repair — see the two review rows below |
+| `b2-doc-review` | B2 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Returned `BLOCKED` with four findings, all four confirmed by hand and repaired. The blocking one is the unit's own defect reintroduced by a literal reading of the plan; it also caught that `prettier --check docs/` is vacuous because `.prettierignore` contains `docs/` |
+| `b2-reverify` | B2 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Confirmed all four repairs against the tree and found **three errors introduced by the repair itself**, all three the root session's; see the learning dated 2026-08-11 on citations carried from a reviewer |
+| `b2-implement` | B2 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | — | Open as pull request 66, under independent review |
+| `b2-code-review` | B2 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | — | In flight |
+| `b3-plan` | B3 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Merged as pull request 63 after repair. Its commit carries an attribution trailer that this organization's rules prohibit — see the correction below |
+| `b3-doc-review` | B3 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Accepted in full.** Returned `BLOCKED` with three findings, all three confirmed by hand and repaired. The blocking one established that `pageup` and `home` never scroll at all, which is now filed as its own P1 defect rather than papered over |
+| `b3-implement` | B3 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | — | Open as pull request 65, under independent review |
+| `b3-code-review` | B3 | Qwen Code, `qwen3.8-max-preview` | n/a | bypass (standing) | 2026-08-11 | — | In flight |
+| `b1-plan` | B1 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | — | In flight |
+| `b4-implement` (second) | B4 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Rejected — and the fault is the root session's, not the session's.** Launched against a unit that had already shipped as pull request 60. Interrupted about ninety seconds in, its worktree and branch removed. It had itself already reached the right suspicion — its last line before the interrupt was that `platforms.changed` was in `_OBSERVED_ON_A_LIVE_GATEWAY` at `decode.py:120` and it needed to check whether that was already on `main` |
 
 **The rejected finding, recorded rather than dropped.** The Antigravity review reported that the
 replay gate's `interface_shows_everything` check "no longer exists", replaced by the two-part ownership
@@ -247,10 +260,33 @@ user-level setting applies it to every session; see D6, which originally recorde
 *Outcome* records what was accepted, not what was produced: a session whose findings the root session
 rejected is recorded as rejected, with the reason.
 
-**The register's own evidence, now that there are enough rows to read.** Seven sessions across three
-products. Both rejections and the only partial acceptance are Antigravity's; every session on Qwen
-Code and on the DeepSeek route was accepted in full. That is what D10 is decided on, and it is a
-count of outcomes on this repository's work rather than a claim about the products in general.
+**The register's own evidence, now that there are enough rows to read.** Twenty sessions across three
+products, fifteen of them closed and five in flight. Every closed session on Qwen Code and on the
+DeepSeek route was accepted in full **on the quality of its work**; the only rejection and the only
+partial acceptance attributable to a session are both Antigravity's, one each. That is what D10 is
+decided on,
+and it is a count of outcomes on this repository's work rather than a claim about the products in
+general. The third rejection, the duplicate `b4-implement`, is excluded from that reading on purpose:
+it was rejected for being launched at all, which is a root-session error and says nothing about the
+engine.
+
+**What the review rows are worth, counted rather than asserted.** Four plans went to independent
+document review and **none was clean on first submission** — five findings on B5's, four on B2's, three
+on B3's, three on B4's. Both plans that were re-verified after repair had errors found *in the repair*.
+That is the argument for the second pass, and it is now a count rather than an intuition.
+
+**An attribution trailer reached merged history, and removing it is not this session's call.**
+Commit `9ac33e7`, the unit B3 plan, carries `Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>`,
+and it survived the squash into `ef8e815` on `main`. This organization prohibits attribution lines of
+any kind in commits. The cause is specific and worth naming: the prohibition lives in a Claude-level
+configuration file that the Claude CLI reads on every route including DeepSeek, and that **Qwen Code
+does not read at all**. Every Qwen session that commits therefore needs the prohibition stated in its
+own brief. The two Qwen sessions in flight at the time of writing are read-only reviewers and cannot
+commit.
+
+Rewriting `main` on a public repository to remove one trailer is an operator decision, not a merge
+decision, so it is recorded here and left standing rather than force-pushed. The recurrence guard —
+stating the prohibition in every brief for an engine that cannot inherit it — is in force from now.
 
 ## 3. Root decisions in response to child questions
 
