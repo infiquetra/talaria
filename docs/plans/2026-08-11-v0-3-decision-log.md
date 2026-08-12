@@ -494,7 +494,7 @@ observed; both are checkable.
 | `c2-implement` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after code review and repair.** Got the hard part right — all five keys the palette claims reach the palette rather than the text editor, which is the ruling unit C1 shipped a regression against — then built the trigger on the one mechanism its own plan names and rejects. Its report was unusually candid about which of its assertions were weak, and still overstated six acceptance items |
 | `c2-code-review` | C2 | Codex, `gpt-5.6-sol` | High | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted in full.** Returned `BLOCKED` with three P1s: a selection that moves below the visible region so Enter inserts an unseen command, a click on the palette header that crashes the application, and the rejected-mechanism finding above. It drove all five claimed keys individually and reported each outcome separately, and it checked the root session's own test edit and said plainly that it was not a weakening |
 | `c2-repair` | C2 | Claude CLI on Muse, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Abandoned before it read its brief, for a harness reason and not a model one.** The Claude command-line interface defers most tool definitions and expects the model to load them on demand; on this route that load returned an empty result every time, so the session never obtained a file-reading tool and spent twelve minutes retrying. It produced no work to judge |
-| `c2-repair-muse` | C2 | Muse Code, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | — | In flight |
+| `c2-repair-muse` | C2 | Muse Code, `muse-spark-1.2-contributor` | xhigh | bypass (standing) | 2026-08-12 | 2026-08-12 | **Accepted after two defects found in verification, and the strongest implementation session on this model.** Repaired all six findings including the one that overrode its own plan, deleting the watcher, the suppress flag and all six timers rather than routing around them. Its report was accurate everywhere the root session checked it, with one omission it stated plainly rather than hid: it left the full suite unrun and said so. Two defects survived — a defensive handler catching the exception class its own branch was repaired for, and a sort that did not group the way the plan requires twice. Both fixed by the root session as `c4316bf` |
 | `b4-implement` (second) | B4 | Claude CLI on DeepSeek, `deepseek-v4-flash` | xhigh | bypass (standing) | 2026-08-11 | 2026-08-11 | **Rejected — and the fault is the root session's, not the session's.** Launched against a unit that had already shipped as pull request 60. Interrupted about ninety seconds in, its worktree and branch removed. It had itself already reached the right suspicion — its last line before the interrupt was that `platforms.changed` was in `_OBSERVED_ON_A_LIVE_GATEWAY` at `decode.py:120` and it needed to check whether that was already on `main` |
 
 **The rejected finding, recorded rather than dropped.** The Antigravity review reported that the
@@ -517,7 +517,7 @@ user-level setting applies it to every session; see D6, which originally recorde
 rejected is recorded as rejected, with the reason.
 
 **The register's own evidence, now that there are enough rows to read.** Forty-six sessions across
-four products and five model routes, forty-five of them closed and one in flight. Every closed
+four products and five model routes, all of them now closed. Every closed
 session on Qwen Code and on the DeepSeek route was accepted in full **on the quality of its work**; the
 only rejection and the only partial acceptance attributable to a session are both Antigravity's, one
 each. That is what D10 is decided on, and it is a count of outcomes on this repository's work rather
@@ -526,11 +526,12 @@ excluded from that reading on purpose: it was rejected for being launched at all
 root-session error and says nothing about the engine.
 
 **The Muse route's record, stated separately because D12 adopted it mid-release on cost rather than on
-evidence.** Seventeen rows, of which fifteen have been judged, one was abandoned before it produced any work,
-and one is in flight. Of the fifteen judged: four accepted in full with nothing to correct; four whose own output was accepted after the
-plan they wrote went back for repair; two accepted with a correction to what they delivered; one
-partly accepted and then accepted after repair; and four accepted only after a further repair round
-that an independent check forced. No Muse session has been rejected. That is still not the clean sweep
+evidence.** Seventeen rows, of which sixteen have been judged and one was abandoned before it
+produced any work. Of the sixteen judged: four accepted in full with nothing to correct; four
+whose own output was accepted after the plan they wrote went back for repair; two accepted with a
+correction to what they delivered; one partly accepted and then accepted after repair; and five
+accepted only after a further repair round that an independent check forced. No Muse session has
+been rejected. That is still not the clean sweep
 Qwen Code and the DeepSeek route posted, but the sample is now large enough to name the shape rather
 than call it noise: **on this route the report has repeatedly claimed more than the work delivered.**
 `flake-fix` replaced a three-condition pane check with the one condition that never touches the pane
