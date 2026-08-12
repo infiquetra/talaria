@@ -46,10 +46,10 @@ FAST_RETRIES = (0.0, 0.01, 0.01)
 #: see ``test_the_served_viewport_is_the_rows_on_screen``, which is what
 #: holds this pair to the actual screen.
 SCREEN = (80, 24)
-#: 17, not 18: U3's caret slot (``talaria/ui/status_region.py``) added one
-#: permanent chrome row, shrinking the transcript viewport by one at every
-#: terminal height.
-SCREEN_ROWS = 17
+#: 18, not 17: B1 removed U3's caret slot (``talaria/ui/status_region.py``),
+#: reclaiming one permanent chrome row at every terminal height (plan
+#: docs/plans/2026-08-11-v0-3-unit-b1-caret-status-row.md KTD1).
+SCREEN_ROWS = 18
 
 #: The one value swept for across the frame log, the transcript, the status
 #: document and every notice. Distinctive enough that a substring search over
@@ -509,10 +509,9 @@ async def test_the_served_viewport_is_the_rows_on_screen(
     """
     measured: dict[int, tuple[int, int, int]] = {}
 
-    # 17 and 27, not 18 and 28: U3's caret slot added one permanent chrome
-    # row to the status region, shrinking the transcript viewport by one at
-    # every terminal height (see ``SCREEN_ROWS`` above).
-    for index, (height, expected) in enumerate(((24, 17), (34, 27))):
+    # 18 and 28, not 17 and 27: B1 removed U3's caret slot, reclaiming one
+    # row (see ``SCREEN_ROWS`` above).
+    for index, (height, expected) in enumerate(((24, 18), (34, 28))):
         app, source = live_app(bridge_gateway)
         request_id = f"t-size-{index}"
         async with app.run_test(size=(80, height)):
