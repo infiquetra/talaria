@@ -1037,6 +1037,10 @@ class TalariaApp(App[None]):
         #: without this the same read is answered once per tick until the reply
         #: lands — several identical answers to one blocking question.
         self._answering: set[str] = set()
+        #: B1's latch: which no-text region last announced a discard. While the
+        #: caret stays in that region, further printable keys or pastes are silent
+        #: (KTD2). Cleared whenever the caret leaves the announced region (KTD4).
+        self._discard_latch: str = ""
 
         # ── gate counters ────────────────────────────────────────────────
         #: Coalescing flushes that actually re-rendered. KTD14 measures render
@@ -4191,55 +4195,80 @@ class TalariaApp(App[None]):
             self._notice(note)
         self._dirty = True
 
-    # ── U3: naming where the caret is (R5, KTD5) ─────────────────────────
+    # ── B1: discarded-input notice replaces the caret row (R5', KTD1-KTD5) ─
 
-    #: Ancestor id → the location word ``StatusRegion.set_caret`` renders.
-    #: Only regions the plan names (``docs/plans/2026-08-08-talaria-v0-2-
-    #: answerability-and-session-story-plan.md``, unit U3) get a word; a
-    #: focused widget with none of these ancestors (nothing focused, or the
-    #: composer itself) clears the slot instead.
-    _CARET_REGION_IDS: dict[str, str] = {
+    #: Which ancestor id maps to which region word for the discard notice.
+    #: Transcript and agents are always no-text; prompts is no-text only when
+    #: the focused widget is NOT inside a PromptCard (KTD3, KTD5). The ancestor
+    #: walk itself survives from U3, re-interpreted from naming to classifying.
+    _NO_TEXT_REGION_IDS: Final[Mapping[str, str]] = {
         "transcript": "transcript",
         "agents": "agents",
         "prompts": "prompts",
     }
 
-    def _caret_location(self) -> str:
+    #: The composer notice shown when a printable key or paste would otherwise
+    #: be silently discarded. Way-back clause leads so it survives truncation at
+    #: 80 columns (KTD2). House register, full lowercase.
+    _DISCARD_NOTICE_BY_REGION: Final[Mapping[str, str]] = {
+        "transcript": (
+            "press tab to return to the message box — "
+            "typing is paused while the transcript holds the focus"
+        ),
+        "agents": (
+            "press tab to return to the message box — "
+            "typing is paused while the sub-agent list holds the focus"
+        ),
+        "prompts": (
+            "press tab to return to the message box — "
+            "typing is paused while the prompts region holds the focus"
+        ),
+    }
+
+    def _no_text_region(self) -> str | None:
+        """Which no-text region currently holds the caret, or None.
+
+        Transcript and agents are always no-text. Prompts is answer-affordant
+        only when the focused widget is inside a PromptCard; the container
+        itself (PromptRegion#prompts) holds the caret and discards keys (KTD5).
+        A focused card control classifies as not-no-text, so no notice fires
+        there (KTD3).
+        """
         focused = self.focused
         if focused is None:
-            return ""
+            return None
+        # Card controls are not discard regions — check before the id map so
+        # a Button#choice-0 inside a PromptCard does not classify as prompts.
         for widget in focused.ancestors_with_self:
-            location = self._CARET_REGION_IDS.get(widget.id or "")
+            if isinstance(widget, PromptCard):
+                return None
+        for widget in focused.ancestors_with_self:
+            rid = widget.id or ""
+            location = self._NO_TEXT_REGION_IDS.get(rid)
             if location is not None:
                 return location
-        return ""
+        return None
 
-    def _refresh_caret_slot(self) -> None:
-        """Write the caret's location word into the dedicated status slot.
+    def _clear_discard_latch_if_needed(self) -> None:
+        """Clear the discard latch when the caret has left the announced region.
 
-        Reads :attr:`focused` fresh rather than trusting either event's
-        payload, because Textual delivers ``DescendantBlur`` for the old
-        holder and ``DescendantFocus`` for the new one as two separate
-        messages — reading the app's current focus from both handlers
-        means whichever fires last leaves the right word on screen instead
-        of a stale one from the widget that just lost the caret.
-
-        Guarded, because a ``DescendantBlur`` also lands while the app is
-        coming down, after ``#status`` has already unmounted — the same
-        teardown ordering the other two ``NoMatches`` guards in this file
-        absorb.
+        Called from the focus handlers that already fire on every focus change
+        (KTD4). Clears whenever the current region differs from the latched one,
+        not only when the caret returns to the composer — the composer-free
+        re-entry transcript → F1 → PromptRegion → transcript is reachable via
+        shift+tab without ever focusing the composer (KTD2).
         """
-        try:
-            region = self.status_region
-        except NoMatches:
+        if not self._discard_latch:
             return
-        region.set_caret(self._caret_location())
+        current = self._no_text_region()
+        if current != self._discard_latch:
+            self._discard_latch = ""
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        self._refresh_caret_slot()
+        self._clear_discard_latch_if_needed()
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:
-        self._refresh_caret_slot()
+        self._clear_discard_latch_if_needed()
 
     # ── the caret comes home ─────────────────────────────────────────────
 
@@ -4405,6 +4434,24 @@ class TalariaApp(App[None]):
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         self.transcript.hold_anchor()
 
+    def on_paste(self, event: events.Paste) -> None:
+        """Paste is typing's bigger sibling (KTD2, R5').
+
+        A paste that reaches a no-text region is silently discarded the same
+        way a printable key is — TranscriptPane and PromptRegion have no
+        paste handler and the app defines no other. The same latch and the
+        same notice apply; the paste is not rescued and focus does not move.
+        """
+        if not event.text:
+            return
+        region = self._no_text_region()
+        if region is None:
+            return
+        if region == self._discard_latch:
+            return
+        self._notice(self._DISCARD_NOTICE_BY_REGION[region])
+        self._discard_latch = region
+
     def on_key(self, event: events.Key) -> None:
         # Reading while scrolled away must survive streaming (R38). Page keys
         # reach the app because the transcript is not focused — the composer is
@@ -4415,6 +4462,16 @@ class TalariaApp(App[None]):
             # B3: the ``end`` key shares F5's follow rule (KTD2) — one method
             # carries it, or two renderings of "already following" drift.
             self.action_follow_bottom()
+        # B1: a printable key that reached the app was not consumed by the
+        # focused widget, so in a no-text region it is about to be silently
+        # discarded. Announce once per focus-hold (KTD2), never move focus,
+        # never re-dispatch the character (the triggering input is lost and
+        # that loss is accepted).
+        if event.is_printable:
+            region = self._no_text_region()
+            if region is not None and region != self._discard_latch:
+                self._notice(self._DISCARD_NOTICE_BY_REGION[region])
+                self._discard_latch = region
 
     # ── helpers used by the gate harness ─────────────────────────────────
 
