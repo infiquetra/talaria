@@ -4,6 +4,52 @@
 
 ## 2026-08-12
 
+### A repair that reports success can leave a fresh defect in the thing it repaired
+
+**Evidence.** The unit C2 planning document went back for repair against a review that found two
+blocking findings, five fabricated quotations and fifteen wrong citations. The repairing session
+returned a report saying every finding was repaired and none declined. Fifteen citations really were
+fixed — five re-checked by hand were exact. But the repair introduced a contradiction into the very
+acceptance item it was correcting: the item now asserts that typing a space and then `/a` **opens** the
+palette, because leading whitespace is stripped, and in the same sentence that typing `/` with the
+caret off column zero leaves it **closed**. For a line holding one space and a slash, both clauses
+apply and they disagree. Repaired by the root session as `3b0af98`.
+
+The review's original finding was that this same acceptance item contradicted the decision defining the
+predicate. The repair fixed the direction the review named and left a contradicting clause standing in
+the same sentence.
+
+**Mechanism.** The clause was written against an earlier design where the predicate tested the caret
+column. The adopted design tests the stripped text of the whole line and has no notion of caret column
+at all, so the clause could not have been satisfied by any implementation of the mechanism the plan
+adopts. A repair pass reads for the finding it was given; it does not necessarily re-read the sentence
+it is editing against the mechanism section three headings away.
+
+This is the second instance in this release. An earlier repair of the unit B2 plan introduced three
+errors of its own, all found only because the plan was re-verified after repair rather than accepted on
+the repairing session's report.
+
+**Generalizable rule.** Re-verify a repair against the artifact, never against the repair report — and
+re-read the *whole* sentence a finding touches, not the clause the finding named. Two of this release's
+repairs introduced fresh defects, and both reports said the work was complete.
+
+### A status-check poll that tests `conclusion` reports success before the checks have run
+
+**Evidence.** A background poll on a pull request's checks used the jq expression
+`.conclusion // "PENDING"`, intending to treat a check with no conclusion as still running. It reported
+"checks concluded: SUCCESS,,,SUCCESS,SUCCESS,," on its first pass, while GitHub's own merge state for
+that pull request read `BLOCKED` and four of the seven checks were `IN_PROGRESS`.
+
+**Mechanism.** `gh` reports a running check's conclusion as an empty string, not as `null`. jq's `//`
+operator substitutes only when the left side is `null` or `false`, so `""` passes straight through and
+the `"PENDING"` branch never fires. Every entry then looked like a concluded check, and the loop exited
+on its first iteration. The failure is silent and shaped exactly like a pass.
+
+**Generalizable rule.** Build a check-rollup predicate on `status == "COMPLETED"` and never on any test
+of `conclusion`; require the rollup to hold all seven of this repository's checks before reading it at
+all. Both halves matter — an empty rollup and a running rollup fail toward "looks fine", which is the
+direction that ships.
+
 ### Seven passing cases cannot tell a live guard from a dead one
 
 **Evidence.** Reviewing a repair to `tests/replay/test_gate.py`, the root session claimed that the
