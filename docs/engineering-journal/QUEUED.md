@@ -439,19 +439,90 @@ Enumerating the redactor's call sites is the wrong direction: it can only find p
 
 **Worth checking at the same time.** Whether `home` should scroll to the top of the transcript rather than merely release the anchor, and whether `F5` is alive at all while scrolled up — an open item on the operator's own checklist that touches the same follow state.
 
-### ~~A replay-gate test counts a legitimately-lagging pane as content loss when the runner is loaded~~ — CLOSED 2026-08-12
+### A replay-gate test counts a legitimately-lagging pane as content loss when the runner is loaded
 
 **Author.** v0.3 unit B5 implementation, 2026-08-11
-**Closed.** 2026-08-12 — both flakes fixed on branch `fix/timing-dependent-tests`; see below.
+**Closed 2026-08-12, reopened the same day.** The closure was wrong and is recorded below rather than
+erased, because the way it was wrong is the reusable part.
 **Priority.** P1
+**Effort.** Small to medium
+**Worth it when.** Now. It has failed three times, the third on a documentation-only pull request, and
+the branch it was declared fixed on changed nothing about it. It is worse than an ordinary flaky test
+because `content_loss_failures == 0` is also the replay gate's own pass criterion
+(`talaria/replay/gate.py:1677`, `:1684`, `:1702`, `:1752`) — the instrument the project uses to decide
+whether a release is honest can be failed by runner load.
 
 **Evidence.** `tests/replay/test_gate.py:1381`, `test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule`, first arm: `assert measurement.content_loss_failures == 0`. Failed `python-check-linux (3.13)` on pull request 64 with `assert 1 == 0`. The same test passes on `main` and passes three runs out of three on the pull request's own branch, at 4.6 seconds each. The change under review cannot reach it: the gate constructs `TalariaApp` at `talaria/replay/gate.py:1217`, `:1433` and `:1454` and passes no startup selection in any of the three, so `begin_live_startup` short-circuits (`talaria/ui/app.py:3053`) and neither `open_session` nor `_land_session` ever runs under the gate — a `grep` for either name across `gate.py` returns nothing.
 
 **Mechanism.** The first arm asserts that a *correct* pane records zero content-loss failures, and it separates correct from broken purely by wall-clock: `CATCHUP_GRACE_SECONDS` is monkeypatched to 0.2, chosen — in the test's own comment — as "comfortably above the pane's 50 ms coalescing flush so a correct, legitimately-lagging pane cannot fail the first arm (the run-9 lesson)". Four times the flush interval is comfortable on an unloaded machine. On a shared runner it is not, and a pane that is behind for ordinary scheduling reasons is counted as having lost content. The test already carries a scar from this exact failure; the margin was widened rather than the dependence removed.
 
-**Repair.** Restored `assert measurement.content_loss_failures == 0`. The previous repair at `097101b` replaced it with `assert content_is_complete(state, transcript_view(state))`; that expression does catch aggregate projection loss — `content_is_complete` renders each entry in isolation at `gate.py:1041` and checks aggregate order, so a dropped or reordered aggregate is caught even though each isolated render is correct — but it drops the two pane-involving branches at `gate.py:1375` (`apply_in_flight` stuck marker, which would have silently excused every mid-stream ownership sample) and `gate.py:1382` (`interface_shows_everything`, the only genuine pane-versus-projection check in the settled chain). The test is named `test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule` and its correctness arm existed to prove the pane kept up; keeping only the domain branch does not replace it. This restore is not wall-clock-dependent here because `gate.py:1367-1371` already forces a flush (`await app.render_snapshot()` plus `await pilot.pause()`) before the settled `final_view` check, so the lagging-pane mechanism the original grace window compensated for is already addressed and the settle is deterministic. The poll-versus-checkpoint property is still asserted via `content_loss_checkpoints == 1`, `ownership_checkpoints == 0`, `reachability_checkpoints >= 1` (checkpoint schedule disabled via `RSS_SAMPLE_EVERY = 10**9`). The second arm — stale snapshot counted once per consumed fingerprint via monkeypatched `_snapshot_covers` — is unchanged.
+**Repair.** Restored `assert measurement.content_loss_failures == 0`. The previous repair at `097101b` replaced it with `assert content_is_complete(state, transcript_view(state))`; that expression does catch aggregate projection loss — `content_is_complete` renders each entry in isolation at `gate.py:1041` and checks aggregate order, so a dropped or reordered aggregate is caught even though each isolated render is correct — but it drops the two pane-involving branches at `gate.py:1375` (`apply_in_flight` stuck marker, which would have silently excused every mid-stream ownership sample) and `gate.py:1382` (`interface_shows_everything`, the only genuine pane-versus-projection check in the settled chain). The test is named `test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule` and its correctness arm existed to prove the pane kept up; keeping only the domain branch does not replace it. The poll-versus-checkpoint property is still asserted via `content_loss_checkpoints == 1`, `ownership_checkpoints == 0`, `reachability_checkpoints >= 1` (checkpoint schedule disabled via `RSS_SAMPLE_EVERY = 10**9`). The second arm — stale snapshot counted once per consumed fingerprint via monkeypatched `_snapshot_covers` — is unchanged.
+
+**Why that repair did not fix this, and why it looked like it had.** It restored the assertion the
+previous attempt had weakened, which was right, and then claimed the restored assertion was no longer
+wall-clock-dependent, which was wrong. The claimed reason was that `gate.py:1367-1371` forces a flush
+before the settled check, so the settle is deterministic. The settle is deterministic; the assertion
+is not, because `content_loss_failures` does not count only settled failures. It also counts the
+mid-stream reachability check at `gate.py:1268`, which is gated on `now - prev_progress_at >=
+CATCHUP_GRACE_SECONDS` at `:1261` — wall-clock, unchanged, and the original mechanism. The commit
+message read `make two timing-dependent tests deterministic`; the diff to `tests/replay/test_gate.py`
+was a removed comment and an added comment, with no behavioural change to this test at all. The other
+test in that pull request, `tests/ui/test_transcript_bounds.py`, was genuinely fixed.
+
+**Third occurrence, and the measurement that settles which branch fires.** Failed
+`python-check-linux (3.13)` on pull request 70 with `assert 1 == 0` at `content_loss_failures=1`,
+`reachability_checkpoints=9`, on a commit whose entire diff is two files under `docs/`. Instrumenting
+all five `failures += 1` sites in `gate.py` and sweeping this arm's grace on an unloaded machine:
+every failure comes from `midstream:reachability` (`:1268`) and none from any settled branch, at 0.02 s
+46 failures, at 0.05 s and above none. So the 0.2 s in the test is roughly a 4x margin over the local
+edge, and a loaded runner still crossed it — one failure in nine checks.
 
 **The repair is to stop deciding correctness by elapsed time.** Either drive the sampler's clock deterministically so the grace window is measured in controlled ticks rather than wall-clock seconds, or make the first arm assert against an observed pane state rather than against a deadline. Widening the grace again buys another few months and re-teaches the same lesson.
+
+**A concrete candidate, not yet decided.** Age the progress fingerprint in *applied frames* rather
+than in seconds: if the pane has had N further applies since the fingerprint was taken and still does
+not cover it, the pane is genuinely behind, and that is a property of the stream rather than of the
+runner. This changes what the release gate counts as a failure, so it wants a decision rather than a
+patch.
+
+### A partial reply was not committed when the credential failed mid-stream — seen once, not reproduced
+
+**Author.** v0.3 orchestration, 2026-08-12
+**Priority.** P1 to *diagnose*, because the guarantee it touches is data preservation rather than
+tidiness. Not yet P1 to fix, because it is not yet established that there is anything to fix.
+**Effort.** Unknown — the first task is reproduction, not repair.
+**Worth it when.** On the second occurrence, immediately, and this entry exists so the second
+occurrence is recognised rather than re-diagnosed from nothing. Also worth a bounded attempt before
+the release ships, because the failing assertion is R6: a credential that stops working mid-stream
+must not throw away the text the operator already received.
+
+**Evidence.** `tests/transport/test_source.py::test_auth_failed_mid_stream_commits_the_partial_reply`
+failed `python-check (3.13)` — the macOS job, runner path `/Users/runner/...` — on pull request 71 at
+commit `513da81`, with `AssertionError: the typed auth_failed cause did not reach the domain commit`
+and `assert [] == ['partial reply']`. The transcript held no assistant entry at all where it should
+have held the partial reply. That branch changes two files under `docs/engineering-journal/` and one
+comment in `tests/replay/test_gate.py`, so it cannot reach this code. The test passes on `main`
+locally, and 25 runs of the test plus 8 runs of its whole file, all under deliberate CPU load, did not
+reproduce it.
+
+**Mechanism — not known, and one plausible theory already ruled out.** The obvious shape is the one
+the other two flakes in this file have: the test waits on a proxy signal rather than on the thing it
+asserts. It settles on `app.state.connection == "auth_failed"` and then asserts the transcript
+commit, and the commit is gated on the typed *cause*, not on the status — `set_connection` in
+`talaria/domain/state.py` runs `_commit_partial_streams` only inside `if cause is not None`. So a
+cause-less call that set the status first would satisfy the predicate before the commit existed.
+
+That theory does not survive checking. The transport reaches `auth_failed` only through calls that
+carry the cause (`talaria/transport/source.py:544`, `:852`), and the comment at `:626-628` states it
+outright: the domain already committed on whichever typed cause put the source in `auth_failed` to
+begin with. Whatever this is, it is not that. Do not re-run that reasoning; start somewhere else.
+
+**Where to start.** Reproduce first — this needs a real failing instance before anything is changed.
+A GitHub-hosted macOS runner is more contended than a developer machine, so the next attempt should
+raise concurrency rather than raw load. If it reproduces, the question to answer first is whether
+`streaming_text` was still populated at the moment the causal `set_connection` ran, which separates a
+test race from a genuine loss of the operator's text. Resist repairing the test until that is known:
+the assertion is currently the only thing standing between a real R6 regression and silence.
 
 ### ~~A replay-pause test asserts how fast the runner is, and fails on Linux when it is fast enough~~ — CLOSED 2026-08-12
 
