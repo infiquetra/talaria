@@ -22,7 +22,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Input
 
 from talaria.domain.models_catalog import ModelProvider, ProviderCatalog
-from talaria.ui.app import JUMP_BLOCKED_BY_MODAL
+from talaria.ui.app import JUMP_BLOCKED_BY_MODAL, JUMP_NOTHING_OUTSTANDING
 from talaria.ui.dialog import PickerDialog
 from tests.ui.conftest import RecordingDispatcher, event, feed, live_app, settle
 
@@ -311,18 +311,26 @@ async def test_f1_jumps_even_while_the_composer_holds_text() -> None:
 @pytest.mark.asyncio
 async def test_f1_with_nothing_outstanding_is_a_no_op() -> None:
     """No card, nothing to jump to — the caret and the composer's text are
-    both left exactly where the operator put them."""
+    both left exactly where the operator put them.
+
+    B3 (AE1): the no-op used to be indistinguishable from a dead key, so it
+    now says so — one notice naming that no prompt is waiting, and no
+    transcript row, because a no-op is not part of the session's story.
+    """
     app = live_app(RecordingDispatcher())
     async with app.run_test() as pilot:
         await pilot.press("h", "i")
         await pilot.pause()
         before = app.screen.focused
+        before_rows = len(app.state.transcript)
 
         await pilot.press("f1")
         await pilot.pause()
 
         assert app.screen.focused is before
         assert app.composer.text == "hi"
+        assert JUMP_NOTHING_OUTSTANDING in app.composer.notice
+        assert len(app.state.transcript) == before_rows, "a no-op must not append a transcript row"
         await app.shutdown_sources()
 
 

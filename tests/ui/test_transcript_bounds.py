@@ -17,7 +17,15 @@ from textual.widgets import Static
 
 from talaria.domain.projection import terminal_read, transcript_view
 from talaria.replay.gate import content_is_complete
-from tests.ui.conftest import event, paused_app, records, streaming_turn
+from talaria.ui.app import ALREADY_FOLLOWING_BOTTOM
+from tests.ui.conftest import (
+    RecordingDispatcher,
+    event,
+    live_app,
+    paused_app,
+    records,
+    streaming_turn,
+)
 
 SMALL_CAP = 40
 
@@ -167,6 +175,38 @@ async def test_end_and_pageup_toggle_the_anchor(stress_frames: list[dict[str, An
         await pilot.press("end")
         await pilot.pause()
         assert app.transcript.follow is True
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_f5_and_end_confirm_a_repeat_follow_without_losing_the_anchor() -> None:
+    """B3 (AE3): re-following the newest line at the bottom of a paused
+    replay is a legitimate no-op, and the old silence there was exactly
+    charter E2's ambiguity. The first press — the one that visibly scrolls —
+    stays silent; the repeat press, which changes nothing, says so. ``end``
+    shares the rule through the same method (KTD2), so the two keys cannot
+    drift.
+    """
+    app = live_app(RecordingDispatcher())
+    async with app.run_test() as pilot:
+        # Not following: the press scrolls the view, so no notice is owed.
+        await pilot.press("pageup")
+        await pilot.pause()
+        assert app.transcript.follow is False
+        await pilot.press("f5")
+        await pilot.pause()
+        assert app.transcript.follow is True
+        assert app.composer.notice == "", "a visible scroll needs no confirmation"
+
+        # Already following: both keys say so, and follow stays true.
+        await pilot.press("end")
+        await pilot.pause()
+        assert app.transcript.follow is True
+        assert ALREADY_FOLLOWING_BOTTOM in app.composer.notice
+        await pilot.press("f5")
+        await pilot.pause()
+        assert app.transcript.follow is True
+        assert ALREADY_FOLLOWING_BOTTOM in app.composer.notice
         await app.shutdown_sources()
 
 

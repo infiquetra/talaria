@@ -146,6 +146,7 @@ from talaria.ui.palette import PaletteRegion
 from talaria.ui.picker import (
     NO_PROFILES,
     NO_PROVIDERS,
+    SESSION_ALREADY_FOCUSED,
     ModelPickerSource,
     PickerMode,
     ProfilePickerSource,
@@ -276,6 +277,43 @@ PROMPT_NO_LONGER_LIVE: Final[str] = REFUSED_NOT_OUTSTANDING
 #: that "worked" from "did nothing" — exactly the control AE11 exists to rule
 #: out. The jump is refused instead, and the modal keeps the focus it had.
 JUMP_BLOCKED_BY_MODAL: Final[str] = "close the picker first, then jump to the prompt"
+
+#: Shown when F1 is pressed with no outstanding prompt to jump to (B3, KTD3).
+#:
+#: ``focus_first_unanswered`` already returns the boolean the no-op is
+#: readable from, and discarding it was the whole silence: the keypress
+#: landed, nothing moved, nothing was said. The absence *is* the answer —
+#: the operator wants to know there is nothing to jump to, not merely that
+#: Talaria is listening.
+JUMP_NOTHING_OUTSTANDING: Final[str] = "no prompt is waiting to be answered — nothing to jump to"
+
+#: Shown when F5 (or ``end``) is pressed while the transcript already follows
+#: the newest line (B3, KTD3).
+#:
+#: Both keys reach the same rule (KTD2): re-following at the bottom of a
+#: paused replay is a legitimate no-op, and silence there is ambiguous —
+#: exactly charter E2's observation. The ``nothing changed`` tail is the
+#: pacing register's own ("this session is live — nothing changed").
+ALREADY_FOLLOWING_BOTTOM: Final[str] = "the newest line is already followed — nothing changed"
+
+#: Shown when F2 is pressed while the sub-agent region has no rows to show or
+#: hide (B3, KTD3).
+#:
+#: The toggle still flips its flag on an empty press — it decides how the
+#: next fan-out arrives — but the flag is invisible, so the keypress is
+#: confirmed by saying there is nothing on screen for it to act on. The
+#: ``-populated`` class decides visibility from the same predicate
+#: (``talaria/ui/agents.py``), so the notice and the rendered region cannot
+#: disagree about whether a toggle would have been seen.
+AGENTS_NOTHING_TO_TOGGLE: Final[str] = "no sub-agents to show or hide — the region stays hidden"
+
+#: Shown when a landing retains the already-focused session (B3, KTD4).
+#:
+#: The picker's marked row already refuses itself in the dialog with
+#: ``SESSION_ALREADY_FOCUSED``; this is the same fact on the composer surface
+#: for the unmarked row the picker did not recognize, so one fact keeps one
+#: voice on both surfaces.
+SESSION_ALREADY_FOCUSED_NOTICE: Final[str] = f"{SESSION_ALREADY_FOCUSED} — nothing changed"
 
 #: Shown when a decline's wire value and the registry's current kind for the
 #: same id no longer agree (CR4 finding 5).
@@ -1442,12 +1480,31 @@ class TalariaApp(App[None]):
         if isinstance(self.screen, ModalScreen):
             self._notice(JUMP_BLOCKED_BY_MODAL)
             return
-        self.prompts.focus_first_unanswered()
+        if not self.prompts.focus_first_unanswered():
+            # B3: the keypress landed and moved nothing. The no-op is a fact
+            # the operator doubted (charter E2), so it is said out loud.
+            self._notice(JUMP_NOTHING_OUTSTANDING)
 
     async def action_toggle_agents(self) -> None:
+        if not self.agents.is_populated:
+            # B3: the toggle still flips its flag when empty — it decides how
+            # the next fan-out arrives — but the flip is invisible, so the
+            # keypress says there was nothing on screen for it to act on.
+            self._notice(AGENTS_NOTHING_TO_TOGGLE)
         await self.agents.toggle_collapsed()
 
     def action_follow_bottom(self) -> None:
+        """Follow the newest transcript line, or say the key arrived when already there.
+
+        Both F5 and the raw ``end`` key reach this one method (KTD2), so the
+        fact "already following" cannot be rendered two ways and drift — the
+        failure :meth:`_pacing_notice`'s docstring records two renderings of
+        the pacing state doing. Re-following at the bottom of a paused replay
+        is a legitimate no-op, and silence there is ambiguous (charter E2).
+        """
+        if self.transcript.follow:
+            self._notice(ALREADY_FOLLOWING_BOTTOM)
+            return
         self.transcript.follow_bottom()
 
     def action_interrupt(self) -> None:
@@ -3329,12 +3386,13 @@ class TalariaApp(App[None]):
             # already-focused row (``/sessions``, U7).
             if outcome.method == RESUME_METHOD:
                 # B5: a resumed session names itself on arrival. Only the
-                # real-switch branch announces; the retain branch above is
-                # deliberately silent (KTD3b), and ``--new`` landings are
-                # silent too — the operator created the session, so there is
-                # no identity question (KTD3). The durable id is the one the
-                # picker names a session by; when the reply carries none, the
-                # runtime id is named and labelled as such (AE4).
+                # real-switch branch adds the transcript row; the retain
+                # branch below is deliberately without one (B5 KTD3b), and
+                # ``--new`` landings are silent too — the operator created
+                # the session, so there is no identity question (KTD3). The
+                # durable id is the one the picker names a session by; when
+                # the reply carries none, the runtime id is named and
+                # labelled as such (AE4).
                 if isinstance(stored, str) and stored:
                     line = RESUMED_SESSION_ANNOUNCEMENT.format(session_key=stored)
                 else:
@@ -3349,6 +3407,14 @@ class TalariaApp(App[None]):
                 omitted=result.get("messages_omitted") is True,
                 count=count if isinstance(count, int) and not isinstance(count, bool) else 0,
             )
+        else:
+            # B3: landing the session already focused — the picker row the
+            # marker did not recognize — confirms the keypress on the
+            # composer surface instead (KTD4). The transient half of B5's
+            # KTD3b handoff: the notice lives here, B5's durable row lives in
+            # the moved-focus branch above, so the two stay mutually
+            # exclusive (never both, never neither).
+            self._notice(SESSION_ALREADY_FOCUSED_NOTICE)
         self._dirty = True
         return outcome
 
@@ -4346,7 +4412,9 @@ class TalariaApp(App[None]):
         if event.key in ("pageup", "home"):
             self.transcript.hold_anchor()
         elif event.key == "end":
-            self.transcript.follow_bottom()
+            # B3: the ``end`` key shares F5's follow rule (KTD2) — one method
+            # carries it, or two renderings of "already following" drift.
+            self.action_follow_bottom()
 
     # ── helpers used by the gate harness ─────────────────────────────────
 

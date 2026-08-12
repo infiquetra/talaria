@@ -38,7 +38,8 @@ from talaria.ui.app import (
     SWITCH_ALREADY_IN_FLIGHT,
     TalariaApp,
 )
-from talaria.ui.dialog import PickerDialog
+from talaria.ui.dialog import REFUSED_PREFIX, PickerDialog
+from talaria.ui.picker import SESSION_ALREADY_FOCUSED
 from tests.ui.conftest import event, feed, live_app, records, screen_text, settle
 
 
@@ -427,6 +428,42 @@ async def test_choosing_a_row_dispatches_session_resume_and_lands_it() -> None:
         assert "a dangerous command" not in screen
         assert no_dialog(app)
         assert app.focused is app.composer.text_area
+        # B3 (AE5): landing a *different* session is the real-switch branch —
+        # B5's durable row announces it there, and no "already the focused
+        # session" notice belongs on a landing that changed focus.
+        assert SESSION_ALREADY_FOCUSED not in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_enter_on_the_marked_current_row_is_refused_in_the_dialog() -> None:
+    """B3 (AE6): the marked row already refuses itself in the dialog — enter
+    on it shows ``cannot select — already the focused session``, the same
+    fact B3's composer notice states for the unmarked landing (KTD4). One
+    fact, one voice on both surfaces, asserted on the surface that shipped
+    it (v0.2) rather than rebuilt here."""
+    dispatcher = ScriptedDispatcher(
+        {
+            LIST_SESSIONS_METHOD: list_outcome(
+                session_row("s1", title="current"), session_row("s2", title="other")
+            ),
+        }
+    )
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        # The marked current row is the initially active row.
+        assert "current" in dialog(app).active_row_text
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        # Still in the dialog, and the refusal names the fact the composer
+        # uses for the unmarked landing.
+        assert not no_dialog(app)
+        assert f"{REFUSED_PREFIX}{SESSION_ALREADY_FOCUSED}" in dialog(app).refusal_text
         await app.shutdown_sources()
 
 
@@ -575,6 +612,10 @@ async def test_landing_the_already_focused_session_does_not_reseed_history() -> 
 
         seeded_again = [entry.text for entry in app.state.transcript if "canary-4mQ7" in entry.text]
         assert len(seeded_again) == 1, "landing the focused session twice re-seeded its history"
+        # B3 (AE5): the landing changed nothing, so the keypress says so on
+        # the composer surface — carrying the picker's own
+        # ``SESSION_ALREADY_FOCUSED`` wording (KTD4), one fact one voice.
+        assert SESSION_ALREADY_FOCUSED in app.composer.notice
         await app.shutdown_sources()
 
 
