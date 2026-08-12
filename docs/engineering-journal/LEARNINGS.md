@@ -2,6 +2,77 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-12
+
+### Seven passing cases cannot tell a live guard from a dead one
+
+**Evidence.** Reviewing a repair to `tests/replay/test_gate.py`, the root session claimed that the
+replay gate's middle failure branch — `elif not content_is_complete(app.state, final_view)` at
+`talaria/replay/gate.py:1380`, where `final_view` is `transcript_view(app.state)` built six lines
+earlier — was dead code that could never fire, and instructed a child session to file it as a defect.
+The claim rested on `content_is_complete`'s own docstring, which warns that
+`view == transcript_view(state)` "would pass no matter what", plus an empirical check: the call
+evaluated `True` across seven hand-built states including empty text, duplicate entries, mixed kinds
+and in-flight streaming text.
+
+The claim was wrong and was withdrawn before the filing landed. `content_is_complete` renders each
+entry **in isolation** — `transcript_view(SessionState(transcript=(entry,)))` at `gate.py:1041` — and
+then requires those lines to appear in order in the aggregate view. Mutating the aggregate projection
+to drop its last entry while leaving per-entry rendering correct returned `False`. The branch guards a
+real class of bug.
+
+**Mechanism, and why the evidence looked strong.** Every one of the seven cases ran *correct* code.
+A guard that is live and a guard that is dead behave identically when nothing is broken — both stay
+quiet. Volume of passing cases feels like evidence and is not: seventy would have been no better than
+seven. The only observation that separates the two is breaking the thing being guarded, and that
+observation was one mutation away throughout.
+
+The docstring compounded it. It warns against `view == transcript_view(state)` — an *equality*
+comparison — which is not what the function does internally. Reading the warning as applying to any
+call whose `view` argument is `transcript_view(state)` is a plausible over-read, and the surrounding
+code invites it: `interface_shows_everything`'s docstring at `gate.py:997-1005` says the call sites
+*were* effectively self-comparisons and that blanking the pane "produced a completely blank screen and
+a `pass` verdict with zero content loss." Both things are true at once — the branch cannot see the
+pane, and it can see an aggregate projection loss — and collapsing them into "dead code" loses the
+distinction that matters.
+
+**Generalizable rule.** To claim a check never fires, make it fire. A guard's liveness is only
+observable by breaking what it guards, so mutation is not the strongest evidence available — it is the
+*only* evidence, and passing cases are not weak evidence of deadness but zero evidence. The same
+session had already demanded exactly this of three child reviewers before failing to apply it to its
+own finding, which is the more useful half of the lesson: a verification standard held for others and
+not for oneself is not a standard.
+
+### A mutation proves an assertion has teeth, and says nothing about whether it will pass tomorrow
+
+**Evidence.** The replay-gate reachability flake was declared fixed and its queue entry closed. Hours
+later the same assertion, `assert measurement.content_loss_failures == 0` in
+`tests/replay/test_gate.py::test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule`,
+failed `python-check-linux (3.13)` on a pull request whose entire diff is two files under `docs/`. The
+diff that had "fixed" it turned out to be a removed comment and an added comment: no behavioural
+change to that test at all. Instrumenting all five `failures += 1` sites in `talaria/replay/gate.py`
+and sweeping the first arm's grace window shows every failure arriving from the mid-stream reachability
+branch at `:1268` and none from any settled branch — 46 failures at 0.02 s, none at 0.05 s and above
+on an unloaded machine, against the 0.2 s the test uses.
+
+**Mechanism.** The repair was accepted on a mutation: `interface_shows_everything` was made to return
+`False`, the assertion went red, and that was read as confirming the repair. The mutation was sound and
+its conclusion was true — the assertion does have teeth. It was simply an answer to a different
+question than the one being asked. Closing a flake is a claim that an assertion *passes when nothing is
+broken*; a mutation only shows it *fails when something is*. Those are independent properties, and a
+flaky assertion with teeth satisfies the second while failing the first. The error compounded because
+`content_loss_failures` is a counter fed from five separate sites: mutating the branch that came to mind
+said nothing about the four that did not, and the flake lived in one of those. The closing note then
+wrote the false half down — "the settle is deterministic" — which is true of the settled check and
+irrelevant to a counter that also counts a wall-clock-gated mid-stream check.
+
+**Generalizable rule.** Match the evidence to the claim: mutation answers "would this notice a bug?",
+repetition under load answers "will this pass when there is none", and neither substitutes for the
+other. Before closing a flake, require a diff that changes behaviour — if the only change is a comment
+explaining why the test is now fine, nothing has been fixed. And when the assertion under repair reads
+a counter rather than a condition, find every site that increments it and mutate the one the observed
+failure actually came from, not the one the repair happens to be about.
+
 ## 2026-08-11
 
 ### Two tests in this suite decide correctness by elapsed time, and both went red on documentation
@@ -1880,44 +1951,3 @@ symbol its plan introduces missing from the default branch — not by observing 
 open. Absence of an artifact about the work is not absence of the work. Where a project keeps a ledger
 of what shipped, read the ledger *before* dispatching, not while writing it up: a register that records
 outcomes is only a control if it is consulted at the moment a decision is made.
-
-## 2026-08-12
-
-### Seven passing cases cannot tell a live guard from a dead one
-
-**Evidence.** Reviewing a repair to `tests/replay/test_gate.py`, the root session claimed that the
-replay gate's middle failure branch — `elif not content_is_complete(app.state, final_view)` at
-`talaria/replay/gate.py:1380`, where `final_view` is `transcript_view(app.state)` built six lines
-earlier — was dead code that could never fire, and instructed a child session to file it as a defect.
-The claim rested on `content_is_complete`'s own docstring, which warns that
-`view == transcript_view(state)` "would pass no matter what", plus an empirical check: the call
-evaluated `True` across seven hand-built states including empty text, duplicate entries, mixed kinds
-and in-flight streaming text.
-
-The claim was wrong and was withdrawn before the filing landed. `content_is_complete` renders each
-entry **in isolation** — `transcript_view(SessionState(transcript=(entry,)))` at `gate.py:1041` — and
-then requires those lines to appear in order in the aggregate view. Mutating the aggregate projection
-to drop its last entry while leaving per-entry rendering correct returned `False`. The branch guards a
-real class of bug.
-
-**Mechanism, and why the evidence looked strong.** Every one of the seven cases ran *correct* code.
-A guard that is live and a guard that is dead behave identically when nothing is broken — both stay
-quiet. Volume of passing cases feels like evidence and is not: seventy would have been no better than
-seven. The only observation that separates the two is breaking the thing being guarded, and that
-observation was one mutation away throughout.
-
-The docstring compounded it. It warns against `view == transcript_view(state)` — an *equality*
-comparison — which is not what the function does internally. Reading the warning as applying to any
-call whose `view` argument is `transcript_view(state)` is a plausible over-read, and the surrounding
-code invites it: `interface_shows_everything`'s docstring at `gate.py:997-1005` says the call sites
-*were* effectively self-comparisons and that blanking the pane "produced a completely blank screen and
-a `pass` verdict with zero content loss." Both things are true at once — the branch cannot see the
-pane, and it can see an aggregate projection loss — and collapsing them into "dead code" loses the
-distinction that matters.
-
-**Generalizable rule.** To claim a check never fires, make it fire. A guard's liveness is only
-observable by breaking what it guards, so mutation is not the strongest evidence available — it is the
-*only* evidence, and passing cases are not weak evidence of deadness but zero evidence. The same
-session had already demanded exactly this of three child reviewers before failing to apply it to its
-own finding, which is the more useful half of the lesson: a verification standard held for others and
-not for oneself is not a standard.
