@@ -337,19 +337,42 @@ async def test_the_stable_floor_never_advances_into_the_provisional_block() -> N
 async def test_the_projection_and_the_domain_transcript_agree_at_every_pause_point(
     stress_frames: list[dict[str, Any]],
 ) -> None:
-    """KTD14's zero-content-loss clause, checked repeatedly rather than once."""
-    app, controls = paused_app(stress_frames, mount_cap=SMALL_CAP)
-    async with app.run_test(size=(80, 24)) as pilot:
+    """KTD14's zero-content-loss clause, checked repeatedly rather than once.
+
+    Previous shape resumed and paused a replay up to twelve times, breaking
+    early once ``replay_complete`` was set, then asserted ``checked >= 3``.
+    That asserted how fast the runner is: on a fast Linux runner the replay
+    drained in two cycles and the run failed with ``assert 2 >= 3``. The
+    guarantee the test exists to prove — ``content_is_complete`` at every
+    sampled point — held on both samples.
+
+    This shape controls the sample count: it ingests the stress corpus in
+    deterministic batches, renders after each, and asserts completeness each
+    time. The number of checks is a value the test controls (``len(batches)``),
+    not one it observes via wall-clock scheduling. Rejected: feeding more
+    frames (mitigation, still probabilistic, costs wall-clock) and adding a
+    stepping API to ``ReplayControls`` (adds production surface purely for a
+    test — see ``talaria/replay/controls.py:87`` — when the existing
+    ``ingest`` path already provides a deterministic drive with no new API).
+    """
+    app, _ = paused_app(stress_frames, mount_cap=SMALL_CAP)
+    async with app.run_test(size=(80, 24)):
+        all_records = records(stress_frames)
+        # A sixth-of-the-corpus batch guarantees at least three checks (the
+        # original guard) for any corpus that triggers the mount cap. For the
+        # 321-frame stress fixture the batch is 53 frames, which yields seven
+        # checks rather than six — integer division floors, so the remainder
+        # gets a short final batch. Either way the count is ceil(n/batch_size),
+        # a value this test computes, not one it observes: wall-clock
+        # independent and impossible to fail because of runner speed.
+        batch_size = max(1, len(all_records) // 6)
         checked = 0
-        for _ in range(12):
-            controls.resume()
-            await pilot.pause()
-            controls.pause()
-            await pilot.pause()
+        for start in range(0, len(all_records), batch_size):
+            for rec in all_records[start : start + batch_size]:
+                app.ingest(rec)
+            await app.render_snapshot()
             assert content_is_complete(app.state, transcript_view(app.state))
             checked += 1
-            if app.replay_complete.is_set():
-                break
         assert checked >= 3
         await app.shutdown_sources()
 

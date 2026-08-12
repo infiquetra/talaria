@@ -1361,9 +1361,6 @@ async def test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule(
     counted failure, once per consumed fingerprint.
     """
     monkeypatch.setattr(gate_module, "RSS_SAMPLE_EVERY", 10**9)
-    # Comfortably above the pane's 50 ms coalescing flush so a correct,
-    # legitimately-lagging pane cannot fail the first arm (the run-9
-    # lesson), far below the replay's duration so consumptions happen.
     monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.2)
     corpus = build_stress_corpus(deltas=600, seed=5)
     # speed=2.0 stretches the 2.6 s recorded span to ~1.3 s of wall-clock —
@@ -1378,6 +1375,16 @@ async def test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule(
     assert measurement.reachability_checkpoints >= 1, (
         "coverage must run on the poll even with the checkpoint schedule disabled"
     )
+    # Restored: content_loss_failures == 0 is not wall-clock-dependent here
+    # because gate.py:1367-1371 already forces a flush (render_snapshot plus
+    # pilot.pause) before the settled check. The original grace-window flake
+    # was reachability during the run; the final settled check that this
+    # assertion now exercises is deterministic after that flush. Do not widen
+    # the grace and do not replace this with content_is_complete(state,
+    # transcript_view(state)) alone — that keeps only the aggregate projection
+    # branch (gate.py:1380, which renders each entry in isolation and checks
+    # aggregate order) and drops the two pane-involving branches
+    # (apply_in_flight at :1375 and interface_shows_everything at :1382).
     assert measurement.content_loss_failures == 0
 
     monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.02)
