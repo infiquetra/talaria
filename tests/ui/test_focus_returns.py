@@ -384,3 +384,90 @@ async def test_answering_via_the_f1_jumped_to_control_hands_the_caret_back() -> 
         await pilot.pause()
         assert app.composer.text == "done"
         await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a1_approval_card_takes_focus_on_mount_when_composer_empty() -> None:
+    """A1/A2 AE1: an approval card takes focus when it mounts, without a jump key.
+
+    With the composer empty, a gateway ``approval.request`` with a closed choice
+    list is button-backed. After ``settle`` the first button (``#choice-0``) holds
+    the caret — the same widget ``PromptCard.focus_answer`` lands on for ``F1``,
+    and the same ``holds_caret`` the region uses to decide whether a second card
+    may steal.
+    """
+    app = live_app(RecordingDispatcher())
+    async with app.run_test() as pilot:
+        assert app.composer.text.strip() == "", "composer must start empty for AE1"
+        feed(
+            app,
+            event(
+                "approval.request",
+                {
+                    "description": "delete the build directory",
+                    "command": "rm -rf build",
+                    "choices": ["once", "deny"],
+                },
+            ),
+        )
+        await settle(app, pilot)
+
+        card = app.prompts.card_for("approval:s1#1")
+        assert card is not None
+        focused: Widget | None = app.screen.focused
+        assert focused is card.query_one("#choice-0", Button)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a1_second_card_does_not_steal_focus_from_the_first() -> None:
+    """A1/A2 AE4: a second card does not steal focus from the first.
+
+    Mount a first approval, let it auto-focus (AE1). Without moving focus,
+    feed a second ``approval.request``. After ``settle`` the first card still
+    holds the caret and the second does not, regardless of the uncorrelated-
+    approval rebuild that turns both cards into ``deny-all`` once two are queued.
+    """
+    from talaria.ui.focus import holds_caret
+
+    app = live_app(RecordingDispatcher())
+    async with app.run_test() as pilot:
+        feed(
+            app,
+            event(
+                "approval.request",
+                {
+                    "description": "first",
+                    "command": "cmd1",
+                    "choices": ["once", "deny"],
+                },
+            ),
+        )
+        await settle(app, pilot)
+
+        first = app.prompts.card_for("approval:s1#1")
+        assert first is not None
+        assert app.screen.focused is first.query_one("#choice-0", Button)
+
+        feed(
+            app,
+            event(
+                "approval.request",
+                {
+                    "description": "second",
+                    "command": "cmd2",
+                    "choices": ["once", "deny"],
+                },
+            ),
+        )
+        await settle(app, pilot)
+
+        first_after = app.prompts.card_for("approval:s1#1")
+        second = app.prompts.card_for("approval:s1#2")
+        assert first_after is not None and second is not None
+        # Both cards are now deny-all (uncorrelated-approval rule), so the
+        # first card's control is ``#deny-all``, not ``#choice-0``.
+        assert app.screen.focused is first_after.query_one("#deny-all", Button)
+        assert holds_caret(first_after)
+        assert not holds_caret(second)
+        await app.shutdown_sources()
