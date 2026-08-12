@@ -115,12 +115,24 @@ async def test_f2_with_no_sub_agents_says_so_and_the_region_stays_hidden() -> No
         await pilot.pause()
         assert app.agents.row_texts == ()
         assert app.agents.display is False
+        assert app.agents.collapsed is False
 
         await pilot.press("f2")
         await pilot.pause()
 
         assert AGENTS_NOTHING_TO_TOGGLE in app.composer.notice
         assert app.agents.display is False, "the region stays hidden"
+        # The flip is what the notice is *about*: invisible today, and it
+        # decides how the next fan-out arrives. Asserting only the notice
+        # leaves an early return after it green, which is the one mutation
+        # that survived this unit's review.
+        assert app.agents.collapsed is True, "the flag flips even when nothing shows"
+
+        await pilot.press("f2")
+        await pilot.pause()
+
+        assert app.agents.collapsed is False, "and flips back"
+        assert app.agents.display is False
         await app.shutdown_sources()
 
 
