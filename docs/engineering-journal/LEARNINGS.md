@@ -12,6 +12,35 @@
 
 **Generalizable rule.** A redundant path must be visible at the size the operator actually uses, scoped to the mode that owns it, and asserted against what renders rather than the backing property — and a destructive chord that reclaims a system binding needs an explicit “nothing in flight” guard with visible feedback. When fitting 80 columns, cut entries rather than let them clip: four paths that show beat nine that show three with ellipsis.
 
+### A stub for a collaborator that does not exist yet gets keyed to the nearest thing with a similar name
+
+**Evidence.** Unit C1 shipped the composer's key seam with a predicate meaning "is the slash palette
+open". Unit C2, which owns that palette, is not implemented. The predicate was written as
+`self.app.palette` with a `.showing` boolean — which resolves, but to `PaletteRegion`
+(`talaria/ui/palette.py`), the read-only foldable command listing bound to a function key. That region
+takes no focus and claims none of the five keys the seam is about. With it open the composer still held
+the caret, so pressing Enter took the seam branch and Textual's `TextArea` inserted a newline: the
+message was never sent, with no notice and no refusal. Four continuous-integration checks went red on
+`tests/transport/test_commands.py::test_the_client_local_entry_is_listed_unsupported_and_never_dispatched`,
+and an independent code review found the same defect separately with a driven probe. The repair
+(`talaria/ui/composer.py`, `_is_slash_palette_open`) returns `False` today and says in its own docstring
+that it is *not* keyed to the command listing.
+
+**Mechanism.** Two mistakes compounded, and each is invisible alone. The first is naming: an attribute
+called `palette` existed, so the predicate found something to bind to and type-checked, lint-checked and
+imported cleanly — the extension point looked honest because nothing about it was unresolved. The second
+is the destination: the seam's true branch read `await super()._on_key(event)`, which the author
+intended as "let this key go to whoever claimed it". The superclass there is the text editor, so the
+branch actually meant "give this key to the text editor". Both mistakes are silent at every gate that
+runs before a key is pressed.
+
+**Generalizable rule.** A stub standing in for an unbuilt collaborator must resolve to *nothing*, not to
+the nearest existing object with a matching name — a predicate that returns a constant and says why is
+an honest extension point; one bound to a real object is a live behaviour change wearing a stub's
+comment. And `super()` is not a forwarding address: delegating to the superclass is correct only for
+keys nobody has claimed. When a region claims a key, act on it there or post a message that region
+consumes.
+
 ### A stash that survives arrowing is one value taken once, not a ring
 
 **Evidence.** Implementing up-arrow history for the composer (`talaria/domain/composer_history.py`, `talaria/ui/composer.py:116`, `talaria/ui/app.py:2789`) against the unit C1 plan. Three cross-unit questions were settled by root ruling before code was written: both units claim keys in `ChatTextArea._on_key` (not in `TalariaApp.on_key`), `Down` when the palette is closed belongs to history under the same caret-boundary predicate as `Up`, and the palette opens only on typed input, never on programmatic writes to `composer.text`. The implementation that made the first two green — moving `Down` from the app to the widget and capturing the draft on the first `Up` from the sentinel — failed the third until the history recall wrote `composer.text` directly and the palette's open predicate was checked before either unit's handler ran at the same site. `grep -rn "_on_key" talaria/` showing a single site was added as the review gate.
