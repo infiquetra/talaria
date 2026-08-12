@@ -124,12 +124,17 @@ DESCENDANT_ESTIMATE_TRIGGER: Final[int] = 1_200
 
 CONDENSED_TEMPLATE: Final[str] = "── {count} earlier lines condensed (still readable by the agent)"
 
-#: RA3's banner: names the clip and the fallback cause, never claims the
-#: clipped cells are reachable on screen (the full line is still in the
-#: terminal-read buffer, which the banner also says).
+#: RA3's banner: reports how much of this entry is hidden (KTD1) and names
+#: the entry scope (KTD2) — the hidden count and the total in one clause,
+#: so the retained count is arithmetic the operator can do. "clipped" and
+#: "at the viewport edge" are gone because they named the horizontal cut of
+#: the retained rows while the number being printed was the vertical loss
+#: (B2's defect). The two surviving clauses stay part of the RA3 contract
+#: this comment describes: the fallback cause and the reassurance that the
+#: full line is still in the terminal-read buffer.
 FALLBACK_BANNER_TEMPLATE: Final[str] = (
-    "── entry too large to render as markdown ({lines} lines clipped at the "
-    "viewport edge, full content still readable by the agent) ──"
+    "── entry too large to render as markdown ({hidden} of {total} lines of "
+    "this entry hidden, full content still readable by the agent) ──"
 )
 
 #: The entry kinds that attempt block rendering. Moved here from
@@ -579,7 +584,7 @@ def _welded_entry_lines(kind: TranscriptKind, text: str) -> list[str]:
     return welded.split("\n") if welded else [""]
 
 
-def _fallback_banner(line_count: int) -> Static:
+def _fallback_banner(hidden: int, total: int) -> Static:
     """The RA3 banner, constrained to exactly one row at every width.
 
     Built the same way :class:`TranscriptLine` builds its own no-wrap
@@ -612,17 +617,21 @@ def _fallback_banner(line_count: int) -> Static:
     therefore its own rule, scoped to the banner's own class only.
     """
     return Static(
-        _banner_text(line_count), markup=False, classes="transcript--fallback-banner"
+        _banner_text(hidden, total), markup=False, classes="transcript--fallback-banner"
     )
 
 
-def _banner_text(line_count: int) -> Text:
+def _banner_text(hidden: int, total: int) -> Text:
     """The banner's renderable, shared with the in-place count refresh a
     growing fallback tail performs — same construction, same one-row
-    constraint, whichever path draws it.
+    constraint, whichever path draws it. ``hidden`` is the entry's total
+    projected rows minus the retained mounted rows; ``total`` is the
+    entry's full projected row count (KTD1).
     """
     return Text(
-        defang(FALLBACK_BANNER_TEMPLATE.format(lines=line_count)), no_wrap=True, end=""
+        defang(FALLBACK_BANNER_TEMPLATE.format(hidden=hidden, total=total)),
+        no_wrap=True,
+        end="",
     )
 
 
@@ -1106,8 +1115,8 @@ class TranscriptPane(VerticalScroll):
         shapes — the alternative, building the committed unit fresh while
         the old tail was still mounted, put 1,203 new widgets beside 501
         existing ones before condensation could fold either. The banner
-        count follows the retained rows, exactly as the growth path
-        refreshes it.
+        reports the hidden count and total on the committed rows, exactly as
+        the growth path refreshes it.
         """
         while len(unit.lines) > len(rows):
             head = unit.lines.pop(0)
@@ -1127,7 +1136,8 @@ class TranscriptPane(VerticalScroll):
                 await self.mount_all(extras)
             unit.lines.extend(extras)
         if unit.banner is not None:
-            unit.banner.update(_banner_text(len(unit.lines)))
+            total = len(_welded_entry_lines(kind, unit.applied_text))
+            unit.banner.update(_banner_text(total - len(unit.lines), total))
 
     def _prepare_unit(
         self,
@@ -1188,6 +1198,11 @@ class TranscriptPane(VerticalScroll):
             source_lines = _welded_tail_lines(kind, text)
         else:
             source_lines = _welded_entry_lines(kind, text)
+        # KTD1: the banner's total is the entry's full projected row count,
+        # captured before the cap slice — the hidden count is total minus
+        # the retained mounted rows. A total read after the slice would
+        # under-report the loss the moment anything caps (B2's defect).
+        total_rows = len(source_lines)
         if max_rows is not None:
             # The banner row is reserved out of the budget only when a
             # banner will actually mount: a fallback unit retains
@@ -1203,7 +1218,7 @@ class TranscriptPane(VerticalScroll):
         widgets = [
             TranscriptLine(line, kind=kind, no_wrap=is_fallback) for line in source_lines
         ]
-        banner = _fallback_banner(len(widgets)) if is_fallback else None
+        banner = _fallback_banner(total_rows - len(widgets), total_rows) if is_fallback else None
         pending.extend(widgets)
         if banner is not None:
             pending.append(banner)
@@ -1435,7 +1450,6 @@ class TranscriptPane(VerticalScroll):
             if fresh:
                 await self.mount_all(fresh, before=unit.banner)
                 unit.lines.extend(fresh)
-                unit.banner.update(_banner_text(len(unit.lines)))
             recycled_rows = 0
             for line in grown[fill:]:
                 head = unit.lines.pop(0)
@@ -1443,6 +1457,18 @@ class TranscriptPane(VerticalScroll):
                 self.move_child(head, before=unit.banner)
                 unit.lines.append(head)
                 recycled_rows += 1
+            # KTD4's second trap, unconditional: the banner is refreshed at
+            # the end of EVERY growth patch, recycle-only included. Once a
+            # fallback tail reaches the mount cap — the steady state of any
+            # long stream — no fresh widgets mount and the growth boundary is
+            # served entirely by the recycle loop above; the total still grew
+            # while the retained count is frozen, and a refresh gated on
+            # ``fresh`` would leave the hidden count under-reporting by more
+            # and more as the stream continues (B2's defect). The total binds
+            # from ``new_lines``, not ``unit.applied_text``, which is still
+            # the PRE-growth text until the assignment two lines below — the
+            # same stale-total trap, one level shallower (KTD4).
+            unit.banner.update(_banner_text(len(new_lines) - len(unit.lines), len(new_lines)))
             if recycled_rows and kind == "assistant":
                 # Rows folded away above the retained window — surfaced to
                 # _condense for the restore anchor. Assistant only: its
@@ -1548,13 +1574,14 @@ class TranscriptPane(VerticalScroll):
                         removed_top_height += max(1, widget.outer_size.height)
                         to_remove.append(widget)
                         trimmed = True
-                    # The banner count follows the retained rows here too —
-                    # every other path that changes a fallback unit's row
-                    # count (growth, retarget) already refreshes it, and a
-                    # partial fold that leaves "2 lines clipped" over one
-                    # remaining row makes the banner lie (CR5 re-review).
+                    # The banner follows the retained rows here too — every
+                    # other path that changes a fallback unit's row count
+                    # (growth, retarget) already refreshes it, and a partial
+                    # fold that leaves "2 lines clipped" over one remaining
+                    # row makes the banner lie (CR5 re-review). The total is
+                    # the entry's full span, `count` from the record (KTD1).
                     if trimmed and unit.banner is not None:
-                        unit.banner.update(_banner_text(len(unit.lines)))
+                        unit.banner.update(_banner_text(count - len(unit.lines), count))
 
         tail = self._tails.get("assistant")
         if tail is not None and tail.kind == "line" and tail_folded:
@@ -1567,7 +1594,7 @@ class TranscriptPane(VerticalScroll):
                 to_remove.append(widget)
                 trimmed = True
             if trimmed and tail.banner is not None:
-                tail.banner.update(_banner_text(len(tail.lines)))
+                tail.banner.update(_banner_text(tail_rows - len(tail.lines), tail_rows))
 
         mounted = [widget for widget in to_remove if widget.is_mounted]
         if mounted:
