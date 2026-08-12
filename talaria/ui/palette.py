@@ -177,6 +177,7 @@ class PaletteRegion(Vertical):
         height: auto;
         max-height: 14;
         display: none;
+        overflow-y: auto;
     }
     PaletteRegion.-showing {
         display: block;
@@ -419,6 +420,13 @@ class PaletteRegion(Vertical):
         # Update row classes synchronously — no remount needed.
         for idx, row in enumerate(self._rows):
             row.set_class(idx == self._selected, "-active")
+        # Scroll the selected row into view so arrow navigation does not
+        # leave the highlight off-screen. The region is capped at 14 rows,
+        # so with 20 matches the selected index 15 would otherwise be invisible.
+        try:
+            self.scroll_to_widget(self._rows[new], animate=False)
+        except (AttributeError, ValueError):
+            pass
 
     # ── click ────────────────────────────────────────────────────────────
 
@@ -426,25 +434,30 @@ class PaletteRegion(Vertical):
         """Click on a filtered row selects it (same insert rule as Enter)."""
         if self._slash_prefix is None or not self._filtered:
             return
-        # Find which row was clicked — Textual delivers Click to the deepest
-        # widget, but we mounted the rows as direct children, so the event's
-        # control chain includes the row.
-        target = event.widget if isinstance(event.widget, Static) else None
-        # Fallback: search by position in case widget is not the row itself.
+        # Textual delivers Click with event.widget as the widget under the cursor.
+        # For a row click that is the row's Static; for a header click it is the
+        # header Static, not a row. Click.chain is an integer (click count), not
+        # an ancestry chain.
+        target = event.widget
         idx: int | None = None
-        if target is not None and target in self._rows:
+        if isinstance(target, Static) and target in self._rows:
             idx = self._rows.index(target)
         else:
-            # Try to find via event's chain — any ancestor that is our row.
+            # Check if target is inside a row (e.g., if rows had children)
             for row in self._rows:
-                if row in getattr(event, "chain", []) or row == getattr(event, "control", None):
-                    idx = self._rows.index(row)
-                    break
+                try:
+                    if target is not None and row in getattr(target, "ancestors", []):
+                        idx = self._rows.index(row)
+                        break
+                except (AttributeError, TypeError):
+                    continue
         if idx is None:
-            # As a last resort, use the current selection for any click inside
-            # the palette region while filtered.
-            idx = self._selected
-        if idx is None or not (0 <= idx < len(self._filtered)):
+            # Click was not on a row (e.g., header or empty area) — do not
+            # insert and do not crash. Previously this used `row in chain`
+            # where chain is an int, raising TypeError: argument of type 'int'
+            # is not iterable.
+            return
+        if not (0 <= idx < len(self._filtered)):
             return
         event.stop()
         self._selected = idx
@@ -452,12 +465,15 @@ class PaletteRegion(Vertical):
         await self._insert_selected()
 
     async def _insert_selected(self) -> None:
+        from textual.app import ScreenStackError
+        from textual.dom import NoScreen
+
         entry = self.selected_entry
         if entry is None:
             return
         try:
             app = self.app
-        except Exception:
+        except (NoScreen, ScreenStackError, AttributeError):
             return
         try:
             catalog: CommandCatalog | None = getattr(app, "catalog", None)
@@ -475,12 +491,12 @@ class PaletteRegion(Vertical):
             try:
                 # Place caret at end (single-line, row 0).
                 composer.text_area.cursor_location = (0, len(text))
-            except Exception:
+            except (ValueError, AttributeError, NoScreen, ScreenStackError):
                 pass
             try:
                 composer.text_area.focus()
-            except Exception:
+            except (NoScreen, ScreenStackError, AttributeError):
                 pass
             await self.hide_slash()
-        except Exception:
+        except (NoScreen, ScreenStackError, AttributeError):
             return
