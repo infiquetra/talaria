@@ -1375,16 +1375,30 @@ async def test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule(
     assert measurement.reachability_checkpoints >= 1, (
         "coverage must run on the poll even with the checkpoint schedule disabled"
     )
-    # Restored: content_loss_failures == 0 is not wall-clock-dependent here
-    # because gate.py:1367-1371 already forces a flush (render_snapshot plus
-    # pilot.pause) before the settled check. The original grace-window flake
-    # was reachability during the run; the final settled check that this
-    # assertion now exercises is deterministic after that flush. Do not widen
-    # the grace and do not replace this with content_is_complete(state,
-    # transcript_view(state)) alone — that keeps only the aggregate projection
-    # branch (gate.py:1380, which renders each entry in isolation and checks
-    # aggregate order) and drops the two pane-involving branches
+    # STILL WALL-CLOCK-DEPENDENT, and the comment that used to sit here said
+    # otherwise. It claimed this assertion exercises only the settled check,
+    # which gate.py:1367-1371 makes deterministic by forcing a flush. That is
+    # wrong: content_loss_failures also counts the mid-stream reachability
+    # check at gate.py:1268, which fires whenever a progress fingerprint has
+    # aged past CATCHUP_GRACE_SECONDS of *wall-clock* and the pane has not yet
+    # caught up to it. A pane that is merely behind for ordinary scheduling
+    # reasons is counted as content loss.
+    #
+    # Measured, not reasoned: instrumenting all five increment sites and
+    # sweeping this arm's grace shows every failure comes from
+    # midstream:reachability and none from any settled branch — 0.02 s gives 46
+    # failures, 0.05 s and above give none on an unloaded machine. The 0.2 s
+    # here is a 4x margin over that edge, and it was still not enough on a
+    # loaded python-check-linux (3.13) runner, which produced exactly one
+    # failure out of nine reachability checks.
+    #
+    # Do not widen the grace — that is the same trade this test has already
+    # made twice. Do not replace this with content_is_complete(state,
+    # transcript_view(state)) alone either: that keeps only the aggregate
+    # projection branch (gate.py:1380, which renders each entry in isolation
+    # and checks aggregate order) and drops the two pane-involving branches
     # (apply_in_flight at :1375 and interface_shows_everything at :1382).
+    # The repair is to stop measuring catch-up in seconds; it is queued.
     assert measurement.content_loss_failures == 0
 
     monkeypatch.setattr(gate_module, "CATCHUP_GRACE_SECONDS", 0.02)
