@@ -400,6 +400,52 @@ gave for four engines and D11 gave for the DeepSeek route: no code or plan is gr
 family that wrote it. Every unit in the A and C spines was written on the Muse route, so a reviewer on
 a fourth product widens the independence rather than merely adding capacity.
 
+### D20 — the Muse route switches client from Claude Code to Muse Code
+
+**Decided 2026-08-12**, in the operator's own words: "lets stop using claude-muse and switch to just
+using muse directly." It follows one abandoned session, recorded in the register above with its cause.
+
+**What changes and what does not.** The model is unchanged — `muse-spark-1.2-contributor` at extra-high
+reasoning effort, the same route D12 adopted on cost. What changes is the client. D12's route was the
+Claude command-line client pointed at a host serving that model; from here it is Muse Code, the model
+vendor's own agent, which the terminal multiplexer recognizes as its own agent kind rather than as a
+Claude session.
+
+**Why, and this is not a capability judgement either.** Claude Code presents most of its tools by name
+only and expects the model to fetch each definition before calling it. On this route the fetch returned
+an empty result every time, so a repair session never obtained a file-reading tool, spent twelve minutes
+retrying, and read nothing. Relaunched against the same model through Muse Code — which carries its
+tools outright and has no fetch step — it opened the same file within seconds of the same prompt. **The
+route was fine and the client was not.** That distinction is worth stating because the visible symptom,
+an agent that stalls and says little, is also what a weak model produces, and reading the pane was the
+only thing that separated them.
+
+**The rejected alternative.** The launcher can trim the Claude client's runtime surface to a curated
+tool set with no external tool servers, which would plausibly avoid the deferral altogether. It is
+rejected because it treats the symptom: whether a session can read a file would then depend on how many
+tools happened to be configured that day, which is a failure that returns silently the next time the
+surface grows.
+
+**One consequence, and it reopens something D12 recorded as closed.** D12 noted that Qwen Code did not
+read the organization's own instruction file — the gap through which an attribution trailer reached
+`main` — and that the switch to a Claude client closed it. Muse Code is not a Claude client and does not
+read that file either, so the gap reopens. Muse Code reads `AGENTS.md` in the working directory, which
+is verifiable from the tool itself: `muse init` scaffolds that file and states in its own text that Muse
+Code reads it as project rules. This repository's `AGENTS.md` covered secrets and private operational
+detail but said nothing about attribution, so **this decision ships with the prohibition added there**,
+where every agent kind in use reads it. The procedural guard — restating standing prohibitions in the
+brief of any session on an engine that cannot inherit them — stays in force, because the next engine
+change will not necessarily read `AGENTS.md` either.
+
+**Launch invariant worth recording, because omitting it looks like a capable agent refusing to work.**
+Muse Code has tool approval and a filesystem and network sandbox on by default. An unattended session
+that must edit, run the checks and push needs those disabled at launch; without it the session stalls on
+its first write with no error that names the cause.
+
+**Revisit when** either the Claude client's deferred tool loading works against a non-Anthropic route,
+or a session on Muse Code shows a defect traceable to the client rather than the model. Neither has been
+observed; both are checkable.
+
 ## 2. Child-session register
 
 | Session name | Unit | Engine | Effort | Permission | Created | Closed | Outcome |

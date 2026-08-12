@@ -68,6 +68,7 @@ failure rather than a skip, because the harness once skipped invisibly inside a 
 - Do not commit secrets, local environment files, private operational details, or copied private policy text.
 - Keep public documentation safe for readers outside Infiquetra.
 - Use conventional commits and pull requests for non-trivial changes.
+- **No attribution lines anywhere** — not in commit messages, pull request bodies, code comments, or generated documentation. No generated-with notices, no co-authored-by trailer naming a tool, no machine-added sign-off. This is stated here rather than left to each contributor's own configuration because agents that do not read that configuration still read this file, and one such agent put an attribution trailer on `main`.
 
 ## Architectural guardrails
 
