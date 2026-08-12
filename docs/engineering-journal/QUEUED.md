@@ -439,29 +439,33 @@ Enumerating the redactor's call sites is the wrong direction: it can only find p
 
 **Worth checking at the same time.** Whether `home` should scroll to the top of the transcript rather than merely release the anchor, and whether `F5` is alive at all while scrolled up — an open item on the operator's own checklist that touches the same follow state.
 
-### A replay-gate test counts a legitimately-lagging pane as content loss when the runner is loaded
+### ~~A replay-gate test counts a legitimately-lagging pane as content loss when the runner is loaded~~ — CLOSED 2026-08-12
 
 **Author.** v0.3 unit B5 implementation, 2026-08-11
+**Closed.** 2026-08-12 — both flakes fixed on branch `fix/timing-dependent-tests`; see below.
 **Priority.** P1
-**Effort.** Small to medium
-**Worth it when.** Before the next release, and ahead of the sibling flake below if only one is fixed. This one is worse than an ordinary flaky test because it is in the replay gate — the instrument the project uses to decide whether a release is honest. A gate that goes red on runner load is a gate people learn to merge past.
 
 **Evidence.** `tests/replay/test_gate.py:1381`, `test_reachability_coverage_rides_the_poll_not_the_checkpoint_schedule`, first arm: `assert measurement.content_loss_failures == 0`. Failed `python-check-linux (3.13)` on pull request 64 with `assert 1 == 0`. The same test passes on `main` and passes three runs out of three on the pull request's own branch, at 4.6 seconds each. The change under review cannot reach it: the gate constructs `TalariaApp` at `talaria/replay/gate.py:1217`, `:1433` and `:1454` and passes no startup selection in any of the three, so `begin_live_startup` short-circuits (`talaria/ui/app.py:3053`) and neither `open_session` nor `_land_session` ever runs under the gate — a `grep` for either name across `gate.py` returns nothing.
 
 **Mechanism.** The first arm asserts that a *correct* pane records zero content-loss failures, and it separates correct from broken purely by wall-clock: `CATCHUP_GRACE_SECONDS` is monkeypatched to 0.2, chosen — in the test's own comment — as "comfortably above the pane's 50 ms coalescing flush so a correct, legitimately-lagging pane cannot fail the first arm (the run-9 lesson)". Four times the flush interval is comfortable on an unloaded machine. On a shared runner it is not, and a pane that is behind for ordinary scheduling reasons is counted as having lost content. The test already carries a scar from this exact failure; the margin was widened rather than the dependence removed.
 
+**Repair.** The first arm now asserts correctness against observed pane state rather than a deadline: `assert content_is_complete(state, transcript_view(state))` on the final state returned by `measure_replay`, while still asserting `reachability_checkpoints >= 1` to prove the poll-driven path (checkpoint schedule disabled via `RSS_SAMPLE_EVERY = 10**9`). Rejected: widening the grace (mitigation, re-teaches the same lesson) and injecting a deterministic clock into `measure_replay` (adds production API purely for this test when the observed-state check already proves the property without any new surface). The second arm — stale snapshot counted once per consumed fingerprint — is unchanged and remains deterministic.
+
 **The repair is to stop deciding correctness by elapsed time.** Either drive the sampler's clock deterministically so the grace window is measured in controlled ticks rather than wall-clock seconds, or make the first arm assert against an observed pane state rather than against a deadline. Widening the grace again buys another few months and re-teaches the same lesson.
 
-### A replay-pause test asserts how fast the runner is, and fails on Linux when it is fast enough
+### ~~A replay-pause test asserts how fast the runner is, and fails on Linux when it is fast enough~~ — CLOSED 2026-08-12
 
 **Author.** v0.3 orchestration, 2026-08-11
+**Closed.** 2026-08-12 — fixed on branch `fix/timing-dependent-tests` alongside the sibling 200 ms-grace flake; see below.
 **Priority.** P1
-**Effort.** Small
-**Worth it when.** Before the next release, or sooner if it fails a second time. A test that fails on a documentation-only change is worse than a missing test, because it teaches everyone to merge past a red mark — which is exactly how the non-required Node job went red for two merges before anyone noticed.
 
 **Evidence.** `tests/ui/test_transcript_bounds.py:313`, `test_the_projection_and_the_domain_transcript_agree_at_every_pause_point`. Failed `python-check-linux (3.12)` on pull request 61 with `assert 2 >= 3`, on a branch whose entire diff is three files under `docs/`. `python-check-linux (3.13)` passed on the identical commit, so the failure is not deterministic.
 
+**Second occurrence — the trigger that fired the Worth-it-when.** Failed `python-check-linux (3.12)` on pull request 65 at commit `750a34c` with the same `assert 2 >= 3`, while `python-check-linux (3.13)` passed on the identical commit. The branch's only change was twelve added lines in `tests/ui/test_agent_rows.py` (the B3 collapsed-flip pin). The first occurrence was pull request 61; this second failure is the one that queued this repair.
+
 **Mechanism.** The test resumes and pauses a replay up to twelve times, breaking early once `app.replay_complete` is set, then asserts `checked >= 3`. That final assertion is not a property of the code under test — it is a claim that the replay takes at least three resume-pause cycles to drain, which depends on how the runner schedules `pilot.pause()` against the replay source. The guarantee the test exists to prove, `content_is_complete` at every pause point, held on both samples it managed to take. Only the did-I-sample-enough guard failed.
+
+**Repair.** The test now controls its sample count: it ingests the stress corpus in six deterministic batches via `app.ingest(record)` and `await app.render_snapshot()`, asserting `content_is_complete` after each. `checked` is `ceil(len(records)/batch_size)` — for the 321-frame stress fixture, seven checks of ~46 frames — impossible to fail due to runner speed. Rejected: feeding more frames (probabilistic mitigation, still flaky, costs wall-clock) and adding a stepping API to `ReplayControls` (`talaria/replay/controls.py:87`) — adds production surface purely for a test when the existing `ingest` path already provides a deterministic drive with no new API. The sibling ingest-driven tests directly above in the same file (`app.ingest(record)` loop asserting `seen == len(frames)`) are the model; this test's unique value — invariant holds at every mid-stream sample — survives because each batch is a genuine mid-stream domain state.
 
 **The fix is not simply lowering the threshold.** Three samples is a real requirement — checking a repeated invariant once is the thing this test was written to stop. The sound repair makes the sample count a property the test controls rather than one it observes: feed enough frames that the replay cannot drain in two cycles, or drive the source deterministically so each resume yields a bounded number of frames. Lowering `3` to `2` keeps the flake and weakens the check at the same time.
 
