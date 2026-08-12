@@ -11,6 +11,42 @@
 **Mechanism.** `TextArea` updates its document for `backspace`/`delete` after `super()._on_key` returns, not during it — `await super()._on_key` still saw the old text, even after `await asyncio.sleep(0.1)`. The fix was to drive the palette from `TextArea.Changed` (`on_text_area_changed` on `ChatTextArea`), which fires after the document has actually changed, and to distinguish typed from programmatic at the setter: `ChatTextArea` sets `_suppress_sync = True` before `self.text = new_text` for history recall and `Composer.text`'s setter does the same for any `composer.text = ` write, holding the flag until `set_timer(0.01, ...)` clears it after the `Changed` message has been delivered. `on_focus` was made a no-op for opening (ruling 3) and `render_catalog` was changed to catch `ScreenStackError` as well as `NoMatches` because `self.palette` raises `ScreenStackError` before the screen is mounted, not `NoMatches`.
 
 **Generalizable rule.** A widget that mutates its own document asynchronously cannot be polled immediately after `super()._on_key` — the palette must be driven from the change event, and programmatic writes must be suppressed at the setter that does the write, not at the watcher that sees it. A timer that clears the suppress flag too early reopens the palette on the next programmatic write.
+### A redundant path that is invisible, over-broad, or clipped is the same failure it was meant to replace
+
+**Evidence.** Unit A4 was blocked on four P1s (review of commit 5110451): `action_interrupt` at `talaria/ui/app.py:1556` sent `session.interrupt` with an empty session id when no turn was in flight and left the notice empty; `StatusRegion.on_click` at `talaria/ui/status_region.py:64` advertised “click status” while `compose` yielded only an empty marker and `status_tick` at `talaria/ui/app.py` returns early when `status_runner is None` — with no status command the region is one blank row; `TranscriptPane.on_click` at `talaria/ui/transcript.py:1742` re-followed on any click anywhere while reading scrollback; `HelpBar` at `talaria/ui/app.py:823` rendered 164 and 126 characters into one 80-column row with `text-wrap: nowrap` and `ellipsis`, so at 80×24 the live footer ended at `end/F5 follow (click bo…` and the replay footer clipped the macOS note. The three P2s were a swallowed `except Exception: pass` in the status click handler, five tautological assertions (`tests/ui/test_a4_function_key_row.py:97,108,294,302,377`), and a prompt-region claim that 75% keeps both deny-all hints visible when the reviewer measured 14 rows and only the first hint visible without scrolling.
+
+**Mechanism.** The eaten-key identity (no bytes, indistinguishable from not pressed) motivated redundant paths, but a redundant path that nothing renders, that is the entire pane, or that is clipped off-screen fails the same charter E2 the eaten key does — a signal whose failure is indistinguishable from success. `ctrl+c` reclaiming Textual 8.2.8's system `help_quit` binding makes the idle guard load-bearing: without `state.turn == "streaming"` the universal “get me out” reflex fires a destructive operation with no feedback. The help footer's backing `help_text` property still held the full string while the screen showed ellipsis, so the sixth acceptance item's test passed on the property and missed the clipping. The status region's disabled marker lives in `runner.tick()` at `talaria/status/runner.py`, but `talaria/cli.py` returns no runner when no command is configured, so `status: no command configured` is never produced in the default operator experience.
+
+**Generalizable rule.** A redundant path must be visible at the size the operator actually uses, scoped to the mode that owns it, and asserted against what renders rather than the backing property — and a destructive chord that reclaims a system binding needs an explicit “nothing in flight” guard with visible feedback. When fitting 80 columns, cut entries rather than let them clip: four paths that show beat nine that show three with ellipsis.
+
+### A stub for a collaborator that does not exist yet gets keyed to the nearest thing with a similar name
+
+**Evidence.** Unit C1 shipped the composer's key seam with a predicate meaning "is the slash palette
+open". Unit C2, which owns that palette, is not implemented. The predicate was written as
+`self.app.palette` with a `.showing` boolean — which resolves, but to `PaletteRegion`
+(`talaria/ui/palette.py`), the read-only foldable command listing bound to a function key. That region
+takes no focus and claims none of the five keys the seam is about. With it open the composer still held
+the caret, so pressing Enter took the seam branch and Textual's `TextArea` inserted a newline: the
+message was never sent, with no notice and no refusal. Four continuous-integration checks went red on
+`tests/transport/test_commands.py::test_the_client_local_entry_is_listed_unsupported_and_never_dispatched`,
+and an independent code review found the same defect separately with a driven probe. The repair
+(`talaria/ui/composer.py`, `_is_slash_palette_open`) returns `False` today and says in its own docstring
+that it is *not* keyed to the command listing.
+
+**Mechanism.** Two mistakes compounded, and each is invisible alone. The first is naming: an attribute
+called `palette` existed, so the predicate found something to bind to and type-checked, lint-checked and
+imported cleanly — the extension point looked honest because nothing about it was unresolved. The second
+is the destination: the seam's true branch read `await super()._on_key(event)`, which the author
+intended as "let this key go to whoever claimed it". The superclass there is the text editor, so the
+branch actually meant "give this key to the text editor". Both mistakes are silent at every gate that
+runs before a key is pressed.
+
+**Generalizable rule.** A stub standing in for an unbuilt collaborator must resolve to *nothing*, not to
+the nearest existing object with a matching name — a predicate that returns a constant and says why is
+an honest extension point; one bound to a real object is a live behaviour change wearing a stub's
+comment. And `super()` is not a forwarding address: delegating to the superclass is correct only for
+keys nobody has claimed. When a region claims a key, act on it there or post a message that region
+consumes.
 
 ### A stash that survives arrowing is one value taken once, not a ring
 

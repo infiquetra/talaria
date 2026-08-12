@@ -22,7 +22,6 @@ from textual.widget import Widget
 from textual.widgets import Button, Input
 
 from talaria.domain.models_catalog import ModelProvider, ProviderCatalog
-from talaria.ui.app import JUMP_BLOCKED_BY_MODAL, JUMP_NOTHING_OUTSTANDING
 from talaria.ui.dialog import PickerDialog
 from tests.ui.conftest import RecordingDispatcher, event, feed, live_app, settle
 
@@ -189,15 +188,13 @@ async def test_a_deliberate_focus_move_is_left_alone() -> None:
 
 @pytest.mark.asyncio
 async def test_f1_reaches_a_button_backed_card_past_agent_rows() -> None:
-    """R1: one press reaches the control regardless of how much sits above it.
+    """A4 AE1: F1 is removed — the card owns focus when the composer is empty,
+    and the jump has no job. This test keeps the composer non-empty (the mid-word
+    guard) and verifies that pressing F1 now does nothing, while the underlying
+    ``focus_first_unanswered`` helper still reaches past the rows when called
+    directly (the deliberate-steal path is preserved, just not on F1).
 
-    Two agent rows are mounted first — the variable-tab-distance case — so
-    the approval's control is not the first focusable widget on screen, which
-    is exactly the arrangement a tab-order-only fix would still get wrong.
-
-    A1/A2: approval cards now auto-focus on mount when the composer is empty
-    (KTD1), so this test keeps the composer non-empty to prove the jump
-    itself, not the auto-focus, reaches past the rows.
+    Two agent rows are mounted first — the variable-tab-distance case.
     """
     app = live_app(RecordingDispatcher())
     async with app.run_test(size=(100, 30)) as pilot:
@@ -226,12 +223,13 @@ async def test_f1_reaches_a_button_backed_card_past_agent_rows() -> None:
 
         await pilot.press("f1")
         await pilot.pause()
-
+        # A4: F1 no longer bound — focus stays on the composer.
+        assert app.screen.focused is app.composer.text_area
+        # The helper still reaches past the rows when invoked directly.
+        assert app.prompts.focus_first_unanswered()
+        await pilot.pause()
         card = app.prompts.card_for("approval:s1#1")
         assert card is not None
-        # Read once into an explicitly typed local: the assert above narrowed
-        # ``app.screen.focused`` to the composer's text area, and mypy keeps
-        # that narrowing across the keypress the test exists to make.
         focused: Widget | None = app.screen.focused
         assert focused is card.query_one("#choice-0", Button)
         await app.shutdown_sources()
@@ -241,8 +239,9 @@ async def test_f1_reaches_a_button_backed_card_past_agent_rows() -> None:
 
 @pytest.mark.asyncio
 async def test_f1_jumps_even_while_the_composer_holds_text() -> None:
-    """KTD1: the jump is deliberate and may steal the caret mid-word — the
-    typed text itself is never touched by the act of jumping away from it."""
+    """A4: F1 no longer jumps — the deliberate-steal path is now via
+    ``focus_first_unanswered`` directly. Typed text is still never touched by
+    a focus move, whether via the helper or via the composer guard."""
     app = live_app(RecordingDispatcher())
     async with app.run_test() as pilot:
         await pilot.press("h", "i")
@@ -255,12 +254,12 @@ async def test_f1_jumps_even_while_the_composer_holds_text() -> None:
 
         await pilot.press("f1")
         await pilot.pause()
-
+        # A4: F1 does not move focus; helper does.
+        assert app.screen.focused is app.composer.text_area
+        assert app.prompts.focus_first_unanswered()
+        await pilot.pause()
         card = app.prompts.card_for("c-1")
         assert card is not None
-        # Read once into an explicitly typed local: the assert above narrowed
-        # ``app.screen.focused`` to the composer's text area, and mypy keeps
-        # that narrowing across the keypress the test exists to make.
         focused: Widget | None = app.screen.focused
         assert focused is card.query_one("#answer", Input)
         assert app.composer.text == "hi"
@@ -269,12 +268,9 @@ async def test_f1_jumps_even_while_the_composer_holds_text() -> None:
 
 @pytest.mark.asyncio
 async def test_f1_with_nothing_outstanding_is_a_no_op() -> None:
-    """No card, nothing to jump to — the caret and the composer's text are
-    both left exactly where the operator put them.
-
-    B3 (AE1): the no-op used to be indistinguishable from a dead key, so it
-    now says so — one notice naming that no prompt is waiting, and no
-    transcript row, because a no-op is not part of the session's story.
+    """A4: F1 is not bound — pressing it with nothing outstanding leaves the
+    caret and the composer's text exactly where they were, with no notice.
+    The former B3 notice (JUMP_NOTHING_OUTSTANDING) is gone with the binding.
     """
     app = live_app(RecordingDispatcher())
     async with app.run_test() as pilot:
@@ -282,26 +278,24 @@ async def test_f1_with_nothing_outstanding_is_a_no_op() -> None:
         await pilot.pause()
         before = app.screen.focused
         before_rows = len(app.state.transcript)
+        before_notice = app.composer.notice
 
         await pilot.press("f1")
         await pilot.pause()
 
         assert app.screen.focused is before
         assert app.composer.text == "hi"
-        assert JUMP_NOTHING_OUTSTANDING in app.composer.notice
+        # No binding, no notice.
+        assert app.composer.notice == before_notice
         assert len(app.state.transcript) == before_rows, "a no-op must not append a transcript row"
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
 async def test_f1_is_refused_while_a_modal_picker_is_open() -> None:
-    """CR1 finding 2: ``Widget.focus()`` (which ``focus_answer()`` ends in)
-    calls ``widget.screen.set_focus(...)`` — the card's OWN background
-    screen, never the active top-of-stack modal. With a picker open, F1 used
-    to change a background button's has-focus state with no visible or
-    functional effect at all: the modal kept receiving every keystroke, and
-    the operator had no way to tell "worked" from "did nothing" (AE11). F1
-    is refused instead, with a notice, and neither screen's focus moves.
+    """A4: F1 is not bound — pressing it while a modal picker is open does
+    nothing to either screen's focus and shows no jump notice. The helper's
+    background-focus hazard is moot without the binding.
     """
     app = live_app(RecordingDispatcher())
     app.model_catalog = ProviderCatalog(
@@ -335,6 +329,7 @@ async def test_f1_is_refused_while_a_modal_picker_is_open() -> None:
         assert isinstance(app.screen, PickerDialog)
         modal_focus_before = app.screen.focused
 
+        before_notice = app.composer.notice
         await pilot.press("f1")
         await pilot.pause()
 
@@ -343,15 +338,16 @@ async def test_f1_is_refused_while_a_modal_picker_is_open() -> None:
         assert base_screen.focused is focus_before_picker, (
             "the background card must not gain focus while it cannot be seen or used"
         )
-        assert JUMP_BLOCKED_BY_MODAL in app.composer.notice
+        assert app.composer.notice == before_notice
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
 async def test_answering_via_the_f1_jumped_to_control_hands_the_caret_back() -> None:
-    """The jump is a way in, not a new way to lose the caret — pressing the
-    control it landed on releases the caret through the existing
-    ``CaretReleased`` path, same as answering by tab or by click."""
+    """A4: the helper still lands on the control, and answering via that
+    control hands the caret back through ``CaretReleased``, same as via tab or
+    click. The entry is via the helper directly, not via F1.
+    """
     app = live_app(RecordingDispatcher())
     async with app.run_test() as pilot:
         feed(app, event("message.start", {}))
@@ -368,8 +364,7 @@ async def test_answering_via_the_f1_jumped_to_control_hands_the_caret_back() -> 
             seq=101,
         )
         await settle(app, pilot)
-
-        await pilot.press("f1")
+        assert app.prompts.focus_first_unanswered()
         await pilot.pause()
         card = app.prompts.card_for("approval:s1#1")
         assert card is not None

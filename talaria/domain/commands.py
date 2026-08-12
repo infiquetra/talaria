@@ -343,7 +343,9 @@ def _is_client_local(name: str, category: str) -> bool:
 
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
-LocalAction = Literal["quit", "pause", "resume", "speed", "models", "profiles", "sessions"]
+LocalAction = Literal[
+    "quit", "pause", "resume", "speed", "models", "profiles", "sessions", "agents"
+]
 
 
 @dataclass(frozen=True)
@@ -363,12 +365,12 @@ class LocalCommand:
 
 TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand("/quit", "quit", "Leave Talaria; the gateway session keeps running"),
-    LocalCommand("/pause", "pause", "Hold the replay clock", replay_only=True),
-    LocalCommand("/resume", "resume", "Release the replay clock", replay_only=True),
+    LocalCommand("/pause", "pause", "Hold the replay clock (F8)", replay_only=True),
+    LocalCommand("/resume", "resume", "Release the replay clock (F8)", replay_only=True),
     LocalCommand(
         "/speed",
         "speed",
-        "Set the replay rate",
+        "Set the replay rate (F9 slower / F10 faster)",
         argument_hint="<multiplier|max>",
         replay_only=True,
     ),
@@ -387,7 +389,7 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand(
         "/models",
         "models",
-        "Open the model picker, select a row, or set a row as the profile's default",
+        "Open the model picker, select a row, or set a row as the profile's default (F6)",
         argument_hint="[index [default [confirm]]]",
     ),
     # Plural for the same reason and with the same hazard (U4). The gateway
@@ -402,7 +404,7 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand(
         "/profiles",
         "profiles",
-        "Open the profile picker, or switch to a listed profile by its number",
+        "Open the profile picker, or switch to a listed profile by its number (F7)",
         argument_hint="[index]",
     ),
     # v0.2's U7 (2026-08-08 answerability-and-session-story plan), and this one
@@ -419,6 +421,14 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "/sessions",
         "sessions",
         "Open the session picker and switch to a listed session",
+    ),
+    # A4: eaten F2's redundant typed path. Primary is ctrl+g;
+    # F2 remains as alias where the desktop delivers it. Listed as talaria-local
+    # so the palette and help footer can name it without a gateway.
+    LocalCommand(
+        "/agents",
+        "agents",
+        "Toggle sub-agent rows (F2 / ctrl+g)",
     ),
 )
 

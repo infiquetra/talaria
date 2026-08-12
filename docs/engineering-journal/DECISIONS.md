@@ -51,6 +51,26 @@ for the first time.
 distinguish a pane that is behind from a pane that has stopped. The wall-clock ceiling is the only
 remaining time-dependent branch, and it is what would need re-thinking first.
 
+### The function-key row is reduced to replay pacing, every other action gains a non-function-key primary (A4, KTD1-KTD5)
+
+**Author.** unit A4, 2026-08-12, per docs/plans/2026-08-12-v0-3-unit-a4-function-key-row.md
+
+**Decision.** The ten-binding row is re-decided as a whole rather than patched key by key:
+
+- **F1 `jump_to_prompt` removed, not relocated.** The focus-owning card (A1) is the anchor; a card that owns focus leaves nothing to jump to (D9). On macOS F1 is eaten before Talaria sees it (hands-on notes:757), so the program cannot detect that it was eaten and cannot warn. The two residual cases where no card takes focus — a second card arriving while the first is outstanding, and a card arriving while the composer is non-empty — remain reachable via Tab and click; the help footer documents F1 as eaten and the card's own tint announces which control holds the caret. `PromptRegion.focus_first_unanswered` stays as the helper for deliberate focus moves, but no binding reaches it.
+- **F2 `toggle_agents` and F4 `interrupt` leave the row as primaries.** Primary becomes `ctrl+g` plus a click on the status region for agents (`/agents` slash alias added), and `ctrl+c` for interrupt (F4 remains as alias). Both chords avoid bare `up-arrow` and bare `/` that spines C1/C2 claim for the composer.
+- **F5 `follow_bottom` remains as alias; primary is `end` plus a bottom-edge click on the transcript pane.** Pressing `end` and clicking the transcript when not following call the same `follow_bottom` path so the "already following" notice cannot drift.
+- **F3 `toggle_palette`, F6 `toggle_picker` (`/models`), F7 `toggle_profiles` (`/profiles`) remain as secondary aliases; their primaries are `/`, `/models`, `/profiles` already in the slash surface.** No new slash names are invented for them.
+- **F8 `toggle_pause`, F9 `slow_down`, F10 `speed_up` stay primary on the row** (measured on 2026-08-10, F10 assumed alive by analogy with its neighbours and documented as such) and gain slash aliases `/pause`, `/resume`, `/speed` already in the command set.
+
+**Discoverability.** The palette lists every local command with its function-key alias in the description (e.g., `/pause (F8)`), and the shell's help footer — a new one-row `HelpBar` — lists bindings scoped to the current mode so replay does not advertise live keys and live does not advertise pacing keys. The listing is static, not a runtime detector: a eaten key sends no bytes, so any in-process detector would invent a cause it cannot observe.
+
+**Geometry.** Adding the footer costs one chrome row. `PromptRegion`'s `max-height` moves from 70% to 75% to keep two deny-all cards' hints visible at 80x24, and the viewport-row expectation in `tests/transport/test_bridges.py` moves from 18 to 17 (80x24) and 28 to 27 (80x34) for the same reason — the help bar is the cause, and the comment carries that provenance.
+
+**Rejected:** patching eaten keys one by one (re-runs discovery every release), relocating the whole row to chords/leader (D9 reserves chords for no-anchor actions), removing the row entirely (replay pacing has no click target and pauses are single-key moments).
+
+**Revisit when** a different desktop claims a different key, or `F10` is measured and found eaten — its disposition flips from primary to alias with no other change, because the alias already exists. If the two residual no-focus cases prove disorienting in the operator drive, the answer is a notice on the card path, not a new jump binding.
+
 ## 2026-08-11
 
 ### The fleet axis is deliberately deferred out of v0.3

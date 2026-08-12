@@ -1736,8 +1736,6 @@ class TranscriptPane(VerticalScroll):
         elif removed_top_height:
             self.scroll_to(y=max(0, self.scroll_offset.y - removed_top_height), animate=False)
 
-    # ── follow-bottom control ────────────────────────────────────────────
-
     def hold_anchor(self) -> None:
         self.follow = False
 
