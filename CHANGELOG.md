@@ -10,6 +10,79 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-13
+
+Talaria confirms what it just did. The release comes out of driving v0.2 by
+hand and finding that four defects which looked unrelated were all the same
+problem: a keypress that did nothing looked exactly like a keypress that
+worked. Alongside that, the composer gains the two conventions every
+comparable interface already has — history on `Up`, and a slash-command
+palette. Nine units; two shipped clean, three needed one repair round, and
+four needed a further round after an independent check found the first
+report had claimed more than the work delivered. The session-by-session
+record is in [the decision register](docs/plans/2026-08-11-v0-3-decision-log.md).
+
+### Added
+
+- **`Up` recalls what you sent.** An in-memory composer history bounded at
+  100 entries. `Down` walks back toward the newest and then restores the
+  draft you were part-way through typing, caret at the end. A multi-line
+  draft recalls only at the caret boundary you are moving through, so
+  editing a paragraph still works. Slash commands and lines the gateway
+  failed to deliver are held; empty lines and refused submissions are not.
+  Never written to disk.
+- **`/` opens a filterable command palette** over Talaria's own eight
+  commands and the gateway's, Talaria's first. Filtering is by prefix,
+  case-insensitively. `Up` and `Down` move the selection and scroll it into
+  view, `Enter` inserts the canonical name with a trailing space and sends
+  nothing, `Escape` closes it and keeps what you typed, and moving the caret
+  closes it too. `F3` still browses the whole list.
+- **An outstanding prompt card takes the caret by itself** when the composer
+  is empty, so the answerable thing is where your hands already are. The
+  first card of a batch takes focus; a later card in the same batch does not
+  steal it from the one you are answering.
+- **A resumed session names itself on arrival**, by its durable id, placed so
+  it survives the transcript clear and introduces the history it precedes. A
+  reply carrying no durable id names the runtime id and says so.
+- **Four silent keypresses now confirm themselves** on the composer notice,
+  each at the site of its silence — re-following when already at the bottom
+  among them.
+- **Typing where text cannot go says typing is paused**, names the region,
+  and leads with the way back so the sentence survives 80 columns. Latched
+  per focus-hold, cleared when the caret leaves the region. The keystroke is
+  still discarded; the silence is what changed.
+- **`/agents`** — a slash primary for the sub-agent rows, which had only a
+  function key before.
+
+### Changed
+
+- **Every action the desktop can eat has a non-function-key primary.**
+  `ctrl+g` toggles sub-agent rows, `ctrl+c` interrupts, `end` re-follows the
+  newest line. `F2`, `F4` and `F5` remain as aliases where the desktop
+  delivers them; `F3`, `F6` and `F7` remain beside their slash primaries;
+  `F8`, `F9` and `F10` stay primary for replay pacing. The help footer is
+  scoped to the running mode, so a live session no longer advertises replay
+  keys.
+- **The fallback banner reports what is hidden, not what is retained.** It
+  printed a retained line count under the word "clipped" — a number a reader
+  takes as a loss, visibly falling as more was hidden. It now names the
+  hidden count and the total in one clause, at a named scope, so the banner
+  and the condensed marker count the same quantity.
+- **An unknown gateway event announces once per type, per connection**, with
+  repeats counted rather than reprinted, and an unknown event belonging to a
+  background session no longer writes into the foreground transcript.
+
+### Removed
+
+- **`F1`'s jump to the newest unanswered prompt**, with its action and
+  constants. The card owns focus now, so the jump has no job. On macOS the
+  key never reached Talaria at all: the desktop ate it, and an eaten key
+  sends no bytes, so the program could not report the loss.
+- **The caret status row**, with its slot, its CSS and the walk that fed it.
+  It named where the caret was — unreadably in the one case that mattered,
+  redundantly everywhere else. The discard notice above covers the case the
+  row existed for.
+
 ### Fixed
 
 - **`F4`'s published description was missing its destructive half, and this
@@ -162,5 +235,6 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
+[0.3.0]: https://github.com/infiquetra/talaria/releases/tag/v0.3.0
 [0.2.0]: https://github.com/infiquetra/talaria/releases/tag/v0.2.0
 [0.1.0]: https://github.com/infiquetra/talaria/releases/tag/v0.1.0
