@@ -31,6 +31,102 @@ resolve a blocking prompt — profile edits, config writes, or any respond metho
 outlives the blocked question. Those stay outside Talaria under constraint 7 regardless of this
 ruling.
 
+### v0.4 topology: one concurrent connection per configured profile endpoint, sized now
+
+**Author.** Operator ruling (multi-profile now) plus evidence pass, 2026-08-16, at v0.4 planning.
+
+**Decision.** Talaria v0.4 dials every configured profile endpoint concurrently — the inventory is
+`[profiles.endpoints]` plus the credential-file gateway as the default entry — with per-connection
+credentials, epochs, reconnect, probes, and frame logs. The requirements' PC1 scope valve
+(registry-over-the-configured-gateway only) is not taken.
+
+**Rationale.** The running gateway's own source (revision `7095e23eb`) shows session events are
+delivered only to the transport that owns the session (`tui_gateway/server.py:1637`), and sessions
+in other profile-gateway processes are invisible to any single connection regardless. A 90-second
+passive listen on a bare authenticated connection confirmed the silence empirically. The fleet
+Talaria exists to watch can therefore only be reached by dialing each profile's gateway.
+
+**Rejected.** One app-global connection using the gateway's remote-mode `profile` parameter (real
+at the running revision, but it cannot observe sessions other clients drive, and other profiles'
+processes stay out of reach entirely). Also rejected: the staged single-gateway valve — operator
+ruling, same date.
+
+**Revisit when.** Hermes ships a cross-process or broadcast event surface, or a listing that names
+a session's profile.
+
+### Attach is steal: activating another client's session requires a naming confirmation
+
+**Author.** Operator ruling on gateway-source evidence, 2026-08-16, at v0.4 planning.
+
+**Decision.** `session.activate` (and resume) rebinds the session's transport to the caller — the
+displaced client is silently blinded (`tui_gateway/methods_session.py:1024`, `:110`). Talaria
+therefore treats every live session it did not itself open, resume, or activate as another
+client's, and interposes an explicit confirmation naming the detachment consequence before
+activating it. Never silent. The confirmation scopes to **live** sessions (present in
+`session.active_list`): resuming a historical session steals nothing live and gets no dialog —
+always-confirming would train the operator to click through the one dialog that matters.
+
+**Rationale.** The gateway sends the displaced client nothing (`session.reclaimed` fires only for
+backend reaps), so a silent steal breaks the operator's other surface invisibly — the exact
+fabricated-normalcy failure the fleet turn exists to eliminate, pointed at ourselves.
+
+**Rejected.** Silent platform-semantics stealing (how Hermes's own frontends switch — but those
+switch their *own* sessions); refusing foreign focus outright (turns queue items into dead ends,
+violating the resolvability rule R17).
+
+**Revisit when.** The gateway exposes transport identity on listings (making detached-orphan
+distinguishable from attached-client), or notifies the displaced client.
+
+### The queue answers approvals inline and only approvals; aiming stays head-of-queue
+
+**Author.** Operator ruling, 2026-08-16, at v0.4 planning.
+
+**Decision.** The needs-you queue's drill-down answers approval requests inline, through the same
+single answer-path function the prompt cards use. Every other kind — clarify, secret, sudo, and
+any kind the gateway grows later — navigates to its original session. Aiming stays head-of-queue
+per requirement R18; the running gateway's new optional `request_id` on `approval.respond` is
+recorded and deliberately unsent.
+
+**Rationale.** `approval.respond` aims by session id from any connection, so a foreign approval is
+answerable with no attach and no steal — the one kind where inline answering removes a hazard
+instead of adding surface. The other kinds carry masking, hints, and focus semantics that live on
+the card, and their pending state is not even queryable for sessions other clients drive.
+Head-of-queue unsent-`request_id` behavior is correct on both the pinned and running revisions.
+
+**Rejected.** Navigate-everything (forces the steal confirmation onto the one kind that does not
+need it); inline-everything-answerable (per-kind wiring and secret-masking surface in a release
+that already carries the topology work).
+
+**Revisit when.** The probed baseline floor guarantees `request_id` semantics on every gateway
+Talaria runs against — then per-request aiming can replace head-of-queue.
+
+**Amended 2026-08-17** (operator ruling on the four-engine doc-review panel's blocking finding):
+the unsent-always choice is reversed. The answer now carries the head approval's `request_id`
+whenever one was observed, because the gateway removes queue heads on timeout and interrupt with
+no event — the exact hazard the domain's uncorrelated-approval refusal documents — and the
+running revision synthesizes ids that aim exactly. Head-of-queue *presentation* stands; the
+refusal and deny-all fallback stand for the uncorrelated case; R18 was amended the same day.
+
+### The protocol baseline re-pins to the running revision, with probed absence
+
+**Author.** v0.4 planning, 2026-08-16.
+
+**Decision.** v0.4's pinned read moves from `7f4d15515` (2026-08-01) to the running install's
+`7095e23eb`: the release builds on `session.active_list` and `approval.pending`, which the old pin
+does not have. Both are probed capabilities — a gateway lacking them gets fleet features off by
+name while the single-session core keeps the old-pin baseline. U1 of the plan formalizes the new
+read; RR-28's drift (an optional `request_id` on `approval.respond`) is recorded there.
+
+**Rationale.** Building fleet features on methods the pin lacks while claiming the old pin would
+make the baseline a fiction. Probing keeps the claim honest in both directions: old gateways
+degrade to named absence, and the re-pin is a recorded diff rather than silent drift.
+
+**Rejected.** A `session.list`-polling degraded roster for old gateways — the listing has no
+lifecycle field, so that mode would fabricate exactly the zeroes requirement R10 forbids.
+
+**Revisit when.** The next release needs a capability absent at `7095e23eb` — same procedure, new
+entry.
+
 ## 2026-08-12
 
 ### The replay gate's catch-up grace is counted in re-renders, not in seconds

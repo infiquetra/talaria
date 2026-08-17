@@ -56,7 +56,12 @@ An adversarial review of this document's first draft (2026-08-16, in-session, ag
 tree, the ideation, and the Q1 ruling) found one missing security requirement, one unsized scope
 risk, and four precision gaps; this revision incorporates all thirteen of its findings and three
 operator clarifications — never-observed is not stale, an event without trustworthy session
-identity needs a safe visible path, and the needs-you summary's space is reserved by layout.
+identity needs a safe visible path, and the needs-you summary's space is reserved by layout. A
+second revision (2026-08-17, on a four-engine doc-review panel's findings against the
+implementation plan) amended R18 (the gateway now synthesizes approval request ids — an observed
+id is sent with the answer), AE11 (an unrecoverable-kind item's floor is a latched visible
+failure, never a silent dead end), R14 (the queueable-kind enumeration and the row-latched path
+for unrenderable kinds), and the `session_id` field name in the dependency notes.
 
 ## Key Decisions
 
@@ -193,7 +198,13 @@ is called out where it occurs.
   gateway (Kanban blocked state, pane-manager blocked state) without restatement; v0.4 populates
   gateway prompts only.
 - R14. Every outstanding human-facing blocking prompt from every registry session appears in the
-  queue: approval, clarification, secret, sudo. The focused session's own prompts are included —
+  queue: approval, clarification, secret, sudo — the four kinds Talaria renders cards for, which
+  is what makes them queueable under R17's resolvability rule. A blocking prompt of a kind Talaria
+  cannot render anywhere (the running gateway has grown three such kinds since the pin) resolves
+  on its session's registry row as a named, latched state and is never a queue item, exactly as
+  the terminal-read bridge's failure contract already works; a foreign session whose waiting kind
+  is not yet knowable enters the queue as an unobserved item under AE11's resolution rule
+  (amended 2026-08-17). The focused session's own prompts are included —
   the count is the install's whole truth, and the card the operator is already looking at is one
   of its rows. Terminal-read stays a machine-answered bridge (`answer_terminal_read`,
   `talaria/ui/app.py:2786`); a terminal-read Talaria cannot serve — a background session is the
@@ -217,10 +228,15 @@ is called out where it occurs.
   is, its answer goes through the same single answer-path function both existing paths use.
 - R18. Answering is fire-and-observe. A row in flight renders as requested-with-age; a row clears
   only on gateway-confirmed resolution or expiry; an ambiguous approval outcome settles and
-  latches per the recorded decision, never restores. Within one session, approvals resolve in
-  gateway queue order — `approval.respond` carries a session and a choice, no request id — so the
-  queue aims answers at a session's head approval and never presents a session's second approval
-  as independently answerable while its first is outstanding.
+  latches per the recorded decision, never restores. Within one session, approvals present in
+  gateway queue order: the queue aims answers at a session's head approval and never presents a
+  session's second approval as independently answerable while its first is outstanding. When the
+  gateway supplies a request id for the head approval — the running revision synthesizes one and
+  `approval.respond` accepts it, a drift from the pinned read this document originally recorded —
+  the answer carries that id, because the gateway removes queue heads on timeout and interrupt
+  without emitting anything, and an uncorrelated answer can authorize a command the operator was
+  never shown. When no id is observed, the shipped uncorrelated-approval refusal and deny-all
+  fallback apply unchanged. (Amended 2026-08-17 on the doc-review panel's blocking finding.)
 - R19. Expiry and withdrawal are visible twice: the expired prompt leaves its persistent
   indication in its own session's transcript (v0.1 R8 inheritance), and the queue row clears with
   the summary count updating in the same render boundary.
@@ -324,8 +340,13 @@ is called out where it occurs.
   evidence. v0.3 shipped with no unit gated on a live drive; this release does not repeat that.
   **Covers F2 end-to-end.**
 - AE11. **When every queue kind is resolved using only the keyboard in a headless run**, each row
-  reaches resolution — at minimum by navigation to its card with the caret landing on the
-  control — and no kind requires the mouse. **Covers R17.**
+  reaches a keyboard-reachable end: navigation to its card with the caret landing on the control,
+  or — for an item whose kind cannot be recovered after a confirmed attach — a latched, visible
+  failure on its row and its queue item, per the terminal-read settle precedent. No kind requires
+  the mouse, and no path ends silently. (Amended 2026-08-17: the gateway exposes only a flattened
+  `waiting` for sessions other clients drive, and attach hydrates only approvals and
+  clarifications, so an unknown-kind item's honest floor is a visible latched failure, never a
+  silent dead end.) **Covers R17.**
 
 ## Requirement Traceability
 
@@ -374,8 +395,8 @@ Out of v0.4:
   connection did not open has not been established. PC1's live verification settles it, and the
   answer decides how the queue is fed under either topology.
 - **`session.list` carries identity, not liveness.** The decoded summary
-  (`talaria/domain/session_list.py:44`) holds id, title, preview, started-at, message count, and
-  source — no lifecycle field. R3's lifecycle summaries therefore derive from routed traffic, not
+  (`talaria/domain/session_list.py:44`) holds `session_id` (decoded from the wire row's `id`),
+  title, preview, started-at, message count, and source — no lifecycle field. R3's lifecycle summaries therefore derive from routed traffic, not
   from the listing; if the pinned revision offers a richer listing, planning may use it, but
   nothing here assumes it.
 - **The prompt-correlation floor exists.** The prompt registry stores the session, synthesized
