@@ -33,7 +33,7 @@ import json
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
 from textual import events
@@ -86,7 +86,7 @@ from talaria.domain.models_catalog import (
     ProfileDirectory,
     ProviderCatalog,
 )
-from talaria.domain.normalize import normalize_frame
+from talaria.domain.normalize import clip_detail_line, normalize_frame
 from talaria.domain.projection import (
     DEFAULT_VIEWPORT_ROWS,
     ProjectionUnavailableError,
@@ -97,20 +97,36 @@ from talaria.domain.projection import (
     project,
     terminal_read,
 )
+from talaria.domain.registry import RegistryRow, attach_displaces_client
 from talaria.domain.selection import PickerSource
-from talaria.domain.session_list import decode_session_list
+from talaria.domain.session_list import (
+    SessionDirectory,
+    decode_active_list,
+    decode_session_list,
+)
 from talaria.domain.startup import StartupSelection
 from talaria.domain.state import (
     APPROVAL_COMMAND_LABEL,
     DELIVERY_NOTES,
+    PROMPT_EVENT_KINDS,
     REFUSED_NOT_OUTSTANDING,
     DeliveryState,
+    FleetState,
     SessionState,
+    activation_hydration_events,
     age_out_approvals,
+    apply_active_list,
     apply_frame,
+    attach_confirm_row,
+    begin_fleet_answer,
     cancel_turn,
+    end_fleet_answer,
+    fleet_row,
+    fleet_switch_refusal,
     land_session,
+    latch_attach_residue,
     latch_resolved_prompts,
+    mark_we_drive,
     record_command_result,
     record_local_note,
     record_replayed_submission,
@@ -119,10 +135,11 @@ from talaria.domain.state import (
     respond_to_all_approvals,
     respond_to_prompt,
     restore_prompt,
+    roster_staleness,
+    seed_from_listing,
     seed_history,
     set_connection,
     settle_prompt,
-    switch_refusal,
 )
 from talaria.domain.state import (
     SUBMIT_METHOD as SUBMIT_METHOD,
@@ -143,7 +160,7 @@ from talaria.transport.rpc import (
 from talaria.transport.source import FrameRecord, FrameSource, SwitchReport
 from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
-from talaria.ui.dialog import PickerDialog
+from talaria.ui.dialog import ConfirmDialog, PickerDialog
 from talaria.ui.focus import CaretReleased
 from talaria.ui.palette import PaletteRegion
 from talaria.ui.picker import (
@@ -157,6 +174,7 @@ from talaria.ui.picker import (
     SessionModel,
     SessionPickerSource,
     flatten_profiles,
+    flatten_registry_sessions,
     flatten_selectable,
 )
 from talaria.ui.prompts import (
@@ -510,6 +528,79 @@ NO_SESSIONS: Final[str] = "the gateway reports no sessions to switch to"
 SWITCH_ALREADY_IN_FLIGHT: Final[str] = (
     "a session switch is already on the wire — wait for it to land, then try again"
 )
+
+# ── v0.4 U4: the registry-backed picker, the steal confirm, the handover ────
+
+#: The connection name a single-gateway run's registry rows are keyed under.
+#: The registry key is ``(profile, durable_id)``, so this half has to be stable
+#: for the whole run or one gateway's sessions become two sets of rows.
+DEFAULT_PROFILE: Final[str] = "default"
+
+#: The gateway's live roster (``tui_gateway/methods_session.py:986``). It is
+#: **not** gated behind a version check: U1's enumeration found it registered
+#: at the old pin, at the checkout, and on the wire this machine serves — the
+#: plan's KTD4 sentence calling it new was wrong, and building a version gate
+#: on it would refuse a roster from gateways that have always had one. It is
+#: probed the only honest way instead: it is called, and a call that fails
+#: leaves the rows saying what they actually know (R10/R24).
+LIST_ACTIVE_METHOD: Final[str] = "session.active_list"
+
+#: Said when the roster call failed and the picker fell back to identity-only
+#: rows. Names the absent capability rather than showing lifecycle zeroes.
+ROSTER_UNAVAILABLE: Final[str] = (
+    "roster unavailable: session.active_list did not answer — rows show identity "
+    "only, not what each session is doing"
+)
+
+#: Said when the roster failed *this* time but answered before. The rows do
+#: show lifecycle, so the sentence above would be false; what they cannot say is
+#: how old it is. Two sentences because there are two situations, and reporting
+#: the second as the first told the operator the rows showed identity only while
+#: displaying a lifecycle for every one of them.
+ROSTER_STALE: Final[str] = (
+    "roster stale: session.active_list did not answer — lifecycle below is from "
+    "an earlier sweep and may have changed since"
+)
+
+#: Added to OP2's dialog when the roster could not confirm the session is still
+#: live. The confirmation still fires: not asking would risk a silent steal,
+#: which is the worse error. What changes is that it stops implying a sighting
+#: it does not have (R24).
+ATTACH_CONFIRM_STALE_LIVENESS: Final[str] = (
+    "the roster has not confirmed this session since an earlier sweep, so it may "
+    "already have ended"
+)
+
+#: The title of OP2's confirmation. Names the session and the consequence in
+#: one line, because that line is what an operator reads before pressing enter.
+ATTACH_CONFIRM_TITLE: Final[str] = "this session is live and Talaria did not open it"
+
+#: The consequence, stated as both possibilities. Rows carry no transport
+#: identity field, so a detached orphan and a session another client is
+#: actively driving are indistinguishable from here (KTD8) — the copy says so
+#: rather than asserting the one that would sound more decisive.
+ATTACH_CONFIRM_BODY: Final[str] = (
+    "this session may be attached to another client; focusing it here detaches "
+    "that client — it stops receiving this session's events and is told nothing"
+)
+
+#: The extra sentence for a queue item whose kind the gateway never named
+#: (KTD8's ``unobserved`` clause). A polled row reports only the flattened
+#: ``waiting``, and the activate reply hydrates approvals and clarifications
+#: alone, so the operator is confirming a steal that may recover nothing.
+ATTACH_CONFIRM_UNKNOWN_KIND: Final[str] = (
+    "the gateway reports only that it is waiting: the kind of prompt is unknown, "
+    "and it may not be recoverable after the attach"
+)
+
+#: How much of a gateway-supplied session title the confirmation's own title
+#: line carries. The modal is fixed-size and the title's length is the
+#: gateway's choice, not Talaria's.
+CONFIRM_TITLE_CLIP: Final[int] = 48
+
+#: Said when the operator backed out of that dialog. Fire-and-observe: nothing
+#: was sent, and nothing on screen moved optimistically either.
+ATTACH_DECLINED: Final[str] = "nothing was sent — the session was left where it is"
 
 # ── U5: the default-model write and its two-act confirmation (KTD7) ────────
 
@@ -1035,7 +1126,18 @@ class TalariaApp(App[None]):
         #: after that is not going to be answered by waiting longer.
         self.call_timeout = call_timeout
 
-        self.state = SessionState()
+        #: The fleet root (v0.4 KTD3). The focused engine lives inside it as
+        #: :attr:`FleetState.focused`, which is what :attr:`state` reads and
+        #: writes — see that property for why the sixty-odd ``self.state = …``
+        #: assignments in this file did not have to change.
+        self._fleet = FleetState(
+            focused=SessionState(), focused_profile=current_profile or DEFAULT_PROFILE
+        )
+        #: The poll epoch the two listing sweeps share. The dual-listing
+        #: retirement rule only fires when ``session.list`` and
+        #: ``session.active_list`` agree on an epoch, so both sweeps of one
+        #: picker open carry this number and a sweep that failed carries none.
+        self._poll_epoch = 0
         self.composer_history = ComposerHistory()
         self.snapshot: Snapshot | None = None
 
@@ -1146,6 +1248,71 @@ class TalariaApp(App[None]):
         #: :attr:`stream_failure` because a dead startup sequence and a dead
         #: frame stream are different incidents with the same exit code.
         self.background_failure = ""
+
+    # ── the fleet root, and the focused cursor into it ───────────────────
+
+    @property
+    def fleet(self) -> FleetState:
+        """The whole fleet: registry rows, per-connection channels, the focused
+        engine, and the in-flight answers that protect rows (v0.4 KTD3)."""
+        return self._fleet
+
+    @fleet.setter
+    def fleet(self, value: FleetState) -> None:
+        self._fleet = value
+
+    @property
+    def state(self) -> SessionState:
+        """The focused session's state — :attr:`FleetState.focused`, exactly.
+
+        A property rather than a field, and that is the whole of how the fleet
+        root reached this class without a rewrite: every existing read and every
+        existing ``self.state = …`` assignment goes on meaning what it meant,
+        and the fleet stays consistent with the focused engine by construction
+        rather than by a synchronisation step somebody has to remember. A second
+        copy of the focused state living beside the fleet is exactly the drift
+        :meth:`~talaria.domain.state.FleetState.focused_key` would then resolve
+        against the wrong value.
+
+        What deliberately did **not** change with it: inbound frames are still
+        folded by :func:`~talaria.domain.state.apply_frame` rather than routed
+        through :func:`~talaria.domain.state.route_frame`, so a background
+        session's event still takes the shipped cross-talk discard. Routing it
+        to a registry row instead is U6's feed wiring; doing it here would
+        change what ``cross_session_events_ignored`` counts as a side effect of
+        a focus-movement unit.
+        """
+        return self._fleet.focused
+
+    @state.setter
+    def state(self, value: SessionState) -> None:
+        self._fleet = replace(self._fleet, focused=value)
+
+    @property
+    def fleet_profile(self) -> str:
+        """Which connection the registry rows this app shows belong to.
+
+        The registry key's first half. It follows the profile this session is
+        connected to (:meth:`_adopt_profile`), because the key exists precisely
+        to keep two gateways' sessions apart: a stored id seen on two
+        connections is two rows, and one name for both would merge them into
+        one wrong fleet. Rows of a profile the operator has switched away from
+        stay in the registry under their own key — unreachable from the picker,
+        which shows this profile's rows, and bounded by the same per-connection
+        cap every other profile's rows are.
+        """
+        return self._fleet.focused_profile
+
+    def _adopt_profile(self, name: str) -> None:
+        """Re-point the fleet at the profile this session just connected to.
+
+        Called from the two places ``current_profile`` is assigned, and from
+        nowhere else — a property that quietly re-keyed the registry as a side
+        effect of being read would be the worst possible shape for this.
+        """
+        self.current_profile = name
+        if name and name != self._fleet.focused_profile:
+            self._fleet = replace(self._fleet, focused_profile=name)
 
     # ── layout ───────────────────────────────────────────────────────────
 
@@ -2498,19 +2665,58 @@ class TalariaApp(App[None]):
         self.state = next_state
         self._dirty = True
 
-        outcome = await dispatcher.call(
-            RESPOND_METHODS[prompt.kind],
-            respond_params(
-                prompt.kind,
-                request_id=request_id,
-                session_id=session_id,
-                value=value,
-            ),
-            timeout=self.call_timeout,
-        )
+        with self.fleet_answer(session_id=session_id or "", request_key=request_id):
+            outcome = await dispatcher.call(
+                RESPOND_METHODS[prompt.kind],
+                respond_params(
+                    prompt.kind,
+                    request_id=request_id,
+                    session_id=session_id,
+                    value=value,
+                ),
+                timeout=self.call_timeout,
+            )
 
         self._record_prompt_outcome(prompt, value, outcome, declined=declined)
         return outcome
+
+    @contextmanager
+    def fleet_answer(self, *, session_id: str, request_key: str) -> Iterator[None]:
+        """Hold one answer's fleet-scoped in-flight record for its round trip (KTD9).
+
+        Two things ride on the record and both are R6's: while it is held, a
+        session switch is refused fleet-wide, and the registry row the answer
+        names cannot be retired or evicted out from under it. Released in a
+        ``finally``, because a call that raised is a call that is no longer
+        travelling — leaving the record behind would refuse every switch for the
+        rest of the run.
+
+        **This is the queue's entry point too**, not only
+        :meth:`respond_live`'s. An answer aimed at a session Talaria does not
+        drive never enters the focused engine's ``answering`` tuple — that
+        tuple is the focused session's bookkeeping — so without this it would
+        occupy no switch-refusal window at all, which is exactly the hole KTD9
+        names.
+
+        ``session_id`` should be the session's **durable** id where the caller
+        holds one; :func:`~talaria.domain.state.begin_fleet_answer` documents
+        why a runtime id is the weaker choice. The focused session's own
+        ``session_key`` is substituted here when the caller named the focused
+        runtime id, which is the case every card-answer path takes.
+        """
+        durable = session_id
+        if session_id and session_id == self.state.focused_session_id:
+            durable = self.state.session_key or session_id
+        profile = self.fleet_profile
+        self.fleet = begin_fleet_answer(
+            self.fleet, profile=profile, session_id=durable, request_key=request_key
+        )
+        try:
+            yield
+        finally:
+            self.fleet = end_fleet_answer(
+                self.fleet, profile=profile, session_id=durable, request_key=request_key
+            )
 
     def _record_prompt_outcome(
         self,
@@ -3269,8 +3475,8 @@ class TalariaApp(App[None]):
         """Probe KTD9's read-only set and name every gap on screen (R34, AE7).
 
         What lands in the transcript is only the blocking rows. A clean check
-        says nothing, because a line reading "19 methods verified" would be
-        false — six were verified and thirteen were not probed at all — and a
+        says nothing, because a line reading "20 methods verified" would be
+        false — six were verified and fourteen were not probed at all — and a
         line that told the truth about that would be an operator-facing
         paragraph on every launch about a thing that is fine.
 
@@ -3400,7 +3606,7 @@ class TalariaApp(App[None]):
             # returned (listing fetched, dialog open, operator selects) reached
             # this point unrefused and put the RPC on the wire regardless of
             # what its reply would do with it.
-            refusal = switch_refusal(self.state)
+            refusal = fleet_switch_refusal(self.fleet)
             if refusal:
                 self._notice(refusal)
                 return None
@@ -3466,10 +3672,11 @@ class TalariaApp(App[None]):
         if not isinstance(raw, str) or not raw:
             self._notice(f"{SESSION_START_FAILED} the reply named no session")
             return outcome
-        refusal = switch_refusal(self.state)
+        refusal = fleet_switch_refusal(self.fleet)
         if refusal:
             # Landing is refused for the same reason a switch is: an answer is
-            # still travelling. Seeding into a state that did not move would
+            # still travelling — anywhere in the fleet, not only in the focused
+            # engine (R6/KTD9). Seeding into a state that did not move would
             # append the landed session's history to the session still on
             # screen.
             self._notice(refusal)
@@ -3526,6 +3733,11 @@ class TalariaApp(App[None]):
                 omitted=result.get("messages_omitted") is True,
                 count=count if isinstance(count, int) and not isinstance(count, bool) else 0,
             )
+            self._apply_handover(
+                result,
+                runtime_id=raw,
+                durable_id=stored if isinstance(stored, str) and stored else "",
+            )
         else:
             # B3: landing the session already focused — the picker row the
             # marker did not recognize — confirms the keypress on the
@@ -3536,6 +3748,89 @@ class TalariaApp(App[None]):
             self._notice(SESSION_ALREADY_FOCUSED_NOTICE)
         self._dirty = True
         return outcome
+
+    def _apply_handover(
+        self, result: Mapping[str, Any], *, runtime_id: str, durable_id: str
+    ) -> None:
+        """What an attach recovered, and what it visibly did not (KTD8).
+
+        Three acts, in this order, on the branch where focus actually moved:
+
+        **Ownership.** The session is now one this run drives, so its registry
+        row says ``we_drive`` and stops being a candidate for OP2's dialog. A
+        session Talaria has attached to is not a session Talaria can steal from
+        somebody else again.
+
+        **Hydration.** The shared live-session payload builder behind
+        ``session.create``, ``session.resume`` and ``session.activate`` carries
+        ``pending_approval`` and ``pending_clarify`` when they exist at the
+        pinned revision (``tui_gateway/server.py:8708-8711``). Each becomes an
+        ordinary request event and is folded through the ordinary reducer, so a
+        hydrated card is registered, deduped, transcribed and answered by
+        exactly the machinery a live request uses — no second path, nothing to
+        drift.
+
+        **Residue.** Everything else the session was waiting on is
+        unrecoverable by construction: it was announced to the transport this
+        attach displaced, no method re-announces it, and inventing a card for it
+        would be a claim. So it latches a visible resolved-failed on the row and
+        writes the same sentence to the transcript. On the revision serving this
+        machine today the reply hydrates *nothing at all* (U1), which makes this
+        the ordinary path rather than the exotic one.
+
+        Nothing runs on the retain branch — landing the session already focused
+        is not an attach, and an approval that arrives with no ``request_id``
+        gets a fresh synthesized one each time it is registered, so replaying a
+        hydration would register a second card for one question.
+        """
+        session_id = durable_id or runtime_id
+        at = self.state.last_observed_at
+
+        # Read ownership BEFORE marking it, because marking destroys the answer.
+        # A landing on a session this run already drives is a return, not a
+        # steal: no transport was displaced, so there is no residue to latch and
+        # saying otherwise names a client that never existed.
+        #
+        # The predicate is shared with OP2's dialog rather than restated here.
+        # A first attempt asked only "do we already drive this row", which is
+        # half the question: a row can be not-ours and no longer live at once,
+        # and on that row — an ordinary historical resume — the dialog correctly
+        # stayed away while the residue told the operator a client was
+        # displaced. Two questions with one answer must not have two spellings.
+        #
+        # An earlier attempt also treated the prompts Talaria still holds as
+        # cards that were never lost. True, but unreachable: prompts are only
+        # registered while a session is focused, and a focused session is one
+        # this run drives. It was dead weight that made the live guard
+        # untestable — neither mutation failed a test while both were in.
+        existing = fleet_row(self.fleet, profile=self.fleet_profile, session_id=session_id)
+        displaced = existing is not None and attach_displaces_client(existing)
+
+        self.fleet = mark_we_drive(
+            self.fleet, profile=self.fleet_profile, session_id=session_id, at=at
+        )
+        events = activation_hydration_events(
+            result, session_id=runtime_id, at=at, seq=self.state.entry_seq
+        )
+        for hydrated in events:
+            self.state = apply_frame(self.state, hydrated)
+        kinds = frozenset(
+            PROMPT_EVENT_KINDS[event.type]
+            for event in events
+            if event.type in PROMPT_EVENT_KINDS
+        )
+        residue = ""
+        if displaced:
+            self.fleet, residue = latch_attach_residue(
+                self.fleet,
+                profile=self.fleet_profile,
+                session_id=session_id,
+                hydrated=kinds,
+                at=at,
+            )
+        if residue:
+            self._notice(residue)
+            self.state = record_local_note(self.state, residue, at=at)
 
     def _report_startup_failure(self, outcome: RpcOutcome) -> None:
         """Put a failed session open in front of the operator, and in the log.
@@ -3808,7 +4103,7 @@ class TalariaApp(App[None]):
 
         report = await switcher.switch_to_endpoint(row.endpoint)
         if report.ok:
-            self.current_profile = row.name
+            self._adopt_profile(row.name)
             if self.admin_factory is not None:
                 # The admin surface follows the socket. See ``admin_factory``.
                 self.admin_client = self.admin_factory(row.endpoint)
@@ -3843,7 +4138,7 @@ class TalariaApp(App[None]):
 
         report = await connections.ensure(name)
         if report.ok:
-            self.current_profile = name
+            self._adopt_profile(name)
             if self.admin_factory is not None:
                 # The admin surface follows the *home* connection, which is the
                 # one a new session would be created on. See ``admin_factory``.
@@ -3884,7 +4179,8 @@ class TalariaApp(App[None]):
         await self.open_sessions_picker()
 
     async def open_sessions_picker(self) -> None:
-        """Fetch ``session.list`` fresh and put the modal picker up (R7).
+        """Read both listings fresh, fold them into the registry, and put the
+        modal picker up (R7, and v0.4's R3).
 
         **Fetched on every open, never cached.** ``/models`` and ``/profiles``
         hold their listing in app state so a reconnect-invalidated read can be
@@ -3897,23 +4193,30 @@ class TalariaApp(App[None]):
         rather than shown (:data:`SESSIONS_STALE_EPOCH`).
 
         **Refused before anything is sent, while an answer is on the wire**
-        (U5's :func:`~talaria.domain.state.switch_refusal`, surfaced here for
-        the first time a UI caller reaches it): a late outcome resolving after
-        a switch would mutate the newly focused session's transcript, so the
-        same guard :meth:`_land_session` applies to the *switch* is applied
-        here to the *listing fetch* as well — an operator mid-answer gets one
-        consistent refusal instead of a picker that opens and then cannot be
-        used.
+        (:func:`~talaria.domain.state.fleet_switch_refusal`): a late outcome
+        resolving after a switch would mutate the newly focused session's
+        transcript, so the same guard :meth:`_land_session` applies to the
+        *switch* is applied here to the *listing fetch* as well — an operator
+        mid-answer gets one consistent refusal instead of a picker that opens
+        and then cannot be used. The refusal is fleet-scoped as of v0.4: an
+        answer travelling for a session that is not the focused one holds the
+        window exactly as a focused one does (R6/KTD9).
+
+        **The connection this open belongs to is captured once**, before either
+        call goes out, and every fold and every row is keyed by it. Reading it
+        again per step would let a profile switch landing mid-open file one
+        gateway's listing and another's roster under two different keys.
         """
         dispatcher = self.dispatcher
         if dispatcher is None:
             self._notice(SESSIONS_UNAVAILABLE)
             return
-        refusal = switch_refusal(self.state)
+        refusal = fleet_switch_refusal(self.fleet)
         if refusal:
             self._notice(refusal)
             return
         epoch = self._connection_epoch
+        profile = self.fleet_profile
         outcome = await dispatcher.call(
             LIST_SESSIONS_METHOD, {"limit": SESSIONS_LIST_LIMIT}, timeout=self.call_timeout
         )
@@ -3924,11 +4227,72 @@ class TalariaApp(App[None]):
             self._notice(SESSIONS_STALE_EPOCH)
             return
         directory = decode_session_list(outcome.result)
-        if directory.is_empty:
+        roster_missing = await self._seed_registry(dispatcher, directory, profile=profile)
+        if epoch != self._connection_epoch:
+            # Re-checked after the roster call for the reason the first check
+            # exists at all: the second round trip is a second window, and a
+            # listing that answered for a gateway Talaria has left must not be
+            # shown as this gateway's fleet.
+            self._notice(SESSIONS_STALE_EPOCH)
+            return
+        rows = flatten_registry_sessions(
+            self.fleet, profile=profile, current=self.state.session_key or ""
+        )
+        if not rows:
             self._notice(NO_SESSIONS)
             return
-        source = SessionPickerSource(directory, current=self.state.session_key or "")
-        self.push_screen(PickerDialog(source), self._sessions_dismissed(epoch))
+        # The line goes in the picker's own title as well as the composer.
+        # A composer notice is written and then covered by the modal pushed on
+        # top of it, so the named absence never actually reached the screen the
+        # operator was looking at — a surface that names an absence nobody can
+        # see has not named it.
+        staleness = roster_staleness(self.fleet, profile)
+        title = ""
+        if roster_missing:
+            line = ROSTER_UNAVAILABLE if staleness == "never" else ROSTER_STALE
+            self._notice(line)
+            title = line
+        self.push_screen(
+            PickerDialog(SessionPickerSource(rows, title=title)),
+            self._sessions_dismissed(epoch),
+        )
+
+    async def _seed_registry(
+        self, dispatcher: LiveDispatcher, directory: SessionDirectory, *, profile: str
+    ) -> bool:
+        """Fold both listing sweeps into the registry; report a missing roster.
+
+        The two sweeps share one poll epoch, which is what arms the dual-listing
+        retirement rule: a row absent from *both* successful sweeps of the same
+        epoch may be dropped, and a row absent from one of them may not. A
+        roster call that fails therefore advances no active epoch at all, so
+        nothing is retired on the strength of a sweep that never happened —
+        the rows simply keep saying what they last knew, and the caller names
+        the absence (R10, R24).
+
+        Ages come from ``last_observed_at`` — the frame clock — and never from
+        a wall clock, so a replayed recording reproduces every age exactly
+        (KTD12/R20).
+        """
+        at = self.state.last_observed_at
+        self._poll_epoch += 1
+        epoch = self._poll_epoch
+        self.fleet = seed_from_listing(
+            self.fleet, directory, profile=profile, at=at, poll_epoch=epoch
+        )
+        outcome = await dispatcher.call(
+            LIST_ACTIVE_METHOD, {}, timeout=self.call_timeout
+        )
+        if not outcome.confirmed:
+            return True
+        self.fleet = apply_active_list(
+            self.fleet,
+            decode_active_list(outcome.result),
+            profile=profile,
+            at=at,
+            poll_epoch=epoch,
+        )
+        return False
 
     def _sessions_dismissed(self, epoch: int) -> Callable[[str | None], None]:
         """What happens when the session dialog closes — mirrors
@@ -3981,7 +4345,9 @@ class TalariaApp(App[None]):
             return
         await self.switch_session(session_id)
 
-    async def switch_session(self, session_id: str) -> RpcOutcome | None:
+    async def switch_session(
+        self, session_id: str, *, waiting_kind: str = ""
+    ) -> RpcOutcome | None:
         """Resolve a chosen ``/sessions`` row into a switch — KTD3, exactly.
 
         No new landing code: ``StartupSelection(mode="session", session_id=…)``
@@ -3998,10 +4364,110 @@ class TalariaApp(App[None]):
         two calls here — :meth:`open_session` is what refuses the second
         one outright while the first is still on the wire; see its own
         docstring and :attr:`_resume_in_flight`.
+
+        **Two gates in front of that call now (v0.4 U4).** The switch refusal is
+        asked fleet-wide rather than of the focused engine alone, so an answer
+        travelling for a background session occupies the window exactly as a
+        focused one does (R6/KTD9) — and it is asked *here* as well as at the
+        picker's open, because this is also the queue's entry point and a queue
+        navigation never went past that open. Then OP2: a session the gateway
+        reports live that this run did not open is confirmed before anything is
+        sent, because focusing it detaches whichever client is driving it and
+        that client is told nothing (KTD8, measured in U1).
+
+        ``waiting_kind`` is what the caller knows the session is waiting on, and
+        the only value that changes anything is ``"unobserved"`` — the queue's
+        word for a wait the gateway flattened. It adds the sentence saying the
+        kind is unknown and may not survive the attach, which is the difference
+        between an operator confirming a steal and an operator confirming a
+        steal that may recover nothing.
+
+        Returns ``None`` when the confirmation is put up: the switch has not
+        happened yet and may never, and answering ``None`` is the same answer
+        every other refusal on this path gives. The dialog's own callback
+        starts the switch if the operator takes it.
         """
+        refusal = fleet_switch_refusal(self.fleet)
+        if refusal:
+            self._notice(refusal)
+            return None
+        row = attach_confirm_row(
+            self.fleet, profile=self.fleet_profile, session_id=session_id
+        )
+        if row is not None:
+            # The epoch is captured HERE, before the dialog goes up, and
+            # re-compared after it answers. Everything else on this path
+            # already did that; inserting a modal between the last comparison
+            # and the dispatch reopened the window those comparisons exist to
+            # close — and widened it to however long an operator takes to read
+            # a warning about detaching somebody. On the profile-switch flavour
+            # of a reconnect the consequence is worse than a stale id: the
+            # decision was made against one gateway's rows and the resume would
+            # go to another gateway entirely.
+            self._confirm_attach(
+                session_id,
+                row,
+                waiting_kind=waiting_kind,
+                epoch=self._connection_epoch,
+                liveness_stale=roster_staleness(self.fleet, self.fleet_profile) != "current",
+            )
+            return None
         return await self.open_session(
             StartupSelection(mode="session", session_id=session_id)
         )
+
+    def _confirm_attach(
+        self,
+        session_id: str,
+        row: RegistryRow,
+        *,
+        waiting_kind: str = "",
+        epoch: int,
+        liveness_stale: bool = False,
+    ) -> None:
+        """Put OP2's dialog up, and send nothing until it answers (KTD8).
+
+        Fire-and-observe applies to the *decline* as much as to the confirm:
+        backing out moves no focus, marks no row, and dispatches nothing —
+        the only trace is the notice saying so.
+        """
+        kind = waiting_kind or row.waiting_kind
+        body = [ATTACH_CONFIRM_BODY]
+        if kind in ("unobserved", "") and row.status == "waiting":
+            body.append(ATTACH_CONFIRM_UNKNOWN_KIND)
+        if liveness_stale:
+            body.append(ATTACH_CONFIRM_STALE_LIVENESS)
+        # Clipped, like every other place a gateway-supplied title reaches a
+        # bounded surface: the dialog is a fixed-size modal, and a title is a
+        # string the gateway chose the length of.
+        title = clip_detail_line(row.title.strip(), CONFIRM_TITLE_CLIP) or session_id
+        dialog = ConfirmDialog(
+            title=f"{ATTACH_CONFIRM_TITLE}: {title}", body=tuple(body)
+        )
+
+        def answered(confirmed: bool | None) -> None:
+            self.composer.focus()
+            if not confirmed:
+                self._notice(ATTACH_DECLINED)
+                return
+            if epoch != self._connection_epoch:
+                # The connection this decision was made against is gone. The
+                # operator agreed to detach a client on *that* gateway; sending
+                # the resume anyway would act on a different one.
+                self._notice(SESSIONS_STALE_EPOCH)
+                return
+            self._spawn_live(self._attach_and_discard(session_id, epoch))
+
+        self.push_screen(dialog, answered)
+
+    async def _attach_and_discard(self, session_id: str, epoch: int) -> None:
+        # Re-validated here as well as in the closure that scheduled it, for
+        # the same reason ``_switch_session_and_discard`` is: a reconnect
+        # between scheduling and running would otherwise slip through.
+        if epoch != self._connection_epoch:
+            self._notice(SESSIONS_STALE_EPOCH)
+            return
+        await self.open_session(StartupSelection(mode="session", session_id=session_id))
 
     def _lookup_model_row(self, argument: str) -> SelectableRow | None:
         """Resolve a ``/models`` row number into its catalogue row, or notice why not.

@@ -4,6 +4,92 @@
 
 ## 2026-08-17
 
+### The `/sessions` rows are registry summaries, and the listing-only row helpers are gone
+
+**Author.** v0.4 fleet-turn plan, unit U4 (R3, PC2).
+
+**Decision.** The session picker reads the registry, not a reply. Opening `/sessions` folds both
+sweeps — `session.list` for identity, `session.active_list` for liveness — into `FleetState` under
+one shared poll epoch, and the rows are built from the registry by `flatten_registry_sessions`. Each
+row leads with the fixed facts (lifecycle, what the session is waiting on, the source and age of the
+last observation) and puts the gateway-supplied title last, clipped. The v0.2 row helpers that
+formatted a `session.list` row directly — `SessionRow`, `flatten_sessions`, `format_session_label`,
+`format_session_detail` — are deleted rather than kept beside the new ones.
+
+**Rationale.** `session.list` carries no lifecycle field at all (re-confirmed live in
+`docs/analysis/2026-08-17-v0-4-topology-verification.md`), so a listing-only row can say when a
+session started and never what it is doing — which is the whole question an operator opens the
+picker to answer. Keeping both row builders would leave one of them unreachable, and an unreachable
+formatter is the kind of code that gets edited by somebody who believes it renders. The absolute
+start timestamp goes with them: the registry's ages ride the frame clock, so they reproduce exactly
+under replay, which an absolute wall-clock stamp never did.
+
+**Rejected alternative.** *Keep the listing-only source as the degraded path for a gateway with no
+roster.* It is not needed: a listing-seeded row that no poll has confirmed already renders as
+never-observed, which is the honest degraded row, and a failed roster call leaves the epochs
+disagreeing so nothing is retired on the strength of a sweep that never happened.
+
+**Revisit when.** A second connection's rows share the picker — the flattener is already
+per-profile, but the ordering and the title would then need to say which gateway a row belongs to.
+
+### An attach latches what it could not recover, except when it recovered something
+
+**Author.** v0.4 fleet-turn plan, unit U4 (KTD8, KTD2's amended resolution rule).
+
+**Decision.** After a confirmed attach, `pending_approval` and `pending_clarify` in the reply become
+ordinary request events and register as ordinary cards. Anything else the row was waiting on latches
+a visible resolved-failed — on the registry row and in the transcript, one sentence in both places.
+The single exception is a wait whose *kind was never named*: when the row only ever reported the
+gateway's flattened `waiting`, the latch is withheld if the reply hydrated anything at all, and
+stands if it hydrated nothing.
+
+**Rationale.** A prompt announced to the transport an attach displaced is unrecoverable by
+construction — no method re-announces it, and inventing a card would be a claim — so silence would
+leave a control the operator can never answer. But a polled row cannot say *which* kind it was
+waiting on (U1 verified the row carries no kind), so "a prompt was lost" printed on a row while two
+recovered cards sit on the screen is a contradiction the operator has no way to resolve.
+
+**What bounds it, stated honestly.** The first draft of this entry said "the next roster poll says
+so again". That overstates what U4 ships: the only caller of `session.active_list` in this unit is
+the `/sessions` picker, so until U6 wires the poll loop, "the next roster poll" means "the next time
+the operator opens the picker". And there is a case with no signal at all: a session holding both a
+hydratable approval and a non-hydratable sudo or secret hydrates the approval, the latch is withheld,
+the orphaned prompt then times out gateway-side without emitting anything (the removal-without-
+emission hazard at `talaria/domain/state.py:959`), and the next roster reports the session idle. The
+operator is never told anything was lost.
+
+That is a real cost, accepted rather than hidden, because the alternative — printing "a prompt was
+lost" beside two recovered cards — is a contradiction on every attach rather than a silence on a
+narrow one. The honest fix is the revisit condition below, not a different guess.
+
+**Rejected alternative.** *Latch whenever the row was waiting, kind or no kind.* It is more
+conservative in the abstract and worse in practice, for the contradiction above — and this run
+already latches on every attach against the revision serving this machine, which hydrates nothing.
+
+**Revisit when.** The gateway exposes the pending kind on a roster row, or a query surface for
+non-approval pending prompts exists. Either one turns the flattened case into a named one and the
+exception disappears.
+
+### `session.active_list` is baselined evidence-only, and never version-gated
+
+**Author.** v0.4 fleet-turn plan, unit U4 (a correction to KTD4).
+
+**Decision.** The roster method gets a `MethodBaseline` entry classified `evidence-only`: pinned,
+named in the compatibility report as unverified at runtime, and not called at startup. U4 calls it
+on demand when the picker opens, exactly as `session.create` and `session.resume` are called on
+demand. No version check gates it.
+
+**Rationale.** The compatibility-coverage test requires every gateway method Talaria names to be
+pinned, and it is right to. Read-only classification would add a startup probe, which is unit U5's
+work and a different question. The no-version-gate half is a correction of record: the plan's KTD4
+names `session.active_list` as a method the old pin does not have, and U1's enumeration found it
+registered at the old pin, at the checkout, and on the wire this machine serves — only
+`approval.pending` is genuinely new. A gate built on the plan's sentence would refuse a roster from
+gateways that have always had one.
+
+**Revisit when.** U5 adds the seam probes. The classification moves to `read-only` there, with the
+probe cadence and the named-absence rendering that unit owns.
+
 ### Selecting a profile *ensures* a connection; retargeting one socket is now the fallback
 
 **Author.** v0.4 fleet-turn plan, unit U2 (KTD1).

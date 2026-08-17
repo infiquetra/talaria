@@ -150,6 +150,34 @@ COMPAT_BASELINE: tuple[MethodBaseline, ...] = (
     ),
     # ── evidence-only: never probed ──────────────────────────────────────
     MethodBaseline(
+        method="session.active_list",
+        classification="evidence-only",
+        evidence="tui_gateway/methods_session.py:986",
+        purpose=(
+            "The v0.4 registry's liveness feed: every live session of the "
+            "gateway process, with the lifecycle word session.list has no field "
+            "for (KTD2)."
+        ),
+        # Evidence-only rather than read-only *for now*, and deliberately: the
+        # method is a pure in-memory snapshot and safe to probe, but adding a
+        # startup probe is U5's seam-probe work, not U4's. U4 calls it on demand
+        # when the /sessions picker opens, exactly as session.create and
+        # session.resume are called on demand.
+        #
+        # **Not gated behind a version check, and that is a correction to the
+        # plan.** KTD4 names this method as one the pin above does not have;
+        # U1's enumeration found it registered at 7f4d15515, at the checkout
+        # revision, and on the wire this machine serves. Only approval.pending
+        # is genuinely new. A version gate here would refuse a roster from
+        # gateways that have always had one.
+        request_fixture={},
+        # Top-level only, per this module's scope note: the row shape
+        # ({current, id, last_active, message_count, model, preview,
+        # session_key, started_at, status, title}, verified live 2026-08-17)
+        # is pinned by the decoder contract in talaria/domain/session_list.py.
+        response_shape={"sessions": "list"},
+    ),
+    MethodBaseline(
         method="session.create",
         classification="evidence-only",
         evidence="tui_gateway/methods_session.py:14-158",

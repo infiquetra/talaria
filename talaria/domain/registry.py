@@ -294,6 +294,7 @@ __all__ = [
     "Ownership",
     "RegistryRow",
     "RowKey",
+    "attach_displaces_client",
     "next_poll_due_at",
     "note_identityless",
     "row_age",
@@ -301,3 +302,44 @@ __all__ = [
     "truncation_note",
     "waiting_floor_span",
 ]
+
+
+def attach_displaces_client(row: RegistryRow) -> bool:
+    """Whether attaching to this row takes a live client's session away.
+
+    One predicate, three callers, and that is the point.
+    :func:`~talaria.domain.state.attach_confirm_row` asks it to decide whether
+    OP2's dialog fires; the attach handover asks it to decide whether the residue
+    line — which says in so many words that a client was displaced — may be
+    latched; and the picker asks it to decide whether a row carries the "live
+    elsewhere" warning. Those three questions have exactly one answer, and giving
+    them more than one was a real defect twice over: the dialog asked "live and
+    not ours" while the handover asked only "not ours", so a historical resume of
+    a session whose client had since gone showed no dialog (right — KTD8's words
+    are "nothing live is stolen") and then told the operator a client was
+    displaced anyway; and the picker asked the row's *freshness* class instead,
+    so it warned about a steal on a row the confirmation correctly never fired
+    for.
+
+    A row can be not-ours and no longer live at the same time. A roster sweep
+    that omits a session clears ``live_listed`` and deliberately leaves ``status``
+    and ``waiting_kind`` saying what they last knew, so the stale wait is still
+    there for a latch to read — which is why the asymmetry was reachable rather
+    than theoretical.
+
+    **Known limitation: ownership does not expire.** ``we_drive`` says this run
+    once landed on the session, not that it still holds the transport. Another
+    client can attach to a session this run drove, and a reconnect leaves every
+    such row still reading ``we_drive``; in both shapes a genuine steal answers
+    ``False`` here and shows neither dialog nor residue. This is not fixable from
+    the data available — KTD8 records that rows carry no transport-identity
+    field, which is also why the dialog's own copy says "may be attached to
+    another client" rather than asserting it. Revisit if a roster row ever names
+    its owning transport.
+    """
+    return (
+        row.ownership != "we_drive"
+        and row.live_listed
+        and row.reclaimed_reason is None
+        and not row.disconnected
+    )
