@@ -80,17 +80,18 @@ def _number(value: Any) -> float:
     """A ``datetime``-representable ``started_at``, or 0.0 (this module's own
     "missing" value).
 
-    ``started_at`` reaches :func:`~talaria.ui.picker.format_session_detail`,
-    which hands it to ``datetime.fromtimestamp`` — NaN, an infinity, or a
-    magnitude ``datetime`` cannot represent (its year is bounded to 1-9999)
-    raises there and would crash the picker's own construction before the
-    operator ever sees a dialog (P2, U7 round two). Verified against the
-    exact conversion the render side performs, rather than a hand-computed
-    bound, because the safe range is a property of ``datetime`` and not one
-    this module should have to keep in sync with it by hand. Folded into the
-    same 0.0 already returned for a missing or wrong-typed value — an
-    unrenderable timestamp is not a new kind of failure the picker has to
-    learn, it is this one.
+    A NaN, an infinity, or a magnitude ``datetime`` cannot represent (its year
+    is bounded to 1-9999) raises inside ``datetime.fromtimestamp``, and a
+    listing row carrying one used to crash the ``/sessions`` picker's own
+    construction before the operator ever saw a dialog (P2, U7 round two). The
+    picker no longer formats this stamp — v0.4's registry-backed rows render
+    frame-clock ages instead (KTD12) — but the guard stays here, where the
+    hazard actually is: this decoder's output is what any renderer, present or
+    future, is entitled to hand to ``datetime``. It is verified against the
+    exact conversion rather than a hand-computed bound, because the safe range
+    is a property of ``datetime`` and not one this module should keep in sync
+    by hand. Folded into the same 0.0 already returned for a missing or
+    wrong-typed value.
     """
     if isinstance(value, bool):
         return 0.0

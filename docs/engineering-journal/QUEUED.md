@@ -1127,7 +1127,9 @@ This contradicts the clearing rule's own docstring: *"The moment the agent produ
 
 **Suggested framing.** Widen `_turn_progress` to include tool activity, but do it narrowly and pin both directions: the case that must *not* clear is the bad one, where the gateway still holds the approval and the agent is blocked inside a tool call producing nothing. A tool *completing* is progress; a tool *starting* may not be.
 
-### `focus_session` does not clear `withdrawn_approvals`
+### ~~`focus_session` does not clear `withdrawn_approvals`~~ — CLOSED 2026-08-17
+
+**Closed.** Fixed in the v0.2 answerability spine and verified again while v0.4's unit U4 was written: `focus_session` (`talaria/domain/state.py`) now sets `withdrawn_approvals=0` in its own `replace(...)` call, and its docstring states why — the count is about approvals *this* session had withdrawn from under it, so carrying it into the next session makes that session's screen hedge about a withdrawal that never happened there. Pinned by `tests/domain/test_prompt_registry.py::test_a_switch_clears_the_withdrawal_count_it_cannot_speak_for`, which fails when the reset is removed, and now also by `tests/ui/test_focus_churn.py::test_a_withdrawal_hedge_does_not_follow_a_switch` at the operator-visible level. Note for anyone re-checking this by mutation: there are **two** places the count is cleared, in different functions and for different reasons — `focus_session`'s reset, which this entry is about, and `_clear_withdrawal_on_progress`, which ends the hedge when the agent is observed working and is pinned by `tests/ui/test_prompts.py`. Mutating the second and concluding this citation is wrong is a mistake a review of this file has already made once. The paragraphs below describe the pre-repair tree and are kept as the record of what the defect was.
 
 **Author.** v0.1 milestone-2, unit U8 (blocking prompts), verification of the fifth adversarial round
 **Priority.** P2
@@ -1298,7 +1300,9 @@ There is also a predicate asymmetry worth resolving while here: `reveal_actions`
 
 **Frame it as making the code honour the invariant its docstring depends on**, not as fixing a loop. The one-line change is to settle the prompt on that path as every other outcome does; the reason it needs a moment's thought is deciding whether a read that could not be answered should leave any trace in the registry at all.
 
-### `focus_session` disarms the in-flight bookkeeping the prompt registry depends on
+### ~~`focus_session` disarms the in-flight bookkeeping the prompt registry depends on~~ — CLOSED 2026-08-17
+
+**Closed.** Both halves are repaired, and the function has had production callers since v0.2 — every landing reaches it through `land_session`, which the `/sessions` switcher, `--resume` and startup all go through. What the current contract does (`talaria/domain/state.py`, `focus_session`): `prompts` and `flushed_prompt_ids` **survive** a switch, so neither an outstanding control is orphaned nor a closed one resurrected; `answering` is emptied, which is safe only because a switch is refused outright while an answer is on the wire (`switch_refusal`), so the tuple is already empty by the time the clear runs — the invariant is stated in the code beside the clear; and `approvals_seen` survives too, which is what keeps a synthesized approval id from colliding with the tombstone of an earlier visit to the same session. Pinned by the 53 tests of `tests/domain/test_prompt_registry.py`, and kept green under the v0.4 registry by `tests/ui/test_focus_churn.py`, which drives three sessions with outstanding prompts through rapid switches and answers each one after its session is refocused. The paragraphs below describe the pre-repair tree.
 
 **Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
 **Priority.** P3 — **latent**, and the priority is low only because of that. Fix it before anything calls the function.

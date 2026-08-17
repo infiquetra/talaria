@@ -4,6 +4,28 @@
 
 ## 2026-08-17
 
+### One fact, two structures, and only one of them gets re-anchored
+
+**Evidence.** v0.4 unit U4, the fleet-scoped answering bookkeeping
+(`talaria/domain/state.py`: `begin_fleet_answer`, `FleetState.answering_keys`), pinned by
+`test_an_in_flight_answer_survives_rebind_then_alias_churn` (`tests/domain/test_fleet_focus.py`),
+which was verified to fail when the re-anchoring in `_rebind_durable` is removed.
+
+**Mechanism.** U3 left two protection sets on the fleet root — rows holding queue items, rows with
+an answer in flight — and its own review had already established that protection needs *two*
+mechanisms: read-time resolution through the alias map, and re-anchoring at the one place a row's
+key changes. U4 needed a third thing from the answering half that the queue half does not need: the
+identity of the individual answer, `(profile, session, request key)`, so two answers against one
+session can end independently. The obvious shape is a set of answer keys *beside* the set of row
+keys — and that is a second structure holding the same fact, in a codebase whose recorded defect is
+that a protection recorded in one structure stopped resolving because the other one changed
+underneath it. It was built as one mapping instead, answer identity to row key, with the row-key
+set derived from its values. `_rebind_durable` re-anchors exactly one thing.
+
+**Generalizable rule.** When a fix's history is "two correct mechanisms, each undoing the other",
+the next feature in that area should reduce the number of places the invariant is written down, not
+add one. A derived view costs nothing at runtime and cannot drift from what it is derived from.
+
 ### A late frame from a replaced connection is an observation, never an all-clear
 
 **Evidence.** v0.4 unit U3, the fleet router (`talaria/domain/state.py`, `route_frame`), pinned by

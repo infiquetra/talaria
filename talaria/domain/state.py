@@ -72,6 +72,7 @@ from talaria.domain.registry import (
     ObservationSource,
     RegistryRow,
     RowKey,
+    attach_displaces_client,
     note_identityless,
 )
 from talaria.domain.session_list import ActiveSessionDirectory, SessionDirectory
@@ -2457,6 +2458,11 @@ _HANDLERS: Mapping[str, _Handler] = {
 #: at import time so a failure names the missing type.
 EXPIRE_EVENT_KINDS: Mapping[str, PromptKind] = _EXPIRE_EVENTS
 
+#: The request half of the same table, published for callers that must turn an
+#: event type into the prompt kind it registers without a second copy of the
+#: mapping (U4's attach handover asks "which kinds did this reply hydrate").
+PROMPT_EVENT_KINDS: Mapping[str, PromptKind] = _PROMPT_EVENTS
+
 
 # ── The fleet root (U3, KTD3) ────────────────────────────────────────────
 #
@@ -2477,6 +2483,26 @@ EXPIRE_EVENT_KINDS: Mapping[str, PromptKind] = _EXPIRE_EVENTS
 # fleet (picker, needs-you bar, confirm flow) lands in U4–U7, which own the
 # app files. Until then the legacy single-connection path keeps its shipped
 # behavior, and this root is exercised by the domain suite and by replay.
+#
+# U4's amendment to that note: the app now *holds* a ``FleetState`` — the
+# focused engine is its ``focused`` field, and the registry is seeded from the
+# two listing sweeps the ``/sessions`` picker already makes. What U4 does not
+# do is route inbound frames through :func:`route_frame`: the app still folds
+# every frame with :func:`apply_frame`, so background events keep taking the
+# shipped cross-talk discard and ``cross_session_events_ignored`` keeps its
+# shipped meaning. Moving that boundary changes what a background event does
+# to the focused transcript's counters, which is U6's feed wiring, not this
+# unit's focus-movement work.
+
+
+#: One in-flight answer's fleet-scoped identity (KTD9): the connection it was
+#: sent on, the session it names, and the request key that names the question.
+#:
+#: Distinct from :data:`~talaria.domain.registry.RowKey` on purpose. A row key
+#: says *which row*; this says *which answer*, and two answers against one row
+#: (a second approval in the same session) must be able to coexist and to end
+#: independently.
+AnswerKey = tuple[str, str, str]
 
 
 @dataclass(frozen=True)
@@ -2487,10 +2513,20 @@ class FleetState:
     ``focused_profile`` names the connection that feeds it. ``rows`` is keyed
     ``(profile, durable_id)`` (KTD3); ``aliases`` maps ``(profile, runtime_id)``
     to a key, because runtime ids change across resume and are rebound, never
-    the key. ``queue_item_keys`` and ``answering_keys`` are the protection
+    the key. ``queue_item_keys`` and :meth:`answering_keys` are the protection
     sets the memory bound and retirement must never evict — populated by the
-    queue (U6) and the fleet-scoped answering bookkeeping (U4/KTD9); this unit
-    enforces the protection, later units feed the sets.
+    queue (U6) and the fleet-scoped answering bookkeeping (U4/KTD9); U3
+    enforces the protection, and U4 feeds the answering half.
+
+    ``answers_in_flight`` is that answering half, and it is stored as a
+    *mapping* rather than as a bare set of row keys on purpose (U4/KTD9). Its
+    keys are the fleet-scoped answer identity KTD9 specifies —
+    ``(profile, session, request key)`` — which is what
+    :func:`fleet_switch_refusal` needs; its values are the registry keys the
+    protection is about, resolved at record time per the contract in
+    :meth:`protected_keys`. One structure carrying both means there is exactly
+    one thing :func:`_rebind_durable` has to re-anchor, which is the whole
+    lesson of that method's history section.
 
     ``clock`` is the frame-clock high-water mark: the largest ``at`` this
     fleet has folded, and the only value ages are computed against (KTD12).
@@ -2502,8 +2538,18 @@ class FleetState:
     aliases: Mapping[tuple[str, str], RowKey] = field(default_factory=dict)
     channels: Mapping[str, ConnectionChannel] = field(default_factory=dict)
     queue_item_keys: frozenset[RowKey] = frozenset()
-    answering_keys: frozenset[RowKey] = frozenset()
+    answers_in_flight: Mapping[AnswerKey, RowKey] = field(default_factory=dict)
     clock: float = 0.0
+
+    @property
+    def answering_keys(self) -> frozenset[RowKey]:
+        """Rows with an answer on the wire right now, as registry keys.
+
+        Derived from ``answers_in_flight`` rather than stored beside it: two
+        copies of one fact would be two things to re-anchor at a rebind, and
+        the second one is exactly what nobody would remember to write.
+        """
+        return frozenset(self.answers_in_flight.values())
 
     def focused_key(self) -> RowKey | None:
         """The focused cursor's registry key, ``None`` before any adoption."""
@@ -2692,7 +2738,13 @@ def _rebind_durable(fleet: FleetState, old_key: RowKey, durable_id: str) -> Flee
         rows=rows,
         aliases=aliases,
         queue_item_keys=_moved(fleet.queue_item_keys),
-        answering_keys=_moved(fleet.answering_keys),
+        # The answering half is re-anchored here too, and for the identical
+        # reason — it is a mapping only so that one entry can carry both the
+        # answer's own identity and the row key the protection is about.
+        answers_in_flight={
+            answer: (new_key if target == old_key else target)
+            for answer, target in fleet.answers_in_flight.items()
+        },
     )
 
 
@@ -3188,22 +3240,313 @@ def mark_we_drive(
     return _with_row(fleet, key, replace(fleet.rows[key], ownership="we_drive"))
 
 
+# ── U4: fleet-scoped answering, the steal confirm, the attach handover ────
+
+
+#: Why a switch is refused while an answer is travelling for some *other*
+#: session than the focused one (R6/KTD9).
+#:
+#: Separate wording from :data:`REFUSED_SWITCH_WHILE_ANSWERING` because the two
+#: name different situations and the operator can act on the difference: the
+#: focused sentence is about the card in front of them, this one is about an
+#: answer they sent from the queue into a session they are not looking at.
+REFUSED_SWITCH_WHILE_FLEET_ANSWERING: Final[str] = (
+    "an answer is still travelling to the gateway for another session — the "
+    "session was not switched; try again in a moment"
+)
+
+
+def fleet_answer_key(profile: str, session_id: str, request_key: str) -> AnswerKey:
+    """The fleet-scoped identity of one in-flight answer (KTD9)."""
+    return (profile, session_id, request_key)
+
+
+def begin_fleet_answer(
+    fleet: FleetState, *, profile: str, session_id: str, request_key: str
+) -> FleetState:
+    """Record one answer as on the wire, protecting the row it names (KTD9).
+
+    **The recorded value is the row's registry key as resolved right now**, per
+    the contract :meth:`FleetState.protected_keys` states: an alias is followed
+    to the row it points at, and a session with no row yet is recorded under the
+    key a row for it would take. Both cases are then re-anchored by
+    :func:`_rebind_durable` if the row ever learns a durable identity, which is
+    the only moment a row's key changes.
+
+    ``session_id`` should be the **durable** id whenever the caller holds one
+    (``session_key``, or the id a listing named), for the reason that contract
+    spells out: a runtime id that is merely an alias of an already-durable-keyed
+    row is re-anchored by nothing, because no rebind ever moves it, and it
+    silently loses protection when the alias ages out of the row's four-slot
+    window. Passing the durable id makes the recorded key the row's own.
+
+    Recording an answer against a session with no row does **not** invent one.
+    A row is a claim that the gateway told Talaria about a session; an answer in
+    flight is Talaria's own bookkeeping. The protection is simply inert until a
+    row exists under that key, which is exactly what it should be.
+    """
+    key = _resolve_key(fleet, profile, session_id) or (profile, session_id)
+    answers = dict(fleet.answers_in_flight)
+    answers[fleet_answer_key(profile, session_id, request_key)] = key
+    return replace(fleet, answers_in_flight=answers)
+
+
+def end_fleet_answer(
+    fleet: FleetState, *, profile: str, session_id: str, request_key: str
+) -> FleetState:
+    """Retire one in-flight answer — the round trip ended, however it ended.
+
+    Removing the entry is what releases both the switch-refusal window and the
+    row's protection, and a row still named by a *second* outstanding answer
+    keeps its protection because the protection set is derived from what is
+    left rather than from a counter that could drift.
+    """
+    answer = fleet_answer_key(profile, session_id, request_key)
+    if answer not in fleet.answers_in_flight:
+        return fleet
+    answers = {k: v for k, v in fleet.answers_in_flight.items() if k != answer}
+    return replace(fleet, answers_in_flight=answers)
+
+
+def fleet_switch_refusal(fleet: FleetState) -> str:
+    """Why a session switch must not happen right now, fleet-wide, or ``""``.
+
+    The focused engine's own rule first, verbatim
+    (:func:`switch_refusal`) — that sentence is the shipped one and every
+    surface that already says it goes on saying it. Then R6's fleet half: an
+    answer travelling for *any* session on *any* connection occupies the same
+    window, because the late outcome is applied to whatever state exists when
+    the reply lands, and a switch inside that window moves the state out from
+    under it. A queue answer aimed at a background session never enters the
+    focused engine's ``answering`` tuple at all, so without this half it would
+    occupy no window whatsoever.
+    """
+    focused = switch_refusal(fleet.focused)
+    if focused:
+        return focused
+    if fleet.answers_in_flight:
+        return REFUSED_SWITCH_WHILE_FLEET_ANSWERING
+    return ""
+
+
+def fleet_row(
+    fleet: FleetState, *, profile: str, session_id: str
+) -> RegistryRow | None:
+    """The registry row a session id names on one connection, or ``None``.
+
+    Public because callers outside the domain legitimately need to *read* a row
+    before acting — and because the alternative, reaching into ``fleet.rows``
+    with a raw tuple, skips the alias resolution and silently misses a row whose
+    runtime id has been rebound to a durable key.
+    """
+    key = _resolve_key(fleet, profile, session_id)
+    return fleet.rows[key] if key is not None else None
+
+
+def roster_staleness(fleet: FleetState, profile: str) -> str:
+    """How current this connection's lifecycle data is: current, stale, never.
+
+    Derived, not stored. The two sweeps of one open share a poll epoch, and a
+    failed ``session.active_list`` advances no active epoch — so a listing epoch
+    ahead of the active epoch *is* the record of a roster that did not answer,
+    and no separate flag can drift from it.
+
+    Three answers because there are three situations and they are not the same
+    sentence. ``never`` is a connection whose roster has never once answered:
+    rows carry identity only. ``stale`` is a roster that answered before and did
+    not this time: the rows still say what they last knew, which is data, but
+    data of unknown age. ``current`` is the ordinary case. Reporting ``stale``
+    as ``never`` was a real defect — the picker told the operator its rows
+    showed identity only while displaying a lifecycle for every one of them.
+    """
+    channel = fleet.channel(profile)
+    if channel.active_epoch < 0:
+        return "never"
+    if channel.listing_epoch > channel.active_epoch:
+        return "stale"
+    return "current"
+
+
+def attach_confirm_row(
+    fleet: FleetState, *, profile: str, session_id: str
+) -> RegistryRow | None:
+    """The row whose attach needs OP2's confirmation, or ``None`` (KTD8).
+
+    The dialog fires for exactly one shape: a session the gateway currently
+    reports **live** (present in the most recent ``session.active_list`` sweep,
+    not reclaimed, not on a connection Talaria has lost) that this run did not
+    create, resume or activate. Attaching that steals its event stream, and the
+    displaced client is told nothing — U1 measured the silence at four ownership
+    flips.
+
+    A historical session — in ``session.list`` and not in ``active_list`` — is
+    deliberately **not** confirmed: nothing live is stolen, and a dialog on
+    every resume trains the operator to click through the one that matters.
+    Neither is a row this run already drives, nor a session with no row at all
+    (the roster is unavailable or the session is unknown): a confirmation whose
+    premise Talaria cannot check would be a claim, and R24's rule is that an
+    absence of observation is named rather than acted on as if it were a
+    sighting.
+    """
+    row = fleet_row(fleet, profile=profile, session_id=session_id)
+    return row if row is not None and attach_displaces_client(row) else None
+
+
+#: Which reply field hydrates which prompt event on a confirmed attach.
+#:
+#: Exactly two, and the pair is the gateway's, not a choice: the shared
+#: live-session payload builder behind ``session.create``, ``session.resume``
+#: and ``session.activate`` adds ``pending_approval`` and ``pending_clarify``
+#: when they exist (``tui_gateway/server.py:8708-8711`` at the pinned read) and
+#: nothing for sudo, secret, or any other bridge. On the revision this machine
+#: actually serves today it adds neither (U1's topology verification), so the
+#: empty case is day-one behaviour rather than an edge case.
+ACTIVATION_HYDRATION_FIELDS: Final[Mapping[str, str]] = {
+    "pending_approval": "approval.request",
+    "pending_clarify": "clarify.request",
+}
+
+
+def activation_hydration_events(
+    result: Any, *, session_id: str, at: float, seq: int
+) -> tuple[GatewayEvent, ...]:
+    """Turn a landing reply's hydratable prompts into request events (KTD8).
+
+    Returned as ordinary :class:`~talaria.domain.models.GatewayEvent` values so
+    the caller folds them through :func:`apply_frame` — the same registration
+    path a live ``approval.request`` takes. Nothing about a hydrated card is
+    special-cased downstream: one registration path means one dedupe rule, one
+    transcript line, one answer path, and no second implementation to drift.
+
+    A field the reply does not carry produces no event; a field carrying
+    something that is not a mapping produces no event either, because the only
+    honest reading of a shape the gateway did not send is that it was not sent.
+    """
+    if not isinstance(result, Mapping):
+        return ()
+    events: list[GatewayEvent] = []
+    for field_name, event_type in ACTIVATION_HYDRATION_FIELDS.items():
+        payload = result.get(field_name)
+        if not isinstance(payload, Mapping):
+            continue
+        events.append(
+            GatewayEvent(
+                type=event_type,
+                session_id=session_id,
+                payload=dict(payload),
+                at=at,
+                seq=seq + len(events),
+            )
+        )
+    return tuple(events)
+
+
+#: How a row says an attach recovered nothing for a prompt it was waiting on.
+#:
+#: The wording latches the outcome rather than describing an attempt: the
+#: gateway announced that prompt to the transport it has now displaced, no
+#: method re-announces it, and nothing Talaria can send would recover it. That
+#: is a resolved-failed, and the terminal-read settle precedent says a failure
+#: settles visibly instead of leaving a control the operator can never answer.
+ATTACH_RESIDUE_PREFIX: Final[str] = "attach recovered no card"
+
+#: What the residue line calls a waiting kind the gateway never named. A polled
+#: row reports the flattened ``waiting`` and nothing finer (U1 verified the row
+#: carries no kind), so this is the honest noun for it.
+ATTACH_RESIDUE_UNKNOWN_KIND: Final[str] = "prompt of an unknown kind"
+
+
+def attach_residue_notice(kind: str) -> str:
+    """The one line a row and the transcript both carry for lost residue."""
+    named = ATTACH_RESIDUE_UNKNOWN_KIND if kind in ("", "unobserved") else f"{kind} prompt"
+    return (
+        f"{ATTACH_RESIDUE_PREFIX} for the {named} this session was waiting on — "
+        "resolved-failed: it was announced to the client this attach displaced"
+    )
+
+
+def latch_attach_residue(
+    fleet: FleetState,
+    *,
+    profile: str,
+    session_id: str,
+    hydrated: frozenset[str],
+    at: float,
+) -> tuple[FleetState, str]:
+    """Latch the visible resolved-failed for a wait the attach did not recover.
+
+    Returns the fleet and the line, ``""`` when there is nothing to latch —
+    the caller writes the line to the transcript as well, so one sentence
+    reaches both surfaces and neither can drift from the other.
+
+    Nothing is latched when the row was not waiting, or when the kind it was
+    waiting on is among the kinds this reply hydrated. Everything else latches,
+    including a *clarify* that failed to hydrate: on the revision serving this
+    machine the reply carries no hydration fields at all, so "clarify always
+    comes back" would be a claim about a gateway Talaria is not talking to.
+
+    **A wait whose kind was never named is the one case decided differently,
+    and deliberately.** A polled row flattens every kind to the word
+    ``waiting``, so Talaria cannot say whether the thing it was waiting on is
+    the thing that just hydrated. When the reply hydrated *something*, the
+    latch is withheld: telling the operator a prompt was lost while two
+    recovered cards are on the screen in front of them is a contradiction, and
+    the cost of being wrong is bounded — the next roster poll reports the
+    session as ``waiting`` again and the row says so. When the reply hydrated
+    *nothing*, the latch stands, because then there is no reading under which
+    anything came back.
+    """
+    key = _resolve_key(fleet, profile, session_id)
+    if key is None:
+        return fleet, ""
+    row = fleet.rows[key]
+    waiting = row.waiting_kind or ("unobserved" if row.status == "waiting" else "")
+    if not waiting or waiting in hydrated:
+        return fleet, ""
+    if waiting == "unobserved" and hydrated:
+        return fleet, ""
+    line = attach_residue_notice(waiting)
+    row = replace(
+        row,
+        waiting_kind="",
+        last_notice=clip_detail_line(line),
+        last_event_at=max(row.last_event_at, at),
+    )
+    return _with_row(fleet, key, row), line
+
+
 __all__ = [
+    "ACTIVATION_HYDRATION_FIELDS",
     "APPROVAL_AGED_OUT",
     "APPROVAL_COMMAND_LABEL",
     "APPROVAL_STALE_AFTER",
+    "ATTACH_RESIDUE_PREFIX",
+    "ATTACH_RESIDUE_UNKNOWN_KIND",
     "DELIVERY_NOTES",
     "EXPIRE_EVENT_KINDS",
+    "PROMPT_EVENT_KINDS",
+    "fleet_row",
+    "REFUSED_SWITCH_WHILE_ANSWERING",
+    "REFUSED_SWITCH_WHILE_FLEET_ANSWERING",
     "WITHHELD_HISTORY_PREFIX",
+    "AnswerKey",
     "DeliveryState",
     "DenyAllScope",
     "FleetState",
     "SessionState",
+    "activation_hydration_events",
     "apply_active_list",
     "age_out_approvals",
     "apply_frame",
     "apply_frames",
+    "attach_confirm_row",
+    "attach_residue_notice",
+    "begin_fleet_answer",
     "cancel_turn",
+    "end_fleet_answer",
+    "fleet_answer_key",
+    "fleet_switch_refusal",
+    "latch_attach_residue",
     "fleet_connection_lost",
     "fleet_connection_restored",
     "focus_session",

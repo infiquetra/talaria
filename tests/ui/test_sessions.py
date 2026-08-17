@@ -24,11 +24,14 @@ from typing import Any
 import pytest
 
 from talaria.domain.commands import CATALOG_METHOD
-from talaria.domain.state import REFUSED_SWITCH_WHILE_ANSWERING
+from talaria.domain.state import ATTACH_RESIDUE_PREFIX, REFUSED_SWITCH_WHILE_ANSWERING
 from talaria.replay.controls import ReplayControls
 from talaria.replay.source import ReplaySource
 from talaria.transport.rpc import RpcOutcome
 from talaria.ui.app import (
+    ATTACH_CONFIRM_UNKNOWN_KIND,
+    ATTACH_DECLINED,
+    LIST_ACTIVE_METHOD,
     LIST_SESSIONS_METHOD,
     NO_SESSIONS,
     RESUME_METHOD,
@@ -38,7 +41,7 @@ from talaria.ui.app import (
     SWITCH_ALREADY_IN_FLIGHT,
     TalariaApp,
 )
-from talaria.ui.dialog import REFUSED_PREFIX, PickerDialog
+from talaria.ui.dialog import REFUSED_PREFIX, ConfirmDialog, PickerDialog
 from talaria.ui.picker import SESSION_ALREADY_FOCUSED
 from tests.ui.conftest import event, feed, live_app, records, screen_text, settle
 
@@ -332,7 +335,14 @@ async def test_sessions_opens_the_dialog_listing_the_stub_with_the_focused_one_m
         assert any(
             "a different conversation" in row and not row.startswith("*") for row in rows
         )
-        assert [method for method, _ in dispatcher.operator_calls] == [LIST_SESSIONS_METHOD]
+        # Two calls, not one: v0.4's picker reads the registry, and the
+        # registry is fed by the historical listing *and* the live roster.
+        # ``session.list`` alone carries no lifecycle field at all, so a
+        # one-call picker could only ever show identity.
+        assert [method for method, _ in dispatcher.operator_calls] == [
+            LIST_SESSIONS_METHOD,
+            LIST_ACTIVE_METHOD,
+        ]
         await app.shutdown_sources()
 
 
@@ -357,8 +367,11 @@ async def test_escape_closes_without_a_wire_call_and_returns_the_caret() -> None
 
         assert no_dialog(app)
         assert app.focused is app.composer.text_area
-        # Backing out sent nothing beyond the listing fetch that opened it.
-        assert [method for method, _ in dispatcher.operator_calls] == [LIST_SESSIONS_METHOD]
+        # Backing out sent nothing beyond the two reads that opened it.
+        assert [method for method, _ in dispatcher.operator_calls] == [
+            LIST_SESSIONS_METHOD,
+            LIST_ACTIVE_METHOD,
+        ]
         await app.shutdown_sources()
 
 
@@ -793,4 +806,352 @@ async def test_an_empty_listing_is_a_claim_the_gateway_made_not_a_blank_dialog()
 
         assert no_dialog(app)
         assert app.composer.notice == NO_SESSIONS
+        await app.shutdown_sources()
+
+
+# ── v0.4 OP2: the confirmation before a live session is taken (KTD8) ─────
+
+
+def active_row(
+    session_id: str,
+    *,
+    session_key: str = "",
+    status: str = "idle",
+    title: str = "",
+) -> dict[str, Any]:
+    """One ``session.active_list`` row, in the shape U1 verified on the wire."""
+    return {
+        "id": session_id,
+        "session_key": session_key or session_id,
+        "status": status,
+        "title": title,
+        "preview": "",
+        "model": "a-model",
+        "message_count": 2,
+        "started_at": 1785000000.0,
+        "last_active": 1785000000.0,
+    }
+
+
+def roster_outcome(*rows: Mapping[str, Any]) -> RpcOutcome:
+    return RpcOutcome(
+        status="ok",
+        method=LIST_ACTIVE_METHOD,
+        request_id="1",
+        epoch=1,
+        result={"sessions": list(rows)},
+    )
+
+
+def confirm(app: TalariaApp) -> ConfirmDialog:
+    screen = app.screen
+    assert isinstance(screen, ConfirmDialog), (
+        f"expected the steal confirmation, got {type(screen).__name__}"
+    )
+    return screen
+
+
+def _steal_dispatcher(
+    *,
+    live_waiting: bool = True,
+    resume: RpcOutcome | None = None,
+) -> ScriptedDispatcher:
+    """A gateway whose roster reports ``s2`` live and ``s3`` only historical."""
+    return ScriptedDispatcher(
+        {
+            LIST_SESSIONS_METHOD: list_outcome(
+                session_row("s1", title="current"),
+                session_row("s2", title="somebody else is here"),
+                session_row("s3", title="yesterday's session"),
+            ),
+            LIST_ACTIVE_METHOD: roster_outcome(
+                active_row("s1", title="current"),
+                active_row(
+                    "s2",
+                    status="waiting" if live_waiting else "working",
+                    title="somebody else is here",
+                ),
+            ),
+            RESUME_METHOD: resume or resume_outcome("s2"),
+        }
+    )
+
+
+async def choose_row(app: TalariaApp, pilot: Any, needle: str) -> None:
+    """Walk the open picker to the row whose text contains ``needle``, and
+    press enter on it."""
+    for _ in range(len(dialog(app).row_texts)):
+        if needle in dialog(app).active_row_text:
+            break
+        await pilot.press("down")
+        await pilot.pause()
+    assert needle in dialog(app).active_row_text, dialog(app).row_texts
+    await pilot.press("enter")
+    await app.settle_live()
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_taking_a_live_session_asks_first_and_names_the_consequence() -> None:
+    """OP2. Rows carry no transport-identity field, so a detached orphan and a
+    session another client is actively driving are indistinguishable from
+    here — the copy states both possibilities rather than asserting the more
+    decisive-sounding one. Nothing reaches the wire while the dialog is up."""
+    dispatcher = _steal_dispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        await choose_row(app, pilot, "somebody else is here")
+
+        dialog_screen = confirm(app)
+        assert "somebody else is here" in dialog_screen.title_text
+        assert any("detaches that client" in line for line in dialog_screen.body_texts)
+        # The waiting kind is the flattened one the poll reports, so the copy
+        # also says the prompt may not survive the attach (KTD8's unobserved
+        # clause).
+        assert any(
+            ATTACH_CONFIRM_UNKNOWN_KIND == line for line in dialog_screen.body_texts
+        )
+        assert RESUME_METHOD not in [method for method, _ in dispatcher.operator_calls]
+        assert app.state.focused_session_id == "s1"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_declining_the_steal_sends_nothing_and_moves_no_focus() -> None:
+    """Fire-and-observe on the decline as much as on the confirm: no optimistic
+    focus move, no row marked, nothing dispatched — just the sentence saying
+    so."""
+    dispatcher = _steal_dispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        await choose_row(app, pilot, "somebody else is here")
+        assert isinstance(app.screen, ConfirmDialog)
+
+        await pilot.press("escape")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert not isinstance(app.screen, ConfirmDialog)
+        assert app.composer.notice == ATTACH_DECLINED
+        assert RESUME_METHOD not in [method for method, _ in dispatcher.operator_calls]
+        assert app.state.focused_session_id == "s1"
+        assert app.focused is app.composer.text_area
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_enter_on_the_opening_row_cancels_rather_than_steals() -> None:
+    """The highlight opens on cancel, so the reflex keypress is the safe one.
+    Reaching the destructive row takes a deliberate move first."""
+    dispatcher = _steal_dispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        await choose_row(app, pilot, "somebody else is here")
+        assert "cancel" in confirm(app).active_row_text
+
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.composer.notice == ATTACH_DECLINED
+        assert RESUME_METHOD not in [method for method, _ in dispatcher.operator_calls]
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_confirming_the_steal_resumes_the_session() -> None:
+    dispatcher = _steal_dispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        await choose_row(app, pilot, "somebody else is here")
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert "detach" in confirm(app).active_row_text
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        resume_call = next(
+            params for method, params in dispatcher.calls if method == RESUME_METHOD
+        )
+        assert resume_call["session_id"] == "s2"
+        assert app.state.focused_session_id == "s2"
+        # The session is now one this run drives, so a later switch back to it
+        # is not a steal and asks nothing.
+        assert app.fleet.rows[(app.fleet_profile, "s2")].ownership == "we_drive"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_historical_session_resumes_with_no_dialog_at_all() -> None:
+    """KTD8's exemption: nothing live is stolen, and a dialog on every resume
+    would train the operator to click through the one that matters."""
+    dispatcher = _steal_dispatcher(resume=resume_outcome("s3"))
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        await choose_row(app, pilot, "yesterday's session")
+
+        assert not isinstance(app.screen, ConfirmDialog)
+        resume_call = next(
+            params for method, params in dispatcher.calls if method == RESUME_METHOD
+        )
+        assert resume_call["session_id"] == "s3"
+        await app.shutdown_sources()
+
+
+# ── v0.4 KTD8: what a confirmed attach recovers, and what it cannot ──────
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_attach_renders_the_cards_its_reply_hydrated() -> None:
+    """The scripted twin of U1's live hydration leg.
+
+    The shared live-session payload builder behind create, resume and activate
+    carries ``pending_approval`` and ``pending_clarify`` when they exist at the
+    pinned revision. Both become ordinary request events, so both arrive as
+    ordinary cards — this asserts the cards on screen, not a field on a reply.
+    """
+    hydrating = resume_outcome("s2")
+    hydrating = replace(
+        hydrating,
+        result={
+            **(hydrating.result or {}),
+            "pending_approval": {
+                "request_id": "a-1",
+                "command": "rm -rf /data-canary-hydrate",
+                "description": "a hydrated dangerous command",
+                "choices": ["once", "deny"],
+            },
+            "pending_clarify": {
+                "request_id": "c-1",
+                "question": "which branch should I use — canary-clarify?",
+                "choices": ["main", "release"],
+            },
+        },
+    )
+    dispatcher = _steal_dispatcher(resume=hydrating)
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        await choose_row(app, pilot, "somebody else is here")
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        await settle(app, pilot)
+
+        assert sorted(prompt.kind for prompt in app.state.prompts) == [
+            "approval",
+            "clarify",
+        ]
+        screen = screen_text(app)
+        assert "a hydrated dangerous command" in screen
+        assert "which branch should I use — canary-clarify?" in screen
+        # Nothing was invented beyond what the reply carried.
+        assert app.fleet.rows[(app.fleet_profile, "s2")].last_notice == ""
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_attach_that_hydrates_nothing_fails_visibly_on_the_row() -> None:
+    """Day-one behaviour, not an edge case: the gateway revision serving this
+    machine has no hydration fields in its payload builder at all (U1), so a
+    confirmed attach on a waiting session recovers no card. The wait settles as
+    resolved-failed — visible on the registry row and in the transcript —
+    rather than leaving a control the operator can never answer or inventing
+    one that was never announced to them.
+    """
+    dispatcher = _steal_dispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        await choose_row(app, pilot, "somebody else is here")
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+        await settle(app, pilot)
+
+        assert app.state.prompts == (), "no card may be invented for a lost prompt"
+        row = app.fleet.rows[(app.fleet_profile, "s2")]
+        assert ATTACH_RESIDUE_PREFIX in row.last_notice
+        assert "resolved-failed" in row.last_notice
+        assert row.waiting_kind == ""
+        # The same sentence reaches the operator twice: the notice bar now, and
+        # the transcript, which outlives the next notice.
+        assert ATTACH_RESIDUE_PREFIX in app.composer.notice
+        assert any(
+            ATTACH_RESIDUE_PREFIX in entry.text for entry in app.state.transcript
+        )
+
+        # And it is still on the row the next time the picker is opened, which
+        # is where an operator looking at the fleet would find it.
+        await open_sessions(app, pilot)
+        assert any(
+            ATTACH_RESIDUE_PREFIX in row_text for row_text in dialog(app).row_texts
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_reconnect_while_the_confirmation_is_open_refuses_the_steal() -> None:
+    """CR4's blocking finding: the OP2 dialog reopened a window that was closed.
+
+    Every step from opening the picker to dispatching ``session.resume`` compared
+    the connection generation — at the listing fetch, at dialog dismissal, and
+    once more inside the scheduled task. U4 inserted the steal confirmation
+    between the last comparison and the dispatch, and the confirmation's callback
+    carried no generation at all. That made the window human-scale: exactly as
+    long as an operator takes to read a warning about detaching somebody.
+
+    On the profile-switch flavour of a reconnect the consequence is worse than a
+    stale id. The decision was made against one gateway's rows, and the resume
+    would go to whichever gateway is current when the operator presses enter.
+    """
+    dispatcher = _steal_dispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.state = replace(app.state, focused_session_id="s1", session_key="s1")
+        await open_sessions(app, pilot)
+        await choose_row(app, pilot, "somebody else is here")
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert "detach" in confirm(app).active_row_text
+
+        # The connection is replaced while the operator is reading the warning.
+        # This is literally what note_connection("connected") does.
+        app._connection_epoch += 1  # noqa: SLF001 - the generation is the mechanism
+
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        # Nothing was sent, the focus did not move, and the refusal says why.
+        assert not any(method == RESUME_METHOD for method, _ in dispatcher.calls)
+        assert app.state.focused_session_id == "s1"
+        assert SESSIONS_STALE_EPOCH in app.composer.notice
         await app.shutdown_sources()

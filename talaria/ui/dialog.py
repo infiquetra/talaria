@@ -402,3 +402,169 @@ class PickerDialog(ModalScreen[str | None]):
         self._refusal = ""
         self._stack.append(outcome)
         await self._repaint()
+
+
+# ── U4's confirm-before-steal dialog (OP2, KTD8) ──────────────────────────
+
+
+#: The two rows, in the order they are drawn. Cancel is first, and first is
+#: where the highlight opens: the destructive act is one deliberate keypress
+#: away rather than the default, and an operator who hits ``enter`` on reflex
+#: has cancelled rather than detached somebody.
+CONFIRM_CANCEL_ROW = "cancel — leave the session where it is"
+CONFIRM_PROCEED_ROW = "detach that client and focus this session here"
+
+#: What the dialog says it is doing when neither row is chosen.
+CONFIRM_HINT = "↑↓ move · enter choose · esc cancel"
+
+
+class ConfirmDialog(ModalScreen[bool]):
+    """A two-row confirmation over the transcript: cancel, or go ahead.
+
+    Dismisses ``True`` only when the operator chose the proceed row, and
+    ``False`` for every other exit — escape, the cancel row, or the dialog
+    being dismissed by anything else. A caller therefore never has to
+    distinguish "declined" from "closed", because for a destructive act they
+    are the same answer.
+
+    **Not a** :class:`PickerDialog` **with two rows**, and the difference is
+    the filter: the picker sends every printable key into a type-to-filter
+    box, which is right for a hundred-row model list and wrong for a question
+    with two answers — a stray keystroke would empty the dialog rather than
+    answering it. This modal answers exactly the keys below and ignores the
+    rest.
+
+    Every line reaches the screen through :func:`~talaria.ui.literal.literal_text`
+    with markup off, including the body copy, because the body names a session
+    whose title the gateway supplied (R23).
+    """
+
+    DEFAULT_CSS = """
+    ConfirmDialog {
+        align: center middle;
+    }
+    ConfirmDialog > Vertical {
+        width: auto;
+        min-width: 44;
+        max-width: 92;
+        height: auto;
+        max-height: 20;
+        border: round $warning;
+        background: $surface;
+        padding: 0 1;
+    }
+    ConfirmDialog .dialog--title {
+        color: $warning;
+        text-style: bold;
+    }
+    ConfirmDialog .dialog--body {
+        color: $text;
+    }
+    ConfirmDialog .dialog--row {
+        color: $text;
+    }
+    ConfirmDialog .dialog--row.-active {
+        background: $accent;
+        color: $text;
+        text-style: bold;
+    }
+    ConfirmDialog .dialog--hint {
+        color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str,
+        body: tuple[str, ...] = (),
+        proceed_label: str = CONFIRM_PROCEED_ROW,
+        cancel_label: str = CONFIRM_CANCEL_ROW,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._title_line = title
+        self._body_lines = body
+        self._labels = (cancel_label, proceed_label)
+        #: 0 is cancel and it is where the dialog opens — see the row constants.
+        self._active = 0
+        self._title: Static | None = None
+        self._hint: Static | None = None
+        self._rows: list[Static] = []
+
+    # ── read access, so tests never reach through to the framework ───────
+
+    @property
+    def title_text(self) -> str:
+        return "" if self._title is None else str(self._title.content)
+
+    @property
+    def body_texts(self) -> tuple[str, ...]:
+        return tuple(self._body_lines)
+
+    @property
+    def row_texts(self) -> tuple[str, ...]:
+        return tuple(str(row.content) for row in self._rows)
+
+    @property
+    def active_row_text(self) -> str:
+        """The highlighted row, read off the CSS class rather than the model —
+        the same reason :attr:`PickerDialog.active_row_text` does."""
+        for row in self._rows:
+            if row.has_class("-active"):
+                return str(row.content)
+        return ""
+
+    # ── composition and paint ────────────────────────────────────────────
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            self._title = Static(
+                literal_text(self._title_line), markup=False, classes="dialog--title"
+            )
+            yield self._title
+            for line in self._body_lines:
+                yield Static(literal_text(line), markup=False, classes="dialog--body")
+            for index, label in enumerate(self._labels):
+                row = Static(
+                    literal_text(label),
+                    markup=False,
+                    classes="dialog--row -active" if index == 0 else "dialog--row",
+                )
+                self._rows.append(row)
+                yield row
+            self._hint = Static(
+                literal_text(CONFIRM_HINT), markup=False, classes="dialog--hint"
+            )
+            yield self._hint
+
+    def _repaint(self) -> None:
+        for index, row in enumerate(self._rows):
+            row.set_class(index == self._active, "-active")
+
+    # ── keys ─────────────────────────────────────────────────────────────
+
+    async def on_key(self, event: events.Key) -> None:
+        """Arrows move, enter answers, escape cancels; everything else is ignored.
+
+        No ``y``/``n`` shortcut and no ``left``/``right`` alias for choose: the
+        act behind the proceed row takes another client's session away with no
+        notification to it, so the only path to it is landing on the row and
+        pressing enter. Every other key leaves the dialog exactly as it was
+        rather than doing something adjacent.
+        """
+        key = event.key
+        if key == "escape":
+            event.stop()
+            self.dismiss(False)
+            return
+        if key in ("up", "down"):
+            event.stop()
+            delta = -1 if key == "up" else 1
+            self._active = max(0, min(len(self._labels) - 1, self._active + delta))
+            self._repaint()
+            return
+        if key == "enter":
+            event.stop()
+            self.dismiss(self._active == 1)
+            return

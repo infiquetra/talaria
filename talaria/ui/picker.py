@@ -1,4 +1,4 @@
-"""What the picker offers: models by provider, and profiles by name.
+"""What the picker offers: models by provider, profiles by name, sessions by row.
 
 **This module used to hold a foldable region, and the region is gone.** KTD3 of
 the 2026-08-06 plan modelled the picker on :class:`~talaria.ui.palette.PaletteRegion`
@@ -10,8 +10,9 @@ use said so immediately. KTD3 is overturned; see
 ``docs/engineering-journal/DECISIONS.md``, "The picker is a modal dialog". The
 rows are now rendered and driven by :class:`~talaria.ui.dialog.PickerDialog`,
 and what is left here is the pure half: the numbering, the formatting, and the
-two :class:`~talaria.domain.selection.PickerSource` implementations that say
-what each level of the dialog contains.
+three :class:`~talaria.domain.selection.PickerSource` implementations that say
+what each level of the dialog contains — models, profiles, and the sessions of
+the v0.4 registry.
 
 **What is rendered and what is not.** ``ProviderCatalog`` — U1's pure decode of
 ``GET /api/model/options`` — carries no ``available``/``failure`` pair the way
@@ -49,7 +50,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Literal
 
 from talaria.domain.models_catalog import (
@@ -57,8 +57,10 @@ from talaria.domain.models_catalog import (
     ProfileDirectory,
     ProviderCatalog,
 )
+from talaria.domain.normalize import clip_detail_line
+from talaria.domain.registry import attach_displaces_client, row_age, waiting_floor_span
 from talaria.domain.selection import Choice, Selection, Stage
-from talaria.domain.session_list import SessionDirectory
+from talaria.domain.state import FleetState
 
 #: Which listing the dialog was opened on. ``"models"`` is U2's and stays the
 #: default, so nothing about the model picker changes for an operator who never
@@ -520,50 +522,7 @@ class ProfilePickerSource:
         return choice.payload
 
 
-# ── U7's session picker (KTD6) ────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class SessionRow:
-    """One session as the picker shows it, current-session marked (R7).
-
-    Carries the **stored** id ``session.list`` returns
-    (``tui_gateway/methods_session.py:197``) as :attr:`session_id` — never a
-    row position — because that id is the picker's whole selection contract:
-    it is what a chosen row emits, what a later ``session.resume`` asks for,
-    and what :attr:`~talaria.domain.state.SessionState.session_key` names a
-    landed session by (R6/R7).
-    """
-
-    session_id: str
-    title: str
-    preview: str
-    started_at: float
-    message_count: int
-    source: str
-    is_current: bool
-
-
-def flatten_sessions(
-    directory: SessionDirectory, *, current: str = ""
-) -> tuple[SessionRow, ...]:
-    """Every session, in the listing order the gateway sent, current one marked.
-
-    Pure, the same contract :func:`flatten_selectable` and :func:`flatten_profiles`
-    keep: nothing here reads a screen, so a test asserts the marking without one.
-    """
-    return tuple(
-        SessionRow(
-            session_id=entry.session_id,
-            title=entry.title,
-            preview=entry.preview,
-            started_at=entry.started_at,
-            message_count=entry.message_count,
-            source=entry.source,
-            is_current=bool(current) and entry.session_id == current,
-        )
-        for entry in directory.sessions
-    )
+# ── the session picker's shared row vocabulary (U7's KTD6, kept) ─────────
 
 
 #: Said on the row naming the session already in focus.
@@ -574,60 +533,213 @@ SESSION_ALREADY_FOCUSED: str = "already the focused session"
 UNTITLED_SESSION: str = "(untitled session)"
 
 
-def format_session_label(row: SessionRow) -> str:
-    """The session's own title, or a named placeholder when it has none."""
-    title = row.title.strip()
-    return title or UNTITLED_SESSION
+# ── U4's registry-backed session rows (v0.4 R3, PC2) ─────────────────────
+#
+# These replaced the v0.2 rows, which were whatever ``session.list`` said and
+# nothing else. That reply carries no lifecycle field at all (verified live,
+# U1), so those rows could say when a session started and never what it was
+# doing. The registry can, because it also folds ``session.active_list``, and
+# R3's second half is exactly that: the picker shows lifecycle, what the
+# session is waiting on, where the observation came from, and how old it is.
+# The old row helpers were deleted rather than kept beside these — see
+# ``docs/engineering-journal/DECISIONS.md`` for that decision and its cost (an
+# absolute start timestamp no row shows any more).
 
 
-def format_session_detail(row: SessionRow) -> str:
-    """The id and when it started — the "id/recency" half of R7's three fields.
+#: What a row's status says when the registry has an identity for a session and
+#: no lifecycle observation of it (R24's never-observed class). Never ``idle``:
+#: a listing proves a session exists, not what it is doing, and rendering the
+#: absence as a state is the fabrication R10 exists to prevent.
+NEVER_OBSERVED_STATUS: str = "never observed · no lifecycle poll yet"
 
-    Rendered as an absolute UTC timestamp rather than a relative one ("3h
-    ago"): a relative rendering needs the current time, and nothing else in
-    this module reads a clock — the picker's rows are a pure function of the
-    reply alone, the same purity :func:`flatten_selectable` and
-    :func:`flatten_profiles` keep.
+#: Said after the status block for a live session this run did not open (KTD8).
+#: The operator sees before they choose the row what the confirmation dialog
+#: will then say — the dialog is the gate, this is the warning.
+NOT_OURS_SUFFIX: str = " · live elsewhere"
+
+#: How much of a gateway-supplied title one registry row shows. Bounded, and
+#: bounded *here* rather than left to the terminal, because the title is the
+#: only variable-width field on the row and everything the operator needs to
+#: judge the row — status, source, age — is drawn after it. At 80 columns an
+#: unbounded title pushes all three off the screen.
+REGISTRY_TITLE_CLIP: int = 28
+
+#: How much of a row's ``last_notice`` reaches the picker. The whole line lives
+#: in the transcript; the row carries enough of it to be recognized.
+REGISTRY_NOTICE_CLIP: int = 60
+
+
+@dataclass(frozen=True)
+class RegistrySessionRow:
+    """One registry row as the picker shows it (R3's second half).
+
+    :attr:`session_id` is the row's **durable** id — the registry key's second
+    half — because the selection contract is unchanged: a chosen row emits the
+    id a later ``session.resume`` asks for. Every other field is a summary the
+    registry already holds; nothing here reads a clock, so the ages are the
+    frame-clock spans :mod:`talaria.domain.registry` computed (KTD12).
     """
-    when = datetime.fromtimestamp(row.started_at, tz=UTC).strftime("%Y-%m-%d %H:%M")
-    return f"{row.session_id} · {when}"
+
+    session_id: str
+    title: str
+    lifecycle: str
+    observation: str
+    waiting_kind: str
+    waiting_span: float | None
+    source: str
+    age: float | None
+    notice: str
+    message_count: int
+    ownership: str
+    is_current: bool
+    #: Whether choosing this row would take a live client's session away —
+    #: :func:`~talaria.domain.registry.attach_displaces_client`'s answer, carried
+    #: here rather than re-derived from the flattened strings.
+    #:
+    #: Re-deriving it was a real defect. This row said "live elsewhere" whenever
+    #: the row was not ours and its *observation class* was live — but that class
+    #: is R24's data-freshness question (have we seen it lately), not the
+    #: gateway's liveness (does the roster still list it). A sweep that omits a
+    #: session clears the liveness and leaves the freshness alone, so the picker
+    #: warned "live elsewhere", the operator chose the row, and the confirmation
+    #: correctly did not fire. The warning and the gate disagreed, which is the
+    #: whole failure this field exists to make impossible.
+    displaces_client: bool = False
+
+
+def format_span(seconds: float | None) -> str:
+    """A frame-clock span as a short, deterministic label.
+
+    ``None`` renders as ``"—"`` rather than as ``0s``: no observation and an
+    observation one instant old are different facts, and the second one is a
+    measurement (R24).
+    """
+    if seconds is None:
+        return "—"
+    total = int(max(0.0, seconds))
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m"
+    return f"{total // 3600}h"
+
+
+def format_registry_status(row: RegistrySessionRow) -> str:
+    """The fixed-width half of a registry row: lifecycle, source, and age.
+
+    The waiting age is rendered as a floor — ``≥`` — and never as a start time.
+    No poll row and no approval event carries a start stamp at any gateway
+    revision U1 examined, so the span since Talaria first observed the wait is
+    the only honest age *any* client can render (KTD12).
+    """
+    if row.observation == "never-observed":
+        status = NEVER_OBSERVED_STATUS
+    else:
+        lifecycle = row.lifecycle or "unreported"
+        if row.waiting_kind:
+            lifecycle = f"{lifecycle} ≥{format_span(row.waiting_span)} on {row.waiting_kind}"
+        source = row.source or "unattributed"
+        status = f"{lifecycle} · {source} {format_span(row.age)}"
+        if row.observation == "stale":
+            status = f"{status} · stale"
+    if row.displaces_client:
+        status += NOT_OURS_SUFFIX
+    return status
+
+
+def format_registry_label(row: RegistrySessionRow) -> str:
+    """The row's own line: what it is doing, then what it is called.
+
+    Status first. The title is the gateway's, so it is the one field whose
+    width Talaria does not control, and a row that puts it first is a row whose
+    fixed facts disappear the moment somebody names a session with a sentence.
+    """
+    title = row.title.strip()
+    shown = clip_detail_line(title, REGISTRY_TITLE_CLIP) if title else UNTITLED_SESSION
+    return f"{format_registry_status(row)}  {shown}"
+
+
+def format_registry_detail(row: RegistrySessionRow) -> str:
+    """The row's second half: the durable id, its size, and any latched notice."""
+    parts = [row.session_id]
+    if row.message_count:
+        parts.append(f"{row.message_count} msgs")
+    if row.notice:
+        parts.append(clip_detail_line(row.notice, REGISTRY_NOTICE_CLIP))
+    return " · ".join(parts)
+
+
+def flatten_registry_sessions(
+    fleet: FleetState, *, profile: str, current: str = ""
+) -> tuple[RegistrySessionRow, ...]:
+    """Every registry row of one connection, most recently observed first.
+
+    Pure — the same contract the three flatteners above keep — and ordered
+    deterministically so two renders of one registry produce one order:
+    observed rows before never-observed ones, then youngest observation first,
+    then by durable id so two equal ages cannot swap between renders.
+    """
+    rows = [
+        RegistrySessionRow(
+            session_id=key[1],
+            title=row.title,
+            lifecycle=row.lifecycle(),
+            observation=row.observation(),
+            waiting_kind=row.waiting_kind,
+            waiting_span=waiting_floor_span(row, fleet.clock),
+            source=row.last_event_source,
+            age=row_age(row, fleet.clock),
+            notice=row.last_notice,
+            message_count=row.message_count,
+            ownership=row.ownership,
+            is_current=bool(current) and key[1] == current,
+            displaces_client=attach_displaces_client(row),
+        )
+        for key, row in fleet.rows.items()
+        if key[0] == profile
+    ]
+    rows.sort(key=lambda row: (row.age is None, row.age or 0.0, row.session_id))
+    return tuple(rows)
 
 
 class SessionPickerSource:
-    """Flat: every session, current one marked (R7 — the ``/profiles`` shape).
+    """The ``/sessions`` listing, read from the registry instead of from a reply.
 
-    One level, the same reason :class:`ProfilePickerSource` is flat: a session
-    listing has no second stage to descend into, unlike ``/models``'
-    provider-then-model staging.
+    One level and one selection contract, both unchanged from the v0.2 source
+    this replaces: a chosen row emits its **durable** id, the focused row is
+    marked and refuses itself. What changed is where a row's words come from.
+    The old source could only repeat ``session.list``, which carries no
+    lifecycle field at all (verified live, U1), so its rows said when a session
+    started and never what it was doing. The registry has folded
+    ``session.active_list`` as well, so these rows say both — and where it has
+    folded no roster, they say *that*, as never-observed, rather than filling
+    the gap with ``idle`` (R24).
 
-    Unlike the model and profile listings, **nothing here is cached across a
-    typed shorthand.** ``/sessions`` has no ``/sessions <n>`` form — the
-    listing is fetched fresh every time the picker opens
-    (:meth:`~talaria.ui.app.TalariaApp.open_sessions_picker`) rather than held
-    in app state the way :attr:`~talaria.ui.app.TalariaApp.model_catalog` and
-    :attr:`~talaria.ui.app.TalariaApp.profiles` are, so there is no cached row
-    a composer-typed index could resolve against.
+    Rows are built by :func:`flatten_registry_sessions` and handed in already
+    ordered, so this class holds no policy about which sessions are listed —
+    the caller decides which connection's rows it is showing.
     """
 
-    def __init__(self, directory: SessionDirectory, *, current: str = "") -> None:
-        self._rows = flatten_sessions(directory, current=current)
+    def __init__(
+        self, rows: tuple[RegistrySessionRow, ...], *, title: str = ""
+    ) -> None:
+        self._rows = rows
+        self._title = title or "sessions — choose one to switch to"
 
     def root(self) -> Stage:
         choices = tuple(
             Choice(
                 key=row.session_id,
-                label=format_session_label(row),
+                label=format_registry_label(row),
                 payload=row.session_id,
-                detail=format_session_detail(row),
+                detail=format_registry_detail(row),
                 marked=row.is_current,
                 selectable=not row.is_current,
                 refusal=SESSION_ALREADY_FOCUSED if row.is_current else "",
             )
             for row in self._rows
         )
-        return Stage(
-            title="sessions — choose one to switch to", selection=Selection.opened(choices)
-        )
+        return Stage(title=self._title, selection=Selection.opened(choices))
 
     def descend(self, depth: int, choice: Choice) -> Stage | str:
         return choice.payload
