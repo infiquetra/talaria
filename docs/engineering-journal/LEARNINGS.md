@@ -2,7 +2,330 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-18
+
+### A refusal's stated exit must be reachable from where the refusal is shown
+
+**Evidence.** The needs-you queue's connection-wide fold refused every approval on a connection while
+a phantom (an approval whose runtime session id names no registry row) stood on it, and its reason
+promised the block "clears when that approval is answered from its own session's view or ages out
+unanswered". Both exits were closed off-focus: `age_out_approvals` (talaria/domain/state.py) keeps
+every prompt of a non-focused session by its A3 rule, and `prompt_view` renders only the focused
+session's cards — a probe showed the phantom surviving 100x `APPROVAL_STALE_AFTER` while age-out took
+the operator's live focused approval instead. The fix narrowed the fold on a verified property of the
+Hermes core: `resolve_gateway_approval` (`tools/approval.py:2655-2658`) selects entries by id whenever
+a `request_id` is present and returns 0 on no match, with the head-pop the structurally unreachable
+`else` — so an id-carrying answer cannot land on a phantom's entry and is exempt, a blind answer stays
+refused (`UNPLACEABLE_APPROVAL_ON_CONNECTION`, rewritten), and the phantom itself carries a reason
+of its own. Pinned by the phantom tests in `tests/domain/test_needs_you_queue.py`.
+
+**Corrected 2026-08-18.** As first written this paragraph named that reason
+`PHANTOM_APPROVAL_FOCUS_ITS_SESSION` and said it named "the one exit that exists". Review round eight
+found that exit unreachable — no operator action can focus a trimmed runtime id — which is this
+entry's own rule turned on its own sentence for the second time. The constant is now
+`PHANTOM_APPROVAL_AGES_OUT`, and the exit it names is true because the age-out was made unconditional
+(DECISIONS.md, 2026-08-18).
+
+**Mechanism.** The fold's reason was written from the exits' *definitions* (the answer path exists;
+age-out exists) rather than from their *guards* (both are focus-scoped). A refusal shown in a
+fleet-wide surface inherited a sentence whose truth conditions are session-scoped, so the sentence
+was true exactly where the refusal never appears (the phantom's own focused session) and false
+everywhere it does. Separately, the refusal's width was set by its worst case (a blind head-pop) and
+applied to answers that provably cannot misroute (aimed by id, no fallthrough at the pinned read) —
+over-refusal that blocked the operator's live approvals beside a stuck phantom.
+
+**Generalizable rule.** When a blocked-state message promises an exit, test the exit from the state
+the message is shown in — not from the state its author was imagining — and scope a safety refusal to
+the mechanism that makes the action unsafe, verified at the pinned source, not to the surface it was
+first observed on.
+
 ## 2026-08-17
+
+### A two-part fix needs a mutation per part, or the inert half gets the credit
+
+**Evidence.** v0.4 unit U6, review round four. The reported defect was an anchor recovery that
+silently kept a phantom row key. The repair had two parts: key the lookup on the gateway's
+`observed_request_id` rather than the registry's `request_id`, and mark the item
+`possibly_duplicate` when no anchor resolves. The comment written beside the first part said the
+spelling change was "the whole fix". Mutation testing reverted each part alone: reverting the
+spelling passed everything — 47 in the file, 2056 in the whole suite — while reverting the label
+failed both legs.
+
+**Mechanism.** The two spellings are equivalent by a fact neither of them states. `request_id` is
+the gateway's id whenever one was observed, so on that branch the strings are identical; when none
+was observed it is a locally synthesized `approval:<session>#<n>`, which carries colons, while every
+gateway id is `uuid4` hex — so the synthesized key can never appear in a map built from gateway ids
+and the lookup misses to the same `None` the empty-string guard produces. The spelling is worth
+keeping because it states the precondition instead of leaning on that non-collision, but it changes
+no behaviour, and no test can distinguish it.
+
+The damage of not knowing that is specific. A comment claiming the inert half is the fix survives
+into the next reader's hands, and the next reader simplifying this function deletes the half that
+works — the `unanchored` branch — while carefully preserving the half that does not. An equivalent
+mutant is not a gap in the tests; it is a measurement, and the thing it measures is which line the
+prose should be pointing at.
+
+**Generalizable rule, CORRECTED 2026-08-18 after it produced a defect of its own.** Mutate each part
+of a multi-part fix separately, never the fix as a whole. A surviving mutant says **exactly one
+thing: the existing tests do not distinguish the change.** It does *not*, on its own, say the line is
+inert.
+
+The original wording of this rule said it did, and that inference shipped a false claim. In the same
+unit, a mutation replacing a routed frame's connection generation with a constant left all 2083 tests
+green; the survival was read as inertness and a comment was written saying the argument "buys nothing
+at all". It buys the whole of a registry row's liveness recovery: the constant makes
+`stale_generation` true from the first reconnect of every run, so no inbound event ever ends a row's
+staleness again. The mutant was a **coverage gap**, not an equivalence, and the comment it licensed
+would have led the next reader to delete a load-bearing argument with a green suite.
+
+So a survivor forks into two cases, and which one it is must be **established, never assumed**:
+
+* **Coverage gap** — behaviour differs and no test looks. Write the distinguishing probe, which is
+  the test that fails under the mutation. Do not write a test that merely re-asserts the line exists.
+* **Equivalent** — behaviour genuinely cannot differ. Declaring this requires **either a
+  distinguishing behavioural probe that comes back identical, or a structural equivalence proof** —
+  an argument from the code that no reachable state separates the two. A green suite is neither.
+
+Only in the second case does the "move the prose off it" advice apply, and the declaration must carry
+its evidence the way the surviving branch in `talaria/domain/queue.py` does. Two claims in this unit
+declared equivalence from a green suite alone; both were wrong, one materially.
+
+### Enumerate-then-cite finds the prose defects that reproduce as code defects later
+
+**Evidence.** v0.4 unit U6. Three consecutive review rounds returned findings that were defects in
+the previous round's remediation, and an operator ruling of 2026-08-17 required every scope word
+already shipped in the unit — "entirely", "gateway-supplied", "never", "only" — to get a `grep`
+enumeration of every consumer and every spelling, each site pinned by a test or the claim corrected.
+Six claims were swept. Two had already produced the round's code defects. Two more were wrong and
+had not yet: "a polled approval is dropped only by rule 1" omitted the settled-tombstone route, and
+"no path here fires at a row of unknown status" was true but cited nothing.
+
+**Mechanism.** Each remediation had been scoped by the reproduction the reviewer supplied, then
+described in prose with a universal quantifier that was never checked. The prose is the defect
+vector rather than a side effect of it: a claim of completeness makes the fix read as finished to
+its author, to the reviewer, and to the next editor, so the unenumerated sibling survives every one
+of them. Both surviving prose defects in this sweep were of that shape — behaviour that happened to
+be right, described by a sentence that would license a wrong edit.
+
+**Generalizable rule.** A scope word in a docstring, comment, or commit message cites the thing that
+checks it — the test name, or the enumeration it came from — or it is rewritten without the
+universal claim. Where a claim covers several sites, name them as a list rather than counting them,
+so the claim can be checked by following it; where an earlier draft undercounted, say so in the
+comment, because the undercount is the evidence that counting is not safe here.
+
+### A status word flattened into a prompt's shape is not a prompt, and `kind` cannot tell them apart
+
+**Evidence.** v0.4 unit U6, review round three. `build_queue` in `talaria/domain/queue.py` derives
+queue items from three sources, one of them the roster — the fleet poll's per-session status line. A
+roster row whose `waiting_kind` reads `approval` produced a queue item with `kind="approval"`,
+`command=""`, `observed_request_id=""` and `answerable=True`. Reproduced exactly before fixing:
+`source=roster kind=approval key='roster:waiting' cmd='' obs='' answerable=True reason=''`. Pinned by
+`test_a_roster_item_is_never_answerable_even_when_its_kind_says_approval` and
+`test_a_roster_item_does_not_take_the_head_from_a_real_approval`.
+
+**Mechanism.** The roster does not carry a prompt. It carries a word about one, and that word was
+mapped onto the same `kind` field a real approval sets, because both answer the question *what is
+this session waiting on*. The answerability rules then read `kind` as though it also answered *is
+there something here to answer*, and the lone-approval short circuit returned answerable before
+reaching any test for a request id. Answering it would have sent `approval.respond` with nothing to
+aim at — and that call pops the gateway's FIFO head with no request id in it, so the operator would
+have approved a command the surface never showed them. The second consequence compounded the first:
+a roster item and a polled approval both carry `age_is_floor=True`, so the mixed-feed guard read them
+as one feed and handed headship to the synthetic item, leaving the genuinely answerable approval
+blocked with no path back. The precondition is ordinary rather than exotic — it is every session
+Talaria's transport owns but is not focused on, and on a gateway with no approval-detail seam it is
+permanent.
+
+**Generalizable rule.** *What an item is about* and *whether it can be acted on* are two axes, and a
+classification field only ever carries the first. Where a surface derives actions from items of mixed
+provenance, make the second axis a property of the source, not an inference from the type: a
+derived-from-a-status-word item is never actionable, and it is excluded from the ordering that
+decides which item is next. A one-clause exception inside the answerability rules would have been
+re-derived wrongly by the next editor; a rule about the source cannot be.
+
+### A bounded alias cache is an identity map, so eviction does not lose a name — it changes one
+
+**Evidence.** v0.4 unit U6, review round three. A registry row keeps its newest
+`MAX_RUNTIME_ALIASES` runtime session ids (`talaria/domain/registry.py:76`, four slots). When a
+driven prompt's runtime id aged out of that window, the driven feed keyed the prompt by a session
+nothing answers to while the poll keyed the same approval by the durable row, so one approval
+appeared twice, both copies answerable and neither flagged `possibly_duplicate`. Pinned by
+`test_an_aged_out_alias_does_not_double_a_driven_approval`.
+
+**Mechanism.** The window was sized for display — how many aliases a row shows — and then reused as
+the map from a live id back to its row. Those are different jobs with different lifetimes: a display
+list may forget, but a lookup that forgets does not return "unknown", it returns a key that is
+syntactically fine and refers to nothing. Downstream, an unresolvable key is indistinguishable from a
+second session, so the deduplication that compares sessions had nothing to compare and correctly
+emitted two items. The recovery is a derivation rather than a second guess: a gateway-supplied
+`request_id` is the same string on both sides of the wire, so where the alias is gone the request id
+still names the row the prompt belongs to (`_polled_anchors`, consumed by `_feed_a_items`).
+
+**Generalizable rule.** Before reusing a bounded collection as an identity map, ask what a miss
+returns. If a miss yields a plausible-but-wrong key rather than a refusal, the bound is a correctness
+parameter and not a memory one, and every consumer downstream inherits a silent identity split. Where
+a second, unbounded name for the same thing exists — an id the far side supplied — resolve through
+that on a miss instead of trusting the key you were handed.
+
+### When correlation is impossible, over-report and label the doubt — never pick one to hide
+
+**Evidence.** v0.4 unit U6, review rounds one and two. Two successive versions of the two-feed
+deduplication in `build_queue` (`talaria/domain/queue.py`) each lost a live, human-blocking approval.
+The first was a blanket per-session rule: any prompt feed A held for a session suppressed everything
+feed B knew about it, so a session where feed A held one approval and the poll returned two lost the
+second, and a lone *clarify* suppressed a polled approval. The second — written as the *fix* for the
+first — masked one polled approval per uncorrelated driven one. Pinned now by
+`test_attaching_mid_wait_hides_no_approval_and_doubles_none` and
+`test_a_ghost_feed_a_approval_masks_no_live_polled_one`.
+
+**Mechanism.** The second version is the instructive one, because it looks careful. A driven
+approval whose gateway sent no `request_id` cannot be matched to any polled row — that is what "no
+request id" means — so the mask consumed polled rows *positionally*. Polled rows arrive in the
+gateway's own queue order, so the mask always ate the head. Attaching to a session mid-wait therefore
+produced both failures at once: the queue showed one command twice and never showed the other. A
+second shape: feed A can hold a prompt the gateway already dropped (it removes an entry on timeout
+and on interrupt without emitting anything), and that ghost went on masking a live polled approval
+indefinitely — the queue came back empty for a fleet that was blocking on a person.
+
+The repair is not a better guess. It is refusing to guess: polled approvals dedupe by exact identity
+only, and where feed A holds an uncorrelated approval the polled rows are kept and flagged
+`possibly_duplicate` so the surface states the doubt. The severity is asymmetric and that asymmetry
+is the whole argument — showing one approval twice is visible and self-correcting, hiding one is
+neither, and on a surface whose job is completeness the hidden one is unrecoverable by the person it
+harms.
+
+**Generalizable rule.** Before writing a suppression, ask what proves the two things are the same
+thing. If the answer is a count, a position, or an ordering you cannot derive from the data, there is
+no proof — emit both and mark the uncertainty. "Deduplicate" is not a licence to drop; it is a claim
+of identity, and a claim of identity needs evidence.
+
+### A field nothing reads is not a working field, and the first reader inherits its bugs
+
+**Evidence.** v0.4 unit U6's review, round two. `ConnectionChannel.connected`
+(`talaria/domain/registry.py`) defaults to `False`, and the only assignment of `True` anywhere in
+`talaria/` was inside `fleet_connection_restored` — a reconnect reducer with no production caller. So
+every connection that had successfully polled described itself as disconnected. Nothing noticed
+because nothing read the field, until U6's queue notices did — at which point a perfectly healthy
+fleet reported "part of the fleet could not be asked" on every render. Pinned by
+`test_a_healthy_polled_connection_is_not_reported_as_down`.
+
+**Mechanism.** The field was added with its *transitions* implemented and its *initial state* left to
+a default, on the reasonable-sounding basis that the reconnect path would set it. The reconnect path
+is the second event in a connection's life, not the first, and nothing wrote the first. A dormant
+false premise costs nothing while unread; the first consumer pays all of it at once, and pays it as
+an always-firing warning, which is worse than no warning because it trains the reader to ignore the
+line.
+
+The fix records the evidence rather than the assumption: a successful roster poll sets `connected`,
+and that line is reached only because a reply came back.
+
+**Generalizable rule.** A boolean whose `True` branch is written by exactly one reducer is a boolean
+with one half implemented. When adding state that nothing reads yet, write the test that reads it —
+or expect the first real consumer to discover that the field has never once been true. And when a
+warning can fire on a healthy system, that is a defect in the warning, not a conservative default.
+
+### A docstring that asserts a property the code lacks is worse than no docstring, because it is read as evidence
+
+**Evidence.** v0.4 unit U6's review. `approval_block_reason`
+(`talaria/domain/queue.py`) opened with "**One function, three callers, and that is the point**" and
+named `respond_to_prompt` as the third. There were two: `respond_to_prompt`
+(`talaria/domain/state.py`) re-spelled the same two branches inline and never called it. The commit
+message and a `DECISIONS.md` entry repeated the claim. The reviewer demonstrated the two disagreeing
+— settle the head approval after an ambiguous outcome and the queue offers the second while the
+registry refuses it. Fixed by having the registry call the shared function, and by counting settled
+approvals in the head-of-queue accounting; pinned by
+`test_the_queue_never_offers_an_approval_the_registry_would_refuse`.
+
+**Mechanism.** This is the third appearance of one defect class in this run — U3's protection keys,
+U4's displaces-a-client predicate, and now this — but the new part is *why it survived a unit that
+knew about the class*. The unit had read the earlier lessons; it wrote the shared function; and it
+then wrote a docstring describing the design it intended rather than the code it shipped. Everything
+downstream treated that sentence as the check. The class of bug the sentence warned about was
+sitting in the same diff.
+
+There is a second, quieter half. Unifying the two spellings turned out to have **no behavioural
+signature**: the inline copy computes the same answers, so reverting it passes every test. It is an
+equivalent mutant, and claiming a pin for it would have been the same failure one level up. What
+does bite is an agreement test driving both readers over the whole rule space — measured, not
+assumed: a *divergent* clause on one side fails it, a merely redundant one does not.
+
+**Generalizable rule.** A docstring may describe what code does; it may not assert a relationship
+between this code and code elsewhere without something that checks the relationship. "One function,
+N callers" is a claim with an arity — count them, or do not write the number. And when a repair is
+structural rather than behavioural, say the mutation survives instead of finding a test that appears
+to cover it.
+
+### A deduplication rule must suppress only what it can show is a duplicate
+
+> **Partly superseded the same day** by "When correlation is impossible, over-report and label the
+> doubt" above. The diagnosis here is right and the remedy it describes — masking one polled approval
+> per uncorrelated driven one — was itself wrong, and lost a live approval in a different way. Kept
+> rather than rewritten, because the sequence is the lesson: the second rule was narrower than the
+> first, sounded principled, and still guessed. The two tests named below now assert the *third*
+> rule's behaviour and their bodies were rewritten with it.
+
+**Evidence.** v0.4 unit U6's review. `build_queue` (`talaria/domain/queue.py`) suppressed **all** of
+feed B for any session feed A held any prompt for. A session where feed A held one approval and the
+`approval.pending` poll returned two lost the second entirely — Talaria had fetched it, stored it in
+`approval_detail`, and left it off the surface with no notice that anything was withheld. A single
+`clarify` in feed A suppressed a polled approval for the same session. Pinned by
+`test_a_polled_approval_feed_a_does_not_hold_still_reaches_the_queue` and
+`test_a_driven_clarify_does_not_suppress_a_polled_approval`.
+
+**Mechanism.** The blanket rule was reasoned backwards from the case that needed it. Two shapes
+genuinely double: a roster row's flattened `waiting`, which carries no request key and so can never
+be matched by identity, and a driven approval whose gateway sent no `request_id`, leaving feed A
+with a synthesized key. Both are real, and "the session is covered" is a correct suppressor for
+*those*. It is not a suppressor for a prompt feed A has never seen — feed A is the better record of
+a prompt it holds, and no record at all of one it does not. The narrowed rule masks a roster item per
+session and masks one polled approval per *uncorrelated* driven approval, and nothing else.
+
+**Generalizable rule.** Write a dedupe as "this specific thing is the same thing as that specific
+thing", never as "this whole bucket is covered". A bucket rule fails silently in the direction of
+dropping real work, and on a surface whose job is completeness, a silent drop is the one error that
+cannot be noticed by the person it harms.
+
+### Surfacing a failure is not settling one — and a render-pass dispatcher turns the difference into a loop
+
+**Evidence.** v0.4 unit U6. `TalariaApp.answer_terminal_read`'s unavailable branch
+(`talaria/ui/app.py`) wrote a local note, discarded its in-flight marker, and returned — leaving the
+prompt in `state.prompts`. `_answer_unattended_prompts` dispatches every unanswered terminal-read it
+sees on every render pass, so the next tick found the same prompt and wrote the same line again.
+Pinned by `test_an_unavailable_projection_settles_the_prompt_instead_of_re_dispatching`
+(`tests/transport/test_bridges.py`), verified to fail when the latch is removed: the prompt is still
+registered, and a second dispatch writes a second failure entry.
+
+**Mechanism.** The registry has three exits for a prompt — answered, expired, restored — and this
+path took none of them, because the failure was local rather than something the gateway said. The
+code even documented the invariant it was breaking, three lines up: "this dispatches on sight, so the
+bound is that every outcome settles the prompt". `latch_unservable_prompt` now takes the third exit
+explicitly: out of `prompts`, tombstoned in `flushed_prompt_ids` so a late restore cannot resurrect
+it, and one sentence written to both the transcript and the session's registry row.
+
+**Generalizable rule.** Any surface that dispatches from a *state* rather than from an *event* makes
+"I told the operator" and "I finished" different things, and only the second one stops the work. When
+a failure path is added to such a dispatcher, ask what removes the item from the state that caused
+the dispatch — if the answer is "the next successful attempt", there is no such attempt for a failure
+that is permanent.
+
+### The gateway's `waiting` word does not cover approvals, so a trigger keyed on it never fires
+
+**Evidence.** v0.4 unit U6, from U1's topology verification
+(`docs/analysis/2026-08-17-v0-4-topology-verification.md`). `_session_live_status` consults only the
+`_block()` prompt registry — clarify, sudo, secret, terminal.read, preview.read, window.read,
+mcp.setup — while approvals live in `tools/approval.py`'s `_gateway_queues`, which that function
+never reads. An approval-blocked session therefore reports `working`, because its turn is in flight.
+
+**Mechanism.** KTD11 gated `approval.pending` on rows reporting `waiting`, to avoid warming a lazy
+agent build. Read against the actual status derivation, that gate would have fired for every kind
+*except* the one the call exists to fetch. The operator's ruling of 2026-08-17 widened it to
+waiting-or-working, which keeps the safety property intact — a `working` row's agent is live by
+construction, and `idle`, `starting` and lazy rows stay excluded — and is checkable by reading
+`APPROVAL_DETAIL_TRIGGER_STATUSES` and `approval_detail_due()` in `talaria/domain/queue.py`.
+
+**Generalizable rule.** A gate keyed on a status word is a claim about how that word is *computed*,
+not about what it means in English. Before gating on one, read the function that assigns it and check
+that the thing you are gating for is among the inputs.
 
 ### Two readers of one wire will drift apart, and the second one inherits the first one's fixed bug
 

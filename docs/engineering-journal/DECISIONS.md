@@ -2,7 +2,199 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-18
+
+### An approval's expiry is unconditional; only its presentation is focus-scoped
+
+**Author.** v0.4 unit U6, operator ruling after the alias-pinning gate failed, 2026-08-18 (R18, AE2).
+
+**Decision.** `age_out_approvals` in `talaria/domain/state.py` withdraws every approval past
+`APPROVAL_STALE_AFTER` regardless of which session is focused. Its two *presentation* effects — the
+`withdrawn_approvals` counter and the transcript line — remain scoped to the focused session.
+
+**Rationale.** The focus scoping was right about the effects and wrong to carry the removal with
+them. Its own docstring gives the effects' reason and that reason still stands: ageing session A's
+approval while B is focused would increment B's counter and write A's line into B's transcript,
+because both effects belong to the one focused surface. What did not stand was the clause that
+followed — that the prompt ages "when A is focused again". Review round eight established that a
+session whose runtime id has been trimmed out of its row's four-slot window can never be focused
+again, so the deferral was permanent and the prompt leaked.
+
+Measured before the change, twelve ordinary land-approve-switch-away cycles against one durable row
+left twelve outstanding prompts, and ageing at *a thousand times* the threshold removed exactly one:
+the focused one. There is no other clearing path — no gateway `approval.expire` event exists,
+answering requires focus, `focus_session` deliberately retains `prompts`, and nothing drops prompts
+on row retirement or eviction.
+
+**What makes the expiry visible.** The queue is derived, so removing the prompt removes its queue
+item, and that withdrawal is the notice wherever the session has a surface. Where the session is
+focused, the counter and transcript line fire as before. No expiry is silent where a surface exists
+to show it.
+
+**Rejected — pinning a runtime alias while a prompt references it.** That was the first choice and it
+failed its quantification gate: eleven permanent pins after twelve cycles, unbounded, which would
+have relocated the growth the four-slot bound exists to prevent. Recorded in `QUEUED.md`.
+
+**Rejected — capping the prompt registry the way rows are capped.** A cap bounds the structure by
+dropping prompts rather than expiring them, which loses a human-blocking approval silently. Expiry
+withdraws on a stated threshold and says so.
+
+**Revisit when.** Pinning is re-asked under the new bound — four slots plus approvals arriving inside
+one stale window — which is now a number that can be stated. If it is taken, the phantom class ends
+and the unplaceable fold and both its constants become machinery for an unreachable state; delete
+them then, per the fold's own revisit clause above.
+
+## 2026-08-18
+
+### The unplaceable fold refuses only what would be answered blind
+
+**Author.** v0.4 unit U6, operator ruling on review round seven, 2026-08-18 (R18, KTD2).
+
+**Decision.** The needs-you queue's unplaceable fold — which refuses approvals across a connection
+while a phantom approval stands on it — applies only to approvals Talaria holds **no gateway request
+id** for. An approval carrying an observed request id is answerable regardless of phantoms.
+
+**Rationale, and it is a fact about the gateway rather than a judgement.** The fold's premise was
+that a phantom might belong to any session on the connection, so answering a sibling could land on
+the phantom's queue entry. That is true only of a *blind* answer. Verified in the read-only Hermes
+core before the change was made, at the operator's gate:
+
+* `tools/approval.py:2655-2658` — `if request_id:` selects `targets` by exact id match and, on no
+  match, `return 0`. There is no fallthrough.
+* The head pop, `queue.pop(0)`, is the `else` of an `if/elif/else` and is structurally unreachable
+  whenever a request id is present.
+* `tui_gateway/methods_prompt.py`'s `approval.respond` handler passes `request_id` through verbatim
+  and returns `{"resolved": count}`; it never retries without one.
+
+So an id-carrying answer is aimed by id and cannot reach a phantom's entry, and a stale id is a
+no-op rather than a blind pop. The fold as first written refused approvals that were never at risk.
+
+**Rejected — keeping the wide fold and correcting only its sentence.** That was the round-six repair
+and it left the round-seven defect intact: the constant promised an expiry exit that does not exist
+off-focus, because `age_out_approvals` is scoped to the focused session
+(`talaria/domain/state.py:1454`). Narrowing the fold removes the situations in which that promise had
+to be made at all, rather than making a smaller false promise.
+
+**Rejected — fixing the root here.** The root is that a runtime alias can be trimmed while a prompt
+is still registered under it. Pinning the alias would remove the phantom class outright, but it
+reopens U3's four-slot memory bound, which is a reviewed decision and not U6's to change. Recorded as
+a P0 candidate in `QUEUED.md` with the ceiling that has to be quantified first.
+
+**Revisit when.** The alias pinning above lands, at which point phantoms stop occurring and the fold
+becomes dead code rather than a narrowed rule — delete it then rather than leaving a mechanism whose
+precondition can no longer arise. Also revisit if a gateway revision ever resolves an approval
+positionally *despite* a supplied request id, which would invalidate the targeting evidence this
+entry rests on; the three citations above are the things to re-check.
+
 ## 2026-08-17
+
+### Answerability is a property of an item's source, never an inference from its kind
+
+**Author.** v0.4 fleet-turn plan, unit U6, review round three (R14, R18, R24).
+
+**Decision.** `build_queue` in `talaria/domain/queue.py` marks every `source=roster` item
+`answerable=False` with `ROSTER_ITEM_NOT_ANSWERABLE`, and excludes roster items from the head, count
+and feed accounting that decides which approval is next. The rule is checked before any rule that
+reads `kind`, so no path through the answerability logic can reach a roster item.
+
+**Rationale.** The roster is the fleet poll's status line: it carries a *word about* a prompt, not a
+prompt. Mapping that word onto the same `kind` field a real approval sets is right — both answer
+"what is this session waiting on" — but the answerability rules then read `kind` as though it also
+answered "is there anything here to answer". A roster row saying `approval` produced an item with no
+command, no observed request id, and `answerable=True`, because the lone-approval short circuit
+returned before testing for a request id. Answering it would have sent `approval.respond` with
+nothing to aim at, and that call pops the gateway's FIFO head — approving a command the operator
+never saw. Excluding roster items from the accounting is the same finding's other half: a roster item
+and a polled approval both carry `age_is_floor=True`, so the mixed-feed guard read them as one feed
+and gave headship to the synthetic one.
+
+**Rejected — a clause inside the answerability rules.** A condition reading "and not a roster item"
+next to the request-id test is smaller, and it is what the next editor deletes while simplifying,
+because nothing about its placement says why it is there. A rule keyed on the source states the
+invariant where a reader looking for "can this be answered" will find it, and it generalises to the
+next feed that carries a status word rather than a payload.
+
+**Revisit when.** A feed appears that is derived from a status word *and* carries a real request id —
+for example a roster that starts reporting the gateway's own request ids. Then the source is no
+longer a proxy for "nothing to aim at", and the rule should key on the presence of an aimable id
+instead.
+
+### The needs-you queue is derived on every read, never stored
+
+**Author.** v0.4 fleet-turn plan, unit U6 (R13, R14, R15, R19, KTD2).
+
+**Decision.** `talaria/domain/queue.py` builds the whole queue from the registry rows, the focused
+engine's prompt registry, the polled approval detail and the per-connection seam boards, on every
+call to `fleet_queue()`. `FleetState` stores the queue's *inputs* and none of its output;
+`FleetState.protected_keys()` derives the rows an item holds rather than reading a recorded set.
+
+**Rationale.** R19 wants an expiry to clear the item and the count "in the same render boundary".
+Derivation gives that by construction — the prompt leaves the registry and the item is gone, because
+there was never a second copy to update. It also removes the whole class of protection bug U3's
+`protected_keys()` docstring is a monument to: an item recorded under a runtime id loses its row when
+the alias trims, and an item that is *made of* its row follows the row through a rebind with nothing
+to re-anchor.
+
+**Rejected — storing the queue and syncing it after every reduction.** The first draft did this and
+it was wrong twice over: the list of reductions that can change the queue is a list somebody has to
+keep true, and clobbering `queue_item_keys` on every fold silently disarmed the hand-recorded
+protection U3's tests pin. The stored field survives for callers that must protect a row for a reason
+the queue cannot see, and the two sets are unioned.
+
+**Revisit when.** A profiler shows the per-read build costs anything at fleet scale. It is one pass
+over the rows with an early status check, and `protected_keys()` is only reached when retirement or
+the memory bound actually has work to do.
+
+### One approval rule, three callers: the card, the queue, and the registry that refuses
+
+**Author.** v0.4 fleet-turn plan, unit U6 (R18 as amended 2026-08-17, KTD9).
+
+**Decision.** `approval_block_reason()` in `talaria/domain/queue.py` decides whether an approval may
+be answered. `prompt_view` reads it to mark a card, `build_queue` reads it to mark an item, and
+`respond_to_prompt` refuses in the same two cases with the "nothing was sent" wording of the same two
+sentences. A session's second approval is never answerable; its head is answerable when the gateway
+sent a request id for it, and refused — uncorrelated, deny-all unchanged — when it did not.
+
+**This entry described the intent and not the code until 2026-08-17.** As first written, and as the
+function's own docstring said, there were three callers; there were two. `respond_to_prompt` had its
+own inline copy of the two branches, and review found them disagreeing in a reachable state: with the
+head approval settled after an ambiguous outcome, the queue offered the second while the registry
+refused it. Both readers now call the one function, a settled approval still counts in the
+head-of-queue accounting because latching means the outcome was never confirmed, and
+`test_the_queue_and_the_registry_agree_across_the_whole_rule_space` drives both over the rule space
+so the claim has a check behind it rather than a sentence. Count the callers before writing the
+number — see the `LEARNINGS.md` entry of the same date.
+
+**Rationale.** R18's amendment closes the queue-head hazard by correlation rather than by refusal:
+the running revision synthesizes a `request_id` per approval entry and `approval.respond` forwards
+it, so an answer can name the entry it means. The head-of-queue half is a *tightening*: the gateway
+resolves from its queue's head, so an answer aimed past the head lands on the head, which the old
+blanket refusal happened to prevent and no longer needed to.
+
+**Rejected — leaving the card projection on the old blanket rule.** It would have offered less than
+the registry allows, which is safe, and would have put two rules where one fact is — the exact shape
+that let a screen and a registry disagree before.
+
+**Revisit when.** A probed baseline floor guarantees `request_id` semantics everywhere Talaria runs;
+the uncorrelated branch can then go.
+
+### Per-connection seam boards, because the queue must say which connection it could not ask
+
+**Author.** v0.4 fleet-turn plan, unit U6 (operator ruling of 2026-08-17, R24).
+
+**Decision.** `FleetState.seam_boards` holds one board per connection; `TalariaApp.seams` is now a
+property over the focused connection's entry rather than a single field. U5 deferred the question —
+one board or one per connection — to the queue as the first consumer of fleet-wide state, and the
+queue answers per-connection.
+
+**Rationale.** The queue has to name, per connection, what that connection could not be asked: a
+connection that answers no roster and no approvals is, from the items alone, indistinguishable from a
+connection with nothing waiting on it, and an empty queue that means "we could not ask" reads as "you
+are free". One board can only ever describe one connection, so the notice for a second one would
+have had nothing to read.
+
+**Revisit when.** The app dials more than one connection at once — the map is ready; what is missing
+is the transport wiring U2 built and no surface consumes yet.
 
 ### A seam is a named capability, not a method — and its absence is a sentence, never a zero
 

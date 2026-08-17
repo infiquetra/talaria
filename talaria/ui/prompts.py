@@ -355,28 +355,46 @@ def respond_params(
     session_id: str | None,
     value: str,
     all_approvals: bool = False,
+    observed_request_id: str = "",
 ) -> dict[str, Any]:
     """Build the exact ``params`` one bridge's respond method reads.
 
     Approval is shaped differently from the other four and it is not an
     oversight in this function. ``approval.respond`` takes ``session_id`` and
-    resolves the pending approval by the session's own key
-    (``methods_prompt.py:887-905``); it never looks at ``request_id``, because
-    ``approval.request`` never sent one. The registry key Talaria answers under
-    is synthesized locally and deliberately stays local — putting it on the wire
-    would be a field the gateway ignores, which reads to the next person as
-    though correlation were happening when it is not.
+    resolves the pending approval from the session's own queue
+    (``methods_prompt.py:887-905``).
+
+    **It also carries the gateway's own request id when one was observed** —
+    R18 as amended on 2026-08-17, reversing this function's original
+    unsent-always choice. Three facts moved it. The running revision synthesizes
+    a ``request_id`` on every approval entry (``tools/approval.py:2596``) and
+    emits it with the request event; ``approval.respond`` forwards the parameter
+    at that revision; and the gateway removes queue heads on timeout and
+    interrupt without emitting anything, so an uncorrelated answer can authorize
+    a command the operator was never shown.
+
+    ``observed_request_id`` is the gateway's id and never Talaria's synthesized
+    registry key — see
+    :attr:`~talaria.domain.models.PendingPrompt.observed_request_id`. That
+    distinction is what the original docstring was protecting: a local key on the
+    wire would be a field the gateway ignores, reading to the next person as
+    though correlation were happening when it is not. A gateway that does not
+    read the parameter ignores it — U1 verified live that a bogus id is accepted
+    and disregarded rather than refused — so sending it degrades to today's
+    behaviour rather than breaking it.
 
     ``all_approvals`` sets the gateway's own ``all`` flag, which resolves every
     queued approval in the session with one choice. It is the only answer that
     is correct without correlation, and :data:`DENY_ALL_CHOICE` is the only
-    value it is ever sent with.
+    value it is ever sent with — so it is never aimed, and no id rides with it.
     """
     field = RESPOND_VALUE_FIELDS[kind]
     if kind == "approval":
         params: dict[str, Any] = {"session_id": session_id or "", field: value}
         if all_approvals:
             params["all"] = True
+        elif observed_request_id:
+            params["request_id"] = observed_request_id
         return params
     return {"request_id": request_id, field: value}
 

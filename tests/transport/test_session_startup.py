@@ -31,6 +31,7 @@ import pytest_asyncio
 
 from talaria.domain.commands import CommandCatalog
 from talaria.domain.startup import StartupSelection
+from talaria.domain.state import fleet_row
 from talaria.transport.attach import AttachTarget
 from talaria.transport.compat_check import METHOD_NOT_FOUND
 from talaria.transport.rpc import RpcOutcome
@@ -648,7 +649,13 @@ async def test_a_resume_keeps_the_runtime_id_and_the_durable_one_apart(
         # stamped with the durable id is another session's traffic as far as
         # this connection is concerned, and a client that correlated on
         # ``session_key`` would fold it and drop the real stream instead.
-        before = app.state.cross_session_events_ignored
+        #
+        # U6 changed how that traffic is *disposed of*, not whether it is kept
+        # out of this transcript. It used to be discarded and counted in
+        # ``cross_session_events_ignored``; ``TalariaApp.ingest`` now routes it
+        # to the registry row the durable id names. The assertion below is the
+        # one this test exists for and it is unchanged — the observable waited
+        # on simply moved from the counter to the row.
         await gateway_for_startup.send(
             {
                 "method": "event",
@@ -659,9 +666,17 @@ async def test_a_resume_keeps_the_runtime_id_and_the_durable_one_apart(
                 },
             }
         )
-        await until(lambda: app.state.cross_session_events_ignored > before)
+        await until(
+            lambda: fleet_row(
+                app.fleet, profile=app.fleet_profile, session_id="s-stored-042"
+            )
+            is not None
+        )
         assert all(
             e.text != "addressed to the durable id" for e in app.state.transcript
+        )
+        assert app.state.cross_session_events_ignored == 0, (
+            "an identified foreign event was counted as unplaceable"
         )
         await app.shutdown_sources()
 

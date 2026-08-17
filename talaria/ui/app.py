@@ -130,21 +130,27 @@ from talaria.domain.state import (
     begin_fleet_answer,
     cancel_turn,
     end_fleet_answer,
+    fleet_connection_lost,
+    fleet_connection_restored,
     fleet_row,
+    fleet_seam_board,
     fleet_switch_refusal,
     land_session,
     latch_attach_residue,
     latch_resolved_prompts,
+    latch_unservable_prompt,
     mark_we_drive,
     record_command_result,
     record_local_note,
     record_replayed_submission,
+    record_seam_board,
     record_submission,
     replayed_submission_text,
     respond_to_all_approvals,
     respond_to_prompt,
     restore_prompt,
     roster_staleness,
+    route_frame,
     seed_from_listing,
     seed_history,
     set_connection,
@@ -1122,10 +1128,12 @@ class TalariaApp(App[None]):
         #: run. ``None`` and "ran, and found gaps" are different facts, so they
         #: are not collapsed (R34, AE7).
         self.compat: CompatReport | None = None
-        #: The focused connection's seam board (v0.4 U5). Starts with every seam
-        #: never-observed, which is the honest state before a probe has run —
-        #: not an empty board, and not a board of absences.
-        self.seams: SeamBoard = empty_board()
+        #: The focused connection's seam board is **not** a field here: it lives
+        #: in the fleet, one per connection, and :attr:`seams` reads and writes
+        #: this connection's entry (U6's answer to U5's deferred question). A
+        #: connection with no entry yet answers a board of never-observed seams,
+        #: which is the honest state before a probe has run — not an empty board,
+        #: and not a board of absences.
         #: The seam lines currently on screen, or ``None`` before the board has
         #: ever been painted. The two are different facts and the difference is
         #: load-bearing: ``None`` is what keeps the render tick from putting four
@@ -1283,6 +1291,36 @@ class TalariaApp(App[None]):
         self._fleet = value
 
     @property
+    def seams(self) -> SeamBoard:
+        """The **focused connection's** seam board, out of the fleet's per-connection map.
+
+        A property rather than a field since U6, and the change is the answer to
+        the question U5 deferred. U5 kept one board scoped to the focused
+        connection and left "should it be per-connection" to the needs-you
+        queue — the first consumer of fleet-wide state — on the reasoning that
+        building the shape before its first consumer means inheriting a parallel
+        structure that then has to be reconciled.
+
+        The queue answered it: **per-connection**. It has to name, per
+        connection, what that connection could not be asked (R24), and the
+        connection whose probe failed is precisely the one whose silence must not
+        read as quiet — so a single board could only ever describe one of them.
+        The board *type* was already per-connection (it carries a ``profile``);
+        what was single was this attribute, and it now reads and writes the
+        fleet's entry for whichever connection is focused, so the app keeps its
+        one-board view of a fleet that holds one board each.
+        """
+        return fleet_seam_board(self._fleet, self.fleet_profile) or empty_board(
+            self.fleet_profile
+        )
+
+    @seams.setter
+    def seams(self, value: SeamBoard) -> None:
+        self._fleet = record_seam_board(
+            self._fleet, profile=self.fleet_profile, board=value
+        )
+
+    @property
     def state(self) -> SessionState:
         """The focused session's state — :attr:`FleetState.focused`, exactly.
 
@@ -1295,13 +1333,16 @@ class TalariaApp(App[None]):
         :meth:`~talaria.domain.state.FleetState.focused_key` would then resolve
         against the wrong value.
 
-        What deliberately did **not** change with it: inbound frames are still
-        folded by :func:`~talaria.domain.state.apply_frame` rather than routed
-        through :func:`~talaria.domain.state.route_frame`, so a background
-        session's event still takes the shipped cross-talk discard. Routing it
-        to a registry row instead is U6's feed wiring; doing it here would
-        change what ``cross_session_events_ignored`` counts as a side effect of
-        a focus-movement unit.
+        What U4 deliberately left standing here, and U6 has now discharged:
+        inbound frames used to be folded by
+        :func:`~talaria.domain.state.apply_frame`, so a background session's
+        event took the shipped cross-talk discard and no registry row ever saw
+        it. :meth:`ingest` now routes every frame through
+        :func:`~talaria.domain.state.route_frame` instead. U4 declined the move
+        because it changes what ``cross_session_events_ignored`` counts and that
+        was not a focus-movement unit's business; it is this unit's, because the
+        queue is derived from the rows the router writes and a queue fed by a
+        discard is empty for the wrong reason (R14).
         """
         return self._fleet.focused
 
@@ -1603,7 +1644,59 @@ class TalariaApp(App[None]):
             seq=record.seq,
             parse_error=record.parse_error,
         )
-        self.state = apply_frame(self.state, decoded)
+        # Routed rather than folded: ``apply_frame`` only ever sees the focused
+        # engine, so a background session's event was discarded and no registry
+        # row learned anything from it — which is how U6's queue could be empty
+        # because Talaria never recorded the question rather than because none
+        # was asked. ``route_frame`` feeds focused traffic to that same engine
+        # unchanged and sends everything else to its row.
+        #
+        # ``generation`` is this app's CURRENT connection epoch, and it is
+        # LOAD-BEARING — passing a constant here silently breaks a registry
+        # row's liveness recovery. ``route_frame`` computes
+        # ``stale_generation = generation < channel.generation``, and
+        # ``stale_generation`` is what WITHHOLDS ``_fresh_observation``, the call
+        # that clears a row's ``disconnected`` and ``stale_since``. Because
+        # ``fleet_connection_restored`` raises the channel's generation to the
+        # epoch on every reconnect, passing the epoch is exactly what keeps that
+        # comparison false so a row recovers on its next event; passing ``0``
+        # makes it true from the first connect of the run and no inbound event
+        # ever ends any row's staleness again. Pinned by
+        # ``test_a_reconnected_row_recovers_liveness_from_its_next_event``, which
+        # fails under precisely that substitution.
+        #
+        # Three earlier drafts of this comment were wrong, the last one badly,
+        # and the correction is kept because the mistake is instructive. It said
+        # the argument was inert, on the evidence that replacing it with ``0``
+        # left the whole suite green. The suite WAS green — that measurement was
+        # real — but a green suite means the tests do not distinguish the
+        # change, never that behaviour does not differ. It was a coverage gap
+        # read as an equivalence, and the test above is the probe that was
+        # missing. See the corrected rule in
+        # ``docs/engineering-journal/LEARNINGS.md``.
+        #
+        # What IS true of the narrow reading: the ``>`` guard cannot fire from
+        # here, and a genuinely superseded frame is unreachable today because
+        # ``FrameRecord`` carries no epoch of its own. So this argument does not
+        # yet DETECT staleness; it prevents live frames from being mistaken for
+        # it. U2's ``TaggedFrame`` carries each frame's own epoch and reaches no
+        # consumer until U7 assembles the ``ConnectionSet``.
+        #
+        # The capability is not missing, only unassembled. U2 built
+        # ``TaggedFrame`` (``transport/connection_set.py:170-186``) carrying each
+        # frame's own ``profile`` and ``epoch`` for exactly this — "so a consumer
+        # can tell a frame from the socket it is talking to now from one that
+        # arrived on a socket since replaced". It reaches no consumer because
+        # ``build_live_app`` never assembles the ``ConnectionSet``. That
+        # composition root is U7's first deliverable by operator ruling
+        # (2026-08-18); when it lands, this argument becomes the frame's own
+        # epoch and the stale-generation rule becomes reachable.
+        self._fleet = route_frame(
+            self._fleet,
+            decoded,
+            profile=self.fleet_profile,
+            generation=self._connection_epoch,
+        )
         self._dirty = True
 
     # ── the coalescing render tick (KTD14) ───────────────────────────────
@@ -1874,6 +1967,20 @@ class TalariaApp(App[None]):
         self.state = set_connection(
             self.state, state, cause=cause, at=self.state.last_observed_at
         )
+        if state == "disconnected":
+            # The fleet half of the same event, and U6's rather than R35's: the
+            # focused engine's ``connection`` field describes the session on
+            # screen, while every *other* row on this connection has just lost
+            # the stream that was naming its waits. Without this the rows keep
+            # reporting a kind no surviving stream can clear, and the queue
+            # either starves (a suppressed kind) or offers an answer to a
+            # question that may already be gone. Pinned by
+            # ``test_a_dropped_connection_marks_the_fleet_rows_not_just_the_focused_session``.
+            self._fleet = fleet_connection_lost(
+                self._fleet,
+                profile=self.fleet_profile,
+                at=self.state.last_observed_at,
+            )
         self._dirty = True
         line = _CONNECTION_NOTICE[state]
         if detail:
@@ -1890,6 +1997,26 @@ class TalariaApp(App[None]):
             # transition is stamped with the epoch it actually ran on rather
             # than the previous one — see :attr:`_connection_epoch`.
             self._connection_epoch += 1
+            # The fleet's symmetric half of the disconnect above, and it restores
+            # the CHANNEL rather than the rows. Without it ``channel.connected``
+            # would stay False for the rest of the run, and that flag is what
+            # ``connection_notices`` reads to tell the operator a connection is
+            # down (``talaria/domain/queue.py:1350``) — so a reconnected
+            # connection would go on claiming it was down, which is precisely
+            # the queue-that-lies failure R14 exists to prevent.
+            #
+            # It deliberately does NOT clear any row's ``disconnected``: a
+            # reconnect proves the socket, not the sessions (R20). Each row
+            # clears its own break when a fresh poll or event re-confirms it
+            # (``_fresh_observation``), which is the flag U6's stale-kind rule
+            # reads. Pinned by
+            # ``test_a_reconnect_restores_the_channel_and_leaves_the_rows_to_re_confirm``.
+            self._fleet = fleet_connection_restored(
+                self._fleet,
+                profile=self.fleet_profile,
+                generation=self._connection_epoch,
+                at=self.state.last_observed_at,
+            )
             self.fetch_catalog()
             self.fetch_model_catalog()
             self.fetch_profiles()
@@ -2717,6 +2844,11 @@ class TalariaApp(App[None]):
                     request_id=request_id,
                     session_id=session_id,
                     value=value,
+                    # R18 as amended 2026-08-17: the gateway's own id, when it
+                    # sent one, so an approval answer names the entry it means.
+                    # ``""`` for a locally synthesized key, which never goes on
+                    # the wire.
+                    observed_request_id=prompt.observed_request_id,
                 ),
                 timeout=self.call_timeout,
             )
@@ -2753,7 +2885,14 @@ class TalariaApp(App[None]):
             durable = self.state.session_key or session_id
         profile = self.fleet_profile
         self.fleet = begin_fleet_answer(
-            self.fleet, profile=profile, session_id=durable, request_key=request_key
+            self.fleet,
+            profile=profile,
+            session_id=durable,
+            request_key=request_key,
+            # The frame clock, never the wall clock (R20/KTD12) — it is what
+            # R18's requested-with-age is measured from, and what makes a
+            # replayed recording render the same age twice.
+            at=self.state.last_observed_at,
         )
         try:
             yield
@@ -2987,7 +3126,8 @@ class TalariaApp(App[None]):
 
         ``notice`` overrides what the operator is shown; the default is the same
         sentence that went to the transcript, which is the property
-        ``test_the_notice_bar_and_the_transcript_say_one_thing`` pins.
+        ``test_the_notice_bar_and_the_transcript_say_one_thing_about_one_answer``
+        pins.
 
         ``in_focus`` is ``False`` only for a sweep answering a session that
         is no longer the one displayed (the sweep-transcript fix, U7 round
@@ -3107,6 +3247,23 @@ class TalariaApp(App[None]):
             self.state = record_local_note(
                 self.state, line, at=self.state.last_observed_at
             )
+            # **And it settles** (U6, R14). Surfacing the failure and leaving the
+            # prompt registered was the recorded unavailable-projection defect:
+            # this method is dispatched from the render pass on sight, so a
+            # prompt still in the registry afterwards is re-dispatched on the
+            # very next tick — one failure line per tick, forever, for a question
+            # nothing would ever answer. The latch takes it out of the registry,
+            # tombstones it against a late restore, and names the resolved-failed
+            # on the session's registry row as well as in its transcript.
+            prompt = self.state.prompt_for(row.request_id, session_id=row.session_id)
+            if prompt is not None:
+                self.fleet, _ = latch_unservable_prompt(
+                    self.fleet,
+                    prompt,
+                    profile=self.fleet_profile,
+                    reason=detail,
+                    at=self.state.last_observed_at,
+                )
             self._notice(line)
             self._dirty = True
             return None

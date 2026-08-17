@@ -55,9 +55,23 @@ for the read).
 | `connection`           | `"disconnected"` \| `"connecting"` \| `"connected"` \| `"reconnecting"` \| `"auth_failed"` | The attach state.                                     |
 | `session`              | `{ "id": str, "title": str \| null }`                                              | The focused session's identifier and human-facing title. |
 | `turn`                 | `"idle"` \| `"streaming"` \| `"waiting"` \| `"cancelled"`                          | `"waiting"` means a prompt is outstanding — this is the one field that tells an external consumer the session is blocked on the operator, not working. |
-| `pending_prompts`      | `int`                                                                              | Count of outstanding prompts. No prompt content is ever included here. |
+| `pending_prompts`      | `int`                                                                              | Count of outstanding prompts **in the focused session** — never the install-wide total. No prompt content is ever included here. |
 | `subagents`            | `{ "active": int, "terminal": int }`                                              | Sub-agent counts by state, not the rows themselves.   |
 | `usage`                | `{ "input_tokens": int, "output_tokens": int }` \| `null`                        | `null` until usage has been observed at least once.  |
+
+### `pending_prompts` counts the focused session, and only the focused session
+
+This is a clarification of what the field has always meant, not a change to it. Talaria v0.4 keeps a
+fleet-wide *needs-you queue* — every outstanding prompt of every session on every connected gateway —
+and that count is deliberately **not** folded in here. A consumer written against version 1 reads
+this number as "the session I am looking at is blocked on me N times"; making it the whole install's
+total would silently turn another session's approval into this session's, in a document whose field
+set is frozen. The install-wide count lives on Talaria's own needs-you surface. If a fleet-scoped
+number is ever wanted here it arrives as a new, additional field under a new `version` — never as a
+meaning change to this one.
+
+A prompt that belongs to a session Talaria is no longer showing does not count either, for the same
+reason: the session on screen has nothing outstanding.
 
 **This is the whole of what the command sees about Talaria's state.** No terminal-framework type, no
 raw transcript, and no credential ever appears in this document — it is a small, deliberately

@@ -26,13 +26,15 @@ from talaria.domain.models import (
     ConnectionStatus,
     PendingPrompt,
     PromptKind,
+    QueuePrompt,
     RunMode,
     SubagentRow,
     TranscriptEntry,
     TranscriptKind,
     TurnStatus,
 )
-from talaria.domain.state import UNCORRELATED_APPROVAL, SessionState
+from talaria.domain.queue import approval_block_reason, prompt_feed_rows
+from talaria.domain.state import SessionState
 
 #: KTD5 freezes the status contract's field set at version 1. Adding a field is
 #: a ``version: 2`` change that still emits the v1 shape on request.
@@ -491,11 +493,18 @@ def prompt_view(state: SessionState) -> PromptView:
     """Project the registry, marking any prompt whose answer cannot be aimed.
 
     The only such prompt is an approval sharing its session with another
-    outstanding approval. ``approval.respond`` carries no discriminator and
-    resolves the oldest queue entry, and the gateway drops entries on timeout
-    without telling anyone, so with two on screen the operator cannot know which
-    command their answer reaches. The projection marks both, and the card turns
-    into a read-only summary plus the one action that needs no correlation.
+    outstanding approval, and :func:`~talaria.domain.queue.approval_block_reason`
+    is the single rule that decides it — the same function the needs-you queue
+    and the registry's own refusal read, so a card can never offer what the
+    registry would refuse.
+
+    Two shapes come out of it, per R18 as amended on 2026-08-17. A session's
+    **second** approval is never offered: the gateway resolves from its queue's
+    head, so an answer aimed past the head would land on the head. The **head**
+    is offered when the gateway sent a request id for it and refused when it did
+    not, because without an id the answer names nothing and the gateway also
+    drops entries on timeout without telling anyone. The card then turns into a
+    read-only summary plus the one action that needs no correlation.
 
     "Outstanding" here means outstanding *at the gateway*, which is why
     :meth:`~talaria.domain.state.SessionState.outstanding_approvals` searches
@@ -523,11 +532,17 @@ def prompt_view(state: SessionState) -> PromptView:
     transcript and cannot answer.
     """
     prompts = _focused_prompts(state)
-    ambiguous: set[str] = set()
+    blocked: dict[str, str] = {}
     for session in {p.session_id for p in prompts if p.kind == "approval"}:
         queued = state.outstanding_approvals(session)
-        if len(queued) > 1:
-            ambiguous.update(p.request_id for p in queued)
+        for prompt in queued:
+            reason = approval_block_reason(
+                is_head=queued[0].request_id == prompt.request_id,
+                queued_count=len(queued),
+                observed_request_id=prompt.observed_request_id,
+            )
+            if reason:
+                blocked[prompt.request_id] = reason
     return PromptView(
         rows=tuple(
             PromptRow(
@@ -539,16 +554,40 @@ def prompt_view(state: SessionState) -> PromptView:
                 command=p.command,
                 read_start=p.read_start,
                 read_count=p.read_count,
-                answerable=p.request_id not in ambiguous,
-                blocked_reason=(
-                    UNCORRELATED_APPROVAL if p.request_id in ambiguous else ""
-                ),
+                answerable=p.request_id not in blocked,
+                blocked_reason=blocked.get(p.request_id, ""),
             )
             for p in prompts
         ),
         withdrawn=state.withdrawn_approvals,
         notice=state.thinking_notice,
     )
+
+
+def prompt_feed(state: SessionState) -> tuple[QueuePrompt, ...]:
+    """The needs-you queue's feed A: the prompt registry with its stamps kept (U6).
+
+    Three differences from :func:`prompt_view`, and each one is a requirement
+    rather than a convenience.
+
+    * **``opened_at`` and ``seq`` survive.** They exist on every
+      :class:`~talaria.domain.models.PendingPrompt` and this is the projection
+      that carries them out, because the queue is ordered by wait age (R15) and
+      tie-broken by arrival while a card needs neither.
+    * **No focus filter.** :func:`_focused_prompts` exists so a prompt parked in
+      a session that is no longer on screen cannot make *that screen* look
+      blocked. The queue is the opposite question — R14 makes it the install's
+      whole truth, and a prompt in a switched-away session is precisely what it
+      is for.
+    * **Answers in flight are included and flagged.** A prompt whose answer is
+      travelling is still outstanding at the gateway, and R18 clears a row on
+      confirmation rather than on optimism.
+
+    The building is delegated to :func:`~talaria.domain.queue.prompt_feed_rows`
+    so the fleet's own adapter and this one cannot come to disagree about what
+    feed A contains.
+    """
+    return prompt_feed_rows(state.prompts, state.answering)
 
 
 def turn_status(state: SessionState) -> TurnStatus:
@@ -587,6 +626,16 @@ def status_payload(state: SessionState, *, mode: RunMode) -> StatusPayload:
     (:func:`_focused_prompts`), the same reason :func:`turn_status` does —
     otherwise a prompt parked in an unfocused session (CR3's retention fix)
     inflates the count for a session that has nothing outstanding.
+
+    **KTD13: v0.4 does not change what that field means, and the fleet queue
+    does not leak into it.** The needs-you queue counts every waiting prompt on
+    every connection (R14), and folding that number into ``pending_prompts``
+    would silently change what every existing consumer of this frozen v1
+    document reads — a status command written against v0.1 would start reporting
+    another session's approval as this session's. The install-wide count lives on
+    the needs-you surface; a fleet-scoped status field, if ever wanted, is a
+    deliberate versioned addition. ``docs/formats/status-line.md`` carries the
+    same qualifier for the external reader.
     """
     view = subagent_view(state)
     return StatusPayload(

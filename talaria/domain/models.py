@@ -254,6 +254,159 @@ class PendingPrompt:
     #: carried through rather than defaulted here.
     read_start: int | None = None
     read_count: int | None = None
+    #: The request id **the gateway itself sent**, or ``""`` when it sent none.
+    #:
+    #: Distinct from :attr:`request_id`, which is the registry's key and may be
+    #: locally synthesized (``approval:<session>#<n>``) for a bridge that sends
+    #: no id. The distinction is R18's, as amended on 2026-08-17: an answer
+    #: carries the gateway's own id whenever one was observed, and a synthesized
+    #: key is never put on the wire because a field the gateway ignores reads to
+    #: the next person as though correlation were happening when it is not.
+    #:
+    #: For the four keyed bridges the two are equal by construction. For
+    #: ``approval`` they differ exactly when the gateway is older than the
+    #: revision that synthesizes ids (``tools/approval.py:2596`` sets one by
+    #: ``setdefault``), which is the case the uncorrelated-approval refusal
+    #: still governs unchanged.
+    observed_request_id: str = ""
+
+
+#: Where one needs-you queue item was learned from (R13's ``source``).
+#:
+#: A plain ``str`` rather than a ``Literal`` because R13 requires the item type
+#: to admit sources beyond the gateway — Kanban blocked state, pane-manager
+#: blocked state — "without restatement". The constants below are what v0.4
+#: populates; a new source adds a constant and nothing else.
+QueueSource = str
+
+#: Feed A (KTD2): a session Talaria drives, whose prompts arrive as events and
+#: land in the focused engine's prompt registry.
+SOURCE_DRIVEN: str = "driven"
+
+#: Feed B, flattened half: a roster row reporting ``waiting`` with no kind. The
+#: gateway exposes only the flattened word for sessions other clients drive.
+SOURCE_ROSTER: str = "roster"
+
+#: Feed B, detailed half: one row of an ``approval.pending`` reply.
+SOURCE_APPROVAL_POLL: str = "approval-poll"
+
+
+@dataclass(frozen=True)
+class QueuePrompt:
+    """One registry prompt with its wait stamps kept (U6's feed A).
+
+    The projection that already existed — :class:`.projection.PromptRow` — drops
+    ``opened_at`` and ``seq`` because a card does not need them. The queue is
+    ordered by wait age (R15) and tie-broken by arrival, so it does, and this is
+    the shape that carries them out of the registry.
+
+    ``in_flight`` is the prompt's own bookkeeping half: a prompt in
+    :attr:`~talaria.domain.state.SessionState.answering` has an answer on the
+    wire, is still outstanding at the gateway, and must render as
+    requested-with-age rather than vanish (R18/R21).
+    """
+
+    request_id: str
+    kind: PromptKind
+    summary: str
+    opened_at: float
+    seq: int
+    choices: tuple[str, ...] = ()
+    session_id: str | None = None
+    command: str = ""
+    observed_request_id: str = ""
+    in_flight: bool = False
+
+
+@dataclass(frozen=True)
+class QueueItem:
+    """One thing that needs a person, whatever fleet it came from (R13).
+
+    Reference, source, kind, prompt text, allowed answers, and age — the six
+    R13 names — plus what R18 and R21 need to render an answer honestly.
+
+    ``kind`` is an **open set of plain strings**, not :data:`PromptKind`. The
+    running gateway already blocks on three kinds the pinned read never named
+    (``preview.read``, ``window.read``, ``mcp.setup``), and a foreign session's
+    wait arrives flattened to :data:`~talaria.domain.queue.UNOBSERVED_KIND` with
+    no kind at all. A closed enum here would have to be widened by every gateway
+    release; the queue instead decides *resolvability* by membership in
+    :data:`~talaria.domain.queue.QUEUEABLE_KINDS` and names everything else on
+    its session's registry row.
+
+    ``opened_at`` is a frame-clock stamp and ``age_is_floor`` says which kind of
+    stamp it is (KTD12). ``False`` is an authoritative start — Talaria watched
+    the request frame arrive. ``True`` is an observation floor: the first moment
+    Talaria *saw* the wait, which is all any client can know for a wait that was
+    already in progress, so the age renders "waiting ≥ span" and no start time
+    is invented.
+    """
+
+    profile: str
+    session_id: str
+    request_key: str
+    source: QueueSource
+    kind: str
+    summary: str
+    #: The registry key of the row this item belongs to, **resolved when the
+    #: item was built** — the contract :meth:`.state.FleetState.protected_keys`
+    #: states for anything that records protection.
+    row_key: tuple[str, str]
+    choices: tuple[str, ...] = ()
+    command: str = ""
+    opened_at: float = 0.0
+    seq: int = 0
+    age_is_floor: bool = False
+    observed_request_id: str = ""
+    #: False when this item must not offer an answer — a session's second
+    #: approval while its first is outstanding (R18), or an approval nothing can
+    #: aim at. Decided in the domain so no widget can disagree with the registry
+    #: that would refuse the answer.
+    answerable: bool = True
+    #: Why not, in the operator's words. Empty when ``answerable``.
+    blocked_reason: str = ""
+    #: True while an answer for this item is on the wire — R18's
+    #: requested-with-age state. It never clears the item; only a
+    #: gateway-confirmed resolution or an expiry does.
+    requested: bool = False
+    #: Frame-clock stamp of the moment that answer was sent, or ``None`` when
+    #: the sending path recorded none. ``requested`` without a stamp renders as
+    #: requested with the age unobserved rather than with a fabricated zero.
+    requested_at: float | None = None
+    #: The session's title, for the summary row. Gateway text: defanged and
+    #: rendered literally at the boundary like everything else (R23).
+    session_title: str = ""
+    #: Frame-clock moment this item's source went stale, or ``None`` while it is
+    #: current. A queue item whose connection dropped says so rather than
+    #: presenting a frozen age as current (R20).
+    stale_since: float | None = None
+    #: Whether this item might be a second sighting of one already in the queue.
+    #:
+    #: Two writers, one meaning — this sighting and another may be one thing:
+    #:
+    #: * A **polled** approval, when the same session also has a *driven*
+    #:   approval the gateway sent no ``request_id`` for (``build_queue``'s
+    #:   rule-2 polled branch). The two cannot be matched — that is what "no
+    #:   request id" means — so both are shown and the polled one carries the
+    #:   doubt.
+    #: * A **driven** item of any queueable kind whose row could not be derived
+    #:   (``queue.py``'s ``_feed_a_items``, ``possibly_duplicate=unanchored``):
+    #:   the alias tying its runtime session id to a row aged out of the
+    #:   four-slot window and no gateway id exists to re-anchor through. A poll
+    #:   may already show the same wait under the durable row, so the copy that
+    #:   cannot be shown to belong anywhere carries the doubt itself — a driven
+    #:   *clarify* with a trimmed alias comes back flagged, not only approvals.
+    #:
+    #: In both cases Talaria shows both sightings and says the doubt out loud
+    #: rather than picking one to hide. Picking is what the two earlier versions
+    #: of the dedupe did, and both hid a live approval: showing one twice is
+    #: visible and self-correcting, hiding one is neither.
+    possibly_duplicate: bool = False
+
+    @property
+    def identity(self) -> tuple[str, str, str]:
+        """The one identity both feeds resolve to: connection, session, request."""
+        return (self.profile, self.session_id, self.request_key)
 
 
 def _as_int(value: Any, fallback: int) -> int:

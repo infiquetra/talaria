@@ -24,7 +24,7 @@ import pytest_asyncio
 
 from talaria.domain.models import PromptKind
 from talaria.domain.projection import PromptRow, terminal_read, transcript_view
-from talaria.domain.state import record_local_note
+from talaria.domain.state import fleet_row, record_local_note
 from talaria.recorder.framelog import FrameRecorder
 from talaria.recorder.redact import is_suspicious_key
 from talaria.transport.attach import AttachTarget
@@ -228,6 +228,50 @@ async def test_approval_is_the_one_bridge_addressed_by_session(
             m for m in bridge_gateway.current.received if m.get("method") == "approval.respond"
         )
         assert sent["params"] == {"session_id": "s1", "choice": "deny"}
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_approval_answer_aims_at_the_id_the_gateway_sent(
+    bridge_gateway: StubGateway,
+) -> None:
+    """R18 as amended 2026-08-17, over the socket.
+
+    The running revision synthesizes a ``request_id`` on every approval entry
+    (``tools/approval.py:2596``) and emits it with the request; the answer
+    carries it back, because the gateway removes queue heads on timeout and
+    interrupt without emitting anything and an uncorrelated answer can authorize
+    a command the operator was never shown.
+
+    Delete the ``observed_request_id`` argument in ``respond_live``'s
+    ``respond_params`` call and this test fails: the params come back as the
+    session-only pair.
+    """
+    app, source = live_app(bridge_gateway)
+
+    async with app.run_test():
+        await until(lambda: source.state == "connected")
+        await push(
+            bridge_gateway,
+            app,
+            event(
+                "approval.request",
+                {"request_id": "gw-uuid-1", "description": "curl | sh", "choices": ["deny"]},
+            ),
+        )
+        await app.render_snapshot()
+        # Registered under the gateway's own id, not a synthesized one.
+        assert app.state.prompt_for("gw-uuid-1") is not None
+        await app.respond_live("gw-uuid-1", "deny")
+
+        sent = next(
+            m for m in bridge_gateway.current.received if m.get("method") == "approval.respond"
+        )
+        assert sent["params"] == {
+            "session_id": "s1",
+            "choice": "deny",
+            "request_id": "gw-uuid-1",
+        }
         await app.shutdown_sources()
 
 
@@ -654,6 +698,70 @@ async def test_an_unavailable_projection_sends_nothing_and_says_so_locally(
         # scrub rule are the claim: the message survives the redaction, and a
         # scrub that ate it would leave the constant alone and look fine.
         assert any("no terminal-read response is sent" in text for text in local)
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_projection_settles_the_prompt_instead_of_re_dispatching(
+    bridge_gateway: StubGateway,
+) -> None:
+    """The recorded unavailable-projection defect, and U6's fix (R14).
+
+    Surfacing the failure was never the missing half — leaving the prompt
+    *registered* was. This method is dispatched from the render pass on sight, so
+    a prompt still outstanding afterwards is re-dispatched on the very next tick:
+    one failure line per tick, forever, for a question nothing will ever answer.
+
+    Delete the ``latch_unservable_prompt`` call in ``answer_terminal_read``'s
+    unavailable branch and this test fails on the first assertion — the prompt is
+    still in the registry — and then again on the transcript count.
+    """
+    app, source = live_app(bridge_gateway)
+
+    async with app.run_test():
+        await until(lambda: source.state == "connected")
+        await push(
+            bridge_gateway,
+            app,
+            event("terminal.read.request", {"request_id": "t-settle"}),
+        )
+        assert app.state.prompt_for("t-settle") is not None
+
+        await app.shutdown_sources()
+        assert app.transcript_view_for_read() is None
+
+        row = PromptRow(
+            request_id="t-settle", kind="terminal_read", summary="terminal read requested"
+        )
+        assert await app.answer_terminal_read(row) is None
+
+        # Settled: out of the registry, tombstoned, and named on both surfaces.
+        assert app.state.prompt_for("t-settle") is None
+        assert app.state.answering_for("t-settle") is None
+        latched = [e.text for e in app.state.transcript if e.kind == "prompt-expired"]
+        assert len(latched) == 1
+        assert latched[0].startswith("resolved-failed")
+        # The row half of the same sentence, asserted here rather than deferred.
+        # This comment used to say the app "still folds inbound frames with
+        # ``apply_frame`` rather than routing them", so no registry row existed
+        # to carry the notice. Both halves stopped being true in the commit that
+        # wired ``TalariaApp.ingest`` through ``route_frame``: the run has a row,
+        # and the row carries the sentence. Kept as a correction rather than a
+        # silent swap, because a stale comment describing the old fold is
+        # exactly what let the routing gap survive nine review rounds.
+        focused_id = app.state.focused_session_id
+        assert focused_id is not None
+        registry_row = fleet_row(
+            app.fleet, profile=app.fleet_profile, session_id=focused_id
+        )
+        assert registry_row is not None, "the routed frame created no row"
+        assert registry_row.last_notice.startswith("resolved-failed"), (
+            f"the row does not carry the failure sentence: {registry_row.last_notice!r}"
+        )
+
+        # And it cannot come back: a second dispatch finds nothing to answer, so
+        # the render pass that runs on every tick writes no second failure line.
+        assert await app.answer_terminal_read(row) is None
+        assert len([e for e in app.state.transcript if e.kind == "prompt-expired"]) == 1
 
 
 # ── R8: the expiry arrives on the wire, and the late answer sends nothing ─
