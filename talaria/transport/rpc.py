@@ -38,6 +38,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from talaria.domain.decode import is_reply_frame
+
 __all__ = [
     "LOST_WITH_TRANSPORT",
     "NEVER_SENT",
@@ -249,27 +251,24 @@ class RpcCorrelator:
         on, threaded straight onto the resulting :class:`RpcOutcome` (B3) —
         see its own field docstring for what it is for.
 
-        **The envelope is checked, not just the members.** A frame is a reply
-        only if it declares ``jsonrpc: "2.0"`` and carries neither ``method`` nor
-        ``type``. Without that, any inbound object with a top-level ``id`` and
-        ``result`` was accepted — and the gateway sends exactly such objects that
-        are not replies. An event payload of the shape
-        ``{"type": "tool.complete", "id": "1", "result": {…}}`` resolved an
-        in-flight ``session.interrupt`` as a confirmed success and drove the turn
-        to ``cancelled``, which is the precise harm
+        **The envelope is checked, not just the members**, by
+        :func:`~talaria.domain.decode.is_reply_frame`. Without that check, any
+        inbound object with a top-level ``id`` and ``result`` was accepted — and
+        the gateway sends exactly such objects that are not replies. An event
+        payload of the shape ``{"type": "tool.complete", "id": "1", "result":
+        {…}}`` resolved an in-flight ``session.interrupt`` as a confirmed success
+        and drove the turn to ``cancelled``, which is the precise harm
         :meth:`~talaria.ui.app.TalariaApp.interrupt_live` says must never happen:
         ``cancelled`` is sticky and suppresses the rest of a turn that never
         stopped.
+
+        The predicate is imported rather than written here because the seam
+        reconstruction reads recordings of this same wire and has to read it the
+        same way. It did not, once, and condemned a seam on an event.
         """
         if not isinstance(frame, dict):
             return False
-        if frame.get("jsonrpc") != "2.0":
-            return False
-        if "method" in frame or "type" in frame:
-            # A request, a notification, or an event that happens to carry an
-            # ``id``. A reply is never any of those.
-            return False
-        if "result" not in frame and "error" not in frame:
+        if not is_reply_frame(frame):
             return False
 
         raw_id = frame.get("id")

@@ -166,3 +166,31 @@ async def test_status_region_geometry_is_invariant_across_focus_states() -> None
         assert regions() == baseline_with_rows, "returning focus to composer with rows moved a region"
 
         await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_never_probed_board_paints_no_seam_rows() -> None:
+    """The render tick refreshes a painted seam board; it does not create one.
+
+    An unprobed board is not empty — every seam in it reads never-observed — so
+    a repaint that did not check whether anything had ever been painted would put
+    four rows on screen in replay, where no probe runs and there is nothing to be
+    never-observed *about* yet.
+
+    This exists because the clause was already caught, but only by
+    :func:`test_status_region_geometry_is_invariant_across_focus_states`, and only
+    when the whole suite runs: that test reads its baseline geometry after the
+    first pause, so it notices the extra rows only if a 50ms render tick happens
+    to land between the baseline and a later assertion. Under load it fails every
+    time; run alone it passes every time. A pin that needs a busy machine is not
+    a pin — it is a test that will one day stop catching this and tell nobody. So
+    the render tick is driven directly here, and the assertion is on the rows.
+    """
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert app.status_region.seam_texts == ()
+        await app._render_tick()
+        await pilot.pause()
+        assert app.status_region.seam_texts == (), "a render tick painted an unprobed board"
+        await app.shutdown_sources()

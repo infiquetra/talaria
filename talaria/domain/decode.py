@@ -212,6 +212,40 @@ class NonEventFrame:
 DecodedFrame = GatewayEvent | UnknownEventFrame | NonEventFrame | ProtocolErrorFrame
 
 
+def is_reply_frame(frame: Any) -> bool:
+    """Whether an inbound frame is a JSON-RPC reply to a request we sent.
+
+    **A top-level ``id`` is not enough, and believing it was has already cost
+    this project a real bug.** The gateway sends event payloads that carry an
+    ``id`` of their own — ``{"type": "tool.complete", "id": "1", "result": {…}}``
+    is the recorded shape — and Talaria's request ids are small decimal strings
+    counting from one that restart at every reconnect, so the collision is
+    ordinary rather than unlucky. Read as a reply, that event resolved an
+    in-flight ``session.interrupt`` as a confirmed success and drove a turn to
+    ``cancelled``, which is sticky and suppresses the rest of a turn that never
+    stopped.
+
+    So a reply must declare ``jsonrpc: "2.0"``, carry neither ``method`` nor
+    ``type`` (a request, a notification and an event are none of them replies,
+    whatever ids they carry), and carry one of ``result`` or ``error``.
+
+    It lives in the domain because **two** things read this wire and must read it
+    the same way: the live correlator in ``talaria/transport/rpc.py``, and the
+    seam reconstruction in ``talaria/domain/compat.py`` that grades a recording
+    of the same traffic. They disagreed once — the correlator checked the
+    envelope and the reconstruction matched on the id alone, so a recorded event
+    was graded as a probe's answer and condemned a seam it was not about. One
+    wire, one predicate.
+    """
+    if not isinstance(frame, Mapping):
+        return False
+    if frame.get("jsonrpc") != "2.0":
+        return False
+    if "method" in frame or "type" in frame:
+        return False
+    return "result" in frame or "error" in frame
+
+
 def decode_frame(
     frame: Any,
     *,

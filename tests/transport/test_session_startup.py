@@ -53,6 +53,7 @@ from tests.transport.test_compat_baseline import (
     EXPECTED_PROBE_SET,
     FORBIDDEN_AT_STARTUP,
     HEALTHY,
+    SESSION_NOT_FOUND,
     StubProvider,
 )
 
@@ -142,6 +143,12 @@ def startup_responder(
             return ok(rid, create if create is not None else CREATED)
         if method == RESUME_METHOD:
             return ok(rid, resume if resume is not None else RESUMED)
+        if method == "approval.pending":
+            # What a *present* handler answers a bare presence probe (v0.4 U5,
+            # KTD11): ``_sess`` misses on the empty session id and refuses 4001
+            # before anything is warmed. A stub that answered this with data
+            # would be modelling a call Talaria never makes.
+            return err(rid, SESSION_NOT_FOUND, "session not found")
         if method in HEALTHY:
             return ok(rid, HEALTHY[method])
         return err(rid, METHOD_NOT_FOUND, f"unknown method: {method}")

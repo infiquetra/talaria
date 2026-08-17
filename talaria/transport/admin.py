@@ -133,6 +133,7 @@ from talaria.domain.models_catalog import (
     decode_profile_directory,
     decode_provider_catalog,
 )
+from talaria.transport.compat_check import HealthAnswer
 from talaria.transport.credentials import Credential, CredentialError, CredentialProvider
 from talaria.transport.refresh import (
     MAX_INDEX_BYTES,
@@ -143,6 +144,7 @@ from talaria.transport.refresh import (
 
 __all__ = [
     "CREDENTIAL_HEADERS",
+    "HEALTH_PATH",
     "MAX_RESPONSE_BYTES",
     "MODEL_INFO_PATH",
     "MODEL_OPTIONS_PATH",
@@ -151,9 +153,11 @@ __all__ = [
     "AdminClient",
     "AdminError",
     "AdminFailure",
+    "HealthAnswer",
     "admin_origin_for",
     "fetch_admin_json",
     "post_admin_json",
+    "probe_health_route",
 ]
 
 #: Every header name the credential is written into. Named once so the tests
@@ -179,6 +183,15 @@ MODEL_SET_PATH = "/api/model/set"
 #: module names — see the module docstring on why ``/api/profiles/active`` has
 #: no constant here.
 PROFILES_PATH = "/api/profiles"
+
+#: The ``http-runner`` seam's probe (v0.4 U5). ``get_health`` at the running
+#: revision is three lines that read ``__version__`` and one app-state flag, and
+#: unlike almost every other route in that module it carries no
+#: ``_require_token`` call — so a bare GET is both side-effect-free and the
+#: cheapest question that can be asked of the HTTP surface. Probing it names the
+#: seam present or absent; the disabled feature when it is absent is this
+#: module's own admin catalogue.
+HEALTH_PATH = "/api/health"
 
 #: What went wrong, as a value a caller can branch on without parsing prose.
 #: R7 requires a picker to distinguish "could not fetch" from "nothing here",
@@ -519,6 +532,73 @@ def _probe_route_exists(origin: str, path: str, *, token: str, timeout: float) -
         return False
 
 
+def probe_health_route(origin: str, *, token: str, timeout: float) -> HealthAnswer:
+    """The ``http-runner`` seam probe (U5): one bare ``GET /api/health``.
+
+    Returns a classification, never a body. What comes back is the status line
+    and one boolean read out of the decoded JSON — the response body itself is
+    never carried into a diagnostic, which is what R22 requires of a probe
+    result and what makes this safe to render on a status surface.
+
+    Three outcomes and their reasons:
+
+    * a status code — whatever it was. 404 is the only one that means the route
+      is absent; the caller
+      (:func:`~talaria.transport.compat_check._health_seam`) decides that, not
+      this function, because "what a 401 means" is a classification question and
+      this layer's job is to report what happened.
+    * ``status=None`` — the request produced no status line at all (unreachable
+      host, refused connection, timeout, a redirect this opener declines to
+      follow, a body that arrived truncated). Nothing about the route was
+      learned, and the seam board renders that as no observation rather than as
+      absence.
+    * ``ok`` — the decoded body's own ``ok`` field. A 200 without it is a
+      different server answering on that origin, which is drift rather than
+      health.
+
+    The credential is attached even though ``get_health`` requires none, per
+    this module's standing rule: the public-path allowlist is Hermes's decision
+    to revisit, and a probe that only authenticated where a credential is
+    currently needed would start failing on the release that gates one more
+    route. The opener is the redirect-refusing one for the same reason
+    :func:`_probe_route_exists` uses it — a 3xx would otherwise re-send both
+    :data:`CREDENTIAL_HEADERS` to whatever ``Location`` names.
+    """
+    url = _build_url(origin, HEALTH_PATH, None)
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", **_credential_headers(token)},
+        method="GET",
+    )
+    try:
+        # nosec B310 - origin was validated by admin_origin_for /
+        # require_fetchable_origin, and _build_url forbids leaving it.
+        with _PROBE_OPENER.open(request, timeout=timeout) as response:  # nosec B310
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            status = int(response.status)
+    except urllib.error.HTTPError as exc:
+        try:
+            exc.read(MAX_RESPONSE_BYTES)
+        except (OSError, http.client.HTTPException):
+            # Draining the error body is courtesy to the socket; the status
+            # line already arrived and is the whole answer.
+            pass
+        return HealthAnswer(status=int(exc.code))
+    except (OSError, http.client.HTTPException):
+        return HealthAnswer(status=None, detail="the admin origin did not answer")
+
+    if len(body) > MAX_RESPONSE_BYTES:
+        # An endless stream on the health path is not a healthy runner. Graded
+        # as an answered-but-wrong shape rather than as absence.
+        return HealthAnswer(status=status, ok=False, detail="the health route overran its bound")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return HealthAnswer(status=status, ok=False, detail="the health route answered non-JSON")
+    ok = isinstance(payload, dict) and payload.get("ok") is True
+    return HealthAnswer(status=status, ok=ok)
+
+
 def _perform_admin_request(
     request: urllib.request.Request,
     *,
@@ -710,6 +790,33 @@ class AdminClient:
             token=credential.value,
             params=params,
             body=body,
+            timeout=self._timeout,
+        )
+
+    async def probe_health(self) -> HealthAnswer:
+        """The ``http-runner`` seam probe, offloaded (U5).
+
+        Satisfies :class:`~talaria.transport.compat_check.HealthProbe`
+        structurally, so the seam prober depends on the shape rather than on
+        this class — an admin client that predates this method, or a test double
+        that never had one, leaves the seam never-observed instead of raising.
+
+        A credential that cannot be acquired is **not** an absent HTTP runner,
+        so it returns "no status" rather than letting
+        :class:`AdminError` escape into a probe round: the probe learned nothing
+        about the route, which is a different thing from learning it is gone.
+        Same ``to_thread`` offload as every other call here, for the same
+        reason — a blocking ``urlopen`` on Textual's event loop freezes the
+        interface for the whole timeout.
+        """
+        try:
+            credential = await self._credential()
+        except AdminError:
+            return HealthAnswer(status=None, detail="no credential for the admin origin")
+        return await asyncio.to_thread(
+            probe_health_route,
+            self.origin,
+            token=credential.value,
             timeout=self._timeout,
         )
 
