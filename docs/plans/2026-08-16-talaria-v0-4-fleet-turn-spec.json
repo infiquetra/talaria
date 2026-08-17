@@ -1,0 +1,500 @@
+{
+  "name": "talaria-v0-4-fleet-turn",
+  "repo": "infiquetra/talaria",
+  "description": "v0.4 fleet turn: live topology verification and re-pin, multi-profile connection set with per-profile credentials, registry as root object with event routing, focus movement with confirm-before-steal, per-connection seam probes, the needs-you queue and its reserved bar with inline approvals, the fleet replay gate, and the operator-driven live acceptance run.",
+  "concurrency": {
+    "max_concurrent": 3,
+    "readonly_max_concurrent": 3,
+    "aggregate_max_concurrent": 3
+  },
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "Live topology verification and the new pinned read",
+      "tier": {
+        "model": "fable",
+        "effort": "high"
+      },
+      "prompt": "U1: Turn the plan's Grounding Evidence into the recorded, operator-witnessed protocol baseline at Hermes revision 7095e23eb, and close the live-only questions: empirical scoped routing (a session created on connection A produces nothing on connection B), active_list status transitions for every prompt kind, approval.pending row shape and start stamps, cross-session approval.respond, whether approval.request events carry the synthesized request_id, and the activate steal plus pending_approval/pending_clarify hydration end-to-end. Preflight, halt without it: obtain the operator-supplied disposable test workspace identity and throwaway-session inventory before the first mutating call \u2014 no mutation against an unnamed workspace. Use disposable sessions in that workspace only; invoke read-only methods and evidence-only respond calls against throwaway sessions only; never type a real secret; redaction-check any capture before citing it. Write the dated evidence document and update the protocol-surface and reconciliation-rules analyses (record RR-28's request_id drift). Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U1, KTD4, KTD8, KTD12, PC1) as your authoritative spec. Update the Hermes terminal UI feature-inventory analysis with keep/change/drop verdicts for affected rows at the running revision.",
+      "returns": [
+        "preflight_workspace_identity_confirmed_before_first_mutation",
+        "scoped_routing_confirmed_empirically_on_two_connections",
+        "active_list_status_transitions_recorded_per_prompt_kind",
+        "approval_pending_row_shape_and_start_stamps_recorded",
+        "request_id_presence_on_approval_request_events_recorded",
+        "activate_steal_and_hydration_observed_end_to_end",
+        "pinned_read_updated_to_running_revision_with_drift_diff",
+        "rr28_drift_recorded_in_reconciliation_rules"
+      ],
+      "depends_on": [],
+      "files": [
+        "docs/analysis/2026-08-17-v0-4-topology-verification.md",
+        "docs/analysis/hermes-gateway-protocol-surface.md",
+        "docs/analysis/2026-08-02-hermes-reconciliation-rules.md",
+        "docs/analysis/2026-08-02-hermes-tui-feature-inventory.md"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "opus",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "CR1",
+      "label": "Adversarial review of U1's evidence documents",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "CR1: Adversarially review U1's diff \u2014 the topology evidence document and the two updated analyses. Attempt to refute: any claim without a recorded observation behind it, any capture cited without a redaction check, any drift assertion that does not name both revisions, and any live-leg conclusion the recorded evidence does not actually support. Return only findings that survive your own verification, each with file:line. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U1) for what the evidence must establish. End with a machine-readable verdict line: VERDICT: clean, or VERDICT: blocked (with the surviving findings above it). A blocked verdict halts every dependent unit until remediation and re-review.",
+      "returns": [
+        "u1_evidence_reviewed_with_surviving_findings_or_clean_verdict",
+        "verdict_line_clean_or_blocked"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "Connection set: N gateways, per-profile credentials, profile-tagged recording",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "U2: Build the ConnectionSet owning one LiveSource per configured profile endpoint plus the credential-file default \u2014 per-connection epochs, reconnect, correlators, redaction; frames tagged with connection identity; the credential file's backward-compatible [profiles.<name>] token-only entries with refresh-credential --profile (endpoints live solely in config; same-URL profiles share a connection only with byte-identical tokens, else refuse loud); the recorder's multi-connection contract per KTD6 \u2014 per-frame profile keys, header connections list, and header version 2 on multi-connection runs; single-connection runs emit none of it and stay version-1 byte-identical, so the TypeScript equivalence corpus is untouched (record the contract in docs/formats/frame-log.md); /profiles ensures a connection instead of drop-switching. Run the project checks (uv sync --all-groups; uv run ruff check .; uv run mypy; uv run pytest; uv run bandit -r talaria -q; git diff --check). Never run ruff format. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U2, KTD1, KTD5, KTD6, OP1) as your authoritative spec.",
+      "returns": [
+        "connection_set_holds_n_live_sources_with_isolated_failure",
+        "per_profile_credential_entries_resolve_and_refresh",
+        "legacy_single_entry_credential_file_still_works",
+        "recorder_profile_tagging_only_on_multi_connection_runs",
+        "equivalence_suite_untouched_and_green",
+        "profiles_command_ensures_instead_of_drop_switching",
+        "project_checks_green"
+      ],
+      "depends_on": [
+        "U1",
+        "CR1"
+      ],
+      "files": [
+        "talaria/transport/source.py",
+        "talaria/transport/credentials.py",
+        "talaria/transport/refresh.py",
+        "talaria/transport/connection_set.py",
+        "talaria/config.py",
+        "talaria/recorder/framelog.py",
+        "talaria/cli.py",
+        "tests/transport/test_connection_set.py",
+        "tests/recorder/test_profile_tagging.py",
+        "docs/formats/frame-log.md"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "CR2",
+      "label": "Adversarial review of U2's transport diff",
+      "tier": {
+        "model": "fable",
+        "effort": "high"
+      },
+      "prompt": "CR2: Adversarially review U2's diff. Attempt to refute: epoch or reconnect bookkeeping that drifts when duplicated across sockets, a credential path that borrows or leaks another profile's token, a recorder change that could alter single-connection output bytes, a /profiles path that still drops a socket, and any 0600-discipline hole. Return only findings that survive your own verification, each with file:line. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U2, KTD1, KTD5, KTD6) for the contract. End with a machine-readable verdict line: VERDICT: clean, or VERDICT: blocked (with the surviving findings above it). A blocked verdict halts every dependent unit until remediation and re-review.",
+      "returns": [
+        "u2_diff_reviewed_with_surviving_findings_or_clean_verdict",
+        "verdict_line_clean_or_blocked"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "opus",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "U3",
+      "label": "Registry as root: FleetState, routing, seeding, retirement",
+      "tier": {
+        "model": "fable",
+        "effort": "high"
+      },
+      "prompt": "U3: Invert the domain root \u2014 FleetState wraps the existing TalariaState as the focused cursor's engine, with registry rows keyed (profile, durable_id), runtime-id aliases, ownership bookkeeping, KTD10 lifecycle vocabulary plus the three observation classes, seeding from session.list (never-observed) and session.active_list (live), the KTD2 poll loop, session.reclaimed retirement, the dual-listing retirement rule with the 256-row bound, routing that replaces the cross-talk discard (AE1's test must fail against the current discard-and-count behavior), and R25 identity-less events on the connection channel. The domain imports no terminal framework; tests/domain/test_boundary.py stays green. Run the project checks; never run ruff format. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U3, KTD2, KTD3, KTD10, KTD12, PC2) as your authoritative spec.",
+      "returns": [
+        "fleet_state_wraps_focused_engine_unchanged",
+        "background_events_route_to_rows_not_discard",
+        "identity_less_events_surface_and_create_no_row",
+        "list_only_rows_render_never_observed_not_idle",
+        "retirement_and_bounds_enforced",
+        "ages_derive_from_frame_clock",
+        "domain_boundary_test_green",
+        "project_checks_green"
+      ],
+      "depends_on": [
+        "U2",
+        "CR2"
+      ],
+      "files": [
+        "talaria/domain/state.py",
+        "talaria/domain/registry.py",
+        "talaria/domain/session_list.py",
+        "talaria/domain/decode.py",
+        "tests/domain/test_registry.py",
+        "tests/domain/test_registry_bounds.py"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "opus",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "CR3",
+      "label": "Adversarial review of U3's domain-root diff",
+      "tier": {
+        "model": "fable",
+        "effort": "high"
+      },
+      "prompt": "CR3: Adversarially review U3's diff \u2014 the root-object inversion. Attempt to refute: any focused-session behavior change (R2 requires none), a foreign event that can still mutate the focused transcript, a registry row that can accumulate unbounded state, a never-observed row rendered as idle or zero, a retirement that drops a row a queue item references, and any framework import below the domain boundary. Return only findings that survive your own verification, each with file:line. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U3, KTD3) for the contract. End with a machine-readable verdict line: VERDICT: clean, or VERDICT: blocked (with the surviving findings above it). A blocked verdict halts every dependent unit until remediation and re-review.",
+      "returns": [
+        "u3_diff_reviewed_with_surviving_findings_or_clean_verdict",
+        "verdict_line_clean_or_blocked"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "opus",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "U4",
+      "label": "Focus movement: pins kept, refusal reported, confirm-before-steal",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "U4: Keep the shipped focus-churn pins green under the registry (the repairs already exist \u2014 do not re-fix them; correct the two stale register entries in docs/engineering-journal/QUEUED.md when you land), fleet-scope the answering set per KTD9, report switch refusals through queue navigation and the picker, implement the OP2 confirm for live not-ours sessions only (historical resumes stay dialog-free), render the activate reply's hydrated approval/clarify cards and fail non-hydrated sudo/secret visibly on the row, and make the /sessions picker rows read registry summaries. Run the project checks; never run ruff format. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U4, KTD8, KTD9, OP2, PC6) as your authoritative spec. Include the scripted activate-reply hydration test (cards render from pending_approval/pending_clarify; absence latches the visible resolved-failed), and the unobserved-item confirm copy naming the unknown-kind risk.",
+      "returns": [
+        "focus_churn_pins_green_under_registry",
+        "stale_register_entries_corrected",
+        "fleet_scoped_answering_refuses_switches",
+        "confirm_fires_only_for_live_not_ours_sessions",
+        "activate_hydration_rendered_and_residue_fails_visibly",
+        "picker_rows_show_lifecycle_waiting_age",
+        "project_checks_green"
+      ],
+      "depends_on": [
+        "U3",
+        "CR3"
+      ],
+      "files": [
+        "talaria/domain/state.py",
+        "talaria/ui/app.py",
+        "talaria/ui/picker.py",
+        "docs/engineering-journal/QUEUED.md",
+        "tests/ui/test_sessions.py",
+        "tests/ui/test_focus_churn.py",
+        "docs/engineering-journal/QUEUED.md"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "CR4",
+      "label": "Adversarial review of U4's focus diff",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "CR4: Adversarially review U4's diff. Attempt to refute: a path that activates a live not-ours session without the confirmation, a historical resume that shows the dialog, a switch during any in-flight fleet answer that is not refused with the reason on screen, a hydration render that invents a sudo/secret card, and any AE6 churn case the tests do not pin. Return only findings that survive your own verification, each with file:line. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U4, KTD8, KTD9) for the contract. End with a machine-readable verdict line: VERDICT: clean, or VERDICT: blocked (with the surviving findings above it). A blocked verdict halts every dependent unit until remediation and re-review.",
+      "returns": [
+        "u4_diff_reviewed_with_surviving_findings_or_clean_verdict",
+        "verdict_line_clean_or_blocked"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "U5",
+      "label": "Seam probes: named presence, absence, degradation per connection",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "U5: Extend the probe set per connection \u2014 the six pinned read-only methods plus session.active_list bare and approval.pending presence via the parameter-invalid distinction (bare re-ask before absence, closing the absent_capability class); GET /api/health names the http-runner seam; kanban-dispatcher renders never-observed (no route exists \u2014 invent no probe URL). Classification present/absent/incompatible/degraded/parameter-invalid plus never-observed; cadence attach, reconnect, and five-minute revalidation, never per-render; degradation updates the named surface with source and age; replay uses recorded replies only and opens no socket. Run the project checks; never run ruff format. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U5, KTD4, KTD10, KTD11, PC3) as your authoritative spec.",
+      "returns": [
+        "probe_set_extended_with_new_capabilities",
+        "parameter_invalid_distinguished_by_bare_reask",
+        "absent_seams_named_with_disabled_feature",
+        "kanban_seam_never_observed_never_zero",
+        "mid_session_degradation_updates_with_age",
+        "replay_probes_from_recording_only",
+        "project_checks_green"
+      ],
+      "depends_on": [
+        "U2",
+        "CR2"
+      ],
+      "files": [
+        "talaria/domain/compat.py",
+        "talaria/transport/compat_check.py",
+        "talaria/transport/admin.py",
+        "talaria/ui/status_region.py",
+        "tests/transport/test_seam_probes.py",
+        "tests/domain/test_probe_replay.py"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "CR5",
+      "label": "Adversarial review of U5's probe diff",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "CR5: Adversarially review U5's diff. Attempt to refute: any mutating or build-warming call reachable from the probe path (approval.pending must never be a startup probe), an absence claimed without the bare re-ask, a never-observed seam rendered as zero or absent, a probe that fires per render, and a replay path that could dial. Return only findings that survive your own verification, each with file:line. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U5, KTD11) for the contract. End with a machine-readable verdict line: VERDICT: clean, or VERDICT: blocked (with the surviving findings above it). A blocked verdict halts every dependent unit until remediation and re-review.",
+      "returns": [
+        "u5_diff_reviewed_with_surviving_findings_or_clean_verdict",
+        "verdict_line_clean_or_blocked"
+      ],
+      "depends_on": [
+        "U5"
+      ],
+      "files": [],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "U6",
+      "label": "Needs-you queue domain: typed items, two feeds, fire-and-observe",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "U6: Build the queue domain \u2014 the R13 item type with the unobserved kind, feed A from the driven-session prompt registry (exposing opened_at/seq through a new projection), feed B from waiting rows via KTD11-gated approval.pending, one item identity across feeds, oldest-first ordering, head-of-queue approval presentation with the observed request_id sent whenever one exists (R18 as amended 2026-08-17; refusal/deny-all unchanged when uncorrelated), requested-with-age in-flight state, settle-and-latch on ambiguous outcomes, the terminal-read settle fix (the unavailable path must stop leaving the prompt registered), reuse of the existing named-session guard (respond_to_prompt already verifies the named session \u2014 no relaxation), and the three unresolvable running-revision kinds named on rows, never queued. Run the project checks; never run ruff format. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U6, KTD2, KTD9, KTD11, KTD12) as your authoritative spec. Cover KTD12's 'waiting >= observed span' rendering and KTD13's pending_prompts focused-only pin (extend tests/domain/test_projection.py; add the focused-scope qualifier to docs/formats/status-line.md).",
+      "returns": [
+        "typed_queue_with_unobserved_kind_and_stable_identity",
+        "two_feeds_deduplicate_to_one_item",
+        "head_of_queue_aiming_second_approval_waits",
+        "fire_and_observe_never_clears_optimistically",
+        "terminal_read_unavailable_path_settles",
+        "unresolvable_kinds_named_on_rows_not_queued",
+        "project_checks_green",
+        "named_session_guard_reused_not_relaxed",
+        "observed_request_id_sent_when_present",
+        "pending_prompts_meaning_pinned"
+      ],
+      "depends_on": [
+        "U4",
+        "CR4"
+      ],
+      "files": [
+        "talaria/domain/queue.py",
+        "talaria/domain/projection.py",
+        "talaria/domain/models.py",
+        "talaria/domain/state.py",
+        "tests/domain/test_needs_you_queue.py",
+        "docs/formats/status-line.md",
+        "tests/domain/test_projection.py"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "CR6",
+      "label": "Adversarial review of U6's queue diff",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "CR6: Adversarially review U6's diff. Attempt to refute: a duplicate item from the two feeds, a second same-session approval presented as answerable, an optimistic clear, an approval.pending call reachable for a non-waiting row, a terminal-read that stays registered after the unavailable path, and a queue item for a kind Talaria cannot resolve. Return only findings that survive your own verification, each with file:line. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U6) for the contract. End with a machine-readable verdict line: VERDICT: clean, or VERDICT: blocked (with the surviving findings above it). A blocked verdict halts every dependent unit until remediation and re-review.",
+      "returns": [
+        "u6_diff_reviewed_with_surviving_findings_or_clean_verdict",
+        "verdict_line_clean_or_blocked"
+      ],
+      "depends_on": [
+        "U6"
+      ],
+      "files": [],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "U7",
+      "label": "Needs-you surface: the bar, the drill-down, inline approvals",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "U7: Build the NeedsYouBar (one fixed row, mounted always, empty state, ellipsis-not-wrap; move the screen-row pins once with a comment naming the bar) and the /needs drill-down (local command with catalogue shadowing and /needs-you fallback, palette entry, no new global chord; picker conventions; enter navigates through the confirm flow and lands with focus_first_unanswered; approve/decline keys answer head approvals inline through the single answer-path function with an explicit deny). Every gateway string crosses defang plus literal_text; expiry is visible twice in one render boundary; AE9's geometry test uses the invariance pattern and AE11's headless keyboard-only run reaches a keyboard end for every kind \u2014 a card with the caret on its control, or the latched visible failure for an unrecoverable unobserved item (AE11 as amended 2026-08-17). Run the project checks; never run ruff format. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U7, KTD7, KTD9, KTD13, OP3, PC4) as your authoritative spec.",
+      "returns": [
+        "bar_reserved_at_mount_with_explicit_empty_state",
+        "geometry_invariant_empty_to_many_to_empty",
+        "needs_command_shadow_checked_and_in_palette",
+        "inline_approval_through_single_answer_path_explicit_deny",
+        "keyboard_only_resolution_for_every_kind",
+        "untrusted_text_boundary_on_every_new_surface",
+        "status_line_contract_meaning_unchanged",
+        "project_checks_green"
+      ],
+      "depends_on": [
+        "U6",
+        "CR6"
+      ],
+      "files": [
+        "talaria/ui/needs_you.py",
+        "talaria/ui/app.py",
+        "talaria/domain/commands.py",
+        "talaria/ui/prompts.py",
+        "tests/ui/test_needs_you.py"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "CR7",
+      "label": "Adversarial review of U7's surface diff",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "CR7: Adversarially review U7's diff. Attempt to refute: any state where the bar's height or a neighbor's height moves (AE9), a queue kind resolvable only by mouse (AE11), a gateway string rendered outside defang/literal_text, an inline answer that bypasses the single answer-path function or sends an empty decline, a sensitive respond value reaching any new surface, and a pending_prompts meaning change in the status payload. Return only findings that survive your own verification, each with file:line. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U7, KTD7, KTD13) for the contract. End with a machine-readable verdict line: VERDICT: clean, or VERDICT: blocked (with the surviving findings above it). A blocked verdict halts every dependent unit until remediation and re-review.",
+      "returns": [
+        "u7_diff_reviewed_with_surviving_findings_or_clean_verdict",
+        "verdict_line_clean_or_blocked"
+      ],
+      "depends_on": [
+        "U7"
+      ],
+      "files": [],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "U8",
+      "label": "Fleet replay: profile tags, extended determinism gate",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "U8: Teach replay the per-frame profile tags (an untagged log is one connection; native arrival order, no merge rule) and extend the existing determinism gate with registry, queue, derived-focus, and rendered-age checkpoints \u2014 the same checkpoints twice, byte-identical; assert the focus derivation itself (recorded landing replies, else first-named). Mutation controls stay inert; recordings in the v0.1-v0.3 format still replay unchanged; ages equal frame-clock differences even when the process sleeps between runs. Run the project checks; never run ruff format. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U8, KTD6, KTD12, PC5) as your authoritative spec.",
+      "returns": [
+        "profile_tagged_replay_with_untagged_backcompat",
+        "gate_asserts_registry_queue_focus_and_ages_twice_identical",
+        "focus_derivation_itself_asserted",
+        "mutation_controls_inert",
+        "project_checks_green"
+      ],
+      "depends_on": [
+        "U6",
+        "CR6"
+      ],
+      "files": [
+        "talaria/replay/source.py",
+        "talaria/replay/gate.py",
+        "tests/replay/test_fleet_replay.py"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "CR8",
+      "label": "Adversarial review of U8's replay diff",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "prompt": "CR8: Adversarially review U8's diff. Attempt to refute: any nondeterminism between two replays of the same recording (ages included), a legacy log that replays differently than before this unit, a derivation the gate does not actually assert, and any socket reachable from the replay path. Return only findings that survive your own verification, each with file:line. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U8) for the contract. End with a machine-readable verdict line: VERDICT: clean, or VERDICT: blocked (with the surviving findings above it). A blocked verdict halts every dependent unit until remediation and re-review.",
+      "returns": [
+        "u8_diff_reviewed_with_surviving_findings_or_clean_verdict",
+        "verdict_line_clean_or_blocked"
+      ],
+      "depends_on": [
+        "U8"
+      ],
+      "files": [],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      }
+    },
+    {
+      "unit_id": "U9",
+      "label": "Live acceptance: checklist authored, evidence staged, operator drives",
+      "tier": {
+        "model": "opus",
+        "effort": "medium"
+      },
+      "prompt": "U9: Author the live acceptance checklist from the plan's U9 \u2014 every leg with its expected observation, the steal leg (cancel then confirm), the two-profile prerequisite named, and the safety envelope verbatim (throwaway sessions only, canary approvals, no live secrets, redaction-check before citing, a failing leg stops the run, close what you open). Stage the results document skeleton. The drive itself is operator-performed; this unit's completion is the checklist and skeleton existing and the prerequisite's status honestly recorded \u2014 it must not claim the drive happened. Read docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md (unit U9, AE10) as your authoritative spec. The pipeline's terminal state is operator-attention: the workflow stops and waits; release readiness is the separately completed operator-verified evidence with a pass verdict.",
+      "returns": [
+        "acceptance_checklist_authored_with_expected_observations",
+        "safety_envelope_recorded_verbatim",
+        "second_profile_prerequisite_status_recorded",
+        "results_skeleton_staged_without_claiming_the_drive",
+        "terminal_state_is_operator_attention_not_release_ready"
+      ],
+      "depends_on": [
+        "CR4",
+        "CR5",
+        "CR7",
+        "CR8"
+      ],
+      "files": [
+        "docs/plans/2026-08-17-v0-4-acceptance-checklist.md",
+        "docs/plans/2026-08-17-v0-4-live-acceptance-results.md"
+      ],
+      "worth_it_because": "operator escalation ruling 2026-08-17: run the v0.4 spine one tier up",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "medium"
+      }
+    }
+  ]
+}
