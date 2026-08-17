@@ -4,6 +4,28 @@
 
 ## 2026-08-17
 
+### A late frame from a replaced connection is an observation, never an all-clear
+
+**Evidence.** v0.4 unit U3, the fleet router (`talaria/domain/state.py`, `route_frame`), pinned by
+`test_stale_generation_frames_never_unstale_a_row` (`tests/domain/test_registry.py`). U2's review
+had flagged the hazard for this unit: a profile's correlator epoch restarts when `ensure` rebuilds
+that profile's source, so `(profile, epoch)` is not globally unique across a reconnect — a slow
+consumer can hold an old-generation and a new-generation frame with equal epochs.
+
+**Mechanism.** The registry clears a row's stale-since on any fresh observation, because a fresh
+observation is exactly what R20 says ends staleness. But a frame that crossed a socket the
+transport has since replaced is *dated* evidence arriving late: the gateway did emit it (so the row
+records `last_event_at` honestly), yet it proves nothing about the current source, so letting it
+clear `stale_since` or `disconnected` would render a dead connection's row as live. The router
+therefore takes the transport's per-profile *generation* counter, not the epoch, as connection
+identity: a frame whose generation is below the channel's current one updates the observation
+fields and leaves every staleness marker in place.
+
+**Generalizable rule.** When one identity counter can restart, comparisons across the restart need
+the outer counter that doesn't — and evidence must be split by what it proves: a late frame proves
+the event happened, not that its source is still alive, so it may update history and must not
+update liveness.
+
 ### A `MULTILINE` regex and a whole-document regex, mixed, silently rewrote the wrong credential
 
 **Evidence.** v0.4 unit U2, `talaria/transport/refresh.py`. `talaria refresh-credential` with no

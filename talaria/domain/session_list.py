@@ -114,6 +114,88 @@ def _count(value: Any) -> int:
     return 0
 
 
+@dataclass(frozen=True)
+class ActiveSessionSummary:
+    """One session as ``session.active_list`` reports it (U3, KTD2).
+
+    The wire row is exactly ``{current, id, last_active, message_count, model,
+    preview, session_key, started_at, status, title}`` — verified live on
+    2026-08-17 (U1's topology verification), with epoch-seconds floats for the
+    timestamps and ``started_at`` being session creation, not prompt start.
+    ``session_key`` is the durable identity (the registry key half);
+    ``session_id`` (wire ``id``) is the runtime id, a routing alias.
+
+    ``status`` is kept **verbatim** (KTD10: gateway words, re-encoded never
+    translated) — including a word outside the known four, which a renderer
+    defangs and shows literally rather than this decoder guessing at.
+    ``last_active`` and ``started_at`` are gateway wall-clock values; ages are
+    never derived from them (KTD12 — ages ride the frame clock), they exist
+    for display formatting only.
+    """
+
+    session_id: str
+    session_key: str = ""
+    title: str = ""
+    preview: str = ""
+    status: str = ""
+    model: str = ""
+    current: bool = False
+    started_at: float = 0.0
+    last_active: float = 0.0
+    message_count: int = 0
+
+    @property
+    def durable_id(self) -> str:
+        """The registry-key half: ``session_key`` when known, else the id."""
+        return self.session_key or self.session_id
+
+
+@dataclass(frozen=True)
+class ActiveSessionDirectory:
+    """Every live session the gateway reported, in the order it sent them."""
+
+    sessions: tuple[ActiveSessionSummary, ...] = ()
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.sessions
+
+
+def decode_active_list(result: Any) -> ActiveSessionDirectory:
+    """Turn a ``session.active_list`` reply into a directory, degrading
+    rather than raising — the same posture as :func:`decode_session_list`,
+    for the same reason: this runs on a poll loop, and a malformed reply
+    must mark data stale (the caller's job), never crash the poller. A row
+    with no usable ``id`` names nothing routable and is dropped."""
+    if not isinstance(result, Mapping):
+        return ActiveSessionDirectory()
+    raw = result.get("sessions")
+    if not isinstance(raw, list):
+        return ActiveSessionDirectory()
+    rows: list[ActiveSessionSummary] = []
+    for row in raw:
+        if not isinstance(row, Mapping):
+            continue
+        session_id = _text(row.get("id"))
+        if not session_id:
+            continue
+        rows.append(
+            ActiveSessionSummary(
+                session_id=session_id,
+                session_key=_text(row.get("session_key")),
+                title=_text(row.get("title")),
+                preview=_text(row.get("preview")),
+                status=_text(row.get("status")),
+                model=_text(row.get("model")),
+                current=row.get("current") is True,
+                started_at=_number(row.get("started_at")),
+                last_active=_number(row.get("last_active")),
+                message_count=_count(row.get("message_count")),
+            )
+        )
+    return ActiveSessionDirectory(sessions=tuple(rows))
+
+
 def decode_session_list(result: Any) -> SessionDirectory:
     """Turn a ``session.list`` reply into a listing, degrading rather than raising.
 
@@ -150,4 +232,11 @@ def decode_session_list(result: Any) -> SessionDirectory:
     return SessionDirectory(sessions=tuple(rows))
 
 
-__all__ = ["SessionDirectory", "SessionSummary", "decode_session_list"]
+__all__ = [
+    "ActiveSessionDirectory",
+    "ActiveSessionSummary",
+    "SessionDirectory",
+    "SessionSummary",
+    "decode_active_list",
+    "decode_session_list",
+]
