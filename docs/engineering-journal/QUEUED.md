@@ -4,7 +4,9 @@
 
 ## P0
 
-### An approval cannot be answered from the keyboard on macOS
+### ~~An approval cannot be answered from the keyboard on macOS~~ — CLOSED 2026-08-16
+
+**Closed.** v0.3's card-owns-focus unit removed the mechanism this entry names: `talaria/ui/prompts.py:1172` now reads `if focus_new and card.action_widget is not None`, so a button-backed approval card takes the caret itself when the composer is empty — the `Input`-only restriction is gone, and with it the dependence on the eaten `F1`, whose binding v0.3 removed outright. Confirmed in use by the operator's hands-on drive of v0.3 in a real terminal against a live gateway (attested 2026-08-16, functionally fine). **Still open from the "Related, same root" paragraph below:** the mis-aimed mouse. The v0.3 diagnosis refuted this entry's mixed-height suspect — Talaria maps clicks by entry id, never by line offset, so the mechanism is below Talaria — and the hand-driven capture that would separate the remaining candidates was cut from v0.3 by decision D13 and has not happened.
 
 **Author.** v0.2 hands-on drive, 2026-08-10
 **Priority.** P0
@@ -18,7 +20,9 @@ A prompt card never takes focus when it mounts unless it is input-backed — `ta
 
 **Related, same root.** The mouse is the only working path to the card, and the mouse is also mis-aimed — a double-click landed several rows above the clicked line, which is separately why the terminal's own select-and-copy never reaches through the Talaria pane. Suspect: the mixed-height widget layout v0.2 introduced. Undiagnosed.
 
-### Sort the rest of the v0.2 hands-on findings into v0.3
+### ~~Sort the rest of the v0.2 hands-on findings into v0.3~~ — CLOSED 2026-08-16
+
+**Closed.** The triage happened at v0.3 planning, 2026-08-11: the orchestration charter and the decision register under `docs/plans/` are the sort, the "Talaria confirms what it just did" theme this entry flagged became v0.3's release theme, and the `F4` half-description it names was corrected forward in v0.3's changelog. Closed now rather than then only because nobody swept this file after the release.
 
 **Author.** v0.2 hands-on drive, 2026-08-10
 **Priority.** P0 to triage, the items themselves range P1–P3
@@ -52,7 +56,11 @@ Branch protection requires exactly `python-check (3.12)` and `python-check (3.13
 
 The argument for adding them: a job that cannot block will drift again, and it already did, straight through a release. The argument against: `check` covers the TypeScript reference recorder, whose failure mode is narrow. Either answer is defensible. **What is not defensible is leaving it undecided**, which is the state that produced two red merges. Audit with `gh api repos/infiquetra/talaria/branches/main/protection`.
 
-### ADR-0006 is `proposed` and its own acceptance condition has been met
+**Re-verified 2026-08-16.** Protection still requires exactly `python-check (3.12)` and `python-check (3.13)`; the decision is still unmade.
+
+### ~~ADR-0006 is `proposed` and its own acceptance condition has been met~~ — CLOSED 2026-08-16
+
+**Closed.** The disagreement this entry warned about is gone: the record was flipped to `accepted` during the v0.3 run (commit `c32424c`, "flip ADR-0006 to accepted — U6 replay gate passed 24/24"), and the file reads `Status: accepted`, verified 2026-08-16 by reading it.
 
 **Author.** v0.2.0 release, 2026-08-11
 **Priority.** P2
@@ -61,7 +69,9 @@ The argument for adding them: a job that cannot block will drift again, and it a
 
 [ADR-0006](../../platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) states its condition in its own opening note: `proposed` rather than `accepted` "until that gate runs green under the restated claim". The gate ran green, 24 of 24, confirmed across three runs ending at `2e96324` and published in [the gate results](../analysis/2026-08-09-block-markdown-gate-results.md). Either flip the status or record why it is being held open. A record whose stated condition is satisfied while its status disagrees is worse than either state alone, because a reader cannot tell which one is stale.
 
-### The shipped `F4` description omits the destructive half
+### ~~The shipped `F4` description omits the destructive half~~ — CLOSED 2026-08-16
+
+**Closed.** The decision this entry insisted on was made and shipped with v0.3: correct forward, leave the shipped notes as published. The correction of record is the v0.3 changelog's Fixed entry and the v0.3 release notes' "One correction to the v0.2.0 notes" section; `docs/releases/v0.2.0.md` deliberately stays as it was.
 
 **Author.** v0.2 hands-on drive, 2026-08-10
 **Priority.** P2
@@ -301,7 +311,9 @@ Both remedies proposed here followed from the wrong mechanism and neither would 
 
 **Refs.** [Project direction](../analysis/2026-08-01-hermes-tui-project-direction.md), [v0.1 prototype plan](../plans/2026-08-02-talaria-v0-1-prototype-plan.md) unit U7
 
-### Smoke-attach the transport against a real local Hermes gateway
+### ~~Smoke-attach the transport against a real local Hermes gateway~~ — CLOSED 2026-08-16, by operator attestation
+
+**Closed.** Live attaches against a real gateway have happened repeatedly since this was queued: the recorded 2026-08-04 live run (R3's corpus), the 2026-08-07 live credential verification both ways, the v0.2 hands-on drive, and the operator's own hands-on drive of v0.3 against a live gateway, attested 2026-08-16 as functionally fine. On that attestation the operator retired this as scheduled work. **What this closure does not claim:** the itemized captures below — the auth-failure close shape, a live frame log diffed against the AE3 sweep, the real catalogue's entry count and categories, a real `paste.collapse` file, what a real slash worker prints — were never individually recorded. They stand as open observations for whenever one of those seams misbehaves, not as gates.
 
 **Author.** v0.1 milestone-2, unit U7
 **Priority.** P0
@@ -357,7 +369,9 @@ The mitigation exists and is measured: KTD11's third level, a `0600` file at `<c
 
 **Do not.** Widen R1's wording so the argv half satisfies it. The failing half is asserted by a test that asserts the *failure*, so if Talaria ever does scrub its inherited environment that test goes red and somebody has to remove it on purpose.
 
-### R2, R3 and the F1/F7 live demonstrations are unmet — the whole live acceptance run
+### ~~R2, R3 and the F1/F7 live demonstrations are unmet — the whole live acceptance run~~ — CLOSED 2026-08-16, by operator attestation
+
+**Closed.** The operator has driven the interface by hand in a real terminal against a live Hermes gateway — the v0.2 hands-on drive (2026-08-10) and again on v0.3, attested 2026-08-16: functionally fine, with interface feedback deliberately held for the theming-and-readability work. On that attestation the remaining steps are retired as scheduled work. **What was never produced:** step 1's three-startup-paths capture and step 3's compatibility-check output were not recorded, and `docs/plans/2026-08-06-u6-row19-operator-checklist.md` was never run as written. The v0.1 daily-driver verdict is a dated artifact and is not re-graded by this closure.
 
 **Author.** v0.1 milestone-2, unit U10
 **Priority.** P0 — this is the gap that makes the daily-driver verdict *not ready*.
@@ -380,7 +394,9 @@ The comparison could not have passed before that run, and the reason was a defec
 
 **The remaining steps are now a written checklist, and that is all that changed on 2026-08-06.** Unit U6 of the model-picker plan turned them into `docs/plans/2026-08-06-u6-row19-operator-checklist.md` — six steps, each naming what to run, what to capture verbatim, and what to hand back (digest and frame count per recording, no operator profile inventory). It is marked `status: ready-for-operator` and none of it has been run: the recording corpus has gained nothing since 2026-08-04, its newest frame log's header reading `2026-08-04T19:43:17.075Z`. The verdict document *has* now been updated — re-graded 2026-08-06 — and row 19 stays **unmet** on exactly this. Do not read the checklist's existence as progress against this item; the item closes when somebody runs it.
 
-### The install job and the CI matrix are declared but have never run
+### ~~The install job and the CI matrix are declared but have never run~~ — CLOSED 2026-08-16, long since stale
+
+**Closed.** The branch was pushed with v0.1.0 and `validate.yml` has run on every pull request since — the 2026-08-11 branch-protection entry above attests the install jobs run (they merely cannot block), and every release since v0.1.0 built its wheel in continuous integration. The verdict document's matrix rows were corrected as this entry asked: `docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md:588` records the rows moving off *declared, not observed* once the push happened. Verified 2026-08-16.
 
 **Author.** v0.1 milestone-2, unit U10
 **Priority.** P1
@@ -401,6 +417,8 @@ The comparison could not have passed before that run, and the reason was a defec
 **Context.** R39 says the recorded matrix lists exactly what was exercised. What was exercised is macOS arm64, Python 3.12.11 and 3.13, a bare pseudo-terminal at 100×30, a tmux 3.7b pane at 100×30, and a clean `uv tool install`. Not exercised, and therefore claimed nowhere: Linux as a daily driver (the CI leg is informational and runs the test suite, not the interface), Windows, any real terminal emulator, screen, mosh, any remote session, any narrow terminal under a real emulator, and Python 3.14.
 
 **Do.** Add one real terminal emulator and one Linux desktop run to the matrix before the next verdict revision, and re-run the pseudo-terminal teardown tests at a narrow width (80×24 and below) — U8's height-zero failure family lived exactly there.
+
+**Updated 2026-08-16.** The real-terminal-emulator half is now exercised: the operator has driven v0.2 and v0.3 by hand in a real terminal on macOS. The Linux half is deliberately parked on the operator's ruling of 2026-08-16 — "not concerned about Linux right now" — so no Linux run is scheduled, and the claims rule stands unchanged: nothing is claimed for platforms the matrix does not list.
 
 ### Audit the egress surfaces as a set, rather than the redactor's call sites
 

@@ -2,6 +2,35 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-16
+
+### Answering a blocked agent is driving, not authoring — the ideation's Q1 is ruled
+
+**Author.** Operator ruling, 2026-08-16, at v0.4 requirements scoping.
+
+**Decision.** Answering a blocked agent's approval, clarification, sudo, secret, or terminal-read
+prompt counts as *driving* the agent — the same category of act as steering a session or typing a
+message — not as *authoring* it. This settles open boundary question Q1 of
+`docs/ideation/2026-08-02-talaria-product-shape-ideation.md`, which that document assumed but never
+ruled. Constraint 7 — Talaria reads agent state and does not author agent identity — stands
+unchanged; this ruling interprets it rather than amends it.
+
+**Rationale.** Shipped precedent. Talaria has answered all four human-facing blocking prompts for
+the focused session since the v0.2 answerability spine, and machine-answers terminal-read through
+its bridge. That already *is* answering a blocked agent. A cross-session needs-you queue changes
+where the answer is aimed from, not what is answered — and ruling the queue "authoring" while the
+focused card ships would make the distinction turn on which pane the keystroke lands in, which is
+no distinction at all.
+
+**Rejected.** The authoring reading. It collapses ideation survivor 1 (the typed queue for
+everything that needs a person) and takes four other survivors with it, while leaving the
+already-shipped focused-card answer path unexplained.
+
+**Revisit when.** A queue row's "answer" would write agent identity or configuration rather than
+resolve a blocking prompt — profile edits, config writes, or any respond method whose effect
+outlives the blocked question. Those stay outside Talaria under constraint 7 regardless of this
+ruling.
+
 ## 2026-08-12
 
 ### The replay gate's catch-up grace is counted in re-renders, not in seconds
