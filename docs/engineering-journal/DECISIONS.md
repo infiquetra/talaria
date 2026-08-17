@@ -4,6 +4,80 @@
 
 ## 2026-08-17
 
+### A seam is a named capability, not a method — and its absence is a sentence, never a zero
+
+**Author.** v0.4 fleet-turn plan, unit U5 (R9, R10, R12, R24, KTD4, KTD11).
+
+**Decision.** `talaria/domain/compat.py` gains a seam catalogue beside the method baseline. Four
+seams — `roster`, `approval-detail`, `http-runner`, `kanban-dispatcher` — each carry the feature
+their absence disables, and the status region renders one line per seam with its source and the age
+of the observation behind it. A probe verdict about a *method* maps onto a seam classification;
+nothing renders a seam from an empty collection.
+
+**Rationale.** R10's failure mode is a surface that shows an empty board because its data source is
+gone and says "0 cards". The only structural defence is that the renderer never sees a count for a
+source it has not heard from: a seam with no observation renders "not observed" with the feature
+named, which cannot be mistaken for zero work.
+
+**Rejected — giving `kanban-dispatcher` a probe URL.** No route exists at the running revision.
+Inventing one and reading its 404 as absence is the `absent_capability` misdiagnosis committed one
+layer further out, so the catalogue entry has no method and no path and the seam renders
+never-observed until a real route exists. The absence of a field to put a URL in is the enforcement.
+
+**Rejected — one blanket "is it working" flag.** Never-observed, absent, incompatible, degraded and
+parameter-invalid are five different operator actions. Collapsing them would put "upgrade your
+gateway" and "you typed the wrong profile" behind the same word, which is the defect this unit
+closes.
+
+**Revisit when.** A dispatcher route ships, or a seam needs a per-connection *history* rather than a
+current state — the board holds one observation per seam by design, which is enough for a status line
+and not enough for a timeline.
+
+### A method's absence blocks the daily-driver verdict only if the daily driver needs it
+
+**Author.** v0.4 fleet-turn plan, unit U5 (KTD4, AE7).
+
+**Decision.** `MethodBaseline.blocks_daily_driver` is `False` for `session.active_list` and
+`approval.pending`, so their absence names a disabled seam and leaves `CompatReport.ready` alone.
+Every other entry keeps the v0.1 behavior unchanged.
+
+**Rationale.** The daily-driver verdict answers "can this gateway run Talaria at all". U1 verified
+that the process serving this machine's WebSocket has no `approval.pending` — and it runs the
+single-session core perfectly. Blocking on it would report every gateway at the old pin as
+incompatible forever, which drains the flag of the only meaning it has.
+
+**Rejected — deriving the rule from the classification** (`presence-only` never blocks). It would
+have given the same answer today and the wrong one tomorrow: whether a capability is *required* and
+how it is *probed* are unrelated questions, and a future required method probed bare would silently
+stop blocking.
+
+**Revisit when.** The fleet surfaces stop being additive — if a release makes the roster a
+precondition for launching at all, the roster's entry flips and the verdict follows.
+
+### Probe diagnostics are gateway text and pass the same boundary as everything else
+
+**Author.** v0.4 fleet-turn plan, unit U5 (R22, R23).
+
+**Decision.** A probe's error message reaches a seam line only through
+`redact_probe_detail` — whitespace collapsed, `Bearer` blobs withheld, URL-ish tokens handed to the
+recorder's `redact_url`, credential-shaped `name: value` pairs withheld, then clipped to one line —
+and is rendered through `literal_text` like every other untrusted string. Response *bodies* are never
+read into a diagnostic at all; only the error code and message are.
+
+**Rationale.** R22 names "probe diagnostic" in the same list as the frame log and the status payload.
+The deny-set is imported from `talaria/recorder/redact.py` rather than restated, so a pattern added
+there protects this surface in the same commit.
+
+**Rejected — withholding gateway text entirely.** It would make the canary tests trivially true and
+the diagnostic useless: "session not found" and "request_id required" are different facts, and the
+whole point of the parameter-invalid classification is telling an operator which one happened.
+
+**Revisit when.** A probe needs to surface structured error data rather than a sentence — the
+redactor is written for prose and a structured payload would want the recorder's key-based rule
+instead.
+
+## 2026-08-17
+
 ### The `/sessions` rows are registry summaries, and the listing-only row helpers are gone
 
 **Author.** v0.4 fleet-turn plan, unit U4 (R3, PC2).

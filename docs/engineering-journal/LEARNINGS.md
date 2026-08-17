@@ -4,6 +4,176 @@
 
 ## 2026-08-17
 
+### Two readers of one wire will drift apart, and the second one inherits the first one's fixed bug
+
+**Evidence.** v0.4 unit U5's review, round two. `_probe_exchanges` in
+`talaria/domain/compat.py` accepted any inbound recorded frame carrying a top-level `id` as a reply
+to a probe. `talaria/transport/rpc.py`'s live correlator does not — its `resolve` checks the whole
+envelope, and its docstring records, in the past tense, the incident that put the check there.
+Pinned by `test_an_event_carrying_an_id_is_not_graded_as_a_probe_reply` and
+`test_an_event_with_neither_result_nor_error_demotes_nothing`
+(`tests/domain/test_probe_replay.py`), both verified to fail when the envelope check is removed.
+
+**Mechanism.** The gateway sends event payloads with ids of their own —
+`{"type": "tool.complete", "id": "1", "result": {…}}` is the recorded shape — and Talaria's request
+ids are decimal strings counting from one that restart at every reconnect, so the collision is
+ordinary. The live correlator learned this the expensive way: such an event once resolved an
+in-flight `session.interrupt` as a confirmed success and drove a turn to `cancelled`. The replay
+reader, written months later against the same wire, reproduced the pre-fix reading exactly — an
+event graded against the roster's pinned signature, condemning a seam it was not about and
+discarding the genuine reply, which arrived to find its pairing already consumed.
+
+Nothing about the second reader was careless. The rule simply lived in one reader's method body,
+where the other could not see it. The fix moves the predicate to `talaria/domain/decode.py` and has
+both call it, which is the same repair this unit had already made for the redaction policy one layer
+down.
+
+**Generalizable rule.** When a live path and a replay path read the same bytes, every rule about
+what those bytes *mean* belongs in a shared function, not in whichever path learned it first. A bug
+fixed in one reader is not fixed in the wire's other reader, and the second one will be written by
+somebody who never saw the incident. Ask of any wire predicate: who else reads this, and are they
+reading it the same way?
+
+### A field whose value changes with no event behind it is never repainted
+
+**Evidence.** v0.4 unit U5's review, round two. `TalariaApp._render_seams` had exactly one caller,
+on the statement immediately after a probe round folded in, with no await between them — so every
+seam row was drawn at an age of exactly zero and the text stayed frozen until the next round drew it
+at zero again. The `stale` wording the renderer already knew how to write could not appear on
+screen. Pinned by `test_a_painted_seam_line_grows_older_and_eventually_says_stale`
+(`tests/transport/test_seam_probes.py`), verified to fail when the repaint is removed from the
+render tick.
+
+**Mechanism.** Every other thing on that row changes because a frame arrived, and the render tick is
+driven by frames arriving. An age changes because time passed, which no frame reports. This is the
+same shape as the approval age-out sitting *before* the dirty check in the same tick, for the same
+reason written down two units earlier — and the seam board did not get the treatment because the
+board's clock argument made it look like the age was already being computed fresh. It was: once.
+
+The repaint probes nothing, which is what makes it legal under a cadence rule that says *never per
+render*: that rule governs opening sockets, and drawing a line from a pure function over a board and
+a clock opens none. The two verbs were worth separating explicitly, because "never per render" read
+as a ban on repainting is what left the constant on screen.
+
+**Generalizable rule.** For any rendered value, ask what makes it change. If the answer is "time",
+it needs a repaint on the clock, not on the event that created it — and if a cadence rule forbids
+doing something per render, check whether it forbids the *work* or merely the *side effect*.
+
+### A default that is right thirteen times in fourteen is worse than no default
+
+**Evidence.** v0.4 unit U5's review, round one. `MethodVerdict.blocks_daily_driver` in
+`talaria/transport/compat_check.py` carried a `True` default; one of the module's fourteen
+construction sites omitted the field, and the entry that branch grades is `session.active_list` —
+the only probed method whose pinned fixture is bare *and* whose baseline sets the flag `False`. So a
+gateway with no roster method reported as a compatibility gap instead of naming a disabled seam,
+which is the exact outcome KTD4 and the field's own docstring exist to prevent. Pinned by
+`test_an_absent_roster_names_a_seam_without_condemning_the_gateway`
+(`tests/transport/test_compat_baseline.py`), verified to fail when the flag stops being copied from
+the entry.
+
+**Mechanism.** Three of the verdict's fields are copies of the baseline entry, and every return
+statement was spelling all three out: fourteen sites times three fields, and one of the forty-two
+was missing. The default made the omission legal, and it made it silent — the value it supplied was
+correct for thirteen of the fourteen, so nothing anywhere looked wrong. The full battery was green
+with the defect shipped.
+
+Two things had to go wrong together for it to survive review-quality tests, and both are worth
+naming. The behavioural test that would have caught it was *narrowed* in the same diff, from the
+whole probe set to the probe set minus the two fleet methods, with a docstring saying the excluded
+cases were covered separately — a claim that was true of one of the two. And the test that did name
+the flag asserted it on the baseline **data**, proving only that somebody typed `False` in the
+table, never that the prober's output carried it.
+
+**Generalizable rule.** When a field is a copy of something the caller already has, copy it in one
+place and make the field required; a default exists to be right when nobody thought about it, so a
+default whose wrong case is silent is a bug with a waiting period. And when a parametrized set is
+narrowed, the dropped cases stop being tested unless something picks them up **by name** — write the
+replacement's name in the docstring, not the file it might be in.
+
+### A JSON-RPC id is not a durable name, and a map built over a whole log can grade a reply against a request sent later
+
+**Evidence.** v0.4 unit U5's review, round one. `seam_board_from_recording` in
+`talaria/domain/compat.py` correlated recorded replies to recorded requests by JSON-RPC id, using a
+map built over the entire recording with last-write-wins. Pinned by
+`test_a_reply_is_graded_against_the_request_it_answers_not_a_later_one`
+(`tests/domain/test_probe_replay.py`), verified to fail when the pre-built map is restored.
+
+**Mechanism.** The correlator restarts its id counter at every reconnect, deliberately — its own
+docstring says reuse is the condition the epoch guard exists for, so making reuse impossible would
+quietly retire the guard. A frame-log record carries no epoch of its own, so a recording spanning a
+reconnect holds the same id twice for two different methods. Because the map was built before any
+reply was graded, the *later* request won: a reply could be attributed to a call that had not been
+sent when it arrived. The rendered output carried the proof of its own mistake — the roster seam
+read `absent` with the detail `unknown method: approval.pending`.
+
+The fix walks the log in order and lets an id be outstanding for one request at a time: an outbound
+frame reusing an id supersedes whatever that id meant before, and a reply consumes the request it
+answers. An unanswered probe at the end of a recording then claims nothing, which is the honest
+reading of a log that stops mid-exchange.
+
+**Generalizable rule.** A correlation key that is only unique within a connection is not a key
+across a recording of several. Before matching on an identifier, ask what resets it — and if the
+answer is "a reconnect", either carry the epoch in the record or consume the pairing in stream
+order. Building the index over the whole file first is what converts a reuse into a time-travelling
+match.
+
+### A refusal is stronger evidence of presence than a success, when the success would cost something
+
+**Evidence.** v0.4 unit U5, the seam probes (`talaria/domain/compat.py`'s `presence-only`
+classification and `talaria/transport/compat_check.py`'s `probe_presence`), pinned by
+`test_a_refused_bare_approval_pending_proves_presence` (`tests/transport/test_seam_probes.py`),
+verified to fail when the refusal-proves-presence branch is changed to report `missing`, and again
+when the probe is changed to send a session id.
+
+**Mechanism.** `approval.pending` cannot be probed the ordinary way. Its handler resolves the session
+through `_sess`, and `_sess` waits on `_wait_agent` — so a probe carrying a real session id warms
+that session's agent build (MCP discovery, model metadata, a skills scan: tens of seconds on a cold
+start) purely to find out whether a method name is registered. Called with no parameters at all, the
+same handler misses on the empty session id and refuses `4001 session not found` *before* reaching
+the warming path. That refusal is a complete answer: only an unregistered name produces `-32601`, so
+any other error proves a handler ran. U1 measured both answers on this machine's wire.
+
+**Generalizable rule.** When calling a capability to test for it has a side effect, look for the
+cheapest request the handler is *guaranteed to reject*, and read the rejection code. A method that
+refuses you has told you it exists.
+
+### Absence needs two calls, not one, wherever one status code does two jobs
+
+**Evidence.** v0.4 unit U5 (`_reask_bare` in `talaria/transport/compat_check.py`, and the
+`parameterized=` branch of `classify_recorded_reply` in `talaria/domain/compat.py`), pinned by
+`test_a_parameterized_failure_is_reasked_bare_before_absence` and
+`test_a_recorded_parameterized_method_not_found_is_not_read_as_absence`, both verified to fail with
+the re-ask removed. Closes the `absent_capability` misdiagnosis carried in
+[QUEUED.md](QUEUED.md) since 2026-08-07.
+
+**Mechanism.** The recorded defect was an HTTP one: Hermes returns 404 both for "this route does not
+exist" and for "this route exists but that profile does not", and the client picked the rarer
+reading, telling an operator to upgrade Hermes when they had mistyped a profile name. The JSON-RPC
+probe path had the identical shape available to it — a request that carries parameters and comes back
+`-32601` says nothing about which half failed until a parameterless call is made. The fix is the same
+sentence in both places: absence may be claimed only after a bare re-ask also refuses, and a bare
+re-ask that is *not* refused reclassifies the failure as the probe's own.
+
+**Generalizable rule.** Before a client blames a server for lacking a capability, it has to have asked
+a question that could only fail for that reason. One status code doing two jobs is not evidence for
+either.
+
+### A checkout revision is not the revision the process is running
+
+**Evidence.** U1's live verification (`docs/analysis/2026-08-17-v0-4-topology-verification.md`),
+relied on by U5's baseline entries: the checkout at the Hermes install is `7095e23eb`, the process
+serving the WebSocket Talaria dials is executing `91a545ab1`, and the two differ by 19 registered
+methods including `approval.pending`.
+
+**Mechanism.** A Python process executes the code it imported at start. The checkout advanced by a
+fast-forward merge seven days after those processes started, so reading the working tree answers a
+question about the *next* restart, not about the wire.
+
+**Generalizable rule.** Check a serving process's start time against the revision before treating a
+source read as evidence about a running system.
+
+## 2026-08-17
+
 ### One fact, two structures, and only one of them gets re-anchored
 
 **Evidence.** v0.4 unit U4, the fleet-scoped answering bookkeeping

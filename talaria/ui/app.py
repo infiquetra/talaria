@@ -67,6 +67,15 @@ from talaria.domain.commands import (
     slash_exec_command,
     unavailable_catalog,
 )
+from talaria.domain.compat import (
+    PROBE_REVALIDATION_S,
+    ProbeTrigger,
+    SeamBoard,
+    apply_probe_round,
+    board_lines,
+    empty_board,
+    seam_probe_due,
+)
 from talaria.domain.composer_history import ComposerHistory
 from talaria.domain.composer_history import push as history_push
 from talaria.domain.decode import (
@@ -148,7 +157,7 @@ from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
-from talaria.transport.compat_check import CompatReport, check_compatibility
+from talaria.transport.compat_check import CompatReport, HealthProbe, probe_seams
 from talaria.transport.connection_set import EnsureReport
 from talaria.transport.rpc import (
     LOST_WITH_TRANSPORT,
@@ -1113,6 +1122,15 @@ class TalariaApp(App[None]):
         #: run. ``None`` and "ran, and found gaps" are different facts, so they
         #: are not collapsed (R34, AE7).
         self.compat: CompatReport | None = None
+        #: The focused connection's seam board (v0.4 U5). Starts with every seam
+        #: never-observed, which is the honest state before a probe has run —
+        #: not an empty board, and not a board of absences.
+        self.seams: SeamBoard = empty_board()
+        #: The seam lines currently on screen, or ``None`` before the board has
+        #: ever been painted. The two are different facts and the difference is
+        #: load-bearing: ``None`` is what keeps the render tick from putting four
+        #: never-observed rows on screen in replay, where no probe runs at all.
+        self._seam_lines: tuple[str, ...] | None = None
         #: How many ``paste.collapse`` round trips are outstanding. Non-zero
         #: means the composer still holds a literal body that is about to be
         #: replaced, so Enter must not put it into the turn.
@@ -1144,6 +1162,9 @@ class TalariaApp(App[None]):
         self._dirty = True
         self._teardown_started = False
         self._coalesce_timer: Timer | None = None
+        #: The five-minute seam revalidation timer (U5). Separate from the
+        #: render tick above so the two cadences cannot be confused for one.
+        self._seam_timer: Timer | None = None
         self._pump_task: asyncio.Task[None] | None = None
         #: KTD2's landing barrier: how many session landings are in flight.
         #:
@@ -1366,6 +1387,13 @@ class TalariaApp(App[None]):
     async def on_mount(self) -> None:
         self._started_at = time.monotonic()
         self._coalesce_timer = self.set_interval(self.coalesce_interval, self._render_tick)
+        # A separate, far slower timer than the render tick, and deliberately
+        # not folded into it: R12 wants the probe story kept live, and a probe
+        # round on the 50ms render cadence would put eight RPCs and an HTTP
+        # request on the wire twenty times a second. The callback re-checks
+        # ``seam_probe_due`` before doing anything, so the interval is a floor
+        # rather than the only thing standing between here and a busy loop.
+        self._seam_timer = self.set_interval(PROBE_REVALIDATION_S, self.revalidate_seams)
         self._pump_task = asyncio.create_task(self._pump())
         if self.status_runner is not None and self.status_runner.enabled:
             self._status_task = asyncio.create_task(self._status_loop())
@@ -1399,6 +1427,9 @@ class TalariaApp(App[None]):
         if self._coalesce_timer is not None:
             self._coalesce_timer.stop()
             self._coalesce_timer = None
+        if self._seam_timer is not None:
+            self._seam_timer.stop()
+            self._seam_timer = None
         for task in (
             self._pump_task,
             self._status_task,
@@ -1581,6 +1612,10 @@ class TalariaApp(App[None]):
         if self._teardown_started:
             return
         self._age_out_approvals()
+        # Before the dirty check, and for the same reason ageing out an approval
+        # is: a seam line growing older is a change with no event behind it, so
+        # nothing else marks the app dirty when it becomes due.
+        await self._refresh_seam_ages()
         if not self._dirty:
             return
         self._dirty = False
@@ -1858,6 +1893,15 @@ class TalariaApp(App[None]):
             self.fetch_catalog()
             self.fetch_model_catalog()
             self.fetch_profiles()
+            # Order matters: ``begin_live_startup`` runs the whole startup
+            # sequence — compatibility check included — but only on the *first*
+            # connection, because re-running it would re-open the session. A
+            # reconnect still has to re-establish the probe story (R9: "probe
+            # results are re-validated on reconnect"), so the seam round is
+            # scheduled separately for exactly the case the startup guard
+            # declines to handle.
+            if self._startup_done:
+                self._reprobe_seams("reconnect")
             self.begin_live_startup()
 
     def note_reconnect(self, epoch: int) -> None:
@@ -3471,43 +3515,62 @@ class TalariaApp(App[None]):
             await self.open_session(self.startup)
         self._startup_done = True
 
-    async def verify_gateway(self) -> CompatReport | None:
-        """Probe KTD9's read-only set and name every gap on screen (R34, AE7).
+    async def verify_gateway(
+        self, *, trigger: ProbeTrigger = "attach"
+    ) -> CompatReport | None:
+        """Probe the permitted set and name every gap on screen (R34, AE7, R9).
 
         What lands in the transcript is only the blocking rows. A clean check
-        says nothing, because a line reading "20 methods verified" would be
-        false — six were verified and fourteen were not probed at all — and a
-        line that told the truth about that would be an operator-facing
-        paragraph on every launch about a thing that is fine.
+        says nothing, because a line reading "every method verified" would be
+        false — most of the baseline is never probed at all — and a line that
+        told the truth about that would be an operator-facing paragraph on
+        every launch about a thing that is fine.
 
-        These counts have moved twice and both times this docstring was the
-        thing that went stale, which is worth naming rather than quietly
-        re-editing away. They used to read "a line reading '17 methods
-        verified' … five were verified and twelve were not probed at all".
-        Five plus twelve is seventeen, and ``REQUIRED_METHODS`` held eighteen:
-        commit ``ec861fa`` pinned ``slash.exec``, taking
-        ``EVIDENCE_ONLY_METHODS`` from twelve to thirteen, and never touched
-        this file. U7 of the 2026-08-08 v0.2 plan then pinned ``session.list``
-        read-only (R10), taking the probed set from five to six and
-        ``REQUIRED_METHODS`` from eighteen to nineteen — five plus thirteen is
-        eighteen, not nineteen, which is the same arithmetic mismatch this
-        paragraph was written to explain the first time.
+        **No counts appear in this docstring any more, and that is the fix.**
+        They went stale three times. The paragraph used to read "a line reading
+        '17 methods verified' … five were verified and twelve were not probed";
+        commit ``ec861fa`` pinned ``slash.exec`` and never touched this file,
+        U7 of the 2026-08-08 v0.2 plan pinned ``session.list`` read-only, and
+        v0.4's U5 promoted ``session.active_list`` and added
+        ``approval.pending`` as presence-only — each time leaving arithmetic
+        here that no longer added up. The counts live in
+        :data:`~talaria.domain.compat.COMPAT_BASELINE` and are printed from it
+        by :meth:`~talaria.transport.compat_check.CompatReport.lines`, which is
+        the only place they can be right by construction.
 
         The gaps do not stop the launch. AE7 blocks the *daily-driver verdict*
         on any gap, and that verdict lives in
         ``docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md``. A client that
         refused to start because one response grew a key would be less useful
         than one that starts and says which surface it could not verify.
+
+        **v0.4 U5 folded the seam round into this method rather than beside
+        it.** The three cadence points R12 names — attach, reconnect, and the
+        five-minute revalidation — are exactly the three moments this method
+        already runs or is now made to run, and ``trigger`` records which one
+        it is so the seam line can say where its knowledge came from. Nothing
+        on a render path calls this.
         """
         dispatcher = self.dispatcher
         if dispatcher is None:  # pragma: no cover - guarded by every caller
             return None
-        report = await check_compatibility(
+        report, results = await probe_seams(
             dispatcher,
+            trigger=trigger,
             session_id=self.state.focused_session_id or "",
             timeout=self.call_timeout,
+            health=self.admin_client if isinstance(self.admin_client, HealthProbe) else None,
         )
         self.compat = report
+        self.seams = apply_probe_round(
+            self.seams, results, at=self.state.last_observed_at
+        )
+        # The status region is the *only* surface a seam change writes to, and
+        # deliberately. It is a current-state surface, which is what a seam is;
+        # an absence also written into the append-only transcript would repeat
+        # every reconnect and would put "the roster is off" in the middle of a
+        # conversation, which is where R10 wants a named absence least.
+        await self._render_seams()
         if report.blocking:
             for verdict in report.blocking:
                 self.state = record_local_note(
@@ -3518,6 +3581,90 @@ class TalariaApp(App[None]):
             self._dirty = True
             self._notice(report.lines()[0])
         return report
+
+    async def _render_seams(self) -> None:
+        """Push the seam board onto the status region, ages and all.
+
+        The clock is ``state.last_observed_at`` — the frame clock, never a wall
+        clock read at render time — so a replayed recording renders the same
+        ages twice (R20, AE8).
+
+        Guarded on the widget being present for the same reason
+        :meth:`note_connection_state` guards its notice: this can be reached
+        from a probe round that lands after the screen has come down.
+
+        Nothing repaints when the text has not moved, which is what lets the
+        render tick call this at its own frequency — see :meth:`_refresh_seam_ages`
+        for why it must.
+        """
+        lines = board_lines(self.seams, self.state.last_observed_at)
+        if lines == self._seam_lines:
+            return
+        try:
+            region = self.status_region
+        except NoMatches:  # pragma: no cover - teardown race
+            return
+        self._seam_lines = lines
+        await region.apply_seams(lines)
+
+    async def _refresh_seam_ages(self) -> None:
+        """Let a painted seam line grow older on screen.
+
+        **A seam's age is the one thing on that line that changes with no event
+        behind it**, and until this existed nothing repainted it. The board was
+        painted exactly once per probe round, on the statement after the round
+        folded in, with no await in between — so every seam was drawn at an age
+        of zero and stayed there. Two whole revalidation intervals could pass
+        with the line still claiming "0s ago", and the ``stale`` wording the
+        renderer already knew how to write could not appear on screen at all.
+        That is R20's obligation reported as a constant, and R24's "say how old
+        the knowledge is" answered with a number that was never true after the
+        instant it was written.
+
+        The repaint probes nothing: :func:`~talaria.domain.compat.board_lines` is
+        a pure function over the board and a clock, so the cadence rule this unit
+        is built around — attach, reconnect, revalidation, never per render —
+        governs *probing* and is untouched by *drawing*.
+
+        It returns before painting when the board has never been painted, which
+        is not an optimization. An unprobed board renders four never-observed
+        rows; painting them from the render tick would put a seam board on screen
+        in replay, where no probe runs and there is nothing to be never-observed
+        *about* yet.
+        """
+        if self._seam_lines is None:
+            return
+        await self._render_seams()
+
+    def _reprobe_seams(self, trigger: ProbeTrigger) -> None:
+        """Schedule one seam round from a synchronous callback.
+
+        ``note_connection_state`` is a transport callback and cannot await, so
+        the round is supervised like every other background task this app
+        starts rather than fired and forgotten.
+        """
+        if self.mode != "live" or self.dispatcher is None or self._teardown_started:
+            return
+
+        async def _round() -> None:
+            await self.verify_gateway(trigger=trigger)
+
+        self._supervise(asyncio.create_task(_round()), "the seam probe round")
+
+    async def revalidate_seams(self) -> None:
+        """The five-minute re-probe (R12), and the only scheduled one.
+
+        Asks :func:`~talaria.domain.compat.seam_probe_due` first, so a timer
+        firing early — or several timers, or a caller with a shorter interval —
+        cannot turn the cadence into something faster than the interval. The
+        render tick is a different timer entirely and never reaches this method,
+        which is the mechanical half of "never per-render".
+        """
+        if self.mode != "live" or self.dispatcher is None or self._teardown_started:
+            return
+        if not seam_probe_due(self.seams, self.state.last_observed_at, "revalidation"):
+            return
+        await self.verify_gateway(trigger="revalidation")
 
     async def open_session(self, selection: StartupSelection) -> RpcOutcome | None:
         """Resolve KTD7's selection into one focused session (R2).

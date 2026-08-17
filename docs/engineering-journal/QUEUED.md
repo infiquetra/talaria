@@ -160,9 +160,24 @@ feeds, which is where the design question sits — not in the reading of the rep
 is exactly where a reader trusts the transcript to be the whole conversation, and right now it is
 reliably empty.
 
-### `absent_capability` blames the gateway's version for a mistyped profile name
+### ~~`absent_capability` blames the gateway's version for a mistyped profile name~~ — CLOSED 2026-08-17
 
-**Priority.** P1 — the message actively misdiagnoses, and it fires on the most likely operator error.
+**Closed by.** Two units, one rule. v0.4's U4 fixed the reported HTTP case: a 404 carrying a
+`profile` parameter is re-probed with a bare GET, and a route that answers 2xx or 405 to the bare
+path reclassifies the failure as `unknown_profile`
+(`_disambiguate_absent_capability`, `talaria/transport/admin.py`). v0.4's U5 generalized the rule to
+the JSON-RPC probe path it had never been applied to: a `-32601` on a request that carried parameters
+is re-asked bare before `missing` may be returned, and a bare re-ask that is answered reclassifies
+the verdict as `parameter-invalid` (`_reask_bare`, `talaria/transport/compat_check.py`). The same
+sentence governs a replayed recording, so a corpus holding only a parameterized failure reproduces
+`parameter-invalid` rather than inventing an absence
+(`classify_recorded_reply`, `talaria/domain/compat.py`). Pinned by
+`test_a_parameterized_failure_is_reasked_bare_before_absence` and
+`test_a_recorded_parameterized_method_not_found_is_not_read_as_absence`, both verified to fail with
+the re-ask removed. The generalizable rule is in [LEARNINGS.md](LEARNINGS.md), "Absence needs two
+calls, not one, wherever one status code does two jobs".
+
+**Priority when open.** P1 — the message actively misdiagnoses, and it fires on the most likely operator error.
 Found 2026-08-07 while exercising row 19's absent-capability branch against a live gateway.
 
 **Evidence.** `GET /api/model/options` returns 200; `GET /api/model/options?profile=no-such-profile`
