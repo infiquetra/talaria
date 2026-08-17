@@ -2,6 +2,30 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-08-17
+
+### The checkout is not the process: a pinned read must pin what the server imported
+
+**Evidence.** v0.4 unit U1's live drive
+([docs/analysis/2026-08-17-v0-4-topology-verification.md](../analysis/2026-08-17-v0-4-topology-verification.md)):
+the Hermes checkout stood at `7095e23eb`, but the process serving the websocket Talaria dials had
+started seven days before the checkout advanced there, so the wire behaved as `91a545ab1` — no
+`approval.pending` (`-32601` on the wire, present in the checkout at
+`tui_gateway/methods_prompt.py:1448`), no activate-reply hydration (verified live: an activate
+during a pending clarify returned `status: "waiting"` with no `pending_clarify` key, while the
+checkout hydrates at `tui_gateway/server.py:8708-8711`), no approval `request_id`.
+
+**Mechanism.** A long-lived Python process executes the modules it imported at start; a later
+`git merge` in its checkout changes the working tree, not the process. Reading the tree and
+calling it "the running revision" silently attributes post-start commits to a pre-start server —
+a wrong *positive* finding, which reads exactly as confidently as a verified one. The tell was a
+live reply contradicting a line-numbered source citation; the resolution was `ps`'s process start
+time against the checkout's reflog dates.
+
+**Generalizable rule.** Before citing a source revision as "what the running system does," check
+the serving process's start time against that revision's landing time; if the process predates the
+revision, the wire is the older code and every claim must say which of the two it is about.
+
 ## 2026-08-12
 
 ### A hand-tuned timer is a timing window with two silent failure modes, not a margin

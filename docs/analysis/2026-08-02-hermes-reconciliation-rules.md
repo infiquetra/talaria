@@ -89,7 +89,7 @@ Every rule's test lives under `tests/domain/`. Line references are at `7f4d15515
 | RR-25 | A sub-agent event carrying empty text is dropped before the upsert, so a heartbeat cannot append a blank detail line. | handler `:1240-1244`, `:1279-1284` | re-encode | `test_an_empty_subagent_event_changes_nothing` |
 | RR-26 | A prompt expiry clears the control **only** when its `request_id` matches, so a stale expiry cannot close a newer prompt. | handler `:1174-1182` | re-encode | `test_a_stale_expiry_cannot_close_a_different_prompt` |
 | RR-27 | **Gap found in the shipping client.** The gateway emits `.expire` for all four blocking bridges — secret, sudo, clarify and terminal.read — but the terminal UI handles only `sudo.expire` and `secret.expire`. `clarify.expire` is covered indirectly by RR-05; `terminal.read.expire` is unhandled. Talaria routes all four through one registry (R8). | `tui_gateway/server.py:2981-2998` vs. handler `:1174-1182` | re-encode with a change | `test_every_bridge_expires_through_the_same_registry` |
-| RR-28 | **Gap found in the protocol.** `approval.request` carries no `request_id` — the payload is `{description, command, choices, allow_permanent, smart_denied}` and `approval.respond` resolves by session key instead. R8 requires a keyed registry, so Talaria synthesizes a stable session-scoped key; only one approval can be outstanding per session on this protocol, so the key is stable rather than a guess. | handler `:1130-1147`; `tui_gateway/methods_prompt.py:886-920` | re-encode with a change | `test_approval_gets_a_synthesized_session_scoped_key` |
+| RR-28 | **Gap found in the protocol.** `approval.request` carries no `request_id` — the payload is `{description, command, choices, allow_permanent, smart_denied}` and `approval.respond` resolves by session key instead. R8 requires a keyed registry, so Talaria synthesizes a stable session-scoped key; only one approval can be outstanding per session on this protocol, so the key is stable rather than a guess. **Drifted at `7095e23eb` — see "Drift against the running install" below.** | handler `:1130-1147`; `tui_gateway/methods_prompt.py:886-920` | re-encode with a change | `test_approval_gets_a_synthesized_session_scoped_key` |
 | RR-29 | A response whose `request_id` matches no outstanding prompt is refused before it reaches the socket. The gateway tolerates a late respond and answers `{"status": "expired"}`, so tolerance is not routing — R8's "a late response cannot be attached to a different request" can only be guaranteed in the registry that knows which ids are live. | `tui_gateway/server.py:10228-10239` | re-encode with a change | `test_a_late_respond_attaches_to_nothing` |
 | RR-30 | Switching the focused session drops the previous session's live state — sub-agents, streaming buffers, turn phase — so session A cannot bleed into session B. **`prompts` is the deliberate exception** (U5, CR3 finding 1): the gateway keeps blocking on an outstanding bridge across a switch and never re-announces it, so clearing the registry would orphan the control forever. It is retained in the registry; `talaria/domain/projection.py`'s `prompt_view` session filter is what keeps it off the switched-to session's screen. | controller `:918-938` | re-encode with a change | `test_focusing_a_new_session_drops_the_previous_sessions_live_state` |
 | RR-31 | A delta arriving with no `message.start` opens a turn, counts it, and says so in the transcript. Hermes drops these; R6 forbids dropping content and AE2 names "missing start" as a sequence that must land in a catalogued outcome. | handler `:751-754` | re-encode with a change | `test_a_delta_without_a_start_opens_a_visible_synthetic_turn` |
@@ -118,6 +118,40 @@ against its own body. `talaria/domain/decode.py` takes the 45 from the switch.
 same expiry path that produces the two `.expire` events Hermes does handle
 (`tui_gateway/server.py:2989-2998` names all four). Talaria's known-event set is therefore 48. A
 client that did not know them would surface every desktop-style terminal read as protocol noise.
+
+## Drift against the running install (recorded 2026-08-17, v0.4 unit U1)
+
+The catalogue's evidence column stays pinned at `7f4d15515`. The v0.4 pinned read (`7095e23eb`, the
+running install's checkout) drifts one rule, and the drift has a wrinkle: at recording time the
+machine's serving processes still executed an intermediate revision (`91a545ab1`) on which the
+drift had not yet landed — full detail in
+[2026-08-17-v0-4-topology-verification.md](2026-08-17-v0-4-topology-verification.md).
+
+**RR-28 — the approval-keying gap is closed upstream at `7095e23eb`.** Every queued approval entry
+now synthesizes a `request_id` at construction (`tools/approval.py:2596`, `uuid4` setdefault); the
+`approval.request` event payload and the new `approval.pending` snapshot rows carry it; and
+`approval.respond` accepts an optional `request_id` that resolves exactly the named entry,
+falling back to the FIFO head when omitted (`tools/approval.py:2655-2662`). Two consequences for
+Talaria, both taken up by v0.4's KTD9:
+
+- Talaria's synthesized session-scoped key remains the fallback identity, but when a gateway id
+  was observed, the answer sends it — the gateway removes queue heads on timeout and interrupt
+  without emitting anything, so an aimed answer is strictly safer than a positional one.
+- On a pre-drift gateway the `request_id` parameter is **accepted without error** — verified live on
+  `91a545ab1`, where `approval.respond` carrying a bogus id returned `{"resolved": 0}` rather than a
+  parameter error. That the **FIFO head pops regardless** is *source-derived*, not live-verified:
+  the observation was made against a session with an empty approval queue, where an id-aware and an
+  id-ignoring implementation both return zero. The source basis is unambiguous — `tools/approval.py`
+  at `91a545ab1` contains **zero** occurrences of `request_id` (8 at `7095e23eb`), so the parameter
+  cannot be read there. Sending only *observed* ids keeps this harmless either way — a pre-drift
+  gateway never emits one to observe.
+
+Two smaller corrections that surfaced in the same read: the per-session approval structure is a
+queue, not a single slot, at `7f4d15515` too (`tools/approval.py:2169` at that pin) — RR-28's
+"only one approval can be outstanding per session" was a description of the shipping TUI's
+presentation, never a protocol guarantee — and `session.active_list`'s `waiting` status never
+covered approvals at any examined revision (the status function reads only the blocking-bridge
+registry), so a session blocked on an approval reports `working`.
 
 ## What this catalogue does not cover
 

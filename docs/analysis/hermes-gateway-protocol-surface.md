@@ -2,7 +2,8 @@
 
 Status: `active`
 Authority: `reference`
-Source: [Hermes Agent](https://github.com/NousResearch/hermes-agent) at `7f4d15515` (2026-08-01)
+Source: [Hermes Agent](https://github.com/NousResearch/hermes-agent) at `7f4d15515` (2026-08-01);
+re-pinned additions at `7095e23eb` (2026-08-17, v0.4 U1) in the dated section at the end
 
 Derived by reading Hermes's own terminal UI (`ui-tui/`) and gateway (`tui_gateway/`) rather than by
 observation. This is reference data, not a decision — nothing here is canon until an ADR promotes it.
@@ -90,3 +91,66 @@ what it is doing, `gateway.ready` for connect, and `error`. Everything else degr
 
 The blocking prompts are the first hard requirement beyond display, because ignoring them hangs the
 agent rather than merely showing less — and answering them is what puts credentials on the wire.
+
+## Re-pin at `7095e23eb` (2026-08-17, recorded by v0.4 unit U1)
+
+Everything above stands as written at `7f4d15515`. The v0.4 fleet turn re-pinned the read to
+`7095e23eb`, the running install's checkout, and drove the load-bearing additions live where the
+serving process allowed. Full live evidence, including which claims are wire-verified versus
+source-only, is in
+[2026-08-17-v0-4-topology-verification.md](2026-08-17-v0-4-topology-verification.md). The surface
+deltas:
+
+- **154 registered methods** (was 130 at the old pin; 135 at the revision the live processes run).
+  The delta from the old pin is exactly 24 added and none removed. The additions v0.4 builds on:
+  `approval.pending` (per-session pending-approval snapshot — **side-effecting**: it warms the
+  session's agent build via `_sess`, `tui_gateway/server.py:2500`), `approval.received` (client
+  ack), and a third GUI blocking bridge, `mcp.setup.respond`. Other additions (`profiles.*`,
+  `mcp.servers.*`, `image.generate`, `session.set_hidden`, `session.workspace.move`,
+  `subagent.steer`, `wake.feed`, `mcp.catalog`, `preview.read.respond`, `window.read.respond`) are
+  outside Talaria's needs.
+- **`session.active_list` is NOT new — it was registered at the old pin too**
+  (`tui_gateway/methods_session.py` at `7f4d15515`), and its status vocabulary
+  `waiting | starting | working | idle` is unchanged: `_session_live_status` in
+  `tui_gateway/server.py` is byte-identical at `7f4d15515`, `91a545ab1` and `7095e23eb`. This
+  corrects the v0.4 plan's KTD4, which lists the roster method alongside `approval.pending` as
+  something "the old pin does not have"; only `approval.pending` is genuinely new. The line above
+  listing the 32 methods the shipping terminal client calls already included the roster method, and
+  the enumeration confirms it. Probing it as a capability stays harmless — a probe of an
+  always-present method always succeeds — but **the roster must not be gated behind a
+  version check**, because there is no version of this gateway Talaria dials that lacks it.
+- **Session events are transport-scoped, not broadcast.** `write_json`
+  (`server.py:1637`) routes any event frame carrying a `session_id` to the one transport stored on
+  that session; only session-less events fan out to all peers via `_broadcast_global_event`
+  (`server.py:1691`) — the broadcast set that matters is `sessions.changed` (empty payload,
+  signature watcher, ~2 s coalescence) and `session.reclaimed` (`{session_id, stored_session_id,
+  reason}`, only for the three backend reap reasons — an explicit `session.close` does not emit
+  it). Verified live on two concurrent connections: a session created and driven on one produced
+  zero session-scoped frames on the other.
+- **Four calls rebind that transport: `session.create`, `session.resume`, `session.activate` — and
+  `prompt.submit`** (`methods_prompt.py:337-341`). Attach *and submit* are steal; the displaced
+  client receives nothing, mid-turn included (verified live in the one leg that measured the
+  displaced connection's frame count). That the `*.respond` bridges do **not** rebind, and resolve
+  purely by `request_id` with no transport or session check, is **source-derived, not live-verified**
+  — every non-approval bridge delegates to `_respond` (`server.py:11629-11641`), which looks up
+  `params["request_id"]` in the `_pending` registry and never resolves a session; and no `*.respond`
+  handler appears among the writers of `session["transport"]` (`methods_prompt.py:341`,
+  `server.py:8664`, `:8089`, `:1194`, `compute_host.py:530`, `:632`). The live run answered every
+  prompt from a connection that had just activated the session, so it never exercised a respond from
+  a non-owning connection.
+- **`session.activate`'s reply hydrates `pending_approval` and `pending_clarify`** when they exist
+  (`server.py:8708-8711`) — and nothing else: a pending sudo/secret is not in the payload. New in
+  `7095e23eb`; not yet live on this machine's serving processes (see the caveat below).
+- **Approvals gained a keyed identity.** Every queued approval entry synthesizes a `request_id`
+  (`tools/approval.py:2596`) carried by the request event, the pending snapshot, and an optional
+  aimed `approval.respond`. Pre-pin gateways accept and silently ignore the parameter. Approval
+  rows carry **no start stamp** — wait ages have no authoritative start time on this protocol.
+- **Probing absence works by error code:** an absent method answers `-32601` (`unknown method: …`);
+  a present method with a bad or missing session answers `4001` (`session not found`). Verified
+  live for `approval.pending`, which is absent on the wire this machine serves today.
+
+**Caveat that earned its own rule: the checkout is not the process.** At recording time the serving
+processes predated the checkout's advance to `7095e23eb` and execute `91a545ab1` — which lacks
+`approval.pending`, the activate-reply hydration, the approval `request_id`, and `mcp.setup`. A
+re-derivation of this document must pin the revision the *process* imported (process start time
+versus checkout history), not the revision the working tree shows.

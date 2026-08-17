@@ -179,3 +179,21 @@ it is small, and its 20 fields are a ready-made list of everything the domain st
 which makes it a test of the framework boundary in
 [ADR-0002](../../platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)
 as well as of the renderer.
+
+## Verdicts re-checked at the pinned checkout revision `7095e23eb` (2026-08-17, v0.4 unit U1)
+
+The v0.4 fleet turn re-pinned the protocol read to `7095e23eb` and drove the affected surfaces
+live ([evidence](2026-08-17-v0-4-topology-verification.md)). The rows the fleet turn touches,
+re-checked against that revision:
+
+| Row | Verdict at `7095e23eb` | What changed since `7f4d15515` |
+| --- | --- | --- |
+| D1 (`approval`, `clarify`, `secret`, `sudo`) | **Keep — verdict stands, scope grows.** | The blocking-bridge family is now eight request kinds (`terminal.read`, `preview.read`, `window.read`, `mcp.setup` beside the four here). Talaria cards the original four (R14); the GUI-only four are named on the fleet registry row and not queued — a kind Talaria cannot render anywhere is not a resolvable queue item (KTD2). Approvals gained a synthesized `request_id` and an aimed `approval.respond`; the payloads carry no start stamp, so every wait age is an observation floor (KTD12). |
+| D2 (`confirm`) | **Keep — now load-bearing.** | Operator ruling OP2 makes a confirm dialog the gate on activating any live session Talaria does not drive, because activation — and `prompt.submit` itself — silently rebinds the session's event stream (verified live; the displaced client gets nothing, mid-turn included). |
+| D4 (active session switcher) | **Keep and extend — "extend" is now specified.** | `session.active_list` is confirmed live: rows carry `{current, id, last_active, message_count, model, preview, session_key, started_at, status, title}`, statuses `waiting`/`starting`/`working`/`idle`, no kind on a waiting row, no transport-identity field (hence OP2's confirm-before-steal). The v0.4 registry + needs-you queue is the extension; Hermes's modal switcher remains the shape to surpass, not to copy. One inherited caveat: `waiting` never covers approval-blocked sessions (they report `working`) — a switcher trusting `waiting` as "needs you" under-reports exactly the kind that matters most. |
+| D10/D11 territory — `approval.pending`, `approval.received` | **New methods, adopt `approval.pending` with its guard.** | New at `7095e23eb`; `approval.pending` warms the target session's agent build as a side effect, so it fires only at sessions whose agent is known live (KTD11), and its absence on older gateways is probed by name (`-32601`), never assumed. |
+| E (`sessions` command) | **Keep — unchanged.** | Talaria's `/sessions` and the new `/needs` drill-down are the command-surface counterparts of D4's verdict. |
+| "does not do" item 1 (single-profile process) | **Re-affirmed — and it holds at every revision examined, so the checkout-versus-serving-process distinction does not bite here.** | `session.active_list` enumerates only in-process sessions; other profiles' gateway processes are structurally invisible. One connection per configured profile endpoint (KTD1/OP1) remains the only fleet topology that works. |
+
+No verdict above reverses an original proposal; D2's and D4's grow teeth. The inventory's other
+rows (A, B, C, F, D3, D5–D9) are untouched by the fleet turn and were not re-derived.
