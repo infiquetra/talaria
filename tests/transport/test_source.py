@@ -336,3 +336,35 @@ async def test_a_transient_reconnect_mid_reply_commits_nothing_extra_and_never_d
             f"the resumed response duplicated or lost content: {assistant_text}"
         )
         await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_queued_frame_keeps_the_epoch_of_the_socket_it_arrived_on(
+    gateway: StubGateway,
+) -> None:
+    """``arrival_epoch`` answers for the frame, ``epoch`` for the connection.
+
+    Found by adversarial review of U2 (CR2, minor). The fleet's per-frame tag
+    read ``source.epoch`` when the frame was finally pumped, not when it
+    arrived — but a queued frame outlives its socket whenever backpressure
+    holds it across a reconnect, so a replaced-socket frame would be tagged
+    with the current socket's epoch. That is the exact question the field
+    exists to answer, inverted. No consumer existed yet; U3's router is the
+    one that will rely on it, so the contract is fixed before it does.
+    """
+    source = live_source(gateway)
+    app = live_app(source)
+
+    async with app.run_test():
+        await drain_into(app, until=1)
+        arrived_on = source._connection_epoch
+
+        source._ingest(json.dumps(event("message.delta", {"text": "queued"})), arrived_on)
+        # The socket is replaced before that frame is consumed.
+        replaced_by = source.correlator.open_epoch()
+        assert replaced_by != arrived_on
+
+        await drain_into(app, until=2)
+
+        assert source.arrival_epoch == arrived_on
+        assert source.epoch == replaced_by

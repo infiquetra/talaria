@@ -82,6 +82,29 @@ asking a question nobody can see.
 overrides ``__repr__`` for that reason — a dataclass's generated repr would put
 the token into any traceback, any ``logging`` call with ``%r``, and any pytest
 assertion failure that happens to hold one.
+
+**One entry per profile, backward-compatibly (v0.4 KTD5).** The file's
+top-level ``token`` is the *default profile's* entry and keeps working forever
+— it is not a legacy shape to be migrated away from. Beside it, a
+``[profiles.<name>]`` table holds one ``token`` key for a named profile, so
+Talaria can dial several gateways concurrently, each with its own credential.
+Three rules make that extension safe rather than merely possible:
+
+* **A named profile's credential never falls back.** No top-level ``token``,
+  no other profile's table, and no interactive prompt stands behind
+  ``[profiles.<name>]``. Falling back would present one gateway's credential
+  to another, where the refusal reads as an authentication problem rather than
+  as "that credential was never for this gateway". A profile with no entry
+  fails loud, naming ``talaria refresh-credential --profile <name>``.
+* **A per-profile entry may not carry a ``url``.** Endpoints live in
+  ``[profiles.endpoints]`` in ``config.toml`` and nowhere else, so an address
+  has exactly one source and there is no precedence anybody has to remember. A
+  ``url`` inside ``[profiles.<name>]`` is refused by name rather than ignored.
+* **Syntax fails the whole file; semantics fail one profile.** One TOML
+  document has one parse, so a syntax error is reported for the file and every
+  profile's dial then reports it — there is no per-entry syntax boundary to
+  isolate. After a successful parse, a missing or malformed table refuses that
+  profile's connection by name and leaves every other profile usable.
 """
 
 from __future__ import annotations
@@ -89,6 +112,7 @@ from __future__ import annotations
 import asyncio
 import getpass
 import os
+import re
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -98,14 +122,20 @@ from typing import Literal, Protocol, runtime_checkable
 __all__ = [
     "CREDENTIAL_FILE_MODE",
     "DEFAULT_GATEWAY_URL",
+    "DEFAULT_PROFILE_NAME",
     "GATEWAY_URL_ENV_VAR",
+    "PROFILES_TABLE",
     "Credential",
     "CredentialError",
     "CredentialProvider",
     "CredentialSource",
     "LoopbackTokenProvider",
     "PrimingProvider",
+    "profile_token_from_document",
+    "read_credential_document",
     "resolve_endpoint",
+    "valid_profile_name",
+    "validate_profile_name",
 ]
 
 #: The environment variable holding the gateway endpoint. Also forwarded to the
@@ -140,7 +170,51 @@ _TOO_LOOSE_MASK = 0o077
 #: environment variable, and that is now a property of the whole chain rather
 #: than of one level.** Adding one back means editing this line, which is the
 #: cheapest possible place for that decision to become visible in review.
-CredentialSource = Literal["file", "prompt", "prompt-cached"]
+#: ``"profile-file"`` was added on 2026-08-17 with KTD5's per-profile entries.
+#: It is not a new *place* a credential can come from — it is the same 0600
+#: file — but it names a different key inside it (``[profiles.<name>].token``
+#: rather than the top-level ``token``), and a test that wants to prove a
+#: profile was dialled with its **own** entry has to be able to see the
+#: difference. It is producible, which is the bar the two deleted members
+#: failed.
+CredentialSource = Literal["file", "profile-file", "prompt", "prompt-cached"]
+
+#: The name the credential file's top-level ``token``/``url`` pair answers to.
+#: It is the default profile's entry, not a legacy shape: a file holding only
+#: those two keys stays valid forever (KTD5).
+DEFAULT_PROFILE_NAME = "default"
+
+#: The credential file's per-profile section: ``[profiles.<name>]``.
+PROFILES_TABLE = "profiles"
+
+#: What a profile name may contain to be addressable in this file. Deliberately
+#: narrower than TOML's bare-key grammar: a name carrying a dot would create a
+#: *nested* table (``[profiles.a.b]``) rather than a profile called ``a.b``, and
+#: a name carrying a quote or a bracket could close the header it is written
+#: into and append structure of the writer's choosing. The write path validates
+#: against this before touching the file, so a profile name — which arrives from
+#: the operator's config, and in a later unit from a gateway listing — can never
+#: rewrite the document.
+_PROFILE_NAME_PATTERN = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+
+
+def valid_profile_name(name: str) -> bool:
+    """Whether ``name`` is addressable as ``[profiles.<name>]`` in this file."""
+    return bool(_PROFILE_NAME_PATTERN.match(name))
+
+
+def validate_profile_name(name: str) -> None:
+    """Refuse a profile name that cannot be written as a bare TOML table key.
+
+    Raises :class:`CredentialError` naming the rule rather than echoing the
+    offending name back into a message that may reach a log.
+    """
+    if not valid_profile_name(name):
+        raise CredentialError(
+            "a profile name must be letters, digits, underscores or hyphens, "
+            "starting with a letter or digit, so it can be written as "
+            "[profiles.<name>] in the credential file"
+        )
 
 
 class CredentialError(Exception):
@@ -274,10 +348,33 @@ class LoopbackTokenProvider:
         credentials_path: Path | None = None,
         prompt: Callable[[str], object] | None = None,
         allow_prompt: bool = True,
+        profile: str | None = None,
     ) -> None:
+        #: Which entry of the credential file this provider reads (KTD5).
+        #:
+        #: ``None`` is the default profile and reads the top-level ``token``
+        #: — the shape v0.1 shipped, unchanged and permanent. A string reads
+        #: ``[profiles.<name>].token``.
+        #:
+        #: **One name has a fallback and no other does.** A provider for the
+        #: profile literally named :data:`DEFAULT_PROFILE_NAME` reads its own
+        #: table first and then the top-level ``token``, because the top-level
+        #: pair *is* that profile's entry under another spelling — an operator
+        #: who names the credential-file gateway in ``[profiles.endpoints]``
+        #: has not thereby un-paired it. Every other name resolves from its own
+        #: table or fails; falling back would carry one gateway's credential to
+        #: another, and the refusal would then read as an authentication
+        #: problem rather than as "that credential was never for this gateway".
+        self._profile = profile
         self._credentials_path = credentials_path
         self._prompt = prompt
-        self._allow_prompt = allow_prompt
+        #: A named profile never prompts, whatever the caller asked for. A
+        #: multi-connection launch dials several gateways at once, and a hidden
+        #: :func:`getpass.getpass` underneath a running interface is
+        #: indistinguishable from a hung connection — the failure mode
+        #: :meth:`prime` exists to prevent, multiplied by the size of the
+        #: fleet. A profile with no entry is a *pairing* problem and says so.
+        self._allow_prompt = allow_prompt and profile is None
         self._remembered: str | None = None
         #: How many dials have asked for a credential. Public because KTD11's
         #: per-dial rule is otherwise invisible: a provider that were called
@@ -319,6 +416,9 @@ class LoopbackTokenProvider:
             self._allow_prompt = False
 
     async def _resolve(self) -> Credential:
+        if self._profile is not None:
+            return self._resolve_profile(self._profile)
+
         value = self._from_file()
         if value:
             return Credential(parameter="token", value=value, source="file")
@@ -374,6 +474,102 @@ class LoopbackTokenProvider:
         if not isinstance(raw, str):
             raise CredentialError(f"{path}: token must be a string")
         return _clean(raw)
+
+    def _resolve_profile(self, profile: str) -> Credential:
+        """KTD5's per-profile level: ``[profiles.<name>].token``, or a loud refusal.
+
+        There is no chain here on purpose. One key is read; if it is not there
+        the answer is a :class:`CredentialError` naming the pairing command,
+        never another profile's value and never a prompt nothing can display.
+        """
+        path = self._credentials_path
+        document: Mapping[str, object] = {}
+        if path is not None and path.exists():
+            document = _read_credential_file(path)
+
+        value = profile_token_from_document(document, profile, path)
+        if value:
+            return Credential(parameter="token", value=value, source="profile-file")
+
+        if profile == DEFAULT_PROFILE_NAME:
+            # The one documented fallback, and only for this one name: the
+            # top-level pair *is* the default profile's entry (see ``_profile``).
+            fallback = self._from_file()
+            if fallback:
+                return Credential(parameter="token", value=fallback, source="file")
+
+        # The default profile pairs with the bare command — it is the one name
+        # whose entry may be the top-level pair, so naming the flag here would
+        # teach an operator a longer form than their situation needs.
+        command = (
+            "`talaria refresh-credential`"
+            if profile == DEFAULT_PROFILE_NAME
+            else f"`talaria refresh-credential --profile {profile}`"
+        )
+        raise CredentialError(
+            f"no credential for profile {profile!r}: run "
+            f"{command} to write it into {self._describe_path()} at mode 0600. "
+            "A profile is never dialled with another profile's credential"
+        )
+
+
+def read_credential_document(path: Path) -> Mapping[str, object]:
+    """Parse the credential file the way every credential read parses it.
+
+    Public because :mod:`talaria.transport.connection_set` needs to ask which
+    profiles the file actually holds without duplicating the mode check, and
+    because a second reader that forgot the ``stat`` is exactly the defect
+    :func:`_read_credential_file`'s own docstring records.
+    """
+    return _read_credential_file(path)
+
+
+def profile_token_from_document(
+    document: Mapping[str, object], profile: str, path: Path | None = None
+) -> str | None:
+    """The ``[profiles.<name>].token`` value, or ``None`` when there is no entry.
+
+    Distinguishes absence from malformation, which is KTD5's per-profile
+    semantic isolation in one function: a document with no ``[profiles]``
+    section at all, and one whose section simply does not name this profile,
+    both answer ``None`` so the caller can report "not paired". A section that
+    is not a table, an entry that is not a table, an entry carrying a ``url``,
+    and a non-string ``token`` are each a :class:`CredentialError` naming this
+    profile and leaving every other profile in the document usable.
+    """
+    where = f"{path}: " if path is not None else ""
+    section = document.get(PROFILES_TABLE)
+    if section is None:
+        return None
+    if not isinstance(section, Mapping):
+        raise CredentialError(
+            f"{where}{PROFILES_TABLE} must be a table of per-profile entries, "
+            f"e.g. [{PROFILES_TABLE}.{profile}]"
+        )
+    entry = section.get(profile)
+    if entry is None:
+        return None
+    if not isinstance(entry, Mapping):
+        raise CredentialError(
+            f"{where}[{PROFILES_TABLE}.{profile}] must be a table holding a token key"
+        )
+    if "url" in entry:
+        # KTD5's single-source rule, enforced rather than documented. A per-entry
+        # address would be a second place an endpoint can come from, with a
+        # precedence against ``[profiles.endpoints]`` that nobody has defined —
+        # and the wrong resolution of that precedence dials one gateway with
+        # another's credential.
+        raise CredentialError(
+            f"{where}[{PROFILES_TABLE}.{profile}] carries a url, and the credential "
+            "file is not an endpoint source. Endpoints live in "
+            "[profiles.endpoints] in config.toml; remove the url key"
+        )
+    raw = entry.get("token")
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise CredentialError(f"{where}[{PROFILES_TABLE}.{profile}] token must be a string")
+    return _clean(raw)
 
 
 def _read_credential_file(path: Path) -> Mapping[str, object]:

@@ -155,10 +155,21 @@ refused before anything is dialled — as is a profile whose gateway is not runn
 `[gateway not running]`. Those are two different problems with two different fixes, so they are two
 different messages.
 
-Each profile's dashboard mints its own session token, and `<config_dir>/credentials` holds exactly
-one. A switch to a profile whose token you do not currently hold therefore fails with
-`credential_unavailable` and the reason on screen — nothing was dialled, so no gateway refused
-anything. Run `talaria refresh-credential` against the profile you want and try again.
+Each profile's dashboard mints its own session token, so the credential file holds one entry per
+profile. Pair each one against **its own** dashboard:
+
+```bash
+uv run talaria refresh-credential                    # the default profile: the top-level token
+uv run talaria refresh-credential --profile work     # writes [profiles.work] in the same file
+```
+
+`--profile` derives the dashboard from that profile's `[profiles.endpoints]` entry above, so a
+profile with no configured endpoint is refused by name rather than paired against whichever gateway
+happens to be the default. A profile whose token you do not currently hold reports
+`credential_unavailable` with the reason on screen — nothing was dialled, so no gateway refused
+anything, and every other connection stays up. A named profile never falls back to another
+profile's token: that would present one gateway's credential to another, where the refusal reads as
+an authentication problem rather than as "that credential was never for this gateway".
 
 ### Supplying the gateway credential
 
@@ -188,7 +199,17 @@ halves — `token` for the credential and `url` for the endpoint:
 # <config_dir>/credentials, mode 0600
 token = "..."                              # written by `talaria refresh-credential`
 url = "ws://127.0.0.1:9119/api/ws"         # optional; the default is this value
+
+[profiles.work]                            # written by `--profile work`
+token = "..."
 ```
+
+The top-level pair is the **default profile's** entry and stays valid forever — a file holding only
+those two keys needs no migration. A `[profiles.<name>]` table holds one `token` and nothing else:
+an endpoint there is refused, because addresses live in `[profiles.endpoints]` in `config.toml` and
+having two places one could come from is a precedence nobody has defined. A syntax error fails the
+whole file loud (one TOML document has one parse); after a successful parse, a bad table refuses
+that profile by name and leaves the rest usable.
 
 Stated narrowly, because the narrow claim is the true one: **no route Talaria supports puts a
 credential in its environment, its command line, or your shell history.** What that does _not_ buy

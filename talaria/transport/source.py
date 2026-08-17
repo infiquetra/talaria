@@ -49,7 +49,7 @@ from talaria.transport.rpc import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - types only, no runtime import
-    from talaria.recorder.framelog import FrameRecorder
+    from talaria.recorder.framelog import FrameSink
     from talaria.transport.attach import AttachTarget, Dialer, GatewayConnection
     from talaria.transport.credentials import CredentialProvider
 
@@ -292,7 +292,7 @@ class LiveSource:
         provider: CredentialProvider,
         *,
         dialer: Dialer | None = None,
-        recorder: FrameRecorder | None = None,
+        recorder: FrameSink | None = None,
         correlator: RpcCorrelator | None = None,
         on_connection: Callable[[LiveConnectionState, str, TerminalCause | None], None]
         | None = None,
@@ -322,6 +322,12 @@ class LiveSource:
         self.correlator = correlator if correlator is not None else RpcCorrelator()
 
         self._dialer = dialer
+        #: Where frames are written, when anything is. Typed as
+        #: :class:`~talaria.recorder.framelog.FrameSink` rather than as
+        #: ``FrameRecorder``: a multi-connection run hands each source a *view*
+        #: onto one shared log, and the view is what stamps the connection
+        #: identity — which is exactly the value a source must not be able to
+        #: choose for itself (KTD6).
         self._recorder = recorder
         self._on_connection = on_connection
         self._on_reconnect = on_reconnect
@@ -342,6 +348,9 @@ class LiveSource:
         self._state: LiveConnectionState = "disconnected"
         self._queue: asyncio.Queue[Any] = asyncio.Queue()
         self._queued_bytes = 0
+        #: The epoch of the last frame handed to a consumer (see
+        #: :attr:`arrival_epoch`). ``None`` until one has been.
+        self._arrival_epoch: int | None = None
         self._reads_allowed = asyncio.Event()
         self._reads_allowed.set()
         self._reader: asyncio.Task[None] | None = None
@@ -391,6 +400,21 @@ class LiveSource:
     @property
     def epoch(self) -> int:
         return self.correlator.epoch
+
+    @property
+    def arrival_epoch(self) -> int:
+        """The epoch of the socket the most recently yielded frame arrived on.
+
+        Distinct from :attr:`epoch`, which is the *current* socket's. They
+        differ exactly when a queued frame outlives its connection, which
+        backpressure across a reconnect makes ordinary rather than exotic.
+        Anything tagging a consumed frame with its origin wants this one.
+
+        Before the first frame is yielded there is nothing to report, so this
+        answers the current epoch — the same value, since nothing has been
+        replaced yet.
+        """
+        return self._arrival_epoch if self._arrival_epoch is not None else self.epoch
 
     @property
     def closed(self) -> bool:
@@ -526,6 +550,24 @@ class LiveSource:
 
         outcome = await attach(self.target, credential, dialer=self._dialer)
         if isinstance(outcome, AttachSuccess):
+            # A close can land *during* the two awaits above — the credential
+            # acquire and the attach — and by the time we get here its whole
+            # teardown may have run, having found ``_connection`` still ``None``
+            # and dropped nothing. Storing the socket now would strand an open,
+            # authenticated connection that nothing will ever close: a later
+            # ``close`` no-ops on its own idempotency guard, and a connection
+            # set that already emptied its source map has nothing left to
+            # retire. Verified live — a ping over that socket was answered after
+            # teardown returned.
+            #
+            # Closed here rather than in the caller, because every caller has
+            # the same window and only this frame holds the connection before it
+            # is stored.
+            if self._closed:
+                with contextlib.suppress(Exception):
+                    await outcome.connection.close()
+                return False
+
             self._connection = outcome.connection
             self._connection_epoch = self.correlator.open_epoch()
             self.failure_kind = ""
@@ -586,9 +628,10 @@ class LiveSource:
                 if self._on_connection is not None:
                     self._on_connection(item.state, item.detail, item.cause)
                 continue
-            record, size = item
+            record, size, arrival_epoch = item
             self._queued_bytes = max(0, self._queued_bytes - size)
             self._resume_reads_if_drained()
+            self._arrival_epoch = arrival_epoch
             yield record
 
     async def close(self) -> None:
@@ -786,7 +829,7 @@ class LiveSource:
         # Sized from the bytes that arrived rather than from the decoded object.
         # Measuring the object would mean serializing it again per frame, on the
         # hot path, to refine a threshold whose job is to stop unbounded growth.
-        self._enqueue(record, len(raw))
+        self._enqueue(record, len(raw), epoch)
 
     def _record(self, direction: Direction, raw: str) -> None:
         if self._recorder is not None:
@@ -794,8 +837,21 @@ class LiveSource:
 
     # ── backpressure (KTD13) ─────────────────────────────────────────────
 
-    def _enqueue(self, record: FrameRecord, size: int) -> None:
-        self._queue.put_nowait((record, size))
+    def _enqueue(self, record: FrameRecord, size: int, epoch: int) -> None:
+        # The epoch is stamped HERE, at arrival, not read when the frame is
+        # finally consumed. A queued frame outlives its socket: backpressure
+        # can hold it while a reconnect bumps the correlator, and a consumer
+        # reading the epoch at consumption time would then be told a
+        # replaced-socket frame belongs to the current one — the exact
+        # question the field exists to answer.
+        #
+        # And it is the *connection's own* epoch, threaded down from
+        # ``_ingest``, not ``self.correlator.epoch``. They are equal on every
+        # live path today, so nothing observable turns on it — but the reader
+        # captures its epoch before the receive that produced this frame, and
+        # that captured value is the one this frame actually belongs to. The
+        # same reasoning the correlation path already records one function up.
+        self._queue.put_nowait((record, size, epoch))
         self._queued_bytes += size
         self.peak_queued_frames = max(self.peak_queued_frames, self._queue.qsize())
         self.peak_queued_bytes = max(self.peak_queued_bytes, self._queued_bytes)

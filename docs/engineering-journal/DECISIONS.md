@@ -2,6 +2,97 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-08-17
+
+### Selecting a profile *ensures* a connection; retargeting one socket is now the fallback
+
+**Author.** v0.4 fleet-turn plan, unit U2 (KTD1).
+
+**Decision.** `ConnectionSet.ensure(profile)` is what `/profiles <n>` means when a connection set is
+present: the chosen profile's gateway is brought up **beside** the connections already open and
+becomes the home for the next `session.create`/`session.resume`, and no other connection is touched.
+`LiveSource.switch_to_endpoint` — which retargets one socket, and therefore drops whatever it was
+connected to — stays as the lower-level primitive for a Talaria holding exactly one connection, and
+`TalariaApp` picks between them structurally (`self.connections is None`).
+
+**Rationale.** The gateway routes session events to the one client transport that owns the session
+and broadcasts nothing else — verified on the wire in
+`docs/analysis/2026-08-17-v0-4-topology-verification.md`, where a connection displaced by an activate
+received exactly zero further session-scoped frames at all four ownership flips of the run. So a
+connection is the *sole* feed for its gateway's sessions, and dropping it to look at another gateway
+loses precisely the sessions the operator switched in order to watch. The failure notices differ for
+the same reason the acts do: a failed ensure says "that profile is not connected, everything else is
+unchanged", while a failed switch has to say where the operator has been left instead.
+
+**Rejected alternative.** *Keep drop-switching and let the registry re-seed on the way back* — the
+rows would be re-fetched but the events that arrived while the connection was down are gone, and a
+roster that silently loses the interval it was not watching is the `never-observed`-versus-`idle`
+confusion this release exists to remove.
+
+**Revisit when.** A single connection can carry another gateway's sessions — that is, if Hermes ever
+routes cross-process session events to a client that asks for them.
+
+### A named profile's credential never falls back, and one name is the documented exception
+
+**Author.** v0.4 fleet-turn plan, unit U2 (KTD5).
+
+**Decision.** The credential file's top-level `token` stays the default profile's entry forever;
+`[profiles.<name>]` tables add one `token` key each. A provider built for a named profile resolves
+from its own table or raises, naming `talaria refresh-credential --profile <name>` — no top-level
+fallback, no other profile's table, and no interactive prompt. The single exception is the profile
+literally named `default`, whose provider reads its own table and then the top-level `token`,
+because the top-level pair *is* that profile's entry under another spelling. A per-profile entry
+carrying a `url` is refused: endpoints live in `[profiles.endpoints]` in `config.toml` and nowhere
+else. Two configured profiles whose endpoints parse equal share one connection only when their
+resolved tokens are byte-identical (compared with `hmac.compare_digest`); different tokens refuse the
+launch and name both profiles.
+
+**Rationale.** Each profile's Hermes dashboard mints its own session token and holds it in memory
+only. A fallback would therefore present gateway A's credential to gateway B, and the refusal that
+came back would read as an authentication problem against a gateway the operator never
+misconfigured — sending them to rotate a token that was never for that gateway. The same reasoning
+already produced `credential_unavailable` as a state distinct from `auth_failed` (v0.1 U4); this
+extends it from one connection to N. The `url` refusal removes a precedence nobody defined before
+anyone can depend on it.
+
+**Rejected alternatives.** *Let a named profile fall back to the top-level token* — silently correct
+on a one-gateway machine and silently wrong on every other, which is the worst available split.
+*Allow a per-entry `url`* — a second place an address can come from, with an undefined precedence
+against config, and the wrong resolution of it dials one gateway with another's credential.
+*Refuse only the conflicting profile rather than the launch* — whichever credential were then picked
+would still be presented to a gateway that did not mint it.
+
+**Cost.** Pairing a second profile is an operator act: one `talaria refresh-credential --profile
+<name>` per profile, against that profile's own dashboard.
+
+**Revisit when.** Hermes issues a credential that is valid across a machine's profiles, which would
+make the whole comparison moot.
+
+### The frame log's version follows the connection count, and nothing else
+
+**Author.** v0.4 fleet-turn plan, unit U2 (KTD6).
+
+**Decision.** A recording with one connection is version 1 with no `profile` key and no
+`connections` header — byte-identical to v0.1–v0.3. A recording with two or more is version 2:
+every frame carries the `profile` it crossed, the header lists the connections, and `endpoint`
+survives as a superset field naming the first. All connections write to one file in native arrival
+order; there is no per-connection log and no merge rule.
+
+**Rationale.** This format's own rule is that the version bumps when a reader must notice a change.
+Session ids are unique within a gateway *process*, not across gateways, so a version-1-only reader
+that skipped an unknown `profile` key would merge equal ids from two gateways into one session that
+never existed — and do it silently. The bump makes that reader stop instead of misread. Keeping
+single-connection runs at version 1 is what leaves `tests/recorder/test_equivalence.py` — the corpus
+that pins the Python recorder equivalent to the TypeScript reference, and with it the redaction
+guarantee — untouched by any of this.
+
+**Rejected alternatives.** *One log per connection plus a run manifest* — invents a cross-log merge
+rule exactly where determinism is the requirement. *Keep version 1 for multi-connection logs* — the
+first draft's choice, reversed on the misread hazard above.
+
+**Revisit when.** A reader needs a field whose absence changes meaning again; the additive-and-
+tolerated case still does not warrant a bump, which is why the tolerance is stated in the contract.
+
 ## 2026-08-16
 
 ### Answering a blocked agent is driving, not authoring — the ideation's Q1 is ruled
