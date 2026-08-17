@@ -132,6 +132,7 @@ from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
 from talaria.transport.compat_check import CompatReport, check_compatibility
+from talaria.transport.connection_set import EnsureReport
 from talaria.transport.rpc import (
     LOST_WITH_TRANSPORT,
     NEVER_SENT,
@@ -461,6 +462,13 @@ PROFILE_SWITCH_UNAVAILABLE: Final[str] = (
 #: making the new one. The report's own reason and detail follow.
 PROFILE_SWITCH_FAILED: Final[str] = "profile switch failed:"
 
+#: How the transcript names an *ensure* that did not bring a connection up
+#: (v0.4 KTD1). Deliberately a different sentence from
+#: :data:`PROFILE_SWITCH_FAILED`: nothing was dropped to attempt it, so the
+#: operator needs to read "that profile is not connected", not "you have been
+#: disconnected from something".
+PROFILE_CONNECT_FAILED: Final[str] = "could not connect"
+
 # ── U7: the session picker (KTD3, KTD6) ─────────────────────────────────────
 
 #: The gateway method the picker's listing comes from (``tui_gateway/methods_session.py:162``,
@@ -763,9 +771,32 @@ class EndpointSwitcher(Protocol):
     shape for the same reason :class:`LiveDispatcher` is: a test proves what
     Talaria does with each outcome by choosing the outcome, not by standing up
     a second gateway to provoke it.
+
+    **This is the single-connection primitive, not the fleet path (v0.4 KTD1).**
+    Retargeting one socket means dropping whatever it was connected to, and a
+    fleet client must not drop a gateway in order to look at another — the
+    connection it just dropped is the only feed for that gateway's sessions.
+    When a :class:`ConnectionEnsurer` is present it is used instead; this
+    remains for a Talaria holding exactly one connection.
     """
 
     async def switch_to_endpoint(self, endpoint: str) -> SwitchReport: ...
+
+
+@runtime_checkable
+class ConnectionEnsurer(Protocol):
+    """Brings one profile's connection up without touching the others (KTD1).
+
+    Satisfied by :class:`~talaria.transport.connection_set.ConnectionSet`.
+    Declared as a shape here for the same reason every other transport seam in
+    this module is: the interface asserts what it does with each outcome by
+    choosing the outcome, not by standing up a second gateway to provoke it.
+    """
+
+    async def ensure(self, profile: str) -> EnsureReport: ...
+
+    @property
+    def home(self) -> str: ...
 
 
 @runtime_checkable
@@ -898,6 +929,7 @@ class TalariaApp(App[None]):
         admin_client: ModelAdmin | None = None,
         admin_factory: Callable[[str], ModelAdmin | None] | None = None,
         switcher: EndpointSwitcher | None = None,
+        connections: ConnectionEnsurer | None = None,
         profile_endpoints: Mapping[str, str] | None = None,
         current_profile: str = "",
         call_timeout: float | None = 30.0,
@@ -927,6 +959,13 @@ class TalariaApp(App[None]):
         #: The live transport, when it can be retargeted (U4). ``None`` in
         #: replay and in every test that has no second gateway to reach.
         self.switcher = switcher
+        #: The fleet's connection set (v0.4 KTD1), when there is one. Present
+        #: means ``/profiles`` **ensures** a connection — brings it up beside
+        #: the ones already open and makes it the home for the next create or
+        #: resume — instead of drop-switching the single socket. ``None`` keeps
+        #: the v0.3 behaviour, which is still correct for a Talaria holding
+        #: exactly one connection.
+        self.connections = connections
         #: Talaria's own name-to-gateway-URL map for profiles. Hermes publishes
         #: no endpoint for a profile, so this is the only source of one — see
         #: ``talaria/transport/admin.py``'s docstring.
@@ -3694,8 +3733,18 @@ class TalariaApp(App[None]):
     async def _switch_profile_and_discard(self, argument: str) -> None:
         await self.select_profile(argument)
 
-    async def select_profile(self, argument: str) -> SwitchReport | None:
-        """Resolve ``/profiles <n>`` into a switch to that profile's gateway.
+    async def select_profile(self, argument: str) -> SwitchReport | EnsureReport | None:
+        """Resolve ``/profiles <n>`` into a connection to that profile's gateway.
+
+        **What selecting a profile means changed in v0.4 (KTD1).** With a
+        connection set present it *ensures*: the chosen profile's gateway is
+        brought up beside the connections already open and becomes the home for
+        the next create or resume, and **no other connection is touched**. The
+        v0.3 behaviour — retarget the one socket, dropping whatever it was on —
+        is kept only for a Talaria that holds exactly one connection, because
+        in a fleet the connection a switch would drop is the sole feed for that
+        gateway's sessions, and dropping it to look at another gateway loses
+        exactly the sessions the operator is trying to keep an eye on.
 
         Every refusal below happens **before anything is dialled and before the
         current connection is touched**, which is the property that matters:
@@ -3736,7 +3785,7 @@ class TalariaApp(App[None]):
         if row is None:
             self._notice(f"/profiles has no row {index}")
             return None
-        if row.is_current:
+        if row.is_current and self.connections is None:
             self._notice(f"already connected to {row.name} — nothing to switch")
             return None
         if not row.dialable:
@@ -3748,6 +3797,10 @@ class TalariaApp(App[None]):
                 f"{row.name} cannot be dialled: {row.undialable_reason}; nothing changed"
             )
             return None
+        connections = self.connections
+        if connections is not None:
+            return await self._ensure_profile(row.name, row.endpoint)
+
         switcher = self.switcher
         if switcher is None:
             self._notice(PROFILE_SWITCH_UNAVAILABLE)
@@ -3772,6 +3825,41 @@ class TalariaApp(App[None]):
                 f"{PROFILE_SWITCH_FAILED} {report.reason} · {report.detail} "
                 f"— still connected to the previous gateway"
             )
+        return report
+
+    async def _ensure_profile(self, name: str, endpoint: str) -> EnsureReport | None:
+        """The fleet path for ``/profiles <n>``: bring one connection up (KTD1).
+
+        Nothing here can disconnect anything. Every outcome is reported by
+        name, and every one of them ends with the connections that were open
+        still open — which is why the failure notices say what is *now* true of
+        this profile rather than, as the drop-switch's do, where the operator
+        has been left instead.
+        """
+        connections = self.connections
+        if connections is None:  # pragma: no cover - guarded by the caller
+            self._notice(PROFILE_SWITCH_UNAVAILABLE)
+            return None
+
+        report = await connections.ensure(name)
+        if report.ok:
+            self.current_profile = name
+            if self.admin_factory is not None:
+                # The admin surface follows the *home* connection, which is the
+                # one a new session would be created on. See ``admin_factory``.
+                self.admin_client = self.admin_factory(endpoint)
+            self._notice(
+                f"{name} is connected and is now the home for new sessions"
+                if report.reason == "connected"
+                else f"already connected to {name} — it is now the home for new sessions"
+            )
+            return report
+
+        detail = f" · {report.detail}" if report.detail else ""
+        self._notice(
+            f"{PROFILE_CONNECT_FAILED} {name}: {report.reason}{detail} "
+            "— every other connection is unchanged"
+        )
         return report
 
     # ── U7: the session picker (KTD3, KTD6) ─────────────────────────────────

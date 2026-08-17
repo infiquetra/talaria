@@ -2,7 +2,7 @@
 
 Status: `active`
 Authority: `contract`
-Version: 1
+Version: 2 (a single-connection recording is still version 1 — see "Connections")
 
 A frame log is the recording Talaria makes of its conversation with a Hermes gateway. It is written
 by `talaria record` and is the corpus that replay, renderer comparison, and protocol-drift detection
@@ -29,11 +29,12 @@ The first line is a header. Every subsequent line is a frame.
 }
 ```
 
-| field       | meaning                                                                    |
-| ----------- | -------------------------------------------------------------------------- |
-| `version`   | Format version. Bumped when a reader must notice a change.                 |
-| `startedAt` | When recording began, ISO-8601.                                            |
-| `endpoint`  | The gateway dialled, with every credential-bearing component withheld — see below. |
+| field         | meaning                                                                    |
+| ------------- | -------------------------------------------------------------------------- |
+| `version`     | Format version. Bumped when a reader must notice a change.                 |
+| `startedAt`   | When recording began, ISO-8601.                                            |
+| `endpoint`    | The gateway dialled, with every credential-bearing component withheld — see below. |
+| `connections` | Version 2 only. Every connection this recording covers — see "Connections". |
 
 **What `endpoint` promises.** A URL can carry a credential in three places, and all three are
 withheld: a credential-shaped query parameter (`?token=`, `?ticket=`, `?internal=`, plus the
@@ -68,6 +69,56 @@ is deliberately distinguishable from a missing file.
 | `frame`      | The decoded JSON-RPC frame, after redaction.                 |
 | `redactions` | Present only when something was withheld.                    |
 | `parseError` | Present only when the payload was not valid JSON.            |
+| `profile`    | Version 2 only. Which connection the frame crossed — see below. |
+
+## Connections
+
+Talaria can hold several gateway connections at once, one per configured profile. They record into
+**one** file, in native arrival order, so replay reproduces the interleaving with no cross-log merge
+rule to get wrong. The connection count — and nothing else — decides which of the two shapes a
+recording has.
+
+**One connection: version 1.** No `profile` key on any frame, no `connections` list in the header.
+This is what `talaria record`, `talaria --record`, and every single-gateway run write, and it is
+byte-identical to what v0.1–v0.3 wrote. Recordings made by those versions are single-connection
+recordings by definition, and every reader that could read them can still read a new one.
+
+**Two or more: version 2.** Every frame carries a `profile` naming the connection it crossed, and
+the header carries a `connections` list:
+
+```json
+{
+  "kind": "header",
+  "version": 2,
+  "startedAt": "2026-08-17T09:14:02.331Z",
+  "endpoint": "ws://127.0.0.1:9119/api/ws",
+  "connections": [
+    { "profile": "work", "endpoint": "ws://127.0.0.1:9119/api/ws" },
+    { "profile": "lab", "endpoint": "ws://127.0.0.1:9120/api/ws" }
+  ]
+}
+```
+
+A version-2 header is a **superset** of a version-1 one: `endpoint` is still present and names the
+run's first connection, so no field changes meaning by disappearing. Each `connections` entry's
+`endpoint` is withheld on exactly the same terms as the top-level one.
+
+**Why the version bumps.** This format's rule is that the version bumps when a reader must notice a
+change, and a multi-connection log is that case rather than a merely additive one. Session ids are
+unique *within a gateway process*, not across gateways: a version-1-only reader that skipped the
+unknown `profile` key would merge equal ids from two different gateways into one session that never
+existed, and would do it silently. The bump makes such a reader stop instead of misread.
+
+**Profiles are the observer's identity, not the gateway's.** No gateway listing carries a profile
+field — verified on the wire, 2026-08-17. `profile` is the name of the connection Talaria observed
+the frame on, taken from the operator's own `[profiles.endpoints]` configuration. When two
+configured profile names resolve to one gateway with one credential they are one connection, and
+frames carry the first-configured name.
+
+**Readers ignore what they do not know.** Both this document and the reader
+(`talaria/recorder/reader.py`) treat unknown record fields as tolerated: each record's known fields
+are selected and extras are neither rejected nor required. That tolerance is what lets a field be
+added without a bump when — unlike `profile` — nothing changes meaning for a reader that skips it.
 
 ## Redaction
 

@@ -645,10 +645,17 @@ def test_refresh_credential_derives_the_dashboard_from_the_gateway_endpoint(
 
     seen: list[str] = []
 
-    def fake_refresh(origin: str, path: Path, *, timeout: float) -> object:
+    def fake_refresh(
+        origin: str, path: Path, *, timeout: float, profile: str = ""
+    ) -> object:
         seen.append(origin)
         return refresh_module.RefreshReport(
-            path=path, origin=origin, created=True, tightened=False, preserved_keys=("url",)
+            path=path,
+            origin=origin,
+            created=True,
+            tightened=False,
+            preserved_keys=("url",),
+            profile=profile,
         )
 
     monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:9119/api/ws")
@@ -660,6 +667,62 @@ def test_refresh_credential_derives_the_dashboard_from_the_gateway_endpoint(
     printed = capsys.readouterr().out
     assert "created" in printed
     assert "kept: url" in printed
+
+
+def test_refresh_credential_profile_derives_the_dashboard_from_the_configured_endpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """KTD5: a named profile is paired against *its own* gateway's dashboard.
+
+    Deriving the origin from the default endpoint instead would write one
+    gateway's credential under another gateway's name — the confusion the
+    single-endpoint-source rule exists to prevent.
+    """
+    import talaria.transport.refresh as refresh_module
+
+    seen: list[tuple[str, str]] = []
+
+    def fake_refresh(
+        origin: str, path: Path, *, timeout: float, profile: str = ""
+    ) -> object:
+        seen.append((origin, profile))
+        return refresh_module.RefreshReport(
+            path=path,
+            origin=origin,
+            created=True,
+            tightened=False,
+            preserved_keys=(),
+            profile=profile,
+        )
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        '[profiles.endpoints]\nalpha-fixture = "ws://127.0.0.1:9130/api/ws"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TALARIA_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:9119/api/ws")
+    monkeypatch.setattr(refresh_module, "refresh_credential", fake_refresh)
+
+    assert cli_module.main(["refresh-credential", "--profile", "alpha-fixture"]) == 0
+    assert seen == [("http://127.0.0.1:9130/", "alpha-fixture")]
+    assert "[profiles.alpha-fixture]" in capsys.readouterr().out
+
+
+def test_refresh_credential_refuses_a_profile_with_no_configured_endpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Never silently paired against whichever gateway happens to be default."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("TALARIA_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("TALARIA_GATEWAY_URL", "ws://127.0.0.1:9119/api/ws")
+
+    assert cli_module.main(["refresh-credential", "--profile", "alpha-fixture"]) == 2
+    message = capsys.readouterr().err
+    assert "alpha-fixture" in message
+    assert "[profiles.endpoints]" in message
 
 
 def test_refresh_credential_reports_a_missing_dashboard_and_exits_two(

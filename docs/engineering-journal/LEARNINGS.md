@@ -4,6 +4,28 @@
 
 ## 2026-08-17
 
+### A `MULTILINE` regex and a whole-document regex, mixed, silently rewrote the wrong credential
+
+**Evidence.** v0.4 unit U2, `talaria/transport/refresh.py`. `talaria refresh-credential` with no
+`--profile` — the default-profile refresh — overwrote a *named* profile's token in a credential file
+whose first table was `[profiles.<name>]`, leaving the default profile's own entry untouched. Caught
+by `test_refreshing_the_default_profile_never_edits_a_profile_table`
+(`tests/transport/test_refresh.py`) on the first run of the new test, before the command shipped.
+
+**Mechanism.** Two patterns in the same function disagreed about what a line is. `_TOKEN_LINE` was
+compiled with `re.MULTILINE`, so its `^`/`$` anchor to *line* boundaries and it matches a `token =`
+assignment anywhere in the document. `_TABLE_HEADER_LINE` — added beside it to find where the
+top-level section ends — was compiled **without** the flag, so its `^`/`$` anchor to the whole
+string and it matched nothing in any multi-line file. The boundary search therefore always answered
+"there is no table header", the rewrite window became the entire document, and the MULTILINE token
+pattern found the first `token =` line in it, which in a fleet credential file belongs to a profile.
+The failure is invisible on the file shape the feature was developed against (a top-level `token`
+first) and appears only on the shape the feature exists to create.
+
+**Generalizable rule.** When two regexes divide one document between them, compile them with the
+same flags or the division is a fiction — and write the test for the *new* file shape before the old
+one, because the shape a feature introduces is the one its author has not been staring at.
+
 ### The checkout is not the process: a pinned read must pin what the server imported
 
 **Evidence.** v0.4 unit U1's live drive

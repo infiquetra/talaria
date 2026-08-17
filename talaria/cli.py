@@ -129,6 +129,14 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help="how long to wait for the dashboard to answer (default: 10)",
     )
+    refresh_parser.add_argument(
+        "--profile",
+        metavar="NAME",
+        default="",
+        help="pair a named profile: write [profiles.NAME] in the credential file "
+        "instead of the top-level token, deriving the dashboard from that "
+        "profile's [profiles.endpoints] entry in config.toml (v0.4 KTD5)",
+    )
 
     gate_parser = subparsers.add_parser(
         "gate",
@@ -576,8 +584,16 @@ def run_refresh_credential(args: argparse.Namespace) -> int:
     which dashboard it came from, and which of the file's other keys survived —
     enough to confirm the command did what was intended without putting the
     value on a screen or into a scrollback.
+
+    ``--profile <name>`` pairs a *named* profile (KTD5): it writes
+    ``[profiles.<name>]`` rather than the top-level ``token``, and it derives
+    the dashboard from that profile's ``[profiles.endpoints]`` entry in
+    ``config.toml`` rather than from the credential file's own endpoint. Those
+    two halves belong together — a profile's token is minted by that profile's
+    own dashboard, so deriving the origin from the *default* endpoint would
+    write one gateway's credential under another gateway's name, which is the
+    exact confusion KTD5's single-endpoint-source rule exists to prevent.
     """
-    from talaria.transport.attach import AttachTarget
     from talaria.transport.refresh import (
         RefreshError,
         dashboard_origin_for,
@@ -586,26 +602,69 @@ def run_refresh_credential(args: argparse.Namespace) -> int:
 
     cfg = config_module.load_config()
     credentials = config_module.credentials_path(cfg.config_dir)
+    profile = str(getattr(args, "profile", "") or "")
 
     try:
         origin = args.dashboard
         if not origin:
-            target = AttachTarget.from_environment(credentials_path=credentials)
-            if target.problem:
-                raise RefreshError(target.problem)
-            origin = dashboard_origin_for(target.url)
-        report = refresh_credential(origin, credentials, timeout=args.timeout)
+            origin = dashboard_origin_for(_endpoint_to_pair(cfg, credentials, profile))
+        report = refresh_credential(
+            origin, credentials, timeout=args.timeout, profile=profile
+        )
     except RefreshError as exc:
         print(f"talaria: {exc}", file=sys.stderr)
         return 2
 
     action = "created" if report.created else "updated"
-    print(f"{action} {report.path} (mode 0600) from {report.origin}")
+    entry = f"[profiles.{report.profile}]" if report.profile else "the default profile"
+    print(f"{action} {entry} in {report.path} (mode 0600) from {report.origin}")
     if report.tightened:
         print("  permissions tightened to 0600; the previous file was readable by others")
     if report.preserved_keys:
         print(f"  kept: {', '.join(report.preserved_keys)}")
     return 0
+
+
+def _endpoint_to_pair(
+    cfg: config_module.Config, credentials: Path, profile: str
+) -> str:
+    """Which gateway's dashboard mints the credential being refreshed (KTD5).
+
+    For the default profile that is the endpoint a bare ``talaria`` launch
+    dials. For a named profile it is that profile's ``[profiles.endpoints]``
+    entry in ``config.toml`` and nothing else — the credential file is not an
+    endpoint source for a named profile, so a profile with no configured
+    endpoint is refused by name rather than silently paired against whichever
+    gateway happens to be the default.
+    """
+    from talaria.transport.attach import AttachTarget
+    from talaria.transport.credentials import validate_profile_name
+    from talaria.transport.refresh import RefreshError
+
+    if not profile:
+        target = AttachTarget.from_environment(credentials_path=credentials)
+        if target.problem:
+            raise RefreshError(target.problem)
+        return target.url
+
+    from talaria.transport.credentials import CredentialError
+
+    try:
+        validate_profile_name(profile)
+    except CredentialError as exc:
+        raise RefreshError(str(exc)) from exc
+
+    endpoint = config_module.profile_endpoints(cfg).get(profile)
+    if not endpoint:
+        raise RefreshError(
+            f"no endpoint is configured for profile {profile!r}: add it under "
+            "[profiles.endpoints] in config.toml, or pass --from with that "
+            "profile's dashboard http URL"
+        )
+    target = AttachTarget.from_url(endpoint)
+    if target.problem:
+        raise RefreshError(target.problem)
+    return target.url
 
 
 def run_gate_command(args: argparse.Namespace) -> int:

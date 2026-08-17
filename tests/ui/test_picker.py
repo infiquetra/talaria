@@ -29,6 +29,7 @@ from talaria.domain.models_catalog import (
 from talaria.replay.controls import ReplayControls
 from talaria.replay.source import ReplaySource
 from talaria.transport.admin import AdminError
+from talaria.transport.connection_set import EnsureReport
 from talaria.transport.rpc import RpcOutcome
 from talaria.transport.source import SwitchReport
 from talaria.ui.app import (
@@ -38,11 +39,13 @@ from talaria.ui.app import (
     MODEL_DEFAULT_UNAVAILABLE,
     MODELS_NOT_FETCHED,
     MODELS_STALE_EPOCH,
+    PROFILE_CONNECT_FAILED,
     PROFILE_SWITCH_FAILED,
     PROFILE_SWITCH_UNAVAILABLE,
     PROFILES_NOT_FETCHED,
     PROFILES_STALE_EPOCH,
     PROFILES_UNAVAILABLE,
+    ConnectionEnsurer,
     EndpointSwitcher,
     ModelAdmin,
     ModelDefaultWriter,
@@ -721,12 +724,39 @@ class RecordingSwitcher:
         return self.report
 
 
+class RecordingEnsurer:
+    """A ``ConnectionEnsurer`` double: one chosen report, every name recorded.
+
+    Deliberately has **no** ``switch_to_endpoint``. A double that could do both
+    would let a test pass while the app took the drop-switch path, which is the
+    one thing these tests exist to rule out.
+    """
+
+    def __init__(self, report: EnsureReport | None = None) -> None:
+        self.report = report if report is not None else EnsureReport("", "connected", "connected")
+        self.ensured: list[str] = []
+        self._home = ""
+
+    async def ensure(self, profile: str) -> EnsureReport:
+        self.ensured.append(profile)
+        report = replace(self.report, profile=profile)
+        if report.ok:
+            self._home = profile
+        return report
+
+    @property
+    def home(self) -> str:
+        return self._home
+
+
 def test_the_profile_doubles_satisfy_their_protocols() -> None:
     """Guard the guards: a double outside the protocol proves nothing."""
     admin = FakeProfileAdmin(profiles=THREE_PROFILES)
     assert isinstance(admin, ProfileAdmin)
     assert isinstance(admin, ModelAdmin)
     assert isinstance(RecordingSwitcher(), EndpointSwitcher)
+    assert isinstance(RecordingEnsurer(), ConnectionEnsurer)
+    assert not isinstance(RecordingEnsurer(), EndpointSwitcher)
     # And the U2-era double is deliberately *not* a ProfileAdmin — that is the
     # "this gateway cannot list profiles" state, not a broken double.
     assert not isinstance(FakeAdminClient(catalog()), ProfileAdmin)
@@ -738,6 +768,7 @@ def profile_app(
     *,
     endpoints: Mapping[str, str] | None = None,
     current: str = "",
+    connections: RecordingEnsurer | None = None,
 ) -> TalariaApp:
     controls = ReplayControls(paused=True)
     source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
@@ -748,6 +779,7 @@ def profile_app(
         dispatcher=RecordingDispatcher(),
         admin_client=admin,  # type: ignore[arg-type]
         switcher=switcher,
+        connections=connections,
         profile_endpoints=FIXTURE_ENDPOINTS if endpoints is None else endpoints,
         current_profile=current,
     )
@@ -932,6 +964,129 @@ async def test_a_session_that_cannot_switch_says_so_and_stays_connected() -> Non
         await pilot.pause()
 
         assert app.composer.notice == PROFILE_SWITCH_UNAVAILABLE
+        await app.shutdown_sources()
+
+
+#  ── v0.4 KTD1: /profiles ensures instead of drop-switching ───────────────
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_profile_ensures_its_connection_and_never_switches() -> None:
+    """The whole of KTD1 at the interface: ensure is called, switch is not.
+
+    The switcher is present and is asserted to have been left completely
+    alone — a fleet client must not drop a gateway in order to look at
+    another, because the connection it would drop is the sole feed for that
+    gateway's sessions.
+    """
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    switcher = RecordingSwitcher()
+    ensurer = RecordingEnsurer()
+    app = profile_app(admin, switcher, connections=ensurer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert ensurer.ensured == ["alpha-fixture"]
+        assert switcher.dialled == []
+        assert app.current_profile == "alpha-fixture"
+        assert "home for new sessions" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_selecting_the_profile_already_connected_makes_it_home_rather_than_refusing() -> None:
+    """Under a connection set, the current profile is a home selection, not a no-op.
+
+    The drop-switch's "nothing to switch" refusal was right when selecting
+    meant retargeting the one socket. It is wrong now: the act has a second
+    effect — where the next session is created — that is worth performing.
+    """
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    ensurer = RecordingEnsurer(EnsureReport("", "already_up", "connected"))
+    app = profile_app(admin, connections=ensurer, current="alpha-fixture")
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert ensurer.ensured == ["alpha-fixture"]
+        assert ensurer.home == "alpha-fixture"
+        assert "already connected" in app.composer.notice
+        assert "home for new sessions" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "report",
+    [
+        EnsureReport("", "credential_unavailable", "disconnected", "no credential for it"),
+        EnsureReport("", "auth_failed", "auth_failed", "the gateway said no"),
+        EnsureReport("", "connect_failed", "disconnected", "nothing answered"),
+        EnsureReport("", "refused_endpoint", "connected", "not a valid URL"),
+    ],
+)
+async def test_a_failed_ensure_names_the_profile_and_disconnects_nothing(
+    report: EnsureReport,
+) -> None:
+    """Every failure says what is now true of *this* profile, and only this one.
+
+    The wording matters as much as the behaviour: after a failed switch the
+    operator has to be told where they were left, and after a failed ensure
+    they have to be told that nothing moved. Reusing the switch's sentence
+    would say the second thing in the first thing's words.
+    """
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    ensurer = RecordingEnsurer(report)
+    app = profile_app(admin, connections=ensurer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        app.composer.text = "/profiles 1"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        notice = app.composer.notice
+        assert notice.startswith(PROFILE_CONNECT_FAILED)
+        assert "alpha-fixture" in notice
+        assert report.reason in notice
+        assert report.detail in notice
+        assert "every other connection is unchanged" in notice
+        assert app.current_profile == ""
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_undialable_row_is_still_refused_before_any_connection_is_attempted() -> None:
+    """The pre-dial refusals are unchanged by the fleet path: nothing is asked."""
+    admin = FakeProfileAdmin(profiles=THREE_PROFILES)
+    ensurer = RecordingEnsurer()
+    app = profile_app(admin, connections=ensurer)
+
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await app.load_profiles()
+        # Row 2 is ``beta-fixture``, whose gateway the gateway itself reports
+        # as not running.
+        app.composer.text = "/profiles 2"
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert ensurer.ensured == []
+        assert "cannot be dialled" in app.composer.notice
         await app.shutdown_sources()
 
 

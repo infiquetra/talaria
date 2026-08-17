@@ -565,8 +565,20 @@ def test_no_credential_source_names_an_environment_variable() -> None:
     pins the surviving set, so adding an environment-borne source back means
     editing this test on purpose — the cheapest place for that decision to
     become visible in review.
+
+    It has gained one, on 2026-08-17 with v0.4's per-profile credential
+    entries: ``"profile-file"`` names ``[profiles.<name>].token``. It is not a
+    new *place* — it is the same 0600 file, a different key in it — and it is
+    producible, which is the bar the two deleted members failed. The set is
+    still free of anything reading the environment, which is what this test is
+    actually guarding.
     """
-    assert set(get_args(CredentialSource)) == {"file", "prompt", "prompt-cached"}
+    assert set(get_args(CredentialSource)) == {
+        "file",
+        "profile-file",
+        "prompt",
+        "prompt-cached",
+    }
 
 
 @pytest.mark.asyncio
