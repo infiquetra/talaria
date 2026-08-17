@@ -128,6 +128,18 @@ KNOWN_EVENT_TYPES: frozenset[str] = (
     _HANDLED_BY_HERMES_TUI | _UNHANDLED_BY_HERMES_TUI | _OBSERVED_ON_A_LIVE_GATEWAY
 )
 
+#: Event types that describe a *connection*, not any one session, and arrive
+#: with no ``session_id`` by design (verified live: ``sessions.changed`` is
+#: broadcast session-less with an empty payload; ``platforms.changed`` likewise).
+#: The fleet router (U3) must not count these as identity-less traffic — a
+#: broadcast without a session id is the contract, not a defect — and
+#: ``sessions.changed`` is additionally the KTD2 poll hint that triggers the
+#: coalesced ``session.active_list`` refresh. ``gateway.``-prefixed types are
+#: the same class and are matched by prefix rather than listed here.
+CONNECTION_BROADCAST_EVENT_TYPES: frozenset[str] = frozenset(
+    {"sessions.changed", "platforms.changed"}
+)
+
 
 # ── Protocol errors ──────────────────────────────────────────────────────
 

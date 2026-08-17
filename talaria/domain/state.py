@@ -30,6 +30,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal
 
 from talaria.domain.decode import (
+    CONNECTION_BROADCAST_EVENT_TYPES,
     DecodedFrame,
     NonEventFrame,
     ProtocolErrorFrame,
@@ -64,6 +65,16 @@ from talaria.domain.normalize import (
     subagent_identity,
     subagent_sort_key,
 )
+from talaria.domain.registry import (
+    MAX_RUNTIME_ALIASES,
+    ROW_CAP_PER_CONNECTION,
+    ConnectionChannel,
+    ObservationSource,
+    RegistryRow,
+    RowKey,
+    note_identityless,
+)
+from talaria.domain.session_list import ActiveSessionDirectory, SessionDirectory
 
 #: Which prompt kind each request/expire event pair belongs to.
 _PROMPT_EVENTS: Mapping[str, PromptKind] = {
@@ -2446,6 +2457,737 @@ _HANDLERS: Mapping[str, _Handler] = {
 #: at import time so a failure names the missing type.
 EXPIRE_EVENT_KINDS: Mapping[str, PromptKind] = _EXPIRE_EVENTS
 
+
+# ── The fleet root (U3, KTD3) ────────────────────────────────────────────
+#
+# ``FleetState`` inverts the domain root: the registry of every session on
+# every connection is the container, and the focused session is a cursor into
+# it. The existing ``SessionState`` reducer above is NOT rewritten — it remains
+# the focused session's engine, fed exactly as today (R2 by construction,
+# minimal blast radius). The cross-talk guard's *protection* survives inside
+# that engine; its *discard* is replaced here, one level up: the router sends
+# foreign-session events to registry rows instead of dropping them (R4), and
+# ``cross_session_events_ignored`` stops counting routable events — its R25
+# role (the identity-less counter) moves to the per-connection channel.
+#
+# Scope note (recorded deliberately): the live launch in ``talaria/cli.py``
+# still builds one ``LiveSource`` feeding ``SessionState`` directly. Wiring
+# ``ConnectionSet``/``FleetState`` into the app is not done in this unit — the
+# plan's U3 file map is domain-only, and every surface that would consume the
+# fleet (picker, needs-you bar, confirm flow) lands in U4–U7, which own the
+# app files. Until then the legacy single-connection path keeps its shipped
+# behavior, and this root is exercised by the domain suite and by replay.
+
+
+@dataclass(frozen=True)
+class FleetState:
+    """The domain root: registry rows, per-connection channels, one focused engine.
+
+    ``focused`` is the untouched v0.1–v0.3 :class:`SessionState`;
+    ``focused_profile`` names the connection that feeds it. ``rows`` is keyed
+    ``(profile, durable_id)`` (KTD3); ``aliases`` maps ``(profile, runtime_id)``
+    to a key, because runtime ids change across resume and are rebound, never
+    the key. ``queue_item_keys`` and ``answering_keys`` are the protection
+    sets the memory bound and retirement must never evict — populated by the
+    queue (U6) and the fleet-scoped answering bookkeeping (U4/KTD9); this unit
+    enforces the protection, later units feed the sets.
+
+    ``clock`` is the frame-clock high-water mark: the largest ``at`` this
+    fleet has folded, and the only value ages are computed against (KTD12).
+    """
+
+    focused: SessionState = field(default_factory=SessionState)
+    focused_profile: str = "default"
+    rows: Mapping[RowKey, RegistryRow] = field(default_factory=dict)
+    aliases: Mapping[tuple[str, str], RowKey] = field(default_factory=dict)
+    channels: Mapping[str, ConnectionChannel] = field(default_factory=dict)
+    queue_item_keys: frozenset[RowKey] = frozenset()
+    answering_keys: frozenset[RowKey] = frozenset()
+    clock: float = 0.0
+
+    def focused_key(self) -> RowKey | None:
+        """The focused cursor's registry key, ``None`` before any adoption."""
+        durable = self.focused.session_key or self.focused.focused_session_id
+        if durable is None:
+            return None
+        alias = self.aliases.get((self.focused_profile, durable))
+        return alias if alias is not None else (self.focused_profile, durable)
+
+    def protected_keys(self) -> frozenset[RowKey]:
+        """Rows the bound and retirement may never remove: the focused row,
+        rows holding queue items, rows with in-flight answers (PC2/KTD2).
+
+        **Protection has two mechanisms, and both are load-bearing.** Read them
+        together; each alone was demonstrably insufficient.
+
+        1. :func:`_rebind_durable` *re-anchors* these sets when it moves a row.
+           That is the primary guarantee, and it is complete because a rebind is
+           the only place a row's key ever changes.
+        2. This method also *resolves* each key through the alias map, as the
+           focused cursor always did. That covers a key recorded against an
+           alias that has not yet been trimmed, and it costs nothing.
+
+        The history is worth keeping, because the obvious simplification here is
+        fatal. Resolution came first, replacing a raw membership test that let a
+        queue item's row be retired: a row created by an event is keyed by its
+        runtime id, the first poll that learns its ``session_key`` rebinds it,
+        and a protection recorded before that moment named a key no row answered
+        to. Resolution fixed that — and then broke against the *other* fix of
+        the same round, because the alias index is deliberately bounded: once a
+        protected runtime id aged out of the row's window, the trim reclaimed
+        the only entry that led to the live row, and the row became retirable
+        again. Two correct mechanisms, each undoing the other.
+
+        So re-anchoring is not redundant with resolution, and deleting it
+        because this docstring once argued for resolution alone would reopen the
+        defect. The test that catches it needs a rebind **plus** enough resumes
+        to age the original id out; a single-rebind test passes without the
+        re-anchoring and proves nothing.
+
+        **Contract for units that record protection** (U4's answering
+        bookkeeping, U6's queue): record the row's *registry key* as resolved at
+        record time, not a bare runtime id you happen to hold. A key that is
+        merely an alias of an already-durable-keyed row is re-anchored by
+        nothing — no rebind ever moves it — so it loses protection when that
+        alias trims.
+        """
+        resolved = {self._resolve_protection(key) for key in self.queue_item_keys}
+        resolved |= {self._resolve_protection(key) for key in self.answering_keys}
+        focused = self.focused_key()
+        if focused is not None:
+            resolved.add(focused)
+        return frozenset(resolved)
+
+    def _resolve_protection(self, key: RowKey) -> RowKey:
+        """Where ``key`` points now, following one alias hop if it moved."""
+        return self.aliases.get(key, key)
+
+    def channel(self, profile: str) -> ConnectionChannel:
+        return self.channels.get(profile) or ConnectionChannel(profile=profile)
+
+
+def _with_channel(fleet: FleetState, channel: ConnectionChannel) -> FleetState:
+    channels = dict(fleet.channels)
+    channels[channel.profile] = channel
+    return replace(fleet, channels=channels)
+
+
+def _with_row(fleet: FleetState, key: RowKey, row: RegistryRow) -> FleetState:
+    rows = dict(fleet.rows)
+    rows[key] = row
+    return replace(fleet, rows=rows)
+
+
+def _bind_alias(fleet: FleetState, profile: str, runtime_id: str, key: RowKey) -> FleetState:
+    """Point a runtime id at a row, keeping both sides of the alias bounded.
+
+    The row keeps its newest ``MAX_RUNTIME_ALIASES`` ids; an id the row drops
+    is also dropped from the fleet map, so a churning session cannot grow the
+    alias index without bound (R3's fixed-size discipline, applied fleet-wide).
+    """
+    row = fleet.rows[key]
+    if runtime_id != key[1] or runtime_id in row.runtime_ids:
+        ids = tuple(i for i in row.runtime_ids if i != runtime_id) + (runtime_id,)
+        kept = ids[-MAX_RUNTIME_ALIASES:]
+        dropped = set(ids) - set(kept)
+        aliases = {
+            pair: target
+            for pair, target in fleet.aliases.items()
+            if not (pair[0] == profile and pair[1] in dropped and target == key)
+        }
+        aliases[(profile, runtime_id)] = key
+        fleet = replace(_with_row(fleet, key, replace(row, runtime_ids=kept)), aliases=aliases)
+        return fleet
+    aliases = dict(fleet.aliases)
+    aliases[(profile, runtime_id)] = key
+    return replace(fleet, aliases=aliases)
+
+
+def _resolve_key(fleet: FleetState, profile: str, session_id: str) -> RowKey | None:
+    alias = fleet.aliases.get((profile, session_id))
+    if alias is not None and alias in fleet.rows:
+        return alias
+    direct = (profile, session_id)
+    if direct in fleet.rows:
+        return direct
+    return None
+
+
+def _rebind_durable(fleet: FleetState, old_key: RowKey, durable_id: str) -> FleetState:
+    """Move a row to its learned durable key (KTD3: runtime ids never the key).
+
+    If a row already sits at the durable key — a listing-seeded row meeting
+    its event-created runtime twin — the two merge: the moved row's observed
+    fields win (it is the one events fed), listing markers and aliases union,
+    and the earliest seeding is kept.
+    """
+    profile = old_key[0]
+    new_key: RowKey = (profile, durable_id)
+    if new_key == old_key or old_key not in fleet.rows:
+        return fleet
+    moved = fleet.rows[old_key]
+    existing = fleet.rows.get(new_key)
+    merged = replace(
+        moved,
+        durable_id=durable_id,
+        runtime_ids=moved.runtime_ids,
+    )
+    if existing is not None:
+        merged = replace(
+            merged,
+            title=merged.title or existing.title,
+            model=merged.model or existing.model,
+            message_count=max(merged.message_count, existing.message_count),
+            seeded_at=(
+                min(merged.seeded_at, existing.seeded_at)
+                if merged.seeded_at and existing.seeded_at
+                else (merged.seeded_at or existing.seeded_at)
+            ),
+            listed=merged.listed or existing.listed,
+            live_listed=merged.live_listed or existing.live_listed,
+            listing_epoch=max(merged.listing_epoch, existing.listing_epoch),
+            active_epoch=max(merged.active_epoch, existing.active_epoch),
+            runtime_ids=tuple(
+                dict.fromkeys((*existing.runtime_ids, *merged.runtime_ids))
+            )[-MAX_RUNTIME_ALIASES:],
+        )
+    rows = {k: v for k, v in fleet.rows.items() if k != old_key}
+    rows[new_key] = merged
+    # Ids the merge trimmed out of ``runtime_ids`` must lose their alias entries
+    # too. ``_bind_alias`` cleans up the ids *it* pushes out, but it derives the
+    # dropped set from the row's current ``runtime_ids`` — so an id this merge
+    # trimmed is invisible to it forever after. That was an unbounded leak on
+    # the most ordinary churn there is: fifty resumes of one session left fifty
+    # permanent alias entries pointing at a row holding four runtime ids.
+    trimmed = (
+        set(moved.runtime_ids) | set(existing.runtime_ids if existing else ())
+    ) - set(merged.runtime_ids)
+    aliases = {
+        pair: (new_key if target == old_key else target)
+        for pair, target in fleet.aliases.items()
+        if not (
+            pair[0] == profile
+            and pair[1] in trimmed
+            and target in (old_key, new_key)
+        )
+    }
+    # Protection is *re-anchored* here, not merely resolvable through the alias
+    # map at read time. Resolving alone was not enough, and the way it failed is
+    # worth keeping: the alias index is deliberately bounded, so once a protected
+    # runtime id aged out of the row's four-id window the trim deleted the only
+    # entry that led from the recorded key to the live row — and the row a queue
+    # item still referenced became retirable again. Two correct mechanisms, each
+    # undoing the other.
+    #
+    # A rebind is the one place a row's key ever changes, so rewriting the
+    # protection sets here is complete rather than partial, and it holds across
+    # arbitrarily many rebinds because each one re-anchors again. The read-time
+    # resolution stays as well: it costs nothing and it covers a key recorded
+    # against an alias that has not yet been trimmed.
+    def _moved(keys: frozenset[RowKey]) -> frozenset[RowKey]:
+        return frozenset(new_key if key == old_key else key for key in keys)
+
+    return replace(
+        fleet,
+        rows=rows,
+        aliases=aliases,
+        queue_item_keys=_moved(fleet.queue_item_keys),
+        answering_keys=_moved(fleet.answering_keys),
+    )
+
+
+def _fresh_observation(
+    row: RegistryRow, *, at: float, source: ObservationSource
+) -> RegistryRow:
+    """Fold one current-source observation: the row is live again (R20 — a
+    fresh observation is exactly what clears stale-since)."""
+    return replace(
+        row,
+        observed=True,
+        last_event_at=at,
+        last_event_source=source,
+        stale_since=None,
+        disconnected=False,
+        reclaimed_reason=None,
+    )
+
+
+def _apply_event_to_row(
+    fleet: FleetState,
+    profile: str,
+    decoded: GatewayEvent | UnknownEventFrame,
+    *,
+    stale_generation: bool,
+) -> FleetState:
+    """Route one identified event to its registry row, creating it if unknown (R4)."""
+    session_id = decoded.session_id
+    if session_id is None:  # callers routed identity-less traffic away already
+        return _count_identityless(fleet, profile, f"identity-less event: {decoded.type}")
+    key = _resolve_key(fleet, profile, session_id)
+    if key is None:
+        key = (profile, session_id)
+        fleet = _with_row(
+            fleet,
+            key,
+            RegistryRow(
+                profile=profile,
+                durable_id=session_id,
+                runtime_ids=(session_id,),
+                seeded_at=decoded.at,
+            ),
+        )
+        aliases = dict(fleet.aliases)
+        aliases[(profile, session_id)] = key
+        fleet = replace(fleet, aliases=aliases)
+        fleet = _enforce_row_bound(fleet, profile)
+        if key not in fleet.rows:
+            # The bound evicted the row it just created (a cap of protected
+            # rows only). The eviction was counted and is visible; stop here.
+            return fleet
+    else:
+        fleet = _bind_alias(fleet, profile, session_id, key)
+
+    row = fleet.rows[key]
+    if stale_generation:
+        # A frame from a connection generation ``ensure`` has since replaced
+        # (U2's finding: (profile, epoch) is not unique across a rebuild). The
+        # observation is real — the gateway did emit it — but it must not
+        # un-stale a row whose current source is gone or replaced.
+        row = replace(
+            row,
+            observed=True,
+            last_event_at=max(row.last_event_at, decoded.at),
+            last_event_source="event",
+        )
+    else:
+        row = _fresh_observation(row, at=decoded.at, source="event")
+
+    if isinstance(decoded, GatewayEvent):
+        etype = decoded.type
+        payload = decoded.payload
+        if etype in _PROMPT_EVENTS:
+            row = replace(row, waiting_kind=_PROMPT_EVENTS[etype])
+        elif etype in _EXPIRE_EVENTS:
+            row = replace(
+                row,
+                waiting_kind="",
+                last_notice=clip_detail_line(f"{_EXPIRE_EVENTS[etype]} prompt expired"),
+            )
+        elif etype == "message.start":
+            row = replace(row, open_turn=True, waiting_kind="")
+        elif etype in ("message.complete", "error"):
+            row = replace(row, open_turn=False)
+        elif etype == "session.title":
+            row = replace(row, title=coerce_text(payload.get("title")) or row.title)
+        elif etype == "session.info":
+            row = replace(row, title=coerce_text(payload.get("title")) or row.title)
+            durable = coerce_text(payload.get("stored_session_id"))
+            fleet = _with_row(fleet, key, row)
+            if durable and durable != key[1]:
+                return _rebind_durable(fleet, key, durable)
+            return fleet
+        elif etype == "session.reclaimed":
+            # Retirement, KTD10: the row latches ``reclaimed(reason)`` and
+            # shows stale-since the reap — never a silent removal (the
+            # dual-listing rule, not this event, is what may drop the row).
+            reason = coerce_text(payload.get("reason")) or "reclaimed"
+            row = replace(
+                row,
+                reclaimed_reason=clip_detail_line(reason),
+                stale_since=decoded.at,
+                live_listed=False,
+                open_turn=False,
+            )
+    # An UnknownEventFrame updates the row as a generic observation and
+    # nothing else — AE1's unknown-kind half: the row moved, nothing dropped.
+    return _with_row(fleet, key, row)
+
+
+def _count_identityless(fleet: FleetState, profile: str, notice: str) -> FleetState:
+    """R25: surface on the connection channel, count, touch no row."""
+    return _with_channel(fleet, note_identityless(fleet.channel(profile), notice))
+
+
+def _feed_focused(
+    fleet: FleetState, decoded: DecodedFrame, *, stale_generation: bool = False
+) -> FleetState:
+    """Feed the focused engine exactly as today, then mirror its row summary.
+
+    The mirror only writes once a focused session exists to key a row by, so
+    pre-adoption traffic creates no row (R25's "creates no row" holds
+    structurally for the focused connection too).
+
+    ``stale_generation`` governs the **row mirror only**, never the engine feed.
+    A frame from a socket since replaced is still a real frame the focused
+    transcript must show — R2 governs the transcript, and changing what the
+    engine sees is exactly what this unit promised not to do. But it is not
+    evidence that the *connection* is live again, and the row's freshness is a
+    claim about the connection. Letting it through un-staled a focused row the
+    moment a late frame from a dead socket arrived, while the background rows it
+    shared a connection with correctly stayed stale — the same row, two
+    contradictory answers.
+    """
+    fleet = replace(fleet, focused=apply_frame(fleet.focused, decoded))
+    key = fleet.focused_key()
+    if key is None:
+        return fleet
+    runtime = fleet.focused.focused_session_id
+    row = fleet.rows.get(key)
+    if row is None:
+        row = RegistryRow(profile=key[0], durable_id=key[1], seeded_at=decoded.at)
+        fleet = _with_row(fleet, key, row)
+    if runtime is not None:
+        fleet = _bind_alias(fleet, key[0], runtime, key)
+        row = fleet.rows[key]
+    if not stale_generation:
+        row = _fresh_observation(row, at=decoded.at, source="event")
+    row = replace(
+        row,
+        ownership="we_drive",
+        open_turn=fleet.focused.turn == "streaming",
+        title=fleet.focused.session_title or row.title,
+    )
+    fleet = _with_row(fleet, key, row)
+    durable = fleet.focused.session_key
+    if durable and durable != key[1]:
+        fleet = _rebind_durable(fleet, key, durable)
+    return fleet
+
+
+def _is_focused_traffic(fleet: FleetState, session_id: str) -> bool:
+    """Whether an identified event on the focused connection belongs to the
+    focused engine. Matches the engine's own guard: the exact runtime id, or
+    the adoption case (no session adopted yet — the engine adopts the first
+    session named on the wire, exactly as replay always has)."""
+    focused_id = fleet.focused.focused_session_id
+    return focused_id is None or session_id == focused_id
+
+
+def route_frame(
+    fleet: FleetState,
+    decoded: DecodedFrame,
+    *,
+    profile: str,
+    generation: int = 0,
+) -> FleetState:
+    """Fold one connection-tagged frame into the fleet (U3's router, KTD3).
+
+    Replaces the cross-talk *discard* one level above the focused engine:
+
+    * focused-session traffic on the focused connection feeds the engine
+      exactly as today, then mirrors the focused row's summary;
+    * an identified foreign event updates its row, creating it when the
+      session is unknown (R4) — the focused transcript does not change and
+      nothing is counted as ignored;
+    * an identity-less frame — a protocol error, or a session-scoped event
+      with no usable session id — surfaces on the connection channel, is
+      counted, and creates no row (R25). ``gateway.*`` and the broadcast
+      types are connection traffic by contract, not identity-less defects.
+      (The third R25 clause — an id that conflicts with what the connection
+      can own — cannot arise under ``(profile, durable_id)`` keys: every id
+      is scoped to the connection that observed it, so there is nothing to
+      conflict with; noted here so the omission reads as considered.)
+
+    ``generation`` is the transport's per-profile connection generation
+    (U2). Frames from a superseded generation still count as observations
+    but never clear a row's stale-since — the epoch alone cannot distinguish
+    connection identities across a reconnect-by-ensure.
+    """
+    fleet = replace(fleet, clock=max(fleet.clock, decoded.at))
+    channel = fleet.channel(profile)
+    if generation > channel.generation:
+        channel = replace(channel, generation=generation)
+        fleet = _with_channel(fleet, channel)
+    stale_generation = generation < channel.generation
+    on_focused_connection = profile == fleet.focused_profile
+
+    if isinstance(decoded, NonEventFrame):
+        if on_focused_connection:
+            return replace(fleet, focused=apply_frame(fleet.focused, decoded))
+        return fleet
+
+    if isinstance(decoded, ProtocolErrorFrame):
+        fleet = _count_identityless(fleet, profile, decoded.text)
+        if on_focused_connection:
+            # The session-less protocol error already takes the v0.1 R5 path
+            # through the focused transcript; that rendering is unchanged.
+            return replace(fleet, focused=apply_frame(fleet.focused, decoded))
+        return fleet
+
+    etype = decoded.type
+    session_id = decoded.session_id
+
+    if etype.startswith("gateway.") or etype in CONNECTION_BROADCAST_EVENT_TYPES:
+        if etype == "sessions.changed":
+            fleet = _with_channel(fleet, replace(fleet.channel(profile), hint_at=decoded.at))
+        if on_focused_connection:
+            return replace(fleet, focused=apply_frame(fleet.focused, decoded))
+        return fleet
+
+    if session_id is None:
+        # Identity-less session-scoped traffic: counted and surfaced on the
+        # channel (R25). On the focused connection the engine still sees the
+        # frame — its guard passes session-less events, and that shipped
+        # behavior is R2's to keep, not this router's to change.
+        fleet = _count_identityless(fleet, profile, f"identity-less event: {etype}")
+        if on_focused_connection:
+            return _feed_focused(fleet, decoded, stale_generation=stale_generation)
+        return fleet
+
+    if on_focused_connection and _is_focused_traffic(fleet, session_id):
+        return _feed_focused(fleet, decoded, stale_generation=stale_generation)
+
+    return _apply_event_to_row(fleet, profile, decoded, stale_generation=stale_generation)
+
+
+def route_frames(
+    fleet: FleetState,
+    frames: Iterable[DecodedFrame],
+    *,
+    profile: str,
+    generation: int = 0,
+) -> FleetState:
+    for decoded in frames:
+        fleet = route_frame(fleet, decoded, profile=profile, generation=generation)
+    return fleet
+
+
+# ── Seeding, polling, retirement (KTD2) ──────────────────────────────────
+
+
+def seed_from_listing(
+    fleet: FleetState,
+    directory: SessionDirectory,
+    *,
+    profile: str,
+    at: float,
+    poll_epoch: int,
+) -> FleetState:
+    """Fold one successful ``session.list`` sweep in (R5).
+
+    A listing row's id is the stored — durable — id, so it keys directly.
+    A row this sweep creates enters as **never-observed**: a listing proves
+    existence, not lifecycle, and R24 forbids rendering that as ``idle``.
+    Rows of this profile absent from the sweep lose their ``listed`` marker;
+    the dual-listing retirement below decides whether they drop.
+    """
+    fleet = replace(fleet, clock=max(fleet.clock, at))
+    seen: set[RowKey] = set()
+    for summary in directory.sessions:
+        key: RowKey = (profile, summary.session_id)
+        existing = _resolve_key(fleet, profile, summary.session_id)
+        if existing is not None:
+            key = existing
+        seen.add(key)
+        row = fleet.rows.get(key) or RegistryRow(
+            profile=profile, durable_id=key[1], seeded_at=at
+        )
+        row = replace(
+            row,
+            title=summary.title or row.title,
+            message_count=max(row.message_count, summary.message_count),
+            listed=True,
+            listing_epoch=poll_epoch,
+        )
+        fleet = _with_row(fleet, key, row)
+    for key, row in list(fleet.rows.items()):
+        if key[0] == profile and key not in seen and row.listed:
+            fleet = _with_row(fleet, key, replace(row, listed=False))
+    channel = replace(
+        fleet.channel(profile), listing_epoch=poll_epoch, listing_stale_since=None
+    )
+    fleet = _with_channel(fleet, channel)
+    fleet = _retire_absent_rows(fleet, profile)
+    return _enforce_row_bound(fleet, profile)
+
+
+def apply_active_list(
+    fleet: FleetState,
+    directory: ActiveSessionDirectory,
+    *,
+    profile: str,
+    at: float,
+    poll_epoch: int,
+) -> FleetState:
+    """Fold one successful ``session.active_list`` poll in (KTD2's live feed).
+
+    Every reported row is a lifecycle-confirming observation: status is
+    stored verbatim (KTD10), the observation floor advances only when the
+    status word changes (KTD12 — "waiting ≥ observed span" measures from the
+    first poll that saw the wait), and a ``waiting`` row whose kind no event
+    has named carries the flattened ``unobserved`` kind (the gateway exposes
+    nothing finer for sessions other clients drive).
+    """
+    fleet = replace(fleet, clock=max(fleet.clock, at))
+    seen: set[RowKey] = set()
+    for active in directory.sessions:
+        durable = active.durable_id
+        key: RowKey = (profile, durable)
+        existing = _resolve_key(fleet, profile, active.session_id)
+        if existing is not None and existing != key:
+            fleet = _rebind_durable(fleet, existing, durable)
+        row = fleet.rows.get(key) or RegistryRow(
+            profile=profile, durable_id=durable, seeded_at=at
+        )
+        if key not in fleet.rows:
+            fleet = _with_row(fleet, key, row)
+        fleet = _bind_alias(fleet, profile, active.session_id, key)
+        row = fleet.rows[key]
+        seen.add(key)
+        status_changed = active.status != row.status or not row.observed
+        row = _fresh_observation(row, at=at, source="poll")
+        waiting_kind = row.waiting_kind
+        if active.status == "waiting":
+            waiting_kind = waiting_kind or "unobserved"
+        elif waiting_kind == "unobserved":
+            waiting_kind = ""
+        row = replace(
+            row,
+            status=active.status,
+            status_floor_at=at if status_changed else row.status_floor_at,
+            waiting_kind=waiting_kind,
+            title=active.title or row.title,
+            model=active.model or row.model,
+            message_count=max(row.message_count, active.message_count),
+            live_listed=True,
+            active_epoch=poll_epoch,
+        )
+        fleet = _with_row(fleet, key, row)
+    for key, row in list(fleet.rows.items()):
+        if key[0] == profile and key not in seen and row.live_listed:
+            fleet = _with_row(fleet, key, replace(row, live_listed=False))
+    channel = replace(
+        fleet.channel(profile), active_epoch=poll_epoch, last_poll_at=at, hint_at=None
+    )
+    fleet = _with_channel(fleet, channel)
+    fleet = _retire_absent_rows(fleet, profile)
+    return _enforce_row_bound(fleet, profile)
+
+
+def listing_failed(fleet: FleetState, *, profile: str, at: float) -> FleetState:
+    """A refused or failed ``session.list``: listing-derived fields are marked
+    stale from this moment — marked, never cleared (R5/R20)."""
+    fleet = replace(fleet, clock=max(fleet.clock, at))
+    channel = fleet.channel(profile)
+    if channel.listing_stale_since is None:
+        channel = replace(channel, listing_stale_since=at)
+    return _with_channel(fleet, channel)
+
+
+def _retire_absent_rows(fleet: FleetState, profile: str) -> FleetState:
+    """The dual-listing retirement rule (KTD2/U3).
+
+    A row is dropped only when a successful ``session.list`` and
+    ``session.active_list`` of the **same epoch** both failed to mention it,
+    and it is not focused, holds no queue item, and has no in-flight answer.
+    Live-only rows (in the active list, not the historical listing) are kept;
+    ``session.reclaimed`` and connection loss mark stale-since and never
+    remove.
+    """
+    channel = fleet.channel(profile)
+    if channel.listing_epoch < 0 or channel.listing_epoch != channel.active_epoch:
+        return fleet
+    protected = fleet.protected_keys()
+    doomed = [
+        key
+        for key, row in fleet.rows.items()
+        if key[0] == profile
+        and not row.listed
+        and not row.live_listed
+        and key not in protected
+    ]
+    if not doomed:
+        return fleet
+    rows = {k: v for k, v in fleet.rows.items() if k not in doomed}
+    doomed_set = set(doomed)
+    aliases = {p: t for p, t in fleet.aliases.items() if t not in doomed_set}
+    return replace(fleet, rows=rows, aliases=aliases)
+
+
+def _enforce_row_bound(fleet: FleetState, profile: str) -> FleetState:
+    """The 256-rows-per-connection memory bound (PC2).
+
+    Applies to unprotected rows only; eviction is oldest-first by last
+    observation; every eviction increments the channel's visible truncation
+    count — never a silent drop. Protected rows may exceed the cap outright.
+    """
+    keys = [key for key in fleet.rows if key[0] == profile]
+    overflow = len(keys) - ROW_CAP_PER_CONNECTION
+    if overflow <= 0:
+        return fleet
+    protected = fleet.protected_keys()
+    evictable = sorted(
+        (key for key in keys if key not in protected),
+        key=lambda key: (fleet.rows[key].last_seen_at(), key),
+    )
+    doomed = set(evictable[:overflow])
+    if not doomed:
+        return fleet
+    rows = {k: v for k, v in fleet.rows.items() if k not in doomed}
+    aliases = {p: t for p, t in fleet.aliases.items() if t not in doomed}
+    channel = fleet.channel(profile)
+    channel = replace(channel, evicted_rows=channel.evicted_rows + len(doomed))
+    fleet = replace(fleet, rows=rows, aliases=aliases)
+    return _with_channel(fleet, channel)
+
+
+# ── Connection lifecycle at fleet level ──────────────────────────────────
+
+
+def fleet_connection_lost(fleet: FleetState, *, profile: str, at: float) -> FleetState:
+    """A dropped connection marks every row it fed stale-since, never
+    frozen-fresh (AE4's first half at row level). Never-observed rows stay
+    never-observed — stale-since-nothing is forbidden (R24)."""
+    fleet = replace(fleet, clock=max(fleet.clock, at))
+    for key, row in list(fleet.rows.items()):
+        if key[0] != profile:
+            continue
+        stale_since = row.stale_since
+        if row.observed and stale_since is None:
+            stale_since = at
+        fleet = _with_row(
+            fleet, key, replace(row, disconnected=True, stale_since=stale_since)
+        )
+    return _with_channel(fleet, replace(fleet.channel(profile), connected=False))
+
+
+def fleet_connection_restored(
+    fleet: FleetState, *, profile: str, generation: int, at: float
+) -> FleetState:
+    """Reconnect: the channel is current again under a new generation, and
+    rows stay stale until a fresh poll or event re-confirms each one — a
+    reconnect proves the socket, not the sessions (R20)."""
+    fleet = replace(fleet, clock=max(fleet.clock, at))
+    channel = replace(
+        fleet.channel(profile),
+        connected=True,
+        generation=max(generation, fleet.channel(profile).generation),
+    )
+    return _with_channel(fleet, channel)
+
+
+def mark_we_drive(
+    fleet: FleetState, *, profile: str, session_id: str, at: float
+) -> FleetState:
+    """Record ownership (KTD8): this run created, resumed, or activated the
+    session. Creates the row if the session is not yet known — ownership is
+    Talaria's own bookkeeping, not a gateway observation, so the row stays
+    never-observed until something confirms its lifecycle."""
+    fleet = replace(fleet, clock=max(fleet.clock, at))
+    key = _resolve_key(fleet, profile, session_id)
+    if key is None:
+        key = (profile, session_id)
+        fleet = _with_row(
+            fleet,
+            key,
+            RegistryRow(profile=profile, durable_id=session_id, seeded_at=at),
+        )
+        aliases = dict(fleet.aliases)
+        aliases[(profile, session_id)] = key
+        fleet = replace(fleet, aliases=aliases)
+    return _with_row(fleet, key, replace(fleet.rows[key], ownership="we_drive"))
+
+
 __all__ = [
     "APPROVAL_AGED_OUT",
     "APPROVAL_COMMAND_LABEL",
@@ -2455,14 +3197,23 @@ __all__ = [
     "WITHHELD_HISTORY_PREFIX",
     "DeliveryState",
     "DenyAllScope",
+    "FleetState",
     "SessionState",
+    "apply_active_list",
     "age_out_approvals",
     "apply_frame",
     "apply_frames",
     "cancel_turn",
+    "fleet_connection_lost",
+    "fleet_connection_restored",
     "focus_session",
     "is_terminal_status",
     "land_session",
+    "listing_failed",
+    "mark_we_drive",
+    "route_frame",
+    "route_frames",
+    "seed_from_listing",
     "latch_resolved_prompts",
     "prompt_registration_line",
     "record_local_note",
