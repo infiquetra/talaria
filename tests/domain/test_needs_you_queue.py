@@ -1166,7 +1166,15 @@ def test_an_empty_fleet_builds_an_empty_queue_without_raising() -> None:
 
 def test_a_polled_item_of_a_disconnected_connection_says_it_is_stale() -> None:
     """R20: a queue item whose source dropped says so rather than presenting a
-    frozen age as current."""
+    frozen age as current.
+
+    **The rendering half was added in U7 and the field half is older.** As first
+    written this test asserted `stale_since` was *set* and stopped there, which
+    is what its own docstring promised and not what it checked: nothing read the
+    field, so the age went on counting up off a clock that had stopped watching
+    and the surface said exactly what the docstring said it must not. The
+    assertions below are the promise, tested.
+    """
     from talaria.domain.state import fleet_connection_lost
 
     fleet = foreign_waiting_fleet()
@@ -1175,6 +1183,18 @@ def test_a_polled_item_of_a_disconnected_connection_says_it_is_stale() -> None:
     assert item.stale_since == BASE_TIME + 30
     assert any("connection down" in notice for notice in fleet_queue(dropped).notices)
     assert SOURCE_APPROVAL_POLL not in {item.source}
+
+    # Five minutes after the break, and the only number that moved is the blind
+    # one. The wait is reported as it stood when the stream broke, as a floor,
+    # because Talaria cannot know whether it ended a second later.
+    line = wait_line(item, BASE_TIME + 330)
+    assert "unobserved for 300s" in line, (
+        "a dropped connection's item does not say how long it has been unobserved"
+    )
+    assert "≥" in line, "an unobserved wait is reported as though it were still watched"
+    assert "330s" not in line, (
+        "the age kept counting off a clock that stopped watching at the break"
+    )
 
 
 def test_a_polled_approval_feed_a_does_not_hold_still_reaches_the_queue() -> None:

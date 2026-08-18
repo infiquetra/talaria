@@ -1313,7 +1313,16 @@ async def test_a_second_approval_appears_and_both_lose_their_affirmatives() -> N
     dispatcher = RecordingDispatcher()
     app = live_app(dispatcher)
 
-    async with app.run_test() as pilot:
+    # One row taller than the default, and the extra row is U7's reserved
+    # needs-you bar rather than slack. Every assertion below is unchanged and
+    # measures what it always measured — two cards' content on the assembled
+    # interface — but the last one counts occurrences on the *screen*, so it was
+    # coupled to how many rows the screen has. Adding a permanent bottom row cost
+    # the viewport one line and clipped the second card's hint. The coupling is
+    # incidental to this test's subject; the row cost is not incidental to the
+    # interface, which is why it is named here instead of absorbed by loosening
+    # the count.
+    async with app.run_test(size=(80, 25)) as pilot:
         two_approvals(app)
         await settle(app, pilot)
 

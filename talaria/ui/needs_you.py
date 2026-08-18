@@ -1,0 +1,221 @@
+"""The needs-you surface: one reserved row, and the drill-down behind ``/needs`` (v0.4 U7).
+
+U6 built the queue and this module renders it. Nothing here decides *what* needs
+a person — :func:`~talaria.domain.state.fleet_queue` does, purely, from the
+registry — so a disagreement between what this bar says and what the answer path
+will accept is not possible by construction. That is the whole reason the queue
+is derived rather than stored.
+
+**What this surface will not say.** It reports what Talaria has been told and
+never what it has not asked. Two rules follow, and both are copy rules rather
+than mechanism:
+
+* The empty state is ``needs-you: none``, which is a statement about the queue.
+  It is never "nothing needs you", "all clear", or anything else that would make
+  a claim about the gateways. When a connection could not be asked,
+  :func:`~talaria.domain.queue.summary_line` says so in the same row and the
+  drill-down lists the reason per connection.
+* An item whose connection dropped renders its age as it stood at the break,
+  with the blind span named separately — see
+  :func:`~talaria.domain.queue.wait_line`. Until U7 that field had no reader at
+  all, so a frozen age was rendered as a live one.
+
+**The freshness this surface actually has, stated because it is less than it
+looks.** Sessions Talaria's own connections drive push their frames, so a driven
+wait appears as it happens on any connection. A *foreign* session's wait — one
+another client owns on a gateway Talaria is merely connected to — is visible only
+through polling, and the KTD2 poll loop has no production caller yet (see the
+v0.4 plan's U7 section). Its cadence today is therefore one sweep when a
+connection comes up and one per seam revalidation. Nothing in this module claims
+otherwise, which is why no row here says "now" or "current".
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+from textual.widgets import Static
+
+from talaria.domain.models import QueueItem
+from talaria.domain.queue import ItemKey, NeedsYouQueue, summary_line, wait_line
+from talaria.domain.selection import Choice, Selection, Stage
+from talaria.ui.literal import literal_text
+
+#: The drill-down's title. A question rather than a label, because the surface
+#: answers exactly one and the operator arrived here asking it.
+NEEDS_YOU_TITLE: Final[str] = "needs-you — what is waiting on you"
+
+#: Shown on a notice row, which reports a connection rather than offering an item.
+NOTICE_NOT_AN_ITEM: Final[str] = (
+    "a report about a connection, not something to answer — nothing to select here"
+)
+
+#: Said when a chosen item is no longer in the queue by the time the dialog closes.
+ITEM_NO_LONGER_WAITING: Final[str] = (
+    "that item is no longer waiting — it resolved, expired, or its connection "
+    "dropped while the list was open; nothing was sent"
+)
+
+#: Separates the three parts of an item's identity inside a selection payload.
+#: The unit separator, because it is the one character in this position that
+#: carries no meaning in a session id, a profile name, or a request id.
+_PAYLOAD_SEP: Final[str] = "\x1f"
+
+
+def encode_identity(identity: ItemKey) -> str:
+    """Pack an item's identity into the single string a selection emits."""
+    return _PAYLOAD_SEP.join(identity)
+
+
+def decode_identity(payload: str) -> ItemKey | None:
+    """Unpack a selection payload, or ``None`` when it is not one.
+
+    ``None`` rather than an exception, and the difference matters at exactly one
+    input: a gateway-supplied session id or request id that itself contains
+    :data:`_PAYLOAD_SEP` would split into the wrong number of parts. The caller
+    then reports :data:`ITEM_NO_LONGER_WAITING` and sends nothing, which is the
+    safe reading of an identity that cannot be trusted to name one item. The
+    alternative — splitting on the first two separators and hoping — would aim
+    an approval at whatever row the mangled key happened to match.
+    """
+    parts = payload.split(_PAYLOAD_SEP)
+    if len(parts) != 3:
+        return None
+    return (parts[0], parts[1], parts[2])
+
+
+def format_item_label(item: QueueItem, clock: float) -> str:
+    """One drill-down row: what is waiting, how long, and where.
+
+    Field order is the bar's, and for the bar's reason (R16): the age and the
+    source are fixed-width-ish and come before the variable-width session title,
+    so an 80-column clip takes the title rather than the facts.
+    """
+    title = item.session_title or item.session_id or "an unnamed session"
+    parts = [item.kind, wait_line(item, clock), item.source, title]
+    if item.possibly_duplicate:
+        # Never silently merged: U6 shows both sightings and says the doubt out
+        # loud, so the row has to carry it or the doubt dies at the boundary.
+        parts.append("possibly the same as another row")
+    return " · ".join(part for part in parts if part)
+
+
+def format_item_detail(item: QueueItem) -> str:
+    """The row's second line: the prompt itself, or why it cannot be answered."""
+    if not item.answerable and item.blocked_reason:
+        return item.blocked_reason
+    return item.command or item.summary
+
+
+class NeedsYouBar(Static):
+    """One reserved row for the queue's summary (KTD7, R16).
+
+    Composed at first mount and never unmounted, which is the whole of its
+    geometry contract: a bar that appears when the queue fills and vanishes when
+    it empties would move every region above it twice per approval, and the
+    transcript would reflow underneath a reader. It renders ``needs-you: none``
+    into the same row instead.
+
+    Clipped rather than wrapped, like :class:`~talaria.ui.app.HelpBar`: a second
+    line is a moved region by another name.
+    """
+
+    DEFAULT_CSS = """
+    NeedsYouBar {
+        height: 1;
+        color: $text-muted;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
+        self._line = ""
+
+    def update_queue(self, queue: NeedsYouQueue, clock: float) -> None:
+        """Render this queue, repainting only when the text actually moved.
+
+        The no-move guard is not an optimisation here so much as a rendering
+        contract: the render tick calls this at its own cadence and a repaint per
+        tick would fight the transcript for the terminal.
+        """
+        line = summary_line(queue, clock)
+        if line == self._line:
+            return
+        self._line = line
+        # ``literal_text`` for the same reason every other gateway-sourced string
+        # gets it (R23): the oldest item's session title is the gateway's text,
+        # and it arrives in a row that is otherwise Talaria's own words.
+        self.update(literal_text(line))
+
+    @property
+    def line(self) -> str:
+        """What the bar currently says, for assertions and for the palette."""
+        return self._line
+
+
+class NeedsYouPickerSource:
+    """The ``/needs`` drill-down: every item, then every connection that could not
+    be asked.
+
+    One level, matching ``/sessions`` and for the same reason — there is nothing
+    below an item to descend into, and the answer path lives on the card the
+    selection navigates to rather than in the dialog.
+
+    **Notices are rows, not a footnote.** A connection whose roster or approval
+    detail could not be read contributes silence to the item list, and silence in
+    a surface whose job is "is anything waiting on me" reads as "no". They are
+    listed last and refuse selection, because each one reports a connection
+    rather than offering something to answer.
+
+    The payload is the item's *identity*, never its position: the queue is
+    derived on every render, so a row index taken when the dialog opened may name
+    a different item by the time it closes. The caller resolves the identity
+    against the queue as it stands at that moment and reports
+    :data:`ITEM_NO_LONGER_WAITING` when it has gone.
+    """
+
+    def __init__(self, queue: NeedsYouQueue, clock: float, *, title: str = "") -> None:
+        self._queue = queue
+        self._clock = clock
+        self._title = title or NEEDS_YOU_TITLE
+
+    def root(self) -> Stage:
+        choices = [
+            Choice(
+                key=encode_identity(item.identity),
+                label=format_item_label(item, self._clock),
+                payload=encode_identity(item.identity),
+                detail=format_item_detail(item),
+                selectable=True,
+            )
+            for item in self._queue.items
+        ]
+        choices.extend(
+            Choice(
+                key=f"notice:{index}",
+                label=notice,
+                detail="",
+                selectable=False,
+                refusal=NOTICE_NOT_AN_ITEM,
+            )
+            for index, notice in enumerate(self._queue.notices)
+        )
+        return Stage(title=self._title, selection=Selection.opened(tuple(choices)))
+
+    def descend(self, depth: int, choice: Choice) -> Stage | str:
+        return choice.payload
+
+
+__all__ = [
+    "ITEM_NO_LONGER_WAITING",
+    "NEEDS_YOU_TITLE",
+    "NOTICE_NOT_AN_ITEM",
+    "NeedsYouBar",
+    "NeedsYouPickerSource",
+    "decode_identity",
+    "encode_identity",
+    "format_item_detail",
+    "format_item_label",
+]

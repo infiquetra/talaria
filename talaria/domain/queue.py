@@ -1497,20 +1497,42 @@ def format_age(seconds: float) -> str:
 def wait_line(item: QueueItem, clock: float) -> str:
     """One item's age, saying which kind of age it is (KTD12, R18, R20).
 
-    Three sentences, because there are three facts.
     ``requested`` is an answer on the wire — R18's requested-with-age — and it
     reports the age of the *request*, not of the wait, because that is the number
     that tells the operator whether to worry. ``waiting ≥`` is a floor: Talaria
     saw the wait already in progress and no start stamp exists anywhere on the
     wire, so the span since the first sighting is all that can be claimed.
     ``waiting`` plain is a wait Talaria watched begin.
+
+    **``stale_since`` is rendered here, and until U7 it was rendered nowhere.**
+    The field was written by three call sites in this module and read by none,
+    so a queue item whose connection dropped rendered exactly like a live one:
+    an age that kept counting up off a clock that had stopped watching. Two
+    corrections, both mechanical. Every age is measured **to the moment the
+    stream broke** rather than to now, because nothing after that moment was
+    observed; and the wait becomes a floor whatever kind of stamp it started as,
+    because a wait Talaria watched begin and then stopped watching is a wait
+    known only to have lasted *at least* that long — it may have been answered
+    by someone at the gateway a second later. The blind span is then stated as
+    its own number, so the operator can see how much of the silence is Talaria's
+    rather than the session's. Pinned by
+    ``test_a_polled_item_of_a_disconnected_connection_says_it_is_stale``.
     """
+    # Nothing after the break was observed, so every span below is measured to
+    # the break and never to ``clock``.
+    observed_to = clock if item.stale_since is None else item.stale_since
     if item.requested:
         if item.requested_at is None:
-            return "requested, age not observed"
-        return f"requested {format_age(clock - item.requested_at)} ago"
-    span = format_age(clock - item.opened_at)
-    return f"waiting ≥ {span}" if item.age_is_floor else f"waiting {span}"
+            line = "requested, age not observed"
+        else:
+            line = f"requested {format_age(observed_to - item.requested_at)} ago"
+    else:
+        span = format_age(observed_to - item.opened_at)
+        floor = item.age_is_floor or item.stale_since is not None
+        line = f"waiting ≥ {span}" if floor else f"waiting {span}"
+    if item.stale_since is None:
+        return line
+    return f"{line}, unobserved for {format_age(clock - item.stale_since)}"
 
 
 #: What the summary says when nothing is waiting and every connection answered.

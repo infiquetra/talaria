@@ -87,6 +87,7 @@ from talaria.domain.models import (
     ConnectionStatus,
     PendingPrompt,
     PromptKind,
+    QueueItem,
     RunMode,
     TerminalCause,
 )
@@ -106,6 +107,7 @@ from talaria.domain.projection import (
     project,
     terminal_read,
 )
+from talaria.domain.queue import NeedsYouQueue
 from talaria.domain.registry import RegistryRow, attach_displaces_client
 from talaria.domain.selection import PickerSource
 from talaria.domain.session_list import (
@@ -132,6 +134,7 @@ from talaria.domain.state import (
     end_fleet_answer,
     fleet_connection_lost,
     fleet_connection_restored,
+    fleet_queue,
     fleet_row,
     fleet_seam_board,
     fleet_switch_refusal,
@@ -189,6 +192,12 @@ from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
 from talaria.ui.dialog import ConfirmDialog, PickerDialog
 from talaria.ui.focus import CaretReleased
+from talaria.ui.needs_you import (
+    ITEM_NO_LONGER_WAITING,
+    NeedsYouBar,
+    NeedsYouPickerSource,
+    decode_identity,
+)
 from talaria.ui.palette import PaletteRegion
 from talaria.ui.picker import (
     NO_PROFILES,
@@ -1467,6 +1476,18 @@ class TalariaApp(App[None]):
             paste_threshold=self.paste_threshold,
             id="composer",
         )
+        # KTD7's reserved row, and it is composed here — outside ``#body``,
+        # between the composer and the help footer — for the property that gives
+        # it its name. Inside ``#body`` it would share the ``1fr`` the transcript
+        # stretches into, so a queue that filled would take rows from the
+        # transcript and give them back when it emptied. Out here it is one row
+        # that exists whether or not anything is in it, which is what lets the
+        # empty state be a rendered sentence rather than an absent widget.
+        #
+        # This is the second time the screen-row pins move (the first was
+        # HelpBar's own arrival, A4): the bottom two rows are now needs-you then
+        # help. ``tests/ui/test_a4_function_key_row.py`` holds those pins.
+        yield NeedsYouBar(id="needs-you")
         yield HelpBar(id="help")
 
     @property
@@ -1497,6 +1518,21 @@ class TalariaApp(App[None]):
     def help_bar(self) -> HelpBar:
         return self.query_one("#help", HelpBar)
 
+    @property
+    def needs_you_bar(self) -> NeedsYouBar:
+        return self.query_one("#needs-you", NeedsYouBar)
+
+    @property
+    def needs_you(self) -> NeedsYouQueue:
+        """The queue as the fleet stands, derived on every read (U6, R13).
+
+        A property rather than a field, and the reason is U6's rather than this
+        unit's: a stored queue kept in step by hand is a second copy of the truth
+        that some path eventually forgets to update, which on this surface means
+        either a phantom task or a silent one.
+        """
+        return fleet_queue(self._fleet)
+
     def _idle_notice(self) -> str:
         return INERT_NOTICE if self.mode == "replay" else ""
 
@@ -1512,6 +1548,10 @@ class TalariaApp(App[None]):
         # ``seam_probe_due`` before doing anything, so the interval is a floor
         # rather than the only thing standing between here and a busy loop.
         self._seam_timer = self.set_interval(PROBE_REVALIDATION_S, self.revalidate_seams)
+        # The reserved row starts saying what it will go on saying, rather than
+        # blank: an empty widget and "needs-you: none" occupy the same space and
+        # only one of them is an answer.
+        self._refresh_needs_you()
         self._pump_task = asyncio.create_task(self._pump())
         if isinstance(self.connections, ConnectionFleet):
             # Dialled here rather than in the launcher because the set's dials are
@@ -1788,22 +1828,21 @@ class TalariaApp(App[None]):
         # missing. See the corrected rule in
         # ``docs/engineering-journal/LEARNINGS.md``.
         #
-        # What IS true of the narrow reading: the ``>`` guard cannot fire from
-        # here, and a genuinely superseded frame is unreachable today because
-        # ``FrameRecord`` carries no epoch of its own. So this argument does not
-        # yet DETECT staleness; it prevents live frames from being mistaken for
-        # it. U2's ``TaggedFrame`` carries each frame's own epoch and reaches no
-        # consumer until U7 assembles the ``ConnectionSet``.
+        # **That last paragraph described a gap that is now closed, and the
+        # correction is dated because the shape of the mistake matters.** It read
+        # "``TaggedFrame`` reaches no consumer until U7 assembles the
+        # ``ConnectionSet``", which was true when written and false from
+        # ``ecb6b9d`` (2026-08-18). The set is assembled in ``build_live_app``,
+        # the pump above branches on ``TaggedFrame``, and ``epoch`` is that
+        # frame's own ``arrival_epoch`` off its own socket — so the ``>`` guard
+        # DOES fire, and a frame that outlived its connection is genuinely
+        # distinguishable from one on the current socket.
         #
-        # The capability is not missing, only unassembled. U2 built
-        # ``TaggedFrame`` (``transport/connection_set.py:170-186``) carrying each
-        # frame's own ``profile`` and ``epoch`` for exactly this — "so a consumer
-        # can tell a frame from the socket it is talking to now from one that
-        # arrived on a socket since replaced". It reaches no consumer because
-        # ``build_live_app`` never assembles the ``ConnectionSet``. That
-        # composition root is U7's first deliverable by operator ruling
-        # (2026-08-18); when it lands, this argument becomes the frame's own
-        # epoch and the stale-generation rule becomes reachable.
+        # ``epoch is None`` is now the narrower case rather than the usual one:
+        # a direct ``ingest`` from replay or from a test, where there is one
+        # stream and the app's own focused counter is the only generation there
+        # is. Which counter belongs where is not interchangeable — see
+        # :meth:`_socket_generation`.
         self._fleet = route_frame(
             self._fleet,
             decoded,
@@ -1822,10 +1861,37 @@ class TalariaApp(App[None]):
         # is: a seam line growing older is a change with no event behind it, so
         # nothing else marks the app dirty when it becomes due.
         await self._refresh_seam_ages()
+        # Third member of the same family: a wait's age climbs with no frame
+        # behind it, so the bar would otherwise refresh only when something
+        # unrelated happened to arrive — which for a fleet sitting quietly on one
+        # unanswered approval is precisely never, and a stalled age on this
+        # surface is the wrong number in the one place the operator reads for it.
+        self._refresh_needs_you()
         if not self._dirty:
             return
         self._dirty = False
         await self.render_snapshot()
+
+    def _refresh_needs_you(self) -> None:
+        """Repaint the reserved row from the queue as it now stands.
+
+        The clock is ``state.last_observed_at`` — the frame clock — and never a
+        wall clock read at render time. Structurally rather than by convention:
+        the value is read out of state on the line below, so there is no
+        ``time.time()`` here for a replay to differ on, which is the property
+        ``tests/domain/test_probe_replay.py``'s
+        ``test_two_replays_of_one_corpus_render_identical_lines`` gates for the
+        seam board's ages and this row shares by using the same clock.
+        :meth:`_render_seams` reads it the same way for the same reason.
+
+        The bar itself skips the repaint when the text has not moved, which is
+        what lets this be called at the render tick's own cadence.
+        """
+        try:
+            bar = self.needs_you_bar
+        except NoMatches:  # pragma: no cover - teardown race
+            return
+        bar.update_queue(self.needs_you, self.state.last_observed_at)
 
     def _age_out_approvals(self) -> None:
         """Withdraw an approval the gateway has almost certainly stopped holding.
@@ -4565,6 +4631,11 @@ class TalariaApp(App[None]):
             # cross the socket (U7, KTD6).
             self._perform_sessions(invocation.argument)
             return True
+        if command.action == "needs":
+            # Scheduled for the same reason ``sessions`` is: choosing a row can
+            # dial a connection and resume a session, both across the socket.
+            self._perform_needs(invocation.argument)
+            return True
         if command.action == "agents":
             # A4: redundant typed path for the eaten F2. Scheduled because
             # toggle_collapsed is async (mounts/removes rows). Clears the
@@ -4802,6 +4873,90 @@ class TalariaApp(App[None]):
         return report
 
     # ── U7: the session picker (KTD3, KTD6) ─────────────────────────────────
+
+    def _perform_needs(self, argument: str) -> None:
+        """Route ``/needs``: always opens the list; no argument shorthand (KTD7).
+
+        Refused rather than ignored, for ``/sessions``'s reason and one of its
+        own. The queue is *derived on every render* and ordered by wait age, so a
+        row's position is not a name — an index typed a moment after a glance
+        would select whatever had aged past it in between. There is nothing for
+        an argument to mean here that would not be a misfire waiting to happen.
+        """
+        self.composer.clear()
+        stripped = argument.strip()
+        if stripped:
+            self._notice(f"/needs takes no argument — {stripped!r} is not understood")
+            return
+        self.open_needs_picker()
+
+    def open_needs_picker(self) -> None:
+        """Put the needs-you list up, from the queue exactly as it now stands.
+
+        Synchronous and it sends nothing, unlike ``/sessions``: the queue is
+        derived from state Talaria already holds, so there is no fetch to make
+        stale and no epoch to check on the way in. The staleness that does exist
+        is checked on the way *out* instead — see :meth:`_needs_dismissed`.
+        """
+        queue = self.needs_you
+        source = NeedsYouPickerSource(queue, self.state.last_observed_at)
+        self.push_screen(PickerDialog(source), self._needs_dismissed())
+
+    def _needs_dismissed(self) -> Callable[[str | None], None]:
+        """Resolve the chosen identity against the queue as it stands NOW.
+
+        Deliberately not against the queue the dialog was opened with. An
+        operator reading a list takes longer than an approval takes to be
+        answered from somewhere else, and the queue is rebuilt on every render —
+        so the item chosen may have resolved, expired, or had its connection drop
+        while the list sat open. Re-deriving and looking the identity up again is
+        what turns that from a misfire into a sentence.
+
+        This is the same shape as ``/sessions``'s epoch re-check and exists for
+        the same reason, with the difference that a queue item has no epoch to
+        compare: its identity either still names something or it does not.
+        """
+
+        def dismissed(chosen: str | None) -> None:
+            self.composer.focus()
+            if chosen is None:
+                return
+            identity = decode_identity(chosen)
+            item = self.needs_you.item_for(identity) if identity is not None else None
+            if item is None:
+                self._notice(ITEM_NO_LONGER_WAITING)
+                return
+            self._spawn_live(self._go_to_item(item))
+
+        return dismissed
+
+    async def _go_to_item(self, item: QueueItem) -> None:
+        """Land the operator on the session this item belongs to (R17).
+
+        **Two steps when the item is on another connection, and the first one is
+        not optional.** A session id names a session only on the gateway that
+        issued it, so resuming a background connection's id against the home one
+        asks the wrong gateway about a session it has never heard of. The profile
+        is ensured first — brought up beside the others and made home, exactly
+        what ``/profiles`` does (KTD1) — and only then is the session resumed.
+        Nothing is dropped either way. Pinned by
+        ``test_choosing_an_item_on_another_connection_ensures_that_profile_first``.
+
+        ``waiting_kind`` is carried through so U4's confirm can ask before taking
+        a session that is live and not ours; the queue already knows what the
+        session is waiting on, and re-deriving it at the landing would be a
+        second answer to a question the item has already answered.
+        """
+        if item.profile != self.fleet_profile:
+            endpoint = self.profile_endpoints.get(item.profile, "")
+            report = await self._ensure_profile(item.profile, endpoint)
+            if report is None or not report.ok:
+                # ``_ensure_profile`` has already written the reason, which names
+                # this profile and says every other connection is unchanged.
+                # Adding a second notice here would overwrite the specific
+                # sentence with a vaguer one.
+                return
+        await self.switch_session(item.session_id, waiting_kind=item.kind)
 
     def _perform_sessions(self, argument: str) -> None:
         """Route ``/sessions``: always opens the picker; no argument shorthand.

@@ -219,11 +219,17 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
     assert catalog.available is False
     assert "refused" in catalog.failure
     assert catalog.gateway_entries == ()
-    # The eight that never needed a gateway to be *listed* are still there
+    # The nine that never needed a gateway to be *listed* are still there
     # (``/models`` still needs one to actually select — see U2 —
     # ``/profiles`` needs one to have listed anything at all, see U4, and
     # ``/sessions`` likewise needs one to list anything to switch to, see U7),
     # so an operator whose gateway is down can still leave.
+    #
+    # ``/needs`` (v0.4 U7) is the one entry here that needs no gateway for
+    # anything, not merely to be listed: the queue is derived from rows Talaria
+    # already holds, so with every connection down the list still opens and still
+    # says what it last knew — with each dropped connection named in it, which is
+    # the state an operator most wants the list for.
     assert {entry.name for entry in catalog.local_entries} == {
         "/quit",
         "/pause",
@@ -232,6 +238,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
         "/models",
         "/profiles",
         "/sessions",
+        "/needs",
         "/agents",
     }
 
@@ -434,7 +441,16 @@ def test_dispatch_has_exactly_one_method_and_it_is_the_pinned_one() -> None:
 # ── the local control set ────────────────────────────────────────────────
 
 
-def test_the_local_set_is_pc6s_four_plus_u2_u4_and_u7s_pickers() -> None:
+def test_the_local_set_is_pc6s_four_plus_the_pickers_and_the_needs_you_list() -> None:
+    """The whole Talaria-local set, enumerated so an addition is deliberate.
+
+    ``/needs`` joins in v0.4's U7 and is the only member that shadows nothing:
+    the gateway's registry holds 91 command names at the pinned read
+    (``hermes_cli/commands.py``, checked 2026-08-18) and none of them is
+    ``needs``. The name was checked rather than assumed, because the plan
+    reserved ``/needs-you`` as a fallback for exactly the collision that turned
+    out not to exist.
+    """
     assert {command.name for command in TALARIA_LOCAL_COMMANDS} == {
         "/quit",
         "/pause",
@@ -443,8 +459,22 @@ def test_the_local_set_is_pc6s_four_plus_u2_u4_and_u7s_pickers() -> None:
         "/models",
         "/profiles",
         "/sessions",
+        "/needs",
         "/agents",
     }
+
+
+def test_needs_is_free_of_the_gateway_registry_unlike_sessions() -> None:
+    """``/sessions`` shadows a real gateway command and ``/needs`` shadows none.
+
+    Both facts are asserted together because the pair is the point: this module
+    already accepts one deliberate shadow (KTD6) and the listing marks it, so a
+    reader has to be able to tell which local names carry that cost and which do
+    not. ``CLIENT_LOCAL_NAMES`` is the gateway's own set of client-local extras;
+    ``/needs`` is in neither it nor the dispatchable registry.
+    """
+    assert "/sessions" in CLIENT_LOCAL_NAMES
+    assert "/needs" not in CLIENT_LOCAL_NAMES
 
 
 def test_both_picker_commands_are_plural_and_the_gateway_owns_the_singulars() -> None:

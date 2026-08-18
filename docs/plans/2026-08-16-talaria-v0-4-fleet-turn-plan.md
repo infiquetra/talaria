@@ -342,6 +342,36 @@ unit returns a machine-readable verdict (`clean`, or `blocked` with its survivin
 the /work driver halts on any non-clean verdict — remediating and re-reviewing before any
 dependent unit starts. A review return is never treated as completion by mere existence.
 
+### UNSLOTTED — the KTD2 poll loop has no production caller
+
+**Status: found during U7, ruled out of U7 (operator, 2026-08-18), not yet assigned to a unit. The
+slot is the operator's to choose; the natural placement is its own slice between U8 and U9 if the
+acceptance drive wants the full cadence story.**
+
+`next_poll_due_at` (`talaria/domain/registry.py:265`) carries the whole KTD2 cadence — a 2-second
+coalesce after a `sessions.changed` hint, a 30-second backstop — and nothing in `talaria/` calls it.
+Nothing consumes `channel.hint_at` either, which `route_frame` records on every `sessions.changed`
+(`talaria/domain/state.py:3224`) and only `apply_active_list` clears. A gateway announcing that its
+session list changed is therefore heard and not acted on.
+
+*What exists instead, after U7.* Each connection is probed and its roster swept when it comes up and
+again on the five-minute seam revalidation (`TalariaApp.sweep_connection`), plus the focused fold
+behind `/sessions`. Sessions Talaria's own connections drive push their frames, so a **driven** wait
+is current on any connection; a **foreign** session's wait — one another client owns on a gateway
+Talaria is merely connected to — is as fresh as the last sweep.
+
+*Why it was not folded into U7.* A standing poll against every configured gateway is a traffic
+commitment with its own design surface: cadence, per-connection cost, backoff on a gateway that is
+failing. U7 had already absorbed the composition root, and firm unit boundaries are the discipline
+that carried U6.
+
+*What U7 did instead, so the gap is not silent.* The needs-you surface states what it knows and never
+what it has not asked: `connection_notices` names every connection that could not be answered for and
+the summary row carries the count, `QueueItem.stale_since` is rendered so a dropped connection's item
+reports its age as of the break with the blind span named separately, and no copy anywhere on the
+surface asserts currency. **U9's acceptance leans on driven approvals, which are pushed and route per
+connection**, so the acceptance drive does not depend on this slot being filled first.
+
 ### U1. The live verification and the new pinned read
 
 **Goal:** Turn the grounding evidence into the recorded, operator-witnessed protocol baseline the
@@ -625,15 +655,9 @@ timer. The pairing is not tidiness: a probe alone deletes the queue's "capabilit
 sentence while enumerating nothing. See DECISIONS.md, "A background connection is probed and swept in
 one round".
 
-**REPORTED OPEN, not closed here — the KTD2 poll loop has no production caller.**
-`next_poll_due_at` (`talaria/domain/registry.py:265`) carries the whole cadence — a 2-second coalesce
-after a `sessions.changed` hint, a 30-second backstop — and nothing in `talaria/` calls it. Nor does
-anything consume `channel.hint_at`, which `route_frame` records on every `sessions.changed`
-(`talaria/domain/state.py:3224`) and only `apply_active_list` clears. So today a gateway announcing
-that its session list changed is heard and not acted on, and the only roster folds in production are
-this unit's per-connection sweeps plus the focused fold behind `/sessions`. This is a standing traffic
-commitment against every configured gateway and belongs to a unit that names it; it is surfaced for
-assignment rather than absorbed into the composition-root commit.
+**REPORTED OPEN, not closed here — the KTD2 poll loop has no production caller.** Ruled out of U7 by
+the operator on 2026-08-18 and written up under "UNSLOTTED" at the head of this section, which is
+where the slot gets chosen.
 
 **Covers:** R16, R17, R18 (surface half), R19, R21, R22, R23, PC4, OP3, KTD7, KTD9, AE7, AE9,
 AE11.
