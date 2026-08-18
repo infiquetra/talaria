@@ -31,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
@@ -139,6 +139,7 @@ from talaria.domain.state import (
     latch_attach_residue,
     latch_resolved_prompts,
     latch_unservable_prompt,
+    listing_failed,
     mark_we_drive,
     record_command_result,
     record_local_note,
@@ -164,7 +165,18 @@ from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
 from talaria.transport.compat_check import CompatReport, HealthProbe, probe_seams
-from talaria.transport.connection_set import EnsureReport
+from talaria.transport.connection_set import (
+    # Aliased: ``talaria.domain.models`` already exports a ``ConnectionStatus``
+    # and they are different things — the domain's is what the focused engine
+    # believes about its own link, this one is what the transport knows about
+    # one member of the fleet. Importing both under one name would make the
+    # protocol below silently claim the wrong contract.
+    ConnectionStatus as FleetConnectionStatus,
+)
+from talaria.transport.connection_set import (
+    EnsureReport,
+    TaggedFrame,
+)
 from talaria.transport.rpc import (
     LOST_WITH_TRANSPORT,
     NEVER_SENT,
@@ -906,6 +918,64 @@ class ConnectionEnsurer(Protocol):
 
 
 @runtime_checkable
+class TaggedFrameSource(Protocol):
+    """A frame stream whose items carry the connection they crossed.
+
+    The fleet shape of :class:`~talaria.transport.source.FrameSource`, satisfied
+    by :class:`~talaria.transport.connection_set.ConnectionSet`. Declared as a
+    separate protocol rather than by widening ``FrameSource`` because the two are
+    genuinely different contracts and one caller — replay — can never satisfy
+    this one: a recording is a single stream by construction and has no
+    connection identity to carry.
+    """
+
+    def __aiter__(self) -> AsyncIterator[TaggedFrame]: ...
+
+    async def close(self) -> None: ...
+
+
+@runtime_checkable
+class ConnectionFleet(Protocol):
+    """A :class:`ConnectionEnsurer` that also dials its whole inventory at once.
+
+    Separate from ``ConnectionEnsurer`` because the two are needed at different
+    moments and by different callers: ``/profiles`` ensures ONE connection and
+    has always been able to, while only the launch dials them ALL, and only once.
+    Declared as a shape for the same reason every other transport seam in this
+    module is — a test drives it with a double rather than standing up N
+    gateways. Satisfied by
+    :class:`~talaria.transport.connection_set.ConnectionSet`.
+    """
+
+    async def start(self) -> Any: ...
+
+
+@runtime_checkable
+class ConnectionInventory(Protocol):
+    """Every connection by name, a dispatcher aimed at each, and each one's epoch.
+
+    The third seam onto :class:`~talaria.transport.connection_set.ConnectionSet`,
+    and the one that makes a *non-focused* connection askable. ``ConnectionEnsurer``
+    brings one up and ``ConnectionFleet`` dials them all; neither lets the app put
+    a question to a connection it is not looking at, which is what a fleet-wide
+    seam probe and a fleet-wide roster sweep both need.
+
+    ``status_of`` is here for its ``epoch`` alone. That number is the connection's
+    own socket generation — the same one every :class:`TaggedFrame` off that
+    connection carries — and it is not interchangeable with
+    :attr:`_connection_epoch`, which counts *focused* connects across the whole
+    fleet. See :meth:`TalariaApp._socket_generation`.
+    """
+
+    @property
+    def profiles(self) -> tuple[str, ...]: ...
+
+    def source_for(self, profile: str) -> LiveDispatcher | None: ...
+
+    def status_of(self, profile: str) -> FleetConnectionStatus | None: ...
+
+
+@runtime_checkable
 class ModelDefaultWriter(Protocol):
     """The one thing the picker's "set as default" act needs (U5, KTD1).
 
@@ -1023,7 +1093,7 @@ class TalariaApp(App[None]):
 
     def __init__(
         self,
-        source: FrameSource,
+        source: FrameSource | TaggedFrameSource,
         *,
         mode: RunMode = "replay",
         controls: ReplayControls | None = None,
@@ -1181,7 +1251,14 @@ class TalariaApp(App[None]):
         #: inner exit release the outer one's hold.
         self._landing_depth = 0
         #: Inbound frames held while a landing is in flight, in arrival order.
-        self._deferred_frames: list[FrameRecord] = []
+        #: Frames held by the landing barrier, each with the connection tag it
+        #: arrived under. The tag has to ride the deferral: a frame flushed
+        #: after the seed must still route to the connection that sent it, and
+        #: re-deriving the profile at flush time would attribute it to whichever
+        #: connection happened to be focused then.
+        #: The fleet's concurrent opening dial, when a connection set is present.
+        self._fleet_task: asyncio.Task[Any] | None = None
+        self._deferred_frames: list[tuple[FrameRecord, str | None, int | None]] = []
         self._status_task: asyncio.Task[None] | None = None
         self._catalog_task: asyncio.Task[None] | None = None
         #: The model catalogue's own fetch task, held separately from
@@ -1436,6 +1513,16 @@ class TalariaApp(App[None]):
         # rather than the only thing standing between here and a busy loop.
         self._seam_timer = self.set_interval(PROBE_REVALIDATION_S, self.revalidate_seams)
         self._pump_task = asyncio.create_task(self._pump())
+        if isinstance(self.connections, ConnectionFleet):
+            # Dialled here rather than in the launcher because the set's dials are
+            # concurrent coroutines and the launcher is synchronous — and because
+            # the pump above must already be draining the merged stream when the
+            # first connection lands, or the earliest frames would queue behind a
+            # consumer that had not started. That ``start`` never raises — every
+            # dial's outcome comes back as a report, so one unreachable gateway
+            # cannot take the launch down with it — is ``ConnectionSet.start``'s
+            # own stated contract and U2's tests', not a claim made here.
+            self._fleet_task = asyncio.create_task(self.connections.start())
         if self.status_runner is not None and self.status_runner.enabled:
             self._status_task = asyncio.create_task(self._status_loop())
         self.fetch_catalog()
@@ -1476,6 +1563,11 @@ class TalariaApp(App[None]):
             self._status_task,
             self._catalog_task,
             self._startup_task,
+            # The fleet's opening dial. Cancelled with the rest rather than
+            # awaited: a gateway that is not answering would otherwise hold
+            # teardown open for its whole connect timeout, which is the R36
+            # failure of an exit that cannot be reached from a hung transport.
+            self._fleet_task,
             *self._live_tasks,
         ):
             if task is not None and not task.done():
@@ -1526,8 +1618,22 @@ class TalariaApp(App[None]):
         line on screen during every orderly exit.
         """
         try:
-            async for record in self.source:
-                self.ingest(record)
+            async for item in self.source:
+                if isinstance(item, TaggedFrame):
+                    # The fleet shape. Each frame carries the connection it
+                    # crossed and that connection's epoch at the moment it was
+                    # taken off the queue, so the router keys the right registry
+                    # rows and can tell a frame from the socket Talaria is
+                    # talking to now from one that arrived on a socket since
+                    # replaced. Deriving either from app state instead would
+                    # attribute every connection's traffic to the focused one.
+                    self.ingest(item.record, profile=item.profile, epoch=item.epoch)
+                else:
+                    # The single-connection shape: one ``LiveSource`` or a
+                    # replay, both yielding bare records. Kept rather than
+                    # migrated because replay has no connection set and never
+                    # will — a recording is one stream by construction.
+                    self.ingest(item)
         except asyncio.CancelledError:  # pragma: no cover - teardown path
             raise
         except Exception as exc:  # noqa: BLE001 - reported, then the app stops
@@ -1597,8 +1703,15 @@ class TalariaApp(App[None]):
         self._dirty = True
         self.exit(return_code=STREAM_FAILURE_EXIT_CODE)
 
-    def ingest(self, record: FrameRecord) -> None:
+    def ingest(
+        self, record: FrameRecord, *, profile: str | None = None, epoch: int | None = None
+    ) -> None:
         """Fold one frame into domain state. Pure except for the dirty flag.
+
+        ``profile`` and ``epoch`` are the connection tag the frame arrived under,
+        supplied by the fleet pump from :class:`~talaria.transport.connection_set.TaggedFrame`.
+        They default to the focused connection and this app's own epoch, which is
+        the single-connection shape every existing caller and every replay uses.
 
         Outbound frames are not folded through the reducer: a recording of what
         Talaria itself sent is not a description of what the session became, and
@@ -1628,7 +1741,7 @@ class TalariaApp(App[None]):
             # here and flushed by :meth:`_landing` the moment the seed is
             # applied, which puts the event after the history it follows —
             # which is where the gateway put it.
-            self._deferred_frames.append(record)
+            self._deferred_frames.append((record, profile, epoch))
             return
         self.frames_applied += 1
         if record.direction == "out":
@@ -1694,8 +1807,8 @@ class TalariaApp(App[None]):
         self._fleet = route_frame(
             self._fleet,
             decoded,
-            profile=self.fleet_profile,
-            generation=self._connection_epoch,
+            profile=profile or self.fleet_profile,
+            generation=self._connection_epoch if epoch is None else epoch,
         )
         self._dirty = True
 
@@ -1941,8 +2054,20 @@ class TalariaApp(App[None]):
         state: ConnectionStatus,
         detail: str = "",
         cause: TerminalCause | None = None,
+        *,
+        profile: str | None = None,
     ) -> None:
         """Fold a transport state change into domain state and show it.
+
+        ``profile`` names the connection this is about, and splits the method in
+        two along the same seam U6's approval age-out already uses: the FLEET
+        half is unconditional, because every connection's rows must learn that
+        their stream broke whether or not the operator is looking at them, while
+        the PRESENTATION half — the focused session's ``connection`` field and
+        the notice line — stays scoped to the connection on screen. Firing the
+        presentation half for a background connection would tell the operator
+        that *this* session had dropped when another one had. ``None`` means the
+        focused connection, which is the single-connection shape.
 
         Wired to ``LiveSource(on_connection=…)`` via :meth:`LiveSource.bind`
         (``talaria/cli.py``). It is a callback rather than a synthetic frame
@@ -1964,9 +2089,11 @@ class TalariaApp(App[None]):
         ``self.state.last_observed_at`` rather than a fresh clock read,
         matching :meth:`interrupt_live`'s own call into ``cancel_turn``.
         """
-        self.state = set_connection(
-            self.state, state, cause=cause, at=self.state.last_observed_at
-        )
+        focused = profile is None or profile == self.fleet_profile
+        if focused:
+            self.state = set_connection(
+                self.state, state, cause=cause, at=self.state.last_observed_at
+            )
         if state == "disconnected":
             # The fleet half of the same event, and U6's rather than R35's: the
             # focused engine's ``connection`` field describes the session on
@@ -1978,7 +2105,7 @@ class TalariaApp(App[None]):
             # ``test_a_dropped_connection_marks_the_fleet_rows_not_just_the_focused_session``.
             self._fleet = fleet_connection_lost(
                 self._fleet,
-                profile=self.fleet_profile,
+                profile=profile or self.fleet_profile,
                 at=self.state.last_observed_at,
             )
         self._dirty = True
@@ -1991,12 +2118,25 @@ class TalariaApp(App[None]):
         # screen has come down. The unguarded query raised ``NoMatches`` at the
         # end of an orderly exit, which is exactly the R36 failure the guard on
         # the prompt path was added for; this path had not inherited it.
-        self._notice(line)
+        if focused:
+            # Presentation, so focus-scoped for the same reason ``set_connection``
+            # above is: this line says "the connection dropped" with no subject,
+            # and on a fleet client the operator would read it as the session in
+            # front of them. A background connection's drop is already visible
+            # where it belongs — on its own rows, and in the queue's
+            # ``connection_notices`` line naming that profile. Pinned by
+            # ``test_a_background_connections_drop_does_not_write_the_focused_notice``,
+            # which asserts both halves: the rows learn, the focused view does not.
+            self._notice(line)
         if state == "connected":
-            # Bumped before either fetch, so a fetch that starts on this
-            # transition is stamped with the epoch it actually ran on rather
-            # than the previous one — see :attr:`_connection_epoch`.
-            self._connection_epoch += 1
+            named = profile or self.fleet_profile
+            if focused:
+                # Bumped before either fetch, so a fetch that starts on this
+                # transition is stamped with the epoch it actually ran on rather
+                # than the previous one — see :attr:`_connection_epoch`. It counts
+                # FOCUSED connects only, which is exactly why it is not the number
+                # written into the channel below.
+                self._connection_epoch += 1
             # The fleet's symmetric half of the disconnect above, and it restores
             # the CHANNEL rather than the rows. Without it ``channel.connected``
             # would stay False for the rest of the run, and that flag is what
@@ -2011,25 +2151,49 @@ class TalariaApp(App[None]):
             # (``_fresh_observation``), which is the flag U6's stale-kind rule
             # reads. Pinned by
             # ``test_a_reconnect_restores_the_channel_and_leaves_the_rows_to_re_confirm``.
+            #
+            # **Fleet-scoped, unlike the presentation above.** A background
+            # connection coming up has to mark its own channel connected too, or
+            # ``connection_notices`` reports every connection but the focused one
+            # as down for the life of the run — R14's queue-that-lies failure
+            # pointed the other way, since a fleet whose gateways are all healthy
+            # would say most of itself could not be asked. Pinned by
+            # ``test_a_background_connection_coming_up_marks_its_own_channel``.
             self._fleet = fleet_connection_restored(
                 self._fleet,
-                profile=self.fleet_profile,
-                generation=self._connection_epoch,
+                profile=named,
+                generation=self._socket_generation(named),
                 at=self.state.last_observed_at,
             )
-            self.fetch_catalog()
-            self.fetch_model_catalog()
-            self.fetch_profiles()
-            # Order matters: ``begin_live_startup`` runs the whole startup
-            # sequence — compatibility check included — but only on the *first*
-            # connection, because re-running it would re-open the session. A
-            # reconnect still has to re-establish the probe story (R9: "probe
-            # results are re-validated on reconnect"), so the seam round is
-            # scheduled separately for exactly the case the startup guard
-            # declines to handle.
-            if self._startup_done:
-                self._reprobe_seams("reconnect")
-            self.begin_live_startup()
+            if focused:
+                self.fetch_catalog()
+                self.fetch_model_catalog()
+                self.fetch_profiles()
+                # Order matters: ``begin_live_startup`` runs the whole startup
+                # sequence — compatibility check included — but only on the *first*
+                # connection, because re-running it would re-open the session. A
+                # reconnect still has to re-establish the probe story (R9: "probe
+                # results are re-validated on reconnect"), so the seam round is
+                # scheduled separately for exactly the case the startup guard
+                # declines to handle.
+                if self._startup_done:
+                    self._reprobe_seams("reconnect")
+                self.begin_live_startup()
+            else:
+                # R9 for a connection nothing else will ever ask about. The
+                # focused connection gets its probe story from the startup
+                # sequence and its reconnect story from the branch above; a
+                # background connection has neither, so without this line its
+                # board stays never-probed forever and its sessions are never
+                # enumerated. ``attach`` on the first round for this connection
+                # and ``reconnect`` afterwards, decided by whether a board
+                # already exists rather than by a flag somebody has to maintain.
+                trigger: ProbeTrigger = (
+                    "reconnect"
+                    if fleet_seam_board(self._fleet, named) is not None
+                    else "attach"
+                )
+                self._sweep_connection_soon(named, trigger)
 
     def note_reconnect(self, epoch: int) -> None:
         """Mark a successful reconnect in the transcript, once (F6).
@@ -3711,17 +3875,14 @@ class TalariaApp(App[None]):
         dispatcher = self.dispatcher
         if dispatcher is None:  # pragma: no cover - guarded by every caller
             return None
-        report, results = await probe_seams(
+        report = await self._probe_round(
+            self.fleet_profile,
             dispatcher,
             trigger=trigger,
             session_id=self.state.focused_session_id or "",
-            timeout=self.call_timeout,
             health=self.admin_client if isinstance(self.admin_client, HealthProbe) else None,
         )
         self.compat = report
-        self.seams = apply_probe_round(
-            self.seams, results, at=self.state.last_observed_at
-        )
         # The status region is the *only* surface a seam change writes to, and
         # deliberately. It is a current-state surface, which is what a seam is;
         # an absence also written into the append-only transcript would repeat
@@ -3793,6 +3954,146 @@ class TalariaApp(App[None]):
             return
         await self._render_seams()
 
+    async def _probe_round(
+        self,
+        profile: str,
+        dispatcher: LiveDispatcher,
+        *,
+        trigger: ProbeTrigger,
+        session_id: str,
+        health: HealthProbe | None,
+    ) -> CompatReport:
+        """One probe round against ONE named connection, folded into ITS board.
+
+        The whole of what :meth:`verify_gateway` used to do inline, lifted out
+        so a connection that is not the focused one can have the same round run
+        against it. :func:`~talaria.transport.compat_check.probe_seams` was
+        already per-connection — it takes a dispatcher and hands back results
+        rather than a board, precisely so the caller decides which board they
+        belong to — and this method is that decision made explicit.
+
+        Nothing here renders, writes a transcript note, or touches
+        :attr:`compat`. Those are the focused connection's presentation and stay
+        with the caller that owns a screen; what a background connection needs
+        is its own row in :attr:`FleetState.seam_boards`, which the queue reads
+        per connection (R24).
+        """
+        report, results = await probe_seams(
+            dispatcher,
+            trigger=trigger,
+            session_id=session_id,
+            timeout=self.call_timeout,
+            health=health,
+        )
+        board = fleet_seam_board(self._fleet, profile) or empty_board(profile)
+        self._fleet = record_seam_board(
+            self._fleet,
+            profile=profile,
+            board=apply_probe_round(board, results, at=self.state.last_observed_at),
+        )
+        return report
+
+    async def sweep_connection(self, profile: str, *, trigger: ProbeTrigger) -> None:
+        """Ask one NON-focused connection what it can do, then what it holds.
+
+        **Both halves, and the pairing is the point rather than a convenience.**
+        Probing alone would be a regression dressed as a fix: while a background
+        connection has no board, ``connection_notices`` says "capabilities not
+        probed … its sessions are not in the queue", and a probe on its own
+        deletes that sentence — the roster seam comes back ``present``, every
+        notice for that connection falls silent, and its sessions are still not
+        enumerated. The queue would go from a true sentence to no sentence with
+        the gap unchanged, which is exactly the reading R14 forbids: an empty
+        queue must never mean "we could not ask". So the sweep earns the silence
+        the probe would otherwise take for free. Pinned by
+        ``test_a_background_connection_is_probed_and_swept_together``.
+
+        ``session_id`` is empty and ``health`` is ``None``, both deliberately.
+        The focused session belongs to a different gateway, so sending its id
+        here would probe a session-scoped method with an id that connection
+        never issued; and :attr:`admin_client` is the home profile's admin
+        surface, so its health answer describes the wrong process. The
+        ``http-runner`` seam therefore stays never-observed on a background
+        connection — which costs the queue nothing, because
+        :func:`~talaria.domain.queue.connection_notices` reads exactly two seams,
+        ``roster`` and ``approval-detail``, and neither is the health one.
+        """
+        inventory = self.connections
+        if not isinstance(inventory, ConnectionInventory):
+            return
+        dispatcher = inventory.source_for(profile)
+        if dispatcher is None:
+            return
+        await self._probe_round(
+            profile, dispatcher, trigger=trigger, session_id="", health=None
+        )
+        outcome = await dispatcher.call(
+            LIST_SESSIONS_METHOD, {"limit": SESSIONS_LIST_LIMIT}, timeout=self.call_timeout
+        )
+        if not outcome.confirmed:
+            # Marked stale rather than emptied, and no notice written: this is a
+            # connection the operator is not looking at, so the report belongs in
+            # the queue's own per-connection lines rather than in the focused
+            # composer, which would name a failure with no visible subject.
+            self.fleet = listing_failed(
+                self.fleet, profile=profile, at=self.state.last_observed_at
+            )
+            return
+        await self._seed_registry(
+            dispatcher, decode_session_list(outcome.result), profile=profile
+        )
+        self._dirty = True
+
+    def _sweep_connection_soon(self, profile: str, trigger: ProbeTrigger) -> None:
+        """Schedule :meth:`sweep_connection` from a synchronous callback.
+
+        ``note_connection_state`` is a transport callback and cannot await, so
+        the round is supervised the same way :meth:`_reprobe_seams` supervises
+        the focused one. Supervised identically on purpose, and the premise is
+        read from the code rather than assumed: every dispatcher call underneath
+        returns an :class:`~talaria.transport.rpc.RpcOutcome` on every exit
+        rather than raising, and both decoders degrade instead —
+        :func:`~talaria.domain.session_list.decode_session_list`
+        (``talaria/domain/session_list.py:200``, "degrading rather than raising")
+        and :func:`~talaria.domain.session_list.decode_active_list` beside it
+        return an empty listing for a reply that is not a mapping. So an
+        exception here is a Talaria defect rather than a misbehaving gateway —
+        and a defect that only ever fires on a connection nobody is looking at is
+        the one that most needs to be loud.
+        """
+        if self.mode != "live" or self._teardown_started:
+            return
+
+        async def _round() -> None:
+            await self.sweep_connection(profile, trigger=trigger)
+
+        self._supervise(asyncio.create_task(_round()), "the background connection sweep")
+
+    def _socket_generation(self, profile: str) -> int:
+        """This connection's own socket generation, never the focused counter.
+
+        :attr:`_connection_epoch` counts *focused* connects across the whole
+        fleet, while ``route_frame`` compares a channel's generation against the
+        per-connection ``arrival_epoch`` that every
+        :class:`~talaria.transport.connection_set.TaggedFrame` carries off its
+        own socket. The two numberings coincide only for a fleet of one whose
+        home never moves; where they diverge, stamping a channel with the larger
+        focused counter makes ``generation < channel.generation`` true for every
+        frame that connection will ever deliver, so no inbound event ends a row's
+        staleness again — U6's round-twelve defect, one scope up. Pinned by
+        ``test_a_background_rows_liveness_survives_a_busier_focused_connection``.
+
+        Falls back to the focused counter when there is no inventory to ask,
+        which is the single-connection and replay case: there the two numberings
+        are the same one.
+        """
+        inventory = self.connections
+        if isinstance(inventory, ConnectionInventory):
+            status = inventory.status_of(profile)
+            if status is not None:
+                return status.epoch
+        return self._connection_epoch
+
     def _reprobe_seams(self, trigger: ProbeTrigger) -> None:
         """Schedule one seam round from a synchronous callback.
 
@@ -3817,11 +4118,29 @@ class TalariaApp(App[None]):
         render tick is a different timer entirely and never reaches this method,
         which is the mechanical half of "never per-render".
         """
-        if self.mode != "live" or self.dispatcher is None or self._teardown_started:
+        if self.mode != "live" or self._teardown_started:
             return
-        if not seam_probe_due(self.seams, self.state.last_observed_at, "revalidation"):
+        if self.dispatcher is not None and seam_probe_due(
+            self.seams, self.state.last_observed_at, "revalidation"
+        ):
+            await self.verify_gateway(trigger="revalidation")
+        inventory = self.connections
+        if not isinstance(inventory, ConnectionInventory):
             return
-        await self.verify_gateway(trigger="revalidation")
+        for profile in inventory.profiles:
+            if profile == self.fleet_profile:
+                continue
+            board = fleet_seam_board(self._fleet, profile)
+            if board is not None and not seam_probe_due(
+                board, self.state.last_observed_at, "revalidation"
+            ):
+                continue
+            # Each connection is asked against ITS OWN board's clock, not the
+            # focused one's. A shared due-check would let one connection's fresh
+            # round suppress another's overdue one, and the connection whose
+            # probe is overdue is the one whose silence the queue is least
+            # entitled to read as quiet (R24).
+            await self.sweep_connection(profile, trigger="revalidation")
 
     async def open_session(self, selection: StartupSelection) -> RpcOutcome | None:
         """Resolve KTD7's selection into one focused session (R2).
@@ -3945,8 +4264,8 @@ class TalariaApp(App[None]):
             self._landing_depth -= 1
             if self._landing_depth == 0 and self._deferred_frames:
                 held, self._deferred_frames = self._deferred_frames, []
-                for record in held:
-                    self.ingest(record)
+                for record, held_profile, held_epoch in held:
+                    self.ingest(record, profile=held_profile, epoch=held_epoch)
 
     def _land_session(self, outcome: RpcOutcome) -> RpcOutcome:
         """Focus the session the gateway just handed back and seed its history.
@@ -4437,6 +4756,27 @@ class TalariaApp(App[None]):
         """
         connections = self.connections
         if connections is None:  # pragma: no cover - guarded by the caller
+            # The pragma is on this BRANCH and not on the function, and the
+            # distinction is worth stating because a review of U7 read it the
+            # other way. ``_ensure_profile`` itself is exercised by the picker
+            # tests, which supply a ``connections`` double, and since U7's
+            # composition root it is the production path for ``/profiles``:
+            # ``build_live_app`` always assembles a ``ConnectionSet``, so
+            # ``self.connections`` is never ``None`` in a live run and the
+            # ensure-beside branch above is the one that fires. That the
+            # production assembly HAS a set is pinned by
+            # ``test_the_live_app_is_assembled_on_a_connection_set``; that a
+            # selection then ensures rather than drop-switches is pinned by
+            # ``test_selecting_the_profile_already_connected_makes_it_home_rather_than_refusing``
+            # and ``test_a_failed_ensure_names_the_profile_and_disconnects_nothing``,
+            # which U2 wrote for this semantic before anything could reach it.
+            #
+            # What stays uncovered is this guard, and it stays uncovered because
+            # the sole caller tests the same attribute before dispatching here,
+            # so no reachable state enters with ``None``. Writing a test that
+            # calls this method directly to colour the line would test a
+            # coincidence rather than a behaviour — the failure mode the
+            # corrected mutation rule in the engineering journal names.
             self._notice(PROFILE_SWITCH_UNAVAILABLE)
             return None
 

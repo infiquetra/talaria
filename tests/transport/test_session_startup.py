@@ -723,10 +723,17 @@ async def test_an_event_racing_the_resume_reply_lands_after_the_seeded_history()
         app, _source = live_app(stub, StartupSelection(mode="resume"))
         folded = app.ingest
 
-        def _watch(record: FrameRecord) -> None:
+        def _watch(
+            record: FrameRecord, *, profile: str | None = None, epoch: int | None = None
+        ) -> None:
+            # Mirrors ``ingest``'s connection-tag keywords, which U7's fleet pump
+            # supplies. This stub forwards them rather than dropping them: a
+            # replacement that silently narrowed the signature would make the
+            # deferred frames land on the focused connection instead of the one
+            # that sent them, and this test's whole subject is deferral.
             if app._landing_depth and record.direction == "in":
                 held.append(record)
-            folded(record)
+            folded(record, profile=profile, epoch=epoch)
 
         app.ingest = _watch  # type: ignore[method-assign]
         async with app.run_test():

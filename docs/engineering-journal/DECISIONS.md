@@ -193,8 +193,46 @@ connection with nothing waiting on it, and an empty queue that means "we could n
 are free". One board can only ever describe one connection, so the notice for a second one would
 have had nothing to read.
 
-**Revisit when.** The app dials more than one connection at once — the map is ready; what is missing
-is the transport wiring U2 built and no surface consumes yet.
+**Revisit condition fired, 2026-08-18 (v0.4 U7).** The app now dials more than one connection at
+once: `build_live_app` assembles the `ConnectionSet` and hands it to `TalariaApp` as frame source,
+ensurer and fleet, so the transport wiring U2 built has its consumer. The map was ready, as this entry
+predicted, and what it did *not* anticipate is that a per-connection map is only half the answer —
+`TalariaApp.seams` reading the focused entry was correct and stayed, while what had to become
+per-connection was the **probing**, which ran solely from the focused connection's callback. See
+"A background connection is probed and swept in one round" below.
+
+### A background connection is probed and swept in one round
+
+**Author.** v0.4 fleet-turn plan, unit U7 (operator condition four of 2026-08-18, R9/R14/R24).
+
+**Decision.** `TalariaApp.sweep_connection(profile)` runs a seam probe **and** a `session.list` +
+`session.active_list` sweep against one non-focused connection, folding both into that connection's
+own entries. It fires when a background connection reports `connected` and again on the five-minute
+revalidation timer, each connection judged due against its own board's clock. The probe half sends an
+empty `session_id` and no `HealthProbe`: the focused session belongs to a different gateway and
+`admin_client` is the home profile's admin surface, so the `http-runner` seam stays never-observed on
+a background connection — which costs the queue nothing, because `connection_notices` reads exactly
+the `roster` and `approval-detail` seams.
+
+**Rationale.** Probing alone is a regression wearing a fix's clothes. A background connection with no
+board makes the queue say "capabilities not probed … its sessions are not in the queue" — true, since
+the only roster fold in production is reached from `open_sessions_picker` for the focused profile
+alone. A probe deletes that sentence and enumerates nothing, so the queue stops saying it never
+looked while still never having looked. The sweep is what earns the silence.
+
+**Rejected alternatives.** *Probe only, and add a "never polled" line to `connection_notices`* — keeps
+the queue honest without touching the data path, but the honest line then fires for every connection
+including the focused one at every launch, and a notice that is always present is a notice nobody
+reads; it also edits merged U6 domain code to describe a gap rather than closing it. *Build the KTD2
+poll loop here* — `next_poll_due_at` (`talaria/domain/registry.py:265`) has the cadence arithmetic and
+no production caller, and a 30-second backstop against every configured gateway is a standing traffic
+commitment that belongs to a unit that names it, not to a composition-root commit. That gap is
+reported open rather than closed quietly. *Reuse the focused `admin_client` for a background health
+probe* — attributes one gateway's process health to another, which is the class of false claim this
+release keeps producing.
+
+**Revisit when.** The KTD2 poll loop lands. `sweep_connection` becomes its per-connection body and the
+five-minute revalidation stops being the only cadence a background connection has.
 
 ### A seam is a named capability, not a method — and its absence is a sentence, never a zero
 

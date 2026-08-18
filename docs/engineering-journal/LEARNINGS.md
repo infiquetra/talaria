@@ -4,6 +4,56 @@
 
 ## 2026-08-18
 
+### A capability probe not paired with using the capability trades a true sentence for silence
+
+**Evidence.** U7's condition four asked for production seam probing to go per connection. Reading the
+consumer first showed the literal change would be a regression: while a background connection has no
+seam board, `connection_notices` (`talaria/domain/queue.py:1425`) emits "capabilities not probed —
+nothing is known about what this connection can answer, so its sessions are not in the queue". A probe
+alone deletes that line twice over — the board stops being `None`, and the `roster` seam comes back
+`present`, which `_seam_notice` (`talaria/domain/queue.py:1456`) reads as "nothing to say". Meanwhile
+the only production caller of the roster fold, `_seed_registry`, is reached from
+`open_sessions_picker` alone and only ever for the focused profile, so the connection's sessions were
+still not enumerated. The fix pairs the two: `TalariaApp.sweep_connection` probes **and** polls in one
+round, so the silence is earned. Pinned by
+`test_a_background_connection_is_probed_and_swept_together`, which fails when the roster half is
+removed (verified by deleting it: the sweep's own assertions fall).
+
+**Mechanism.** A probe answers *can this gateway be asked*; a notice's absence asserts *this gateway
+was asked*. They are different propositions, and the notice was reading the first as though it settled
+the second. That is R14's failure ("an empty queue must never mean 'we could not ask'") arriving
+through the front door: not a queue that lost an item, but a queue that stopped saying it had never
+looked. Silence is the most expensive thing a status surface can emit, because nothing about it
+records which of the two reasons produced it.
+
+**Generalizable rule.** Before making a capability observable, find what currently says the capability
+is unobserved and check what that sentence becomes. If the improvement's only visible effect is that a
+true absence-notice disappears, the change is not finished — pair the probe with the use, or leave the
+notice a way to keep telling the truth.
+
+### A per-connection counter and a global one are not interchangeable because they agree today
+
+**Evidence.** `TalariaApp._connection_epoch` counts *focused* connects across the whole fleet;
+`route_frame` compares a channel's `generation` against the per-connection `arrival_epoch` that every
+`TaggedFrame` carries off its own socket (`talaria/transport/connection_set.py:871`). Writing the
+first into the second is invisible in a fleet of one — both read 1, then 2, then 3 — and wrong as soon
+as a second connection exists or home moves, because a channel stamped with the larger focused counter
+makes `generation < channel.generation` true for every frame that connection will ever deliver, so no
+inbound event ends a row's staleness again. `TalariaApp._socket_generation` now reads the connection's
+own epoch from the set. Pinned by
+`test_a_background_rows_liveness_survives_a_busier_focused_connection`, verified to fail when the
+call is replaced by `self._connection_epoch`.
+
+**Mechanism.** This is the same defect as U6's round twelve one scope up. There the argument was
+replaced by a constant and the suite stayed green; here it would be replaced by a number that belongs
+to a different connection, and a single-connection suite stays green for exactly the same reason —
+the two numberings coincide in the only configuration the tests build. Coincidence at the test's
+scale is not identity at the system's scale.
+
+**Generalizable rule.** When two counters are compared, name what each counts and check that the
+answer is the same noun. Agreement in the current configuration is evidence about the configuration,
+not about the counters.
+
 ### A refusal's stated exit must be reachable from where the refusal is shown
 
 **Evidence.** The needs-you queue's connection-wide fold refused every approval on a connection while
