@@ -790,3 +790,33 @@ def test_a_catalogue_with_no_entries_still_answers_lookups() -> None:
     empty = CommandCatalog()
     assert empty.entry_for("/help") is None
     assert empty.canonical("/help") == "/help"
+
+
+def test_needs_resolves_locally_even_if_a_gateway_ever_advertises_it() -> None:
+    """The shadowing precedence, pinned before there is anything to shadow.
+
+    ``/needs`` is free of the gateway's registry today, so the ordinary
+    resolution is uninteresting. What this asserts is the case that would arrive
+    without warning: a Hermes release adding its own ``/needs``. Talaria's local
+    entry wins — the same precedence ``/sessions`` relies on deliberately — which
+    means the gateway's would become unreachable from Talaria, silently, unless
+    someone had written down that this is what happens.
+
+    The listing's ``local`` marker is the only place an operator could notice, so
+    it is asserted here beside the resolution rather than left implied.
+    """
+    reply = catalog_reply(pairs=[["/help", "Show help"], ["/needs", "Something else entirely"]])
+    catalog = decode_catalog(reply)
+
+    resolution = resolve_command("/needs", catalog)
+    assert isinstance(resolution, LocalInvocation), (
+        "a gateway /needs displaced Talaria's own, so the needs-you list became "
+        "unreachable"
+    )
+    assert resolution.command.action == "needs"
+
+    entry = catalog.entry_for("/needs")
+    assert entry is not None and entry.availability == "talaria-local", (
+        "the collision is invisible in the listing, which is the one place it "
+        "could be noticed"
+    )

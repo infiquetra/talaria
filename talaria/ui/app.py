@@ -194,9 +194,10 @@ from talaria.ui.dialog import ConfirmDialog, PickerDialog
 from talaria.ui.focus import CaretReleased
 from talaria.ui.needs_you import (
     ITEM_NO_LONGER_WAITING,
+    NeedsSelection,
     NeedsYouBar,
     NeedsYouPickerSource,
-    decode_identity,
+    decode_selection,
 )
 from talaria.ui.palette import PaletteRegion
 from talaria.ui.picker import (
@@ -4899,8 +4900,43 @@ class TalariaApp(App[None]):
         is checked on the way *out* instead — see :meth:`_needs_dismissed`.
         """
         queue = self.needs_you
-        source = NeedsYouPickerSource(queue, self.state.last_observed_at)
+        source = NeedsYouPickerSource(
+            queue,
+            self.state.last_observed_at,
+            inline_answerable=self._inline_answerable(queue),
+        )
         self.push_screen(PickerDialog(source), self._needs_dismissed())
+
+    def _inline_answerable(self, queue: NeedsYouQueue) -> frozenset[tuple[str, str, str]]:
+        """Which rows may be answered without leaving the list (R18, KTD9).
+
+        **Two gates, and they answer different questions.** The queue decides
+        answerable *in principle* — this is the session's head approval, it
+        carries a request id, its connection is up — and that decision is the
+        domain's so no widget can disagree with it. This method adds the second:
+        the prompt has to still be live in the focused engine's registry, because
+        that registry is what :meth:`respond_live` consults before it sends, and
+        offering a row the answer path would refuse is a control that does
+        nothing — the inert control AE11 exists to prevent.
+
+        It is also the boundary that keeps a credential off this surface. Only
+        ``approval`` is offered, so the value a row can carry is one the gateway
+        named (``once``, ``deny``); ``secret`` and ``sudo`` are answered on their
+        own card, where the input is masked, and reach the list only as something
+        to navigate to (R22).
+        """
+        answerable: set[tuple[str, str, str]] = set()
+        for item in queue.items:
+            if item.kind != "approval" or not item.answerable:
+                continue
+            request_id = item.observed_request_id or item.request_key
+            if not request_id:
+                continue
+            prompt = self.state.prompt_for(request_id, item.session_id)
+            if prompt is None or prompt.kind != "approval":
+                continue
+            answerable.add(item.identity)
+        return frozenset(answerable)
 
     def _needs_dismissed(self) -> Callable[[str | None], None]:
         """Resolve the chosen identity against the queue as it stands NOW.
@@ -4921,14 +4957,55 @@ class TalariaApp(App[None]):
             self.composer.focus()
             if chosen is None:
                 return
-            identity = decode_identity(chosen)
-            item = self.needs_you.item_for(identity) if identity is not None else None
-            if item is None:
+            selection = decode_selection(chosen)
+            item = (
+                self.needs_you.item_for(selection.identity)
+                if selection is not None
+                else None
+            )
+            if selection is None or item is None:
                 self._notice(ITEM_NO_LONGER_WAITING)
                 return
-            self._spawn_live(self._go_to_item(item))
+            if selection.action == "go":
+                self._spawn_live(self._go_to_item(item))
+                return
+            self._spawn_live(self._answer_item(item, selection))
 
         return dismissed
+
+    async def _answer_item(self, item: QueueItem, selection: NeedsSelection) -> None:
+        """Send one inline answer down the card path's own function (KTD9).
+
+        :meth:`_respond_and_discard` is the wrapper both prompt cards already
+        use, so the queue path inherits every guard the card path has rather
+        than restating any of them: the registry correlation check, the
+        expected-kind check, the clear-before-send rule, and R21's
+        requested-with-age rendering that never optimistically clears.
+
+        ``declined`` distinguishes the two acts in the transcript only. The wire
+        value for a decline was decided in
+        :func:`~talaria.ui.needs_you.answer_choices` from
+        :func:`~talaria.ui.prompts.decline_value`, which is the one place that
+        knows an approval's refusal is the explicit ``deny`` choice — an empty
+        approval choice is read as *approved* by the gateway's consumer, so a
+        decline that sent nothing would grant the command it looked like it
+        refused.
+
+        The request id is re-read off the item here rather than carried in the
+        payload: the payload names *which item* and *what answer*, and the id is
+        a property of the item as it stands now.
+        """
+        request_id = item.observed_request_id or item.request_key
+        if not request_id:  # pragma: no cover - inline rows always carry one
+            self._notice(ITEM_NO_LONGER_WAITING)
+            return
+        await self.respond_live(
+            request_id,
+            selection.value,
+            declined=selection.action == "decline",
+            expected_kind="approval",
+            session_id=item.session_id,
+        )
 
     async def _go_to_item(self, item: QueueItem) -> None:
         """Land the operator on the session this item belongs to (R17).

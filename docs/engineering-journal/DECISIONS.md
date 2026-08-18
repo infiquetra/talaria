@@ -201,6 +201,35 @@ predicted, and what it did *not* anticipate is that a per-connection map is only
 per-connection was the **probing**, which ran solely from the focused connection's callback. See
 "A background connection is probed and swept in one round" below.
 
+### Inline answers are a descent, not a key pair
+
+**Author.** v0.4 fleet-turn plan, unit U7 (KTD7/KTD9/AE11). **A deliberate deviation from the plan's
+wording**, which says "explicit approve/decline keys".
+
+**Decision.** `enter` on an answerable approval row in the `/needs` list opens a second level of named
+choices — the gateway's own, plus a decline whose value comes from `decline_value` — and choosing one
+sends it through `respond_live`, the same function both prompt cards use. There are no new keys, in
+the dialog or globally.
+
+**Rationale.** `PickerDialog` gives every printable key to the filter on purpose, and the same plan
+sentence that asks for approve/decline keys also asks that typing filters. An `a`/`d` pair takes two
+letters back out of a filter that a hundred-row list is navigated with; `ctrl+`-something for a modal
+is worse, and the dialog already has a descent (`/models` uses it between a provider and its models).
+The descent also makes "never an empty choice" structural rather than enforced: every offered answer
+is a row carrying a value somebody named, so no path here can send one nobody read.
+
+**Rejected alternatives.** *`a`/`d` keys as written* — costs the filter two letters and contradicts
+the plan's own picker conventions. *A control chord* — invents a binding for a surface that has none
+and that the operator has no reason to know. *A free-text answer control* — an empty approval choice
+is read as **approved** by the gateway's consumer (`tools/approval.py:3291`, `:3320`), so a control
+that permits an empty answer permits an accidental approval.
+
+**Cost.** Two `enter` presses instead of one key. For an act that approves a command, the second
+explicit step is arguably the right price rather than the cost of the design.
+
+**Revisit when.** The dialog grows a non-filtering key region, or a fleet operator reports the second
+press as friction in a real session.
+
 ### A background connection is probed and swept in one round
 
 **Author.** v0.4 fleet-turn plan, unit U7 (operator condition four of 2026-08-18, R9/R14/R24).

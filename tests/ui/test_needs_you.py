@@ -23,19 +23,26 @@ import pytest
 
 from talaria.domain.models import QueueItem
 from talaria.domain.queue import NEEDS_YOU_NONE, NeedsYouQueue, summary_line, wait_line
+from talaria.domain.selection import Stage
 from talaria.domain.session_list import decode_active_list
 from talaria.domain.state import apply_active_list
 from talaria.transport.connection_set import EnsureReport
 from talaria.ui.app import TalariaApp
 from talaria.ui.dialog import PickerDialog
 from talaria.ui.needs_you import (
+    DECLINE_LABEL,
     ITEM_NO_LONGER_WAITING,
+    NeedsSelection,
     NeedsYouPickerSource,
+    answer_choices,
     decode_identity,
+    decode_selection,
     encode_identity,
+    encode_selection,
     format_item_label,
 )
-from tests.ui.conftest import RecordingDispatcher, live_app, settle
+from talaria.ui.prompts import RESPOND_METHODS
+from tests.ui.conftest import RecordingDispatcher, event, feed, live_app, settle
 
 BASE_TIME = 1_785_000_000.0
 
@@ -321,8 +328,11 @@ def test_a_selection_carries_the_items_identity_rather_than_its_position() -> No
     )
     stage = NeedsYouPickerSource(NeedsYouQueue(items=(item,)), BASE_TIME).root()
     payload = stage.selection.items[0].payload
+    selection = decode_selection(payload)
 
-    assert decode_identity(payload) == item.identity
+    assert selection is not None
+    assert selection.identity == item.identity
+    assert selection.action == "go", "a row with no inline answer is a navigation"
     assert NeedsYouQueue(items=(item,)).item_for(item.identity) is item
 
 
@@ -336,6 +346,12 @@ def test_an_unparseable_payload_names_nothing_rather_than_guessing() -> None:
     """
     assert decode_identity("not-an-identity") is None
     assert decode_identity(encode_identity(("a", "b", "c"))) == ("a", "b", "c")
+    assert decode_selection("not-a-selection") is None
+    assert decode_selection(encode_selection("go", ("a", "b", "c"))) == NeedsSelection(
+        "go", ("a", "b", "c")
+    )
+    # An action nobody defined is not a partial match either.
+    assert decode_selection("shred\x1fa\x1fb\x1fc\x1f") is None
 
 
 def test_an_items_label_carries_the_duplicate_doubt_it_was_given() -> None:
@@ -457,7 +473,7 @@ async def test_an_item_that_resolved_while_the_list_was_open_sends_nothing() -> 
         await settle(app, pilot)
         assert app.needs_you.is_empty
 
-        app._needs_dismissed()(encode_identity(item.identity))
+        app._needs_dismissed()(encode_selection("go", item.identity))
         await settle(app, pilot)
 
         assert dispatcher.operator_calls == [], "a resolved item was acted on anyway"
@@ -511,4 +527,266 @@ async def test_choosing_an_item_on_another_connection_ensures_that_profile_first
             "the item's own connection was never brought up, so the resume went "
             "to whichever gateway happened to be home"
         )
+        await app.shutdown_sources()
+
+
+#  ── inline answers: explicit, keyboard-only, never an empty choice ───────
+
+
+def approval_item(**overrides: object) -> QueueItem:
+    fields: dict[str, object] = {
+        "profile": "default",
+        "session_id": "s1",
+        "request_key": "ap-1",
+        "source": "driven",
+        "kind": "approval",
+        "summary": "approval requested",
+        "command": "rm -rf build",
+        "row_key": ("default", "s1"),
+        "opened_at": BASE_TIME,
+        "choices": ("once", "always", "deny"),
+        "observed_request_id": "ap-1",
+    }
+    fields.update(overrides)
+    return QueueItem(**fields)  # type: ignore[arg-type]
+
+
+def test_the_decline_row_sends_an_explicit_deny_and_never_an_empty_choice() -> None:
+    """The one assertion this whole path exists for.
+
+    The gateway's approval consumer blocks only on ``None`` and ``"deny"`` and
+    returns *approved* for anything else it resolves. So an empty approval choice
+    is an approval, and a decline that sent one would grant the command it looked
+    like it refused. Every row here carries a value somebody named.
+    """
+    rows = answer_choices(approval_item())
+    values = [decode_selection(row.payload) for row in rows]
+
+    assert all(selection is not None for selection in values)
+    assert all(selection.value for selection in values if selection is not None), (
+        "an answer row carries an empty value — for an approval that is a yes"
+    )
+    decline = next(row for row in rows if row.label == DECLINE_LABEL)
+    chosen = decode_selection(decline.payload)
+    assert chosen is not None
+    assert chosen.action == "decline"
+    assert chosen.value == "deny"
+
+    # The gateway's own ``deny`` is not offered twice: it is the decline row.
+    assert [row.label for row in rows].count("deny") == 0
+
+
+def test_an_approval_the_gateway_listed_no_choices_for_still_offers_a_named_answer() -> None:
+    """An unlisted approval falls back to the card's own fallback, not to nothing.
+
+    Both paths read ``NO_CHOICES_FALLBACK``, so the list and the card cannot
+    disagree about what an approval with no stated choices offers.
+    """
+    rows = answer_choices(approval_item(choices=()))
+    assert rows, "an approval with no listed choices offered nothing at all"
+    assert all(decode_selection(row.payload).value for row in rows)  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_answering_inline_goes_through_the_card_paths_own_function() -> None:
+    """KTD9: the queue path and the card path converge on ``respond_live``.
+
+    Asserted by comparing the two paths' actual wire calls for the *same* prompt,
+    rather than by checking that some method was called. Convergence is the
+    claim, so the evidence has to be that the two are indistinguishable at the
+    socket — and it is, because both go through ``respond_live`` and neither
+    builds its own parameters.
+
+    The transcript verb is where they differ, and only there: an answer is
+    "answered" and a decline is "declined", which is the one thing ``declined``
+    changes.
+    """
+
+    async def answered_call(inline: bool) -> tuple[str, dict[str, object]]:
+        dispatcher = RecordingDispatcher()
+        app = live_app(dispatcher)
+        async with app.run_test() as pilot:
+            feed(
+                app,
+                event(
+                    "approval.request",
+                    {"description": "rm -rf build", "choices": ["once", "deny"]},
+                ),
+            )
+            await settle(app, pilot)
+            item = app.needs_you.items[0]
+            assert item.identity in app._inline_answerable(app.needs_you)
+
+            if inline:
+                app._needs_dismissed()(encode_selection("answer", item.identity, "once"))
+            else:
+                await app.respond_live(item.request_key, "once", expected_kind="approval")
+            await settle(app, pilot)
+
+            calls = [
+                call
+                for call in dispatcher.operator_calls
+                if call[0] == RESPOND_METHODS["approval"]
+            ]
+            assert calls, "no answer reached the wire"
+            await app.shutdown_sources()
+            return calls[0][0], dict(calls[0][1])
+
+    assert await answered_call(inline=True) == await answered_call(inline=False), (
+        "the queue path and the card path sent different things for one prompt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_row_whose_prompt_left_the_registry_is_not_offered_inline() -> None:
+    """The second gate: answerable in principle is not answerable in fact.
+
+    The queue decides an item is the session's head approval with a request id.
+    Only the focused engine's registry knows whether ``respond_live`` would still
+    accept it — and offering a row that function would refuse is an inert
+    control, which is the failure AE11 exists to prevent. Here the item is
+    fabricated with everything the queue checks and nothing the registry does.
+    """
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test() as pilot:
+        await settle(app, pilot)
+        item = approval_item(session_id="never-seen", request_key="ap-ghost")
+        queue = NeedsYouQueue(items=(item,))
+
+        assert item.answerable
+        assert item.observed_request_id
+        assert app._inline_answerable(queue) == frozenset(), (
+            "a row with no live prompt behind it was offered an inline answer"
+        )
+
+        # And the dialog therefore treats enter as navigation rather than descent.
+        stage = NeedsYouPickerSource(queue, BASE_TIME).root()
+        outcome = NeedsYouPickerSource(queue, BASE_TIME).descend(0, stage.selection.items[0])
+        assert isinstance(outcome, str)
+        await app.shutdown_sources()
+
+
+def test_an_answerable_row_descends_to_its_choices_rather_than_emitting() -> None:
+    """Enter on an answerable approval opens the named choices, keyboard-only.
+
+    No new key: ``PickerDialog`` gives every printable key to the filter, which
+    is the behaviour the plan also asks for ("typing filters"), so an ``a``/``d``
+    pair would take two letters back out of it. The descent is the mechanism the
+    dialog already has, and it is what ``/models`` does between a provider and
+    its models.
+    """
+    item = approval_item()
+    queue = NeedsYouQueue(items=(item,))
+    source = NeedsYouPickerSource(
+        queue, BASE_TIME + 12, inline_answerable=frozenset({item.identity})
+    )
+    root = source.root()
+    outcome = source.descend(0, root.selection.items[0])
+
+    assert isinstance(outcome, Stage), "an answerable approval emitted instead of descending"
+    assert "waiting 12s" in outcome.title, (
+        "the answer stage restated the age instead of carrying the list's own sentence"
+    )
+    assert [row.label for row in outcome.selection.items] == ["once", "always", DECLINE_LABEL]
+
+
+def test_the_answer_stage_reports_a_stale_wait_with_the_same_floor_the_list_used() -> None:
+    """The freshness standard applies to the answer path too.
+
+    The title is built from ``wait_line``, so an item whose connection dropped
+    carries its floor and its blind span into the moment of answering rather than
+    being restated as a live age at the point it matters most.
+    """
+    item = approval_item(stale_since=BASE_TIME + 40)
+    source = NeedsYouPickerSource(
+        NeedsYouQueue(items=(item,)),
+        BASE_TIME + 340,
+        inline_answerable=frozenset({item.identity}),
+    )
+    outcome = source.descend(0, source.root().selection.items[0])
+
+    assert isinstance(outcome, Stage)
+    assert "waiting ≥ 40s" in outcome.title
+    assert "unobserved for 300s" in outcome.title
+    assert "340s" not in outcome.title
+
+
+@pytest.mark.asyncio
+async def test_an_inline_decline_is_recorded_as_a_decline_and_not_as_an_answer() -> None:
+    """``declined`` is carried through, and the record is the only place it shows.
+
+    Found by mutation: replacing ``declined=selection.action == "decline"`` with
+    a constant ``False`` left the whole suite green, because every other
+    assertion here is about what reaches the wire — and a decline sends the same
+    ``approval.respond`` an answer does, with ``deny`` as its choice. The
+    difference is the verb written into the transcript, and "approval answered"
+    for a command the operator refused is a false entry in the one record that
+    says what was allowed.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(
+            app,
+            event("approval.request", {"description": "rm -rf build", "choices": ["once", "deny"]}),
+        )
+        await settle(app, pilot)
+        item = app.needs_you.items[0]
+
+        app._needs_dismissed()(encode_selection("decline", item.identity, "deny"))
+        await settle(app, pilot)
+
+        notice = app.composer.notice
+        assert "declined" in notice, (
+            f"an inline decline was recorded as something else: {notice!r}"
+        )
+        assert "answered" not in notice, "a refusal was written down as an answer"
+
+        # It is still the ordinary answer path underneath: same method, and the
+        # explicit deny rather than an empty choice.
+        sent = [
+            call for call in dispatcher.operator_calls if call[0] == RESPOND_METHODS["approval"]
+        ]
+        assert sent and sent[0][1].get("choice") == "deny"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_escape_leaves_the_list_having_sent_nothing_and_returns_the_caret() -> None:
+    """Backing out is a first-class outcome, not an absence of one.
+
+    The dialog dismisses with ``None`` and the handler's first act is to put the
+    caret back in the composer — before the early return, so the operator gets
+    the caret back whether they chose something or changed their mind. A modal
+    that keeps the focus after closing is the shape that makes the next
+    keystroke go nowhere.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(
+            app,
+            event("approval.request", {"description": "rm -rf build", "choices": ["once", "deny"]}),
+        )
+        await settle(app, pilot)
+
+        app.composer.text_area.focus()
+        app.composer.text = "/needs"
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert isinstance(app.screen, PickerDialog)
+
+        await pilot.press("escape")
+        await settle(app, pilot)
+
+        assert not isinstance(app.screen, PickerDialog), "escape left the dialog up"
+        assert app.composer.text_area.has_focus, "the caret never came back to the composer"
+        assert [
+            call for call in dispatcher.operator_calls if call[0] == RESPOND_METHODS["approval"]
+        ] == [], "backing out of the list answered something"
+        # The approval is untouched: still waiting, still answerable.
+        assert app.needs_you.count == 1
         await app.shutdown_sources()

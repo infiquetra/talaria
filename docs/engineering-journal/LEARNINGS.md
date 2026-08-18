@@ -4,6 +4,28 @@
 
 ## 2026-08-18
 
+### A parameter that only changes a record is invisible to every test that asserts the wire
+
+**Evidence.** U7's inline answer path passes `declined=selection.action == "decline"` into
+`respond_live`. Replacing it with a constant `False` left the whole suite green — 2113 tests — because
+an approval decline sends the *same* `approval.respond` an answer does, with `deny` as its choice, so
+nothing that watched the socket could tell the two apart. The difference is the verb written into the
+transcript, and "approval answered" for a command the operator refused is a false entry in the one
+record that says what was allowed. Pinned by
+`test_an_inline_decline_is_recorded_as_a_decline_and_not_as_an_answer`, verified to fail under exactly
+that substitution.
+
+**Mechanism.** The test suite's centre of gravity for an answer path is what reaches the gateway,
+because that is where the damage is. A parameter whose entire effect is on the local record sits
+outside that lens by construction — it is not a gap in any one test, it is a gap in the *kind* of
+assertion the whole file makes. `respond_live`'s own docstring says as much ("changes **only the
+wording written down**"), which reads as reassurance and is actually the warning: the smaller the
+blast radius of a parameter, the less likely anything is watching where it lands.
+
+**Generalizable rule.** When a function takes a flag whose documented effect is "only the wording" or
+"only the record", assume nothing tests it and check. The parameters most likely to survive mutation
+are the ones whose docstrings say they barely matter.
+
 ### A capability probe not paired with using the capability trades a true sentence for silence
 
 **Evidence.** U7's condition four asked for production seam probing to go per connection. Reading the
