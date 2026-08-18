@@ -62,8 +62,11 @@ formalizes. Talaria citations are into this repository at the merge of the requi
   method exposes pending non-approval prompts for a session another client drives.
 - **`approval.pending` is not side-effect-free.** It resolves its session through `_sess`
   (`server.py:2500`), which warms the session's agent build. Aimed at a lazy idle session it starts
-  an agent. It is only safe against a session already reporting `waiting` — a waiting session's
-  agent is live by construction, since the agent raised the prompt.
+  an agent. It is only safe against a session whose agent is already live — a `waiting` session's
+  agent is live by construction, since the agent raised the prompt, and so is a `working` session's,
+  since it is mid-turn. (This bullet originally named `waiting` alone; see KTD11's amendment of
+  2026-08-17, which widened the trigger on U1's finding that an approval-blocked session reports
+  `working` rather than `waiting`.)
 - **Attach is steal.** `session.activate` (`methods_session.py:1024`) rebinds the session's
   transport to the caller; `session.create`/`session.resume` set `"transport":
   current_transport()` the same way (`methods_session.py:110`). The displaced client receives no
@@ -163,7 +166,8 @@ matters. Rejected: the staged single-gateway valve — operator ruling OP1.
 connection: full event streams feed the focused session and any session Talaria opened or resumed
 (the v0.1–v0.3 machinery, unchanged); `session.active_list` polls — triggered by `sessions.changed`
 (client-side coalesce 2s, matching the server floor) with a 30-second periodic backstop — feed
-every other row; `approval.pending` fetches per-item detail for rows reporting `waiting`;
+every other row; `approval.pending` fetches per-item detail for rows reporting `waiting` or
+`working` (KTD11 as amended by the operator ruling of 2026-08-17);
 `session.reclaimed` retires rows; `session.list` re-lists on reconnect and on the same coalesced
 `sessions.changed` hint, epoch-paired with the `active_list` poll, and a failed listing marks
 listing-derived fields stale (never cleared). A foreign session waiting on a non-approval kind
@@ -291,11 +295,29 @@ from the broadcast, `disconnected` when the row's connection is down. Orthogonal
 three R24 display classes — live, stale-since, never-observed — qualify every value; a seeded row
 whose status no poll has confirmed renders never-observed, not idle.
 
-**KTD11 — `approval.pending` fires only at rows already reporting `waiting`.** The build-warming
-side effect makes it unusable as a blind probe (the read-only discipline's letter would be kept and
-its spirit violated). Presence-probing the *method* at startup uses the parameter-invalid
-distinction (R11): a bare call answering "session required" proves presence without naming a
-session.
+**KTD11 — `approval.pending` fires only at rows already reporting `waiting` or `working`.** The
+build-warming side effect makes it unusable as a blind probe (the read-only discipline's letter would
+be kept and its spirit violated). Presence-probing the *method* at startup uses the
+parameter-invalid distinction (R11): a bare call answering "session required" proves presence without
+naming a session.
+
+**Amended by operator ruling, 2026-08-17, following U1's evidence.** The trigger fires at rows
+reporting **waiting OR working**, not waiting alone as this text originally read. The rationale, as
+the ruling states it:
+
+> KTD11's gate exists to avoid warming lazy agent builds. U1 proved a pending approval does not
+> surface as `waiting`, because approvals ride tools.approval's registry rather than the `_pending`
+> prompt registry that feeds status — and a `working` row's agent is live by construction, because it
+> is mid-turn. So firing approval.pending against waiting-or-working rows preserves the exact safety
+> property — `idle`, `starting` and lazy rows stay excluded and are never polled — while keeping R14
+> true for foreign approvals. The cost is bounded: only active rows, at the existing coalesce and
+> backstop cadence.
+
+The safety property stays checkable by pointing at code: `idle` excluded, `starting` excluded,
+`working` included, `waiting` included, and no path firing it at a row of unknown status. In the
+implementation that is `APPROVAL_DETAIL_TRIGGER_STATUSES` and `approval_detail_due()` in
+`talaria/domain/queue.py`, with `approval_detail_targets()` in `talaria/domain/state.py` as the only
+place the fleet decides to make the call.
 
 **KTD12 — Ages ride the frame clock; polled values carry an observation floor.** Every age derives
 from the clock domain that stamps frames (R20), so replay reproduces ages exactly. A wait age known
@@ -619,6 +641,21 @@ two-session recording: two runs, identical registry/queue/focus/age state at eve
 recordings in the v0.1–v0.3 format (no profile tags) still replay unchanged.
 
 **Depends on:** U2 (format), U3 (registry), U6 (queue).
+
+**Operator ruling, 2026-08-18 — U8 owns one open question from U6's review.** Determine whether a
+**keyless approval** can arrive from any supported recording format: an `approval.request` carrying
+no `request_id`. Cite what you find, either way, against the formats this unit already has to replay
+(v0.1–v0.3 without profile tags, and the current one).
+
+Why it matters beyond replay: U6's unplaceable fold refuses an approval only when Talaria holds no
+gateway id for it, and the case for deleting that fold outright rests on the claim that blind items
+cannot arise. That claim is currently revision-specific — the live gateway mints a `request_id` for
+every entry — and nobody has checked the replay path or older logs, which is where a keyless approval
+would still reach the domain. Until U8 answers it, the fold ships as insurance with a stated trigger.
+If U8 proves blind items impossible across every supported input, the fold-deletion clause in
+`docs/engineering-journal/DECISIONS.md` (2026-08-18, "The unplaceable fold refuses only what would be
+answered blind") becomes actionable at the alias-pinning revisit. If U8 finds one, the fold is
+load-bearing and the clause is withdrawn.
 
 ### U9. The live acceptance run
 

@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal
 
+from talaria.domain.compat import SeamBoard
 from talaria.domain.decode import (
     CONNECTION_BROADCAST_EVENT_TYPES,
     DecodedFrame,
@@ -64,6 +65,25 @@ from talaria.domain.normalize import (
     push_unique,
     subagent_identity,
     subagent_sort_key,
+)
+from talaria.domain.queue import (
+    APPROVAL_DETAIL_TRIGGER_STATUSES,
+    QUEUEABLE_KINDS,
+    QUEUED_BEHIND_APPROVAL,
+    REFUSED_APPROVAL_NOT_HEAD,
+    REFUSED_UNCORRELATED_APPROVAL,
+    UNCORRELATED_APPROVAL,
+    UNOBSERVED_KIND,
+    ItemKey,
+    NeedsYouQueue,
+    PendingApprovalDirectory,
+    PolledApproval,
+    approval_block_reason,
+    approval_detail_due,
+    build_queue,
+    merge_polled_approvals,
+    prompt_feed_rows,
+    unresolvable_kind_notice,
 )
 from talaria.domain.registry import (
     MAX_RUNTIME_ALIASES,
@@ -214,6 +234,13 @@ class SessionState:
     #: value because KTD5 freezes the v1 status contract at four
     #: (``docs/formats/status-line.md``); it is spent on the screen instead, by
     #: :func:`~talaria.ui.prompts.activity_line`.
+    #:
+    #: Counts only the FOCUSED session's withdrawals: it is screen state, and
+    #: the screen shows one session. :func:`age_out_approvals` removes every
+    #: session's stale approvals (the round-eight split) but increments this
+    #: only for the focused one — a foreign withdrawal's notice is its derived
+    #: queue item leaving :func:`fleet_queue`, not a hedge on this session's
+    #: activity line.
     withdrawn_approvals: int = 0
 
     last_status_note: str = ""
@@ -928,22 +955,24 @@ REFUSED_WRONG_SESSION: Final[str] = (
     "that prompt belongs to a session Talaria is no longer showing — nothing was sent"
 )
 
-#: Why a queued approval carries no answer control. Shown on the card by the
-#: projection and repeated by the refusal below, from this one string, so the
-#: screen and the registry cannot come to say different things.
-UNCORRELATED_APPROVAL: Final[str] = (
-    "more than one approval is waiting and this gateway sends no request id "
-    "with an approval, so an answer cannot be aimed at one of them"
-)
-
-#: What the operator is told if an answer is attempted anyway.
-REFUSED_UNCORRELATED_APPROVAL: Final[str] = (
-    f"{UNCORRELATED_APPROVAL} — nothing was sent; deny them all, or let them expire"
-)
+#: The approval-correlation vocabulary is defined in
+#: :mod:`talaria.domain.queue` and imported above, not restated here.
+#:
+#: Both readers need the identical sentence: the queue decides which item may be
+#: *offered*, this registry decides which answer may be *sent*, and a screen that
+#: offers what the registry refuses is the exact defect
+#: :class:`~talaria.domain.projection.PromptRow`'s ``answerable`` field exists to
+#: prevent. ``queue`` is the leaf of the two, so the strings live there and every
+#: existing importer of ``state.UNCORRELATED_APPROVAL`` keeps working through
+#: this module's re-export.
 
 
 def respond_to_prompt(
-    state: SessionState, request_id: str, *, session_id: str | None = None
+    state: SessionState,
+    request_id: str,
+    *,
+    session_id: str | None = None,
+    foreign_approvals: int = 0,
 ) -> tuple[SessionState, str | None]:
     """Answer an outstanding prompt. Returns the new state and any refusal.
 
@@ -969,19 +998,57 @@ def respond_to_prompt(
     actually means — it is not an assertion that any session matches.
 
     **The third refusal is about approval alone, and it is a safety rule rather
-    than a race.** ``approval.request`` carries no request id
-    (``tui_gateway/server.py:1655-1674``) and ``approval.respond`` takes no
-    discriminator: it pops the *oldest* entry in the session's queue
-    (``tools/approval.py:2214-2222``). While exactly one approval is
-    outstanding, that is unambiguous — the answer lands on that approval, or on
-    an empty queue, and the reply's own ``resolved`` count says which. The
-    moment a second approval is outstanding it stops being unambiguous, because
-    the gateway also removes an entry on timeout and on interrupt **without
-    emitting anything** (``tools/approval.py:3336-3344``), so the queue head and
-    the oldest card on screen can differ. Answering then approves a command the
-    operator was never shown. So Talaria refuses, and the interface offers the
-    one answer that needs no correlation instead: deny every queued approval at
-    once.
+    than a race.** ``approval.request`` carries no request id at the pinned read
+    (``tui_gateway/server.py:1655-1674``) and ``approval.respond`` pops the
+    *oldest* entry in the session's queue (``tools/approval.py:2214-2222``).
+    While exactly one approval is outstanding, that is unambiguous — the answer
+    lands on that approval, or on an empty queue, and the reply's own
+    ``resolved`` count says which. The moment a second approval is outstanding it
+    stops being unambiguous, because the gateway also removes an entry on timeout
+    and on interrupt **without emitting anything**
+    (``tools/approval.py:3336-3344``), so the queue head and the oldest card on
+    screen can differ. Answering then approves a command the operator was never
+    shown.
+
+    **R18, amended 2026-08-17, splits that refusal in two.** The running
+    revision synthesizes a ``request_id`` on every approval entry
+    (``tools/approval.py:2596``, ``uuid4`` by ``setdefault``) and emits it with
+    the request event, and ``approval.respond`` forwards the parameter. So there
+    are now two cases where there used to be one:
+
+    * **The head, with an id the gateway itself sent** — answerable. The answer
+      names the entry it means (:attr:`PendingPrompt.observed_request_id`), which
+      is precisely the correlation whose absence the old refusal stood in for.
+    * **The head, with no observed id** — refused exactly as before, with the
+      deny-all fallback unchanged, because a synthesized key is Talaria's own and
+      putting it on the wire would claim a correlation that is not happening.
+
+    **A session's second approval is refused in both cases**, which is a
+    tightening rather than a loosening: the gateway holds approvals in a queue
+    and resolves from its head, so an answer aimed at the second would land on
+    the first. That is R18's head-of-queue rule, and
+    :func:`~talaria.domain.queue.build_queue` renders the same sentence on the
+    same item, from the same constants.
+
+    ``foreign_approvals`` is how many approvals this session is known to have at
+    the gateway that are **not** in this registry — learned from an
+    ``approval.pending`` poll, which is the fleet's business and not a session's.
+    It defaults to zero, which is what a focused-session-only caller knows.
+
+    It exists because the registry and the queue were counting different things.
+    The gateway keeps **one** approval queue per session, and a poll's rows are
+    entries in that same queue — so a session holding one driven approval and one
+    polled one has two, and the registry, seeing one, called it a lone approval
+    and allowed the answer. That answer would have landed on whichever entry the
+    gateway had at its head, which may be the polled one. Ordering the two is not
+    possible: a polled row carries no start stamp, only an observation floor
+    (KTD12), so "which is older" is not a question the data answers. A count above
+    zero therefore means *not provably the head*, and the answer is refused —
+    conservative in the direction that cannot answer the wrong question.
+
+    **Nothing supplies it yet.** U6 owns the rule and its agreement with the
+    queue; wiring the fleet's own count into the answer path belongs to the unit
+    that answers from the queue.
 
     Every refusal increments ``rejected_responses`` rather than raising. A
     refused response is an ordinary race, not a fault.
@@ -1004,8 +1071,30 @@ def respond_to_prompt(
         return _refuse(state), REFUSED_NOT_OUTSTANDING
     if session_id is not None and prompt.session_id is not None and prompt.session_id != session_id:
         return _refuse(state), REFUSED_WRONG_SESSION
-    if prompt.kind == "approval" and len(state.outstanding_approvals(prompt.session_id)) > 1:
-        return _refuse(state), REFUSED_UNCORRELATED_APPROVAL
+    if prompt.kind == "approval":
+        # ``outstanding_approvals`` is ordered by the frame sequence the requests
+        # arrived on, which is the order the gateway enqueued them and therefore
+        # the order its resolver pops them in.
+        #
+        # The decision itself is :func:`~talaria.domain.queue.approval_block_reason`
+        # and not two branches written out here. It was two branches written out
+        # here until 2026-08-17, beneath a docstring on that function claiming
+        # three callers when it had two — and the two disagreed in a reachable
+        # state: a settled head left the queue offering the second approval while
+        # this function refused it. Only the mapping from the reason onto this
+        # module's "nothing was sent" wording is local, because these sentences
+        # are about a refusal and the queue's are about a control not offered.
+        queued = state.outstanding_approvals(prompt.session_id)
+        locally_head = bool(queued) and queued[0].request_id == prompt.request_id
+        reason = approval_block_reason(
+            is_head=locally_head and not foreign_approvals,
+            queued_count=len(queued) + foreign_approvals,
+            observed_request_id=prompt.observed_request_id,
+        )
+        if reason == QUEUED_BEHIND_APPROVAL:
+            return _refuse(state), REFUSED_APPROVAL_NOT_HEAD
+        if reason == UNCORRELATED_APPROVAL:
+            return _refuse(state), REFUSED_UNCORRELATED_APPROVAL
 
     return _start_answering(state, (prompt,)), None
 
@@ -1351,18 +1440,36 @@ def age_out_approvals(state: SessionState, *, now: float) -> SessionState:
     expiry is: it is the latch that stops a late ``restore_prompt`` putting the
     control back after Talaria has told the operator it is gone.
 
-    **Only the focused session's approvals age out here (A3).** ``prompts``
+    **The removal is unconditional at the threshold; only the presentation
+    stays focus-scoped (the round-eight split, 2026-08-18).** ``prompts``
     can hold a foreign session's retained approval since
-    :func:`focus_session` stopped clearing it, and this function's *effects*
-    — ``withdrawn_approvals`` and the transcript line — have nowhere to go
-    but the one session ``state`` represents. Aging session A's approval
-    while B is focused would increment B's withdrawal counter and write A's
-    command into B's transcript: exactly the merged multi-session view the
-    plan's non-goals forbid (``docs/plans/2026-08-08-talaria-v0-2-
-    answerability-and-session-story-plan.md:519``). Deferred rather than
-    reattributed elsewhere — there is no other transcript to write it to —
-    so a foreign approval ages out on the first tick after its own session
-    is focused again, still against the same ``opened_at`` it arrived with.
+    :func:`focus_session` stopped clearing it. The A3 guard this paragraph
+    used to state deferred a foreign approval's whole age-out "until its own
+    session is focused again" — and a session whose runtime id the alias
+    window trimmed can never be focused again, so the deferral was permanent
+    and the registry grew one approval per land-approve-switch-away cycle
+    (measured: 11 of 12 prompts surviving age-out at 1000x the threshold).
+    So the ``stale`` filter below takes every session's stale approvals,
+    focused or not — pinned by
+    ``test_age_out_removes_a_foreign_sessions_stale_approval_silently``,
+    ``test_a_trimmed_id_phantom_off_focus_ages_out_at_threshold`` and the
+    inverted probe
+    ``test_twelve_switch_away_cycles_age_out_to_zero_at_threshold``.
+
+    What A3 rightly protected is kept, as the ``presented`` split below: the
+    *effects* — ``withdrawn_approvals`` and the transcript line — still have
+    nowhere to go but the one session ``state`` represents. Incrementing the
+    focused session's counter or writing a foreign command into its
+    transcript for another session's withdrawal is exactly the merged
+    multi-session view the plan's non-goals forbid
+    (``docs/plans/2026-08-08-talaria-v0-2-answerability-and-session-story-
+    plan.md:519``), so they fire only for prompts whose session IS the
+    focused one — pinned by
+    ``test_age_out_still_counts_and_writes_the_line_for_the_focused_session``.
+    A foreign withdrawal is silent *here* but not invisible: the fleet queue
+    derives its items from ``prompts`` on every read (:func:`fleet_queue`),
+    so removing the prompt withdraws the item from the owning row's own
+    surface — the removal is the notice.
     """
     if now <= 0.0:
         return state
@@ -1372,21 +1479,26 @@ def age_out_approvals(state: SessionState, *, now: float) -> SessionState:
         if p.kind == "approval"
         and p.opened_at > 0.0
         and now - p.opened_at >= APPROVAL_STALE_AFTER
-        and (p.session_id is None or p.session_id == state.focused_session_id)
     )
     if not stale:
         return state
     dropped = {p.request_id for p in stale}
+    presented = tuple(
+        p
+        for p in stale
+        if p.session_id is None or p.session_id == state.focused_session_id
+    )
     next_state = replace(
         state,
         prompts=tuple(p for p in state.prompts if p.request_id not in dropped),
         flushed_prompt_ids=state.flushed_prompt_ids | dropped,
         # Counted, not flagged: two approvals can age out on one tick, and the
         # screen names how many were withdrawn rather than saying "an approval"
-        # about a number it knows.
-        withdrawn_approvals=state.withdrawn_approvals + len(stale),
+        # about a number it knows. Only ``presented`` is counted: the counter
+        # is the focused session's screen state, not the fleet's.
+        withdrawn_approvals=state.withdrawn_approvals + len(presented),
     )
-    for prompt in stale:
+    for prompt in presented:
         line = f"{APPROVAL_AGED_OUT}: {prompt.summary}"
         if prompt.command:
             line = f"{line}\n{APPROVAL_COMMAND_LABEL}{prompt.command}"
@@ -1980,6 +2092,11 @@ def _on_prompt_request(state: SessionState, event: GatewayEvent) -> SessionState
     """
     kind = _PROMPT_EVENTS[event.type]
     request_id = coerce_text(event.payload.get("request_id"))
+    #: What the *gateway* sent, before any local synthesis below (R18 as amended
+    #: 2026-08-17). Kept separately because the two diverge exactly where the
+    #: safety rule turns: a synthesized key is a registry key and never goes on
+    #: the wire, while an observed id is what makes an answer aimable.
+    observed_request_id = request_id
     approvals_seen = state.approvals_seen
     session_id = event.session_id or state.focused_session_id
     if not request_id and kind == "approval":
@@ -2021,6 +2138,7 @@ def _on_prompt_request(state: SessionState, event: GatewayEvent) -> SessionState
         command=command,
         read_start=_optional_index(event.payload.get("start")) if kind == "terminal_read" else None,
         read_count=_optional_index(event.payload.get("count")) if kind == "terminal_read" else None,
+        observed_request_id=observed_request_id,
     )
     return _append(
         replace(state, prompts=(*state.prompts, prompt)),
@@ -2486,13 +2604,20 @@ PROMPT_EVENT_KINDS: Mapping[str, PromptKind] = _PROMPT_EVENTS
 #
 # U4's amendment to that note: the app now *holds* a ``FleetState`` — the
 # focused engine is its ``focused`` field, and the registry is seeded from the
-# two listing sweeps the ``/sessions`` picker already makes. What U4 does not
-# do is route inbound frames through :func:`route_frame`: the app still folds
-# every frame with :func:`apply_frame`, so background events keep taking the
-# shipped cross-talk discard and ``cross_session_events_ignored`` keeps its
-# shipped meaning. Moving that boundary changes what a background event does
-# to the focused transcript's counters, which is U6's feed wiring, not this
-# unit's focus-movement work.
+# two listing sweeps the ``/sessions`` picker already makes. What U4 did not
+# do is route inbound frames through :func:`route_frame`, and it named U6's
+# feed wiring as the owner of that move rather than doing it inside a
+# focus-movement unit.
+#
+# U6's amendment: the move is done. ``TalariaApp.ingest`` routes every frame
+# through :func:`route_frame`, so an identified background event now updates
+# its registry row instead of being discarded, and
+# ``cross_session_events_ignored`` no longer counts it — the change U4 named
+# and deferred, made where the queue needs it. The counter's shipped meaning
+# for an *identity-less* frame is untouched (R25): those are still counted and
+# surfaced on the connection channel. Pinned by
+# ``test_an_identified_background_event_updates_its_row_and_is_not_counted_ignored``
+# and ``test_an_identityless_frame_is_still_counted_ignored_through_the_app``.
 
 
 #: One in-flight answer's fleet-scoped identity (KTD9): the connection it was
@@ -2539,6 +2664,29 @@ class FleetState:
     channels: Mapping[str, ConnectionChannel] = field(default_factory=dict)
     queue_item_keys: frozenset[RowKey] = frozenset()
     answers_in_flight: Mapping[AnswerKey, RowKey] = field(default_factory=dict)
+    #: When each in-flight answer went on the wire, on the frame clock (U6).
+    #:
+    #: Kept beside ``answers_in_flight`` rather than inside it because the two
+    #: are re-anchored differently and only one of them is re-anchored at all:
+    #: an :data:`AnswerKey` never moves — it is the identity of a *call* — while
+    #: the row key that call protects moves whenever its row learns a durable id.
+    #: R18's requested-with-age reads this; an answer recorded without a stamp
+    #: renders as requested with the age unobserved, never as zero seconds old.
+    answer_started_at: Mapping[AnswerKey, float] = field(default_factory=dict)
+    #: Per-connection approval detail from the KTD11-gated ``approval.pending``
+    #: poll, newest reply per row, first-sighting stamps preserved (KTD12).
+    approval_detail: Mapping[RowKey, tuple[PolledApproval, ...]] = field(
+        default_factory=dict
+    )
+    #: One seam board per connection (U5's type, U6's plurality — see
+    #: :func:`fleet_seam_board`). A capability is a property of the install a
+    #: connection reached, and a fleet dials more than one install.
+    seam_boards: Mapping[str, SeamBoard] = field(default_factory=dict)
+    #: Queue items whose outcome came back ambiguous and was latched. Bounded,
+    #: newest last; see :func:`settle_queue_item` for why a tombstone is the
+    #: right shape, which key shapes it latches exactly, and why the queue
+    #: ignores a tombstone on the constant roster key.
+    settled_items: tuple[ItemKey, ...] = ()
     clock: float = 0.0
 
     @property
@@ -2591,14 +2739,25 @@ class FleetState:
         re-anchoring and proves nothing.
 
         **Contract for units that record protection** (U4's answering
-        bookkeeping, U6's queue): record the row's *registry key* as resolved at
-        record time, not a bare runtime id you happen to hold. A key that is
-        merely an alias of an already-durable-keyed row is re-anchored by
-        nothing — no rebind ever moves it — so it loses protection when that
-        alias trims.
+        bookkeeping, anything that records a key by hand): record the row's
+        *registry key* as resolved at record time, not a bare runtime id you
+        happen to hold. A key that is merely an alias of an already-durable-keyed
+        row is re-anchored by nothing — no rebind ever moves it — so it loses
+        protection when that alias trims.
+
+        **U6's queue protects its rows by derivation rather than by record**, and
+        that is the one exception to the contract above rather than a violation
+        of it. The queue is not stored — :func:`fleet_queue` rebuilds it from the
+        rows, the prompt registry and the polled detail on every read — so there
+        is no moment at which a key could be recorded, no copy to keep in step,
+        and nothing to re-anchor: an item follows its row through a rebind
+        because it is *made of* that row. ``queue_item_keys`` stays for callers
+        that must protect a row for a reason the queue cannot see, and the two
+        sets are unioned rather than one replacing the other.
         """
         resolved = {self._resolve_protection(key) for key in self.queue_item_keys}
         resolved |= {self._resolve_protection(key) for key in self.answering_keys}
+        resolved |= {item.row_key for item in fleet_queue(self).items}
         focused = self.focused_key()
         if focused is not None:
             resolved.add(focused)
@@ -2733,10 +2892,26 @@ def _rebind_durable(fleet: FleetState, old_key: RowKey, durable_id: str) -> Flee
     def _moved(keys: frozenset[RowKey]) -> frozenset[RowKey]:
         return frozenset(new_key if key == old_key else key for key in keys)
 
+    # Feed B's approval detail is keyed by row, so it moves with the row for the
+    # identical reason. Detail left behind at the old key would strand every
+    # polled approval of a session the moment its first poll taught the registry
+    # its durable id — which is the very first poll after the row was created by
+    # an event, i.e. the ordinary case rather than an edge one. Merging keeps the
+    # earlier first-sighting stamps, so the observation floor does not jump
+    # forward when a row is re-keyed (KTD12).
+    detail = {
+        key: value for key, value in fleet.approval_detail.items() if key != old_key
+    }
+    if old_key in fleet.approval_detail:
+        detail[new_key] = merge_polled_approvals(
+            fleet.approval_detail.get(new_key, ()), fleet.approval_detail[old_key]
+        )
+
     return replace(
         fleet,
         rows=rows,
         aliases=aliases,
+        approval_detail=detail,
         queue_item_keys=_moved(fleet.queue_item_keys),
         # The answering half is re-anchored here too, and for the identical
         # reason — it is a mapping only so that one entry can carry both the
@@ -2745,6 +2920,18 @@ def _rebind_durable(fleet: FleetState, old_key: RowKey, durable_id: str) -> Flee
             answer: (new_key if target == old_key else target)
             for answer, target in fleet.answers_in_flight.items()
         },
+        # And the settled tombstones, which are keyed by session rather than by
+        # row and were therefore missed when this list was first written. A
+        # settle recorded before the row's first poll was undone BY that poll:
+        # the tombstone kept naming the runtime id while the item it was meant
+        # to suppress was rebuilt under the durable one, so a latched approval
+        # came back and was offered again. "Settles and latches, never restores"
+        # has to survive the ordinary case, and a rebind on the first poll after
+        # an event-created row is the ordinary case.
+        settled_items=tuple(
+            (profile, new_key[1] if (profile, session) == old_key else session, request)
+            for profile, session, request in fleet.settled_items
+        ),
     )
 
 
@@ -2818,7 +3005,23 @@ def _apply_event_to_row(
         etype = decoded.type
         payload = decoded.payload
         if etype in _PROMPT_EVENTS:
-            row = replace(row, waiting_kind=_PROMPT_EVENTS[etype])
+            kind = _PROMPT_EVENTS[etype]
+            row = replace(row, waiting_kind=kind)
+            if kind not in QUEUEABLE_KINDS:
+                # R14's whole bargain for a known prompt kind the queue
+                # suppresses — today ``terminal_read`` alone, checked by the
+                # ``QUEUEABLE_KINDS`` membership rather than a name so a fifth
+                # kind inherits it. The naming must happen HERE because no other
+                # writer is reachable for a background session: the focused
+                # engine's cross-session guard (``apply_frame``) drops the event
+                # before a prompt registers, so ``latch_unservable_prompt``
+                # never runs, and ``_name_unrenderable_wait`` runs only for
+                # unknown event types. Round nine's defect was this branch
+                # setting the kind and writing no notice: the queue suppressed
+                # the roster wait and nothing anywhere said so. Pinned by the
+                # ``terminal_read`` leg of
+                # ``test_an_unrenderable_kind_is_named_on_its_row_and_never_queued``.
+                row = replace(row, last_notice=unresolvable_kind_notice(kind))
         elif etype in _EXPIRE_EVENTS:
             row = replace(
                 row,
@@ -2850,9 +3053,51 @@ def _apply_event_to_row(
                 live_listed=False,
                 open_turn=False,
             )
-    # An UnknownEventFrame updates the row as a generic observation and
-    # nothing else — AE1's unknown-kind half: the row moved, nothing dropped.
+    else:
+        # An UnknownEventFrame updates the row as a generic observation — AE1's
+        # unknown-kind half: the row moved, nothing dropped — and, when the type
+        # names a blocking bridge Talaria renders no card for, says so on the row.
+        row = _name_unrenderable_wait(row, decoded.type)
     return _with_row(fleet, key, row)
+
+
+def _name_unrenderable_wait(row: RegistryRow, etype: str) -> RegistryRow:
+    """Name a blocking kind Talaria has no card for on its row (KTD2/R14).
+
+    The running gateway blocks on three such kinds — ``preview.read``,
+    ``window.read`` and ``mcp.setup``, whose respond bridges are registered at
+    ``methods_prompt.py:1412``, ``:1420`` and ``:1429`` — and the pinned read has
+    none of them, so their request events arrive as unknown types. They are
+    **named on the row and never queued**: the queue holds only resolvable items
+    (R17), and a row nobody can act on is a dead end wearing the clothes of a
+    task.
+
+    The rule is "an unknown ``<kind>.request``", not a list of three, so a fourth
+    kind a later gateway grows is named on the day it arrives rather than on the
+    day somebody edits a tuple. Its matching ``.expire`` clears the wait, which
+    is the only other thing this row can honestly learn about a bridge it cannot
+    render.
+
+    **The kind word is the event type's own stem, and it is inferred rather than
+    verified.** U1 induced none of these three — they are desktop-GUI tools the
+    throwaway agent had no reason to call — so the request-event names are read
+    off the respond-bridge names by the convention ``terminal.read.request``
+    already follows. If a gateway spells one differently, the row still names
+    whatever stem did arrive, which is the honest degradation.
+    """
+    if etype.endswith(".request"):
+        kind = etype[: -len(".request")]
+        return replace(row, waiting_kind=kind, last_notice=unresolvable_kind_notice(kind))
+    if etype.endswith(".expire"):
+        kind = etype[: -len(".expire")]
+        if row.waiting_kind and row.waiting_kind != kind:
+            return row
+        return replace(
+            row,
+            waiting_kind="",
+            last_notice=clip_detail_line(f"{kind} prompt expired unanswered"),
+        )
+    return row
 
 
 def _count_identityless(fleet: FleetState, profile: str, notice: str) -> FleetState:
@@ -2944,6 +3189,11 @@ def route_frame(
     (U2). Frames from a superseded generation still count as observations
     but never clear a row's stale-since — the epoch alone cannot distinguish
     connection identities across a reconnect-by-ensure.
+
+    Nothing here maintains the needs-you queue, and that is U6's design rather
+    than an omission: the queue is derived from the rows this router writes, so
+    an event that changes what needs a person changes the queue in the same
+    reduction, with no second structure to keep in step.
     """
     fleet = replace(fleet, clock=max(fleet.clock, decoded.at))
     channel = fleet.channel(profile)
@@ -3087,11 +3337,47 @@ def apply_active_list(
         row = fleet.rows[key]
         seen.add(key)
         status_changed = active.status != row.status or not row.observed
+        # Captured before ``_fresh_observation`` clears it: whether the stream
+        # that named ``waiting_kind`` broke since the naming. The clear for an
+        # event-named kind is itself an event (``*.expire``, or the answered
+        # bridge's turn moving on), emitted once, to the session's transport of
+        # that moment (``tui_gateway/server.py``: ``_block``'s expire emission,
+        # ``write_json``'s session-transport routing) — a connection dropped
+        # across it never sees it, and nothing replays it.
+        stream_broke = row.disconnected
         row = _fresh_observation(row, at=at, source="poll")
         waiting_kind = row.waiting_kind
         if active.status == "waiting":
-            waiting_kind = waiting_kind or "unobserved"
-        elif waiting_kind == "unobserved":
+            if waiting_kind and stream_broke:
+                # Round nine's stale-kind finding, the reachable half: a kind
+                # named before a drop would otherwise ride the row into every
+                # later wait — for a suppressed kind (``terminal_read``) that
+                # silently starves the queue of this row's waits until a
+                # ``message.start`` Talaria may never receive. After a break the
+                # honest claim is exactly the poll's own: the session waits, on
+                # a kind no surviving stream has named — ``unobserved``, the
+                # word this module already uses for that claim. If the named
+                # prompt is in fact still live, attaching either re-announces it
+                # (approval and clarify, the only kinds the gateway replays —
+                # ``tui_gateway/server.py:8782-8784`` — the F6 path) or latches
+                # the attach-residue notice for it. The break itself reaches the
+                # row through ``fleet_connection_lost``, which
+                # ``TalariaApp.note_connection_state`` calls on every disconnect
+                # — round ten found this rule reading a flag no production path
+                # ever set. Pinned by
+                # ``test_a_kind_named_before_a_connection_drop_does_not_suppress_a_later_wait``
+                # and, for the wiring,
+                # ``test_a_dropped_connection_marks_the_fleet_rows_not_just_the_focused_session``.
+                waiting_kind = UNOBSERVED_KIND
+            waiting_kind = waiting_kind or UNOBSERVED_KIND
+        else:
+            # The other reachable half: an ANSWERED terminal read emits no
+            # ``.expire`` (the gateway's expire fires only on timeout), so
+            # nothing event-shaped ends the named wait. A fresh poll's status is
+            # the gateway's own lifecycle word — a row polled ``working`` or
+            # ``idle`` is waiting on nothing, so whatever kind an event once
+            # named is over and clears, ``unobserved`` included. Pinned by
+            # ``test_a_poll_reporting_any_other_status_ends_the_named_wait``.
             waiting_kind = ""
         row = replace(
             row,
@@ -3105,11 +3391,50 @@ def apply_active_list(
             active_epoch=poll_epoch,
         )
         fleet = _with_row(fleet, key, row)
+        if row.status not in APPROVAL_DETAIL_TRIGGER_STATUSES:
+            # The only clearing path a polled approval has. Detail is refreshed
+            # ONLY at a waiting-or-working row (``approval_detail_due``) and
+            # cleared ONLY by a refresh (``merge_polled_approvals``), so a row
+            # that left those statuses holding detail could never be refreshed
+            # and therefore never shown to have resolved: its approvals stayed
+            # in the queue, answerable, ageing without bound, for the life of
+            # the run. That is a queue that lies, which is the failure R14
+            # exists to prevent.
+            #
+            # Clearing is the honest reading rather than a convenience. These
+            # are the gateway's own lifecycle words, and an approval-blocked
+            # session reports ``working`` — approvals ride ``tools.approval``'s
+            # registry, not ``_block()`` — so a session the gateway calls
+            # ``idle`` or ``starting`` is holding no approval. It is the same
+            # principle ``merge_polled_approvals`` already applies to a fresh
+            # reply that omits an approval: absence from current evidence is
+            # resolution. The queue is derived, so the item goes in the same
+            # reduction (R19).
+            #
+            # A DISCONNECTED row is deliberately not cleared here: there the
+            # evidence is missing rather than negative, and dropping a real
+            # approval silently is the other half of R14's bargain. The queue
+            # refuses those instead — see ``APPROVAL_ON_DOWN_CONNECTION``.
+            # Pinned by
+            # ``test_a_poll_outside_the_trigger_statuses_clears_stale_approval_detail``.
+            fleet = replace(fleet, approval_detail=_drop_detail(fleet, {key}))
     for key, row in list(fleet.rows.items()):
         if key[0] == profile and key not in seen and row.live_listed:
             fleet = _with_row(fleet, key, replace(row, live_listed=False))
+    # A poll that answered is evidence the connection is up, and it is the only
+    # such evidence the fleet ever records. ``connected`` defaults to False and
+    # was written by nothing but ``fleet_connection_restored``, a reconnect
+    # reducer with no caller — so every successfully polled connection described
+    # itself as down. Nothing read that field until U6's queue notices did, at
+    # which point a healthy fleet started reporting "part of the fleet could not
+    # be asked" forever. Setting it here is not an assumption: this line is only
+    # reached because a roster reply came back.
     channel = replace(
-        fleet.channel(profile), active_epoch=poll_epoch, last_poll_at=at, hint_at=None
+        fleet.channel(profile),
+        active_epoch=poll_epoch,
+        last_poll_at=at,
+        hint_at=None,
+        connected=True,
     )
     fleet = _with_channel(fleet, channel)
     fleet = _retire_absent_rows(fleet, profile)
@@ -3153,7 +3478,23 @@ def _retire_absent_rows(fleet: FleetState, profile: str) -> FleetState:
     rows = {k: v for k, v in fleet.rows.items() if k not in doomed}
     doomed_set = set(doomed)
     aliases = {p: t for p, t in fleet.aliases.items() if t not in doomed_set}
-    return replace(fleet, rows=rows, aliases=aliases)
+    return replace(
+        fleet, rows=rows, aliases=aliases, approval_detail=_drop_detail(fleet, doomed_set)
+    )
+
+
+def _drop_detail(
+    fleet: FleetState, doomed: set[RowKey]
+) -> Mapping[RowKey, tuple[PolledApproval, ...]]:
+    """Forget the polled approval detail of rows that just left the registry.
+
+    A row is a fixed-size summary and its detail is part of that size (R3). A
+    retired or evicted row keeping its approvals would leave the one unbounded
+    structure in the fleet pointing at sessions nothing else remembers.
+    """
+    if not doomed:
+        return fleet.approval_detail
+    return {key: value for key, value in fleet.approval_detail.items() if key not in doomed}
 
 
 def _enforce_row_bound(fleet: FleetState, profile: str) -> FleetState:
@@ -3179,7 +3520,9 @@ def _enforce_row_bound(fleet: FleetState, profile: str) -> FleetState:
     aliases = {p: t for p, t in fleet.aliases.items() if t not in doomed}
     channel = fleet.channel(profile)
     channel = replace(channel, evicted_rows=channel.evicted_rows + len(doomed))
-    fleet = replace(fleet, rows=rows, aliases=aliases)
+    fleet = replace(
+        fleet, rows=rows, aliases=aliases, approval_detail=_drop_detail(fleet, doomed)
+    )
     return _with_channel(fleet, channel)
 
 
@@ -3262,7 +3605,12 @@ def fleet_answer_key(profile: str, session_id: str, request_key: str) -> AnswerK
 
 
 def begin_fleet_answer(
-    fleet: FleetState, *, profile: str, session_id: str, request_key: str
+    fleet: FleetState,
+    *,
+    profile: str,
+    session_id: str,
+    request_key: str,
+    at: float = 0.0,
 ) -> FleetState:
     """Record one answer as on the wire, protecting the row it names (KTD9).
 
@@ -3284,11 +3632,27 @@ def begin_fleet_answer(
     A row is a claim that the gateway told Talaria about a session; an answer in
     flight is Talaria's own bookkeeping. The protection is simply inert until a
     row exists under that key, which is exactly what it should be.
+
+    ``at`` is the frame-clock moment the call went out, and it is what R18's
+    requested-with-age renders. It defaults to ``0.0`` — meaning "no stamp was
+    recorded" — because a caller with no clock in hand (the domain suite, a
+    replay-mode path) is telling the truth by saying so, and the queue renders
+    such an item as requested with the age unobserved rather than as an answer
+    sent at the epoch.
     """
     key = _resolve_key(fleet, profile, session_id) or (profile, session_id)
+    answer = fleet_answer_key(profile, session_id, request_key)
     answers = dict(fleet.answers_in_flight)
-    answers[fleet_answer_key(profile, session_id, request_key)] = key
-    return replace(fleet, answers_in_flight=answers)
+    answers[answer] = key
+    stamps = dict(fleet.answer_started_at)
+    if at:
+        stamps[answer] = at
+    return replace(
+        fleet,
+        answers_in_flight=answers,
+        answer_started_at=stamps,
+        clock=max(fleet.clock, at),
+    )
 
 
 def end_fleet_answer(
@@ -3305,7 +3669,8 @@ def end_fleet_answer(
     if answer not in fleet.answers_in_flight:
         return fleet
     answers = {k: v for k, v in fleet.answers_in_flight.items() if k != answer}
-    return replace(fleet, answers_in_flight=answers)
+    stamps = {k: v for k, v in fleet.answer_started_at.items() if k != answer}
+    return replace(fleet, answers_in_flight=answers, answer_started_at=stamps)
 
 
 def fleet_switch_refusal(fleet: FleetState) -> str:
@@ -3515,6 +3880,313 @@ def latch_attach_residue(
     return _with_row(fleet, key, row), line
 
 
+# ── U6: the needs-you queue's fleet half (R13–R15, R18–R21, KTD2, KTD9) ──
+#
+# The queue itself is derived, never stored: :mod:`talaria.domain.queue` builds
+# it from the rows, the prompt registry, the polled approval detail and the seam
+# boards, and everything below is the fleet's side of that — the inputs, the
+# gated poll's target list, and the one stored consequence
+# (``queue_item_keys``) that the memory bound and the retirement rule read.
+#
+# Deriving rather than storing is what makes R19's "one render boundary" true by
+# construction: an expiry removes the prompt, and the item is gone in the same
+# reduction because there was never a second copy of it to forget to update.
+
+
+#: How many settled-item tombstones one fleet keeps. Bounded like every other
+#: collection here (R3).
+#:
+#: **Eviction costs more than a re-latch, and this comment said otherwise until
+#: 2026-08-17.** Losing a tombstone does not merely mean re-recording it: the
+#: item comes back into the queue and is offered again, which for an approval
+#: whose outcome was *ambiguous* is the retry :func:`settle_queue_item` exists to
+#: prevent. Eviction is oldest-first and global rather than per session, so a
+#: settled approval on one session can be evicted by 256 settles on another.
+#:
+#: Left bounded at 256 rather than fixed here, deliberately: reaching it needs
+#: 256 ambiguous approval outcomes in one run, ``latch_unservable_prompt`` does
+#: not consume the bound at all, and the honest repairs — per-session eviction,
+#: or an unbounded set with a different retirement rule — revisit a memory-bound
+#: decision U3 made and had reviewed. Revisit when a real run gets within sight
+#: of the bound, or when the queue gains a second consumer that settles often.
+SETTLED_ITEM_LIMIT: Final[int] = 256
+
+
+def fleet_seam_board(fleet: FleetState, profile: str) -> SeamBoard | None:
+    """This connection's seam board, or ``None`` when it has never been probed.
+
+    ``None`` is deliberate and is not the same value as an empty board: an empty
+    board says every seam is never-observed, which is a probe story; ``None``
+    says there is no probe story at all for this connection. The queue's notices
+    tell the operator those apart (R24), and collapsing them would let a
+    connection nobody ever probed look exactly like one that was probed and
+    answered nothing.
+    """
+    return fleet.seam_boards.get(profile)
+
+
+def record_seam_board(fleet: FleetState, *, profile: str, board: SeamBoard) -> FleetState:
+    """Store one connection's probe story on the fleet (U5's board, per profile)."""
+    boards = dict(fleet.seam_boards)
+    boards[profile] = board
+    return replace(fleet, seam_boards=boards)
+
+
+def approval_detail_targets(fleet: FleetState, profile: str) -> tuple[str, ...]:
+    """Which sessions of one connection ``approval.pending`` may be called for.
+
+    The KTD11 gate, as amended by the operator ruling of 2026-08-17 — see
+    :data:`~talaria.domain.queue.APPROVAL_DETAIL_TRIGGER_STATUSES` for the
+    ruling's own words. This function is the only place the fleet decides to make
+    that call, so the safety property is checkable by reading one predicate:
+    :func:`~talaria.domain.queue.approval_detail_due`.
+
+    Returns durable session ids, because that is what a caller must name on the
+    wire and what the reply's detail is stored under. An empty tuple is the
+    ordinary answer for a quiet or unprobed connection, and it is also the
+    answer whenever the seam is anything other than present — an absent method
+    is named in the queue's notices, never retried blind.
+    """
+    board = fleet_seam_board(fleet, profile)
+    if board is None:
+        return ()
+    try:
+        seam = board.observation_for("approval-detail").status
+    except KeyError:  # pragma: no cover - boards are built from the catalogue
+        return ()
+    return tuple(
+        key[1]
+        for key, row in sorted(fleet.rows.items())
+        if key[0] == profile and approval_detail_due(row, seam=seam)
+    )
+
+
+def apply_approval_pending(
+    fleet: FleetState,
+    directory: PendingApprovalDirectory,
+    *,
+    profile: str,
+    session_id: str,
+    at: float,
+) -> FleetState:
+    """Fold one ``approval.pending`` reply for one session into the fleet.
+
+    A reply that did not answer (``answered=False`` — no ``approvals`` key, or a
+    shape the pin does not describe) changes **nothing**: what was known stays
+    known and the seam's own line says the detail is unavailable. Reading a
+    malformed reply as "this session has no approvals" would be the fabricated
+    zero R10 exists to prevent.
+
+    A reply that did answer replaces the row's detail wholesale, which is how an
+    answered approval leaves the queue: the gateway stops listing it, so it stops
+    being an item. That is R18's confirmed resolution, and it is why nothing here
+    clears an item optimistically.
+
+    The reply does **not** make the row observed. It is detail about a wait, not
+    a lifecycle report, and inventing an observation from it would let a session
+    whose roster never answered render live on the strength of an approval list.
+    """
+    fleet = replace(fleet, clock=max(fleet.clock, at))
+    if not directory.answered:
+        return fleet
+    key = _resolve_key(fleet, profile, session_id)
+    if key is None:
+        return fleet
+    detail = dict(fleet.approval_detail)
+    merged = merge_polled_approvals(detail.get(key, ()), directory.approvals)
+    if merged:
+        detail[key] = merged
+    else:
+        detail.pop(key, None)
+    return replace(fleet, approval_detail=detail)
+
+
+def fleet_queue(fleet: FleetState) -> NeedsYouQueue:
+    """The needs-you queue as this fleet stands: both feeds, one identity (R13).
+
+    Pure and derived on every call. The cost is one pass over the rows and the
+    prompt registry, and the alternative — a stored queue kept in step by hand —
+    is a second copy of the truth that some path will eventually forget to
+    update, which for this surface means either a phantom task or a silent one.
+    """
+    return build_queue(
+        rows=fleet.rows,
+        aliases=fleet.aliases,
+        focused_profile=fleet.focused_profile,
+        focused_session_id=fleet.focused.session_key or fleet.focused.focused_session_id,
+        feed_a=prompt_feed_rows(fleet.focused.prompts, fleet.focused.answering),
+        approval_detail=fleet.approval_detail,
+        channels=fleet.channels,
+        boards=fleet.seam_boards,
+        answers=_answer_stamps(fleet),
+        settled=frozenset(fleet.settled_items),
+    )
+
+
+def _answer_stamps(fleet: FleetState) -> Mapping[ItemKey, float | None]:
+    """Every in-flight answer, with its send stamp where one was recorded."""
+    return {answer: fleet.answer_started_at.get(answer) for answer in fleet.answers_in_flight}
+
+
+def sync_queue(fleet: FleetState) -> FleetState:
+    """Write the queue's current row keys into ``queue_item_keys``.
+
+    **Not required for protection and never called by a reduction here** —
+    :meth:`FleetState.protected_keys` derives the queue's rows itself, precisely
+    so no path can forget to call this and leave a queue item's row evictable.
+    What this offers is a *materialized* copy for a caller that wants to inspect
+    or persist which rows the queue is currently holding without rebuilding it,
+    and it is unioned with — never a replacement for — the keys anything else
+    recorded by hand.
+    """
+    return replace(
+        fleet,
+        queue_item_keys=fleet.queue_item_keys
+        | frozenset(item.row_key for item in fleet_queue(fleet).items),
+    )
+
+
+def settle_queue_item(
+    fleet: FleetState, *, profile: str, session_id: str, request_key: str, at: float
+) -> FleetState:
+    """Latch one item as settled after an outcome that could not be read (R18).
+
+    The recorded decision, generalized from the approval path: an ambiguous
+    outcome **settles and latches, never restores**. The gateway may or may not
+    have applied the answer, and Talaria cannot tell; re-offering the control
+    would invite a second answer to a question that may already have been
+    answered, which for an approval is the worst retry available.
+
+    A tombstone rather than a removal, because the queue is derived — there is
+    nothing to remove. For the two keyed item shapes a tombstone is exact: an
+    approval's request id is a per-entry uuid (``tools/approval.py:2596``) and a
+    bridge prompt's request id is the registry key of one request
+    (``models.py``, ``PendingPrompt.request_id``/``observed_request_id``), so a
+    genuinely new prompt arrives under a key no tombstone names. The flattened
+    roster key is the exception, and an earlier draft of this sentence claimed
+    it was not: ``ROSTER_REQUEST_KEY`` is a module constant
+    (``talaria/domain/queue.py:104``) — per session, but one key for *every*
+    wait that session ever has — so a roster tombstone would name every later
+    wait there. The queue therefore ignores a settled roster item entirely
+    (``_hide`` in :mod:`talaria.domain.queue`, pinned by
+    ``test_a_settled_roster_wait_is_not_a_permanent_tombstone``): a latch exists
+    to withhold a control whose answer's outcome was ambiguous, and a roster
+    item carries no control. The undercount stays on record because it is the
+    evidence that counting key shapes here without citing them was unsafe.
+    """
+    key: ItemKey = (profile, session_id, request_key)
+    if key in fleet.settled_items:
+        return replace(fleet, clock=max(fleet.clock, at))
+    settled = (*fleet.settled_items, key)[-SETTLED_ITEM_LIMIT:]
+    return replace(fleet, settled_items=settled, clock=max(fleet.clock, at))
+
+
+#: How a row and the transcript say a prompt Talaria could not serve is over.
+#:
+#: "resolved-failed" rather than "failed": the operator is being told the
+#: question is finished, not that a retry is pending. The terminal-read bridge is
+#: the case this exists for and the precedent everything else follows — see
+#: :func:`latch_unservable_prompt`.
+UNSERVABLE_PROMPT_PREFIX: Final[str] = "resolved-failed"
+
+
+def unservable_prompt_line(kind: str, reason: str) -> str:
+    """The one sentence both surfaces carry for a prompt Talaria cannot serve."""
+    detail = clip_detail_line(reason) if reason else ""
+    line = f"{UNSERVABLE_PROMPT_PREFIX}: the {kind} prompt could not be answered here"
+    return f"{line} — {detail}" if detail else line
+
+
+def settle_unservable_prompt(
+    state: SessionState, prompt: PendingPrompt, *, reason: str
+) -> tuple[SessionState, str]:
+    """Take a prompt Talaria cannot answer out of the registry, visibly.
+
+    **This is the recorded unavailable-projection defect.** The terminal-read
+    bridge's unavailable path surfaced its failure locally and left the prompt
+    *registered*, so the render pass that dispatches unattended prompts on sight
+    found it again on the very next tick, and again after that: one failure line
+    per tick, forever, for a question nothing would ever answer. Surfacing a
+    failure is not the same as settling one.
+
+    So the prompt leaves the registry, is tombstoned in ``flushed_prompt_ids`` so
+    a late restore cannot resurrect it (the same mechanism an expiry uses), and
+    the transcript keeps a ``prompt-expired`` entry naming the outcome. R14's
+    words for this shape are "fails visibly per the bridge's failure contract and
+    is never left silently registered", and every half of that sentence is one of
+    those three steps.
+
+    Returns the state and the line, ``""`` when there was nothing to settle, so
+    the caller can write the same sentence to the row it belongs to and the two
+    surfaces cannot drift.
+    """
+    target = next((p for p in state.prompts if p is prompt), None)
+    if target is None:
+        target = state.prompt_for(prompt.request_id, session_id=prompt.session_id)
+    if target is None:
+        return state, ""
+    line = unservable_prompt_line(target.kind, reason)
+    state = latch_resolved_prompts(state, (target,))
+    state = replace(state, prompts=tuple(p for p in state.prompts if p is not target))
+    return _append(state, "prompt-expired", line), line
+
+
+def latch_unservable_prompt(
+    fleet: FleetState,
+    prompt: PendingPrompt,
+    *,
+    profile: str,
+    reason: str,
+    at: float,
+) -> tuple[FleetState, str]:
+    """Settle an unservable prompt and name it on its session's row (R14).
+
+    Both surfaces, one sentence: the session's transcript (through
+    :func:`settle_unservable_prompt`) and the bounded ``last_notice`` of the
+    registry row the prompt belongs to.
+
+    **Only the focused case ever reaches here.** The sole caller is
+    ``answer_terminal_read`` (``talaria/ui/app.py``), dispatched over
+    ``prompt_view`` rows, and ``prompt_view`` reads
+    :func:`~talaria.domain.projection._focused_prompts` — while a background
+    terminal-read never registers a prompt at all: :func:`route_frame`, which
+    the app folds every inbound frame through, sends a non-focused session's
+    event to its registry row and never to the focused engine, so there is no
+    prompt object to hand this function
+    (``test_a_background_terminal_read_names_its_row_with_the_machine_wording``
+    asserts ``prompt_for`` finds nothing). The background case is named on its
+    row by the known-prompt branch of :func:`_apply_event_to_row` instead.
+
+    Two earlier drafts of this paragraph were wrong in opposite directions and
+    the corrections are kept because each names a real trap. The first called
+    the background case "the structural case" for this function; as wired it is
+    the one case this function can never see. The second said the focused
+    engine's cross-session guard in :func:`apply_frame` was what dropped it —
+    true while the app still folded with :func:`apply_frame`, and the reason
+    round ten found the row branch reachable only from tests. With the routing
+    wired the frame does not reach that guard at all.
+    """
+    focused, line = settle_unservable_prompt(fleet.focused, prompt, reason=reason)
+    fleet = replace(fleet, focused=focused, clock=max(fleet.clock, at))
+    if not line:
+        return fleet, ""
+    session_id = prompt.session_id or fleet.focused.focused_session_id
+    if session_id is not None:
+        key = _resolve_key(fleet, profile, session_id)
+        if key is not None:
+            row = fleet.rows[key]
+            fleet = _with_row(
+                fleet,
+                key,
+                replace(
+                    row,
+                    waiting_kind="" if row.waiting_kind == prompt.kind else row.waiting_kind,
+                    last_notice=clip_detail_line(line),
+                ),
+            )
+    return fleet, line
+
+
 __all__ = [
     "ACTIVATION_HYDRATION_FIELDS",
     "APPROVAL_AGED_OUT",
@@ -3525,9 +4197,24 @@ __all__ = [
     "DELIVERY_NOTES",
     "EXPIRE_EVENT_KINDS",
     "PROMPT_EVENT_KINDS",
+    "SETTLED_ITEM_LIMIT",
+    "UNSERVABLE_PROMPT_PREFIX",
+    "apply_approval_pending",
+    "approval_detail_targets",
+    "fleet_queue",
     "fleet_row",
+    "fleet_seam_board",
+    "latch_unservable_prompt",
+    "record_seam_board",
+    "settle_queue_item",
+    "settle_unservable_prompt",
+    "sync_queue",
+    "unservable_prompt_line",
+    "REFUSED_APPROVAL_NOT_HEAD",
     "REFUSED_SWITCH_WHILE_ANSWERING",
     "REFUSED_SWITCH_WHILE_FLEET_ANSWERING",
+    "REFUSED_UNCORRELATED_APPROVAL",
+    "UNCORRELATED_APPROVAL",
     "WITHHELD_HISTORY_PREFIX",
     "AnswerKey",
     "DeliveryState",

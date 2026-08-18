@@ -20,12 +20,24 @@ from talaria.domain.projection import (
     SNAPSHOT_REGIONS,
     STATUS_PAYLOAD_VERSION,
     project,
+    prompt_feed,
     status_payload,
     transcript_view,
 )
-from talaria.domain.state import SessionState, set_connection
+from talaria.domain.queue import wait_line
+from talaria.domain.session_list import decode_active_list
+from talaria.domain.state import (
+    FleetState,
+    SessionState,
+    apply_active_list,
+    fleet_queue,
+    focus_session,
+    respond_to_prompt,
+    route_frames,
+    set_connection,
+)
 
-from .conftest import raw_event, replay
+from .conftest import BASE_TIME, decode_all, raw_event, replay
 
 
 def _long_turn() -> SessionState:
@@ -125,6 +137,120 @@ def test_usage_is_null_until_the_gateway_reports_any() -> None:
 def test_connection_state_reaches_the_payload() -> None:
     state = set_connection(SessionState(), "reconnecting")
     assert status_payload(state, mode="live").connection == "reconnecting"
+
+
+# ── KTD13: the v1 contract does not change meaning under a fleet ─────────
+
+
+def test_pending_prompts_stays_the_focused_sessions_count_with_a_full_fleet() -> None:
+    """KTD13's pin. ``pending_prompts`` is frozen v1 and means *this session*.
+
+    Folding the install-wide needs-you count into it would silently change what
+    every existing consumer reads — a status command written against v0.1 would
+    start reporting another session's approval as this session's. The fleet
+    count lives on the needs-you surface; ``docs/formats/status-line.md`` says
+    the same thing to the external reader.
+    """
+    fleet = FleetState(focused_profile="default")
+    fleet = route_frames(
+        fleet,
+        decode_all(
+            [
+                raw_event("message.start"),
+                raw_event("clarify.request", {"request_id": "c-1", "question": "which?"}),
+            ]
+        ),
+        profile="default",
+    )
+    # Three more sessions on the same connection, every one of them waiting.
+    fleet = apply_active_list(
+        fleet,
+        decode_active_list(
+            {
+                "sessions": [
+                    {"id": f"bg-{index}", "session_key": f"bg-{index}", "status": "waiting"}
+                    for index in range(3)
+                ]
+            }
+        ),
+        profile="default",
+        at=BASE_TIME + 50,
+        poll_epoch=1,
+    )
+
+    assert fleet_queue(fleet).count == 4
+    payload = status_payload(fleet.focused, mode="live")
+    assert payload.pending_prompts == 1
+    assert payload.turn == "waiting"
+
+
+def test_a_prompt_parked_in_another_session_stays_out_of_the_v1_count() -> None:
+    """The other half of the same pin, and the one that already shipped: the
+    fleet queue counts it (R14 — the install's whole truth), the v1 payload does
+    not (the focused session has nothing outstanding on screen)."""
+    state = replay([raw_event("sudo.request", {"request_id": "s-1"}, session_id="other")])
+    state = focus_session(state, "sess-focus")
+    assert status_payload(state, mode="live").pending_prompts == 0
+    assert [p.request_id for p in prompt_feed(state)] == ["s-1"]
+
+
+# ── KTD12: a polled wait renders a floor, never a start time ─────────────
+
+
+def test_a_poll_first_seen_wait_renders_waiting_at_least_the_observed_span() -> None:
+    """KTD12's rendering, on the projection's own surface.
+
+    No roster row and no approval payload carries a start stamp at any revision
+    U1 examined, so the span since the first sighting is the only honest age.
+    The floor renders with its ``≥``; a wait Talaria watched begin does not.
+    """
+    fleet = FleetState(focused_profile="default")
+    fleet = apply_active_list(
+        fleet,
+        decode_active_list(
+            {"sessions": [{"id": "bg", "session_key": "bg", "status": "waiting"}]}
+        ),
+        profile="default",
+        at=BASE_TIME + 10,
+        poll_epoch=1,
+    )
+    item = fleet_queue(fleet).items[0]
+    assert item.age_is_floor is True
+    assert wait_line(item, BASE_TIME + 100) == "waiting ≥ 90s"
+
+    watched = replay([raw_event("clarify.request", {"request_id": "c-9", "question": "?"})])
+    assert [row.opened_at for row in prompt_feed(watched)] == [BASE_TIME]
+
+
+def test_the_new_projection_keeps_the_stamps_the_card_projection_drops() -> None:
+    """Feed A exists because ``opened_at`` and ``seq`` are already on every
+    prompt and ``prompt_view`` drops both — the queue orders by wait age and
+    tie-breaks by arrival, and a card needs neither."""
+    state = replay(
+        [
+            raw_event("clarify.request", {"request_id": "c-1", "question": "first?"}),
+            raw_event("sudo.request", {"request_id": "u-1"}),
+        ]
+    )
+    rows = prompt_feed(state)
+    assert [row.request_id for row in rows] == ["c-1", "u-1"]
+    assert [row.opened_at for row in rows] == [BASE_TIME, BASE_TIME + 1]
+    assert [row.seq for row in rows] == [1, 2]
+    assert all(row.in_flight is False for row in rows)
+
+
+def test_a_prompt_whose_answer_is_travelling_is_still_in_the_feed_and_flagged() -> None:
+    """R18: a row clears on gateway-confirmed resolution, not on the answer
+    leaving. The prompt is out of ``prompts`` and in ``answering``, and feed A
+    carries it with the flag that makes it render requested-with-age."""
+    state = replay([raw_event("clarify.request", {"request_id": "c-1", "question": "?"})])
+    state, refusal = respond_to_prompt(state, "c-1")
+    assert refusal is None
+    assert state.prompts == ()
+
+    rows = prompt_feed(state)
+    assert [row.request_id for row in rows] == ["c-1"]
+    assert rows[0].in_flight is True
 
 
 # ── Snapshots and change markers ─────────────────────────────────────────

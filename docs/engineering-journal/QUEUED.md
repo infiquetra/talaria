@@ -4,6 +4,57 @@
 
 ## P0
 
+### ~~Pin a runtime alias while a prompt still references it~~ — GATE FAILED 2026-08-18, superseded
+
+**Not taken, and the measurement is why.** The operator gated this on quantifying the new bound —
+four slots plus outstanding prompts per row — before any code moved. Twelve ordinary
+land-approve-switch-away cycles against ONE durable row:
+
+```
+outstanding prompts   : 12
+distinct session ids  : 12
+row runtime_ids kept  : ('rt-8', 'rt-9', 'rt-10', 'rt-11')
+after age-out at 1000x APPROVAL_STALE_AFTER: 11 prompts remain
+=> pinned aliases would be : 11
+```
+
+Eleven permanent pins after twelve cycles, growing linearly with no ceiling. Pinning would have moved
+U3's unbounded growth out of the alias window and into the pin set, which is the one thing the
+four-slot bound exists to prevent.
+
+**The root is one level lower than this entry assumed.** A non-focused session's approval has no
+clearing path at all: there is no gateway `approval.expire` event (the catalogue carries
+`secret.expire`, `sudo.expire`, `clarify.expire` and `terminal.read.expire` only), `age_out_approvals`
+is focus-scoped at `talaria/domain/state.py:1454`, answering requires focus because
+`respond_to_prompt` refuses a wrong-session answer, `focus_session` deliberately retains `prompts`
+per its own docstring, and nothing drops prompts on row retirement or eviction. At a thousand times
+the stale threshold the age-out removed exactly one prompt: the focused one.
+
+**Superseded by the lifecycle fix, and then re-asked and declined on the new number.** The split
+landed — `age_out_approvals`'s removal is unconditional, its presentation effects stay focus-scoped
+(DECISIONS.md, 2026-08-18) — and the same probe was re-run against it:
+
+```
+after 12 land/approve/switch-away cycles on ONE durable row:
+  outstanding prompts   : 12      (transient peak, unchanged)
+  row runtime_ids kept  : 4
+  after age-out at 1000x stale: 0 prompts remain
+  => pinned aliases would be  : 0
+```
+
+**The bound is now statable, which was this entry's own re-ask condition: steady state zero extra
+pins, transient at most eight extra aliases (twelve outstanding against a four-slot window) for at
+most one 300-second stale window.** The re-ask condition is therefore met, and the operator declined
+it anyway on 2026-08-18, for a reason worth keeping: the split converted pinning's purchase from
+closing an unbounded leak into shaving a bounded transient, and that no longer justifies reopening
+U3's reviewed fixed-size-row decision. Not "still unbounded" — bounded, and no longer worth the
+price.
+
+**What would change that.** A workload where many re-lands of one durable session fall inside a
+single stale window, making the transient large rather than eight; or U8 answering the keyless-approval
+question (see the plan's U8 section) such that the unplaceable fold can be deleted, at which point
+pinning and fold-deletion are one purchase rather than two.
+
 ### ~~An approval cannot be answered from the keyboard on macOS~~ — CLOSED 2026-08-16
 
 **Closed.** v0.3's card-owns-focus unit removed the mechanism this entry names: `talaria/ui/prompts.py:1172` now reads `if focus_new and card.action_widget is not None`, so a button-backed approval card takes the caret itself when the composer is empty — the `Input`-only restriction is gone, and with it the dependence on the eaten `F1`, whose binding v0.3 removed outright. Confirmed in use by the operator's hands-on drive of v0.3 in a real terminal against a live gateway (attested 2026-08-16, functionally fine). **Still open from the "Related, same root" paragraph below:** the mis-aimed mouse. The v0.3 diagnosis refuted this entry's mixed-height suspect — Talaria maps clicks by entry id, never by line offset, so the mechanism is below Talaria — and the hand-driven capture that would separate the remaining candidates was cut from v0.3 by decision D13 and has not happened.

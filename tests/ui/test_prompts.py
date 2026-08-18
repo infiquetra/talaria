@@ -33,7 +33,10 @@ from talaria.domain.state import (
     APPROVAL_COMMAND_LABEL,
     APPROVAL_STALE_AFTER,
     DELIVERY_NOTES,
+    REFUSED_APPROVAL_NOT_HEAD,
     REFUSED_UNCORRELATED_APPROVAL,
+    fleet_queue,
+    fleet_row,
     switch_refusal,
 )
 from talaria.recorder.redact import _DENY_BY_METHOD
@@ -196,14 +199,45 @@ def test_the_field_talaria_sends_is_the_field_the_recorder_withholds() -> None:
 
 
 def test_approval_answers_by_session_because_it_has_no_request_id() -> None:
-    """``approval.respond`` resolves by session key and never reads a request
-    id (``tui_gateway/methods_prompt.py:887-905``). The synthesized registry
-    key stays local."""
+    """``approval.respond`` resolves by session key from the caller's own
+    connection (``tui_gateway/methods_prompt.py:887-905``). The synthesized
+    registry key stays local: a field the gateway ignores reads to the next
+    person as though correlation were happening when it is not."""
     params = respond_params(
         "approval", request_id="approval:s1#1", session_id="s1", value="once"
     )
     assert params == {"session_id": "s1", "choice": "once"}
     assert "request_id" not in params
+
+
+def test_an_approval_answer_carries_the_gateways_own_request_id() -> None:
+    """R18 as amended 2026-08-17. The running revision synthesizes a
+    ``request_id`` per approval entry (``tools/approval.py:2596``) and
+    ``approval.respond`` forwards it, so an answer that has one names the entry
+    it means — which is what closes the queue-head hazard.
+
+    The synthesized *registry* key is still never sent: only an id the gateway
+    itself supplied travels.
+    """
+    aimed = respond_params(
+        "approval",
+        request_id="approval:s1#1",
+        session_id="s1",
+        value="once",
+        observed_request_id="gateway-uuid-1",
+    )
+    assert aimed == {"session_id": "s1", "choice": "once", "request_id": "gateway-uuid-1"}
+
+    # Deny-all is the answer that needs no correlation, so it is never aimed.
+    swept = respond_params(
+        "approval",
+        request_id="approval:s1#1",
+        session_id="s1",
+        value=DENY_ALL_CHOICE,
+        all_approvals=True,
+        observed_request_id="gateway-uuid-1",
+    )
+    assert "request_id" not in swept
 
 
 @pytest.mark.parametrize(
@@ -716,6 +750,16 @@ async def test_an_answer_that_arrives_after_the_expiry_sends_nothing() -> None:
 
 @pytest.mark.asyncio
 async def test_a_prompt_for_another_session_never_renders() -> None:
+    """R9's rendering half, which the U6 routing change does not touch: another
+    session's prompt still renders nothing here.
+
+    What it *did* change is the second assertion below. Until U6 the foreign
+    frame was discarded by the focused engine's cross-talk guard and counted in
+    ``cross_session_events_ignored``; it is now routed to that session's
+    registry row instead, so the counter — which means "a frame this client
+    could not place" — correctly no longer counts it. The behaviour the R9 test
+    exists for is the card list, and it is unchanged.
+    """
     dispatcher = RecordingDispatcher()
     app = live_app(dispatcher)
 
@@ -726,7 +770,205 @@ async def test_a_prompt_for_another_session_never_renders() -> None:
 
         assert app.state.focused_session_id == "s1"
         assert list(app.prompts.card_ids) == []
-        assert app.state.cross_session_events_ignored == 1
+        assert app.state.cross_session_events_ignored == 0
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_identified_background_event_updates_its_row_and_is_not_counted_ignored() -> None:
+    """The first leg U6's routing widening adds: an identified foreign event
+    reaches its registry row rather than the discard."""
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}, session="s1"))
+        feed(app, event("clarify.request", {"request_id": "c-2", "question": "b?"}, session="s2"))
+        await settle(app, pilot)
+
+        profile = app.fleet_profile
+        assert (profile, "s2") in app.fleet.rows, (
+            "the foreign event created no row, so it was discarded after all"
+        )
+        assert app.fleet.rows[(profile, "s2")].waiting_kind == "clarify"
+        assert app.state.cross_session_events_ignored == 0
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_background_terminal_read_names_its_row_through_the_running_app() -> None:
+    """U6's deliverable at plain sight: the plan requires that "a background
+    terminal-read fails visibly on its session's row (its bounded
+    ``last_notice``)", and this drives the path the running program actually
+    takes rather than calling the reducer directly.
+
+    Round ten found the domain-level pin for this asserting against
+    ``route_frame`` while the application still folded with ``apply_frame``, so
+    the behaviour was pinned on a path the product did not use and the row was
+    never named in the product at all. This test exists to make that impossible
+    to reintroduce: it goes through ``TalariaApp.ingest``.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}, session="s1"))
+        feed(
+            app,
+            event("terminal.read.request", {"request_id": "t-1"}, session="s-bg"),
+        )
+        await settle(app, pilot)
+
+        row = app.fleet.rows[(app.fleet_profile, "s-bg")]
+        assert row.waiting_kind == "terminal_read"
+        assert "answered by machine" in row.last_notice, (
+            f"the row carries no machine-wording notice: {row.last_notice!r}"
+        )
+        # R14's other half: named on the row, and never offered as a queue item.
+        assert all(item.session_id != "s-bg" for item in fleet_queue(app.fleet).items)
+        # It is a background prompt, so it renders no card here.
+        assert list(app.prompts.card_ids) == []
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_connection_marks_the_fleet_rows_not_just_the_focused_session() -> None:
+    """The third leg U6's wiring adds. ``set_connection`` describes the session
+    on screen; every other row on the same socket has just lost the stream that
+    was naming its waits, and until this wiring nothing told them so."""
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}, session="s1"))
+        feed(app, event("clarify.request", {"request_id": "c-2", "question": "b?"}, session="s2"))
+        await settle(app, pilot)
+        row = fleet_row(app.fleet, profile=app.fleet_profile, session_id="s2")
+        assert row is not None and not row.disconnected, (
+            "the row was already disconnected, so this proves nothing"
+        )
+
+        app.note_connection_state("disconnected")
+
+        row = fleet_row(app.fleet, profile=app.fleet_profile, session_id="s2")
+        assert row is not None
+        assert row.disconnected
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_reconnect_restores_the_channel_and_leaves_the_rows_to_re_confirm() -> None:
+    """The fourth leg, and the one that makes the third safe. A reconnect proves
+    the socket, not the sessions (R20): it restores the *channel* so polling
+    resumes, and deliberately leaves every row disconnected until that row is
+    re-observed. The row's own flag is what U6's stale-kind rule reads, so
+    clearing it here on the strength of a socket would erase the break before
+    anything had re-confirmed the wait it named.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}, session="s1"))
+        feed(app, event("clarify.request", {"request_id": "c-2", "question": "b?"}, session="s2"))
+        await settle(app, pilot)
+
+        app.note_connection_state("disconnected")
+        dropped = fleet_row(app.fleet, profile=app.fleet_profile, session_id="s2")
+        assert dropped is not None and dropped.disconnected
+        assert not app.fleet.channel(app.fleet_profile).connected
+
+        app.note_connection_state("connected")
+
+        channel = app.fleet.channel(app.fleet_profile)
+        assert channel.connected, "the reconnect never restored the channel"
+        assert channel.generation >= 1, "the reconnect did not advance the generation"
+        row = fleet_row(app.fleet, profile=app.fleet_profile, session_id="s2")
+        assert row is not None
+        assert row.disconnected, (
+            "the reconnect cleared the row's break, which only a fresh "
+            "observation of that row may do"
+        )
+        assert row.stale_since == dropped.stale_since
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_reconnected_row_recovers_liveness_from_its_next_event() -> None:
+    """The distinguishing probe round twelve's refutation showed was missing.
+
+    ``TalariaApp.ingest`` passes the app's connection epoch to ``route_frame`` as
+    ``generation``. A mutation replacing that with a constant ``0`` left the whole
+    suite green, and the driver read the survival as proof the argument was inert.
+    It is not: ``route_frame`` computes
+    ``stale_generation = generation < channel.generation``, and
+    ``stale_generation`` is what WITHHOLDS ``_fresh_observation`` — the call that
+    clears a row's ``disconnected`` and ``stale_since``. Because
+    ``fleet_connection_restored`` raises the channel's generation to the epoch on
+    every reconnect, passing ``0`` makes that comparison true from the first
+    connect of the run, and no inbound event ever ends a row's staleness again.
+
+    This test is the probe that distinguishes the two. It fails if the argument
+    is replaced by a constant, which is what the mutation battery could not see.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}, session="s1"))
+        feed(app, event("message.start", {}, session="s2"))
+        await settle(app, pilot)
+        seeded = fleet_row(app.fleet, profile=app.fleet_profile, session_id="s2")
+        assert seeded is not None and not seeded.disconnected
+
+        app.note_connection_state("disconnected")
+        dropped = fleet_row(app.fleet, profile=app.fleet_profile, session_id="s2")
+        assert dropped is not None and dropped.disconnected, (
+            "the drop never reached the row, so this proves nothing"
+        )
+
+        app.note_connection_state("connected")
+        feed(app, event("message.complete", {"text": "back"}, session="s2"))
+        await settle(app, pilot)
+
+        recovered = fleet_row(app.fleet, profile=app.fleet_profile, session_id="s2")
+        assert recovered is not None
+        assert not recovered.disconnected, (
+            "an event after the reconnect did not end the row's break — the "
+            "generation passed to route_frame is marking live frames stale"
+        )
+        assert recovered.stale_since is None
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_identityless_frame_is_still_counted_ignored_through_the_app() -> None:
+    """The second leg: R25 is untouched. A session-scoped frame carrying no
+    usable session id has no row to go to, so it is still counted and surfaced
+    on the connection channel — the counter keeps its shipped meaning for
+    exactly the case it was introduced for."""
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}, session="s1"))
+        # Built inline rather than through ``event``, whose ``session`` is typed
+        # ``str``: the whole point of this leg is a frame with no usable id.
+        feed(
+            app,
+            {
+                "jsonrpc": "2.0",
+                "method": "event",
+                "params": {"type": "clarify.request", "payload": {"question": "c?"}},
+            },
+        )
+        await settle(app, pilot)
+
+        channel = app.fleet.channel(app.fleet_profile)
+        assert channel.identityless_count == 1, (
+            "R25's counter stopped counting a frame with no session id"
+        )
+        assert channel.notices, "the identity-less frame was counted but not surfaced"
         await app.shutdown_sources()
 
 
@@ -1548,8 +1790,11 @@ async def test_a_second_approval_arriving_mid_answer_cannot_be_answered() -> Non
         assert card is not None
         screen = screen_text(app)
         # Present: the command, the reason, and the one action that needs no aim.
+        # The reason names the head-of-queue rule since R18's amendment of
+        # 2026-08-17 — the first approval is still outstanding at the gateway
+        # while its answer travels, so this one is not the head.
         assert "ls" in screen
-        assert "cannot be aimed" in screen
+        assert "still waiting" in screen
         assert [str(b.label) for b in card.query(Button)] == ["deny all"]
         assert all(b.content_size.height >= 1 for b in card.query(Button))
         # Absent: the affirmative that would put a second answer on the wire.
@@ -1558,7 +1803,7 @@ async def test_a_second_approval_arriving_mid_answer_cannot_be_answered() -> Non
         outcome = await app.respond_live("approval:s1#2", "once")
         assert outcome is None
         assert len(dispatcher.operator_calls) == 1
-        assert REFUSED_UNCORRELATED_APPROVAL in app.composer.notice
+        assert REFUSED_APPROVAL_NOT_HEAD in app.composer.notice
         assert app.state.rejected_responses == 1
 
         dispatcher.gate.set()
