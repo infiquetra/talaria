@@ -15,6 +15,8 @@ connection B and a fleet quiet everywhere never polled at all.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
@@ -818,10 +820,24 @@ async def test_the_cadence_runs_without_anyone_calling_it(
     with_channel(app, HOME, last_poll_at=now)
 
     async with app.run_test() as pilot:
-        # No call to poll_due_connections anywhere in this test. Only the clock.
-        for _ in range(50):
-            if "session.list" in sources[AWAY].calls:
-                break
+        # A deterministic assertion first, because the drive below depends on a
+        # real timer firing and this repo's journal carries several entries about
+        # timing-dependent tests that pass locally and flake on a loaded runner.
+        # This half cannot flake: it asks whether the timer exists and carries
+        # this app's own poll callback.
+        assert app._poll_timer is not None, "no poll timer was armed at mount"
+        assert getattr(app._poll_timer, "_callback", None) == app.poll_due_connections, (
+            "the poll timer is armed with some other callback, so the cadence "
+            "never runs however long the app lives"
+        )
+
+        # And then the behavioural half. No call to poll_due_connections anywhere
+        # in this test — only the clock. Real time rather than a pause count: a
+        # `pilot.pause()` yields to the event loop without necessarily advancing
+        # the wall clock, so counting pauses is a bet on scheduler speed.
+        deadline = time.monotonic() + 5.0
+        while "session.list" not in sources[AWAY].calls and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
             await pilot.pause()
 
     assert "session.list" in sources[AWAY].calls, (
