@@ -10,6 +10,116 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-19
+
+Talaria becomes a fleet client. One running instance now dials every
+configured profile, tracks every session those gateways can see, and keeps
+one queue that answers the operator's standing question: what is waiting on
+me? The scope comes out of driving v0.3 across several concurrent
+workstreams, where a terminal showing one session answers the wrong
+question. Twelve pull requests: eight code units, a live-gateway analysis
+that preceded them, a mid-turn replan that slotted the foreign-wait slice,
+a closing review-and-QA pass over the whole release, and the acceptance
+record. The deepest unit — the needs-you queue — took twelve adversarial
+review rounds plus a bounded confirmation, and its hardest finding
+corrected the project's own review rules. The unit-by-unit record is in
+[the fleet-turn plan](docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md);
+the live-acceptance record is in
+[the acceptance results](docs/plans/2026-08-19-v0-4-live-acceptance-results.md).
+
+### Added
+
+- **The fleet.** `build_live_app` assembles a `ConnectionSet` — one
+  connection per configured profile endpoint, plus the credential file's
+  own gateway — and hands it to the app as frame source, ensurer and
+  fleet. Each connection carries its own credential, correlator, epoch,
+  reconnect schedule and probe state, and every frame is routed by the
+  connection it crossed. Failure is per connection: one gateway down never
+  stalls another's dial or frame flow.
+- **A registry of every session the fleet can see.** A background event
+  updates its own row instead of being discarded, an event from an unknown
+  session creates one, and the focused transcript does not move. Rows
+  seeded from the roster enter never-observed — named as such, never faked
+  as idle or aged zero — and ages render as "waiting at least the observed
+  span" rather than inventing a start. A row is retired only when both
+  roster sweeps of the same epoch omit it and it is not focused, queued or
+  holding an in-flight answer. A 256-row per-connection bound evicts
+  oldest-first among unprotected rows, and the eviction is named on a
+  visible notice, never a silent drop.
+- **The needs-you queue.** Every outstanding human-facing blocking prompt
+  from every registry session becomes one typed item in one flat,
+  wait-age-ordered queue — fed by events where Talaria drives and by polls
+  where it does not, with one identity per wait so attaching mid-wait
+  never doubles an item. The queue is derived on every read, never stored,
+  so an expiry removes the prompt and its item in the same reduction. An
+  item the queue declines to carry is named on its row; an empty queue on
+  a fleet that could not be fully asked says so instead of saying "none".
+- **One reserved summary row, and `/needs`.** The summary occupies a
+  single screen row reserved from first mount and cannot grow; it names
+  the count, then the oldest item's source, age and session. `/needs`
+  opens a drill-down that navigates across connections and answers
+  approvals inline through the same function the prompt card uses.
+  Answering is a descent into named choices — never an empty choice,
+  because the gateway reads any resolved non-deny answer, an empty one
+  included, as approved.
+- **Foreign waits reach the queue.** A session someone else owns, waiting
+  on an approval on a gateway Talaria is merely connected to, appears —
+  fed by a per-connection `approval.pending` poll on a wall-clock cadence
+  with change-hint coalescing. On a gateway that does not register the
+  method, the queue names the disabled feature rather than going silent.
+- **Confirm before steal.** Moving focus to a session another live client
+  is driving asks first, in a dedicated two-row modal rather than the
+  picker — the picker gives every printable key to its filter, and a
+  stray keystroke must not answer a question about taking somebody's
+  session. The confirmation fires only for a row the latest roster sweep
+  saw live elsewhere; everything else resumes dialog-free.
+- **Seam probes, per connection.** Startup asks each gateway what its
+  install can do, and absence is proved rather than inferred: a
+  method-not-found on a parameterized call is re-asked bare, and only a
+  second refusal claims absence. Every named absence names the feature it
+  turns off. `approval.pending` is probed with no session id at all, so
+  the probe can never warm a session's agent build.
+- **Fleet recording and replay.** A multi-connection `--record` run writes
+  a version-2 frame log — its connections in the header, a profile on
+  every frame — and the reader stops on a version it does not know rather
+  than misreading it. Replay reproduces registry, queue and focused
+  projection deterministically, ages included, and the validation gate
+  gains seven fleet checkpoints at two speeds. A single-connection
+  recording stays byte-identical version 1.
+- **Per-profile credentials.** A named profile resolves its own
+  `[profiles.<name>].token` and nothing else, and
+  `refresh-credential --profile <name>` writes it. Two profiles whose
+  endpoints parse equal
+  share a connection only when their tokens are byte-identical; otherwise
+  the launch refuses loudly and names both.
+
+### Changed
+
+- **`/profiles` ensures instead of drop-switching.** Selecting a profile
+  brings its connection up and makes it the home for the next create or
+  resume, leaving every other socket alone. Since v0.1 it had dialed the
+  selected gateway in place of the current one.
+- **Stale is named with its span.** Every derived value renders stale-since
+  with its source and age. Ages come from the frame clock and freeze when
+  frames stop rather than drifting with the wall clock, and an item whose
+  connection broke reports its age as a floor measured to the break, with
+  the blind span named separately.
+
+### Fixed
+
+- **`refresh-credential` verifies its edit instead of trusting its
+  scanner.** Adversarial review found four distinct ways a line-wise TOML
+  editor misreads structure — a table header carrying a trailing comment,
+  an array-of-tables header, a quoted key containing a bracket, and a
+  header-shaped line inside a multi-line string — each able to destroy one
+  profile's token or leave a stale one authoritative while the command
+  reported success. The guarantee is now a verification gate: parse the
+  document before and after, require the result to equal the original with
+  exactly one key set, and otherwise refuse with the file untouched. Two
+  exotic shapes the old writer handled are now refused by design — a
+  refusal that names the problem is a strictly better failure than a
+  silent write.
+
 ## [0.3.0] — 2026-08-13
 
 Talaria confirms what it just did. The release comes out of driving v0.2 by
@@ -235,6 +345,7 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
+[0.4.0]: https://github.com/infiquetra/talaria/releases/tag/v0.4.0
 [0.3.0]: https://github.com/infiquetra/talaria/releases/tag/v0.3.0
 [0.2.0]: https://github.com/infiquetra/talaria/releases/tag/v0.2.0
 [0.1.0]: https://github.com/infiquetra/talaria/releases/tag/v0.1.0
