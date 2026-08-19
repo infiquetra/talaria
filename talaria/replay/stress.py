@@ -37,7 +37,7 @@ import json
 import random
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from talaria.domain.state import SUBMIT_METHOD
 from talaria.replay.source import SidebandAction, build_sideband
@@ -484,5 +484,137 @@ def build_feature_corpus() -> FeatureCorpus:
         label="talaria-feature-v1",
         records=record_tuple,
         sideband=build_sideband(sideband_actions),
+        sha256=digest.hexdigest(),
+    )
+
+
+#  ── U8: the fleet corpus, and the keyless approval it must contain ───────
+
+
+@dataclass(frozen=True)
+class FleetCorpus:
+    """A synthetic two-connection recording, with its tags beside its records.
+
+    Synthetic rather than captured, and the choice is recorded rather than
+    assumed: no frame log is committed to this repository (R29), and the only
+    local recordings are version-1 files with no ``profile`` key anywhere. A
+    live two-gateway capture cannot exist until a build carrying U8's recorder
+    fix has been run against two gateways, which is a U9 activity. So the gate's
+    fleet checkpoints run on a corpus this function generates, and that is
+    stated here rather than left for a reader to infer from a fixture's absence.
+
+    ``sha256`` covers the **profile as well as** the frame. The stress corpus's
+    own digest hashes ``{seq, at, frame}`` only, which is right for a
+    single-connection file and wrong here: two corpora differing solely in which
+    connection carried which frame would otherwise hash identically, and the
+    identity that names a corpus in a results document would not name it.
+    """
+
+    label: str
+    records: tuple[FrameRecord, ...]
+    profiles: tuple[str, ...]
+    connections: tuple[str, ...]
+    sha256: str
+
+    @property
+    def keyless_approval_count(self) -> int:
+        """How many ``approval.request`` frames carry no ``request_id``.
+
+        U8's operator-assigned question came back *yes* — a keyless approval can
+        arrive from a supported input — which made U6's unplaceable fold
+        load-bearing rather than insurance. A corpus that never contains one
+        would leave the gate blind to the mechanism that answer made permanent.
+        """
+        return sum(
+            1
+            for record in self.records
+            if isinstance(record.frame, dict)
+            and isinstance(record.frame.get("params"), dict)
+            and record.frame["params"].get("type") == "approval.request"
+            and not record.frame["params"].get("payload", {}).get("request_id")
+        )
+
+
+FLEET_CORPUS_CONNECTIONS: Final[tuple[str, ...]] = ("work-gateway", "lab-gateway")
+
+
+def build_fleet_corpus(*, base_time: float = 1_785_000_000.0) -> FleetCorpus:
+    """Two connections, interleaved, including one approval with no request id.
+
+    Deterministic by construction — no clock read, no randomness — so two calls
+    produce identical records and the gate can cite the digest.
+    """
+    work, lab = FLEET_CORPUS_CONNECTIONS
+    script: list[tuple[str, dict[str, Any]]] = [
+        (work, {"type": "message.start", "session_id": "s-work", "payload": {}}),
+        (lab, {"type": "message.start", "session_id": "s-lab", "payload": {}}),
+        (
+            work,
+            {
+                "type": "message.complete",
+                "session_id": "s-work",
+                "payload": {"text": "the work gateway answered"},
+            },
+        ),
+        # The keyless approval. No ``request_id`` anywhere in the payload, which
+        # is what the pinned gateway `7f4d15515` emitted for every approval.
+        (
+            lab,
+            {
+                "type": "approval.request",
+                "session_id": "s-lab",
+                "payload": {"description": "rm -rf /data", "choices": ["once", "deny"]},
+            },
+        ),
+        # And one that IS aimable, so the corpus exercises both sides of the
+        # rule rather than only the exceptional one.
+        (
+            work,
+            {
+                "type": "approval.request",
+                "session_id": "s-work",
+                "payload": {
+                    "request_id": "gw-1",
+                    "description": "git push --force",
+                    "choices": ["once", "deny"],
+                },
+            },
+        ),
+        (lab, {"type": "message.complete", "session_id": "s-lab", "payload": {"text": "and lab"}}),
+    ]
+
+    records: list[FrameRecord] = []
+    profiles: list[str] = []
+    for index, (profile, params) in enumerate(script):
+        records.append(
+            FrameRecord(
+                seq=index + 1,
+                at=base_time + index,
+                direction="in",
+                frame={"jsonrpc": "2.0", "method": "event", "params": params},
+            )
+        )
+        profiles.append(profile)
+
+    digest = hashlib.sha256()
+    for record, profile in zip(records, profiles, strict=True):
+        digest.update(
+            json.dumps(
+                {
+                    "seq": record.seq,
+                    "at": record.at,
+                    "frame": record.frame,
+                    "profile": profile,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        )
+    return FleetCorpus(
+        label="talaria-fleet-v1",
+        records=tuple(records),
+        profiles=tuple(profiles),
+        connections=FLEET_CORPUS_CONNECTIONS,
         sha256=digest.hexdigest(),
     )

@@ -352,3 +352,78 @@ async def test_a_replayed_fleet_does_not_report_its_own_recording_as_down(
             "the queue tells the operator a recorded connection was never up"
         )
         await app.shutdown_sources()
+
+
+#  ── the gate's fleet checkpoints ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_checkpoint_trace_is_identical_at_two_speeds(tmp_path: Path) -> None:
+    """"Same checkpoints, twice, byte-identical" — the unit's own goal.
+
+    One checkpoint per frame rather than a sample: the corpus is small by design
+    and the claim is stronger when the checkpoints are all of them.
+    """
+    from talaria.replay.gate import replay_fleet_trace
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    fast = await replay_fleet_trace(corpus, speed=64.0)
+    unbounded = await replay_fleet_trace(corpus, speed=float("inf"))
+
+    assert len(fast) == len(corpus.records), (
+        "the trace has fewer checkpoints than frames, so it compared a prefix"
+    )
+    assert fast == unbounded
+
+
+@pytest.mark.asyncio
+async def test_the_checkpoint_trace_notices_a_corpus_it_should_notice() -> None:
+    """The falsifier, and without it the four gate checks measure nothing.
+
+    A determinism comparison passes trivially when both sides are constant, and
+    the cheap way to build one is to fingerprint something that does not vary.
+    Swapping which connection carried which frame is a change the trace MUST
+    see — the registry keys move between profiles, the focused engine gets
+    different traffic, and the queue and its ages follow. Asserted per aspect,
+    because a single blob differing tells you nothing about which of the four
+    was actually watching.
+    """
+    import dataclasses
+
+    from talaria.replay.gate import replay_fleet_trace
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    baseline = await replay_fleet_trace(corpus)
+    swapped = await replay_fleet_trace(
+        dataclasses.replace(corpus, profiles=tuple(reversed(corpus.profiles)))
+    )
+
+    pairs = list(zip(baseline, swapped, strict=True))
+    for aspect in ("registry", "queue", "focus", "ages"):
+        assert any(first[aspect] != second[aspect] for first, second in pairs), (
+            f"the {aspect} fingerprint did not move when the corpus did, so the "
+            f"gate check reading it is measuring a constant"
+        )
+
+
+def test_the_fleet_corpus_carries_the_blind_approval_the_gate_must_see() -> None:
+    """U8's corpus obligation, as a property of the corpus rather than a note.
+
+    The unit's answer to the operator's keyless-approval question made U6's
+    unplaceable fold load-bearing. A corpus with no keyless approval leaves the
+    gate blind to the mechanism that answer made permanent, and a green run
+    stands in for coverage it does not have.
+    """
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    assert corpus.keyless_approval_count >= 1
+    # And one that IS aimable, so the corpus exercises both sides of the rule.
+    assert any(
+        isinstance(record.frame, dict)
+        and record.frame["params"].get("payload", {}).get("request_id")
+        for record in corpus.records
+    ), "the corpus has no correlated approval, so it tests only the exception"
+    assert build_fleet_corpus().sha256 == corpus.sha256, "the corpus is not deterministic"

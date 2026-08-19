@@ -57,13 +57,24 @@ from talaria.domain.projection import (
     entry_scoped_view,
     transcript_view,
 )
-from talaria.domain.state import SessionState, cancel_turn
+from talaria.domain.queue import summary_line, wait_line
+from talaria.domain.state import SessionState, cancel_turn, fleet_queue
+from talaria.recorder.reader import FrameLogHeader, RecordedConnectionRow
 from talaria.replay.controls import MAX_SPEED, MIN_SPEED, ReplayControls
-from talaria.replay.source import ReplaySource, SidebandAction, load_frame_records, load_header
+from talaria.replay.source import (
+    ReplaySource,
+    SidebandAction,
+    TaggedReplaySource,
+    derive_focus_profile,
+    load_frame_records,
+    load_header,
+)
 from talaria.replay.stress import (
     FeatureCorpus,
+    FleetCorpus,
     StressCorpus,
     build_feature_corpus,
+    build_fleet_corpus,
     build_stress_corpus,
 )
 from talaria.replay.workloads import WARMUP_BOUNDARIES, WorkloadResults, run_adversarial_workloads
@@ -1151,7 +1162,71 @@ def _sideband_status_for_cause(cause: TerminalCause) -> ConnectionStatus:
     return "auth_failed" if cause == "auth_failed" else "disconnected"
 
 
+#: What one fleet checkpoint records. Four separate strings rather than one
+#: digest, because four separate checks read them: a single blob would report
+#: "something differed" and leave the reader to find out what.
+FleetTrace = dict[str, str]
+
+
+def fleet_trace(app: TalariaApp) -> FleetTrace:
+    """Fingerprint the four things U8's goal names, at one instant.
+
+    **Rendered strings for the ages, not the raw floats.** An age is what the
+    operator reads, and the two differ exactly where a wrong clock would show:
+    a float compared against itself reproduces the same wrong number in both
+    runs and passes a determinism check while failing correctness. So this reads
+    :func:`~talaria.domain.queue.summary_line` and
+    :func:`~talaria.domain.queue.wait_line` — the functions the surface itself
+    calls — rather than the stamps behind them.
+    """
+    fleet = app.fleet
+    queue = fleet_queue(fleet)
+    clock = app.state.last_observed_at
+    return {
+        "registry": repr(
+            sorted(
+                (
+                    key,
+                    row.durable_id,
+                    row.status,
+                    row.waiting_kind,
+                    row.listed,
+                    row.live_listed,
+                    row.disconnected,
+                )
+                for key, row in fleet.rows.items()
+            )
+        ),
+        "queue": repr(
+            (
+                tuple(
+                    (item.identity, item.kind, item.source, item.answerable)
+                    for item in queue.items
+                ),
+                queue.notices,
+            )
+        ),
+        "focus": repr((fleet.focused_profile, fleet.focused_key())),
+        "ages": repr(
+            (
+                summary_line(queue, clock),
+                tuple(wait_line(item, clock) for item in queue.items),
+            )
+        ),
+    }
+
+
 def _apply_sideband_action(app: TalariaApp, action: SidebandAction) -> None:
+    if action.kind == "checkpoint":
+        # Recorded by the caller's own callback; nothing to apply. The kind
+        # exists so a checkpoint rides the sideband's EXACT frame indices
+        # (``ReplaySource._fire_due_sideband`` fires after the frame at that
+        # index has been applied, driven by the source's own pacing) rather than
+        # the 20ms wall-clock sampler ``measure_replay`` uses. That sampler's
+        # ``applied`` count differs between runs by construction, so a trace
+        # taken there could never be byte-identical and the pressure would run
+        # toward weakening the comparison until it passed.
+        return
     if action.kind == "confirmed_cancel":
         app.state = cancel_turn(app.state, at=app.state.last_observed_at)
         app._dirty = True
@@ -1483,6 +1558,66 @@ async def replay_headless(
     return state
 
 
+async def replay_fleet_trace(
+    corpus: FleetCorpus, *, speed: float = 64.0
+) -> tuple[FleetTrace, ...]:
+    """Replay a tagged corpus through the real app, fingerprinting at every frame.
+
+    **The checkpoints ride the sideband, not the sampler**, and that is the whole
+    of why this function exists rather than a flag on ``measure_replay``. That
+    one samples on a 20ms wall-clock poll and fires its checkpoint when the
+    applied count has passed a mark — so the count at each poll differs between
+    runs by construction, two runs snapshot different frame prefixes, and no
+    trace taken there could be byte-identical. The sideband fires at exact
+    1-based frame indices, after the frame at that index has been applied,
+    driven by the source's own pacing (see ``ReplaySource.paced``). That is the
+    mechanism this package already argues is deterministic, so it is the one the
+    determinism claim is built on.
+
+    A checkpoint at *every* index rather than a sample of them: the corpus is
+    small by design, and "same checkpoints, twice, byte-identical" is a stronger
+    claim when the checkpoints are all of them.
+    """
+    controls = ReplayControls()
+    controls.set_speed(speed)
+    source = TaggedReplaySource(
+        ReplaySource(corpus.records, controls=controls, profiles=corpus.profiles),
+        connections=corpus.connections,
+        focus_profile=derive_focus_profile(
+            FrameLogHeader(
+                version=2,
+                started_at="",
+                endpoint="",
+                connections=tuple(
+                    RecordedConnectionRow(profile=name, endpoint="")
+                    for name in corpus.connections
+                ),
+            ),
+            (),
+        ),
+    )
+    app = TalariaApp(
+        source, mode="replay", controls=controls, current_profile=source.focus_profile
+    )
+    trace: list[FleetTrace] = []
+    source.bind_sideband(
+        tuple(
+            SidebandAction(frame_index=index + 1, kind="checkpoint")
+            for index in range(len(corpus.records))
+        ),
+        lambda _action: trace.append(fleet_trace(app)),
+    )
+    async with app.run_test(size=GATE_SIZE) as pilot:
+        await app.drain()
+        # The ages the operator reads are repainted by the render tick, not by
+        # ``render_snapshot`` — so a trace that only ever ran the snapshot would
+        # fingerprint a bar nothing had refreshed.
+        await app._render_tick()
+        await pilot.pause()
+        await app.shutdown_sources()
+    return tuple(trace)
+
+
 async def exercise_inert_controls(records: tuple[FrameRecord, ...]) -> tuple[str, ...]:
     """Invoke every mutation control mid-replay and collect the refusals (AE11)."""
     controls = ReplayControls()
@@ -1576,6 +1711,24 @@ async def run_gate(
         == normalized_block_structure(sideband_unbounded)
     )
 
+    # U8: the fleet checkpoints. Two speeds, one tagged corpus, a fingerprint
+    # after every frame — and the comparison is over the four things the unit's
+    # goal names rather than one blob, so a failure says which of them moved.
+    fleet_corpus = build_fleet_corpus()
+    fleet_trace_fast = await replay_fleet_trace(fleet_corpus, speed=64.0)
+    fleet_trace_unbounded = await replay_fleet_trace(fleet_corpus, speed=float("inf"))
+    fleet_aspects = {
+        aspect: (
+            len(fleet_trace_fast) == len(fleet_trace_unbounded)
+            and len(fleet_trace_fast) == len(fleet_corpus.records)
+            and all(
+                first[aspect] == second[aspect]
+                for first, second in zip(fleet_trace_fast, fleet_trace_unbounded, strict=True)
+            )
+        )
+        for aspect in ("registry", "queue", "focus", "ages")
+    }
+
     # U6, gap 2: the KTD1(d) adversarial workloads (growth curves plus the
     # boundary probes), run once at their exact specified sizes.
     workloads = await run_adversarial_workloads()
@@ -1607,6 +1760,71 @@ async def run_gate(
         refusals = await exercise_inert_controls(records)
 
     checks: dict[str, dict[str, Any]] = {
+        # U8's four, one per thing the unit's goal names. Each rides the
+        # sideband's exact frame indices rather than ``measure_replay``'s 20ms
+        # wall-clock sampler, whose applied-count differs between runs by
+        # construction — a trace taken there could not be byte-identical, and
+        # the pressure would run toward weakening the comparison until it passed.
+        #
+        # The checkpoint count is a pass condition of each, for the reason the
+        # sampled checks below carry the same guard: a comparison over zero
+        # checkpoints reports zero differences.
+        "fleet_registry_determinism": {
+            "description": (
+                "the same tagged corpus replayed at two speeds produces an identical "
+                "registry at every frame"
+            ),
+            "measured": len(fleet_trace_fast),
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": fleet_aspects["registry"],
+        },
+        "fleet_queue_determinism": {
+            "description": (
+                "identical needs-you items and connection notices at every frame, "
+                "at two speeds"
+            ),
+            "measured": len(fleet_trace_fast),
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": fleet_aspects["queue"],
+        },
+        "fleet_derived_focus": {
+            "description": (
+                "the focused connection derived from the recording is the same at "
+                "every frame, at two speeds"
+            ),
+            "measured": len(fleet_trace_fast),
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": fleet_aspects["focus"],
+        },
+        "fleet_rendered_age_determinism": {
+            # The RENDERED strings, not the raw stamps. A float compared against
+            # itself reproduces the same wrong number in both runs and passes a
+            # determinism check while failing correctness, so this reads the
+            # functions the surface itself calls.
+            "description": (
+                "the rendered needs-you summary and wait lines are identical at "
+                "every frame, at two speeds"
+            ),
+            "measured": len(fleet_trace_fast),
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": fleet_aspects["ages"],
+        },
+        # U8's corpus obligation, made a gate condition rather than a note. The
+        # unit's own answer to the operator's keyless-approval question made
+        # U6's unplaceable fold load-bearing; a corpus with no keyless approval
+        # would leave this gate blind to the mechanism that answer made
+        # permanent, and a green run would stand in for coverage it does not have.
+        "fleet_corpus_exercises_blind_approval": {
+            "description": "the fleet corpus contains an approval carrying no request id",
+            "measured": fleet_corpus.keyless_approval_count,
+            "threshold": 1,
+            "comparison": ">=",
+            "pass": fleet_corpus.keyless_approval_count >= 1,
+        },
         # Frames the app applied against frames the corpus contains. Content
         # loss upstream of the reducer is invisible to a check whose ground
         # truth is the reducer's own output: discarding nine of every ten

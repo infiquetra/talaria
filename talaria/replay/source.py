@@ -62,7 +62,7 @@ __all__ = [
 # scripted, non-wire-frame action per entry, tied to the index of the frame it
 # follows. Scope is exactly the two action kinds named below — nothing richer.
 
-SidebandActionKind = Literal["confirmed_cancel", "typed_disconnect"]
+SidebandActionKind = Literal["confirmed_cancel", "typed_disconnect", "checkpoint"]
 
 
 @dataclass(frozen=True)
@@ -92,6 +92,8 @@ class SidebandAction:
             raise ValueError("a typed_disconnect action needs a cause (KTD7)")
         if self.kind == "confirmed_cancel" and self.cause is not None:
             raise ValueError("a confirmed_cancel action carries no cause")
+        if self.kind == "checkpoint" and self.cause is not None:
+            raise ValueError("a checkpoint action carries no cause")
 
 
 def build_sideband(actions: Iterable[SidebandAction]) -> tuple[SidebandAction, ...]:
