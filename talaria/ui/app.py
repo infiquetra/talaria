@@ -4366,11 +4366,20 @@ class TalariaApp(App[None]):
         is not the probe's argument but the operator ruling of 2026-08-17:
         :func:`~talaria.domain.queue.approval_detail_due` restricts the call to
         :data:`~talaria.domain.queue.APPROVAL_DETAIL_TRIGGER_STATUSES` —
-        ``waiting`` and ``working`` — sessions the gateway already reports as
-        running, whose agent is therefore already built. Asking about an ``idle``
-        or ``starting`` session would build one to find out it had nothing to
-        say. Pinned by
-        ``test_no_approval_detail_is_asked_for_a_session_outside_the_trigger_statuses``.
+        ``waiting`` and ``working``. Pinned by
+        ``test_no_approval_detail_is_asked_for_a_session_outside_the_trigger_statuses``,
+        which asserts NO CALL rather than a call that returns nothing.
+
+        **Those two words are not merely "sessions that look busy" — they are
+        derived from the agent being live**, which is what makes the restriction
+        a safety property rather than a heuristic. ``_session_live_status``
+        (``tui_gateway/server.py:8545-8555``) returns ``waiting`` only when
+        ``_session_pending_kind`` finds a pending prompt, and ``working`` only
+        when the session is ``running``; both require a built agent. The two
+        words it returns for a session whose agent is NOT live are exactly the
+        two this gate excludes — ``starting`` (build in flight, where
+        ``_wait_agent`` would block) and ``idle`` (no build at all). So the
+        restriction cannot admit a session that a call here would build.
 
         The ids named here are RUNTIME ids and the fold files the answer under
         the durable key — see :func:`~talaria.domain.state.approval_detail_targets`

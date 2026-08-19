@@ -1129,6 +1129,14 @@ def fleet_tags_from_log(path: str | Path) -> FleetTags | None:
     a gate: the alternative is widening ``load_frame_records`` to return two
     things and touching every caller of it, to save one read of a file the gate
     then replays three or four times.
+
+    **The tagged branch has no live input yet, and that is scheduled rather than
+    dead.** A version-2 recording cannot exist until a build carrying U8's
+    recorder fix has been run against two gateways, which is a U9 activity — so
+    today every corpus this sees is version-1 and returns ``None``. U8B was
+    slotted before U9 precisely so the gate can read that first capture when it
+    arrives rather than refuse it. A reader finding no production caller for the
+    tagged path is reading correctly; the schedule is in the plan's U8B entry.
     """
     header = load_header(path)
     if header.version < FRAME_LOG_VERSION_MULTI_CONNECTION:

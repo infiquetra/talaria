@@ -776,3 +776,73 @@ async def test_a_restored_prompt_keeps_its_queue_row(
         "a restored prompt was latched as settled — its queue row is tombstoned "
         "while its control is back on the card, so it can never return"
     )
+
+
+#  ── the wiring itself, which every test above took for granted ────────────
+
+
+@pytest.mark.asyncio
+async def test_the_cadence_runs_without_anyone_calling_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The poll loop is armed at mount, and nothing else in this file proves it.
+
+    Every other test here calls ``poll_due_connections`` directly, which is right
+    for asserting what the loop *decides* and useless for asserting that it ever
+    *runs*. Deleting the one line in ``on_mount`` that arms the timer left the
+    whole of ``tests/ui`` and ``tests/domain`` green — so KTD2's cadence, this
+    unit's headline, could have shipped dead in production exactly as feed B and
+    the settle latch were dead before it. Found by the driver's own
+    fixture-only-path sweep, which is the lens this unit exists because of.
+
+    Driven end to end rather than by asserting the timer attribute is not
+    ``None``: an attribute check dies to a mutation that assigns some other
+    timer, and what has to be true is that a due connection gets swept with no
+    caller but the clock. ``POLL_TICK_S`` is shortened before mount so this costs
+    milliseconds rather than a second.
+    """
+    import talaria.ui.app as app_module
+
+    now = 10_000.0
+    monkeypatch.setattr(app_module, "_wall_clock", lambda: now)
+    monkeypatch.setattr(app_module, "POLL_TICK_S", 0.01)
+    app, sources = fleet_app(now)
+    # **A freshly probed board, and that is what makes this test about the POLL
+    # loop.** Both scheduled loops call ``sweep_connection``, so "session.list
+    # was called" alone does not say which one ran — a mutation arming the timer
+    # with ``revalidate_seams`` survived that version of this test. With the
+    # seam board fresh, ``seam_probe_due`` is False and the seam loop sweeps
+    # nothing; only the poll's own backstop can produce a call here.
+    with_detail_seam(app, AWAY, {})
+    with_channel(app, AWAY, last_poll_at=now - POLL_BACKSTOP_S - 1.0)
+    with_channel(app, HOME, last_poll_at=now)
+
+    async with app.run_test() as pilot:
+        # No call to poll_due_connections anywhere in this test. Only the clock.
+        for _ in range(50):
+            if "session.list" in sources[AWAY].calls:
+                break
+            await pilot.pause()
+
+    assert "session.list" in sources[AWAY].calls, (
+        "the poll loop never ran on its own, so the cadence is not wired to any "
+        "timer and every other test in this file is measuring a method nothing "
+        "calls in production"
+    )
+
+
+def test_the_poll_timer_is_stopped_when_the_app_tears_down() -> None:
+    """A timer left running past teardown reaches a torn-down inventory.
+
+    Cheap to get wrong and invisible until a shutdown races a poll: the loop
+    reads ``self.connections`` and calls into a dispatcher whose socket the
+    teardown has already closed.
+    """
+    import inspect
+
+    import talaria.ui.app as app_module
+
+    source = inspect.getsource(app_module.TalariaApp)
+    assert "self._poll_timer.stop()" in source, (
+        "nothing stops the poll timer, so it can fire against a torn-down fleet"
+    )

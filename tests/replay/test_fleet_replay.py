@@ -1062,3 +1062,69 @@ def test_the_refusal_survives_for_the_corpus_that_is_still_unmeasurable(
         fleet_tags_from_log(path)
     assert "cannot separate its connections" in str(caught.value)
     assert "Refused rather than measured" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_one_file_two_paths_one_row_versus_two(tmp_path: Path) -> None:
+    """The A/B the two tests above make in two halves, made here on one observable.
+
+    Those two are each correct and together they say the right thing, but they
+    assert on *different* objects — the untagged one on a session transcript, the
+    tagged one on registry rows — so a reader has to accept two measurements as
+    comparable. This runs both paths over the identical file and compares the one
+    number that names the harm: how many sessions the replay believes exist.
+
+    Measured: untagged gives ONE row, ``('default', 's-1')``, whose transcript
+    carries both gateways' turns — a session that never existed. Tagged gives
+    two, ``('lab-fixture', 's-1')`` and ``('work-fixture', 's-1')``, and the
+    focused one carries only its own.
+
+    Written after the driver attacked its own pair, on the review obligation the
+    plan states for this unit.
+    """
+    from talaria.replay.controls import ReplayControls
+    from talaria.replay.gate import GATE_SIZE, fleet_tags_from_log
+    from talaria.ui.app import TalariaApp
+
+    path = same_session_id_log(tmp_path / "collision.jsonl")
+    records = load_frame_records(path)
+    tags = fleet_tags_from_log(path)
+    assert tags is not None
+
+    async def rows_seen(*, tagged: bool) -> tuple[tuple[str, str], ...]:
+        controls = ReplayControls()
+        controls.set_speed(float("inf"))
+        source: object = ReplaySource(
+            records, controls=controls, profiles=tags.profiles if tagged else ()
+        )
+        if tagged:
+            source = TaggedReplaySource(
+                source,  # type: ignore[arg-type]
+                connections=tags.connections,
+                focus_profile=tags.focus_profile,
+            )
+        app = TalariaApp(
+            source,  # type: ignore[arg-type]
+            mode="replay",
+            controls=controls,
+            current_profile=tags.focus_profile if tagged else "",
+        )
+        async with app.run_test(size=GATE_SIZE) as pilot:
+            await app.drain()
+            await pilot.pause()
+            seen = tuple(sorted(app.fleet.rows))
+            await app.shutdown_sources()
+        return seen
+
+    untagged = await rows_seen(tagged=False)
+    assert len(untagged) == 1, (
+        f"the untagged replay no longer merges the two gateways: {untagged}"
+    )
+
+    tagged = await rows_seen(tagged=True)
+    assert len(tagged) == 2, (
+        f"the tagged replay still merges two gateways' equal session ids: {tagged}"
+    )
+    assert {key[0] for key in tagged} == {WORK, LAB}, (
+        f"the two rows are not the two connections: {tagged}"
+    )

@@ -40,6 +40,32 @@ deterministically wrong. If the answer is "the check still passes", a second che
 against something computed OUTSIDE the runs is owed — and its ground truth must be declared
 independently, never produced by calling the function under test.
 
+### The review channel dropped every lens of a three-lens panel, and the driver found the defect
+
+**Evidence, 2026-08-19.** CR8B was launched as a three-lens panel over v0.4 unit U8B. All three —
+the fixture-only-path lens, the claim lens, and the untagged-corpus lens — ran, did real work, and
+signalled idle **without returning a verdict**. Each was then asked directly, by name, for its return
+value in the specified format. All three idled again with nothing delivered. None appeared in
+`ListAgents` while running. This is the third occurrence; CR7 and CR8 each lost one lens the same way,
+and in both of those the missing one was the claim lens.
+
+**What it cost, measured rather than asserted.** The driver ran all three passes in-thread and found
+a blocking defect none of the earlier rounds would have caught: the line arming U8B's poll timer was
+pinned by nothing, so deleting it left the whole of `tests/ui` and `tests/domain` green. KTD2's
+cadence — the unit's headline — could have shipped dead in production, which is the exact defect class
+U8B was created to close. Had the idle channel been read as a clean panel, it would have merged.
+
+**A second lesson inside the first.** The driver's own first attempt to pin that wiring was itself
+insufficient: it asserted "a roster sweep happened", and both scheduled loops call `sweep_connection`,
+so a mutation arming the timer with the *other* loop's callback survived. The fix was to give the
+connection a freshly probed seam board, leaving the seam loop nothing to do. A test that asserts an
+effect two callers can produce does not pin which caller ran.
+
+**Generalizable rule, now with three data points.** A review's verdict is the lenses that returned,
+named. An idle channel is a missing verdict, never a clean one, and the pass is re-run — by the driver
+if no one else — before the unit is called reviewed. Budget for running every pass in-thread; treat a
+delivered lens verdict as a bonus rather than the plan.
+
 ### The review channel dropped a lens for the second time, and silence is not a verdict
 
 **Evidence.** CR8's determinism-claim lens never returned. It was asked twice and `ListAgents` showed
