@@ -427,3 +427,41 @@ def test_the_fleet_corpus_carries_the_blind_approval_the_gate_must_see() -> None
         for record in corpus.records
     ), "the corpus has no correlated approval, so it tests only the exception"
     assert build_fleet_corpus().sha256 == corpus.sha256, "the corpus is not deterministic"
+
+
+@pytest.mark.asyncio
+async def test_the_rendered_ages_come_from_the_corpus_clock_not_a_wall_clock() -> None:
+    """The check the determinism comparison cannot be, and why it exists.
+
+    Probed while building this unit: replacing the bar's frame clock with
+    ``time.time()`` leaves **both** replays' rendered ages identical, because
+    ``format_age`` rounds to whole seconds and two replays of a six-frame corpus
+    finish milliseconds apart. No corpus size fixes that — a wall clock is stable
+    to the second across two runs however long the recording is. So a
+    determinism comparison over rendered ages is green under exactly the defect
+    it looks like it would catch.
+
+    What separates the two clocks is what the age SHOULD be: inside the corpus's
+    own span for the frame clock, and the seconds since the recording was made
+    for a wall clock. Measured under the mutation: 2,105,719 against a span of 6.
+
+    The bound is an upper one and the clean run measures 0, so this does not
+    prove the ages are *right* — only that they are not read from a clock that
+    has nothing to do with the recording. Said here rather than left for a
+    reader to assume the check is stronger than it is.
+    """
+    from talaria.replay.gate import _rendered_age_seconds, replay_fleet_trace
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    span = max(r.at for r in corpus.records) - min(r.at for r in corpus.records)
+    trace = await replay_fleet_trace(corpus)
+
+    ages = [_rendered_age_seconds(checkpoint["ages"]) for checkpoint in trace]
+    assert any(age is not None for age in ages), (
+        "no checkpoint rendered an age at all, so this check is vacuous"
+    )
+    assert all(age is None or age <= span + 1.0 for age in ages), (
+        "a rendered age lies outside the corpus's own time span, so the surface "
+        "is reading a clock that has nothing to do with the recording"
+    )

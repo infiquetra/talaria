@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import platform
+import re
 import resource
 import sys
 import time
@@ -47,6 +48,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
 from textual.widgets._markdown import MarkdownBlock, MarkdownFence
 
 from talaria.domain.models import ConnectionStatus, TerminalCause, TranscriptKind
@@ -1172,16 +1174,31 @@ def fleet_trace(app: TalariaApp) -> FleetTrace:
     """Fingerprint the four things U8's goal names, at one instant.
 
     **Rendered strings for the ages, not the raw floats.** An age is what the
-    operator reads, and the two differ exactly where a wrong clock would show:
-    a float compared against itself reproduces the same wrong number in both
-    runs and passes a determinism check while failing correctness. So this reads
-    :func:`~talaria.domain.queue.summary_line` and
-    :func:`~talaria.domain.queue.wait_line` — the functions the surface itself
-    calls — rather than the stamps behind them.
+    operator reads, and the two differ exactly where a wrong clock would show: a
+    float compared against itself reproduces the same wrong number in both runs
+    and passes a determinism check while failing correctness.
+
+    **And the ROW itself, not only a recomputation of it.** The first draft read
+    :func:`~talaria.domain.queue.summary_line` alone and carried a comment about
+    running the render tick first — which was false, because a pure function of
+    the fleet does not care whether any widget has repainted. Reading the bar's
+    own text is what makes the claim "the rendered age is deterministic" a claim
+    about the surface rather than about a function the surface happens to share.
+    Both are kept: the pure strings pin the domain, and the row pins that the
+    two agree.
     """
     fleet = app.fleet
     queue = fleet_queue(fleet)
     clock = app.state.last_observed_at
+    # Synchronous, so it can run inside the sideband callback that produced this
+    # checkpoint — the bar is repainted from the render tick in ordinary running,
+    # and a checkpoint that read it without refreshing would fingerprint whatever
+    # the last tick happened to leave there.
+    app._refresh_needs_you()
+    try:
+        rendered_row = app.needs_you_bar.line
+    except NoMatches:  # pragma: no cover - the gate always mounts the screen
+        rendered_row = ""
     return {
         "registry": repr(
             sorted(
@@ -1211,9 +1228,24 @@ def fleet_trace(app: TalariaApp) -> FleetTrace:
             (
                 summary_line(queue, clock),
                 tuple(wait_line(item, clock) for item in queue.items),
+                rendered_row,
             )
         ),
     }
+
+
+_AGE_SECONDS = re.compile(r"(\d+)s")
+
+
+def _rendered_age_seconds(ages_fingerprint: str) -> float | None:
+    """The largest whole-second age in one checkpoint's rendered strings.
+
+    ``None`` when the checkpoint rendered no age at all, which is the ordinary
+    state of a queue with nothing in it — distinct from "rendered zero", and the
+    caller must not treat the two the same.
+    """
+    found = [float(match) for match in _AGE_SECONDS.findall(ages_fingerprint)]
+    return max(found) if found else None
 
 
 def _apply_sideband_action(app: TalariaApp, action: SidebandAction) -> None:
@@ -1609,10 +1641,6 @@ async def replay_fleet_trace(
     )
     async with app.run_test(size=GATE_SIZE) as pilot:
         await app.drain()
-        # The ages the operator reads are repainted by the render tick, not by
-        # ``render_snapshot`` — so a trace that only ever ran the snapshot would
-        # fingerprint a bar nothing had refreshed.
-        await app._render_tick()
         await pilot.pause()
         await app.shutdown_sources()
     return tuple(trace)
@@ -1717,6 +1745,24 @@ async def run_gate(
     fleet_corpus = build_fleet_corpus()
     fleet_trace_fast = await replay_fleet_trace(fleet_corpus, speed=64.0)
     fleet_trace_unbounded = await replay_fleet_trace(fleet_corpus, speed=float("inf"))
+    # **Determinism cannot catch a wrong clock, so correctness is asserted
+    # separately.** Probed while building this: replacing the bar's frame clock
+    # with ``time.time()`` leaves BOTH runs' rendered ages identical, because
+    # ``format_age`` rounds to whole seconds and two replays of a six-frame
+    # corpus finish milliseconds apart. No corpus size fixes that — a wall clock
+    # is stable to the second across two runs however long the recording is. The
+    # only thing that separates the two clocks is what the age SHOULD be, so the
+    # check below computes it from the corpus and compares.
+    corpus_span = max(record.at for record in fleet_corpus.records) - min(
+        record.at for record in fleet_corpus.records
+    )
+    rendered_ages = [
+        _rendered_age_seconds(checkpoint["ages"]) for checkpoint in fleet_trace_fast
+    ]
+    ages_within_corpus = all(
+        age is None or age <= corpus_span + 1.0 for age in rendered_ages
+    )
+
     fleet_aspects = {
         aspect: (
             len(fleet_trace_fast) == len(fleet_trace_unbounded)
@@ -1818,6 +1864,21 @@ async def run_gate(
         # U6's unplaceable fold load-bearing; a corpus with no keyless approval
         # would leave this gate blind to the mechanism that answer made
         # permanent, and a green run would stand in for coverage it does not have.
+        "fleet_ages_come_from_the_corpus_clock": {
+            # The check the determinism one cannot be. A wall clock would render
+            # an age of roughly the seconds since the recording was made — some
+            # hundreds of millions — where the frame clock renders an age inside
+            # the corpus's own span. Both are stable across two runs, so only
+            # this comparison tells them apart.
+            "description": (
+                "every rendered wait age lies within the corpus's own time span, so "
+                "the surface is reading the frame clock and not a wall clock"
+            ),
+            "measured": max((age for age in rendered_ages if age is not None), default=0.0),
+            "threshold": corpus_span + 1.0,
+            "comparison": "<=",
+            "pass": ages_within_corpus,
+        },
         "fleet_corpus_exercises_blind_approval": {
             "description": "the fleet corpus contains an approval carrying no request id",
             "measured": fleet_corpus.keyless_approval_count,
