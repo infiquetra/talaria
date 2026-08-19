@@ -43,6 +43,7 @@ import re
 import resource
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -1231,21 +1232,60 @@ def fleet_trace(app: TalariaApp) -> FleetTrace:
                 rendered_row,
             )
         ),
+        # The wait lines ALONE, kept as their own key so the corpus-clock check
+        # can read an age without parsing digits out of gateway text. A
+        # ``wait_line`` is Talaria's own words plus one number; the summary line
+        # beside it carries the session TITLE, and a session called "deploy in
+        # 900s" made the age parser report 900. Measured. It inflates rather
+        # than deflates — the parser takes the maximum — so the corruption fails
+        # the gate closed rather than open, which is the safer direction and
+        # still a gate an operator's own title could break.
+        "wait_lines": repr(tuple(wait_line(item, clock) for item in queue.items)),
     }
 
 
 _AGE_SECONDS = re.compile(r"(\d+)s")
 
 
-def _rendered_age_seconds(ages_fingerprint: str) -> float | None:
-    """The largest whole-second age in one checkpoint's rendered strings.
+def _rendered_age_seconds(wait_lines_fingerprint: str) -> float | None:
+    """The largest whole-second age among one checkpoint's rendered wait lines.
+
+    **Wait lines only, never the whole ages fingerprint.** A
+    :func:`~talaria.domain.queue.wait_line` is Talaria's own words plus one
+    number; the summary line beside it carries the gateway's session title, and
+    a session called "deploy in 900s" made this function report 900. Measured
+    while building this check. Because it takes the maximum, such corruption
+    inflates rather than deflates and so fails the gate closed — but a gate an
+    operator's own session title can break is a gate that will be disbelieved
+    the first time it happens.
 
     ``None`` when the checkpoint rendered no age at all, which is the ordinary
     state of a queue with nothing in it — distinct from "rendered zero", and the
     caller must not treat the two the same.
     """
-    found = [float(match) for match in _AGE_SECONDS.findall(ages_fingerprint)]
+    found = [float(match) for match in _AGE_SECONDS.findall(wait_lines_fingerprint)]
     return max(found) if found else None
+
+
+def ages_within_corpus_span(
+    trace: Sequence[FleetTrace], corpus: FleetCorpus
+) -> tuple[bool, float]:
+    """Whether every rendered wait age lies inside the corpus's own time span.
+
+    Returns ``(pass, largest_age_seconds)``. Factored out of :func:`run_gate`
+    rather than left inline, and the reason is a gap this unit found in its own
+    test: a check computed inline can only be exercised by running the whole
+    gate, so the test that was supposed to pin *which fingerprint key it reads*
+    could only assert that the key existed. Under a mutation pointing the parser
+    back at the summary line — which carries the session title — that test stayed
+    green. This function is the thing to drive directly.
+    """
+    span = max(record.at for record in corpus.records) - min(
+        record.at for record in corpus.records
+    )
+    ages = [_rendered_age_seconds(checkpoint["wait_lines"]) for checkpoint in trace]
+    largest = max((age for age in ages if age is not None), default=0.0)
+    return (all(age is None or age <= span + 1.0 for age in ages), largest)
 
 
 def _apply_sideband_action(app: TalariaApp, action: SidebandAction) -> None:
@@ -1756,11 +1796,8 @@ async def run_gate(
     corpus_span = max(record.at for record in fleet_corpus.records) - min(
         record.at for record in fleet_corpus.records
     )
-    rendered_ages = [
-        _rendered_age_seconds(checkpoint["ages"]) for checkpoint in fleet_trace_fast
-    ]
-    ages_within_corpus = all(
-        age is None or age <= corpus_span + 1.0 for age in rendered_ages
+    ages_within_corpus, largest_rendered_age = ages_within_corpus_span(
+        fleet_trace_fast, fleet_corpus
     )
 
     fleet_aspects = {
@@ -1846,10 +1883,22 @@ async def run_gate(
             "pass": fleet_aspects["focus"],
         },
         "fleet_rendered_age_determinism": {
-            # The RENDERED strings, not the raw stamps. A float compared against
-            # itself reproduces the same wrong number in both runs and passes a
-            # determinism check while failing correctness, so this reads the
-            # functions the surface itself calls.
+            # The RENDERED strings, and the bar's own text — but **this check
+            # does NOT guard against a wrong clock, and the sentence that used
+            # to sit here said it did.** It read "a float compared against
+            # itself reproduces the same wrong number in both runs … so this
+            # reads the functions the surface itself calls", which states the
+            # problem correctly and then claims a cure that was measured not to
+            # work: under a wall clock BOTH runs still render identical ages,
+            # because ``format_age`` rounds to whole seconds and two replays of
+            # this corpus finish milliseconds apart.
+            #
+            # What this check is actually for: the rendered text is a function of
+            # more than the clock — the queue's contents, the ordering, the
+            # ages' floor-versus-observed wording — and two runs disagreeing on
+            # any of that is a determinism defect. The clock is guarded by
+            # ``fleet_ages_come_from_the_corpus_clock`` below, which compares
+            # against the corpus instead of against the other run.
             "description": (
                 "the rendered needs-you summary and wait lines are identical at "
                 "every frame, at two speeds"
@@ -1874,7 +1923,7 @@ async def run_gate(
                 "every rendered wait age lies within the corpus's own time span, so "
                 "the surface is reading the frame clock and not a wall clock"
             ),
-            "measured": max((age for age in rendered_ages if age is not None), default=0.0),
+            "measured": largest_rendered_age,
             "threshold": corpus_span + 1.0,
             "comparison": "<=",
             "pass": ages_within_corpus,

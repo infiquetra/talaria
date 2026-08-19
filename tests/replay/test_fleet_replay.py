@@ -465,3 +465,66 @@ async def test_the_rendered_ages_come_from_the_corpus_clock_not_a_wall_clock() -
         "a rendered age lies outside the corpus's own time span, so the surface "
         "is reading a clock that has nothing to do with the recording"
     )
+
+
+def test_a_session_title_cannot_corrupt_the_age_the_gate_measures() -> None:
+    """The age parser reads Talaria's own words, never the gateway's.
+
+    Found by probing this unit's own check: the first version parsed digits out
+    of the whole ages fingerprint, which contains the summary line — and the
+    summary line carries the session TITLE. A session called "deploy in 900s"
+    made the parser report 900 against a corpus span of 6, failing the gate on a
+    name somebody chose.
+
+    It inflates rather than deflates, since the parser takes the maximum, so the
+    corruption failed the gate CLOSED — the safer direction. A gate an operator's
+    own session title can break is still a gate that gets disbelieved the first
+    time it happens.
+    """
+    from talaria.replay.gate import _rendered_age_seconds
+
+    hostile = "deploy in 900s"
+    summary_shaped = repr((f"needs-you: 1 · waiting 3s · driven · {hostile}", ("waiting 3s",), ""))
+    wait_lines_only = repr(("waiting 3s",))
+
+    assert _rendered_age_seconds(summary_shaped) == 900.0, (
+        "the precondition no longer holds; the summary line no longer carries "
+        "the title, and this test's premise needs rechecking"
+    )
+    assert _rendered_age_seconds(wait_lines_only) == 3.0, (
+        "the age parser reads something other than the wait lines, so gateway "
+        "text can still reach it"
+    )
+
+
+def test_the_gate_check_itself_is_unmoved_by_a_hostile_session_title() -> None:
+    """The wiring, driven rather than described.
+
+    The first version of this test asserted only that the trace HAS a wait-lines
+    key and that the key excludes the summary. Both true, and both survived a
+    mutation pointing the gate's own parser back at the summary line — because
+    the check was computed inline in ``run_gate`` and nothing but a full gate run
+    could reach it. ``ages_within_corpus_span`` was factored out for exactly that
+    reason, and this drives it with a checkpoint whose SUMMARY carries a title
+    the parser must not see.
+    """
+    from talaria.replay.gate import ages_within_corpus_span
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    hostile = {
+        "registry": "",
+        "queue": "",
+        "focus": "",
+        # A title naming an age far outside the corpus span, in the place the
+        # gateway's own text lands.
+        "ages": repr(("needs-you: 1 · waiting 3s · driven · deploy in 900s", ("waiting 3s",), "")),
+        "wait_lines": repr(("waiting 3s",)),
+    }
+
+    passes, largest = ages_within_corpus_span([hostile], corpus)
+    assert passes, "an operator's session title failed the gate"
+    assert largest == 3.0, (
+        "the measured age came from somewhere other than the wait lines, so "
+        "gateway text reaches the number this check compares"
+    )
