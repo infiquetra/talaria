@@ -111,7 +111,10 @@ class RecordingDispatcher:
 
 
 def live_app(
-    dispatcher: LiveDispatcher, *, coalesce_interval: float = 3600.0
+    dispatcher: LiveDispatcher,
+    *,
+    coalesce_interval: float = 3600.0,
+    connections: Any = None,
 ) -> TalariaApp:
     """A live-mode app whose only renders are the ones a test asks for.
 
@@ -129,7 +132,18 @@ def live_app(
     a flake under whole-suite load, which is the shape DECISIONS.md already
     records three instances of. :func:`settle` renders explicitly instead.
 
-    **The parameter exists because parking the timer also parks a whole class
+    ``connections`` is the fleet seam, defaulting to ``None`` — the
+    single-connection shape every caller of this helper had before U7. A test
+    that passes one gets the per-connection paths, each pinned where it is
+    asserted rather than claimed here: ``/profiles`` ensures beside rather than
+    drop-switching (``tests/ui/test_picker.py``'s
+    ``test_selecting_a_profile_ensures_its_connection_and_never_switches``),
+    background connections are probed and swept
+    (``test_a_background_connection_is_probed_and_swept_together``), and each
+    channel takes its generation from its own socket
+    (``test_a_background_rows_liveness_survives_a_busier_focused_connection``).
+
+    **The coalesce parameter exists because parking the timer also parks a whole class
     of defect.** Anything that re-arms itself from inside the render pass is
     invisible to a suite that only ever renders on demand: a terminal-read that
     put itself back in the registry ran once per test here and 136 times in
@@ -143,6 +157,7 @@ def live_app(
         controls=controls,
         dispatcher=dispatcher,
         coalesce_interval=coalesce_interval,
+        connections=connections,
     )
 
 

@@ -98,26 +98,80 @@ def test_a_conflicting_pair_never_reaches_the_launcher(
 # ── U10: the live launcher is assembled, without dialling anything ───────
 
 
-def test_the_live_launcher_builds_a_live_app_over_a_live_source() -> None:
-    """``build_live_app`` is the whole wiring, and it opens no socket.
+def test_the_live_app_is_assembled_on_a_connection_set() -> None:
+    """``build_live_app`` is the whole wiring, it opens no socket, and the thing
+    it wires the app to is the CONNECTION SET rather than one ``LiveSource``.
+
+    This test used to assert ``app.source is source`` and ``app.dispatcher is
+    source``, which was true and was the defect: U2 built the connection set and
+    its two-gateway tests, nothing ever assembled one, so ``app.connections`` was
+    permanently ``None``, every multi-connection branch was dead, and U2's goal —
+    "Talaria dials every configured profile endpoint concurrently" — was not true
+    of the running program. U9's two-profile live acceptance would have been the
+    first thing to discover it.
+
+    It is rewritten rather than repointed, and it is the regression guard the
+    operator's ruling of 2026-08-18 asked for: it fails if this entry point ever
+    goes back to handing the app a lone ``LiveSource``.
 
     :class:`~talaria.transport.source.LiveSource` dials from ``start()``, never
-    from its constructor, which is what makes the assembly assertable here
-    rather than only against a stub gateway.
+    from its constructor, and :class:`ConnectionSet` dials from ``start()`` too,
+    which is what makes the assembly assertable here rather than only against a
+    stub gateway.
     """
+    from talaria.transport.connection_set import ConnectionSet
     from talaria.transport.source import LiveSource
-    from talaria.ui.app import TalariaApp
+    from talaria.ui.app import ConnectionFleet, ConnectionInventory, TalariaApp
 
     cfg = config_module.load_config()
     app, source = cli_module.build_live_app(parse_args([]), cfg)
 
     assert isinstance(app, TalariaApp)
-    assert isinstance(source, LiveSource)
     assert app.mode == "live"
-    assert app.dispatcher is source
-    assert app.source is source
+
+    # The regression guard, stated three ways because each one is a different way
+    # of reverting: the app's stream, the ensure-beside seam, and the fleet dial.
+    assert isinstance(app.source, ConnectionSet), (
+        "the app was handed a single source again; the fleet cannot see any "
+        "connection but one"
+    )
+    assert app.connections is app.source, (
+        "the app has no ConnectionEnsurer, so /profiles falls back to "
+        "drop-switching and every multi-connection branch is dead again"
+    )
+    assert isinstance(app.connections, ConnectionFleet), (
+        "nothing will dial the inventory on mount"
+    )
+    assert isinstance(app.connections, ConnectionInventory), (
+        "no background connection can be probed or swept"
+    )
+
+    # The launch depends on two constants in two packages agreeing, and nothing
+    # made them agree on purpose: the set's home member is always named
+    # ``DEFAULT_PROFILE_NAME`` (``talaria/transport/credentials.py``) while the
+    # app's fleet starts focused on ``DEFAULT_PROFILE`` (``talaria/ui/app.py``).
+    # Both read ``"default"`` today. If either moved, the home connection would
+    # arrive at ``note_connection_state`` as a BACKGROUND connection — no epoch
+    # bump, no catalogue fetch, and ``begin_live_startup`` never called, so the
+    # client would come up attached to nothing with no error anywhere. Asserted
+    # here so the coincidence is a requirement rather than a coincidence.
+    assert app.fleet_profile == app.connections.home, (
+        "the app is focused on a profile the connection set does not call home; "
+        "the home gateway's connect would be handled as a background one"
+    )
+
+    # The single-connection primitive is refused, not merely unused: retargeting
+    # one socket drops whatever it was connected to, and the connection it drops
+    # is the only feed for that gateway's sessions.
+    assert app.switcher is None
+
+    # Nothing dialled. ``source`` survives only to prime the interactive
+    # credential level while a human can still see the terminal.
+    assert isinstance(source, LiveSource)
     assert not source.closed
     assert source.state == "disconnected", "building the launcher dialled a gateway"
+    assert not app.source.closed
+    assert app.source.connected_profiles == (), "building the launcher dialled a gateway"
 
 
 def test_the_launcher_carries_the_startup_selection_it_was_given() -> None:
@@ -829,3 +883,32 @@ def test_cancelling_at_the_credential_prompt_stops_before_the_interface(
     assert exit_code == 130
     assert order == []
     assert "cancelled" in capsys.readouterr().err
+
+
+def test_the_assembled_app_knows_which_connection_it_is_on() -> None:
+    """CR7 finding 4: the set knew its home and the app did not.
+
+    Two shipped behaviours died on this, and neither of them noisily. ``/profiles``
+    marks the current row through ``flatten_profiles(..., current=...)``, so with
+    an empty ``current_profile`` it marked nothing and opened at row one —
+    contradicting ``Selection.opened``'s own documented promise to open on the row
+    already in use. And ``set_model_default`` returns early on
+    ``if not self.current_profile``, so ``/models <n> default`` was refused in
+    every live session, with a notice blaming a session "started without one
+    named" that described all of them.
+
+    Asserted against the connection set rather than against the literal
+    ``"default"``, because the property is agreement between the two — a launcher
+    that learned to take ``--profile`` should keep them in step without this test
+    needing to know the name.
+    """
+    cfg = config_module.load_config()
+    app, _ = cli_module.build_live_app(parse_args([]), cfg)
+
+    connections = app.connections
+    assert connections is not None, "no connection set was assembled at all"
+    assert app.current_profile, "the app was assembled not knowing its own profile"
+    assert app.current_profile == connections.home, (
+        "the app and its connection set disagree about which profile is home"
+    )
+    assert app.fleet_profile == app.current_profile

@@ -4,6 +4,106 @@
 
 ## 2026-08-18
 
+### A citation is a claim, and this project shipped a false one in five places
+
+**Evidence.** Five sites across `talaria/ui/prompts.py`, `talaria/ui/app.py` and (newly, by copying)
+`talaria/ui/needs_you.py` cited `tools/approval.py:3291` and `:3320` as the evidence that Hermes's
+approval consumer "blocks only on `None` and `deny` and returns approved for anything else resolved".
+Read against the running checkout on 2026-08-18, `:3291` is inside a quote-parsing loop
+(`in_single`, `in_double`, character scanning) and `:3320` is the tail of a policy-string function.
+Neither is the consumer. The real evidence is `tools/approval.py:3584` —
+`if not resolved or choice is None or choice == "deny":` — and the explicit denial branch at `:3679`.
+Corrected at all five sites.
+
+**Mechanism.** The claim itself was true; only its address was wrong, which is why nothing caught it
+for three units. Tests cannot check a citation into another repository, the prose gate checks that a
+claim *has* a citation rather than that the citation says anything, and a reader who trusts the
+project does not go and look. It propagated the way false citations do — I copied it into a fifth
+site while writing a docstring about not shipping unpinned claims.
+
+**Why it matters more than a wrong line number.** That citation is the evidence for a *safety* rule:
+that an empty approval choice is read as approved, which is why `decline_value` exists and why no
+control may offer an empty answer. A maintainer who checks the citation, finds a quote parser, and
+concludes the rule was invented deletes the guard. A false citation on a safety rule is a loaded
+argument for removing it.
+
+**Generalizable rule.** A `file:line` into another repository is a claim like any other and decays
+faster than the prose around it, because nothing in this repository moves when that file does. When
+prose cites a foreign source, open it. When copying a cited claim, re-verify the citation rather than
+the sentence — the sentence is usually right and the address is what rots.
+
+### A parameter that only changes a record is invisible to every test that asserts the wire
+
+**Evidence.** U7's inline answer path passes `declined=selection.action == "decline"` into
+`respond_live`. Replacing it with a constant `False` left the whole suite green — 2113 tests — because
+an approval decline sends the *same* `approval.respond` an answer does, with `deny` as its choice, so
+nothing that watched the socket could tell the two apart. The difference is the verb written into the
+transcript, and "approval answered" for a command the operator refused is a false entry in the one
+record that says what was allowed. Pinned by
+`test_an_inline_decline_is_recorded_as_a_decline_and_not_as_an_answer`, verified to fail under exactly
+that substitution.
+
+**Mechanism.** The test suite's centre of gravity for an answer path is what reaches the gateway,
+because that is where the damage is. A parameter whose entire effect is on the local record sits
+outside that lens by construction — it is not a gap in any one test, it is a gap in the *kind* of
+assertion the whole file makes. `respond_live`'s own docstring says as much ("changes **only the
+wording written down**"), which reads as reassurance and is actually the warning: the smaller the
+blast radius of a parameter, the less likely anything is watching where it lands.
+
+**Generalizable rule.** When a function takes a flag whose documented effect is "only the wording" or
+"only the record", assume nothing tests it and check. The parameters most likely to survive mutation
+are the ones whose docstrings say they barely matter.
+
+### A capability probe not paired with using the capability trades a true sentence for silence
+
+**Evidence.** U7's condition four asked for production seam probing to go per connection. Reading the
+consumer first showed the literal change would be a regression: while a background connection has no
+seam board, `connection_notices` (`talaria/domain/queue.py:1425`) emits "capabilities not probed —
+nothing is known about what this connection can answer, so its sessions are not in the queue". A probe
+alone deletes that line twice over — the board stops being `None`, and the `roster` seam comes back
+`present`, which `_seam_notice` (`talaria/domain/queue.py:1456`) reads as "nothing to say". Meanwhile
+the only production caller of the roster fold, `_seed_registry`, is reached from
+`open_sessions_picker` alone and only ever for the focused profile, so the connection's sessions were
+still not enumerated. The fix pairs the two: `TalariaApp.sweep_connection` probes **and** polls in one
+round, so the silence is earned. Pinned by
+`test_a_background_connection_is_probed_and_swept_together`, which fails when the roster half is
+removed (verified by deleting it: the sweep's own assertions fall).
+
+**Mechanism.** A probe answers *can this gateway be asked*; a notice's absence asserts *this gateway
+was asked*. They are different propositions, and the notice was reading the first as though it settled
+the second. That is R14's failure ("an empty queue must never mean 'we could not ask'") arriving
+through the front door: not a queue that lost an item, but a queue that stopped saying it had never
+looked. Silence is the most expensive thing a status surface can emit, because nothing about it
+records which of the two reasons produced it.
+
+**Generalizable rule.** Before making a capability observable, find what currently says the capability
+is unobserved and check what that sentence becomes. If the improvement's only visible effect is that a
+true absence-notice disappears, the change is not finished — pair the probe with the use, or leave the
+notice a way to keep telling the truth.
+
+### A per-connection counter and a global one are not interchangeable because they agree today
+
+**Evidence.** `TalariaApp._connection_epoch` counts *focused* connects across the whole fleet;
+`route_frame` compares a channel's `generation` against the per-connection `arrival_epoch` that every
+`TaggedFrame` carries off its own socket (`talaria/transport/connection_set.py:871`). Writing the
+first into the second is invisible in a fleet of one — both read 1, then 2, then 3 — and wrong as soon
+as a second connection exists or home moves, because a channel stamped with the larger focused counter
+makes `generation < channel.generation` true for every frame that connection will ever deliver, so no
+inbound event ends a row's staleness again. `TalariaApp._socket_generation` now reads the connection's
+own epoch from the set. Pinned by
+`test_a_background_rows_liveness_survives_a_busier_focused_connection`, verified to fail when the
+call is replaced by `self._connection_epoch`.
+
+**Mechanism.** This is the same defect as U6's round twelve one scope up. There the argument was
+replaced by a constant and the suite stayed green; here it would be replaced by a number that belongs
+to a different connection, and a single-connection suite stays green for exactly the same reason —
+the two numberings coincide in the only configuration the tests build. Coincidence at the test's
+scale is not identity at the system's scale.
+
+**Generalizable rule.** When two counters are compared, name what each counts and check that the
+answer is the same noun. Agreement in the current configuration is evidence about the configuration,
+not about the counters.
+
 ### A refusal's stated exit must be reachable from where the refusal is shown
 
 **Evidence.** The needs-you queue's connection-wide fold refused every approval on a connection while

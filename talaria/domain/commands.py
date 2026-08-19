@@ -344,7 +344,7 @@ def _is_client_local(name: str, category: str) -> bool:
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
 LocalAction = Literal[
-    "quit", "pause", "resume", "speed", "models", "profiles", "sessions", "agents"
+    "quit", "pause", "resume", "speed", "models", "profiles", "sessions", "agents", "needs"
 ]
 
 
@@ -421,6 +421,26 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "/sessions",
         "sessions",
         "Open the session picker and switch to a listed session",
+    ),
+    # v0.4's U7. The one Talaria-local name in this table that shadows nothing:
+    # the gateway's registry holds 91 commands at the pinned read
+    # (``hermes_cli/commands.py``, checked 2026-08-18) and none of them is
+    # ``needs`` — ``approvals`` and ``queue`` are the near neighbours and both
+    # mean something else. So there is no shadowing cost to state here, unlike
+    # ``/sessions`` above, and the plan's ``/needs-you`` fallback is unused.
+    #
+    # It stays listed as talaria-local rather than left unlisted, for
+    # ``/sessions``'s reason turned around: a future gateway release that adds
+    # its own ``/needs`` would be shadowed by this entry silently, and the
+    # listing's ``local`` marker is the only place an operator could notice.
+    #
+    # No ``<n>`` shorthand and no new global chord (KTD7). The queue is derived
+    # on every render and reorders by age, so a typed index would name whatever
+    # had drifted into that position — the same reason ``/sessions`` has none.
+    LocalCommand(
+        "/needs",
+        "needs",
+        "Open the needs-you list and go to what is waiting",
     ),
     # A4: eaten F2's redundant typed path. Primary is ctrl+g;
     # F2 remains as alias where the desktop delivers it. Listed as talaria-local

@@ -12,8 +12,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from talaria import __version__
 from talaria import config as config_module
@@ -344,6 +345,43 @@ def run_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+class _HomeDispatcher:
+    """Dispatch to whichever connection is currently home (U7, KTD1).
+
+    ``TalariaApp`` takes one dispatcher at construction, while a fleet's home
+    moves: ``/profiles`` ensures a connection and makes it the home for the next
+    ``session.create``/``session.resume``. Holding a source captured at build
+    time would send every later call to the connection that happened to be first
+    in the inventory. Resolving on each call is what makes "the next session
+    lands on the profile you just selected" true.
+
+    Satisfies :class:`~talaria.ui.app.LiveDispatcher`, which is one method wide.
+    """
+
+    def __init__(self, connections: Any) -> None:
+        self._connections = connections
+
+    async def call(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
+        source = self._connections.source_for(self._connections.home)
+        if source is None:
+            # The home connection is not up. Answered with the transport's own
+            # not-connected outcome rather than an exception, and deliberately the
+            # SAME one ``LiveSource.call`` returns in that state: a caller must not
+            # be able to tell "the home connection has not answered yet" from "this
+            # connection has not answered yet", because the honest report is
+            # identical and every screen that renders one already renders the other.
+            from talaria.transport.rpc import NOT_CONNECTED, unknown_outcome
+
+            return unknown_outcome(method, NOT_CONNECTED, epoch=0)
+        return await source.call(method, params, timeout=timeout)
+
+
 def build_live_app(
     args: argparse.Namespace, cfg: config_module.Config
 ) -> tuple[TalariaApp, LiveSource]:
@@ -373,6 +411,13 @@ def build_live_app(
     from talaria.recorder.framelog import FrameRecorder, default_log_path
     from talaria.transport.admin import AdminClient, AdminError
     from talaria.transport.attach import AttachTarget
+    from talaria.transport.connection_set import (
+        ConnectionSet,
+        build_source_factory,
+        credential_provider_factory,
+        plan_connections,
+        resolve_connections,
+    )
     from talaria.transport.credentials import LoopbackTokenProvider
     from talaria.transport.source import LiveSource
     from talaria.ui.app import TalariaApp
@@ -442,33 +487,113 @@ def build_live_app(
         recorder=recorder,
         credential_factory=credential_for,
     )
+
+    # ── U7's composition root ────────────────────────────────────────────
+    #
+    # U2 built the whole assembly kit — ``plan_connections``, ``resolve_connections``,
+    # ``build_source_factory``, ``ConnectionSet`` — and nothing ever called it, so
+    # ``TalariaApp.connections`` was permanently ``None``, every multi-connection
+    # branch was dead, and U2's goal sentence ("Talaria dials every configured
+    # profile endpoint concurrently") was not true of the running program. This is
+    # the call. Pinned by
+    # ``test_the_live_app_is_assembled_on_a_connection_set``, which fails if this
+    # entry point ever reverts to handing the app a lone ``LiveSource``.
+    provider_for = credential_provider_factory(credentials)
+    members = plan_connections(
+        default_endpoint=target.url,
+        config_endpoints=config_module.profile_endpoints(cfg),
+    )
+    # Synchronous launcher, asynchronous resolution — the same shape
+    # :func:`_prime_credential` already uses, and for the same reason: reading a
+    # credential is async because providers are, while nothing has started a loop
+    # yet. Resolution dials nothing; it only decides which configured profiles
+    # share one gateway.
+    #
+    # THE CONSTRAINT THIS IMPOSES, stated because a caller only discovers it by
+    # crashing: ``build_live_app`` must be called from a SYNCHRONOUS context.
+    # ``asyncio.run`` refuses to nest, so calling this from inside a running loop
+    # raises. That is true of :func:`_prime_credential` already and of the whole
+    # launch path by design — ``run_live`` assembles, primes, and only then hands
+    # control to Textual — but a test or a future async caller has to build the
+    # app before entering its loop, not during.
+    entries = asyncio.run(resolve_connections(members, provider_for))
+
+    # The app does not exist yet and the set needs to reach it, which is the same
+    # circularity ``LiveSource.bind`` solves one line further down. A holder keeps
+    # the indirection visible rather than hiding it behind a mutable attribute.
+    holder: list[TalariaApp] = []
+
+    def on_fleet_connection(
+        profile: str,
+        state: Any,
+        detail: str,
+        cause: Any,
+    ) -> None:
+        if holder:
+            holder[0].note_connection_state(state, detail, cause, profile=profile)
+
+    connections = ConnectionSet(
+        entries,
+        build_source_factory(provider_for=provider_for, recorder=recorder),
+        on_connection=on_fleet_connection,
+        recorder=recorder,
+    )
+
     app = TalariaApp(
-        source,
+        # The set IS the frame source: it yields ``TaggedFrame``, so every frame
+        # reaches the registry carrying the connection it crossed and that
+        # connection's own epoch, which is what registry-rooted routing means.
+        # Pinned by ``test_a_tagged_frame_routes_to_its_own_connections_row``,
+        # which feeds one session id on two connections — the case that is
+        # genuinely two sessions and would be one if the tag were ignored.
+        connections,
         mode="live",
-        dispatcher=source,
+        dispatcher=_HomeDispatcher(connections),
         admin_client=admin_client,
         admin_factory=admin_for,
-        switcher=source,
+        # ``None`` on purpose: ``switch_to_endpoint`` retargets one socket and
+        # therefore drops whatever it was connected to, which a fleet client must
+        # never do — the connection it dropped is the only feed for that gateway's
+        # sessions. With a ``ConnectionEnsurer`` present the app takes the
+        # ensure-beside path instead and never reads this.
+        switcher=None,
+        connections=connections,
+        # CR7 finding 4. Without this the app does not know which connection it
+        # is on, while the set beside it does — `app.current_profile` came up
+        # empty in a live run against `connections.home == "default"`. Two shipped
+        # behaviours were dead as a result, neither of them noisily: `/profiles`
+        # marked no row and opened at row one, contradicting `Selection.opened`'s
+        # own promise to open on the current row; and `/models <n> default` was
+        # refused on EVERY fresh session, because `set_model_default` returns
+        # early on `if not self.current_profile` and its notice blamed a session
+        # "started without one named" — which was every session.
+        #
+        # `home` rather than a constant: it is the profile this app is focused on
+        # and the one `_adopt_profile` will overwrite when `/profiles` moves it.
+        current_profile=connections.home,
         profile_endpoints=config_module.profile_endpoints(cfg),
         status_runner=_build_status_runner(cfg),
         status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
         paste_threshold=_build_paste_threshold(cfg),
         startup=selection_from_args(args),
     )
-    # Bound after construction rather than passed in: the app is built *from*
-    # the source, so wiring the source's callbacks to the app's methods at
-    # construction time would be circular (see ``LiveSource.bind``).
+    holder.append(app)
+    # ``source`` is no longer bound, and the removal is the point rather than an
+    # oversight. It used to carry the app's connection callbacks, because it was
+    # the app's stream; the set is now, and the set builds its own sources
+    # through ``build_source_factory`` and observes each one itself, handing the
+    # profile through to ``note_connection_state`` above. KTD7's typed terminal
+    # cause still travels the same end-to-end path — every source sets a cause on
+    # its four disconnect sites, and the set's observer forwards it unchanged —
+    # it simply arrives with the name of the connection it belongs to.
     #
-    # This is the live path KTD7's typed terminal cause travels end to end:
-    # ``LiveSource`` sets a cause on its four disconnect sites, ``bind``
-    # hands the whole three-argument callback to
-    # ``TalariaApp.note_connection_state`` unchanged, and that method passes
-    # the cause straight into ``set_connection`` — the domain transition that
-    # actually commits any partial streaming/reasoning text before clearing
-    # it (R6). Nothing in this line itself needed to change: the callback's
-    # shape grew a third argument and a bound-method reference forwards
-    # whatever it is called with.
-    source.bind(on_connection=app.note_connection_state, on_reconnect=app.note_reconnect)
+    # ``source`` survives for exactly one job: :func:`_prime_credential` reads its
+    # provider so the one credential level that needs a human runs while a human
+    # can still see the terminal. It is never dialled. The fleet's own providers
+    # never prompt, by construction (``credential_provider_factory``), because a
+    # fleet launch dials several gateways at once and an interactive prompt would
+    # be issued once per unpaired profile underneath an interface that cannot
+    # display any of them.
     return app, source
 
 

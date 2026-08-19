@@ -1432,6 +1432,27 @@ def connection_notices(
     lines.extend(
         _seam_notice(profile, board, "approval-detail", _APPROVAL_DETAIL_CONSEQUENCE)
     )
+    # **A present seam means "this gateway would answer", never "we asked".**
+    # Nothing in production issues ``approval.pending`` as a data call — it is
+    # registered as a presence probe only — so ``FleetState.approval_detail`` is
+    # written by nothing in a live run and no foreign session's approval reaches
+    # the queue. Until that changes, a probed-present seam silences the line
+    # above and the silence reads as "everything of this connection's is in the
+    # queue", which is R14's failure arriving through the door the seam was meant
+    # to guard: not a queue that lost an item, but a queue that stopped saying it
+    # had never looked.
+    #
+    # Stated unconditionally rather than gated on the seam, because the fact does
+    # not depend on what the gateway can do: Talaria does not ask, whatever the
+    # answer would have been. It is deliberately the last line, so a connection
+    # that ALSO could not be probed says both things in the order they matter.
+    #
+    # **Delete this line when the poll lands, and not before.** It is not a
+    # permanent caveat; it is the disclosure of a named, filed gap — the plan's
+    # UNSLOTTED slice covering the KTD2 cadence, feed B's assembly, and AE2's
+    # settle-and-latch. Pinned by
+    # ``test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed``.
+    lines.append(f"{profile}: {_APPROVAL_DETAIL_UNPOLLED}")
     return tuple(lines)
 
 
@@ -1443,6 +1464,14 @@ _ROSTER_CONSEQUENCE: Final[str] = (
 _APPROVAL_DETAIL_CONSEQUENCE: Final[str] = (
     "approvals on this connection's foreign sessions are not fetched; a waiting "
     "row is shown without its prompt"
+)
+
+#: Said of every connection, whatever its seam probe found, for as long as
+#: nothing calls ``approval.pending`` for data. See ``connection_notices``.
+_APPROVAL_DETAIL_UNPOLLED: Final[str] = (
+    "foreign approval detail is not polled on any connection — a session of "
+    "someone else's that is waiting on an approval is not in this queue, whether "
+    "or not this gateway would answer"
 )
 
 
@@ -1497,20 +1526,42 @@ def format_age(seconds: float) -> str:
 def wait_line(item: QueueItem, clock: float) -> str:
     """One item's age, saying which kind of age it is (KTD12, R18, R20).
 
-    Three sentences, because there are three facts.
     ``requested`` is an answer on the wire — R18's requested-with-age — and it
     reports the age of the *request*, not of the wait, because that is the number
     that tells the operator whether to worry. ``waiting ≥`` is a floor: Talaria
     saw the wait already in progress and no start stamp exists anywhere on the
     wire, so the span since the first sighting is all that can be claimed.
     ``waiting`` plain is a wait Talaria watched begin.
+
+    **``stale_since`` is rendered here, and until U7 it was rendered nowhere.**
+    The field was written by three call sites in this module and read by none,
+    so a queue item whose connection dropped rendered exactly like a live one:
+    an age that kept counting up off a clock that had stopped watching. Two
+    corrections, both mechanical. Every age is measured **to the moment the
+    stream broke** rather than to now, because nothing after that moment was
+    observed; and the wait becomes a floor whatever kind of stamp it started as,
+    because a wait Talaria watched begin and then stopped watching is a wait
+    known only to have lasted *at least* that long — it may have been answered
+    by someone at the gateway a second later. The blind span is then stated as
+    its own number, so the operator can see how much of the silence is Talaria's
+    rather than the session's. Pinned by
+    ``test_a_polled_item_of_a_disconnected_connection_says_it_is_stale``.
     """
+    # Nothing after the break was observed, so every span below is measured to
+    # the break and never to ``clock``.
+    observed_to = clock if item.stale_since is None else item.stale_since
     if item.requested:
         if item.requested_at is None:
-            return "requested, age not observed"
-        return f"requested {format_age(clock - item.requested_at)} ago"
-    span = format_age(clock - item.opened_at)
-    return f"waiting ≥ {span}" if item.age_is_floor else f"waiting {span}"
+            line = "requested, age not observed"
+        else:
+            line = f"requested {format_age(observed_to - item.requested_at)} ago"
+    else:
+        span = format_age(observed_to - item.opened_at)
+        floor = item.age_is_floor or item.stale_since is not None
+        line = f"waiting ≥ {span}" if floor else f"waiting {span}"
+    if item.stale_since is None:
+        return line
+    return f"{line}, unobserved for {format_age(clock - item.stale_since)}"
 
 
 #: What the summary says when nothing is waiting and every connection answered.

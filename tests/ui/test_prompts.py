@@ -42,6 +42,7 @@ from talaria.domain.state import (
 from talaria.recorder.redact import _DENY_BY_METHOD
 from talaria.replay.controls import INERT_NOTICE, MUTATION_CONTROLS, ReplayControls
 from talaria.replay.source import ReplaySource
+from talaria.transport.connection_set import ConnectionStatus as FleetConnectionStatus
 from talaria.transport.rpc import (
     LOST_WITH_TRANSPORT,
     NO_REPLY_IN_TIME,
@@ -942,6 +943,90 @@ async def test_a_reconnected_row_recovers_liveness_from_its_next_event() -> None
 
 
 @pytest.mark.asyncio
+async def test_a_tagged_frame_routes_to_its_own_connections_row() -> None:
+    """What "registry-rooted routing" actually means, and the claim U7's
+    composition root rests on.
+
+    A frame from the fleet carries the connection it crossed. Routing it by that
+    tag rather than by whichever connection happens to be focused is the whole
+    difference between a fleet client and a single-connection one: two gateways
+    can each hold a session with the same durable id, and only the observing
+    connection distinguishes them.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}, session="s1"))
+        await settle(app, pilot)
+        home = app.fleet_profile
+
+        # Same session id, different connection — the case that is genuinely two
+        # sessions and would be one if the tag were ignored.
+        record = FrameRecord(
+            seq=99,
+            at=1_785_000_500.0,
+            direction="in",
+            frame=event("clarify.request", {"request_id": "c-9", "question": "b?"}, session="s1"),
+        )
+        app.ingest(record, profile="other-profile", epoch=7)
+        await settle(app, pilot)
+
+        assert ("other-profile", "s1") in app.fleet.rows, (
+            "the tagged frame did not reach its own connection's row"
+        )
+        assert app.fleet.rows[("other-profile", "s1")].waiting_kind == "clarify"
+        assert app.fleet.channel("other-profile").generation == 7, (
+            "the frame's own epoch did not reach the channel"
+        )
+        # And the focused connection's view of that id is untouched.
+        assert app.state.focused_session_id == "s1"
+        assert list(app.prompts.card_ids) == []
+        assert home != "other-profile"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_background_connections_drop_does_not_write_the_focused_notice() -> None:
+    """The presentation half of ``note_connection_state`` is focus-scoped, along
+    the same seam U6's approval age-out uses.
+
+    The fleet half is unconditional — every connection's rows must learn their
+    stream broke. The presentation half is not: "the connection dropped" has no
+    subject on screen, so firing it for a background connection tells the
+    operator that the session in front of them has dropped when another one has.
+    """
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        feed(app, event("message.start", {}, session="s1"))
+        record = FrameRecord(
+            seq=98,
+            at=1_785_000_400.0,
+            direction="in",
+            frame=event("message.start", {}, session="s2"),
+        )
+        app.ingest(record, profile="other-profile", epoch=1)
+        await settle(app, pilot)
+        connection_before = app.state.connection
+
+        app.note_connection_state("disconnected", profile="other-profile")
+
+        # The fleet half fired.
+        row = fleet_row(app.fleet, profile="other-profile", session_id="s2")
+        assert row is not None and row.disconnected, (
+            "the background connection's rows never learned their stream broke"
+        )
+        # The presentation half did not.
+        assert app.state.connection == connection_before, (
+            "a background connection's drop rewrote the focused session's "
+            "connection state"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
 async def test_an_identityless_frame_is_still_counted_ignored_through_the_app() -> None:
     """The second leg: R25 is untouched. A session-scoped frame carrying no
     usable session id has no row to go to, so it is still counted and surfaced
@@ -1228,7 +1313,16 @@ async def test_a_second_approval_appears_and_both_lose_their_affirmatives() -> N
     dispatcher = RecordingDispatcher()
     app = live_app(dispatcher)
 
-    async with app.run_test() as pilot:
+    # One row taller than the default, and the extra row is U7's reserved
+    # needs-you bar rather than slack. Every assertion below is unchanged and
+    # measures what it always measured — two cards' content on the assembled
+    # interface — but the last one counts occurrences on the *screen*, so it was
+    # coupled to how many rows the screen has. Adding a permanent bottom row cost
+    # the viewport one line and clipped the second card's hint. The coupling is
+    # incidental to this test's subject; the row cost is not incidental to the
+    # interface, which is why it is named here instead of absorbed by loosening
+    # the count.
+    async with app.run_test(size=(80, 25)) as pilot:
         two_approvals(app)
         await settle(app, pilot)
 
@@ -4362,4 +4456,230 @@ async def test_declining_a_prompt_in_replay_refuses_visibly_and_sends_nothing() 
         # operator's half-typed answer must not have been destroyed while
         # that claim was true — an early clear contradicted its own notice.
         assert card.query_one("#answer", Input).value == "main"
+        await app.shutdown_sources()
+
+
+#  ── v0.4 U7 condition four: probing and sweeping go per connection ───────
+
+
+class FleetDispatcher:
+    """One fleet member's own dispatcher: records what it was asked, per method.
+
+    Distinct from :class:`RecordingDispatcher` in exactly the way this section
+    needs — it answers a *different result per method*, so one double can play a
+    gateway that has a session list and a working roster at the same time.
+    """
+
+    def __init__(self, results: Mapping[str, Any] | None = None) -> None:
+        self.results = dict(results or {})
+        self.calls: list[str] = []
+
+    async def call(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> RpcOutcome:
+        self.calls.append(method)
+        return RpcOutcome(
+            status="ok",
+            method=method,
+            request_id="1",
+            epoch=1,
+            result=self.results.get(method, {}),
+        )
+
+
+class FleetInventory:
+    """A :class:`~talaria.ui.app.ConnectionInventory` double.
+
+    Names its connections, hands out a dispatcher aimed at each, and reports each
+    one's own socket generation — the three things the app needs to put a
+    question to a connection it is not looking at.
+    """
+
+    def __init__(
+        self,
+        sources: Mapping[str, FleetDispatcher],
+        *,
+        epochs: Mapping[str, int] | None = None,
+    ) -> None:
+        self._sources = dict(sources)
+        self._epochs = dict(epochs or {})
+
+    @property
+    def profiles(self) -> tuple[str, ...]:
+        return tuple(self._sources)
+
+    def source_for(self, profile: str) -> FleetDispatcher | None:
+        return self._sources.get(profile)
+
+    def status_of(self, profile: str) -> FleetConnectionStatus | None:
+        if profile not in self._sources:
+            return None
+        return FleetConnectionStatus(
+            profile=profile, endpoint="", epoch=self._epochs.get(profile, 1)
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_background_connection_coming_up_marks_its_own_channel() -> None:
+    """The restore half of ``note_connection_state`` is fleet-scoped, not focused.
+
+    Its sibling — the composer notice — is focus-scoped, and scoping this half
+    the same way is the mistake that reads as tidy. ``channel.connected`` is what
+    ``connection_notices`` consults to tell the operator a connection is down, so
+    a background connection that comes up and never marks its own channel goes on
+    being reported as down for the life of the run. That is R14's queue-that-lies
+    failure pointed the other way: a fleet of healthy gateways declaring that most
+    of itself could not be asked.
+    """
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test() as pilot:
+        assert not app.fleet.channel("other-profile").connected
+
+        app.note_connection_state("connected", profile="other-profile")
+        await settle(app, pilot)
+
+        assert app.fleet.channel("other-profile").connected, (
+            "a background connection came up and its own channel still says down"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_background_rows_liveness_survives_a_busier_focused_connection() -> None:
+    """A channel's generation is ITS socket's, never the focused connect counter.
+
+    ``_connection_epoch`` counts focused connects across the whole fleet, while
+    ``route_frame`` compares a channel's generation against the per-connection
+    ``arrival_epoch`` each ``TaggedFrame`` carries. Here the focused connection
+    churns three times while the background one sits on its own generation 1, so
+    the two numbers are 3 and 1 — and stamping the channel with the larger one
+    makes every frame that connection will ever deliver read as superseded, so no
+    inbound event ends a row's break again.
+
+    This is U6's round-twelve defect one scope up: there the argument was replaced
+    by a constant, here it is replaced by a number that belongs to a different
+    connection. Both are wrong in the same direction and neither is visible to a
+    suite that only ever runs one connection.
+    """
+    # The connection keeps listing its own session, so the sweep that a reconnect
+    # schedules re-confirms the row rather than retiring it — the dual-listing
+    # rule doing its job, and not the effect under test here.
+    background = FleetDispatcher({"session.list": {"sessions": [{"id": "bg-1"}]}})
+    inventory = FleetInventory({"other-profile": background}, epochs={"other-profile": 1})
+    app = live_app(RecordingDispatcher(), connections=inventory)
+
+    async with app.run_test() as pilot:
+        app.ingest(
+            FrameRecord(
+                seq=10,
+                at=1_785_000_100.0,
+                direction="in",
+                frame=event("message.start", {}, session="bg-1"),
+            ),
+            profile="other-profile",
+            epoch=1,
+        )
+        await settle(app, pilot)
+
+        # The focused connection churns. Nothing about the background one moved.
+        for _ in range(3):
+            app.note_connection_state("connected")
+        assert app._connection_epoch == 3, "the focused counter did not actually climb"
+
+        app.note_connection_state("disconnected", profile="other-profile")
+        dropped = fleet_row(app.fleet, profile="other-profile", session_id="bg-1")
+        assert dropped is not None and dropped.disconnected, (
+            "the drop never reached the background row, so this proves nothing"
+        )
+
+        app.note_connection_state("connected", profile="other-profile")
+        app.ingest(
+            FrameRecord(
+                seq=11,
+                at=1_785_000_200.0,
+                direction="in",
+                frame=event("message.complete", {"text": "back"}, session="bg-1"),
+            ),
+            profile="other-profile",
+            epoch=1,
+        )
+        await settle(app, pilot)
+
+        recovered = fleet_row(app.fleet, profile="other-profile", session_id="bg-1")
+        assert recovered is not None
+        assert not recovered.disconnected, (
+            "an event on the background connection's own generation did not end "
+            "its row's break — the channel is stamped with the focused counter"
+        )
+        assert recovered.stale_since is None
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_background_connection_is_probed_and_swept_together() -> None:
+    """Probing without sweeping would trade a true sentence for silence.
+
+    While a background connection has no board, ``connection_notices`` says
+    "capabilities not probed … its sessions are not in the queue". A probe on its
+    own deletes that sentence — the roster seam comes back present and every line
+    for the connection falls silent — while its sessions are still not enumerated.
+    The sweep is what earns the silence: after it, the roster really was asked and
+    the connection's sessions really are in the registry the queue reads.
+
+    The last assertion is the one that makes this per-connection rather than
+    merely fleet-aware: the round lands on the background connection's OWN board
+    and leaves the focused connection's alone.
+    """
+    background = FleetDispatcher(
+        {"session.list": {"sessions": [{"id": "bg-1", "title": "background work"}]}}
+    )
+    inventory = FleetInventory({"other-profile": background})
+    app = live_app(RecordingDispatcher(), connections=inventory)
+
+    async with app.run_test() as pilot:
+        assert domain_state.fleet_seam_board(app.fleet, "other-profile") is None
+
+        await app.sweep_connection("other-profile", trigger="attach")
+        await settle(app, pilot)
+
+        assert "session.list" in background.calls, "the roster was never asked for"
+        assert "session.active_list" in background.calls, (
+            "the lifecycle sweep never ran, so the roster seam's verdict is unearned"
+        )
+        assert app.fleet.channel("other-profile").last_poll_at is not None
+        assert (
+            fleet_row(app.fleet, profile="other-profile", session_id="bg-1") is not None
+        ), "the background connection's sessions never reached the registry"
+        assert domain_state.fleet_seam_board(app.fleet, "other-profile") is not None
+        assert domain_state.fleet_seam_board(app.fleet, app.fleet_profile) is None, (
+            "a background connection's probe was folded into the focused board"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_the_revalidation_round_asks_every_connection_not_only_the_focused() -> None:
+    """R12's five-minute cadence is fleet-wide, and each board is its own clock.
+
+    A shared due-check would let one connection's fresh round suppress another's
+    overdue one, and the connection whose probe is overdue is precisely the one
+    whose silence the queue is least entitled to read as quiet (R24).
+    """
+    background = FleetDispatcher()
+    inventory = FleetInventory({"other-profile": background})
+    app = live_app(RecordingDispatcher(), connections=inventory)
+
+    async with app.run_test() as pilot:
+        await app.revalidate_seams()
+        await settle(app, pilot)
+
+        assert "session.active_list" in background.calls, (
+            "the revalidation timer asked only the focused connection"
+        )
+        assert domain_state.fleet_seam_board(app.fleet, "other-profile") is not None
         await app.shutdown_sources()

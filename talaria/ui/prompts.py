@@ -173,7 +173,7 @@ DENY_ALL_CHOICE: Final[str] = "deny"
 #: **Approval's entry is the one that must never be the empty string, and the
 #: reason is not symmetry.** The gateway's approval consumer blocks on ``None``
 #: and on ``"deny"`` and returns *approved* for every other resolved choice
-#: (``tools/approval.py:3291``, ``:3320``), so an approval "declined" with an
+#: (``tools/approval.py:3584``, ``:3679``), so an approval "declined" with an
 #: empty choice would authorize the command the operator was trying to refuse.
 #: The value lives in this table rather than being derived at the call site so
 #: there is exactly one place that decision is written down.
@@ -738,7 +738,7 @@ class PromptCard(Vertical):
         (:func:`decline_value`), so the widget layer has no way to post a
         decline carrying an empty approval choice — the one string the
         gateway's approval consumer reads as *approved*
-        (``tools/approval.py:3320``). A ``declined=True`` flag on
+        (``tools/approval.py:3679``). A ``declined=True`` flag on
         :class:`Answered` would have put that value one keystroke from a
         control the operator pressed to refuse.
 

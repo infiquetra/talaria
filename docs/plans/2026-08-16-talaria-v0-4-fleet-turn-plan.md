@@ -342,6 +342,55 @@ unit returns a machine-readable verdict (`clean`, or `blocked` with its survivin
 the /work driver halts on any non-clean verdict — remediating and re-reviewing before any
 dependent unit starts. A review return is never treated as completion by mere existence.
 
+### UNSLOTTED — the foreign-wait data path: cadence, feed assembly, and the settle latch
+
+**Status: one slice, not three. Found across U7 (operator rulings of 2026-08-18), ruled out of U7,
+and NOT yet assigned to a unit. The slot is the operator's to choose.**
+
+**U9's AE2 acceptance leg depends on this slice.** AE2 exercises fleet-level settle-and-latch, and
+`FleetState.settled_items` is written only by `settle_queue_item`, which has no production caller —
+so that leg cannot pass against a live gateway until this lands. U9's *other* legs do not depend on
+it: driven approvals are pushed by the gateway and route per connection since U7's composition root.
+**Slotting this before U9, or accepting that AE2's fleet-level leg is deferred, is a decision to make
+here.**
+
+Three parts, and they are one slice because each is inert without the others — wiring any one alone
+manufactures the next dead production path:
+
+1. **The cadence.** `next_poll_due_at` (`talaria/domain/registry.py:265`) carries the whole KTD2
+   rule — a 2-second coalesce after a `sessions.changed` hint, a 30-second backstop — and nothing in
+   `talaria/` calls it. Nothing consumes `channel.hint_at` either, which `route_frame` records on
+   every `sessions.changed` (`talaria/domain/state.py:3224`) and only `apply_active_list` clears. A
+   gateway announcing that its session list changed is heard and not acted on.
+2. **Feed B's assembly.** `approval_detail_targets` (`state.py:3935`), `decode_pending_approvals`
+   (`queue.py:472`) and `apply_approval_pending` (`state.py:3964`) are reachable only from tests.
+   `approval.pending` is issued in production **only as a presence probe**. `FleetState.approval_detail`
+   is written in exactly one place — inside the unreachable `apply_approval_pending` — and pruned in
+   four, so it is permanently empty in a live run. U6's "two feeds, one identity" runs on one feed.
+3. **The settle latch.** `settle_queue_item` (`state.py:4049`) has no production caller, so
+   `settle_items` stays empty and `build_queue`'s `settled=` argument is always the empty set.
+   Production settles through `settle_prompt` on the focused session instead.
+
+*Why the cadence and the feed cannot be split.* The cadence is what would fill `approval_detail`;
+the feed is what the cadence would be for. Assembling the fold without a driver leaves a reducer
+nothing calls on a schedule, and building the cadence without the fold leaves a timer with nothing
+to fetch.
+
+*What exists instead, after U7.* Each connection is probed and its roster swept when it comes up and
+again on the five-minute seam revalidation (`TalariaApp.sweep_connection`), plus the focused fold
+behind `/sessions`. Sessions Talaria's own connections drive push their frames, so a **driven** wait
+is current on any connection. A **foreign** session's wait — one another client owns on a gateway
+Talaria is merely connected to — reaches the queue not at all.
+
+*What U7 did instead, so the gap is disclosed rather than silent.* `connection_notices` now states,
+for every connection and whatever its seam probe found, that foreign approval detail is not polled —
+because a present seam means "this gateway would answer", never "we asked", and the silence it
+bought read as "everything of this connection's is in the queue". **That line is deliberately
+temporary and is deleted when this slice lands**, not kept as a permanent caveat. It is pinned by
+`test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed`. Its cost is that the
+bare `needs-you: none` is unreachable until then, which is the honest state: no fleet has been fully
+asked while a whole feed is never fetched.
+
 ### U1. The live verification and the new pinned read
 
 **Goal:** Turn the grounding evidence into the recorded, operator-witnessed protocol baseline the
@@ -581,8 +630,53 @@ the fleet queue non-empty — the KTD13 pin, extending `tests/domain/test_projec
 
 ### U7. The needs-you surface: reserved summary, drill-down, inline approvals
 
-**Goal:** The queue is discoverable at a glance in space that cannot reflow anything, drillable
-per shipped picker conventions, and every kind resolvable keyboard-only.
+**Goal:** Talaria's live launch becomes U2's production consumer, and the queue is discoverable at a
+glance in space that cannot reflow anything, drillable per shipped picker conventions, and every kind
+resolvable keyboard-only.
+
+**FIRST NAMED DELIVERABLE — the production composition root (operator ruling, 2026-08-18).** Ahead of
+any surface work. `build_live_app` (`talaria/cli.py`) assembles the `ConnectionSet`
+(`talaria/transport/connection_set.py`) with registry-rooted routing, so the running application
+dials every configured profile rather than one, plus an app-assembly test that fails if the entry
+point ever reverts to a single `LiveSource`.
+
+*Why it is U7's and not U8's or U9's.* U2 built the connection set and its two-gateway tests; nothing
+ever assembled it, so `TalariaApp.connections` was permanently `None` and every multi-connection
+branch was dead. Without this wiring U7's own needs-you surface would be fleet-capable only in
+fixtures — the defect class U6's round-ten review found at function scale, repeated at application
+scale. It is a prerequisite of U7's production claim, not a late detail before acceptance. **U9's
+two-profile live acceptance leg depends on it**, and would otherwise be the first thing to discover
+it.
+
+*Four conditions, all operator-set.* (1) This amendment names the `/profiles` behaviour flip
+explicitly: populating `connections` changes `/profiles` from drop-switching to ensure-beside, which
+is decided design, not a new choice — see U2's mechanism above ("`/profiles` stops drop-switching")
+and the `ConnectionSet.ensure` entry in `docs/engineering-journal/DECISIONS.md`. (2) The picker tests
+asserting the drop-switch behaviour are rewritten to assert the new meaning and say why, never merely
+repointed. (3) The `# pragma: no cover` on `_ensure_profile` (`talaria/ui/app.py`) comes off with
+real coverage in the same commit that makes it live. (4) U6's seam-board carry-forward fires here:
+production seam probing goes per-connection, and the single-board reading is retired on evidence —
+`FleetState.seam_boards` is already a per-connection mapping, but `app.seams` reads only the focused
+profile's board and `_reprobe_seams` runs from the single-connection callback.
+
+*How the four resolved (2026-08-18).* (1) Done — this section names the flip and both authorities.
+(2) Already satisfied by U2, which wrote its picker tests for both shapes before either could be
+reached; the application-level pin on the routing itself is
+`tests/ui/test_picker.py::test_selecting_a_profile_ensures_its_connection_and_never_switches`, which
+drives the real `TalariaApp` through `/profiles 1` and asserts `connections.ensure` was called and the
+switcher untouched. (3) The pragma stays, on the operator's confirmation: it sits on a defensive
+`if connections is None` branch *inside* `_ensure_profile` that the sole caller already makes
+unreachable, not on the function, which the picker tests cover. (4) Done, and it needed more than the
+literal ask — `app.seams` reading the focused board was correct and stayed; what was single was the
+**probing**. `TalariaApp.sweep_connection` now probes *and* sweeps one named connection into its own
+board and its own registry rows, on that connection's `connected` transition and on the revalidation
+timer. The pairing is not tidiness: a probe alone deletes the queue's "capabilities not probed"
+sentence while enumerating nothing. See DECISIONS.md, "A background connection is probed and swept in
+one round".
+
+**REPORTED OPEN, not closed here — the KTD2 poll loop has no production caller.** Ruled out of U7 by
+the operator on 2026-08-18 and written up under "UNSLOTTED" at the head of this section, which is
+where the slot gets chosen.
 
 **Covers:** R16, R17, R18 (surface half), R19, R21, R22, R23, PC4, OP3, KTD7, KTD9, AE7, AE9,
 AE11.
@@ -602,9 +696,10 @@ the queue path converge on it (KTD9).
 Every rendered string from the gateway crosses `defang` + `literal_text` (R23); no sensitive
 respond value reaches any row (R22). Expiry is visible twice in the same render boundary (R19).
 
-**Files:** `talaria/ui/needs_you.py` (new: the bar and the drill-down source),
-`talaria/ui/app.py` (compose wiring, `/needs` routing), `talaria/domain/commands.py` (the local
-command and its catalogue shadowing), `talaria/ui/prompts.py` (answer-path reuse only).
+**Files:** `talaria/cli.py` (the composition root — `build_live_app` assembles the `ConnectionSet`),
+`talaria/ui/needs_you.py` (new: the bar and the drill-down source), `talaria/ui/app.py` (the tagged
+frame pump, compose wiring, `/needs` routing), `talaria/domain/commands.py` (the local command and
+its catalogue shadowing), `talaria/ui/prompts.py` (answer-path reuse only).
 
 **Test scenarios:** `tests/ui/test_needs_you.py` (new) — AE9 verbatim via the geometry-invariance
 pattern (`tests/ui/test_status_region.py:110` is the template): empty → one → many → empty, no

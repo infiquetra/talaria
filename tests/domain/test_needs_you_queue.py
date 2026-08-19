@@ -550,7 +550,15 @@ def test_an_expiry_clears_the_item_and_the_count_in_one_reduction() -> None:
     )
     queue = fleet_queue(expired)
     assert queue.count == 0
-    assert summary_line(queue, BASE_TIME + 11) == NEEDS_YOU_NONE
+    # The count is what this test is about, and it reached none. The summary is
+    # no longer the BARE none — since CR7, every connection carries the standing
+    # "foreign approval detail is not polled" line, so a fleet cannot report
+    # itself fully asked while the poll is unassembled. Asserted as "the count
+    # said none" rather than loosened to a substring, so a regression that put a
+    # real item back would still fail here.
+    assert queue.count == 0 and summary_line(queue, BASE_TIME + 11).startswith(
+        NEEDS_YOU_NONE
+    )
 
 
 # ── R14: only resolvable items ───────────────────────────────────────────
@@ -981,11 +989,28 @@ def test_a_never_probed_connection_is_named_as_never_probed() -> None:
 
 
 def test_a_fully_answered_quiet_fleet_says_none_without_qualification() -> None:
-    """The precondition for the two tests above: a connection that answered and
-    has nothing waiting reads as nothing waiting."""
+    """The precondition for the two tests above, as far as it now goes.
+
+    **Renamed in substance by CR7 (2026-08-18): the qualification is real and
+    this fleet has not, in fact, been fully asked.** Nothing in production issues
+    ``approval.pending`` as a data call, so a foreign session waiting on an
+    approval is not in this queue on any connection. The bare ``needs-you: none``
+    is therefore unreachable until that poll lands, and that is the honest state
+    rather than a wording defect — a fleet that says it was fully asked while one
+    whole feed is never fetched is the sentence R14 exists to forbid.
+
+    What the test still guards, and what it was really for: the qualification is
+    *exactly one* line and it is the known one. Any second notice here means some
+    other connection went unanswered and the surface would be hiding it.
+    """
     queue = fleet_queue(probed(FleetState(focused_profile=PROFILE)))
-    assert queue.notices == ()
-    assert summary_line(queue, BASE_TIME) == NEEDS_YOU_NONE
+    assert len(queue.notices) == 1, (
+        "a quiet, fully answered fleet carries a notice beyond the known "
+        "unpolled-approval one"
+    )
+    assert "not polled" in queue.notices[0]
+    assert summary_line(queue, BASE_TIME).startswith(NEEDS_YOU_NONE)
+    assert summary_line(queue, BASE_TIME) != NEEDS_YOU_NONE
 
 
 # ── Protection: the queue's one stored consequence ───────────────────────
@@ -1166,7 +1191,15 @@ def test_an_empty_fleet_builds_an_empty_queue_without_raising() -> None:
 
 def test_a_polled_item_of_a_disconnected_connection_says_it_is_stale() -> None:
     """R20: a queue item whose source dropped says so rather than presenting a
-    frozen age as current."""
+    frozen age as current.
+
+    **The rendering half was added in U7 and the field half is older.** As first
+    written this test asserted `stale_since` was *set* and stopped there, which
+    is what its own docstring promised and not what it checked: nothing read the
+    field, so the age went on counting up off a clock that had stopped watching
+    and the surface said exactly what the docstring said it must not. The
+    assertions below are the promise, tested.
+    """
     from talaria.domain.state import fleet_connection_lost
 
     fleet = foreign_waiting_fleet()
@@ -1175,6 +1208,18 @@ def test_a_polled_item_of_a_disconnected_connection_says_it_is_stale() -> None:
     assert item.stale_since == BASE_TIME + 30
     assert any("connection down" in notice for notice in fleet_queue(dropped).notices)
     assert SOURCE_APPROVAL_POLL not in {item.source}
+
+    # Five minutes after the break, and the only number that moved is the blind
+    # one. The wait is reported as it stood when the stream broke, as a floor,
+    # because Talaria cannot know whether it ended a second later.
+    line = wait_line(item, BASE_TIME + 330)
+    assert "unobserved for 300s" in line, (
+        "a dropped connection's item does not say how long it has been unobserved"
+    )
+    assert "≥" in line, "an unobserved wait is reported as though it were still watched"
+    assert "330s" not in line, (
+        "the age kept counting off a clock that stopped watching at the break"
+    )
 
 
 def test_a_polled_approval_feed_a_does_not_hold_still_reaches_the_queue() -> None:
@@ -1598,7 +1643,12 @@ def test_a_healthy_polled_connection_is_not_reported_as_down() -> None:
     """
     fleet = foreign_waiting_fleet()
     assert fleet.channels[PROFILE].connected is True
-    assert fleet_queue(fleet).notices == (), "a healthy connection was called down"
+    # Narrowed to this test's actual subject by CR7. It is about the DOWN notice
+    # being rare enough to mean something; the standing unpolled-approval line is
+    # a different fact about a different gap and says nothing about the socket.
+    assert not any("down" in notice for notice in fleet_queue(fleet).notices), (
+        "a healthy connection was called down"
+    )
 
     dropped = fleet_connection_lost(fleet, profile=PROFILE, at=BASE_TIME + 30)
     assert any("down" in notice for notice in fleet_queue(dropped).notices)
@@ -2971,3 +3021,61 @@ def test_an_approval_on_a_down_connection_is_refused_not_dropped() -> None:
     assert reasons == [APPROVAL_ON_DOWN_CONNECTION, APPROVAL_ON_DOWN_CONNECTION], (
         f"a second approval on a down connection was given the wrong reason: {reasons}"
     )
+
+
+def test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed() -> None:
+    """A present seam means "this gateway would answer", never "we asked".
+
+    CR7 found that nothing in production issues ``approval.pending`` as a data
+    call — it is registered as a presence probe only — so ``approval_detail`` is
+    written by nothing in a live run. Before this line, a connection whose
+    approval-detail seam probed *present* emitted no notice at all, and that
+    silence read as "everything of this connection's is in the queue". It is
+    R14's failure arriving through the door the seam was meant to guard: not a
+    queue that lost an item, but a queue that stopped saying it had never looked.
+
+    Asserted at BOTH seam states, because the fact does not depend on what the
+    gateway can do — Talaria does not ask, whatever the answer would have been.
+    """
+    from talaria.domain.compat import (
+        SeamObservation,
+        SeamStatus,
+        apply_probe_round,
+        empty_board,
+    )
+    from talaria.domain.queue import connection_notices
+    from talaria.domain.registry import ConnectionChannel
+
+    channel = ConnectionChannel(profile="beta", connected=True, last_poll_at=BASE_TIME)
+
+    def notices(approval_detail_status: SeamStatus | None) -> tuple[str, ...]:
+        board = apply_probe_round(
+            empty_board("beta"),
+            (
+                SeamObservation(
+                    seam="roster", status="present", source="probe", trigger="attach", detail=""
+                ),
+                SeamObservation(
+                    seam="approval-detail",
+                    status=approval_detail_status,
+                    source="probe",
+                    trigger="attach",
+                    detail="",
+                ),
+            ),
+            at=BASE_TIME,
+        )
+        return connection_notices(profile="beta", board=board, channel=channel)
+
+    probed_present = notices("present")
+    assert any("not polled" in line for line in probed_present), (
+        "a connection whose approval-detail seam probed present said nothing, so "
+        "its silence reads as 'we asked and nothing is waiting'"
+    )
+    assert any("beta" in line for line in probed_present), "the line names no connection"
+
+    # And an absent seam still says its own thing, with the unpolled fact after it.
+    absent = notices("absent")
+    assert any("approval-detail absent" in line for line in absent)
+    assert any("not polled" in line for line in absent)
+    assert absent[-1].endswith("whether or not this gateway would answer")
