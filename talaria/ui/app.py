@@ -34,6 +34,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from time import time as _wall_clock
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
 from textual import events
@@ -108,7 +109,11 @@ from talaria.domain.projection import (
     terminal_read,
 )
 from talaria.domain.queue import NeedsYouQueue
-from talaria.domain.registry import RegistryRow, attach_displaces_client
+from talaria.domain.registry import (
+    RegistryRow,
+    attach_displaces_client,
+    next_poll_due_at,
+)
 from talaria.domain.selection import PickerSource
 from talaria.domain.session_list import (
     SessionDirectory,
@@ -582,6 +587,13 @@ DEFAULT_PROFILE: Final[str] = "default"
 #: probed the only honest way instead: it is called, and a call that fails
 #: leaves the rows saying what they actually know (R10/R24).
 LIST_ACTIVE_METHOD: Final[str] = "session.active_list"
+
+#: How often the poll loop asks whether any connection is due. A floor on the
+#: cadence rather than the cadence itself: :func:`~talaria.domain.registry.
+#: next_poll_due_at` is re-checked on every tick, so a faster timer cannot make
+#: the fleet poll faster than KTD2's 2-second coalesce allows — the same
+#: relationship ``PROBE_REVALIDATION_S`` has with ``seam_probe_due``.
+POLL_TICK_S: Final[float] = 1.0
 
 #: Said when the roster call failed and the picker fell back to identity-only
 #: rows. Names the absent capability rather than showing lifecycle zeroes.
@@ -1275,6 +1287,9 @@ class TalariaApp(App[None]):
         #: The five-minute seam revalidation timer (U5). Separate from the
         #: render tick above so the two cadences cannot be confused for one.
         self._seam_timer: Timer | None = None
+        #: KTD2's poll timer (U8B). Stopped in teardown beside the other two —
+        #: a timer left running past shutdown reaches a torn-down inventory.
+        self._poll_timer: Timer | None = None
         self._pump_task: asyncio.Task[None] | None = None
         #: KTD2's landing barrier: how many session landings are in flight.
         #:
@@ -1571,6 +1586,13 @@ class TalariaApp(App[None]):
         # ``seam_probe_due`` before doing anything, so the interval is a floor
         # rather than the only thing standing between here and a busy loop.
         self._seam_timer = self.set_interval(PROBE_REVALIDATION_S, self.revalidate_seams)
+        # KTD2's cadence. A third timer rather than a branch inside either of the
+        # two above, because it answers a different question on a different
+        # period: the render tick is 50ms and the seam re-probe is five minutes,
+        # while a poll that must coalesce within two seconds of a hint sits
+        # between them. The callback re-checks ``next_poll_due_at`` per
+        # connection, so this interval is a floor.
+        self._poll_timer = self.set_interval(POLL_TICK_S, self.poll_due_connections)
         # **A recording's connections were up, and the fleet must start saying
         # so.** ``ConnectionChannel.connected`` defaults False, so without this a
         # replayed two-connection log reports "connection down before it was ever
@@ -1642,6 +1664,9 @@ class TalariaApp(App[None]):
         if self._seam_timer is not None:
             self._seam_timer.stop()
             self._seam_timer = None
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
         for task in (
             self._pump_task,
             self._status_task,
@@ -4144,6 +4169,24 @@ class TalariaApp(App[None]):
         await self._probe_round(
             profile, dispatcher, trigger=trigger, session_id="", health=None
         )
+        await self.sweep_roster(profile, dispatcher)
+
+    async def sweep_roster(self, profile: str, dispatcher: LiveDispatcher) -> None:
+        """The roster half of :meth:`sweep_connection`, on its own.
+
+        Factored out for :meth:`poll_due_connections`, which reaches the FOCUSED
+        connection too — and there the probe half would be a second, conflicting
+        probe path beside :meth:`verify_gateway`'s, issued with an empty session
+        id that connection never asked for.
+
+        Calling this alone on a *background* connection would be U7's defect in
+        reverse, so nothing does: :meth:`sweep_connection` remains the only way a
+        background connection is reached, and it still pairs the two halves. The
+        asymmetry is safe in this direction and not the other — a roster sweep
+        without a probe leaves ``connection_notices`` saying "capabilities not
+        probed", which stays true, whereas a probe without a roster sweep deletes
+        a true sentence and leaves the gap it described.
+        """
         outcome = await dispatcher.call(
             LIST_SESSIONS_METHOD, {"limit": SESSIONS_LIST_LIMIT}, timeout=self.call_timeout
         )
@@ -4258,6 +4301,49 @@ class TalariaApp(App[None]):
             # probe is overdue is the one whose silence the queue is least
             # entitled to read as quiet (R24).
             await self.sweep_connection(profile, trigger="revalidation")
+
+    async def poll_due_connections(self) -> None:
+        """KTD2's cadence, finally driven: sweep every connection that is due.
+
+        ``next_poll_due_at`` has carried the whole rule since U3 — a 2-second
+        coalesce after a ``sessions.changed`` hint, a 30-second backstop — and
+        nothing called it, so a gateway announcing that its session list had
+        changed was heard and not acted on. ``route_frame`` records that hint for
+        every connection including the focused one, which is why this loop covers
+        the whole inventory rather than only the background half.
+
+        **The due-check reads the wall clock, and that is the point of the stamp
+        split.** ``last_poll_at`` is a schedule stamp, not an age; measuring it
+        against ``state.last_observed_at`` made a background connection's cadence
+        a function of traffic on the connection it is not, and a fleet quiet
+        everywhere never polled at all. In live mode the two clocks share a scale
+        anyway — ``talaria/transport/source.py:824`` stamps every live frame from
+        ``time.time()`` — so the hint and this comparison are directly
+        comparable, which is what ``next_poll_due_at``'s own ``max()`` needs.
+
+        Live-only, like every other scheduled round here: a replay has no gateway
+        to poll, so no determinism claim touches this.
+        """
+        if self.mode != "live" or self._teardown_started:
+            return
+        inventory = self.connections
+        if not isinstance(inventory, ConnectionInventory):
+            return
+        now = _wall_clock()
+        for profile in inventory.profiles:
+            channel = self._fleet.channels.get(profile)
+            # A connection with no channel yet has never been polled, which
+            # ``next_poll_due_at`` reads as due immediately — the same answer,
+            # reached without constructing a row for it first.
+            if channel is not None and now < next_poll_due_at(channel):
+                continue
+            dispatcher = inventory.source_for(profile)
+            if dispatcher is None:
+                continue
+            if profile == self.fleet_profile:
+                await self.sweep_roster(profile, dispatcher)
+            else:
+                await self.sweep_connection(profile, trigger="revalidation")
 
     async def open_session(self, selection: StartupSelection) -> RpcOutcome | None:
         """Resolve KTD7's selection into one focused session (R2).
@@ -5263,6 +5349,11 @@ class TalariaApp(App[None]):
             profile=profile,
             at=at,
             poll_epoch=epoch,
+            # Two clocks, deliberately. ``at`` is the frame clock and stamps
+            # every age; this stamps only the poll schedule, which nothing reads
+            # as an age. See ``apply_active_list``'s docstring for the
+            # measurement that separated them.
+            polled_at=_wall_clock(),
         )
         return False
 

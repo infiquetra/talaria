@@ -748,11 +748,38 @@ determinism gate can measure a multi-connection recording rather than refusing i
 cadence is for. Wiring any part alone manufactures the next dead production path, which is the defect
 class U7 spent three commits closing.
 
-1. **The cadence.** `next_poll_due_at` (`talaria/domain/registry.py:265`) carries the whole KTD2 rule
-   — a 2-second coalesce after a `sessions.changed` hint, a 30-second backstop — and nothing in
-   `talaria/` calls it. Nothing consumes `channel.hint_at` either, which `route_frame` records on
-   every `sessions.changed` (`talaria/domain/state.py:3224`) and only `apply_active_list` clears. A
-   gateway announcing that its session list changed is heard and not acted on.
+1. **The cadence. LANDED 2026-08-19.** `next_poll_due_at` (`talaria/domain/registry.py:265`) carries
+   the whole KTD2 rule — a 2-second coalesce after a `sessions.changed` hint, a 30-second backstop —
+   and nothing in `talaria/` called it. Nothing consumed `channel.hint_at` either, which `route_frame`
+   records on every `sessions.changed` (`talaria/domain/state.py:3224`) and only `apply_active_list`
+   clears. A gateway announcing that its session list changed was heard and not acted on.
+
+   **This unit changes a reducer's signature, which this section said it would not, and the change is
+   declared here rather than absorbed.** The phrasing below reads "no new reducers expected — the fold
+   already exists and is tested". That is true of reducers and not of their parameters:
+   `apply_active_list` gains `polled_at` beside `at`. Operator ruling of 2026-08-19, on this finding:
+
+   > The cadence could not be driven from the clock it was written against. `next_poll_due_at` does
+   > arithmetic on `channel.last_poll_at`, which `apply_active_list` stamped from the same `at` that
+   > stamps every age — and `at` is the *focused* session's frame clock, which only focused traffic
+   > advances. So a background connection's poll schedule was a function of traffic on the connection
+   > it is not, and a fleet quiet everywhere never polled at all, which is exactly when a poll is the
+   > only way to learn anything. Measured: sixty frames spanning sixty seconds of frame time on a
+   > background connection left the focused clock at `0.0` and that connection's poll due at `130.0`,
+   > while the registry learned a row from the same frames.
+
+   `at` stays the frame clock and stamps everything read as an age, so R20 and KTD12 are untouched;
+   `polled_at` stamps only `last_poll_at`, whose single consumer is the scheduler. It defaults to
+   `at`, so no existing caller moves. The live loop passes the wall clock, which is honest because the
+   loop is live-only — a replay has no gateway to poll — and because
+   `talaria/transport/source.py:824` stamps every live frame from `time.time()`, so the hint and the
+   schedule share a scale, which `next_poll_due_at`'s own `max()` requires.
+
+   The pinned property is the operator's: **a background connection's own silence brings its poll
+   due** (`tests/ui/test_poll_cadence.py`). Eight mutations; one survived first — reverting
+   `last_poll_at` to the frame clock, which every cadence test missed because they set the stamp
+   directly rather than driving the reducer that writes it. That is a coverage gap rather than
+   equivalence, and it is closed by a domain test driving the two clocks far apart.
 2. **Feed B's assembly.** `approval_detail_targets` (`state.py:3935`), `decode_pending_approvals`
    (`queue.py:472`) and `apply_approval_pending` (`state.py:3964`) are reachable only from tests.
 

@@ -3310,6 +3310,7 @@ def apply_active_list(
     profile: str,
     at: float,
     poll_epoch: int,
+    polled_at: float | None = None,
 ) -> FleetState:
     """Fold one successful ``session.active_list`` poll in (KTD2's live feed).
 
@@ -3319,7 +3320,30 @@ def apply_active_list(
     first poll that saw the wait), and a ``waiting`` row whose kind no event
     has named carries the flattened ``unobserved`` kind (the gateway exposes
     nothing finer for sessions other clients drive).
+
+    **Two stamps, because they are two clocks.** ``at`` is the frame clock and
+    stamps everything an operator reads as an age — R20 and KTD12 both rest on a
+    replayed recording reproducing those exactly. ``polled_at`` stamps only
+    ``last_poll_at``, which nothing reads as an age: its single consumer is
+    :func:`~talaria.domain.registry.next_poll_due_at`, the poll schedule.
+
+    They were one parameter until 2026-08-19, and the conflation made KTD2's
+    30-second backstop unable to fire. The frame clock advances on focused
+    traffic only — ``route_frame`` sends everything else to its registry row —
+    so a *background* connection's schedule was driven entirely by traffic on the
+    connection it is not. Measured: sixty frames spanning sixty seconds of frame
+    time on a background connection left the focused clock at 0.0 and that
+    connection's poll due at 130.0, while the registry learned a row from the
+    same frames. A fleet quiet everywhere never polled at all, which is when a
+    poll is the only way to learn anything.
+
+    ``polled_at`` defaults to ``at`` so every existing caller keeps its current
+    behaviour, and the live poll loop passes the wall clock. That is honest
+    rather than expedient: the loop is live-only (replay has no gateway to poll),
+    so no determinism claim touches this stamp.
     """
+    if polled_at is None:
+        polled_at = at
     fleet = replace(fleet, clock=max(fleet.clock, at))
     seen: set[RowKey] = set()
     for active in directory.sessions:
@@ -3432,7 +3456,9 @@ def apply_active_list(
     channel = replace(
         fleet.channel(profile),
         active_epoch=poll_epoch,
-        last_poll_at=at,
+        # The SCHEDULE clock, not the frame clock — see this function's own
+        # docstring for the measurement that separated them.
+        last_poll_at=polled_at,
         hint_at=None,
         connected=True,
     )
