@@ -80,11 +80,34 @@ is still registered under it. Pinning the alias would remove the phantom class o
 reopens U3's four-slot memory bound, which is a reviewed decision and not U6's to change. Recorded as
 a P0 candidate in `QUEUED.md` with the ceiling that has to be quantified first.
 
-**Revisit when.** The alias pinning above lands, at which point phantoms stop occurring and the fold
-becomes dead code rather than a narrowed rule — delete it then rather than leaving a mechanism whose
-precondition can no longer arise. Also revisit if a gateway revision ever resolves an approval
-positionally *despite* a supplied request id, which would invalidate the targeting evidence this
-entry rests on; the three citations above are the things to re-check.
+**Revisit when.** The alias pinning above lands, at which point *one* of the fold's two preconditions
+stops occurring. Also revisit if a gateway revision ever resolves an approval positionally *despite*
+a supplied request id, which would invalidate the targeting evidence this entry rests on; the three
+citations above are the things to re-check.
+
+**The deletion half of that clause is WITHDRAWN — U8 checked, 2026-08-18, and found one.** It read
+"the fold becomes dead code rather than a narrowed rule — delete it then", which assumed the phantom
+was the *only* way an approval reaches this fold without an aimable id. It is not. A keyless
+`approval.request` — one carrying no `request_id` at all — arrives from a supported input and lands
+in exactly the same state, so alias pinning would remove one precondition and leave the other
+standing. **The fold is load-bearing, not insurance with a stated trigger.**
+
+Three verifications, each run against a current source rather than reasoned from the format:
+
+* **The gateway emitted them.** `tools/approval.py` at the pinned read `7f4d15515` contains **zero**
+  occurrences of `request_id`; the same file at the checkout's HEAD (`d8e238691`) contains eight. So
+  every approval that gateway announced was keyless, and any v0.1–v0.3 recording taken against it
+  carries them.
+* **The recorder does not strip it.** `request_id` is never named in `talaria/recorder/redact.py`, so
+  an absent id in a log is the gateway's silence and not redaction's.
+* **The domain keeps the frame.** `_register_prompt` (`talaria/domain/state.py:2100-2109`) mints a
+  session-qualified synthetic key — `approval:<session>#<n>` — and leaves `observed_request_id`
+  empty, which is the field the fold reads. Probed: a keyless `approval.request` on an adopted
+  session yields one prompt, `request_id='approval:s1#1'`, `observed_request_id=''`.
+
+**What U8 still owes on the strength of this.** `grep -c "approval.request"` returns 0 on every local
+corpus, so no recording exercises the fold this entry now calls load-bearing. U8's replay corpus must
+contain a keyless approval, or the determinism gate it extends never looks at it.
 
 ## 2026-08-17
 

@@ -416,6 +416,7 @@ def build_live_app(
         build_source_factory,
         credential_provider_factory,
         plan_connections,
+    recorded_connections,
         resolve_connections,
     )
     from talaria.transport.credentials import LoopbackTokenProvider
@@ -465,26 +466,16 @@ def build_live_app(
 
     admin_client: AdminClient | None = admin_for(target.url)
 
-    recorder: FrameRecorder | None = None
-    requested = getattr(args, "record", None)
-    if requested is not None:
-        recordings = config_module.recordings_dir(cfg.config_dir)
-        if not requested:
-            recordings.mkdir(parents=True, exist_ok=True)
-        # ``target.url`` and not the dialled URL: the endpoint written into the
-        # frame log's header has already had every credential query parameter
-        # stripped by ``AttachTarget`` (R1, KTD13). The recorder redacts as well,
-        # but handing it a credential and trusting the redaction would make the
-        # log's safety depend on one boundary instead of two.
-        recorder = FrameRecorder(
-            Path(requested) if requested else default_log_path(recordings),
-            target.url,
-        )
-
+    # **No recorder, and the removal is the point.** This source is never
+    # dialled — it survives only so :func:`_prime_credential` can read its
+    # provider (see the note where it is returned) — so the recorder it used to
+    # be handed could never receive a frame from it. Passing one made the
+    # recording look wired here while every recorded frame actually arrived
+    # through the connection set's per-connection views, which is where U8 found
+    # the untagged-log defect hiding.
     source = LiveSource(
         target,
         credential_provider,
-        recorder=recorder,
         credential_factory=credential_for,
     )
 
@@ -517,6 +508,38 @@ def build_live_app(
     # control to Textual — but a test or a future async caller has to build the
     # app before entering its loop, not during.
     entries = asyncio.run(resolve_connections(members, provider_for))
+
+    # **Built here rather than beside the admin client above, and the position is
+    # the whole of U8's first finding.** ``recorded_connections`` needs the
+    # RESOLVED inventory, which does not exist until the line above — so a
+    # recorder constructed earlier could only ever be told about one connection.
+    # It then set ``_multi`` False, which makes ``view()`` skip its profile
+    # validation and ``_tag()`` drop the profile key outright, so a live
+    # two-gateway ``talaria --record`` run wrote a version-1, untagged log: the
+    # one recording U8 exists to replay per-connection, and the one shape it
+    # could not produce.
+    #
+    # The frames reach it through ``build_source_factory(recorder=recorder)``
+    # below, which hands each connection its own ``recorder.view(profile)``. The
+    # ``LiveSource`` built further down is never dialled and records nothing —
+    # see the note where it is kept.
+    recorder: FrameRecorder | None = None
+    requested = getattr(args, "record", None)
+    if requested is not None:
+        recordings = config_module.recordings_dir(cfg.config_dir)
+        if not requested:
+            recordings.mkdir(parents=True, exist_ok=True)
+        # ``target.url`` and not the dialled URL: the endpoint written into the
+        # frame log's header has already had every credential query parameter
+        # stripped by ``AttachTarget`` (R1, KTD13). The recorder redacts as well,
+        # but handing it a credential and trusting the redaction would make the
+        # log's safety depend on one boundary instead of two.
+        recorder = FrameRecorder(
+            Path(requested) if requested else default_log_path(recordings),
+            target.url,
+            connections=recorded_connections(entries),
+        )
+
 
     # The app does not exist yet and the set needs to reach it, which is the same
     # circularity ``LiveSource.bind`` solves one line further down. A holder keeps

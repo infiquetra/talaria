@@ -697,11 +697,23 @@ Why it matters beyond replay: U6's unplaceable fold refuses an approval only whe
 gateway id for it, and the case for deleting that fold outright rests on the claim that blind items
 cannot arise. That claim is currently revision-specific — the live gateway mints a `request_id` for
 every entry — and nobody has checked the replay path or older logs, which is where a keyless approval
-would still reach the domain. Until U8 answers it, the fold ships as insurance with a stated trigger.
-If U8 proves blind items impossible across every supported input, the fold-deletion clause in
-`docs/engineering-journal/DECISIONS.md` (2026-08-18, "The unplaceable fold refuses only what would be
-answered blind") becomes actionable at the alias-pinning revisit. If U8 finds one, the fold is
-load-bearing and the clause is withdrawn.
+would still reach the domain.
+
+**ANSWERED, 2026-08-18: yes, one can arise — the fold is load-bearing and the deletion clause is
+withdrawn.** `tools/approval.py` at the pinned read `7f4d15515` contains zero occurrences of
+`request_id` where the checkout's HEAD contains eight, so that gateway announced every approval
+keyless and any v0.1–v0.3 recording taken against it carries them; `talaria/recorder/redact.py` never
+names the field, so an absent id is the gateway's silence rather than redaction's; and
+`_register_prompt` (`talaria/domain/state.py:2100-2109`) keeps the frame, minting the synthetic key
+`approval:<session>#<n>` while leaving `observed_request_id` empty — the field the fold reads. The
+clause is withdrawn in `docs/engineering-journal/DECISIONS.md` with all three citations.
+
+**A corpus obligation follows from that answer, and it is U8's.** `grep -c "approval.request"`
+returns 0 on every local corpus, so no recording exercises the fold this unit just declared
+load-bearing. **U8's replay corpus must contain a keyless approval** — an `approval.request` with no
+`request_id` — or the determinism gate it extends never looks at the mechanism the answer made
+permanent. A gate that grows a checkpoint over a state its corpus cannot reach is a green check
+standing in for coverage.
 
 ### U8B. The foreign-wait data path: cadence, feed assembly, and the settle latch
 

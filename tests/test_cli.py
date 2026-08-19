@@ -293,20 +293,39 @@ def test_the_live_launcher_can_record_the_session_it_drives(
     shipped client could not perform.
 
     Both directions are asserted in one observation: a launch without the flag
-    must record nothing, or "the source has a recorder" would be satisfied by a
+    must record nothing, or "the recorder is present" would be satisfied by a
     client that always records.
+
+    **Asserted on the connection set, not on the returned source, since U8.** It
+    used to read ``source._recorder is not None`` — true, and evidence of
+    nothing: that ``LiveSource`` is never dialled (it survives only to prime the
+    interactive credential level), so no frame ever reached the recorder it was
+    handed. Every recorded frame arrives through the set's per-connection views.
+    The old assertion would have stayed green through a launch that recorded
+    not one frame, which is the shape of defect this release keeps finding.
     """
-    plain, plain_source = cli_module.build_live_app(
+    plain_app, _plain_source = cli_module.build_live_app(
         parse_args([]), config_module.load_config()
     )
-    assert plain_source._recorder is None, "an unasked-for launch opened a frame log"
+    from talaria.transport.connection_set import ConnectionSet
+
+    assert isinstance(plain_app.connections, ConnectionSet)
+    assert plain_app.connections._recorder is None, (
+        "an unasked-for launch opened a frame log"
+    )
 
     out = tmp_path / "session.jsonl"
-    _app, source = cli_module.build_live_app(
+    app, source = cli_module.build_live_app(
         parse_args(["--record", str(out)]), config_module.load_config()
     )
     try:
-        assert source._recorder is not None
+        assert isinstance(app.connections, ConnectionSet)
+        assert app.connections._recorder is not None, (
+            "the fleet that actually receives frames was handed no recorder"
+        )
+        assert source._recorder is None, (
+            "the priming source was handed a recorder it can never feed"
+        )
         assert out.exists(), "the frame log was not opened"
         header = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
         assert header["kind"] == "header"
@@ -912,3 +931,43 @@ def test_the_assembled_app_knows_which_connection_it_is_on() -> None:
         "the app and its connection set disagree about which profile is home"
     )
     assert app.fleet_profile == app.current_profile
+
+
+def test_a_recording_launch_tells_the_recorder_the_whole_inventory() -> None:
+    """U8's first finding: the live recorder was built before the fleet existed.
+
+    ``recorded_connections`` needs the *resolved* inventory, and that does not
+    exist until ``resolve_connections`` has run. A recorder constructed before
+    it could only ever be told about nothing, which set ``multi_connection``
+    False — and that flag is what makes ``view()`` skip its profile validation
+    and ``_tag()`` drop the profile key. A live two-gateway ``talaria --record``
+    run therefore wrote a **version-1, untagged** log: precisely the recording
+    U8 exists to replay per connection, and the one shape it could not produce.
+
+    Asserted as agreement between the recorder and the set rather than against
+    ``multi_connection`` being True, because the correct answer depends on how
+    many profiles are configured where this runs — one connection SHOULD write
+    an untagged version-1 log (KTD6: "a log with none is one connection"). What
+    must hold either way is that the recorder was told what the set knows.
+    """
+    import tempfile
+
+    from talaria.recorder.framelog import FrameRecorder
+
+    cfg = config_module.load_config()
+    with tempfile.TemporaryDirectory() as directory:
+        log = Path(directory) / "run.jsonl"
+        app, _ = cli_module.build_live_app(parse_args(["--record", str(log)]), cfg)
+
+        from talaria.transport.connection_set import ConnectionSet
+
+        connections = app.connections
+        assert isinstance(connections, ConnectionSet), "no connection set was assembled"
+        recorder = connections._recorder
+        assert isinstance(recorder, FrameRecorder), "the fleet was handed no recorder"
+
+        assert [row.profile for row in recorder.connections] == list(connections.profiles), (
+            "the recorder does not know the connections the set will record; a "
+            "two-gateway run would write an untagged single-connection log"
+        )
+        assert recorder.multi_connection == (len(connections.profiles) > 1)
