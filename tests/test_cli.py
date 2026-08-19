@@ -883,3 +883,32 @@ def test_cancelling_at_the_credential_prompt_stops_before_the_interface(
     assert exit_code == 130
     assert order == []
     assert "cancelled" in capsys.readouterr().err
+
+
+def test_the_assembled_app_knows_which_connection_it_is_on() -> None:
+    """CR7 finding 4: the set knew its home and the app did not.
+
+    Two shipped behaviours died on this, and neither of them noisily. ``/profiles``
+    marks the current row through ``flatten_profiles(..., current=...)``, so with
+    an empty ``current_profile`` it marked nothing and opened at row one —
+    contradicting ``Selection.opened``'s own documented promise to open on the row
+    already in use. And ``set_model_default`` returns early on
+    ``if not self.current_profile``, so ``/models <n> default`` was refused in
+    every live session, with a notice blaming a session "started without one
+    named" that described all of them.
+
+    Asserted against the connection set rather than against the literal
+    ``"default"``, because the property is agreement between the two — a launcher
+    that learned to take ``--profile`` should keep them in step without this test
+    needing to know the name.
+    """
+    cfg = config_module.load_config()
+    app, _ = cli_module.build_live_app(parse_args([]), cfg)
+
+    connections = app.connections
+    assert connections is not None, "no connection set was assembled at all"
+    assert app.current_profile, "the app was assembled not knowing its own profile"
+    assert app.current_profile == connections.home, (
+        "the app and its connection set disagree about which profile is home"
+    )
+    assert app.fleet_profile == app.current_profile

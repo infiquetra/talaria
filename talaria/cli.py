@@ -558,6 +558,19 @@ def build_live_app(
         # ensure-beside path instead and never reads this.
         switcher=None,
         connections=connections,
+        # CR7 finding 4. Without this the app does not know which connection it
+        # is on, while the set beside it does — `app.current_profile` came up
+        # empty in a live run against `connections.home == "default"`. Two shipped
+        # behaviours were dead as a result, neither of them noisily: `/profiles`
+        # marked no row and opened at row one, contradicting `Selection.opened`'s
+        # own promise to open on the current row; and `/models <n> default` was
+        # refused on EVERY fresh session, because `set_model_default` returns
+        # early on `if not self.current_profile` and its notice blamed a session
+        # "started without one named" — which was every session.
+        #
+        # `home` rather than a constant: it is the profile this app is focused on
+        # and the one `_adopt_profile` will overwrite when `/profiles` moves it.
+        current_profile=connections.home,
         profile_endpoints=config_module.profile_endpoints(cfg),
         status_runner=_build_status_runner(cfg),
         status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),

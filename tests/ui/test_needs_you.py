@@ -20,6 +20,7 @@ The domain already carries both facts — ``NeedsYouQueue.notices`` and
 from __future__ import annotations
 
 import pytest
+from textual.widgets import Button
 
 from talaria.domain.models import QueueItem
 from talaria.domain.queue import NEEDS_YOU_NONE, NeedsYouQueue, summary_line, wait_line
@@ -789,4 +790,44 @@ async def test_escape_leaves_the_list_having_sent_nothing_and_returns_the_caret(
         ] == [], "backing out of the list answered something"
         # The approval is untouched: still waiting, still answerable.
         assert app.needs_you.count == 1
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_navigating_to_an_item_lands_the_caret_on_the_card() -> None:
+    """The plan's own sentence for this act, and CR7 finding 7's other half.
+
+    ``PromptRegion.focus_first_unanswered`` had no production caller anywhere —
+    seven tests asserted a caret jump no operator could reach. Navigation from the
+    needs-you list is the act the plan names for it: an operator who chose a
+    waiting item has already said what they want to do, so arriving with the caret
+    still in the composer costs them a keystroke the screen never asked for.
+    """
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test() as pilot:
+        feed(
+            app,
+            event("approval.request", {"description": "rm -rf build", "choices": ["once", "deny"]}),
+        )
+        await settle(app, pilot)
+        item = app.needs_you.items[0]
+
+        app.composer.text_area.focus()
+        await settle(app, pilot)
+        assert app.composer.text_area.has_focus, "the precondition never held"
+
+        await app._go_to_item(item)
+        await settle(app, pilot)
+
+        card = app.prompts.card_for("approval:s1#1")
+        assert card is not None, "the card this navigation was aimed at is not mounted"
+        # Asserted through the screen's focused widget, the way
+        # ``tests/ui/test_focus_returns.py`` already asserts this jump: the card's
+        # ``action_widget`` is the containing row, and what actually takes the
+        # caret is the first control inside it.
+        assert app.screen.focused is card.query_one("#choice-0", Button), (
+            "the caret never reached the card's control, so the answer the "
+            "operator came to give still needs a keystroke nothing asks for"
+        )
         await app.shutdown_sources()

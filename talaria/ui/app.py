@@ -5034,6 +5034,17 @@ class TalariaApp(App[None]):
                 # sentence with a vaguer one.
                 return
         await self.switch_session(item.session_id, waiting_kind=item.kind)
+        # The plan's own sentence for this act: "landing with
+        # `focus_first_unanswered` so the caret reaches the card". CR7 finding 7
+        # showed the method had no production caller at all — seven tests asserted
+        # a caret jump no operator could reach, and this navigation was about to
+        # be the eighth. Without it the operator arrives at the right session and
+        # the caret stays in the composer, so the answer they came to give needs a
+        # tab press nothing on screen asks for.
+        #
+        # A no-op returning False when no card is mounted, which is the ordinary
+        # outcome for a clarify or a terminal read that renders no control.
+        self.prompts.focus_first_unanswered()
 
     def _perform_sessions(self, argument: str) -> None:
         """Route ``/sessions``: always opens the picker; no argument shorthand.
