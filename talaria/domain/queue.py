@@ -1455,6 +1455,15 @@ def connection_notices(
     # becoming reachable again is its observable proof. Pinned by
     # ``test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed``.
     lines.append(f"{profile}: {_APPROVAL_DETAIL_UNPOLLED}")
+    # **No "this row cannot be asked about" line, and the absence is deliberate.**
+    # One was written here on 2026-08-19 and removed the same day: the state it
+    # disclosed cannot occur. ``RegistryRow.status`` is written in exactly one
+    # place (``state.py:3408``, inside ``apply_active_list``), which binds the
+    # row's alias in the same fold — so a row this gate admits has always been
+    # seen in an active list, and ``wire_handle`` always has an id for it. A
+    # notice for an unreachable state is a fixture-only path wearing R14's
+    # clothes. The guarantee is asserted instead of announced, by
+    # ``test_every_due_row_has_a_wire_handle``.
     return tuple(lines)
 
 

@@ -108,7 +108,7 @@ from talaria.domain.projection import (
     project,
     terminal_read,
 )
-from talaria.domain.queue import NeedsYouQueue
+from talaria.domain.queue import NeedsYouQueue, decode_pending_approvals
 from talaria.domain.registry import (
     RegistryRow,
     attach_displaces_client,
@@ -132,7 +132,9 @@ from talaria.domain.state import (
     activation_hydration_events,
     age_out_approvals,
     apply_active_list,
+    apply_approval_pending,
     apply_frame,
+    approval_detail_targets,
     attach_confirm_row,
     begin_fleet_answer,
     cancel_turn,
@@ -587,6 +589,13 @@ DEFAULT_PROFILE: Final[str] = "default"
 #: probed the only honest way instead: it is called, and a call that fails
 #: leaves the rows saying what they actually know (R10/R24).
 LIST_ACTIVE_METHOD: Final[str] = "session.active_list"
+
+#: Feed B's wire call (KTD11). Distinct from the bare presence probe of the same
+#: name that ``compat_check`` issues: that one carries no parameters at all, and
+#: MUST NOT, because a bare call cannot resolve a session and so cannot warm one.
+#: This one names a session, which is the whole difference — see
+#: :meth:`TalariaApp.poll_approval_detail` for what makes that acceptable.
+APPROVAL_PENDING_METHOD: Final[str] = "approval.pending"
 
 #: How often the poll loop asks whether any connection is due. A floor on the
 #: cadence rather than the cadence itself: :func:`~talaria.domain.registry.
@@ -4302,6 +4311,67 @@ class TalariaApp(App[None]):
             # entitled to read as quiet (R24).
             await self.sweep_connection(profile, trigger="revalidation")
 
+    async def poll_approval_detail(self, profile: str, dispatcher: LiveDispatcher) -> None:
+        """Feed B: ask one connection for its foreign sessions' pending approvals.
+
+        **This call warms an agent build on someone else's session, and the
+        trigger-status restriction is what makes that acceptable.** Read
+        first-hand rather than inferred: ``approval.pending``
+        (``tui_gateway/methods_prompt.py:1454``) resolves through ``_sess``,
+        which is ``_sess_building`` plus ``_wait_agent``, and
+        ``_sess_building``'s own docstring at ``tui_gateway/server.py:2519``
+        says it warms the agent build. That is exactly the side effect the
+        *probe* of this method exists to avoid, which is why the probe must stay
+        bare — ``_sessions.get("")`` misses and refuses 4001 before touching
+        anything.
+
+        A parameterless call cannot warm a build; this one can. So what covers it
+        is not the probe's argument but the operator ruling of 2026-08-17:
+        :func:`~talaria.domain.queue.approval_detail_due` restricts the call to
+        :data:`~talaria.domain.queue.APPROVAL_DETAIL_TRIGGER_STATUSES` —
+        ``waiting`` and ``working`` — sessions the gateway already reports as
+        running, whose agent is therefore already built. Asking about an ``idle``
+        or ``starting`` session would build one to find out it had nothing to
+        say. Pinned by
+        ``test_no_approval_detail_is_asked_for_a_session_outside_the_trigger_statuses``.
+
+        The ids named here are RUNTIME ids and the fold files the answer under
+        the durable key — see :func:`~talaria.domain.state.approval_detail_targets`
+        for the wire evidence that they differ.
+        """
+        for session_id in approval_detail_targets(self._fleet, profile):
+            outcome = await dispatcher.call(
+                APPROVAL_PENDING_METHOD,
+                {"session_id": session_id},
+                timeout=self.call_timeout,
+            )
+            if not outcome.confirmed:
+                # **Redundant by construction, and kept anyway — the comment says
+                # which, because a mutation pass proved it.** Removing this line
+                # changes no behaviour: ``RpcOutcome`` is constructed in exactly
+                # five places (``talaria/transport/rpc.py:332-388``) and passes
+                # ``result=`` in only one of them, the ``status="ok"`` branch, so
+                # an unconfirmed outcome always carries ``result=None`` —
+                # ``decode_pending_approvals`` then answers ``answered=False``
+                # and ``apply_approval_pending`` returns the fleet unchanged.
+                # That is a structural proof of equivalence rather than a
+                # surviving mutant read as inertness.
+                #
+                # It stays because it puts R10's rule where the call is made:
+                # a refused detail call is the seam's story, already told by
+                # ``connection_notices``, and must never read as "this session
+                # has no approvals". A reader of this loop should not have to
+                # trace two modules to learn that.
+                continue
+            self.fleet = apply_approval_pending(
+                self._fleet,
+                decode_pending_approvals(outcome.result, at=self.state.last_observed_at),
+                profile=profile,
+                session_id=session_id,
+                at=self.state.last_observed_at,
+            )
+            self._dirty = True
+
     async def poll_due_connections(self) -> None:
         """KTD2's cadence, finally driven: sweep every connection that is due.
 
@@ -4344,6 +4414,10 @@ class TalariaApp(App[None]):
                 await self.sweep_roster(profile, dispatcher)
             else:
                 await self.sweep_connection(profile, trigger="revalidation")
+            # Detail AFTER the roster, never before: which sessions are due is a
+            # function of the statuses the sweep just refreshed, so asking first
+            # would aim this at the previous poll's picture of the fleet.
+            await self.poll_approval_detail(profile, dispatcher)
 
     async def open_session(self, selection: StartupSelection) -> RpcOutcome | None:
         """Resolve KTD7's selection into one focused session (R2).

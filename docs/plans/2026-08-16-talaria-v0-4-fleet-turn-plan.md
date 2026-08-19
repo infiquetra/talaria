@@ -783,6 +783,47 @@ class U7 spent three commits closing.
 2. **Feed B's assembly.** `approval_detail_targets` (`state.py:3935`), `decode_pending_approvals`
    (`queue.py:472`) and `apply_approval_pending` (`state.py:3964`) are reachable only from tests.
 
+   **LANDED 2026-08-19, and it changes a second domain contract — declared here as the stamp split
+   was.** `approval_detail_targets` returned **durable** session ids on a docstring saying durable is
+   "what a caller must name on the wire". Measured against the running gateway, that is false, and
+   wiring the feed on it would have answered `4001 session not found` for every call — silently,
+   because `apply_approval_pending` reads a non-answering reply as "changes nothing", so the queue
+   would have stayed empty while the path looked alive. Three legs:
+
+   - `tui_gateway/server.py:7025-7039` registers `_sessions[sid]`, keyed by the **runtime** id, and
+     stores the durable id as a field named `session_key`. The function takes `sid` and `key` as two
+     separate parameters.
+   - `server.py:2507-2509` resolves `params["session_id"]` against that mapping, and the
+     `approval.pending` handler (`tui_gateway/methods_prompt.py:1454-1460`) then passes
+     `session["session_key"]` onward — which only makes sense if the two differ.
+   - Two local recordings settle it on the wire: the same durable session `20260806_120031_fd736f`
+     resumed 66 seconds apart returned runtime ids `99dcf142` and `fd0367c9`.
+
+   The function now returns the row's **newest** runtime id (`runtime_ids[-1]`, kept newest-last and
+   bounded at four by `_bind_alias`). The fold is unchanged and needs no translation:
+   `apply_approval_pending` resolves through `_resolve_key`, which accepts an alias, so the caller
+   names the runtime id and the detail still files under the durable key. The other half of the old
+   sentence — "what the reply's detail is stored under" — was true, and is now stated separately
+   instead of conflated with the wire name.
+
+   **The operator's "name the unaskable row" ruling was implemented, then found unreachable, and is
+   discharged as an invariant instead.** The ruling was right about the code it was given: the first
+   version skipped rows with no runtime id, and R14 forbids a silent skip. But that version was wrong
+   twice over. `_bind_alias` records nothing when the runtime id *equals* the durable id
+   (`state.py:2794`), because there is no alias to make — so an empty `runtime_ids` means the two
+   coincide and the key **is** the handle. Skipping those rows removed real, askable sessions from the
+   feed, and an existing fixture in `tests/domain/test_needs_you_queue.py` — whose rows carry
+   `id == session_key` — caught it as a full-suite failure.
+
+   With `wire_handle`'s fallback in place the disclosed state cannot occur at all:
+   `RegistryRow.status` is written in exactly one place (`state.py:3408`, inside `apply_active_list`),
+   which binds the alias in the same fold, so a row `approval_detail_due` admits has always been seen
+   in an active list and always has one of the two handles. A notice for an unreachable state is a
+   fixture-only path wearing R14's clothes — the exact defect class the standing review lens hunts —
+   so the guarantee is **asserted** by `test_every_due_row_has_a_wire_handle` rather than announced by
+   a line no operator can ever see. If the invariant breaks, that test fails and the notice becomes
+   the right answer again.
+
    **The safety property this half turns on must be stated in the unit and pinned, not inferred**
    (operator rider, 2026-08-19). The `approval.pending` probe is safe *because* it is parameterless:
    `talaria/transport/compat_check.py:436` argues that a bare call cannot reach the build-warming
@@ -790,9 +831,23 @@ class U7 spent three commits closing.
    returns durable session ids "because that is what a caller must name on the wire" — so the probe's
    own safety argument does not cover it. What covers it is the operator ruling of 2026-08-17: the
    call is restricted to the trigger statuses, enforced in `approval_detail_due` (`queue.py:533`).
-   That restriction is currently readable only by joining two docstrings. This unit states it where
-   the call is made and pins it like any other claim — a test that drives a row outside the trigger
-   statuses and asserts no call is issued for it.
+   That restriction was readable only by joining two docstrings. It is now stated where the call is
+   made, on first-hand evidence rather than inference: `approval.pending` resolves through `_sess`,
+   which is `_sess_building` plus `_wait_agent`, and `_sess_building`'s own docstring
+   (`tui_gateway/server.py:2519`) says it warms the agent build. So the feed call *does* have the side
+   effect the bare probe exists to avoid, and only the trigger-status restriction makes it acceptable —
+   `waiting` and `working` sessions are already built. Pinned by
+   `test_no_approval_detail_is_asked_for_a_session_outside_the_trigger_statuses`, which asserts **no
+   call at all**, not a call that returns nothing.
+
+   Six mutations. Three survived first — naming the oldest runtime id (every fixture row had only
+   one), folding a refused call (the test drove the decoder's guard, not the transport's), and asking
+   for detail before the roster that decides who is due (nothing drove `poll_due_connections`). Two
+   were coverage gaps and are closed by probes. The third is genuine **equivalence**, proved
+   structurally rather than assumed: `RpcOutcome` is constructed in exactly five places
+   (`talaria/transport/rpc.py:332-388`) and passes `result=` only on the `ok` branch, so an
+   unconfirmed outcome always carries `result=None` and the decoder declines it anyway. The guard
+   stays, with a comment saying it is redundant by construction and why it is kept.
    `approval.pending` is issued in production **only as a presence probe**. `FleetState.approval_detail`
    is written in exactly one place — inside the unreachable `apply_approval_pending` — and pruned in
    four, so it is permanently empty in a live run. U6's "two feeds, one identity" runs on one feed.

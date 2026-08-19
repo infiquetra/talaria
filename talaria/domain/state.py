@@ -3967,11 +3967,43 @@ def approval_detail_targets(fleet: FleetState, profile: str) -> tuple[str, ...]:
     that call, so the safety property is checkable by reading one predicate:
     :func:`~talaria.domain.queue.approval_detail_due`.
 
-    Returns durable session ids, because that is what a caller must name on the
-    wire and what the reply's detail is stored under. An empty tuple is the
-    ordinary answer for a quiet or unprobed connection, and it is also the
-    answer whenever the seam is anything other than present — an absent method
-    is named in the queue's notices, never retried blind.
+    Returns **runtime** session ids, and the distinction is not cosmetic —
+    naming the wrong one answers ``4001 session not found`` for every call, and
+    :func:`apply_approval_pending` reads a non-answering reply as "changes
+    nothing", so the queue would simply stay empty while this path looked alive.
+
+    This function returned *durable* ids until 2026-08-19, on a docstring that
+    said durable "is what a caller must name on the wire". Measured against the
+    running gateway, that is false:
+
+    * ``tui_gateway/server.py:7025-7039`` registers ``_sessions[sid]`` — keyed by
+      the runtime id — and stores the durable id as a *field* named
+      ``session_key``. The function takes ``sid`` and ``key`` as two separate
+      parameters.
+    * ``server.py:2507-2509`` resolves ``params["session_id"]`` against that same
+      ``_sessions`` mapping, and ``approval.pending``
+      (``tui_gateway/methods_prompt.py:1454-1460``) then passes
+      ``session["session_key"]`` onward — which only makes sense if the two
+      differ.
+    * Two local recordings settle it on the wire rather than in source: the same
+      durable session ``20260806_120031_fd736f`` resumed 66 seconds apart
+      returned runtime ids ``99dcf142`` and ``fd0367c9``. The runtime id is
+      reminted on every resume.
+
+    The *other* half of the old sentence stays true and is now separate: the
+    reply's detail is stored under the durable key, because
+    :func:`apply_approval_pending` resolves what it is given through
+    ``_resolve_key``, which accepts an alias. So the caller names the runtime id
+    and the fold files it under the durable one, with nothing to translate.
+
+    **A due row with no runtime id is skipped here and NAMED in the queue**, by
+    :func:`~talaria.domain.queue.connection_notices`. It cannot be asked about at
+    all — the wire has no other handle for it — and a silent skip would be R14's
+    forbidden reading, where an empty queue means "we could not ask".
+
+    An empty tuple is the ordinary answer for a quiet or unprobed connection, and
+    it is also the answer whenever the seam is anything other than present — an
+    absent method is named in the queue's notices, never retried blind.
     """
     board = fleet_seam_board(fleet, profile)
     if board is None:
@@ -3981,10 +4013,34 @@ def approval_detail_targets(fleet: FleetState, profile: str) -> tuple[str, ...]:
     except KeyError:  # pragma: no cover - boards are built from the catalogue
         return ()
     return tuple(
-        key[1]
+        wire_handle(key, row)
         for key, row in sorted(fleet.rows.items())
         if key[0] == profile and approval_detail_due(row, seam=seam)
     )
+
+
+def wire_handle(key: RowKey, row: RegistryRow) -> str:
+    """The session id this row must be named by on the wire.
+
+    Newest runtime id when the row has one — ``_bind_alias`` keeps the most
+    recent ``MAX_RUNTIME_ALIASES`` in arrival order, and only the newest names a
+    session the gateway still holds in ``_sessions``.
+
+    **Falling back to the durable id is correct rather than a guess**, and the
+    first draft of this got it wrong by skipping such rows entirely.
+    ``_bind_alias`` records nothing when the runtime id *equals* the durable id
+    (``state.py:2794``), because there is no alias to make — so an empty
+    ``runtime_ids`` means the two coincide and the key itself is the handle, not
+    that no handle exists.
+
+    Every row this is called for has been through :func:`apply_active_list`,
+    which is the only place ``RegistryRow.status`` is ever written
+    (``state.py:3408``) and which binds the alias in the same fold. So a row that
+    :func:`~talaria.domain.queue.approval_detail_due` admits — status ``waiting``
+    or ``working`` — always has one of the two handles above. A row with neither
+    cannot exist while that remains true.
+    """
+    return row.runtime_ids[-1] if row.runtime_ids else key[1]
 
 
 def apply_approval_pending(
