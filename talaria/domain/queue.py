@@ -1447,10 +1447,12 @@ def connection_notices(
     # answer would have been. It is deliberately the last line, so a connection
     # that ALSO could not be probed says both things in the order they matter.
     #
-    # **Delete this line when the poll lands, and not before.** It is not a
-    # permanent caveat; it is the disclosure of a named, filed gap — the plan's
-    # UNSLOTTED slice covering the KTD2 cadence, feed B's assembly, and AE2's
-    # settle-and-latch. Pinned by
+    # **Delete this line in U8B, and not before.** It is not a permanent caveat;
+    # it is the disclosure of a named, SCHEDULED gap — U8B, "the foreign-wait
+    # data path", slotted by the operator on 2026-08-18 between U8's review and
+    # U9, covering the KTD2 cadence, feed B's assembly, and AE2's settle latch.
+    # That unit owns this deletion explicitly, and the bare ``needs-you: none``
+    # becoming reachable again is its observable proof. Pinned by
     # ``test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed``.
     lines.append(f"{profile}: {_APPROVAL_DETAIL_UNPOLLED}")
     return tuple(lines)

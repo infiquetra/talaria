@@ -336,60 +336,11 @@ versioned addition, not a meaning drift.
 
 Dependency order. U1 gates everything; U2–U3 are the trunk; U4 follows U3; U5 can branch from U2;
 U6 follows U4 because both change `talaria/domain/state.py`; U7 and U8 follow their named inputs;
-U9 closes. The execution spec interleaves an adversarial-review unit (CR1–CR8) behind each
+U8B follows U8's review and gates U9's AE2 leg; U9 closes. The execution spec interleaves an adversarial-review unit (CR1–CR8, plus CR8B) behind each
 implementation unit as a scheduling gate; the spec graph is authoritative for order. Every review
 unit returns a machine-readable verdict (`clean`, or `blocked` with its surviving findings), and
 the /work driver halts on any non-clean verdict — remediating and re-reviewing before any
 dependent unit starts. A review return is never treated as completion by mere existence.
-
-### UNSLOTTED — the foreign-wait data path: cadence, feed assembly, and the settle latch
-
-**Status: one slice, not three. Found across U7 (operator rulings of 2026-08-18), ruled out of U7,
-and NOT yet assigned to a unit. The slot is the operator's to choose.**
-
-**U9's AE2 acceptance leg depends on this slice.** AE2 exercises fleet-level settle-and-latch, and
-`FleetState.settled_items` is written only by `settle_queue_item`, which has no production caller —
-so that leg cannot pass against a live gateway until this lands. U9's *other* legs do not depend on
-it: driven approvals are pushed by the gateway and route per connection since U7's composition root.
-**Slotting this before U9, or accepting that AE2's fleet-level leg is deferred, is a decision to make
-here.**
-
-Three parts, and they are one slice because each is inert without the others — wiring any one alone
-manufactures the next dead production path:
-
-1. **The cadence.** `next_poll_due_at` (`talaria/domain/registry.py:265`) carries the whole KTD2
-   rule — a 2-second coalesce after a `sessions.changed` hint, a 30-second backstop — and nothing in
-   `talaria/` calls it. Nothing consumes `channel.hint_at` either, which `route_frame` records on
-   every `sessions.changed` (`talaria/domain/state.py:3224`) and only `apply_active_list` clears. A
-   gateway announcing that its session list changed is heard and not acted on.
-2. **Feed B's assembly.** `approval_detail_targets` (`state.py:3935`), `decode_pending_approvals`
-   (`queue.py:472`) and `apply_approval_pending` (`state.py:3964`) are reachable only from tests.
-   `approval.pending` is issued in production **only as a presence probe**. `FleetState.approval_detail`
-   is written in exactly one place — inside the unreachable `apply_approval_pending` — and pruned in
-   four, so it is permanently empty in a live run. U6's "two feeds, one identity" runs on one feed.
-3. **The settle latch.** `settle_queue_item` (`state.py:4049`) has no production caller, so
-   `settle_items` stays empty and `build_queue`'s `settled=` argument is always the empty set.
-   Production settles through `settle_prompt` on the focused session instead.
-
-*Why the cadence and the feed cannot be split.* The cadence is what would fill `approval_detail`;
-the feed is what the cadence would be for. Assembling the fold without a driver leaves a reducer
-nothing calls on a schedule, and building the cadence without the fold leaves a timer with nothing
-to fetch.
-
-*What exists instead, after U7.* Each connection is probed and its roster swept when it comes up and
-again on the five-minute seam revalidation (`TalariaApp.sweep_connection`), plus the focused fold
-behind `/sessions`. Sessions Talaria's own connections drive push their frames, so a **driven** wait
-is current on any connection. A **foreign** session's wait — one another client owns on a gateway
-Talaria is merely connected to — reaches the queue not at all.
-
-*What U7 did instead, so the gap is disclosed rather than silent.* `connection_notices` now states,
-for every connection and whatever its seam probe found, that foreign approval detail is not polled —
-because a present seam means "this gateway would answer", never "we asked", and the silence it
-bought read as "everything of this connection's is in the queue". **That line is deliberately
-temporary and is deleted when this slice lands**, not kept as a permanent caveat. It is pinned by
-`test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed`. Its cost is that the
-bare `needs-you: none` is unreachable until then, which is the honest state: no fleet has been fully
-asked while a whole feed is never fetched.
 
 ### U1. The live verification and the new pinned read
 
@@ -674,9 +625,9 @@ timer. The pairing is not tidiness: a probe alone deletes the queue's "capabilit
 sentence while enumerating nothing. See DECISIONS.md, "A background connection is probed and swept in
 one round".
 
-**REPORTED OPEN, not closed here — the KTD2 poll loop has no production caller.** Ruled out of U7 by
-the operator on 2026-08-18 and written up under "UNSLOTTED" at the head of this section, which is
-where the slot gets chosen.
+**REPORTED OPEN, not closed here — the foreign-wait data path.** Ruled out of U7 by the operator on
+2026-08-18 and slotted the same day as **U8B**, between U8's review and U9. The standing disclosure
+line U7 added to `connection_notices` is deleted there.
 
 **Covers:** R16, R17, R18 (surface half), R19, R21, R22, R23, PC4, OP3, KTD7, KTD9, AE7, AE9,
 AE11.
@@ -751,6 +702,64 @@ If U8 proves blind items impossible across every supported input, the fold-delet
 `docs/engineering-journal/DECISIONS.md` (2026-08-18, "The unplaceable fold refuses only what would be
 answered blind") becomes actionable at the alias-pinning revisit. If U8 finds one, the fold is
 load-bearing and the clause is withdrawn.
+
+### U8B. The foreign-wait data path: cadence, feed assembly, and the settle latch
+
+**Slotted by operator ruling of 2026-08-18**, out of the UNSLOTTED position it was filed in during
+U7. It runs after U8's review and before U9. Numbered `U8B` rather than renumbered into the sequence
+so that every existing reference to U9 — in this plan, in the saga register, and in
+`docs/engineering-journal/` — keeps meaning what it meant.
+
+**Goal:** A session someone else owns, waiting on an approval on a gateway Talaria is merely
+connected to, appears in the needs-you queue — and stops appearing when it is answered.
+
+**Why it is one unit and not three.** The cadence is what fills the feed, and the feed is what the
+cadence is for. Wiring any part alone manufactures the next dead production path, which is the defect
+class U7 spent three commits closing.
+
+1. **The cadence.** `next_poll_due_at` (`talaria/domain/registry.py:265`) carries the whole KTD2 rule
+   — a 2-second coalesce after a `sessions.changed` hint, a 30-second backstop — and nothing in
+   `talaria/` calls it. Nothing consumes `channel.hint_at` either, which `route_frame` records on
+   every `sessions.changed` (`talaria/domain/state.py:3224`) and only `apply_active_list` clears. A
+   gateway announcing that its session list changed is heard and not acted on.
+2. **Feed B's assembly.** `approval_detail_targets` (`state.py:3935`), `decode_pending_approvals`
+   (`queue.py:472`) and `apply_approval_pending` (`state.py:3964`) are reachable only from tests.
+   `approval.pending` is issued in production **only as a presence probe**. `FleetState.approval_detail`
+   is written in exactly one place — inside the unreachable `apply_approval_pending` — and pruned in
+   four, so it is permanently empty in a live run. U6's "two feeds, one identity" runs on one feed.
+3. **The settle latch.** `settle_queue_item` (`state.py:4049`) has no production caller, so
+   `settled_items` stays empty and `build_queue`'s `settled=` argument is always the empty set.
+   Production settles through `settle_prompt` on the focused session instead.
+
+**Covers:** KTD2 (the cadence proper), R14 and R24 (the queue stops disclosing a gap it no longer
+has), AE2's fleet-level leg.
+
+**U9 depends on this unit, and that dependency is why it is slotted here.** AE2 exercises fleet-level
+settle-and-latch, which cannot pass against a live gateway while `settled_items` is empty. U9's other
+legs do not depend on it — driven approvals are pushed by the gateway and have routed per connection
+since U7's composition root — so this is the one leg the sequencing protects.
+
+**A deletion this unit owns.** U7 added a standing line to `connection_notices` stating that foreign
+approval detail is not polled on any connection, because a present seam means "this gateway would
+answer" and never "we asked". **That line is deleted here**, along with the tests pinning it, and the
+bare `needs-you: none` becomes reachable again for the first time — which is the observable proof
+that this unit did what it says. Its trigger is now scheduled rather than indefinite.
+
+**Files:** `talaria/ui/app.py` (the poll loop and its cadence timer, the `approval.pending` call site,
+the settle call site), `talaria/domain/queue.py` (delete the standing disclosure line),
+`talaria/domain/state.py` (no new reducers expected — the fold already exists and is tested).
+
+**Test scenarios:** a foreign session's approval reaches the queue through a poll and is answerable;
+a `sessions.changed` hint coalesces rather than polling per event; the 30-second backstop fires with
+no hint; an answered foreign approval leaves the queue and does not return on the next poll; the
+bare `needs-you: none` is reachable on a fully answered, fully polled fleet. Per-connection cost and
+backoff on a failing gateway are this unit's to state and pin, since they are the reason it was not
+folded into U7.
+
+**Depends on:** U3 (registry), U6 (queue domain), U7 (the composition root and the per-connection
+sweep this cadence extends).
+
+**Review:** CR8B, bounded — same shape as CR7, same corrected mutation rule, same stop conditions.
 
 ### U9. The live acceptance run
 
