@@ -3082,3 +3082,69 @@ def test_a_probed_connection_no_longer_disclaims_its_foreign_approvals() -> None
     assert not any("not polled" in line for line in absent), (
         "the deleted standing line came back beside the seam's own"
     )
+
+
+#  ── v0.4 accumulated review: the eviction that said nothing ───────────────
+
+
+def test_an_evicted_row_is_named_rather_than_dropped_in_silence() -> None:
+    """``truncation_note`` had no production caller, so evictions were silent.
+
+    ``ConnectionChannel.evicted_rows`` says of itself that it "feeds the visible
+    truncation note — an eviction is never a silent drop", and
+    :func:`~talaria.domain.registry.truncation_note` formats exactly that
+    sentence. Nothing called it. The registry evicted rows past its
+    per-connection cap (``state.py:3548``), counted them, and rendered the count
+    nowhere — so a gateway with more sessions than the cap lost the oldest from
+    the picker AND the queue, and a session waiting among them simply vanished.
+
+    Measured before the fix on a 281-session listing against the 256 cap: 25 rows
+    dropped, ``evicted_rows == 25``, and zero surfaces mentioning them.
+
+    Found by the accumulated-code review's dead-path sweep, at the seam between
+    the registry that produces the count and the surface that never read it.
+    """
+    from talaria.domain.queue import connection_notices
+    from talaria.domain.registry import ROW_CAP_PER_CONNECTION, ConnectionChannel
+
+    channel = ConnectionChannel(profile=PROFILE, connected=True, last_poll_at=BASE_TIME)
+    quiet = connection_notices(profile=PROFILE, board=None, channel=channel)
+    assert not any("not shown" in line for line in quiet), (
+        "a connection that evicted nothing is claiming it did"
+    )
+
+    evicted = replace(channel, evicted_rows=25)
+    notices = connection_notices(profile=PROFILE, board=None, channel=evicted)
+    named = [line for line in notices if "25 older sessions not shown" in line]
+    assert named, f"25 evicted rows were dropped in silence: {notices}"
+    assert "waiting" in named[0], (
+        "the line names the count without naming the consequence for the queue, "
+        "which is the half an operator needs"
+    )
+    assert ROW_CAP_PER_CONNECTION == 256, "the cap moved; this test's numbers are stale"
+
+
+def test_the_eviction_notice_survives_an_unprobed_connection() -> None:
+    """Placement, which the first version of this got wrong.
+
+    ``connection_notices`` short-circuits when the connection has no seam board,
+    returning the "capabilities not probed" line alone. An eviction has nothing
+    to do with probing — the rows are gone whether or not anyone asked what the
+    gateway can do — so a truncation line placed after that return is invisible
+    on exactly the connection least able to speak for itself. Measured: the line
+    was written, the probe still reported zero surfaces mentioning the drop.
+    """
+    from talaria.domain.queue import connection_notices
+    from talaria.domain.registry import ConnectionChannel
+
+    unprobed = ConnectionChannel(
+        profile=PROFILE, connected=True, last_poll_at=BASE_TIME, evicted_rows=9
+    )
+    notices = connection_notices(profile=PROFILE, board=None, channel=unprobed)
+
+    assert any("9 older sessions not shown" in line for line in notices), (
+        "the eviction line is placed after the unprobed short circuit"
+    )
+    assert any("capabilities not probed" in line for line in notices), (
+        "the unprobed line was lost when the eviction line was added"
+    )

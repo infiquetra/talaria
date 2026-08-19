@@ -20,7 +20,7 @@ The domain already carries both facts — ``NeedsYouQueue.notices`` and
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from talaria.domain.models import QueueItem
 from talaria.domain.queue import NEEDS_YOU_NONE, NeedsYouQueue, summary_line, wait_line
@@ -40,10 +40,17 @@ from talaria.ui.needs_you import (
     decode_selection,
     encode_identity,
     encode_selection,
+    format_item_detail,
     format_item_label,
 )
 from talaria.ui.prompts import RESPOND_METHODS
-from tests.ui.conftest import RecordingDispatcher, event, feed, live_app, settle
+from tests.ui.conftest import (
+    RecordingDispatcher,
+    event,
+    feed,
+    live_app,
+    settle,
+)
 
 BASE_TIME = 1_785_000_000.0
 
@@ -920,3 +927,150 @@ async def test_a_navigation_that_moved_home_and_then_failed_says_home_moved() ->
         )
         assert "beta-fixture" in app.composer.notice
         await app.shutdown_sources()
+
+
+#  ── AE7: hostile background traffic on the needs-you surface ──────────────
+
+
+#: Every interpreter ``talaria/ui/literal.py`` names, in one string: Rich
+#: markup, an ANSI escape, a zero-width character and a bidi override — the
+#: last two being the Trojan Source shape, where the rendered path and the
+#: executed path differ while looking identical.
+HOSTILE = (
+    "[bold red]styled[/] \x1b[31mansi\x1b[0m <script>alert(1)</script> "
+    "rm -rf /ho\u200bme \u202ereversed"
+)
+
+
+@pytest.mark.asyncio
+async def test_hostile_gateway_text_renders_literally_in_the_drill_down() -> None:
+    """AE7 verbatim for this surface, and it was promised rather than written.
+
+    The v0.4 plan lists AE7 among U7's test scenarios — "synthetic
+    credential-bearing and markup/ANSI/HTML-bearing background traffic — nothing
+    styles, executes, or leaks". No such test existed: the accumulated-code
+    review found no reference to AE7, to "credential-bearing", or to any markup
+    fixture anywhere in this file.
+
+    The mechanism was already in place — every dialog row is a ``Static`` built
+    from ``literal_text`` with ``markup=False`` (``dialog.py:260``) — so this
+    closes an evidence gap rather than a defect. That distinction is the point: a
+    release claim resting on an unwritten test is a claim nobody has checked.
+
+    Asserted on the SCREEN, because markup that was interpreted is *consumed* —
+    it vanishes from the visible text and reappears as styling. Finding the
+    characters is what safe looks like.
+    """
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        feed(app, event("approval.request", {"description": HOSTILE, "choices": ["once", "deny"]}))
+        await settle(app, pilot)
+
+        app.composer.text_area.focus()
+        app.composer.text = "/needs"
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert isinstance(app.screen, PickerDialog), "the drill-down never opened"
+
+        # **The dialog's OWN rows, not the screen.** The first version of this
+        # read ``screen_text(app)`` and had no teeth: the approval CARD renders
+        # the same description, so "bold red" was on screen whatever the dialog
+        # did — two mutations removing both of the dialog's defences left it
+        # green. Reading the row widgets' rendered strips is what distinguishes
+        # the surface under test from the one beside it.
+        rows = list(app.screen.query(".dialog--row"))
+        assert rows, "the drill-down mounted no rows, so this asserts nothing"
+        painted = "\n".join(
+            "".join(row.render_line(y).text for y in range(max(1, row.size.height)))
+            for row in rows
+        )
+        assert "bold red" in painted, (
+            f"the dialog interpreted markup instead of painting it: {painted!r}"
+        )
+        assert "script" in painted, f"the HTML was not painted as characters: {painted!r}"
+
+        # **The half ``markup=False`` does NOT cover, and the reason
+        # ``literal_text`` exists.** Disabling markup stops Rich tags and nothing
+        # else: an ANSI escape would still be obeyed, and a zero-width or bidi
+        # character would still make the painted command differ from the one the
+        # operator would grant. Measured: removing ``literal_text`` while leaving
+        # ``markup=False`` in place passed the two assertions above, so without
+        # these the test covers a quarter of what the boundary does.
+        assert "\x1b" not in painted, (
+            f"an ANSI escape reached the terminal unneutralised: {painted!r}"
+        )
+        assert "␛" in painted, f"the escape was dropped rather than shown: {painted!r}"
+        assert "\u200b" not in painted and "\u202e" not in painted, (
+            "an invisible or direction-reversing character survived to the screen, "
+            "so the painted command can differ from the granted one (Trojan Source)"
+        )
+
+        await pilot.press("escape")
+        await settle(app, pilot)
+        await app.shutdown_sources()
+
+
+def test_the_row_formatters_hand_hostile_text_on_unchanged() -> None:
+    """The other half: the formatters neither strip nor interpret.
+
+    Defanging belongs at the render boundary and nowhere else — a formatter that
+    also escaped would double-escape, and one that stripped would hide what the
+    gateway actually said. Both formatters must pass the characters through
+    exactly, leaving ``literal_text`` at the boundary as the single place that
+    makes them safe.
+    """
+    item = QueueItem(
+        profile="gw",
+        session_id="s1",
+        request_key="r1",
+        source="driven",
+        kind="approval",
+        summary=HOSTILE,
+        row_key=("gw", "s1"),
+        command=HOSTILE,
+        opened_at=BASE_TIME,
+        seq=0,
+        session_title=HOSTILE,
+    )
+
+    assert HOSTILE in format_item_detail(item), "the detail formatter altered gateway text"
+    assert "bold red" in format_item_label(item, BASE_TIME + 1), (
+        "the label formatter altered gateway text"
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_withheld_answer_value_reaches_a_queue_row() -> None:
+    """R22's half of AE7: the value the operator types is never on this surface.
+
+    A secret prompt's ANSWER is the thing that must not appear. The queue carries
+    the question — kind, summary, command — and the value stays on the card,
+    masked. Asserted as an absence across every string this surface produces,
+    because an absence is exactly what a leak defeats.
+    """
+    from talaria.domain.state import fleet_queue
+
+    secret = "sk-live-NEVER-ON-A-ROW-99"
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        feed(app, event("secret.request", {"request_id": "sec-1", "prompt": "deploy key"}))
+        await settle(app, pilot)
+
+        card = app.prompts.card_for("sec-1")
+        assert card is not None, "the secret card never mounted; nothing to withhold"
+        card.query_one("#answer", Input).value = secret
+        await settle(app, pilot)
+
+        queue = fleet_queue(app.fleet)
+        rendered = [
+            summary_line(queue, app.state.last_observed_at),
+            app.needs_you_bar.line,
+            *(format_item_label(item, app.state.last_observed_at) for item in queue.items),
+            *(format_item_detail(item) for item in queue.items),
+        ]
+        await app.shutdown_sources()
+
+    for line in rendered:
+        assert secret not in line, f"a withheld value reached a queue row: {line!r}"

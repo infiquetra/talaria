@@ -1616,7 +1616,17 @@ class TalariaApp(App[None]):
         # from the truth. Pinned by
         # ``test_a_replayed_fleet_does_not_report_its_own_recording_as_down``.
         source = self.source
-        if isinstance(source, DeclaredConnections):
+        # **Mode-gated as well as shape-gated, and the mode is the honest half.**
+        # This fold stamps every declared connection with ``REPLAY_EPOCH``, which
+        # is meaningful only for a recording. It is skipped in a live run today
+        # because ``ConnectionSet`` — which IS the source in live mode — happens
+        # not to expose a ``connections`` property, so the ``isinstance`` below
+        # answers False. That is correctness resting on the absence of a name:
+        # ``ConnectionSet`` already has ``profiles``, and anyone adding
+        # ``connections`` beside it as a convenience would silently start
+        # stamping a live fleet with a replay epoch at mount. Found by the v0.4
+        # accumulated-code review; no harm demonstrated, a trap removed.
+        if self.mode == "replay" and isinstance(source, DeclaredConnections):
             for profile in source.connections:
                 self._fleet = fleet_connection_restored(
                     self._fleet,
