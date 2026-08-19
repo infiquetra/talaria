@@ -26,6 +26,7 @@ from talaria.replay.source import (
     ReplaySource,
     SidebandAction,
     TaggedReplaySource,
+    load_frame_records,
     source_from_path,
 )
 from talaria.transport.connection_set import TaggedFrame
@@ -681,28 +682,35 @@ def test_the_fleet_corpus_can_tell_the_derivation_rules_apart() -> None:
     )
 
 
-def test_the_gate_refuses_a_recording_it_would_have_to_mis_measure(tmp_path: Path) -> None:
-    """CR8's F15: the gate held the path and chose the untagged reader.
+@pytest.mark.asyncio
+async def test_the_gate_measures_a_tagged_recording_rather_than_refusing_it(
+    tmp_path: Path,
+) -> None:
+    """CR8's F15, closed in U8B — the successor to the refusal U8 shipped.
 
-    A tagged recording replayed as one connection merges two gateways' equal
-    session ids into a session that never existed — and the gate published
-    ``determinism_identical: true`` over it. That is verbatim the harm the frame
-    log's version bump exists to prevent, and this gate was the reader that did
-    not stop.
+    U8 found that the gate held the corpus path and chose the untagged reader,
+    so a tagged recording replayed as one connection and the gate published
+    ``determinism_identical: true`` over a session that never existed. U8's
+    answer was to refuse: correct on its own, and explicitly not the finished
+    one. U8B threads the tags through the three replays, so the gate now
+    measures what it previously could only decline.
 
-    Refusing is not the finished answer — per-connection gate replay is filed as
-    its own work — but it is the half that is correct on its own: a gate that
-    cannot measure a file must not publish a measurement of it.
+    The refusal is gone rather than narrowed, and this asserts what replaced it:
+    a version-2 corpus runs to a verdict, and the corpus is cited under the
+    version it actually is.
     """
-    import asyncio
+    from talaria.replay.gate import run_gate
 
-    from talaria.replay.gate import GateError, run_gate
+    path = same_session_id_log(tmp_path / "collision.jsonl")
+    result = await run_gate(deltas=50, live_corpus=str(path))
 
-    path = two_connection_log(tmp_path / "fleet.jsonl")
-    with pytest.raises(GateError) as caught:
-        asyncio.run(run_gate(deltas=50, live_corpus=str(path)))
-    assert "multi-connection" in str(caught.value)
-    assert "Refused rather than measured" in str(caught.value)
+    assert result.live is not None, "the gate produced no live measurement"
+    assert result.determinism_identical is True, (
+        "the tagged corpus did not replay identically at three speeds"
+    )
+    assert "-v2-" in result.live.corpus.label, (
+        f"the corpus is cited as {result.live.corpus.label}"
+    )
 
 
 def test_the_registry_fingerprint_sees_a_dropped_delta() -> None:
@@ -908,3 +916,149 @@ def test_the_wall_clock_check_has_a_floor_under_it() -> None:
 
     real = [{"wait_lines": repr(("waiting 3s",))}, {"wait_lines": repr(())}]
     assert rendered_age_count(real) == 1
+
+
+#  ── U8B: the gate measures a tagged corpus instead of refusing it ──────────
+
+
+def same_session_id_log(path: Path) -> Path:
+    """Two connections whose sessions carry the SAME id, with different content.
+
+    Session ids are unique within a gateway process and not across gateways, so
+    this is not a contrived shape — it is the ordinary collision that KTD6's
+    per-frame tag exists to survive, and the one the gate could not measure.
+    """
+    recorder = FrameRecorder(
+        path,
+        "ws://gateway.invalid/",
+        connections=(
+            RecordedConnection(profile=WORK, endpoint="ws://work.invalid/"),
+            RecordedConnection(profile=LAB, endpoint="ws://lab.invalid/"),
+        ),
+    )
+
+    def said(text: str) -> str:
+        return json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "event",
+                "params": {
+                    "type": "message.complete",
+                    "session_id": "s-1",
+                    "payload": {"text": text},
+                },
+            }
+        )
+
+    recorder.view(WORK).record("in", frame("s-1"))
+    recorder.view(WORK).record("in", said("the work gateway said this"))
+    recorder.view(LAB).record("in", frame("s-1"))
+    recorder.view(LAB).record("in", said("the lab gateway said this"))
+    recorder.close()
+    return path
+
+
+@pytest.mark.asyncio
+async def test_the_untagged_replay_merges_two_gateways_into_one_session(
+    tmp_path: Path,
+) -> None:
+    """The failure first, because the fix is only credible against it.
+
+    This is what `run_gate` did to every version-2 corpus before U8B: it held
+    the path, chose `load_frame_records`, and replayed a fleet as one
+    connection. Nothing raises. The transcript that comes back is a session that
+    never existed, carrying two gateways' turns as though one agent had said
+    them — and the gate published `determinism_identical: true` over it.
+    """
+    from talaria.replay.gate import replay_headless
+
+    path = same_session_id_log(tmp_path / "collision.jsonl")
+    state = await replay_headless(load_frame_records(path), speed=float("inf"))
+
+    said = " ".join(entry.text for entry in state.transcript)
+    assert "the work gateway said this" in said and "the lab gateway said this" in said, (
+        "the untagged replay no longer merges the two connections; if that is "
+        "deliberate, this test has done its job and should be deleted"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_tagged_replay_keeps_the_two_gateways_apart(tmp_path: Path) -> None:
+    """And now the same corpus through the same function, tagged.
+
+    Two registry rows keyed by connection, not one merged row — and the focused
+    session holds only the connection the recording was driving. Run against the
+    identical file as the test above, so the difference is the tags and nothing
+    else.
+    """
+    from talaria.replay.gate import fleet_tags_from_log, replay_headless
+
+    path = same_session_id_log(tmp_path / "collision.jsonl")
+    tags = fleet_tags_from_log(path)
+    assert tags is not None, "a version-2 recording produced no tags"
+
+    fleet = await replay_headless(load_frame_records(path), speed=float("inf"), tags=tags)
+
+    assert sorted(fleet.rows) == sorted({(WORK, "s-1"), (LAB, "s-1")}), (
+        "the two connections' equal session ids collapsed into one registry row"
+    )
+    said = " ".join(entry.text for entry in fleet.focused.transcript)
+    assert "the work gateway said this" in said
+    assert "the lab gateway said this" not in said, (
+        "the focused session is carrying another connection's turn"
+    )
+
+
+def test_a_single_connection_recording_still_has_no_tags(tmp_path: Path) -> None:
+    """KTD6 from the gate's side: a version-1 log is one connection, unchanged.
+
+    ``None`` rather than an empty ``FleetTags``, because the two would send the
+    replay down different paths — every existing recording and the whole
+    untagged gate must keep taking the path they took before this unit.
+    """
+    from talaria.replay.gate import fleet_tags_from_log
+
+    assert fleet_tags_from_log(one_connection_log(tmp_path / "solo.jsonl")) is None
+
+
+def test_a_recorded_corpus_is_cited_under_the_version_it_actually_is(
+    tmp_path: Path,
+) -> None:
+    """Advisory F23: the label hardcoded ``v1`` while the note read the header."""
+    from talaria.replay.gate import live_corpus_identity
+
+    path = same_session_id_log(tmp_path / "collision.jsonl")
+    identity = live_corpus_identity(path, load_frame_records(path))
+
+    assert "-v2-" in identity.label, f"a version-2 corpus is cited as {identity.label}"
+    assert "frame-log v2" in identity.note
+
+
+def test_the_refusal_survives_for_the_corpus_that_is_still_unmeasurable(
+    tmp_path: Path,
+) -> None:
+    """U8's refusal, narrowed rather than deleted.
+
+    It covered every version-2 corpus because no gate path could carry tags.
+    All three can now, so what is left is the log whose tags cannot separate its
+    connections — here, a version-2 file with its per-frame tags stripped, which
+    is the exact fixture ``test_the_shape_follows_the_declared_version...``
+    builds to prove the header decides the shape. That file opens as a tagged
+    source with blank profiles, which puts every frame on one nameless
+    connection: the silent merge, wearing the tagged path's clothes.
+    """
+    from talaria.replay.gate import GateError, fleet_tags_from_log
+
+    path = same_session_id_log(tmp_path / "collision.jsonl")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    stripped = [lines[0]]
+    for line in lines[1:]:
+        entry = json.loads(line)
+        entry.pop("profile", None)
+        stripped.append(json.dumps(entry))
+    path.write_text("\n".join(stripped) + "\n", encoding="utf-8")
+
+    with pytest.raises(GateError) as caught:
+        fleet_tags_from_log(path)
+    assert "cannot separate its connections" in str(caught.value)
+    assert "Refused rather than measured" in str(caught.value)

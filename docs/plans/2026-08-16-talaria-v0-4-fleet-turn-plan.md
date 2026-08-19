@@ -755,6 +755,17 @@ class U7 spent three commits closing.
    gateway announcing that its session list changed is heard and not acted on.
 2. **Feed B's assembly.** `approval_detail_targets` (`state.py:3935`), `decode_pending_approvals`
    (`queue.py:472`) and `apply_approval_pending` (`state.py:3964`) are reachable only from tests.
+
+   **The safety property this half turns on must be stated in the unit and pinned, not inferred**
+   (operator rider, 2026-08-19). The `approval.pending` probe is safe *because* it is parameterless:
+   `talaria/transport/compat_check.py:436` argues that a bare call cannot reach the build-warming
+   path behind the session lookup. The real feed call is not bare — `approval_detail_targets`
+   returns durable session ids "because that is what a caller must name on the wire" — so the probe's
+   own safety argument does not cover it. What covers it is the operator ruling of 2026-08-17: the
+   call is restricted to the trigger statuses, enforced in `approval_detail_due` (`queue.py:533`).
+   That restriction is currently readable only by joining two docstrings. This unit states it where
+   the call is made and pins it like any other claim — a test that drives a row outside the trigger
+   statuses and asserts no call is issued for it.
    `approval.pending` is issued in production **only as a presence probe**. `FleetState.approval_detail`
    is written in exactly one place — inside the unreachable `apply_approval_pending` — and pruned in
    four, so it is permanently empty in a live run. U6's "two feeds, one identity" runs on one feed.
@@ -762,14 +773,26 @@ class U7 spent three commits closing.
    `settled_items` stays empty and `build_queue`'s `settled=` argument is always the empty set.
    Production settles through `settle_prompt` on the focused session instead.
 
-4. **Per-connection gate replay.** `run_gate` refuses a version-2 corpus outright (U8 shipped that
-   refusal, and it stays — a gate that cannot measure a file must not publish a measurement of it).
-   What it cannot yet do is *measure* one: `measure_replay`, `replay_headless` and
-   `exercise_inert_controls` each construct a bare `ReplaySource` from records with no tags, so a
-   tagged corpus replayed through any of them would merge two gateways' equal session ids into a
-   session that never existed. Threading the tags through is a signature change across all three,
-   which is why it left U8 as an escalation rather than a fix. The fleet checkpoints U8 added
-   (`replay_fleet_trace`) already run per connection and are the shape to follow.
+4. **Per-connection gate replay. LANDED 2026-08-19, first of the two halves.** `measure_replay`,
+   `replay_headless` and `exercise_inert_controls` each constructed a bare `ReplaySource` from
+   records with no tags, so a tagged corpus replayed through any of them merged two gateways' equal
+   session ids into a session that never existed. All three now take one optional `tags` keyword
+   carrying a `FleetTags` — profiles, declared connections, derived focus — so the ten untagged
+   callers across the gate and its tests are unchanged, which is what kept a three-signature change
+   small. `replay_headless` returns the **fleet** for a tagged corpus rather than the focused
+   session, because comparing one connection's state while calling the result
+   `determinism_identical` is the same defect class this unit exists to close.
+
+   **U8's refusal is narrowed, not deleted.** It covered every version-2 corpus because no path
+   could carry tags. What remains genuinely unmeasurable is a version-2 log whose tags cannot
+   separate its connections — a header declaring none, or frames carrying no profile — and both put
+   every frame on one nameless connection, which is the silent merge wearing the tagged path's
+   clothes. That case still raises. Advisory F23 (`live_corpus_identity` hardcoding `v1`) is closed
+   in the same commit, because a version-2 corpus now reaches it.
+
+   **Proof order, per operator ruling:** the untagged path is shown *failing* a same-session-id
+   corpus — two gateways' turns in one transcript, nothing raised — before the tagged path is shown
+   passing the identical file. Eight mutations, all killed.
 
 **Covers:** KTD2 (the cadence proper), R14 and R24 (the queue stops disclosing a gap it no longer
 has), AE2's fleet-level leg, and KTD6 at the gate (a log with no tags is one connection — and a log
@@ -815,7 +838,7 @@ none of them blocking, all of them on the read path this unit owns:
 | --- | --- | --- |
 | F18 | A connection a recording declares but that never answered replays as connected — the mount-time fold marks every declared connection up, because the log is evidence they answered, and a header entry is not that evidence | This unit reads connection state per connection; the fix is a fold that waits for a frame |
 | F21 | Five accessors on `TaggedReplaySource` have no reader in `talaria/` | The gate half above is what reads them; if it does not, they should go |
-| F23 | `live_corpus_identity` hardcodes the string `"v1"` in the identity it publishes, so a version-2 corpus would be cited under a version it is not | The gate half changes which versions reach that function |
+| F23 | `live_corpus_identity` hardcodes the string `"v1"` in the identity it publishes, so a version-2 corpus would be cited under a version it is not | **Closed 2026-08-19** in the gate half, which is what made a version-2 corpus reach it |
 
 Two more from the same lens are already closed: F20 (the age parser reading gateway text) and F22
 (`__all__` omitting U8's public names) were fixed in U8 itself. F19, a missing vacuity floor under
