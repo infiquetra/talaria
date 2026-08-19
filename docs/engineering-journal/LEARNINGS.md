@@ -4,6 +4,34 @@
 
 ## 2026-08-18
 
+### A citation is a claim, and this project shipped a false one in five places
+
+**Evidence.** Five sites across `talaria/ui/prompts.py`, `talaria/ui/app.py` and (newly, by copying)
+`talaria/ui/needs_you.py` cited `tools/approval.py:3291` and `:3320` as the evidence that Hermes's
+approval consumer "blocks only on `None` and `deny` and returns approved for anything else resolved".
+Read against the running checkout on 2026-08-18, `:3291` is inside a quote-parsing loop
+(`in_single`, `in_double`, character scanning) and `:3320` is the tail of a policy-string function.
+Neither is the consumer. The real evidence is `tools/approval.py:3584` —
+`if not resolved or choice is None or choice == "deny":` — and the explicit denial branch at `:3679`.
+Corrected at all five sites.
+
+**Mechanism.** The claim itself was true; only its address was wrong, which is why nothing caught it
+for three units. Tests cannot check a citation into another repository, the prose gate checks that a
+claim *has* a citation rather than that the citation says anything, and a reader who trusts the
+project does not go and look. It propagated the way false citations do — I copied it into a fifth
+site while writing a docstring about not shipping unpinned claims.
+
+**Why it matters more than a wrong line number.** That citation is the evidence for a *safety* rule:
+that an empty approval choice is read as approved, which is why `decline_value` exists and why no
+control may offer an empty answer. A maintainer who checks the citation, finds a quote parser, and
+concludes the rule was invented deletes the guard. A false citation on a safety rule is a loaded
+argument for removing it.
+
+**Generalizable rule.** A `file:line` into another repository is a claim like any other and decays
+faster than the prose around it, because nothing in this repository moves when that file does. When
+prose cites a foreign source, open it. When copying a cited claim, re-verify the citation rather than
+the sentence — the sentence is usually right and the address is what rots.
+
 ### A parameter that only changes a record is invisible to every test that asserts the wire
 
 **Evidence.** U7's inline answer path passes `declined=selection.action == "decline"` into

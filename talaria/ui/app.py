@@ -373,7 +373,7 @@ SESSION_ALREADY_FOCUSED_NOTICE: Final[str] = f"{SESSION_ALREADY_FOCUSED} — not
 #: expired and was reused under a different kind in between would pair one
 #: kind's value with another kind's method, and for approval that is the one
 #: case that matters: an empty value read against the approval method is
-#: *approved*, not declined (``tools/approval.py:3320``). Refused instead.
+#: *approved*, not declined (``tools/approval.py:3679``). Refused instead.
 PROMPT_KIND_CHANGED: Final[str] = "the prompt changed before this could be sent — nothing was sent"
 
 #: Shown when escape is pressed on the unanswerable (deny-all-only) card
@@ -2537,7 +2537,8 @@ class TalariaApp(App[None]):
         while the other three send their field empty — an empty *approval*
         choice is not a decline at all, because the gateway's consumer blocks
         only on ``None`` and ``"deny"`` and returns approved for anything else
-        resolved (``tools/approval.py:3291``, ``:3320``).
+        resolved (``tools/approval.py:3584``, ``:3679``; the ``:3291``/``:3320``
+        this used to cite were re-verified on 2026-08-18 and are wrong).
 
         Everything after that is the ordinary answer path: same
         :meth:`respond_live`, same registry guards, same outcome discipline.
@@ -5010,12 +5011,15 @@ class TalariaApp(App[None]):
     async def _go_to_item(self, item: QueueItem) -> None:
         """Land the operator on the session this item belongs to (R17).
 
-        **Two steps when the item is on another connection, and the first one is
-        not optional.** A session id names a session only on the gateway that
-        issued it, so resuming a background connection's id against the home one
-        asks the wrong gateway about a session it has never heard of. The profile
-        is ensured first — brought up beside the others and made home, exactly
-        what ``/profiles`` does (KTD1) — and only then is the session resumed.
+        **Three steps when the item is on another connection, and the order of
+        the first two is the whole of CR7's navigation finding.** A session id
+        names a session only on the gateway that issued it, so resuming a
+        background connection's id against the home one asks the wrong gateway
+        about a session it has never heard of. So: refuse early if the switch is
+        already impossible, THEN ensure the profile — brought up beside the others
+        and made home, exactly what ``/profiles`` does (KTD1) — and only then
+        resume. Ensuring before the refusal check moved home in service of an act
+        that was already going to be refused.
         Nothing is dropped either way. Pinned by
         ``test_choosing_an_item_on_another_connection_ensures_that_profile_first``.
 
@@ -5024,7 +5028,24 @@ class TalariaApp(App[None]):
         session is waiting on, and re-deriving it at the landing would be a
         second answer to a question the item has already answered.
         """
+        moved_home = ""
         if item.profile != self.fleet_profile:
+            # **The refusal is checked BEFORE the ensure, and that ordering is the
+            # fix rather than a tidy-up.** ``switch_session`` checks this same
+            # predicate first thing and returns without sending; ensuring ahead of
+            # it meant taking a side effect — home moves, and the next session is
+            # created somewhere else — in service of an act that was already going
+            # to be refused. The operator then read "the session was not switched"
+            # and concluded nothing had happened, because the ensure's own notice
+            # had been overwritten by the refusal's. Reproduced before fixing:
+            # home went from "" to "beta-fixture" under that exact sentence.
+            #
+            # Pure and cheap, so checking it twice costs nothing and the second
+            # check inside ``switch_session`` stays the authoritative one.
+            refusal = fleet_switch_refusal(self.fleet)
+            if refusal:
+                self._notice(refusal)
+                return
             endpoint = self.profile_endpoints.get(item.profile, "")
             report = await self._ensure_profile(item.profile, endpoint)
             if report is None or not report.ok:
@@ -5033,7 +5054,22 @@ class TalariaApp(App[None]):
                 # Adding a second notice here would overwrite the specific
                 # sentence with a vaguer one.
                 return
+            moved_home = item.profile
         await self.switch_session(item.session_id, waiting_kind=item.kind)
+        if moved_home and self.state.focused_session_id != item.session_id:
+            # The residue the pre-check cannot remove: a refusal that only becomes
+            # true during the round trip, or a resume the gateway declines. The
+            # ensure has already moved home by then, so the operator is told —
+            # once, in one sentence carrying both facts, because the alternative
+            # is a true sentence about the session that lets them conclude a false
+            # thing about the connection.
+            self._notice(
+                f"{self.composer.notice} — {moved_home} is now home for new sessions"
+                if self.composer.notice
+                else f"{moved_home} is now home for new sessions"
+            )
+            return
+        self.prompts.focus_first_unanswered()
         # The plan's own sentence for this act: "landing with
         # `focus_first_unanswered` so the caret reaches the card". CR7 finding 7
         # showed the method had no production caller at all — seven tests asserted

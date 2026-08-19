@@ -145,11 +145,20 @@ def answer_choices(item: QueueItem) -> tuple[Choice, ...]:
     nothing" as the escape would grant the command it looked like it refused.
 
     That claim about the consumer is not this module's: it is transcribed in
-    :data:`~talaria.ui.prompts.DECLINE_VALUES`, which carries the citation
-    (``tools/approval.py:3291`` and ``:3320``). ``NO_CHOICES_FALLBACK`` covers an
-    approval the gateway described without listing choices; it is the same
-    fallback the card uses, so the two paths cannot disagree about what an
-    unlisted approval offers.
+    :data:`~talaria.ui.prompts.DECLINE_VALUES`, which carries the citation —
+    ``tools/approval.py:3584``, ``if not resolved or choice is None or choice ==
+    "deny"``, plus the explicit denial branch at ``:3679``.
+
+    **Those numbers were re-verified against the running checkout on 2026-08-18,
+    and the ``:3291``/``:3320`` this project cited in five places until then were
+    wrong**: they land in a quote-parsing loop and a policy-string tail, not in
+    the consumer. A load-bearing citation that does not say what it is quoted as
+    saying is worse than none — a maintainer who checks it concludes the rule was
+    invented and deletes the guard.
+
+    ``NO_CHOICES_FALLBACK`` covers an approval the gateway described without
+    listing choices; it is the same fallback the card uses, so the two paths
+    cannot disagree about what an unlisted approval offers.
 
     Pinned by ``test_the_decline_row_sends_an_explicit_deny_and_never_an_empty_choice``
     and ``test_an_approval_the_gateway_listed_no_choices_for_still_offers_a_named_answer``.

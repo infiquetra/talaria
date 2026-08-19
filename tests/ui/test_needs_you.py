@@ -26,7 +26,7 @@ from talaria.domain.models import QueueItem
 from talaria.domain.queue import NEEDS_YOU_NONE, NeedsYouQueue, summary_line, wait_line
 from talaria.domain.selection import Stage
 from talaria.domain.session_list import decode_active_list
-from talaria.domain.state import apply_active_list
+from talaria.domain.state import apply_active_list, begin_fleet_answer, fleet_switch_refusal
 from talaria.transport.connection_set import EnsureReport
 from talaria.ui.app import TalariaApp
 from talaria.ui.dialog import PickerDialog
@@ -830,4 +830,93 @@ async def test_navigating_to_an_item_lands_the_caret_on_the_card() -> None:
             "the caret never reached the card's control, so the answer the "
             "operator came to give still needs a keystroke nothing asks for"
         )
+        await app.shutdown_sources()
+
+
+def foreign_item() -> QueueItem:
+    return QueueItem(
+        profile="beta-fixture",
+        session_id="bg-7",
+        request_key="ap-7",
+        source="approval-poll",
+        kind="approval",
+        summary="approval requested",
+        row_key=("beta-fixture", "bg-7"),
+        opened_at=BASE_TIME,
+    )
+
+
+class RecordingEnsurer:
+    def __init__(self) -> None:
+        self.ensured: list[str] = []
+        self.home = ""
+
+    async def ensure(self, profile: str) -> EnsureReport:
+        self.ensured.append(profile)
+        self.home = profile
+        return EnsureReport(profile, "connected", "connected")
+
+
+@pytest.mark.asyncio
+async def test_a_navigation_that_will_be_refused_dials_nothing_and_moves_no_home() -> None:
+    """The side effect is not taken in service of an act already going to fail.
+
+    ``switch_session`` checks ``fleet_switch_refusal`` first thing and returns
+    without sending. Ensuring ahead of that check moved home — the profile the
+    next session is created on — and then the refusal's notice overwrote the
+    ensure's, so the operator read "the session was not switched" and concluded
+    nothing had happened. Reproduced before the fix: home went from "" to
+    "beta-fixture" under exactly that sentence.
+    """
+    ensurer = RecordingEnsurer()
+    app = live_app(RecordingDispatcher(), connections=ensurer)
+
+    async with app.run_test() as pilot:
+        await settle(app, pilot)
+        app.fleet = begin_fleet_answer(
+            app.fleet,
+            profile=app.fleet_profile,
+            session_id="s1",
+            request_key="ap-1",
+            at=BASE_TIME,
+        )
+        assert fleet_switch_refusal(app.fleet), "the precondition never armed"
+
+        await app._go_to_item(foreign_item())
+        await settle(app, pilot)
+
+        assert ensurer.ensured == [], "a connection was dialled for a switch that was refused"
+        assert app.current_profile == "", "home moved for a navigation that never happened"
+        assert "not switched" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_navigation_that_moved_home_and_then_failed_says_home_moved() -> None:
+    """The residue the pre-check cannot remove, reported rather than left silent.
+
+    A refusal can become true during the round trip, and a gateway can decline a
+    resume it accepted the request for. By then the ensure has moved home, so the
+    operator is told — in one sentence carrying both facts, because a true
+    sentence about the session alone lets them conclude a false thing about the
+    connection.
+    """
+    ensurer = RecordingEnsurer()
+    # The gateway answers, but names no session, so nothing lands.
+    app = live_app(RecordingDispatcher(), connections=ensurer)
+
+    async with app.run_test() as pilot:
+        await settle(app, pilot)
+        item = foreign_item()
+
+        await app._go_to_item(item)
+        await settle(app, pilot)
+
+        assert ensurer.ensured == ["beta-fixture"], "the precondition never held"
+        assert app.state.focused_session_id != item.session_id, "the session landed after all"
+        assert "home for new sessions" in app.composer.notice, (
+            "home moved and the operator was never told, so their next session "
+            "lands on a gateway they did not choose"
+        )
+        assert "beta-fixture" in app.composer.notice
         await app.shutdown_sources()
