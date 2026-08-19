@@ -95,19 +95,34 @@ standing. **The fold is load-bearing, not insurance with a stated trigger.**
 Three verifications, each run against a current source rather than reasoned from the format:
 
 * **The gateway emitted them.** `tools/approval.py` at the pinned read `7f4d15515` contains **zero**
-  occurrences of `request_id`; the same file at the checkout's HEAD (`d8e238691`) contains eight. So
+  occurrences of `request_id`; the same file at the checkout's HEAD (`d8e238691`) contains it on eight lines (twelve occurrences). So
   every approval that gateway announced was keyless, and any v0.1–v0.3 recording taken against it
   carries them.
 * **The recorder does not strip it.** `request_id` is never named in `talaria/recorder/redact.py`, so
   an absent id in a log is the gateway's silence and not redaction's.
-* **The domain keeps the frame.** `_register_prompt` (`talaria/domain/state.py:2100-2109`) mints a
+* **The domain keeps the frame.** `_on_prompt_request` (`talaria/domain/state.py:2054`, minting at `:2099-2110`) mints a
   session-qualified synthetic key — `approval:<session>#<n>` — and leaves `observed_request_id`
   empty, which is the field the fold reads. Probed: a keyless `approval.request` on an adopted
   session yields one prompt, `request_id='approval:s1#1'`, `observed_request_id=''`.
 
-**What U8 still owes on the strength of this.** `grep -c "approval.request"` returns 0 on every local
-corpus, so no recording exercises the fold this entry now calls load-bearing. U8's replay corpus must
-contain a keyless approval, or the determinism gate it extends never looks at it.
+**A recorded instance exists, which is stronger than the inference above.** Checked 2026-08-19 across
+the development machine's own `~/.talaria/recordings/`: 15 of 38 recordings contain an
+`approval.request`, and one of them holds **five keyless approval frames and no correlated ones**.
+That is this project's own recorder capturing what the pinned gateway emitted, so the chain no longer
+rests on reading the gateway's source alone. No recording is committed (R29), so the citation is the
+check rather than the file.
+
+**Corrected 2026-08-19.** This paragraph previously read "`grep -c "approval.request"` returns 0 on
+every local corpus". It was measured over `corpora/` — two generated files — and generalised to
+"local corpus", which in this project means the recording set (`talaria/replay/stress.py`,
+`talaria/domain/session_list.py`). The sentence was false in the direction that made the unit's
+evidence look weaker than it is.
+
+**The corpus obligation stands, on its own reason.** U8's *replay* corpus must contain a keyless
+approval — not because none exists anywhere, but because the determinism gate can only exercise the
+fold if the corpus the gate replays reaches it. Discharged: `build_fleet_corpus`
+(`talaria/replay/stress.py`) carries one, and `fleet_corpus_exercises_blind_approval` is a gate
+condition rather than a note.
 
 ## 2026-08-17
 

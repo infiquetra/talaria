@@ -933,11 +933,17 @@ class TaggedFrameSource(Protocol):
     """A frame stream whose items carry the connection they crossed.
 
     The fleet shape of :class:`~talaria.transport.source.FrameSource`, satisfied
-    by :class:`~talaria.transport.connection_set.ConnectionSet`. Declared as a
-    separate protocol rather than by widening ``FrameSource`` because the two are
-    genuinely different contracts and one caller — replay — can never satisfy
-    this one: a recording is a single stream by construction and has no
-    connection identity to carry.
+    by :class:`~talaria.transport.connection_set.ConnectionSet` live and, since
+    U8, by :class:`~talaria.replay.source.TaggedReplaySource` for a version-2
+    recording. Declared as a separate protocol rather than by widening
+    ``FrameSource`` because the two are genuinely different contracts.
+
+    **This used to say replay "can never satisfy this one: a recording is a
+    single stream by construction and has no connection identity to carry".**
+    That was true of the v0.3 format and false from U2, which gave the frame log
+    a per-frame ``profile`` — the sentence outlived the format it described by
+    two units. A *version-1* recording still has no connection identity and
+    still satisfies ``FrameSource`` instead, which is the surviving half.
     """
 
     def __aiter__(self) -> AsyncIterator[TaggedFrame]: ...
@@ -1707,10 +1713,16 @@ class TalariaApp(App[None]):
                     # attribute every connection's traffic to the focused one.
                     self.ingest(item.record, profile=item.profile, epoch=item.epoch)
                 else:
-                    # The single-connection shape: one ``LiveSource`` or a
-                    # replay, both yielding bare records. Kept rather than
-                    # migrated because replay has no connection set and never
-                    # will — a recording is one stream by construction.
+                    # The single-connection shape: one ``LiveSource``, or a
+                    # VERSION-1 replay — both yielding bare records.
+                    #
+                    # **This used to say "replay has no connection set and never
+                    # will — a recording is one stream by construction".** True
+                    # of the v0.3 format, false from U2 onward, and reached by
+                    # the branch above from U8: a version-2 recording opens as
+                    # ``TaggedReplaySource`` and takes the tagged path. The
+                    # surviving half is that a version-1 log genuinely is one
+                    # stream and no tag is invented for it (KTD6).
                     self.ingest(item)
         except asyncio.CancelledError:  # pragma: no cover - teardown path
             raise

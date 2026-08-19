@@ -701,10 +701,10 @@ would still reach the domain.
 
 **ANSWERED, 2026-08-18: yes, one can arise — the fold is load-bearing and the deletion clause is
 withdrawn.** `tools/approval.py` at the pinned read `7f4d15515` contains zero occurrences of
-`request_id` where the checkout's HEAD contains eight, so that gateway announced every approval
+`request_id` where the checkout's HEAD contains it on eight lines, so that gateway announced every approval
 keyless and any v0.1–v0.3 recording taken against it carries them; `talaria/recorder/redact.py` never
 names the field, so an absent id is the gateway's silence rather than redaction's; and
-`_register_prompt` (`talaria/domain/state.py:2100-2109`) keeps the frame, minting the synthetic key
+`_on_prompt_request` (`talaria/domain/state.py:2054`, minting at `:2099-2110`) keeps the frame, minting the synthetic key
 `approval:<session>#<n>` while leaving `observed_request_id` empty — the field the fold reads. The
 clause is withdrawn in `docs/engineering-journal/DECISIONS.md` with all three citations.
 

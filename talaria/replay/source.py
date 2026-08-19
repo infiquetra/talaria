@@ -60,7 +60,9 @@ __all__ = [
 # genuinely contained one of these cannot reproduce it from the frame log
 # alone, so the gate carries a second, deterministic timeline beside it: one
 # scripted, non-wire-frame action per entry, tied to the index of the frame it
-# follows. Scope is exactly the two action kinds named below — nothing richer.
+# follows. Scope is exactly the action kinds named below — nothing richer. U8
+# added the third, ``checkpoint``, which applies nothing and exists so a gate
+# fingerprint can ride the same exact frame indices the other two do.
 
 SidebandActionKind = Literal["confirmed_cancel", "typed_disconnect", "checkpoint"]
 
@@ -193,13 +195,19 @@ def derive_focus_profile(
     """Which connection's session a replay of this log should show.
 
     **Replay has no other way to answer this, and the answer is not cosmetic.**
-    ``_adopt_profile`` is reached from the two ``/profiles`` picker paths and
-    nowhere else, so it never runs in replay; ``focused_profile`` is whatever the
-    app was constructed with. Meanwhile ``route_frame`` feeds the focused engine
-    only frames whose profile equals it — so a tagged log replayed at the wrong
-    focus renders an EMPTY transcript. Measured: the same frames at
-    ``focused_profile='default'`` give 0 transcript entries and at the tagged
-    profile give 3.
+    ``focused_profile`` is whatever the app was constructed with, and nothing
+    moves it during a replay — ``_adopt_profile`` is reached only through
+    ``_ensure_profile`` (from the profile picker, and from the needs-you list's
+    "go" action), and ``_ensure_profile`` returns at its ``connections is None``
+    guard because a replay is assembled with no connection set. The focus is
+    fixed at construction because the transport seams are absent, not because
+    the picker is the only door — a distinction worth keeping, since a future
+    replay that DID carry a connection set would move it.
+
+    Meanwhile ``route_frame`` feeds the focused engine only frames whose profile
+    equals it, so a tagged log replayed at the wrong focus renders an EMPTY
+    transcript. Measured on ``build_fleet_corpus``: 0 transcript entries at
+    ``focused_profile='default'`` against 2 at the tagged profile.
 
     Three rules, in the plan's own order, each preferring recorded evidence over
     inference:

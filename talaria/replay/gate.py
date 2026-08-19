@@ -1908,17 +1908,13 @@ async def run_gate(
             "comparison": "==",
             "pass": fleet_aspects["ages"],
         },
-        # U8's corpus obligation, made a gate condition rather than a note. The
-        # unit's own answer to the operator's keyless-approval question made
-        # U6's unplaceable fold load-bearing; a corpus with no keyless approval
-        # would leave this gate blind to the mechanism that answer made
-        # permanent, and a green run would stand in for coverage it does not have.
         "fleet_ages_come_from_the_corpus_clock": {
             # The check the determinism one cannot be. A wall clock would render
-            # an age of roughly the seconds since the recording was made — some
-            # hundreds of millions — where the frame clock renders an age inside
-            # the corpus's own span. Both are stable across two runs, so only
-            # this comparison tells them apart.
+            # an age of roughly the seconds since the recording was made — about
+            # 2.1 million for this corpus, whose base time is ~24 days back —
+            # where the frame clock renders an age inside the corpus's own span.
+            # Both are stable across two runs, so only this comparison tells them
+            # apart. Measured under the mutation: 2,105,719 against a span of 6.
             "description": (
                 "every rendered wait age lies within the corpus's own time span, so "
                 "the surface is reading the frame clock and not a wall clock"
@@ -1928,6 +1924,11 @@ async def run_gate(
             "comparison": "<=",
             "pass": ages_within_corpus,
         },
+        # U8's corpus obligation, made a gate condition rather than a note. The
+        # unit's own answer to the operator's keyless-approval question made
+        # U6's unplaceable fold load-bearing; a corpus with no keyless approval
+        # would leave this gate blind to the mechanism that answer made
+        # permanent, and a green run would stand in for coverage it does not have.
         "fleet_corpus_exercises_blind_approval": {
             "description": "the fleet corpus contains an approval carrying no request id",
             "measured": fleet_corpus.keyless_approval_count,

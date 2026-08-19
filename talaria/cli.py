@@ -345,13 +345,18 @@ def run_replay(args: argparse.Namespace) -> int:
         status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
         paste_threshold=_build_paste_threshold(cfg),
         # **Derived from the recording, because replay has no other way to learn
-        # it.** ``_adopt_profile`` runs from the two ``/profiles`` picker paths
-        # and nowhere else, so the focused profile in replay is whatever this
-        # constructor is given — and ``route_frame`` feeds the focused engine
-        # only frames whose profile matches it. Left at the default, a tagged
-        # recording renders an EMPTY transcript: measured at 0 entries against 3
-        # for the same frames at the tagged profile. ``""`` for a
-        # single-connection log keeps the default, which is what that log means.
+        # it.** ``route_frame`` feeds the focused engine only frames whose profile
+        # matches ``focused_profile``, and nothing moves that value during a
+        # replay: ``_adopt_profile`` is reached only through ``_ensure_profile``
+        # and the profile picker, and ``_ensure_profile`` returns at its
+        # ``connections is None`` guard here because ``run_replay`` passes no
+        # connection set. So the focused profile in replay is whatever this
+        # constructor is given, start to finish.
+        #
+        # Left at the default, a tagged recording renders an EMPTY transcript.
+        # Measured on ``build_fleet_corpus``: 0 entries at the default against 2
+        # at the tagged profile. ``""`` for a single-connection log keeps the
+        # default, which is what that log means.
         current_profile=getattr(source, "focus_profile", ""),
     )
     app.run()
