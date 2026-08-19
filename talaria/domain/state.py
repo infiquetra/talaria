@@ -4156,7 +4156,16 @@ def settle_queue_item(
     item carries no control. The undercount stays on record because it is the
     evidence that counting key shapes here without citing them was unsafe.
     """
-    key: ItemKey = (profile, session_id, request_key)
+    # Resolved rather than taken verbatim, because callers hold whichever id
+    # they were working with and the queue's identity space is the DURABLE one
+    # (``build_queue`` keys both feeds from ``row_key[1]``). ``apply_approval_pending``
+    # already resolves for the same reason; a latch filed under a runtime id
+    # would name an item the queue never builds, so the control would stay
+    # offered and the latch would silently do nothing. A session with no row
+    # falls back to the id as given — there is nothing better to key it by, and
+    # recording the latch beats dropping it.
+    resolved = _resolve_key(fleet, profile, session_id)
+    key: ItemKey = (profile, resolved[1] if resolved else session_id, request_key)
     if key in fleet.settled_items:
         return replace(fleet, clock=max(fleet.clock, at))
     settled = (*fleet.settled_items, key)[-SETTLED_ITEM_LIMIT:]

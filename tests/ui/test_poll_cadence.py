@@ -45,6 +45,9 @@ class CountingDispatcher:
         #: Methods this gateway refuses outright, so a caller sees an
         #: unconfirmed outcome rather than a reply it can decode.
         self.refuse: set[str] = set()
+        #: Methods that never left the client at all — the one delivery that is
+        #: DEFINITE about non-delivery and therefore the only one that restores.
+        self.never_sent: set[str] = set()
 
     async def call(
         self, method: str, params: Any = None, *, timeout: float | None = None
@@ -52,6 +55,16 @@ class CountingDispatcher:
         self.calls.append(method)
         if method == APPROVAL_PENDING:
             self.params.append(params)
+        if method in self.never_sent:
+            from talaria.transport.rpc import NOT_CONNECTED
+
+            return RpcOutcome(
+                status="unknown",
+                method=method,
+                request_id="1",
+                epoch=1,
+                reason=NOT_CONNECTED,
+            )
         if method in self.refuse:
             return RpcOutcome(
                 status="error", method=method, request_id="1", epoch=1, error_message="refused"
@@ -259,6 +272,20 @@ async def test_a_connection_never_polled_is_due_at_once(
 
 
 #  ── feed B: the approvals of sessions someone else drives ─────────────────
+
+
+def _prompt(*, request_id: str, session_id: str) -> Any:
+    """A minimal approval prompt, as the card path would hand one to the latch."""
+    from talaria.domain.models import PendingPrompt
+
+    return PendingPrompt(
+        kind="approval",
+        request_id=request_id,
+        summary="rm -rf /data",
+        session_id=session_id,
+        opened_at=1.0,
+        seq=1,
+    )
 
 
 def waiting_row(profile: str, durable: str, runtime: str | None) -> Any:
@@ -622,4 +649,130 @@ async def test_detail_is_asked_after_the_roster_that_decides_who_is_due(
     )
     assert calls.index("session.list") < calls.index(APPROVAL_PENDING), (
         f"detail was asked before the roster that decides who is due: {calls}"
+    )
+
+
+#  ── the settle latch: the queue's copy follows the card's ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_answer_latches_the_polled_copy_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AE2's fleet leg: ``settled_items`` stops being permanently empty.
+
+    ``settle_prompt`` clears the focused registry, which removes feed A's row.
+    Feed B's copy is derived from ``FleetState.approval_detail`` and survives
+    until the gateway stops listing it — which, for an answer whose outcome
+    Talaria could not read, may be never. Re-offering an approval that may
+    already have been answered is the worst retry available (R18).
+
+    Invisible before U8B: ``approval_detail`` was permanently empty, so there
+    was no second copy to leave behind.
+    """
+    import talaria.ui.app as app_module
+    from talaria.domain.state import fleet_queue
+
+    now = 10_000.0
+    monkeypatch.setattr(app_module, "_wall_clock", lambda: now)
+    app, sources = fleet_app(now)
+    with_detail_seam(app, HOME, {(HOME, "s-mine"): waiting_row(HOME, "s-mine", "run-mine")})
+    sources[HOME].results[APPROVAL_PENDING] = {
+        "approvals": [
+            {"request_id": "gw-9", "description": "rm -rf /data", "choices": ["once", "deny"]}
+        ]
+    }
+
+    async with app.run_test() as pilot:
+        await app.poll_approval_detail(HOME, sources[HOME])
+        await pilot.pause()
+        before = fleet_queue(app.fleet)
+        assert any(item.request_key == "gw-9" for item in before.items), (
+            "the precondition did not hold: no polled copy to leave behind"
+        )
+
+        app.fleet = replace(
+            app.fleet,
+            settled_items=(),
+        )
+        app._latch_queue_copy(
+            _prompt(request_id="gw-9", session_id="run-mine")
+        )
+        await pilot.pause()
+
+    assert app.fleet.settled_items, "nothing was latched, so settled_items is still empty"
+    after = fleet_queue(app.fleet)
+    assert not any(item.request_key == "gw-9" for item in after.items), (
+        "the polled copy survived the answer and is still offered"
+    )
+
+
+def test_the_latch_is_filed_under_the_key_the_queue_builds() -> None:
+    """The identity space, which is the durable one — not whatever id was answered.
+
+    ``respond_live`` is given the id the prompt carries, which for a resumed
+    session is a runtime id. ``build_queue`` keys both feeds from ``row_key[1]``.
+    A latch filed under the runtime id names an item the queue never builds, so
+    it would silently latch nothing and the control would stay offered.
+    """
+    from talaria.domain.state import FleetState, settle_queue_item
+
+    rows = {(AWAY, "s-durable"): waiting_row(AWAY, "s-durable", "run-1")}
+    fleet = replace(
+        FleetState(focused_profile=AWAY),
+        rows=rows,
+        aliases={(AWAY, "run-1"): (AWAY, "s-durable")},
+    )
+
+    latched = settle_queue_item(
+        fleet, profile=AWAY, session_id="run-1", request_key="gw-9", at=1.0
+    )
+    assert latched.settled_items == ((AWAY, "s-durable", "gw-9"),), (
+        f"the latch was filed under {latched.settled_items}, which the queue never builds"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_restored_prompt_keeps_its_queue_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The carve-out that makes the latch's placement load-bearing.
+
+    ``not_sent`` is the one outcome definite about non-delivery, so
+    ``restore_prompt`` puts the control back and the operator can answer again.
+    Latching there would tombstone a question that is still live: the card would
+    offer a control the queue had already written off, and the item would never
+    return however long it waited.
+
+    A mutation adding ``_latch_queue_copy`` to the restore branch survived every
+    other test in this file and in ``test_prompts.py``. This is the probe it
+    owed. Driven through ``respond_live`` rather than asserted about the source,
+    because the claim is about which branch runs.
+    """
+    import talaria.ui.app as app_module
+
+    from .conftest import event, feed, settle
+
+    now = 10_000.0
+    monkeypatch.setattr(app_module, "_wall_clock", lambda: now)
+    app, sources = fleet_app(now)
+    sources[HOME].never_sent.add("clarify.respond")
+
+    async with app.run_test() as pilot:
+        feed(app, event("clarify.request", {"request_id": "c-1", "question": "which branch?"}))
+        await settle(app, pilot)
+        assert app.state.prompt_for("c-1", app.state.focused_session_id) is not None, (
+            "the precondition did not hold: no live prompt to restore"
+        )
+
+        await app.respond_live("c-1", "main")
+        await settle(app, pilot)
+
+        assert app.state.prompt_for("c-1", app.state.focused_session_id) is not None, (
+            "the prompt was not restored, so this test is not exercising that branch"
+        )
+
+    assert app.fleet.settled_items == (), (
+        "a restored prompt was latched as settled — its queue row is tombstoned "
+        "while its control is back on the card, so it can never return"
     )

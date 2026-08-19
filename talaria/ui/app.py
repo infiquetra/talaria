@@ -166,6 +166,7 @@ from talaria.domain.state import (
     seed_history,
     set_connection,
     settle_prompt,
+    settle_queue_item,
 )
 from talaria.domain.state import (
     SUBMIT_METHOD as SUBMIT_METHOD,
@@ -3350,6 +3351,7 @@ class TalariaApp(App[None]):
             self.state = settle_prompt(
                 self.state, prompt.request_id, session_id=prompt.session_id
             )
+            self._latch_queue_copy(prompt)
             self.state = latch_resolved_prompts(self.state, (prompt,))
             if in_focus:
                 self.state = record_local_note(
@@ -3380,6 +3382,7 @@ class TalariaApp(App[None]):
             return
 
         self.state = settle_prompt(self.state, prompt.request_id, session_id=prompt.session_id)
+        self._latch_queue_copy(prompt)
         if verdict.disposition == "discarded":
             self._report_prompt_outcome(
                 prompt,
@@ -3411,6 +3414,40 @@ class TalariaApp(App[None]):
         # names a choice the *gateway* offered (:func:`echoable_answer`).
         self._report_prompt_outcome(prompt, line, in_focus=in_focus)
         self._dirty = True
+
+    def _latch_queue_copy(self, prompt: PendingPrompt) -> None:
+        """Settle the queue's copy of a prompt the card path just cleared (R18/AE2).
+
+        ``settle_prompt`` clears the focused engine's registry, which removes
+        feed A's row. It cannot touch feed B's: a polled approval is derived from
+        ``FleetState.approval_detail`` and stays there until the gateway stops
+        listing it, which is one poll away at best and never if the answer's
+        outcome was ambiguous. Until U8B wired feed B that was invisible, because
+        ``approval_detail`` was permanently empty — ``settle_queue_item`` had no
+        production caller and ``build_queue``'s ``settled=`` was always empty.
+
+        **Called from both settle branches and from neither restore branch**, and
+        that is the whole rule: a restored control is a question the operator can
+        still answer, so its queue row must stay. Every other outcome leaves the
+        control cleared, and an item offered with no control behind it is exactly
+        the inert control AE11 forbids.
+
+        One helper rather than the same two lines in two branches — this file's
+        own ``AnswerVerdict`` docstring records what happened the last time one
+        reading of an outcome was written twice.
+        """
+        # A prompt with no session id names no row, so there is no queue copy to
+        # settle — feed A builds its identity from the row the prompt anchors to
+        # and an unanchored prompt has none.
+        if not prompt.session_id:
+            return
+        self.fleet = settle_queue_item(
+            self._fleet,
+            profile=self.fleet_profile,
+            session_id=prompt.session_id,
+            request_key=prompt.request_id,
+            at=self.state.last_observed_at,
+        )
 
     def _report_prompt_outcome(
         self,

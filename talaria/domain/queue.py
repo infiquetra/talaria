@@ -1442,19 +1442,20 @@ def connection_notices(
     # to guard: not a queue that lost an item, but a queue that stopped saying it
     # had never looked.
     #
-    # Stated unconditionally rather than gated on the seam, because the fact does
-    # not depend on what the gateway can do: Talaria does not ask, whatever the
-    # answer would have been. It is deliberately the last line, so a connection
-    # that ALSO could not be probed says both things in the order they matter.
+    # **The standing "foreign approval detail is not polled" line was DELETED
+    # here on 2026-08-19, by the unit that was scheduled to delete it.** U7 added
+    # it as the disclosure of a named, scheduled gap rather than a permanent
+    # caveat, and said so: "Delete this line in U8B, and not before." U8B wired
+    # KTD2's cadence and feed B's assembly, so the sentence became false — the
+    # detail IS polled now, on every connection whose seam answered, for every
+    # session the trigger statuses admit. A disclosure that outlives its gap is
+    # worse than none: it trains an operator to read past the line that will one
+    # day be true again.
     #
-    # **Delete this line in U8B, and not before.** It is not a permanent caveat;
-    # it is the disclosure of a named, SCHEDULED gap — U8B, "the foreign-wait
-    # data path", slotted by the operator on 2026-08-18 between U8's review and
-    # U9, covering the KTD2 cadence, feed B's assembly, and AE2's settle latch.
-    # That unit owns this deletion explicitly, and the bare ``needs-you: none``
-    # becoming reachable again is its observable proof. Pinned by
-    # ``test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed``.
-    lines.append(f"{profile}: {_APPROVAL_DETAIL_UNPOLLED}")
+    # What remains above is the seam's own story, which is the honest residue: a
+    # connection whose approval-detail probe found nothing still says so, because
+    # there the gap is real. The bare ``needs-you: none`` is reachable again for
+    # the first time since U7, and that is this unit's observable proof.
     # **No "this row cannot be asked about" line, and the absence is deliberate.**
     # One was written here on 2026-08-19 and removed the same day: the state it
     # disclosed cannot occur. ``RegistryRow.status`` is written in exactly one
@@ -1477,13 +1478,6 @@ _APPROVAL_DETAIL_CONSEQUENCE: Final[str] = (
     "row is shown without its prompt"
 )
 
-#: Said of every connection, whatever its seam probe found, for as long as
-#: nothing calls ``approval.pending`` for data. See ``connection_notices``.
-_APPROVAL_DETAIL_UNPOLLED: Final[str] = (
-    "foreign approval detail is not polled on any connection — a session of "
-    "someone else's that is waiting on an approval is not in this queue, whether "
-    "or not this gateway would answer"
-)
 
 
 def _seam_notice(

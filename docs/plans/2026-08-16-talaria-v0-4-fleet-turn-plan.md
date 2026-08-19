@@ -851,9 +851,29 @@ class U7 spent three commits closing.
    `approval.pending` is issued in production **only as a presence probe**. `FleetState.approval_detail`
    is written in exactly one place — inside the unreachable `apply_approval_pending` — and pruned in
    four, so it is permanently empty in a live run. U6's "two feeds, one identity" runs on one feed.
-3. **The settle latch.** `settle_queue_item` (`state.py:4049`) has no production caller, so
-   `settled_items` stays empty and `build_queue`'s `settled=` argument is always the empty set.
-   Production settles through `settle_prompt` on the focused session instead.
+3. **The settle latch. LANDED 2026-08-19, with a narrower call site than this section implied.**
+   `settle_queue_item` (`state.py:4049`) had no production caller, so `settled_items` stayed empty and
+   `build_queue`'s `settled=` was always the empty set.
+
+   The obvious call site — answering a foreign approval from the queue — does not exist, and U7 is why:
+   `_inline_answerable` already requires the prompt to be live in the focused engine's registry, so a
+   polled item is navigate-to only ("offering a row the answer path would refuse is a control that
+   does nothing"). The latch's real case is the one this section's own mechanism describes: **an
+   answer whose outcome Talaria could not read leaves feed B's copy behind.** `settle_prompt` clears
+   the focused registry, which removes feed A's row; feed B's is derived from `approval_detail` and
+   survives until the gateway stops listing it, which for an ambiguous outcome may be never. It was
+   invisible before this unit because `approval_detail` was permanently empty.
+
+   Wired through one helper, called from both settle branches and from **neither** restore branch —
+   `not_sent` is the one outcome definite about non-delivery, so the control comes back and its queue
+   row must stay; latching there would tombstone a live question while its card still offered a
+   control. That carve-out survived the first mutation pass and now has its own probe.
+
+   One correction inside `settle_queue_item` itself: it took `session_id` verbatim, but `build_queue`
+   keys both feeds from the **durable** id while `respond_live` is handed whatever id the prompt
+   carries — a runtime id for a resumed session. A latch filed under the runtime id names an item the
+   queue never builds, so it would latch nothing and leave the control offered. It resolves through
+   the alias now, as `apply_approval_pending` does.
 
 4. **Per-connection gate replay. LANDED 2026-08-19, first of the two halves.** `measure_replay`,
    `replay_headless` and `exercise_inert_controls` each constructed a bare `ReplaySource` from
@@ -891,11 +911,25 @@ gateways. So U8B must land the gate's ability to *measure* such a corpus before 
 first one, or the recording arrives with nothing able to read it and the refusal U8 shipped is the
 only thing that happens to it.
 
-**A deletion this unit owns.** U7 added a standing line to `connection_notices` stating that foreign
-approval detail is not polled on any connection, because a present seam means "this gateway would
-answer" and never "we asked". **That line is deleted here**, along with the tests pinning it, and the
-bare `needs-you: none` becomes reachable again for the first time — which is the observable proof
-that this unit did what it says. Its trigger is now scheduled rather than indefinite.
+**A deletion this unit owns. DONE 2026-08-19.** U7 added a standing line to `connection_notices`
+stating that foreign approval detail is not polled on any connection, because a present seam means
+"this gateway would answer" and never "we asked", and wrote "Delete this line in U8B, and not
+before". The sentence is now false — the detail *is* polled, on every connection whose seam answered,
+for every session the trigger statuses admit — so the line and its constant are gone.
+
+Two tests moved with it, and neither was edited to pass:
+
+- `test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed` is **retired** and
+  replaced by its successor, which asserts the present-seam connection is now *silent* and that the
+  absent-seam notice is unchanged. The absent case is still true — a gateway with no
+  `approval.pending` handler genuinely cannot be asked — so only the present half moved.
+- `test_a_fully_answered_quiet_fleet_says_none_without_qualification` is **restored to its original
+  meaning**. It asserted the bare `needs-you: none` until CR7 weakened it to require the
+  qualification, because Talaria was not entitled to the unqualified sentence. It is entitled to it
+  again, and the assertion can only pass while the foreign-wait path actually runs.
+
+The bare `needs-you: none` is reachable for the first time since U7, which is this unit's observable
+proof.
 
 **Files:** `talaria/ui/app.py` (the poll loop and its cadence timer, the `approval.pending` call site,
 the settle call site), `talaria/domain/queue.py` (delete the standing disclosure line),

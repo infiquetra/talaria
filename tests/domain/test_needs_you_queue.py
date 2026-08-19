@@ -989,28 +989,29 @@ def test_a_never_probed_connection_is_named_as_never_probed() -> None:
 
 
 def test_a_fully_answered_quiet_fleet_says_none_without_qualification() -> None:
-    """The precondition for the two tests above, as far as it now goes.
+    """The test's original meaning, restored by the unit that earned it back.
 
-    **Renamed in substance by CR7 (2026-08-18): the qualification is real and
-    this fleet has not, in fact, been fully asked.** Nothing in production issues
-    ``approval.pending`` as a data call, so a foreign session waiting on an
-    approval is not in this queue on any connection. The bare ``needs-you: none``
-    is therefore unreachable until that poll lands, and that is the honest state
-    rather than a wording defect — a fleet that says it was fully asked while one
-    whole feed is never fetched is the sentence R14 exists to forbid.
+    A round trip worth keeping on the record. It began asserting exactly this.
+    CR7 (2026-08-18) found that nothing in production issued ``approval.pending``
+    as a data call, so a foreign session waiting on an approval was in no
+    connection's queue — the bare ``needs-you: none`` was a sentence Talaria was
+    not entitled to say, and the test was weakened to require the qualification
+    instead. U7 added that standing line; U8B wired KTD2's cadence and feed B and
+    deleted it, which is what makes the unqualified sentence true again.
 
-    What the test still guards, and what it was really for: the qualification is
-    *exactly one* line and it is the known one. Any second notice here means some
-    other connection went unanswered and the surface would be hiding it.
+    So the assertion below is not a relaxation. It is the observable proof the
+    plan named for this unit, and it can only pass while the foreign-wait path
+    actually runs: let feed B stop being fetched and the notice returns, because
+    ``connection_notices`` still reports every seam that did not answer.
     """
     queue = fleet_queue(probed(FleetState(focused_profile=PROFILE)))
-    assert len(queue.notices) == 1, (
-        "a quiet, fully answered fleet carries a notice beyond the known "
-        "unpolled-approval one"
+    assert queue.notices == (), (
+        f"a quiet, fully answered fleet still qualifies its silence: {queue.notices}"
     )
-    assert "not polled" in queue.notices[0]
-    assert summary_line(queue, BASE_TIME).startswith(NEEDS_YOU_NONE)
-    assert summary_line(queue, BASE_TIME) != NEEDS_YOU_NONE
+    assert summary_line(queue, BASE_TIME) == NEEDS_YOU_NONE, (
+        "the bare needs-you: none is still unreachable, so U8B's observable proof "
+        "has not landed"
+    )
 
 
 # ── Protection: the queue's one stored consequence ───────────────────────
@@ -3023,19 +3024,20 @@ def test_an_approval_on_a_down_connection_is_refused_not_dropped() -> None:
     )
 
 
-def test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed() -> None:
-    """A present seam means "this gateway would answer", never "we asked".
+def test_a_probed_connection_no_longer_disclaims_its_foreign_approvals() -> None:
+    """The successor to the pin that guarded U7's standing disclosure line.
 
-    CR7 found that nothing in production issues ``approval.pending`` as a data
-    call — it is registered as a presence probe only — so ``approval_detail`` is
-    written by nothing in a live run. Before this line, a connection whose
-    approval-detail seam probed *present* emitted no notice at all, and that
-    silence read as "everything of this connection's is in the queue". It is
-    R14's failure arriving through the door the seam was meant to guard: not a
-    queue that lost an item, but a queue that stopped saying it had never looked.
+    That test asserted a connection whose approval-detail seam probed *present*
+    still said "foreign approval detail is not polled" — true while nothing
+    issued ``approval.pending`` as a data call, and the honest disclosure of a
+    scheduled gap. U8B closed the gap, so the sentence became false and both the
+    line and its pin are retired rather than edited to keep passing.
 
-    Asserted at BOTH seam states, because the fact does not depend on what the
-    gateway can do — Talaria does not ask, whatever the answer would have been.
+    Retired, not deleted wholesale: the *absent* seam half is still true and is
+    asserted below, because there the gap is real — a gateway with no
+    ``approval.pending`` handler genuinely cannot be asked. What changed is only
+    the present case, which is now silent, and this asserts that silence directly
+    so a regression that stops polling shows up as a line reappearing.
     """
     from talaria.domain.compat import (
         SeamObservation,
@@ -3068,14 +3070,15 @@ def test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed()
         return connection_notices(profile="beta", board=board, channel=channel)
 
     probed_present = notices("present")
-    assert any("not polled" in line for line in probed_present), (
-        "a connection whose approval-detail seam probed present said nothing, so "
-        "its silence reads as 'we asked and nothing is waiting'"
+    assert probed_present == (), (
+        f"a connection whose seams all answered still qualifies its silence: "
+        f"{probed_present}"
     )
-    assert any("beta" in line for line in probed_present), "the line names no connection"
 
-    # And an absent seam still says its own thing, with the unpolled fact after it.
+    # The absent seam is unchanged: there the gap is real, and saying so is the
+    # whole of R24. Only the present case moved.
     absent = notices("absent")
     assert any("approval-detail absent" in line for line in absent)
-    assert any("not polled" in line for line in absent)
-    assert absent[-1].endswith("whether or not this gateway would answer")
+    assert not any("not polled" in line for line in absent), (
+        "the deleted standing line came back beside the seam's own"
+    )
