@@ -336,7 +336,8 @@ versioned addition, not a meaning drift.
 
 Dependency order. U1 gates everything; U2–U3 are the trunk; U4 follows U3; U5 can branch from U2;
 U6 follows U4 because both change `talaria/domain/state.py`; U7 and U8 follow their named inputs;
-U8B follows U8's review and gates U9's AE2 leg; U9 closes. The execution spec interleaves an adversarial-review unit (CR1–CR8, plus CR8B) behind each
+U8B follows U8's review and gates U9 twice — its AE2 leg, and the gate's ability to measure the
+two-gateway recording U9 is the first run able to produce; U9 closes. The execution spec interleaves an adversarial-review unit (CR1–CR8, plus CR8B) behind each
 implementation unit as a scheduling gate; the spec graph is authoritative for order. Every review
 unit returns a machine-readable verdict (`clean`, or `blocked` with its surviving findings), and
 the /work driver halts on any non-clean verdict — remediating and re-reviewing before any
@@ -697,21 +698,51 @@ Why it matters beyond replay: U6's unplaceable fold refuses an approval only whe
 gateway id for it, and the case for deleting that fold outright rests on the claim that blind items
 cannot arise. That claim is currently revision-specific — the live gateway mints a `request_id` for
 every entry — and nobody has checked the replay path or older logs, which is where a keyless approval
-would still reach the domain. Until U8 answers it, the fold ships as insurance with a stated trigger.
-If U8 proves blind items impossible across every supported input, the fold-deletion clause in
-`docs/engineering-journal/DECISIONS.md` (2026-08-18, "The unplaceable fold refuses only what would be
-answered blind") becomes actionable at the alias-pinning revisit. If U8 finds one, the fold is
-load-bearing and the clause is withdrawn.
+would still reach the domain.
 
-### U8B. The foreign-wait data path: cadence, feed assembly, and the settle latch
+**ANSWERED, 2026-08-18: yes, one can arise — the fold is load-bearing and the deletion clause is
+withdrawn.** `tools/approval.py` at the pinned read `7f4d15515` contains zero occurrences of
+`request_id` where the checkout's HEAD contains it on eight lines, so that gateway announced every approval
+keyless and any v0.1–v0.3 recording taken against it carries them; `talaria/recorder/redact.py` never
+names the field, so an absent id is the gateway's silence rather than redaction's; and
+`_on_prompt_request` (`talaria/domain/state.py:2054`, minting at `:2099-2110`) keeps the frame, minting the synthetic key
+`approval:<session>#<n>` while leaving `observed_request_id` empty — the field the fold reads. The
+clause is withdrawn in `docs/engineering-journal/DECISIONS.md` with all three citations.
+
+**Corrected, 2026-08-18, and the correction strengthens the answer above.** An earlier revision of
+this section said `grep -c "approval.request"` returns 0 on every local recording. Measured, that is
+wrong twice over. The literal string appears in 15 of the 38 local recordings — 30 of those matches
+are `session.info` payloads listing `approval.request` as a *tool name*, which is not an approval at
+all — and one recording holds **five genuine `approval.request` event frames, every one of them
+keyless**: no `request_id` in the frame's params and none in its payload.
+
+That is direct evidence on disk for the keyless answer above, stronger than the source citation it
+rests on, and it is what a claim of "zero" would have hidden. It was found by re-running the
+measurement rather than by re-reading the sentence.
+
+**The corpus obligation survives the correction, and it is U8's.** The one recording that carries
+those five frames is a version-1, single-connection log, so it cannot be the fleet corpus a
+multi-connection gate needs. **U8's replay corpus must itself contain a keyless approval** — an
+`approval.request` with no `request_id` — or the determinism gate it extends never looks at the
+mechanism the answer made permanent. A gate that grows a checkpoint over a state its corpus cannot
+reach is a green check standing in for coverage.
+
+### U8B. The foreign-wait data path and per-connection gate replay
 
 **Slotted by operator ruling of 2026-08-18**, out of the UNSLOTTED position it was filed in during
 U7. It runs after U8's review and before U9. Numbered `U8B` rather than renumbered into the sequence
 so that every existing reference to U9 — in this plan, in the saga register, and in
 `docs/engineering-journal/` — keeps meaning what it meant.
 
+**It carries two halves, joined by a second operator ruling of 2026-08-18.** The first is the
+foreign-wait data path below. The second is per-connection gate replay, returned to the operator by
+CR8's fixture lens as architectural rather than fixed inside U8, and filed here because this is the
+next unit to touch the fleet's read path and it sits immediately before the unit that produces the
+recording the gate would point at. Both are described in full below; the first is the larger.
+
 **Goal:** A session someone else owns, waiting on an approval on a gateway Talaria is merely
-connected to, appears in the needs-you queue — and stops appearing when it is answered.
+connected to, appears in the needs-you queue — and stops appearing when it is answered. And the
+determinism gate can measure a multi-connection recording rather than refusing it.
 
 **Why it is one unit and not three.** The cadence is what fills the feed, and the feed is what the
 cadence is for. Wiring any part alone manufactures the next dead production path, which is the defect
@@ -731,13 +762,29 @@ class U7 spent three commits closing.
    `settled_items` stays empty and `build_queue`'s `settled=` argument is always the empty set.
    Production settles through `settle_prompt` on the focused session instead.
 
-**Covers:** KTD2 (the cadence proper), R14 and R24 (the queue stops disclosing a gap it no longer
-has), AE2's fleet-level leg.
+4. **Per-connection gate replay.** `run_gate` refuses a version-2 corpus outright (U8 shipped that
+   refusal, and it stays — a gate that cannot measure a file must not publish a measurement of it).
+   What it cannot yet do is *measure* one: `measure_replay`, `replay_headless` and
+   `exercise_inert_controls` each construct a bare `ReplaySource` from records with no tags, so a
+   tagged corpus replayed through any of them would merge two gateways' equal session ids into a
+   session that never existed. Threading the tags through is a signature change across all three,
+   which is why it left U8 as an escalation rather than a fix. The fleet checkpoints U8 added
+   (`replay_fleet_trace`) already run per connection and are the shape to follow.
 
-**U9 depends on this unit, and that dependency is why it is slotted here.** AE2 exercises fleet-level
-settle-and-latch, which cannot pass against a live gateway while `settled_items` is empty. U9's other
-legs do not depend on it — driven approvals are pushed by the gateway and have routed per connection
-since U7's composition root — so this is the one leg the sequencing protects.
+**Covers:** KTD2 (the cadence proper), R14 and R24 (the queue stops disclosing a gap it no longer
+has), AE2's fleet-level leg, and KTD6 at the gate (a log with no tags is one connection — and a log
+with tags is not).
+
+**U9 depends on this unit twice over, and that dependency is why it is slotted here.** First, AE2
+exercises fleet-level settle-and-latch, which cannot pass against a live gateway while
+`settled_items` is empty; U9's other legs do not depend on that — driven approvals are pushed by the
+gateway and have routed per connection since U7's composition root — so it is the one leg the
+sequencing protects. Second, the dependency runs the other way for the gate half: U9's live
+acceptance run is the first opportunity to capture a real two-gateway recording, because a
+version-2 log cannot exist until a build carrying U8's recorder fix has been run against two
+gateways. So U8B must land the gate's ability to *measure* such a corpus before U9 produces the
+first one, or the recording arrives with nothing able to read it and the refusal U8 shipped is the
+only thing that happens to it.
 
 **A deletion this unit owns.** U7 added a standing line to `connection_notices` stating that foreign
 approval detail is not polled on any connection, because a present seam means "this gateway would
@@ -747,19 +794,41 @@ that this unit did what it says. Its trigger is now scheduled rather than indefi
 
 **Files:** `talaria/ui/app.py` (the poll loop and its cadence timer, the `approval.pending` call site,
 the settle call site), `talaria/domain/queue.py` (delete the standing disclosure line),
-`talaria/domain/state.py` (no new reducers expected — the fold already exists and is tested).
+`talaria/domain/state.py` (no new reducers expected — the fold already exists and is tested),
+`talaria/replay/gate.py` (`measure_replay`, `replay_headless` and `exercise_inert_controls` take
+tags; the version-2 refusal narrows to the paths that still cannot carry them).
 
 **Test scenarios:** a foreign session's approval reaches the queue through a poll and is answerable;
 a `sessions.changed` hint coalesces rather than polling per event; the 30-second backstop fires with
 no hint; an answered foreign approval leaves the queue and does not return on the next poll; the
 bare `needs-you: none` is reachable on a fully answered, fully polled fleet. Per-connection cost and
 backoff on a failing gateway are this unit's to state and pin, since they are the reason it was not
-folded into U7.
+folded into U7. For the gate half: a version-2 corpus whose two connections carry the SAME session
+id replays into two distinct registry rows rather than one merged row — the untagged path must be
+shown to fail that before the tagged path is shown to pass it, because the merge is silent and a
+test that only asserts the passing direction cannot tell the two paths apart.
+
+**Advisories inherited from CR8's fixture lens, 2026-08-18.** Filed here rather than fixed inside U8,
+none of them blocking, all of them on the read path this unit owns:
+
+| # | Finding | Why it lands here |
+| --- | --- | --- |
+| F18 | A connection a recording declares but that never answered replays as connected — the mount-time fold marks every declared connection up, because the log is evidence they answered, and a header entry is not that evidence | This unit reads connection state per connection; the fix is a fold that waits for a frame |
+| F21 | Five accessors on `TaggedReplaySource` have no reader in `talaria/` | The gate half above is what reads them; if it does not, they should go |
+| F23 | `live_corpus_identity` hardcodes the string `"v1"` in the identity it publishes, so a version-2 corpus would be cited under a version it is not | The gate half changes which versions reach that function |
+
+Two more from the same lens are already closed: F20 (the age parser reading gateway text) and F22
+(`__all__` omitting U8's public names) were fixed in U8 itself. F19, a missing vacuity floor under
+the wall-clock age check, was fixed in U8 too — the corpus change that prompted it was U8's, and
+leaving the floor out while moving the thing it guards would have been the wrong half to defer.
 
 **Depends on:** U3 (registry), U6 (queue domain), U7 (the composition root and the per-connection
-sweep this cadence extends).
+sweep this cadence extends), U8 (the tagged replay source and the fleet checkpoints the gate half
+extends).
 
 **Review:** CR8B, bounded — same shape as CR7, same corrected mutation rule, same stop conditions.
+The gate half carries one extra obligation: the review must confirm the untagged path *fails* the
+same-session-id corpus before accepting that the tagged path passes it.
 
 ### U9. The live acceptance run
 

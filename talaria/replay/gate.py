@@ -39,14 +39,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import platform
+import re
 import resource
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
 from textual.widgets._markdown import MarkdownBlock, MarkdownFence
 
 from talaria.domain.models import ConnectionStatus, TerminalCause, TranscriptKind
@@ -57,13 +60,25 @@ from talaria.domain.projection import (
     entry_scoped_view,
     transcript_view,
 )
-from talaria.domain.state import SessionState, cancel_turn
+from talaria.domain.queue import summary_line, wait_line
+from talaria.domain.state import FleetState, SessionState, cancel_turn, fleet_queue
+from talaria.recorder.framelog import FRAME_LOG_VERSION_MULTI_CONNECTION
+from talaria.recorder.reader import FrameLogEntry, FrameLogHeader, RecordedConnectionRow
 from talaria.replay.controls import MAX_SPEED, MIN_SPEED, ReplayControls
-from talaria.replay.source import ReplaySource, SidebandAction, load_frame_records, load_header
+from talaria.replay.source import (
+    ReplaySource,
+    SidebandAction,
+    TaggedReplaySource,
+    derive_focus_profile,
+    load_frame_records,
+    load_header,
+)
 from talaria.replay.stress import (
     FeatureCorpus,
+    FleetCorpus,
     StressCorpus,
     build_feature_corpus,
+    build_fleet_corpus,
     build_stress_corpus,
 )
 from talaria.replay.workloads import WARMUP_BOUNDARIES, WorkloadResults, run_adversarial_workloads
@@ -1151,7 +1166,245 @@ def _sideband_status_for_cause(cause: TerminalCause) -> ConnectionStatus:
     return "auth_failed" if cause == "auth_failed" else "disconnected"
 
 
+#: What one fleet checkpoint records. Four separate strings rather than one
+#: digest, because four separate checks read them: a single blob would report
+#: "something differed" and leave the reader to find out what.
+FleetTrace = dict[str, str]
+
+
+def fleet_trace(app: TalariaApp) -> FleetTrace:
+    """Fingerprint the four things U8's goal names, at one instant.
+
+    **Rendered strings for the ages, not the raw floats.** An age is what the
+    operator reads, and the two differ exactly where a wrong clock would show: a
+    float compared against itself reproduces the same wrong number in both runs
+    and passes a determinism check while failing correctness.
+
+    **And the ROW itself, not only a recomputation of it.** The first draft read
+    :func:`~talaria.domain.queue.summary_line` alone and carried a comment about
+    running the render tick first — which was false, because a pure function of
+    the fleet does not care whether any widget has repainted. Reading the bar's
+    own text is what makes the claim "the rendered age is deterministic" a claim
+    about the surface rather than about a function the surface happens to share.
+    Both are kept: the pure strings pin the domain, and the row pins that the
+    two agree.
+    """
+    fleet = app.fleet
+    queue = fleet_queue(fleet)
+    clock = app.state.last_observed_at
+    # Synchronous, so it can run inside the sideband callback that produced this
+    # checkpoint — the bar is repainted from the render tick in ordinary running,
+    # and a checkpoint that read it without refreshing would fingerprint whatever
+    # the last tick happened to leave there.
+    app._refresh_needs_you()
+    try:
+        rendered_row = app.needs_you_bar.line
+    except NoMatches:  # pragma: no cover - the gate always mounts the screen
+        rendered_row = ""
+    return {
+        # **Nine fields of twenty-three, and the two added last are the point.**
+        # CR8 measured that rows differing only in ``message_count`` or
+        # ``open_turn`` fingerprinted identically — and ``message_count`` is
+        # exactly where a speed-dependent dropped delta would show, which is the
+        # defect a determinism gate over a replay exists to catch.
+        # ``frames_accounted_for`` closes that gap for the stress corpus and
+        # never for this one.
+        #
+        # The remainder are deliberately out: ``title`` and ``stale_since`` are
+        # covered by the ages aspect, and the rest are derived from these or are
+        # bookkeeping a replay cannot vary. Listing them explicitly rather than
+        # hashing the whole row keeps the check's failure legible — a diff names
+        # the field that moved.
+        "registry": registry_fingerprint(fleet),
+        "queue": repr(
+            (
+                tuple(
+                    (item.identity, item.kind, item.source, item.answerable)
+                    for item in queue.items
+                ),
+                queue.notices,
+            )
+        ),
+        "focus": repr((fleet.focused_profile, fleet.focused_key())),
+        # The profile ALONE, as its own key, for the same reason ``wait_lines``
+        # is split out below: the correctness check that reads it must not parse
+        # a value out of a repr. ``focus`` above pins that the pair is stable;
+        # this one is what lets a separate check ask whether it is RIGHT.
+        "focus_profile": fleet.focused_profile,
+        "ages": repr(
+            (
+                summary_line(queue, clock),
+                tuple(wait_line(item, clock) for item in queue.items),
+                rendered_row,
+            )
+        ),
+        # The wait lines ALONE, kept as their own key so the corpus-clock check
+        # can read an age without parsing digits out of gateway text. A
+        # ``wait_line`` is Talaria's own words plus one number; the summary line
+        # beside it carries the session TITLE, and a session called "deploy in
+        # 900s" made the age parser report 900. Measured. It inflates rather
+        # than deflates — the parser takes the maximum — so the corruption fails
+        # the gate closed rather than open, which is the safer direction and
+        # still a gate an operator's own title could break.
+        "wait_lines": repr(tuple(wait_line(item, clock) for item in queue.items)),
+    }
+
+
+_AGE_SECONDS = re.compile(r"(\d+)s")
+
+
+def _rendered_age_seconds(wait_lines_fingerprint: str) -> float | None:
+    """The largest whole-second age among one checkpoint's rendered wait lines.
+
+    **Wait lines only, never the whole ages fingerprint.** A
+    :func:`~talaria.domain.queue.wait_line` is Talaria's own words plus one
+    number; the summary line beside it carries the gateway's session title, and
+    a session called "deploy in 900s" made this function report 900. Measured
+    while building this check. Because it takes the maximum, such corruption
+    inflates rather than deflates and so fails the gate closed — but a gate an
+    operator's own session title can break is a gate that will be disbelieved
+    the first time it happens.
+
+    ``None`` when the checkpoint rendered no age at all, which is the ordinary
+    state of a queue with nothing in it — distinct from "rendered zero", and the
+    caller must not treat the two the same.
+    """
+    found = [float(match) for match in _AGE_SECONDS.findall(wait_lines_fingerprint)]
+    return max(found) if found else None
+
+
+def ages_within_corpus_span(
+    trace: Sequence[FleetTrace], corpus: FleetCorpus
+) -> tuple[bool, float]:
+    """Whether every rendered wait age lies inside the corpus's own time span.
+
+    Returns ``(pass, largest_age_seconds)``. Factored out of :func:`run_gate`
+    rather than left inline, and the reason is a gap this unit found in its own
+    test: a check computed inline can only be exercised by running the whole
+    gate, so the test that was supposed to pin *which fingerprint key it reads*
+    could only assert that the key existed. Under a mutation pointing the parser
+    back at the summary line — which carries the session title — that test stayed
+    green. This function is the thing to drive directly.
+    """
+    span = max(record.at for record in corpus.records) - min(
+        record.at for record in corpus.records
+    )
+    ages = [_rendered_age_seconds(checkpoint["wait_lines"]) for checkpoint in trace]
+    largest = max((age for age in ages if age is not None), default=0.0)
+    return (all(age is None or age <= span + 1.0 for age in ages), largest)
+
+
+def rendered_age_count(trace: Sequence[FleetTrace]) -> int:
+    """How many checkpoints rendered an age at all.
+
+    :func:`ages_within_corpus_span` compares each rendered age against the
+    corpus's span and is vacuously true when nothing rendered one — every age is
+    ``None``, ``all()`` over that is ``True``, and the gate reports a wall clock
+    it never looked for. That is the same "a check that runs zero times reports
+    zero failures" shape the sampled checks below carry a floor for, so this is
+    its floor: a separate count, published as its own check, so a corpus that
+    stops filling the queue fails visibly instead of passing quietly.
+
+    The corpus can stop filling the queue without anyone touching this file —
+    move the focus to a connection with no approval and every wait line is empty.
+    """
+    return sum(
+        1 for checkpoint in trace if _rendered_age_seconds(checkpoint["wait_lines"]) is not None
+    )
+
+
+def focus_names_driving_connection(
+    trace: Sequence[FleetTrace], corpus: FleetCorpus
+) -> tuple[bool, int]:
+    """Whether the derived focus is the connection the corpus was driving.
+
+    Returns ``(pass, checkpoints_agreeing)``.
+
+    **The check ``fleet_derived_focus`` provably cannot be**, and the shape is
+    the one this unit has now met three times: a comparison between two runs
+    cannot catch a wrong value, only an unstable one.
+    :func:`~talaria.replay.source.derive_focus_profile` is a pure function of the
+    corpus, so a mutation of it lands identically in both runs and the
+    determinism comparison stays green. Measured, not reasoned: under three
+    mutations — always ``""``, always the header's first connection, and a
+    connection name that appears nowhere in the corpus — ``fleet_derived_focus``
+    passed every time.
+
+    The expected value is :attr:`FleetCorpus.focus_profile`, declared by the
+    builder that wrote the landing, so this compares the derivation against an
+    independent statement rather than against itself.
+    """
+    agreeing = sum(
+        1 for checkpoint in trace if checkpoint["focus_profile"] == corpus.focus_profile
+    )
+    return (bool(trace) and agreeing == len(trace), agreeing)
+
+
+def registry_fingerprint(fleet: FleetState) -> str:
+    """Nine of ``RegistryRow``'s twenty-three fields, named explicitly.
+
+    Factored out so it can be DRIVEN rather than described: a test that builds
+    two fleets differing in one field is the only thing that shows the field is
+    in here. CR8 measured the previous version missing ``message_count`` and
+    ``open_turn``, and ``message_count`` is exactly where a speed-dependent
+    dropped delta would show — the defect a determinism gate over a replay
+    exists to catch. ``frames_accounted_for`` closes that gap for the stress
+    corpus and never for the fleet one.
+
+    The rest are deliberately out: ``title`` and ``stale_since`` are covered by
+    the ages aspect, and the remainder are derived from these or are bookkeeping
+    a replay cannot vary. Listed rather than hashed whole so a failure names the
+    field that moved.
+    """
+    return repr(
+        sorted(
+            (
+                key,
+                row.durable_id,
+                row.status,
+                row.waiting_kind,
+                row.listed,
+                row.live_listed,
+                row.disconnected,
+                row.message_count,
+                row.open_turn,
+            )
+            for key, row in fleet.rows.items()
+        )
+    )
+
+
+def corpus_entries(corpus: FleetCorpus) -> tuple[FrameLogEntry, ...]:
+    """The corpus as the reader would have produced it, so the derivation is real.
+
+    ``derive_focus_profile`` takes what a frame log yields. A synthetic corpus
+    holds records and tags instead, and handing the derivation an empty sequence
+    — as this module first did — makes two of its three rules unreachable and the
+    gate check over it unfalsifiable.
+    """
+    return tuple(
+        FrameLogEntry(
+            seq=record.seq,
+            at=str(record.at),
+            dir=record.direction,
+            frame=record.frame,
+            profile=profile,
+        )
+        for record, profile in zip(corpus.records, corpus.profiles, strict=True)
+    )
+
+
 def _apply_sideband_action(app: TalariaApp, action: SidebandAction) -> None:
+    if action.kind == "checkpoint":
+        # Recorded by the caller's own callback; nothing to apply. The kind
+        # exists so a checkpoint rides the sideband's EXACT frame indices
+        # (``ReplaySource._fire_due_sideband`` fires after the frame at that
+        # index has been applied, driven by the source's own pacing) rather than
+        # the 20ms wall-clock sampler ``measure_replay`` uses. That sampler's
+        # ``applied`` count differs between runs by construction, so a trace
+        # taken there could never be byte-identical and the pressure would run
+        # toward weakening the comparison until it passed.
+        return
     if action.kind == "confirmed_cancel":
         app.state = cancel_turn(app.state, at=app.state.last_observed_at)
         app._dirty = True
@@ -1483,6 +1736,68 @@ async def replay_headless(
     return state
 
 
+async def replay_fleet_trace(
+    corpus: FleetCorpus, *, speed: float = 64.0
+) -> tuple[FleetTrace, ...]:
+    """Replay a tagged corpus through the real app, fingerprinting at every frame.
+
+    **The checkpoints ride the sideband, not the sampler**, and that is the whole
+    of why this function exists rather than a flag on ``measure_replay``. That
+    one samples on a 20ms wall-clock poll and fires its checkpoint when the
+    applied count has passed a mark — so the count at each poll differs between
+    runs by construction, two runs snapshot different frame prefixes, and no
+    trace taken there could be byte-identical. The sideband fires at exact
+    1-based frame indices, after the frame at that index has been applied,
+    driven by the source's own pacing (see ``ReplaySource.paced``). That is the
+    mechanism this package already argues is deterministic, so it is the one the
+    determinism claim is built on.
+
+    A checkpoint at *every* index rather than a sample of them: the corpus is
+    small by design, and "same checkpoints, twice, byte-identical" is a stronger
+    claim when the checkpoints are all of them.
+    """
+    controls = ReplayControls()
+    controls.set_speed(speed)
+    source = TaggedReplaySource(
+        ReplaySource(corpus.records, controls=controls, profiles=corpus.profiles),
+        connections=corpus.connections,
+        # **Real entries, not ``()``.** Passing an empty sequence left rules one
+        # and two of the derivation unreachable, so ``fleet_derived_focus``
+        # exercised only rule three — the header fallback — and could not fail
+        # for any mutation of the capability it names. Two mutations of
+        # ``derive_focus_profile`` (return the LAST connection; return ``""``)
+        # both left the check passing. Found by CR8's fixture lens.
+        focus_profile=derive_focus_profile(
+            FrameLogHeader(
+                version=2,
+                started_at="",
+                endpoint="",
+                connections=tuple(
+                    RecordedConnectionRow(profile=name, endpoint="")
+                    for name in corpus.connections
+                ),
+            ),
+            corpus_entries(corpus),
+        ),
+    )
+    app = TalariaApp(
+        source, mode="replay", controls=controls, current_profile=source.focus_profile
+    )
+    trace: list[FleetTrace] = []
+    source.bind_sideband(
+        tuple(
+            SidebandAction(frame_index=index + 1, kind="checkpoint")
+            for index in range(len(corpus.records))
+        ),
+        lambda _action: trace.append(fleet_trace(app)),
+    )
+    async with app.run_test(size=GATE_SIZE) as pilot:
+        await app.drain()
+        await pilot.pause()
+        await app.shutdown_sources()
+    return tuple(trace)
+
+
 async def exercise_inert_controls(records: tuple[FrameRecord, ...]) -> tuple[str, ...]:
     """Invoke every mutation control mid-replay and collect the refusals (AE11)."""
     controls = ReplayControls()
@@ -1576,6 +1891,48 @@ async def run_gate(
         == normalized_block_structure(sideband_unbounded)
     )
 
+    # U8: the fleet checkpoints. Two speeds, one tagged corpus, a fingerprint
+    # after every frame — and the comparison is over the four things the unit's
+    # goal names rather than one blob, so a failure says which of them moved.
+    fleet_corpus = build_fleet_corpus()
+    fleet_trace_fast = await replay_fleet_trace(fleet_corpus, speed=64.0)
+    fleet_trace_unbounded = await replay_fleet_trace(fleet_corpus, speed=float("inf"))
+    # **Determinism cannot catch a wrong clock, so correctness is asserted
+    # separately.** Probed while building this: replacing the bar's frame clock
+    # with ``time.time()`` leaves BOTH runs' rendered ages identical, because
+    # ``format_age`` rounds to whole seconds and two replays of a six-frame
+    # corpus finish milliseconds apart. No corpus size fixes that — a wall clock
+    # is stable to the second across two runs however long the recording is. The
+    # only thing that separates the two clocks is what the age SHOULD be, so the
+    # check below computes it from the corpus and compares.
+    corpus_span = max(record.at for record in fleet_corpus.records) - min(
+        record.at for record in fleet_corpus.records
+    )
+    ages_within_corpus, largest_rendered_age = ages_within_corpus_span(
+        fleet_trace_fast, fleet_corpus
+    )
+    # And the same argument again, one aspect over: two runs agreeing on the
+    # focused connection says nothing about whether it is the right one, because
+    # the derivation is pure and both runs read the same corpus. Measured under
+    # three mutations of ``derive_focus_profile``, all three survived
+    # ``fleet_derived_focus``. This is what asks the other question.
+    focus_is_the_driven_one, focus_agreements = focus_names_driving_connection(
+        fleet_trace_fast, fleet_corpus
+    )
+    checkpoints_rendering_an_age = rendered_age_count(fleet_trace_fast)
+
+    fleet_aspects = {
+        aspect: (
+            len(fleet_trace_fast) == len(fleet_trace_unbounded)
+            and len(fleet_trace_fast) == len(fleet_corpus.records)
+            and all(
+                first[aspect] == second[aspect]
+                for first, second in zip(fleet_trace_fast, fleet_trace_unbounded, strict=True)
+            )
+        )
+        for aspect in ("registry", "queue", "focus", "ages")
+    }
+
     # U6, gap 2: the KTD1(d) adversarial workloads (growth curves plus the
     # boundary probes), run once at their exact specified sizes.
     workloads = await run_adversarial_workloads()
@@ -1595,6 +1952,30 @@ async def run_gate(
         raise GateError(f"live corpus not found: {live_corpus}")
 
     if live_corpus is not None:
+        # **A version-2 corpus is REFUSED rather than mis-measured (CR8, F15).**
+        # This function holds the path and chose the untagged reader, so a tagged
+        # recording replayed here merged two gateways' equal session ids into one
+        # session that never existed — and published ``determinism_identical:
+        # true`` over it. That is verbatim the harm
+        # ``talaria/recorder/reader.py`` says the version bump exists to prevent:
+        # "the bump makes such a reader stop instead of misread." This gate was
+        # that reader and it did not stop.
+        #
+        # Refusing rather than threading tags through ``measure_replay``,
+        # ``replay_headless`` and ``exercise_inert_controls`` is deliberate and
+        # is NOT the finished answer: that threading is a signature change across
+        # three functions and is filed as its own work. Stopping is the half that
+        # is correct on its own — a gate that cannot measure a file must not
+        # publish a measurement of it.
+        live_header = load_header(live_corpus)
+        if live_header.version >= FRAME_LOG_VERSION_MULTI_CONNECTION:
+            raise GateError(
+                f"live corpus {live_corpus} is a version-{live_header.version} "
+                "(multi-connection) recording, and this gate replays it as a single "
+                "connection — which would merge two gateways' equal session ids. "
+                "Refused rather than measured; per-connection gate replay is filed "
+                "as its own work."
+            )
         records = load_frame_records(live_corpus)
         identity = live_corpus_identity(live_corpus, records)
         live_measurement, _, _ = await measure_replay(records, identity, mount_cap=mount_cap)
@@ -1607,6 +1988,131 @@ async def run_gate(
         refusals = await exercise_inert_controls(records)
 
     checks: dict[str, dict[str, Any]] = {
+        # U8's four, one per thing the unit's goal names. Each rides the
+        # sideband's exact frame indices rather than ``measure_replay``'s 20ms
+        # wall-clock sampler, whose applied-count differs between runs by
+        # construction — a trace taken there could not be byte-identical, and
+        # the pressure would run toward weakening the comparison until it passed.
+        #
+        # The checkpoint count is a pass condition of each, for the reason the
+        # sampled checks below carry the same guard: a comparison over zero
+        # checkpoints reports zero differences.
+        "fleet_registry_determinism": {
+            "description": (
+                "the same tagged corpus replayed at two speeds produces an identical "
+                "registry at every frame"
+            ),
+            "measured": len(fleet_trace_fast),
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": fleet_aspects["registry"],
+        },
+        "fleet_queue_determinism": {
+            "description": (
+                "identical needs-you items and connection notices at every frame, "
+                "at two speeds"
+            ),
+            "measured": len(fleet_trace_fast),
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": fleet_aspects["queue"],
+        },
+        "fleet_derived_focus": {
+            "description": (
+                "the focused connection derived from the recording is the same at "
+                "every frame, at two speeds"
+            ),
+            "measured": len(fleet_trace_fast),
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": fleet_aspects["focus"],
+        },
+        "fleet_focus_names_the_driving_connection": {
+            # The correctness half, and the plan's actual words: "the gate
+            # asserts the derivation itself, not only the end state." The check
+            # above asserts the end state is stable. This one asserts the
+            # derivation picked the connection the recorded run was driving —
+            # the last landing's — against the corpus's own declaration of it.
+            "description": (
+                "the focus derived from the recording is the connection the corpus "
+                "was driving, so a wrong derivation fails rather than merely being "
+                "wrong identically twice"
+            ),
+            "measured": focus_agreements,
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": focus_is_the_driven_one,
+        },
+        "fleet_rendered_age_determinism": {
+            # The RENDERED strings, and the bar's own text — but **this check
+            # does NOT guard against a wrong clock, and the sentence that used
+            # to sit here said it did.** It read "a float compared against
+            # itself reproduces the same wrong number in both runs … so this
+            # reads the functions the surface itself calls", which states the
+            # problem correctly and then claims a cure that was measured not to
+            # work: under a wall clock BOTH runs still render identical ages,
+            # because ``format_age`` rounds to whole seconds and two replays of
+            # this corpus finish milliseconds apart.
+            #
+            # What this check is actually for: the rendered text is a function of
+            # more than the clock — the queue's contents, the ordering, the
+            # ages' floor-versus-observed wording — and two runs disagreeing on
+            # any of that is a determinism defect. The clock is guarded by
+            # ``fleet_ages_come_from_the_corpus_clock`` below, which compares
+            # against the corpus instead of against the other run.
+            "description": (
+                "the rendered needs-you summary and wait lines are identical at "
+                "every frame, at two speeds"
+            ),
+            "measured": len(fleet_trace_fast),
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": fleet_aspects["ages"],
+        },
+        "fleet_ages_come_from_the_corpus_clock": {
+            # The check the determinism one cannot be. A wall clock would render
+            # an age of roughly the seconds since the recording was made — about
+            # 2.1 million for this corpus, whose base time is ~24 days back —
+            # where the frame clock renders an age inside the corpus's own span.
+            # Both are stable across two runs, so only this comparison tells them
+            # apart. Measured under the mutation: 2,105,719 against a span of 6.
+            "description": (
+                "every rendered wait age lies within the corpus's own time span, so "
+                "the surface is reading the frame clock and not a wall clock"
+            ),
+            "measured": largest_rendered_age,
+            "threshold": corpus_span + 1.0,
+            "comparison": "<=",
+            "pass": ages_within_corpus,
+        },
+        "fleet_ages_were_actually_rendered": {
+            # The floor under the check above, which is vacuously true when the
+            # queue is empty at every checkpoint: every age is ``None``, and
+            # ``all()`` over that is ``True``. Nothing in this file has to change
+            # for that to happen — a corpus whose focused connection carries no
+            # approval renders no wait line anywhere, and the wall-clock check
+            # then passes having looked at nothing.
+            "description": (
+                "the corpus rendered at least one wait age, so the wall-clock check "
+                "above compared something"
+            ),
+            "measured": checkpoints_rendering_an_age,
+            "threshold": 1,
+            "comparison": ">=",
+            "pass": checkpoints_rendering_an_age >= 1,
+        },
+        # U8's corpus obligation, made a gate condition rather than a note. The
+        # unit's own answer to the operator's keyless-approval question made
+        # U6's unplaceable fold load-bearing; a corpus with no keyless approval
+        # would leave this gate blind to the mechanism that answer made
+        # permanent, and a green run would stand in for coverage it does not have.
+        "fleet_corpus_exercises_blind_approval": {
+            "description": "the fleet corpus contains an approval carrying no request id",
+            "measured": fleet_corpus.keyless_approval_count,
+            "threshold": 1,
+            "comparison": ">=",
+            "pass": fleet_corpus.keyless_approval_count >= 1,
+        },
         # Frames the app applied against frames the corpus contains. Content
         # loss upstream of the reducer is invisible to a check whose ground
         # truth is the reducer's own output: discarding nine of every ten

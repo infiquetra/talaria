@@ -27,7 +27,7 @@ from talaria.recorder.framelog import (
     RecordedConnection,
     RecorderError,
 )
-from talaria.recorder.reader import read_frame_log
+from talaria.recorder.reader import FrameLogError, read_frame_log
 
 ALPHA = "alpha-fixture"
 BETA = "beta-fixture"
@@ -245,15 +245,14 @@ def test_a_v0_1_format_log_still_loads_as_one_connection(tmp_path: Path) -> None
     assert len(log.entries) == 1
 
 
-def test_the_reader_tolerates_the_version_2_keys_it_does_not_yet_name(
-    tmp_path: Path,
-) -> None:
-    """The unknown-key tolerance the format document states, measured.
+def test_the_reader_names_the_version_2_keys_as_data(tmp_path: Path) -> None:
+    """U8 did the work the previous version of this test was waiting for.
 
-    The reader selects each record's known fields and never rejects extras, so
-    a version-2 log parses today. Naming ``profile`` and ``connections`` as
-    *data* is U8's work; what is asserted here is only that shipping the writer
-    ahead of the reader breaks nothing.
+    It used to assert only that a version-2 log *parsed* — the unknown-key
+    tolerance — and said in its own docstring that naming ``profile`` and
+    ``connections`` as data was U8's job. It is done, so the assertion moves
+    from "nothing broke" to "the tag arrived", which is what every step after
+    this one reads.
     """
     path = tmp_path / "fleet.jsonl"
     recorder = _fleet_recorder(path)
@@ -263,3 +262,46 @@ def test_the_reader_tolerates_the_version_2_keys_it_does_not_yet_name(
     log = read_frame_log(path)
     assert log.header.version == FRAME_LOG_VERSION_MULTI_CONNECTION
     assert len(log.entries) == 1
+    assert [row.profile for row in log.header.connections] == [ALPHA, BETA]
+    assert log.entries[0].profile == ALPHA, "the frame's connection was dropped on read"
+
+
+def test_a_version_this_build_cannot_read_stops_rather_than_misreads(
+    tmp_path: Path,
+) -> None:
+    """The guard the format document promised, which nothing implemented.
+
+    ``docs/formats/frame-log.md`` states the rule: "a version-1-only reader that
+    skipped the unknown ``profile`` key would merge equal ids from two different
+    gateways into one session that never existed, and would do it silently. The
+    bump makes such a reader stop instead of misread." Until U8 there was no
+    version check at all — a header declaring anything at all parsed, and every
+    field a future format added would have been dropped in exactly the silent
+    way the paragraph forbids.
+
+    Refusing a FORWARD version is the point rather than a limitation: this build
+    cannot know what a version 3 means, and the failure mode of guessing is a
+    merged session rather than an error.
+    """
+    path = tmp_path / "future.jsonl"
+    recorder = _fleet_recorder(path)
+    recorder.view(ALPHA).record("in", json.dumps({"jsonrpc": "2.0", "method": "event"}))
+    recorder.close()
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    header = json.loads(lines[0])
+    header["version"] = FRAME_LOG_VERSION_MULTI_CONNECTION + 1
+    path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n", encoding="utf-8")
+
+    with pytest.raises(FrameLogError) as caught:
+        read_frame_log(path)
+    assert "3" in str(caught.value)
+    assert "newer Talaria" in str(caught.value), (
+        "the refusal does not tell the operator what would read this file"
+    )
+
+    # Both known versions still read, or the guard is a regression of its own.
+    for version in (FRAME_LOG_VERSION, FRAME_LOG_VERSION_MULTI_CONNECTION):
+        header["version"] = version
+        path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n", encoding="utf-8")
+        assert read_frame_log(path).header.version == version

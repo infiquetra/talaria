@@ -21,11 +21,13 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Final, Literal
 
 from talaria.domain.normalize import parse_frame_time
+from talaria.recorder.framelog import FRAME_LOG_VERSION_MULTI_CONNECTION
 from talaria.recorder.reader import FrameLogEntry, FrameLogHeader, iter_frame_log, read_header
 from talaria.replay.controls import ReplayControls
+from talaria.transport.connection_set import TaggedFrame
 from talaria.transport.source import Direction, FrameRecord, TerminalCause
 
 #: How many zero-delay frames the source emits before handing control back to
@@ -35,15 +37,21 @@ from talaria.transport.source import Direction, FrameRecord, TerminalCause
 YIELD_EVERY = 64
 
 __all__ = [
+    "LANDING_METHODS",
+    "REPLAY_EPOCH",
     "YIELD_EVERY",
     "ReplaySource",
     "SidebandAction",
     "SidebandActionKind",
+    "TaggedReplaySource",
     "build_sideband",
+    "derive_focus_profile",
     "load_frame_records",
     "load_header",
     "parse_frame_time",
+    "profiles_from_entries",
     "record_from_entry",
+    "source_from_path",
 ]
 
 
@@ -58,9 +66,11 @@ __all__ = [
 # genuinely contained one of these cannot reproduce it from the frame log
 # alone, so the gate carries a second, deterministic timeline beside it: one
 # scripted, non-wire-frame action per entry, tied to the index of the frame it
-# follows. Scope is exactly the two action kinds named below — nothing richer.
+# follows. Scope is exactly the action kinds named below — nothing richer. U8
+# added the third, ``checkpoint``, which applies nothing and exists so a gate
+# fingerprint can ride the same exact frame indices the other two do.
 
-SidebandActionKind = Literal["confirmed_cancel", "typed_disconnect"]
+SidebandActionKind = Literal["confirmed_cancel", "typed_disconnect", "checkpoint"]
 
 
 @dataclass(frozen=True)
@@ -90,6 +100,8 @@ class SidebandAction:
             raise ValueError("a typed_disconnect action needs a cause (KTD7)")
         if self.kind == "confirmed_cancel" and self.cause is not None:
             raise ValueError("a confirmed_cancel action carries no cause")
+        if self.kind == "checkpoint" and self.cause is not None:
+            raise ValueError("a checkpoint action carries no cause")
 
 
 def build_sideband(actions: Iterable[SidebandAction]) -> tuple[SidebandAction, ...]:
@@ -137,6 +149,112 @@ def record_from_entry(entry: FrameLogEntry) -> FrameRecord:
     )
 
 
+#: The socket generation every replayed frame carries.
+#:
+#: **One, not zero, and the difference is rendered.** ``route_frame`` persists a
+#: connection's channel only when ``generation > channel.generation``, and both
+#: are ``0`` on a fresh fleet — so an epoch of zero replays a two-connection log
+#: into a fleet with no channels at all, and the queue then names only the
+#: focused profile instead of every connection the recording holds. Measured:
+#: epoch 0 gives ``channels=[]``; epoch 1 gives both.
+#:
+#: A recording has no epoch of its own to carry, and it does not need one: the
+#: whole file is one pass over connections that are not being re-dialled, so
+#: every frame in it belongs to the same generation by construction. What the
+#: number must not be is a value that makes live frames read as superseded.
+REPLAY_EPOCH: Final[int] = 1
+
+
+def profiles_from_entries(entries: Iterable[FrameLogEntry]) -> tuple[str, ...]:
+    """One profile per entry, positionally, for :class:`ReplaySource`."""
+    return tuple(entry.profile for entry in entries)
+
+
+#: The methods whose reply lands a session — the recorded evidence of which
+#: connection this run was actually driving. Spelled here rather than imported
+#: from ``talaria.ui.app`` because replay must not import the UI package: these
+#: are wire names, and the direction that matters is that nothing below the seam
+#: reaches up (ADR-0002).
+LANDING_METHODS: Final[frozenset[str]] = frozenset({"session.create", "session.resume"})
+
+
+def _frame_method(frame: Any) -> str:
+    if not isinstance(frame, dict):
+        return ""
+    method = frame.get("method")
+    return method if isinstance(method, str) else ""
+
+
+def _frame_session_id(frame: Any) -> str:
+    if not isinstance(frame, dict):
+        return ""
+    params = frame.get("params")
+    if not isinstance(params, dict):
+        return ""
+    session_id = params.get("session_id")
+    return session_id if isinstance(session_id, str) else ""
+
+
+def derive_focus_profile(
+    header: FrameLogHeader, entries: Sequence[FrameLogEntry]
+) -> str:
+    """Which connection's session a replay of this log should show.
+
+    **Replay has no other way to answer this, and the answer is not cosmetic.**
+    ``focused_profile`` is whatever the app was constructed with, and nothing
+    moves it during a replay — ``_adopt_profile`` is reached only through
+    ``_ensure_profile`` (from the profile picker, and from the needs-you list's
+    "go" action), and ``_ensure_profile`` returns at its ``connections is None``
+    guard because a replay is assembled with no connection set. The focus is
+    fixed at construction because the transport seams are absent, not because
+    the picker is the only door — a distinction worth keeping, since a future
+    replay that DID carry a connection set would move it.
+
+    Meanwhile ``route_frame`` feeds the focused engine only frames whose profile
+    equals it, so a tagged log replayed at the wrong focus renders an EMPTY
+    transcript. Measured on ``build_fleet_corpus``: 0 transcript entries at
+    ``focused_profile='default'`` against 2 at the tagged profile.
+
+    Three rules, in the plan's own order, each preferring recorded evidence over
+    inference:
+
+    1. **The LAST recorded landing call.** An outbound ``session.create`` or
+       ``session.resume`` is this run *choosing* a session, which is the
+       strongest statement the log makes about what it was driving — and a run
+       may choose more than once.
+
+       **Last, not first, and the difference is a whole empty transcript.** U7
+       shipped the flow that produces two: ``/profiles`` moves home, and the
+       next session is created on the connection just selected. A recording of
+       that has a landing call on the connection the operator left AND one on
+       the connection they moved to. Taking the first focuses the one they moved
+       away from. Measured on a recording built exactly that way — land on
+       ``lab``, switch, land on ``work``, six turns of ``work`` traffic:
+       first-landing gives 0 transcript entries and last-landing gives 6.
+    2. **The FIRST session named on the wire**, which is the adoption rule the
+       live engine already follows when it has no session of its own
+       (``talaria/domain/state.py``'s adoption branch) — so a log with no landing
+       call replays the way the run itself behaved. First here and last above is
+       deliberate rather than an inconsistency: adoption genuinely is first-wins,
+       and choosing genuinely is latest-wins.
+    3. **The header's first declared connection**, for a log whose frames name
+       no session at all. A recording of a connection that only ever carried
+       gateway-level traffic still belongs to that connection.
+
+    Returns ``""`` when the log declares nothing and names nothing, leaving the
+    caller's own default in place rather than inventing a profile.
+    """
+    for entry in reversed(list(entries)):
+        if entry.dir == "out" and _frame_method(entry.frame) in LANDING_METHODS:
+            return entry.profile
+    for entry in entries:
+        if _frame_session_id(entry.frame):
+            return entry.profile
+    if header.connections:
+        return header.connections[0].profile
+    return ""
+
+
 def load_frame_records(path: str | Path) -> tuple[FrameRecord, ...]:
     """Read a whole frame log into seam records.
 
@@ -167,6 +285,7 @@ class ReplaySource:
         controls: ReplayControls | None = None,
         sideband: Sequence[SidebandAction] = (),
         on_sideband: Callable[[SidebandAction], None] | None = None,
+        profiles: Sequence[str] = (),
     ) -> None:
         self._records: tuple[FrameRecord, ...] = tuple(records)
         self.controls = controls if controls is not None else ReplayControls()
@@ -179,6 +298,12 @@ class ReplaySource:
         #: tuple (as every builder in this package does) pays nothing extra.
         self._sideband: deque[SidebandAction] = deque(sideband)
         self._on_sideband = on_sideband
+        #: One profile per record, positionally. Empty for a version-1 log.
+        #: Kept beside the records rather than folded into ``FrameRecord``
+        #: because that type is the LIVE seam's — widening it would put a replay
+        #: concern on every ``LiveSource`` yield, and the live seam already
+        #: carries connection identity in ``TaggedFrame``.
+        self._profiles: tuple[str, ...] = tuple(profiles)
 
     @classmethod
     def from_path(
@@ -220,7 +345,16 @@ class ReplaySource:
     def records(self) -> tuple[FrameRecord, ...]:
         return self._records
 
-    async def __aiter__(self) -> AsyncIterator[FrameRecord]:
+    async def paced(self) -> AsyncIterator[tuple[FrameRecord, str]]:
+        """Every record on the scaled clock, with the connection it crossed.
+
+        **The one copy of this loop.** :meth:`__aiter__` and
+        :class:`TaggedReplaySource` are both thin wrappers over it, because the
+        pacing, the pause handling, the yield-every-N starvation guard and the
+        sideband ordering are one rule and a second copy of them is a second
+        answer waiting to drift. The profile is ``""`` for a version-1 log,
+        where there is one connection and no frame names it.
+        """
         previous: float | None = None
         since_yield = 0
         for record in self._records:
@@ -254,7 +388,7 @@ class ReplaySource:
                             return
             previous = record.at
             self._emitted += 1
-            yield record
+            yield record, self._profile_at(self._emitted - 1)
             # Resumes here once the consumer has fully processed the frame
             # just yielded (an `async for … : self.ingest(record)` loop does
             # not ask this generator for the next item until its own loop
@@ -270,6 +404,18 @@ class ReplaySource:
         # after the visible content ended" is a real scenario this timeline
         # must be able to express, not an off-by-one to silently drop.
         self._fire_due_sideband(flush=True)
+
+    async def __aiter__(self) -> AsyncIterator[FrameRecord]:
+        """The single-connection shape: bare records, exactly as before U8.
+
+        A version-1 log has one connection by construction (KTD6), so there is
+        nothing for a tag to say and none is invented.
+        """
+        async for record, _profile in self.paced():
+            yield record
+
+    def _profile_at(self, index: int) -> str:
+        return self._profiles[index] if index < len(self._profiles) else ""
 
     def _fire_due_sideband(self, *, flush: bool = False) -> None:
         if self._closed:
@@ -302,3 +448,117 @@ class ReplaySource:
         task = self._sleep_task
         if task is not None and not task.done():
             task.cancel()
+
+
+class TaggedReplaySource:
+    """A version-2 recording, yielding the connection each frame crossed (KTD6).
+
+    Composes a :class:`ReplaySource` rather than subclassing it, and the reason
+    is the type: ``FrameSource`` yields ``FrameRecord`` and ``TaggedFrameSource``
+    yields ``TaggedFrame``, so one class cannot honestly be both. Everything that
+    is genuinely shared — the scaled clock, the pause handling, the sideband
+    ordering — lives in :meth:`ReplaySource.paced` and is used by both.
+
+    Satisfies :class:`~talaria.ui.app.TaggedFrameSource`, which the app's pump
+    already branches on: the consumer side of this needed no change, because U7
+    built it for the live fleet and a recording is simply a second producer.
+    """
+
+    def __init__(
+        self,
+        inner: ReplaySource,
+        *,
+        connections: Sequence[str] = (),
+        focus_profile: str = "",
+    ) -> None:
+        self._inner = inner
+        self._connections = tuple(connections)
+        self._focus_profile = focus_profile
+
+    @classmethod
+    def from_path(
+        cls, path: str | Path, *, controls: ReplayControls | None = None
+    ) -> TaggedReplaySource:
+        header = read_header(path)
+        entries = tuple(iter_frame_log(path))
+        return cls(
+            ReplaySource(
+                tuple(record_from_entry(entry) for entry in entries),
+                controls=controls,
+                profiles=profiles_from_entries(entries),
+            ),
+            connections=tuple(row.profile for row in header.connections),
+            focus_profile=derive_focus_profile(header, entries),
+        )
+
+    @property
+    def connections(self) -> tuple[str, ...]:
+        """Every connection the recording declares, in header order.
+
+        **Read by the app to mark them connected at replay start**, which is a
+        recorded fact rather than an assumption: a log exists because these
+        gateways answered. Without it every channel keeps
+        ``ConnectionChannel.connected``'s ``False`` default and the queue says
+        "connection down before it was ever polled" about a connection that was
+        demonstrably live when the frames were captured. Measured before the
+        fix: both connections of a two-connection replay reported exactly that.
+
+        A connection that really did drop mid-recording is marked down again by
+        the log's own terminal cause, so starting from the recorded truth costs
+        nothing and starting from ``False`` costs a false sentence.
+        """
+        return self._connections
+
+    @property
+    def focus_profile(self) -> str:
+        """Which connection's session this replay should show — see
+        :func:`derive_focus_profile`. ``""`` when the log settles nothing."""
+        return self._focus_profile
+
+    @property
+    def controls(self) -> ReplayControls:
+        return self._inner.controls
+
+    @property
+    def emitted(self) -> int:
+        return self._inner.emitted
+
+    @property
+    def closed(self) -> bool:
+        return self._inner.closed
+
+    @property
+    def records(self) -> tuple[FrameRecord, ...]:
+        return self._inner.records
+
+    def __len__(self) -> int:
+        return len(self._inner)
+
+    def bind_sideband(
+        self, actions: Sequence[SidebandAction], callback: Callable[[SidebandAction], None]
+    ) -> None:
+        self._inner.bind_sideband(actions, callback)
+
+    async def __aiter__(self) -> AsyncIterator[TaggedFrame]:
+        async for record, profile in self._inner.paced():
+            yield TaggedFrame(profile, record, REPLAY_EPOCH)
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+
+def source_from_path(
+    path: str | Path, *, controls: ReplayControls | None = None
+) -> ReplaySource | TaggedReplaySource:
+    """Open a recording as whichever shape its header declares.
+
+    The version decides, and nothing else — not a guess from whether any entry
+    happens to carry a tag. A version-1 log is one connection by construction
+    (KTD6) and gets the bare-record source it has always had; a version-2 log
+    gets the tagged one. The reader refuses any other version before this
+    function sees it.
+    """
+    header = load_header(path)
+    if header.version >= FRAME_LOG_VERSION_MULTI_CONNECTION:
+        return TaggedReplaySource.from_path(path, controls=controls)
+    return ReplaySource.from_path(path, controls=controls)

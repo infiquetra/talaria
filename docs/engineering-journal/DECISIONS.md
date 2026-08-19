@@ -4,6 +4,45 @@
 
 ## 2026-08-18
 
+### Every determinism check in the gate is paired with a correctness check, or it says why not
+
+**Author.** v0.4 unit U8, CR8's determinism-claim pass run in-thread after the lens did not return,
+2026-08-18.
+
+**Decision.** A `*_determinism` check in `talaria/replay/gate.py` — one comparing two replays of the
+same corpus — must be accompanied by a check comparing the same quantity against something computed
+outside both runs, or carry a comment stating why the quantity cannot be deterministically wrong.
+Two such pairs exist now: `fleet_rendered_age_determinism` with
+`fleet_ages_come_from_the_corpus_clock`, and `fleet_derived_focus` with
+`fleet_focus_names_the_driving_connection`.
+
+**Rationale.** A two-run comparison ranges over run-to-run variation only. A quantity computed from
+inputs both runs share is outside that range by construction, so a wrong-but-stable value passes.
+Measured rather than argued: five mutations of `derive_focus_profile`, including one naming a
+connection absent from the corpus, all survived `fleet_derived_focus`; and a wall clock substituted
+for the frame clock survives `fleet_rendered_age_determinism` because two replays finish inside one
+rounding unit. The check is not weak — it measures a different property than its name suggests, and
+the name is what a reader believes.
+
+**The ground truth must be declared, not derived.** The correctness check's expected value comes from
+`FleetCorpus.focus_profile`, a literal the builder sets beside the landing frame it writes. Calling
+`derive_focus_profile` to produce it would compare the function with itself — the shape this unit had
+already shipped once, in an assertion comparing `item.epoch` against the constant it was set from.
+
+**Rejected: strengthening the determinism check instead.** There is nothing to strengthen. No corpus
+size, speed pair, or checkpoint density makes a two-run comparison sensitive to a value both runs
+compute identically.
+
+**Rejected: asserting correctness only in unit tests.** That was the state this finding was found in.
+The unit tests did drive the derivation directly and were green; the gate — the artifact whose output
+is published as a release claim — could not fail. A green gate check standing beside a real unit test
+is worse than no gate check, because it is cited.
+
+**Revisit when** a fleet check's quantity stops being a pure function of the corpus — per-connection
+gate replay (U8B) introduces real transport variation, and some of these pairs may collapse back into
+one honest determinism check at that point.
+
+
 ### An approval's expiry is unconditional; only its presentation is focus-scoped
 
 **Author.** v0.4 unit U6, operator ruling after the alias-pinning gate failed, 2026-08-18 (R18, AE2).
@@ -80,11 +119,49 @@ is still registered under it. Pinning the alias would remove the phantom class o
 reopens U3's four-slot memory bound, which is a reviewed decision and not U6's to change. Recorded as
 a P0 candidate in `QUEUED.md` with the ceiling that has to be quantified first.
 
-**Revisit when.** The alias pinning above lands, at which point phantoms stop occurring and the fold
-becomes dead code rather than a narrowed rule — delete it then rather than leaving a mechanism whose
-precondition can no longer arise. Also revisit if a gateway revision ever resolves an approval
-positionally *despite* a supplied request id, which would invalidate the targeting evidence this
-entry rests on; the three citations above are the things to re-check.
+**Revisit when.** The alias pinning above lands, at which point *one* of the fold's two preconditions
+stops occurring. Also revisit if a gateway revision ever resolves an approval positionally *despite*
+a supplied request id, which would invalidate the targeting evidence this entry rests on; the three
+citations above are the things to re-check.
+
+**The deletion half of that clause is WITHDRAWN — U8 checked, 2026-08-18, and found one.** It read
+"the fold becomes dead code rather than a narrowed rule — delete it then", which assumed the phantom
+was the *only* way an approval reaches this fold without an aimable id. It is not. A keyless
+`approval.request` — one carrying no `request_id` at all — arrives from a supported input and lands
+in exactly the same state, so alias pinning would remove one precondition and leave the other
+standing. **The fold is load-bearing, not insurance with a stated trigger.**
+
+Three verifications, each run against a current source rather than reasoned from the format:
+
+* **The gateway emitted them.** `tools/approval.py` at the pinned read `7f4d15515` contains **zero**
+  occurrences of `request_id`; the same file at the checkout's HEAD (`d8e238691`) contains it on eight lines (twelve occurrences). So
+  every approval that gateway announced was keyless, and any v0.1–v0.3 recording taken against it
+  carries them.
+* **The recorder does not strip it.** `request_id` is never named in `talaria/recorder/redact.py`, so
+  an absent id in a log is the gateway's silence and not redaction's.
+* **The domain keeps the frame.** `_on_prompt_request` (`talaria/domain/state.py:2054`, minting at `:2099-2110`) mints a
+  session-qualified synthetic key — `approval:<session>#<n>` — and leaves `observed_request_id`
+  empty, which is the field the fold reads. Probed: a keyless `approval.request` on an adopted
+  session yields one prompt, `request_id='approval:s1#1'`, `observed_request_id=''`.
+
+**A recorded instance exists, which is stronger than the inference above.** Checked 2026-08-19 across
+the development machine's own `~/.talaria/recordings/`: 15 of 38 recordings contain an
+`approval.request`, and one of them holds **five keyless approval frames and no correlated ones**.
+That is this project's own recorder capturing what the pinned gateway emitted, so the chain no longer
+rests on reading the gateway's source alone. No recording is committed (R29), so the citation is the
+check rather than the file.
+
+**Corrected 2026-08-19.** This paragraph previously read "`grep -c "approval.request"` returns 0 on
+every local corpus". It was measured over `corpora/` — two generated files — and generalised to
+"local corpus", which in this project means the recording set (`talaria/replay/stress.py`,
+`talaria/domain/session_list.py`). The sentence was false in the direction that made the unit's
+evidence look weaker than it is.
+
+**The corpus obligation stands, on its own reason.** U8's *replay* corpus must contain a keyless
+approval — not because none exists anywhere, but because the determinism gate can only exercise the
+fold if the corpus the gate replays reaches it. Discharged: `build_fleet_corpus`
+(`talaria/replay/stress.py`) carries one, and `fleet_corpus_exercises_blind_approval` is a gate
+condition rather than a note.
 
 ## 2026-08-17
 
