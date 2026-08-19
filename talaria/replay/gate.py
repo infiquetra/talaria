@@ -1226,6 +1226,11 @@ def fleet_trace(app: TalariaApp) -> FleetTrace:
             )
         ),
         "focus": repr((fleet.focused_profile, fleet.focused_key())),
+        # The profile ALONE, as its own key, for the same reason ``wait_lines``
+        # is split out below: the correctness check that reads it must not parse
+        # a value out of a repr. ``focus`` above pins that the pair is stable;
+        # this one is what lets a separate check ask whether it is RIGHT.
+        "focus_profile": fleet.focused_profile,
         "ages": repr(
             (
                 summary_line(queue, clock),
@@ -1287,6 +1292,52 @@ def ages_within_corpus_span(
     ages = [_rendered_age_seconds(checkpoint["wait_lines"]) for checkpoint in trace]
     largest = max((age for age in ages if age is not None), default=0.0)
     return (all(age is None or age <= span + 1.0 for age in ages), largest)
+
+
+def rendered_age_count(trace: Sequence[FleetTrace]) -> int:
+    """How many checkpoints rendered an age at all.
+
+    :func:`ages_within_corpus_span` compares each rendered age against the
+    corpus's span and is vacuously true when nothing rendered one — every age is
+    ``None``, ``all()`` over that is ``True``, and the gate reports a wall clock
+    it never looked for. That is the same "a check that runs zero times reports
+    zero failures" shape the sampled checks below carry a floor for, so this is
+    its floor: a separate count, published as its own check, so a corpus that
+    stops filling the queue fails visibly instead of passing quietly.
+
+    The corpus can stop filling the queue without anyone touching this file —
+    move the focus to a connection with no approval and every wait line is empty.
+    """
+    return sum(
+        1 for checkpoint in trace if _rendered_age_seconds(checkpoint["wait_lines"]) is not None
+    )
+
+
+def focus_names_driving_connection(
+    trace: Sequence[FleetTrace], corpus: FleetCorpus
+) -> tuple[bool, int]:
+    """Whether the derived focus is the connection the corpus was driving.
+
+    Returns ``(pass, checkpoints_agreeing)``.
+
+    **The check ``fleet_derived_focus`` provably cannot be**, and the shape is
+    the one this unit has now met three times: a comparison between two runs
+    cannot catch a wrong value, only an unstable one.
+    :func:`~talaria.replay.source.derive_focus_profile` is a pure function of the
+    corpus, so a mutation of it lands identically in both runs and the
+    determinism comparison stays green. Measured, not reasoned: under three
+    mutations — always ``""``, always the header's first connection, and a
+    connection name that appears nowhere in the corpus — ``fleet_derived_focus``
+    passed every time.
+
+    The expected value is :attr:`FleetCorpus.focus_profile`, declared by the
+    builder that wrote the landing, so this compares the derivation against an
+    independent statement rather than against itself.
+    """
+    agreeing = sum(
+        1 for checkpoint in trace if checkpoint["focus_profile"] == corpus.focus_profile
+    )
+    return (bool(trace) and agreeing == len(trace), agreeing)
 
 
 def registry_fingerprint(fleet: FleetState) -> str:
@@ -1860,6 +1911,15 @@ async def run_gate(
     ages_within_corpus, largest_rendered_age = ages_within_corpus_span(
         fleet_trace_fast, fleet_corpus
     )
+    # And the same argument again, one aspect over: two runs agreeing on the
+    # focused connection says nothing about whether it is the right one, because
+    # the derivation is pure and both runs read the same corpus. Measured under
+    # three mutations of ``derive_focus_profile``, all three survived
+    # ``fleet_derived_focus``. This is what asks the other question.
+    focus_is_the_driven_one, focus_agreements = focus_names_driving_connection(
+        fleet_trace_fast, fleet_corpus
+    )
+    checkpoints_rendering_an_age = rendered_age_count(fleet_trace_fast)
 
     fleet_aspects = {
         aspect: (
@@ -1967,6 +2027,22 @@ async def run_gate(
             "comparison": "==",
             "pass": fleet_aspects["focus"],
         },
+        "fleet_focus_names_the_driving_connection": {
+            # The correctness half, and the plan's actual words: "the gate
+            # asserts the derivation itself, not only the end state." The check
+            # above asserts the end state is stable. This one asserts the
+            # derivation picked the connection the recorded run was driving —
+            # the last landing's — against the corpus's own declaration of it.
+            "description": (
+                "the focus derived from the recording is the connection the corpus "
+                "was driving, so a wrong derivation fails rather than merely being "
+                "wrong identically twice"
+            ),
+            "measured": focus_agreements,
+            "threshold": len(fleet_corpus.records),
+            "comparison": "==",
+            "pass": focus_is_the_driven_one,
+        },
         "fleet_rendered_age_determinism": {
             # The RENDERED strings, and the bar's own text — but **this check
             # does NOT guard against a wrong clock, and the sentence that used
@@ -2008,6 +2084,22 @@ async def run_gate(
             "threshold": corpus_span + 1.0,
             "comparison": "<=",
             "pass": ages_within_corpus,
+        },
+        "fleet_ages_were_actually_rendered": {
+            # The floor under the check above, which is vacuously true when the
+            # queue is empty at every checkpoint: every age is ``None``, and
+            # ``all()`` over that is ``True``. Nothing in this file has to change
+            # for that to happen — a corpus whose focused connection carries no
+            # approval renders no wait line anywhere, and the wall-clock check
+            # then passes having looked at nothing.
+            "description": (
+                "the corpus rendered at least one wait age, so the wall-clock check "
+                "above compared something"
+            ),
+            "measured": checkpoints_rendering_an_age,
+            "threshold": 1,
+            "comparison": ">=",
+            "pass": checkpoints_rendering_an_age >= 1,
         },
         # U8's corpus obligation, made a gate condition rather than a note. The
         # unit's own answer to the operator's keyless-approval question made

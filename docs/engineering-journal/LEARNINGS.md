@@ -4,6 +4,62 @@
 
 ## 2026-08-18
 
+### A determinism check can never assert correctness, and this unit shipped that mistake three times
+
+**Evidence.** U8's gate grew four fleet checkpoints, each comparing one tagged corpus replayed at two
+speeds. Three of them turned out to be asserting stability where the plan asked for correctness:
+
+1. The rendered ages. Found while building it — replacing the frame clock with `time.time()` leaves
+   BOTH runs rendering identical ages, because `format_age` rounds to whole seconds and two replays
+   finish milliseconds apart. Fixed by adding `fleet_ages_come_from_the_corpus_clock`, which compares
+   against the corpus instead of the other run (measured under the mutation: 2,105,719 seconds
+   against a corpus span of 6).
+2. The derived focus. Found by the claim pass. `derive_focus_profile` is a pure function of the
+   corpus, so a wrong answer lands identically in both runs. Measured: under five mutations — always
+   `""`, always the header's first connection, always the first session named, a connection appearing
+   nowhere in the corpus, and first-landing-wins — `fleet_derived_focus` passed **every time**,
+   including for the connection that does not exist. Fixed by
+   `fleet_focus_names_the_driving_connection`, comparing against a focus the corpus builder declares.
+3. The vacuity floor under (1). `ages_within_corpus_span` compares each rendered age against the
+   span, and `all()` over an empty sequence is `True` — so a corpus that renders no age at all passes
+   the wall-clock check having compared nothing. Nothing in the gate has to change for that to
+   happen: moving the focus to a connection carrying no approval empties every wait line.
+
+**Mechanism.** A two-run comparison ranges over *run-to-run variation*. Anything computed from inputs
+both runs share — a pure function, a constant, a clock stable to the rounding unit — is outside that
+range by construction. The check is not weak; it is measuring a different property than its name
+suggests, and the name is what a reader believes.
+
+**And the corpus was the second half of the same defect.** The corpus had no outbound landing frame
+anywhere, so rule one of the focus derivation — the rule CR8 had *just* corrected from first-landing
+to last-landing — was the one rule the gate never ran. A corpus with two connections can distinguish
+at most two of three rules; it now has three, chosen so each rule gives a different answer.
+
+**Generalizable rule.** For every "X is deterministic" check, write down what would happen if X were
+deterministically wrong. If the answer is "the check still passes", a second check comparing X
+against something computed OUTSIDE the runs is owed — and its ground truth must be declared
+independently, never produced by calling the function under test.
+
+### The review channel dropped a lens for the second time, and silence is not a verdict
+
+**Evidence.** CR8's determinism-claim lens never returned. It was asked twice and `ListAgents` showed
+no such agent alive. CR7 lost a lens the same way. In both cases the missing return was the *claim*
+lens — the pass that attacks what the unit says about itself rather than what its code does.
+
+**Mechanism.** Not diagnosed; the failure is in the review fan-out, not in this repository, and it
+presents as an idle channel rather than an error. What matters here is the decision rule, because an
+idle channel and a clean verdict look identical from this side.
+
+**Generalizable rule.** A review's verdict is the lenses that returned, named. A lens that did not
+return is a missing verdict, and the pass is re-run — by the driver if no one else — before the unit
+is called reviewed. Absence of findings is not a finding of absence. Recorded twice now, which makes
+it an infrastructure fact rather than an incident: budget for running the claim pass in-thread.
+
+**What that cost, measured.** Running it here found the blocking finding above — five surviving
+mutations on a check the unit had already been through one review round for. Had the idle channel
+been read as clean, U8 would have merged with a gate check that could not fail.
+
+
 ### A citation is a claim, and this project shipped a false one in five places
 
 **Evidence.** Five sites across `talaria/ui/prompts.py`, `talaria/ui/app.py` and (newly, by copying)

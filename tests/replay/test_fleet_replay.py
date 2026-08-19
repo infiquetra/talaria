@@ -641,8 +641,12 @@ def test_the_fleet_corpus_can_tell_the_derivation_rules_apart() -> None:
     The gate's ``fleet_derived_focus`` check ran with an EMPTY entry sequence, so
     only rule three was ever exercised — and two mutations of the derivation
     (return the last connection; return nothing at all) both left it passing.
-    The corpus now declares its connections in the opposite order to the one its
-    frames speak in, so rule two and rule three give different answers.
+
+    The corpus now makes all THREE rules give three different answers, which two
+    connections could not do. The claim pass found the gap that forced it: with
+    no outbound landing anywhere in the corpus, rule one — the rule CR8 had just
+    corrected to take the last landing rather than the first — was the one rule
+    the gate never ran.
     """
     from talaria.recorder.reader import FrameLogHeader, RecordedConnectionRow
     from talaria.replay.gate import corpus_entries
@@ -658,14 +662,23 @@ def test_the_fleet_corpus_can_tell_the_derivation_rules_apart() -> None:
             RecordedConnectionRow(profile=name, endpoint="") for name in corpus.connections
         ),
     )
+    entries = corpus_entries(corpus)
 
-    from_entries = derive_focus_profile(header, corpus_entries(corpus))
-    from_header_only = derive_focus_profile(header, ())
-    assert from_entries != from_header_only, (
-        "the corpus cannot distinguish the derivation's rules, so the gate check "
-        "over it cannot fail for any mutation of the derivation"
+    from_landing = derive_focus_profile(header, entries)
+    from_first_session = derive_focus_profile(
+        header, tuple(entry for entry in entries if entry.dir != "out")
     )
-    assert from_entries == corpus.profiles[0]
+    from_header_only = derive_focus_profile(header, ())
+
+    assert len({from_landing, from_first_session, from_header_only}) == 3, (
+        "two of the derivation's three rules agree on this corpus, so a mutation "
+        f"collapsing one into the other cannot be seen: {from_landing=} "
+        f"{from_first_session=} {from_header_only=}"
+    )
+    assert from_landing == corpus.focus_profile, (
+        "the derivation disagrees with the connection the builder wrote the last "
+        "landing on"
+    )
 
 
 def test_the_gate_refuses_a_recording_it_would_have_to_mis_measure(tmp_path: Path) -> None:
@@ -743,12 +756,155 @@ async def test_the_trace_derives_its_focus_from_the_corpus_not_the_header() -> N
     corpus = build_fleet_corpus()
     trace = await replay_fleet_trace(corpus)
 
-    focused = trace[-1]["focus"]
-    assert corpus.profiles[0] in focused, (
-        "the trace focused the header's first connection, so the derivation ran "
-        "on an empty entry sequence and two of its three rules are unreachable"
+    focused = trace[-1]["focus_profile"]
+    assert focused == corpus.focus_profile, (
+        "the trace did not focus the connection the corpus was driving, so the "
+        "derivation ran on something other than the corpus's own entries"
     )
-    assert corpus.connections[0] not in focused, (
-        "the trace focused the first DECLARED connection rather than the one the "
-        "corpus's frames name"
+    assert focused != corpus.connections[0], (
+        "the trace focused the first DECLARED connection, which is rule three — "
+        "the derivation ran on an empty entry sequence"
     )
+    assert focused != corpus.profiles[0], (
+        "the trace focused the first connection to name a session, which is rule "
+        "two — rule one never saw the corpus's landing calls"
+    )
+
+
+#  ── the claim pass: determinism standing in for correctness, a third time ──
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_focus_derivation_survives_the_determinism_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The defect, kept as a test so the reason for the check beside it stays visible.
+
+    ``fleet_derived_focus`` compares two runs. ``derive_focus_profile`` is a pure
+    function of the corpus, so a wrong answer lands identically in both runs and
+    the comparison stays green — the same shape as the ages check, which cannot
+    catch a wall clock for exactly the same reason.
+
+    Measured, not argued: this drives a derivation that names a connection
+    appearing nowhere in the corpus and asserts the determinism comparison is
+    still satisfied. If a future change makes this test fail, the determinism
+    check has grown teeth and this test should be deleted rather than repaired.
+    """
+    import talaria.replay.gate as gate_module
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    monkeypatch.setattr(
+        gate_module, "derive_focus_profile", lambda header, entries: "ghost-gateway"
+    )
+    fast = await gate_module.replay_fleet_trace(corpus, speed=64.0)
+    unbounded = await gate_module.replay_fleet_trace(corpus, speed=float("inf"))
+
+    assert len(fast) == len(unbounded) == len(corpus.records)
+    assert all(a["focus"] == b["focus"] for a, b in zip(fast, unbounded, strict=True)), (
+        "the determinism comparison now catches a wrong derivation; delete this test"
+    )
+    assert fast[0]["focus_profile"] == "ghost-gateway", "the mutation did not take"
+
+
+@pytest.mark.asyncio
+async def test_the_correctness_check_catches_every_derivation_the_other_one_misses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``focus_names_driving_connection`` against the five mutations that survived.
+
+    Each names a connection the corpus was not driving. The check must fail for
+    all of them and pass for the true derivation, which is what makes the gate's
+    ``fleet_focus_names_the_driving_connection`` an assertion rather than a
+    restatement.
+    """
+    import talaria.replay.gate as gate_module
+    from talaria.replay.source import LANDING_METHODS, _frame_method
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+
+    def first_landing_wins(header: object, entries: object) -> str:
+        for entry in entries:  # type: ignore[attr-defined]
+            if entry.dir == "out" and _frame_method(entry.frame) in LANDING_METHODS:
+                return str(entry.profile)
+        return ""
+
+    mutants = {
+        "empty": lambda header, entries: "",
+        "header's first": lambda header, entries: corpus.connections[0],
+        "first session named": lambda header, entries: corpus.profiles[0],
+        "a connection that is not there": lambda header, entries: "ghost-gateway",
+        "the FIRST landing": first_landing_wins,
+    }
+
+    trace = await gate_module.replay_fleet_trace(corpus, speed=64.0)
+    assert gate_module.focus_names_driving_connection(trace, corpus) == (True, len(trace)), (
+        "the true derivation fails its own check"
+    )
+
+    for label, mutant in mutants.items():
+        with monkeypatch.context() as patched:
+            patched.setattr(gate_module, "derive_focus_profile", mutant)
+            mutated = await gate_module.replay_fleet_trace(corpus, speed=64.0)
+        passed, agreeing = gate_module.focus_names_driving_connection(mutated, corpus)
+        assert not passed, f"the check passed for a derivation returning {label}"
+        assert agreeing == 0, f"{label}: {agreeing} checkpoints agreed with the corpus"
+
+
+def test_the_correctness_check_refuses_an_empty_trace() -> None:
+    """A comparison over zero checkpoints reports zero disagreements.
+
+    The same guard every other fleet check carries, and the reason it is written
+    down: ``all(...)`` over an empty sequence is ``True``, so a replay that fired
+    no checkpoint at all would otherwise report the focus as correct.
+    """
+    from talaria.replay.gate import focus_names_driving_connection
+    from talaria.replay.stress import build_fleet_corpus
+
+    assert focus_names_driving_connection((), build_fleet_corpus()) == (False, 0)
+
+
+@pytest.mark.asyncio
+async def test_the_sideband_fires_every_checkpoint_at_unbounded_speed() -> None:
+    """The claim pass's second question, answered rather than assumed.
+
+    The gate's fleet comparison is fast-against-unbounded, and ``float("inf")``
+    means the pacing loop never sleeps — so whether the sideband still fires once
+    per frame there is load-bearing and was not pinned anywhere. Three unbounded
+    runs, byte-identical, one checkpoint per frame.
+    """
+    from talaria.replay.gate import replay_fleet_trace
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    runs = [await replay_fleet_trace(corpus, speed=float("inf")) for _ in range(3)]
+
+    for index, run in enumerate(runs):
+        assert len(run) == len(corpus.records), (
+            f"unbounded run {index + 1} fired {len(run)} checkpoints for "
+            f"{len(corpus.records)} frames"
+        )
+    assert runs[0] == runs[1] == runs[2], "the sideband is not deterministic at infinite speed"
+
+
+def test_the_wall_clock_check_has_a_floor_under_it() -> None:
+    """F19: ``ages_within_corpus_span`` is vacuously true over an empty queue.
+
+    Every age is ``None``, ``all()`` over that is ``True``, and the gate reports
+    "the surface reads the frame clock" having compared nothing. The floor is a
+    separate count, so the two failures read differently: a wrong clock fails the
+    comparison, and a corpus that stopped filling the queue fails this.
+    """
+    from talaria.replay.gate import ages_within_corpus_span, rendered_age_count
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    empty = [{"wait_lines": repr(())} for _ in corpus.records]
+
+    passes, largest = ages_within_corpus_span(empty, corpus)
+    assert passes and largest == 0.0, "the precondition changed; this test is stale"
+    assert rendered_age_count(empty) == 0, "the floor does not notice an empty queue"
+
+    real = [{"wait_lines": repr(("waiting 3s",))}, {"wait_lines": repr(())}]
+    assert rendered_age_count(real) == 1

@@ -37,15 +37,21 @@ from talaria.transport.source import Direction, FrameRecord, TerminalCause
 YIELD_EVERY = 64
 
 __all__ = [
+    "LANDING_METHODS",
+    "REPLAY_EPOCH",
     "YIELD_EVERY",
     "ReplaySource",
     "SidebandAction",
     "SidebandActionKind",
+    "TaggedReplaySource",
     "build_sideband",
+    "derive_focus_profile",
     "load_frame_records",
     "load_header",
     "parse_frame_time",
+    "profiles_from_entries",
     "record_from_entry",
+    "source_from_path",
 ]
 
 

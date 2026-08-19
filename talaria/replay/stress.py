@@ -493,7 +493,7 @@ def build_feature_corpus() -> FeatureCorpus:
 
 @dataclass(frozen=True)
 class FleetCorpus:
-    """A synthetic two-connection recording, with its tags beside its records.
+    """A synthetic three-connection recording, with its tags beside its records.
 
     Synthetic rather than captured, and the choice is recorded rather than
     assumed: no frame log is committed to this repository (R29), and the only
@@ -515,6 +515,17 @@ class FleetCorpus:
     profiles: tuple[str, ...]
     connections: tuple[str, ...]
     sha256: str
+    #: Which connection this recorded run was DRIVING — the builder's own
+    #: statement of intent, not a value read back out of the derivation.
+    #:
+    #: The gate needs an independent answer to compare
+    #: :func:`~talaria.replay.source.derive_focus_profile` against, and calling
+    #: that function to produce the expected value would compare it with itself.
+    #: This unit already shipped one assertion of exactly that shape (``epoch``
+    #: against the constant it was set from), so the second one is declared here
+    #: instead: the builder knows which connection it wrote the last landing on,
+    #: and says so.
+    focus_profile: str
 
     @property
     def keyless_approval_count(self) -> int:
@@ -536,61 +547,111 @@ class FleetCorpus:
 
 
 #: The header's declaration order, which is DELIBERATELY not the order the
-#: frames speak in.
+#: frames speak in, and deliberately not the connection being driven.
 #:
-#: ``work-gateway`` sends the corpus's first frame and ``lab-gateway`` is
-#: declared first, so ``derive_focus_profile``'s rule two (the first session
-#: named) and rule three (the header's first connection) give DIFFERENT answers.
-#: With them agreeing — as they did when this corpus was first written — the
-#: gate's ``fleet_derived_focus`` check could not tell which rule had run, and
-#: mutating the derivation left it passing. A corpus that cannot distinguish the
-#: rules cannot test the thing that chooses between them.
-FLEET_CORPUS_CONNECTIONS: Final[tuple[str, ...]] = ("lab-gateway", "work-gateway")
+#: ``derive_focus_profile`` has three rules and this corpus makes all three give
+#: DIFFERENT answers, so no mutation that collapses one into another can hide:
+#:
+#:   rule one   the last outbound landing        -> ``work-gateway``  (the truth)
+#:   rule two   the first session named          -> ``edge-gateway``
+#:   rule three the header's first connection    -> ``lab-gateway``
+#:
+#: A two-connection corpus could distinguish at most two of them, and the first
+#: version of this one had no outbound landing at all — so rule one, the rule
+#: CR8 had just corrected to take the LAST landing rather than the first, was
+#: the one rule the gate never ran. Rule one is now what answers here, and the
+#: corpus carries two landings so last-wins is distinguishable from first-wins.
+FLEET_CORPUS_CONNECTIONS: Final[tuple[str, ...]] = (
+    "lab-gateway",
+    "work-gateway",
+    "edge-gateway",
+)
+
+
+def _fleet_event(session_id: str, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "method": "event",
+        "params": {"type": event_type, "session_id": session_id, "payload": payload},
+    }
+
+
+def _fleet_landing(request_id: int, cwd: str) -> dict[str, Any]:
+    """An outbound ``session.create`` — a landing, in ``LANDING_METHODS`` terms.
+
+    Carries no ``session_id``: the gateway assigns one in its reply, and putting
+    one here would also make this frame answer ``derive_focus_profile``'s rule
+    two, which this corpus needs a different connection to answer.
+
+    In replay an outbound record only ever recovers a ``prompt.submit``'s text
+    (``talaria/ui/app.py:1837``), so a landing costs the registry nothing and
+    perturbs no other checkpoint — it exists to be read by the derivation, which
+    reads the log rather than the replayed state.
+    """
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "session.create",
+        "params": {"cwd": cwd},
+    }
 
 
 def build_fleet_corpus(*, base_time: float = 1_785_000_000.0) -> FleetCorpus:
-    """Two connections, interleaved, including one approval with no request id.
+    """Three connections, interleaved, including one approval with no request id.
 
     Deterministic by construction — no clock read, no randomness — so two calls
     produce identical records and the gate can cite the digest.
+
+    The running order is chosen so the three focus-derivation rules disagree
+    (see :data:`FLEET_CORPUS_CONNECTIONS`) while the connection they must
+    resolve to — ``work-gateway`` — stays the one carrying a driven approval and
+    a frame after it. That coupling is not incidental: move the focus to a quiet
+    connection and the needs-you queue is empty at every checkpoint, which
+    silently empties the two age checks as well.
     """
-    lab, work = FLEET_CORPUS_CONNECTIONS
-    script: list[tuple[str, dict[str, Any]]] = [
-        (work, {"type": "message.start", "session_id": "s-work", "payload": {}}),
-        (lab, {"type": "message.start", "session_id": "s-lab", "payload": {}}),
+    lab, work, edge = FLEET_CORPUS_CONNECTIONS
+    script: list[tuple[str, str, dict[str, Any]]] = [
+        # Rule two's answer: the first frame naming a session, on a connection
+        # that is neither the driven one nor the header's first.
+        (edge, "in", _fleet_event("s-edge", "message.start", {})),
+        # The FIRST landing. Last-wins must not pick this one.
+        (edge, "out", _fleet_landing(1, "/srv/edge")),
+        (work, "in", _fleet_event("s-work", "message.start", {})),
+        (lab, "in", _fleet_event("s-lab", "message.start", {})),
         (
             work,
-            {
-                "type": "message.complete",
-                "session_id": "s-work",
-                "payload": {"text": "the work gateway answered"},
-            },
+            "in",
+            _fleet_event("s-work", "message.complete", {"text": "the work gateway answered"}),
         ),
         # The keyless approval. No ``request_id`` anywhere in the payload, which
         # is what the pinned gateway `7f4d15515` emitted for every approval.
         (
             lab,
-            {
-                "type": "approval.request",
-                "session_id": "s-lab",
-                "payload": {"description": "rm -rf /data", "choices": ["once", "deny"]},
-            },
+            "in",
+            _fleet_event(
+                "s-lab",
+                "approval.request",
+                {"description": "rm -rf /data", "choices": ["once", "deny"]},
+            ),
         ),
         # And one that IS aimable, so the corpus exercises both sides of the
         # rule rather than only the exceptional one.
         (
             work,
-            {
-                "type": "approval.request",
-                "session_id": "s-work",
-                "payload": {
+            "in",
+            _fleet_event(
+                "s-work",
+                "approval.request",
+                {
                     "request_id": "gw-1",
                     "description": "git push --force",
                     "choices": ["once", "deny"],
                 },
-            },
+            ),
         ),
-        (lab, {"type": "message.complete", "session_id": "s-lab", "payload": {"text": "and lab"}}),
+        # The LAST landing, and so the answer rule one must give.
+        (work, "out", _fleet_landing(2, "/srv/work")),
+        (lab, "in", _fleet_event("s-lab", "message.complete", {"text": "and lab"})),
         # **One more frame on the FOCUSED connection, after its approval.**
         # Without it that approval is the focused connection's last frame, so the
         # focused clock never advances past its opening and every rendered age in
@@ -599,23 +660,22 @@ def build_fleet_corpus(*, base_time: float = 1_785_000_000.0) -> FleetCorpus:
         # that has nothing to do with the property being measured.
         (
             work,
-            {
-                "type": "message.complete",
-                "session_id": "s-work",
-                "payload": {"text": "and the work gateway again, later"},
-            },
+            "in",
+            _fleet_event(
+                "s-work", "message.complete", {"text": "and the work gateway again, later"}
+            ),
         ),
     ]
 
     records: list[FrameRecord] = []
     profiles: list[str] = []
-    for index, (profile, params) in enumerate(script):
+    for index, (profile, direction, frame) in enumerate(script):
         records.append(
             FrameRecord(
                 seq=index + 1,
                 at=base_time + index,
-                direction="in",
-                frame={"jsonrpc": "2.0", "method": "event", "params": params},
+                direction="out" if direction == "out" else "in",
+                frame=frame,
             )
         )
         profiles.append(profile)
@@ -641,4 +701,7 @@ def build_fleet_corpus(*, base_time: float = 1_785_000_000.0) -> FleetCorpus:
         profiles=tuple(profiles),
         connections=FLEET_CORPUS_CONNECTIONS,
         sha256=digest.hexdigest(),
+        # Stated by the builder, which put the last landing on ``work``, rather
+        # than read back from the derivation the gate uses this to check.
+        focus_profile=work,
     )

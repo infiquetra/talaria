@@ -4,6 +4,45 @@
 
 ## 2026-08-18
 
+### Every determinism check in the gate is paired with a correctness check, or it says why not
+
+**Author.** v0.4 unit U8, CR8's determinism-claim pass run in-thread after the lens did not return,
+2026-08-18.
+
+**Decision.** A `*_determinism` check in `talaria/replay/gate.py` — one comparing two replays of the
+same corpus — must be accompanied by a check comparing the same quantity against something computed
+outside both runs, or carry a comment stating why the quantity cannot be deterministically wrong.
+Two such pairs exist now: `fleet_rendered_age_determinism` with
+`fleet_ages_come_from_the_corpus_clock`, and `fleet_derived_focus` with
+`fleet_focus_names_the_driving_connection`.
+
+**Rationale.** A two-run comparison ranges over run-to-run variation only. A quantity computed from
+inputs both runs share is outside that range by construction, so a wrong-but-stable value passes.
+Measured rather than argued: five mutations of `derive_focus_profile`, including one naming a
+connection absent from the corpus, all survived `fleet_derived_focus`; and a wall clock substituted
+for the frame clock survives `fleet_rendered_age_determinism` because two replays finish inside one
+rounding unit. The check is not weak — it measures a different property than its name suggests, and
+the name is what a reader believes.
+
+**The ground truth must be declared, not derived.** The correctness check's expected value comes from
+`FleetCorpus.focus_profile`, a literal the builder sets beside the landing frame it writes. Calling
+`derive_focus_profile` to produce it would compare the function with itself — the shape this unit had
+already shipped once, in an assertion comparing `item.epoch` against the constant it was set from.
+
+**Rejected: strengthening the determinism check instead.** There is nothing to strengthen. No corpus
+size, speed pair, or checkpoint density makes a two-run comparison sensitive to a value both runs
+compute identically.
+
+**Rejected: asserting correctness only in unit tests.** That was the state this finding was found in.
+The unit tests did drive the derivation directly and were green; the gate — the artifact whose output
+is published as a release claim — could not fail. A green gate check standing beside a real unit test
+is worse than no gate check, because it is cited.
+
+**Revisit when** a fleet check's quantity stops being a pure function of the corpus — per-connection
+gate replay (U8B) introduces real transport variation, and some of these pairs may collapse back into
+one honest determinism check at that point.
+
+
 ### An approval's expiry is unconditional; only its presentation is focus-scoped
 
 **Author.** v0.4 unit U6, operator ruling after the alias-pinning gate failed, 2026-08-18 (R18, AE2).
