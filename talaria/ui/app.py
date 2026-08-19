@@ -164,6 +164,7 @@ from talaria.domain.state import (
     SUBMIT_METHOD as SUBMIT_METHOD,
 )
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
+from talaria.replay.source import REPLAY_EPOCH
 from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
@@ -986,6 +987,21 @@ class ConnectionInventory(Protocol):
 
 
 @runtime_checkable
+class DeclaredConnections(Protocol):
+    """A frame source that knows which connections its frames came from (U8).
+
+    Satisfied by :class:`~talaria.replay.source.TaggedReplaySource`, whose
+    recording declares them in its header. Declared as a shape here for the
+    reason every other seam in this module is, and for one of its own: the live
+    fleet learns its connections by dialling them, and a recording learns them by
+    having been written — two different facts that happen to answer one question.
+    """
+
+    @property
+    def connections(self) -> tuple[str, ...]: ...
+
+
+@runtime_checkable
 class ModelDefaultWriter(Protocol):
     """The one thing the picker's "set as default" act needs (U5, KTD1).
 
@@ -1549,6 +1565,27 @@ class TalariaApp(App[None]):
         # ``seam_probe_due`` before doing anything, so the interval is a floor
         # rather than the only thing standing between here and a busy loop.
         self._seam_timer = self.set_interval(PROBE_REVALIDATION_S, self.revalidate_seams)
+        # **A recording's connections were up, and the fleet must start saying
+        # so.** ``ConnectionChannel.connected`` defaults False, so without this a
+        # replayed two-connection log reports "connection down before it was ever
+        # polled" for every connection — about gateways that demonstrably
+        # answered, since the log exists. Measured before the fix: both
+        # connections of a two-connection replay said exactly that.
+        #
+        # This states a recorded fact rather than assuming one. A connection that
+        # really did drop mid-recording is marked down again by the log's own
+        # terminal cause when replay reaches it, so nothing is lost by starting
+        # from the truth. Pinned by
+        # ``test_a_replayed_fleet_does_not_report_its_own_recording_as_down``.
+        source = self.source
+        if isinstance(source, DeclaredConnections):
+            for profile in source.connections:
+                self._fleet = fleet_connection_restored(
+                    self._fleet,
+                    profile=profile,
+                    generation=REPLAY_EPOCH,
+                    at=self.state.last_observed_at,
+                )
         # The reserved row starts saying what it will go on saying, rather than
         # blank: an empty widget and "needs-you: none" occupy the same space and
         # only one of them is an answer.

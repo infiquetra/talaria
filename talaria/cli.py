@@ -326,13 +326,17 @@ def run_record_command(args: argparse.Namespace) -> int:
 def run_replay(args: argparse.Namespace) -> int:
     """Launch the Textual shell over a recorded corpus (U5)."""
     from talaria.replay.controls import ReplayControls
-    from talaria.replay.source import ReplaySource
+    from talaria.replay.source import source_from_path
     from talaria.ui.app import TalariaApp
 
     cfg = config_module.load_config()
     speed = args.speed if args.speed and args.speed > 0 else float("inf")
     controls = ReplayControls(speed=speed, paused=bool(args.paused))
-    source = ReplaySource.from_path(args.corpus, controls=controls)
+    # source_from_path and not ReplaySource.from_path: the header decides
+    # the shape, so a version-2 recording opens as the tagged source and a
+    # version-1 one is unchanged. Opening every log as untagged would have left
+    # this unit's whole seam with no production caller.
+    source = source_from_path(args.corpus, controls=controls)
     app = TalariaApp(
         source,
         mode="replay",
@@ -340,6 +344,15 @@ def run_replay(args: argparse.Namespace) -> int:
         status_runner=_build_status_runner(cfg),
         status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
         paste_threshold=_build_paste_threshold(cfg),
+        # **Derived from the recording, because replay has no other way to learn
+        # it.** ``_adopt_profile`` runs from the two ``/profiles`` picker paths
+        # and nowhere else, so the focused profile in replay is whatever this
+        # constructor is given — and ``route_frame`` feeds the focused engine
+        # only frames whose profile matches it. Left at the default, a tagged
+        # recording renders an EMPTY transcript: measured at 0 entries against 3
+        # for the same frames at the tagged profile. ``""`` for a
+        # single-connection log keeps the default, which is what that log means.
+        current_profile=getattr(source, "focus_profile", ""),
     )
     app.run()
     return 0

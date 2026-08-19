@@ -21,7 +21,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 from talaria.domain.normalize import parse_frame_time
 from talaria.recorder.framelog import FRAME_LOG_VERSION_MULTI_CONNECTION
@@ -158,6 +158,72 @@ REPLAY_EPOCH: Final[int] = 1
 def profiles_from_entries(entries: Iterable[FrameLogEntry]) -> tuple[str, ...]:
     """One profile per entry, positionally, for :class:`ReplaySource`."""
     return tuple(entry.profile for entry in entries)
+
+
+#: The methods whose reply lands a session — the recorded evidence of which
+#: connection this run was actually driving. Spelled here rather than imported
+#: from ``talaria.ui.app`` because replay must not import the UI package: these
+#: are wire names, and the direction that matters is that nothing below the seam
+#: reaches up (ADR-0002).
+LANDING_METHODS: Final[frozenset[str]] = frozenset({"session.create", "session.resume"})
+
+
+def _frame_method(frame: Any) -> str:
+    if not isinstance(frame, dict):
+        return ""
+    method = frame.get("method")
+    return method if isinstance(method, str) else ""
+
+
+def _frame_session_id(frame: Any) -> str:
+    if not isinstance(frame, dict):
+        return ""
+    params = frame.get("params")
+    if not isinstance(params, dict):
+        return ""
+    session_id = params.get("session_id")
+    return session_id if isinstance(session_id, str) else ""
+
+
+def derive_focus_profile(
+    header: FrameLogHeader, entries: Sequence[FrameLogEntry]
+) -> str:
+    """Which connection's session a replay of this log should show.
+
+    **Replay has no other way to answer this, and the answer is not cosmetic.**
+    ``_adopt_profile`` is reached from the two ``/profiles`` picker paths and
+    nowhere else, so it never runs in replay; ``focused_profile`` is whatever the
+    app was constructed with. Meanwhile ``route_frame`` feeds the focused engine
+    only frames whose profile equals it — so a tagged log replayed at the wrong
+    focus renders an EMPTY transcript. Measured: the same frames at
+    ``focused_profile='default'`` give 0 transcript entries and at the tagged
+    profile give 3.
+
+    Three rules, in the plan's own order, each preferring recorded evidence over
+    inference:
+
+    1. **A recorded landing reply.** An outbound ``session.create`` or
+       ``session.resume`` is this run *choosing* a session, which is the
+       strongest statement the log makes about what it was driving.
+    2. **The first session named on the wire**, which is the adoption rule the
+       live engine already follows when it has no session of its own — so a log
+       with no landing call replays the way the run itself behaved.
+    3. **The header's first declared connection**, for a log whose frames name
+       no session at all. A recording of a connection that only ever carried
+       gateway-level traffic still belongs to that connection.
+
+    Returns ``""`` when the log declares nothing and names nothing, leaving the
+    caller's own default in place rather than inventing a profile.
+    """
+    for entry in entries:
+        if entry.dir == "out" and _frame_method(entry.frame) in LANDING_METHODS:
+            return entry.profile
+    for entry in entries:
+        if _frame_session_id(entry.frame):
+            return entry.profile
+    if header.connections:
+        return header.connections[0].profile
+    return ""
 
 
 def load_frame_records(path: str | Path) -> tuple[FrameRecord, ...]:
@@ -369,21 +435,56 @@ class TaggedReplaySource:
     built it for the live fleet and a recording is simply a second producer.
     """
 
-    def __init__(self, inner: ReplaySource) -> None:
+    def __init__(
+        self,
+        inner: ReplaySource,
+        *,
+        connections: Sequence[str] = (),
+        focus_profile: str = "",
+    ) -> None:
         self._inner = inner
+        self._connections = tuple(connections)
+        self._focus_profile = focus_profile
 
     @classmethod
     def from_path(
         cls, path: str | Path, *, controls: ReplayControls | None = None
     ) -> TaggedReplaySource:
+        header = read_header(path)
         entries = tuple(iter_frame_log(path))
         return cls(
             ReplaySource(
                 tuple(record_from_entry(entry) for entry in entries),
                 controls=controls,
                 profiles=profiles_from_entries(entries),
-            )
+            ),
+            connections=tuple(row.profile for row in header.connections),
+            focus_profile=derive_focus_profile(header, entries),
         )
+
+    @property
+    def connections(self) -> tuple[str, ...]:
+        """Every connection the recording declares, in header order.
+
+        **Read by the app to mark them connected at replay start**, which is a
+        recorded fact rather than an assumption: a log exists because these
+        gateways answered. Without it every channel keeps
+        ``ConnectionChannel.connected``'s ``False`` default and the queue says
+        "connection down before it was ever polled" about a connection that was
+        demonstrably live when the frames were captured. Measured before the
+        fix: both connections of a two-connection replay reported exactly that.
+
+        A connection that really did drop mid-recording is marked down again by
+        the log's own terminal cause, so starting from the recorded truth costs
+        nothing and starting from ``False`` costs a false sentence.
+        """
+        return self._connections
+
+    @property
+    def focus_profile(self) -> str:
+        """Which connection's session this replay should show — see
+        :func:`derive_focus_profile`. ``""`` when the log settles nothing."""
+        return self._focus_profile
 
     @property
     def controls(self) -> ReplayControls:
