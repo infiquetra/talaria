@@ -4,6 +4,33 @@
 
 ## P0
 
+### Eleven public exports have no production caller — v0.4 accumulated review
+
+**Priority.** P3 — none can hurt anyone; all of them read as live to a future maintainer, which is the
+cost.
+
+**Evidence.** A mechanized sweep of all 320 names exported by `__all__` across `talaria/` found 12
+with zero production call sites. One was a real defect and is fixed (`truncation_note` — evictions
+were silent). The other eleven fall in three groups:
+
+| Group | Names | Why it is not urgent |
+| --- | --- | --- |
+| Superseded | `decode_identity` | `decode_selection` replaced it; the old 3-part split is tested in isolation only |
+| Test-only helpers living in production modules | `apply_frames`, `route_frames`, `stale_for`, `probe_set_is_permitted`, `unprobed_methods` | each has real test callers; the smell is that they are exported, not that they exist |
+| Declared and never read | `EXPIRE_EVENT_KINDS`, `GATEWAY_STATUS_WORDS`, `RecordOutcome`, `read_credential_document` | referenced by nothing at all, not even a test |
+
+`sync_queue` is a twelfth zero-caller export and is **correct as-is** — its own docstring says it is
+"never called by a reduction here" and explains why.
+
+**Worth it when.** The next change that touches one of these modules for another reason. Deleting
+public API surface across five modules is its own change with its own review, and doing it as a
+by-product of a review pass would put unrelated churn in a remediation commit.
+
+**The sweep itself is worth keeping.** The script that found this is throwaway, but the check is not:
+"which production call site reaches this?" has now found four dead paths across U6, U7 and U8B plus
+this one. Consider making it a gate rather than a habit.
+
+
 ### The settled-item bound became live in U8B and nothing measures what it costs
 
 **Priority.** P3 — recorded because U8B is what activated it, not because it is urgent.

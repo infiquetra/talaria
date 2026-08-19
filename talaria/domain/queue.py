@@ -56,7 +56,12 @@ from talaria.domain.models import (
 )
 from talaria.domain.normalize import clip_detail_line, coerce_text
 from talaria.domain.redaction import redact_probe_detail
-from talaria.domain.registry import ConnectionChannel, RegistryRow, RowKey
+from talaria.domain.registry import (
+    ConnectionChannel,
+    RegistryRow,
+    RowKey,
+    truncation_note,
+)
 
 # ── Vocabulary ───────────────────────────────────────────────────────────
 
@@ -1421,6 +1426,25 @@ def connection_notices(
             lines.append(
                 f"{profile}: connection down — its rows are stale and no new item "
                 "can be learned from it"
+            )
+    # **A dropped row is named, because an eviction that says nothing is a queue
+    # that lost an item in silence.** ``ConnectionChannel.evicted_rows`` says of
+    # itself that it "feeds the visible truncation note — an eviction is never a
+    # silent drop", and ``truncation_note`` formats exactly that sentence. Until
+    # 2026-08-19 nothing called it: the registry evicted rows past its
+    # per-connection cap (``state.py:3548``), counted them, and rendered the
+    # count nowhere. Measured on a 281-session listing against the 256 cap: 25
+    # rows dropped, ``evicted_rows == 25``, zero surfaces mentioning them.
+    #
+    # It belongs here rather than only on the picker because a dropped row can be
+    # a row that was WAITING, and this is the surface whose whole job is saying
+    # why the queue may be shorter than the truth (R14, R24).
+    if channel is not None:
+        dropped = truncation_note(channel)
+        if dropped:
+            lines.append(
+                f"{profile}: {dropped} — the per-connection row cap dropped them, "
+                "so anything of theirs that is waiting is not in this queue"
             )
     if board is None:
         return (
