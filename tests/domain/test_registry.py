@@ -784,3 +784,75 @@ def test_a_queue_item_survives_rebind_then_alias_churn() -> None:
         profile=OTHER_PROFILE, at=BASE_TIME + 30, poll_epoch=2,
     )
     assert durable_key in fleet.rows, "a queue item's row was retired under it"
+
+
+#  ── U8B: the poll schedule reads a different clock from every age ──────────
+
+
+def test_the_poll_stamp_and_the_age_stamp_are_two_clocks() -> None:
+    """``polled_at`` stamps the schedule; ``at`` stamps everything read as an age.
+
+    They were one parameter until 2026-08-19, and the conflation made KTD2's
+    30-second backstop unable to fire: ``at`` is the focused session's frame
+    clock, which only focused traffic advances, so a *background* connection's
+    poll schedule was driven entirely by traffic on the connection it is not.
+
+    Driven with the two clocks far apart, because a test passing the same value
+    for both cannot tell which field read which — the shape that let a mutation
+    restoring ``last_poll_at=at`` survive the cadence tests entirely.
+    """
+    frame_clock = BASE_TIME
+    schedule_clock = BASE_TIME + 9_999.0
+
+    fleet = FleetState(focused_profile=OTHER_PROFILE)
+    directory = decode_active_list(
+        {
+            "sessions": [
+                {
+                    "id": "run-1",
+                    "session_key": "stored-1",
+                    "status": "waiting",
+                    "title": "waits",
+                    "model": "m1",
+                    "message_count": 2,
+                }
+            ]
+        }
+    )
+    fleet = apply_active_list(
+        fleet,
+        directory,
+        profile=OTHER_PROFILE,
+        at=frame_clock,
+        poll_epoch=1,
+        polled_at=schedule_clock,
+    )
+
+    channel = fleet.channels[OTHER_PROFILE]
+    assert channel.last_poll_at == schedule_clock, (
+        "the poll schedule was stamped with the frame clock, so a quiet fleet's "
+        "backstop can never come due"
+    )
+    row = fleet.rows[(OTHER_PROFILE, "stored-1")]
+    assert row.seeded_at == frame_clock, (
+        "a row's age was stamped with the schedule clock, which would make a "
+        "replayed recording report ages it never had (R20/KTD12)"
+    )
+    assert fleet.clock == frame_clock
+
+
+def test_omitting_the_poll_stamp_leaves_every_existing_caller_unchanged() -> None:
+    """``polled_at`` defaults to ``at``, which is what the old signature did.
+
+    The default is load-bearing rather than tidy: every caller written before
+    this unit passes one stamp, and silently giving them a different clock would
+    change behaviour they were never reviewed for.
+    """
+    fleet = FleetState(focused_profile=OTHER_PROFILE)
+    directory = decode_active_list({"sessions": []})
+
+    fleet = apply_active_list(
+        fleet, directory, profile=OTHER_PROFILE, at=BASE_TIME + 5, poll_epoch=1
+    )
+
+    assert fleet.channels[OTHER_PROFILE].last_poll_at == BASE_TIME + 5

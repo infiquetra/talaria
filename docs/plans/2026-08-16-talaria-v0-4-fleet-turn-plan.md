@@ -748,28 +748,153 @@ determinism gate can measure a multi-connection recording rather than refusing i
 cadence is for. Wiring any part alone manufactures the next dead production path, which is the defect
 class U7 spent three commits closing.
 
-1. **The cadence.** `next_poll_due_at` (`talaria/domain/registry.py:265`) carries the whole KTD2 rule
-   — a 2-second coalesce after a `sessions.changed` hint, a 30-second backstop — and nothing in
-   `talaria/` calls it. Nothing consumes `channel.hint_at` either, which `route_frame` records on
-   every `sessions.changed` (`talaria/domain/state.py:3224`) and only `apply_active_list` clears. A
-   gateway announcing that its session list changed is heard and not acted on.
+1. **The cadence. LANDED 2026-08-19.** `next_poll_due_at` (`talaria/domain/registry.py:265`) carries
+   the whole KTD2 rule — a 2-second coalesce after a `sessions.changed` hint, a 30-second backstop —
+   and nothing in `talaria/` called it. Nothing consumed `channel.hint_at` either, which `route_frame`
+   records on every `sessions.changed` (`talaria/domain/state.py:3224`) and only `apply_active_list`
+   clears. A gateway announcing that its session list changed was heard and not acted on.
+
+   **This unit changes a reducer's signature, which this section said it would not, and the change is
+   declared here rather than absorbed.** The phrasing below reads "no new reducers expected — the fold
+   already exists and is tested". That is true of reducers and not of their parameters:
+   `apply_active_list` gains `polled_at` beside `at`. Operator ruling of 2026-08-19, on this finding:
+
+   > The cadence could not be driven from the clock it was written against. `next_poll_due_at` does
+   > arithmetic on `channel.last_poll_at`, which `apply_active_list` stamped from the same `at` that
+   > stamps every age — and `at` is the *focused* session's frame clock, which only focused traffic
+   > advances. So a background connection's poll schedule was a function of traffic on the connection
+   > it is not, and a fleet quiet everywhere never polled at all, which is exactly when a poll is the
+   > only way to learn anything. Measured: sixty frames spanning sixty seconds of frame time on a
+   > background connection left the focused clock at `0.0` and that connection's poll due at `130.0`,
+   > while the registry learned a row from the same frames.
+
+   `at` stays the frame clock and stamps everything read as an age, so R20 and KTD12 are untouched;
+   `polled_at` stamps only `last_poll_at`, whose single consumer is the scheduler. It defaults to
+   `at`, so no existing caller moves. The live loop passes the wall clock, which is honest because the
+   loop is live-only — a replay has no gateway to poll — and because
+   `talaria/transport/source.py:824` stamps every live frame from `time.time()`, so the hint and the
+   schedule share a scale, which `next_poll_due_at`'s own `max()` requires.
+
+   The pinned property is the operator's: **a background connection's own silence brings its poll
+   due** (`tests/ui/test_poll_cadence.py`). Eight mutations; one survived first — reverting
+   `last_poll_at` to the frame clock, which every cadence test missed because they set the stamp
+   directly rather than driving the reducer that writes it. That is a coverage gap rather than
+   equivalence, and it is closed by a domain test driving the two clocks far apart.
 2. **Feed B's assembly.** `approval_detail_targets` (`state.py:3935`), `decode_pending_approvals`
    (`queue.py:472`) and `apply_approval_pending` (`state.py:3964`) are reachable only from tests.
+
+   **LANDED 2026-08-19, and it changes a second domain contract — declared here as the stamp split
+   was.** `approval_detail_targets` returned **durable** session ids on a docstring saying durable is
+   "what a caller must name on the wire". Measured against the running gateway, that is false, and
+   wiring the feed on it would have answered `4001 session not found` for every call — silently,
+   because `apply_approval_pending` reads a non-answering reply as "changes nothing", so the queue
+   would have stayed empty while the path looked alive. Three legs:
+
+   - `tui_gateway/server.py:7025-7039` registers `_sessions[sid]`, keyed by the **runtime** id, and
+     stores the durable id as a field named `session_key`. The function takes `sid` and `key` as two
+     separate parameters.
+   - `server.py:2507-2509` resolves `params["session_id"]` against that mapping, and the
+     `approval.pending` handler (`tui_gateway/methods_prompt.py:1454-1460`) then passes
+     `session["session_key"]` onward — which only makes sense if the two differ.
+   - Two local recordings settle it on the wire: the same durable session `20260806_120031_fd736f`
+     resumed 66 seconds apart returned runtime ids `99dcf142` and `fd0367c9`.
+
+   The function now returns the row's **newest** runtime id (`runtime_ids[-1]`, kept newest-last and
+   bounded at four by `_bind_alias`). The fold is unchanged and needs no translation:
+   `apply_approval_pending` resolves through `_resolve_key`, which accepts an alias, so the caller
+   names the runtime id and the detail still files under the durable key. The other half of the old
+   sentence — "what the reply's detail is stored under" — was true, and is now stated separately
+   instead of conflated with the wire name.
+
+   **The operator's "name the unaskable row" ruling was implemented, then found unreachable, and is
+   discharged as an invariant instead.** The ruling was right about the code it was given: the first
+   version skipped rows with no runtime id, and R14 forbids a silent skip. But that version was wrong
+   twice over. `_bind_alias` records nothing when the runtime id *equals* the durable id
+   (`state.py:2794`), because there is no alias to make — so an empty `runtime_ids` means the two
+   coincide and the key **is** the handle. Skipping those rows removed real, askable sessions from the
+   feed, and an existing fixture in `tests/domain/test_needs_you_queue.py` — whose rows carry
+   `id == session_key` — caught it as a full-suite failure.
+
+   With `wire_handle`'s fallback in place the disclosed state cannot occur at all:
+   `RegistryRow.status` is written in exactly one place (`state.py:3408`, inside `apply_active_list`),
+   which binds the alias in the same fold, so a row `approval_detail_due` admits has always been seen
+   in an active list and always has one of the two handles. A notice for an unreachable state is a
+   fixture-only path wearing R14's clothes — the exact defect class the standing review lens hunts —
+   so the guarantee is **asserted** by `test_every_due_row_has_a_wire_handle` rather than announced by
+   a line no operator can ever see. If the invariant breaks, that test fails and the notice becomes
+   the right answer again.
+
+   **The safety property this half turns on must be stated in the unit and pinned, not inferred**
+   (operator rider, 2026-08-19). The `approval.pending` probe is safe *because* it is parameterless:
+   `talaria/transport/compat_check.py:436` argues that a bare call cannot reach the build-warming
+   path behind the session lookup. The real feed call is not bare — `approval_detail_targets`
+   returns durable session ids "because that is what a caller must name on the wire" — so the probe's
+   own safety argument does not cover it. What covers it is the operator ruling of 2026-08-17: the
+   call is restricted to the trigger statuses, enforced in `approval_detail_due` (`queue.py:533`).
+   That restriction was readable only by joining two docstrings. It is now stated where the call is
+   made, on first-hand evidence rather than inference: `approval.pending` resolves through `_sess`,
+   which is `_sess_building` plus `_wait_agent`, and `_sess_building`'s own docstring
+   (`tui_gateway/server.py:2519`) says it warms the agent build. So the feed call *does* have the side
+   effect the bare probe exists to avoid, and only the trigger-status restriction makes it acceptable —
+   `waiting` and `working` sessions are already built. Pinned by
+   `test_no_approval_detail_is_asked_for_a_session_outside_the_trigger_statuses`, which asserts **no
+   call at all**, not a call that returns nothing.
+
+   Six mutations. Three survived first — naming the oldest runtime id (every fixture row had only
+   one), folding a refused call (the test drove the decoder's guard, not the transport's), and asking
+   for detail before the roster that decides who is due (nothing drove `poll_due_connections`). Two
+   were coverage gaps and are closed by probes. The third is genuine **equivalence**, proved
+   structurally rather than assumed: `RpcOutcome` is constructed in exactly five places
+   (`talaria/transport/rpc.py:332-388`) and passes `result=` only on the `ok` branch, so an
+   unconfirmed outcome always carries `result=None` and the decoder declines it anyway. The guard
+   stays, with a comment saying it is redundant by construction and why it is kept.
    `approval.pending` is issued in production **only as a presence probe**. `FleetState.approval_detail`
    is written in exactly one place — inside the unreachable `apply_approval_pending` — and pruned in
    four, so it is permanently empty in a live run. U6's "two feeds, one identity" runs on one feed.
-3. **The settle latch.** `settle_queue_item` (`state.py:4049`) has no production caller, so
-   `settled_items` stays empty and `build_queue`'s `settled=` argument is always the empty set.
-   Production settles through `settle_prompt` on the focused session instead.
+3. **The settle latch. LANDED 2026-08-19, with a narrower call site than this section implied.**
+   `settle_queue_item` (`state.py:4049`) had no production caller, so `settled_items` stayed empty and
+   `build_queue`'s `settled=` was always the empty set.
 
-4. **Per-connection gate replay.** `run_gate` refuses a version-2 corpus outright (U8 shipped that
-   refusal, and it stays — a gate that cannot measure a file must not publish a measurement of it).
-   What it cannot yet do is *measure* one: `measure_replay`, `replay_headless` and
-   `exercise_inert_controls` each construct a bare `ReplaySource` from records with no tags, so a
-   tagged corpus replayed through any of them would merge two gateways' equal session ids into a
-   session that never existed. Threading the tags through is a signature change across all three,
-   which is why it left U8 as an escalation rather than a fix. The fleet checkpoints U8 added
-   (`replay_fleet_trace`) already run per connection and are the shape to follow.
+   The obvious call site — answering a foreign approval from the queue — does not exist, and U7 is why:
+   `_inline_answerable` already requires the prompt to be live in the focused engine's registry, so a
+   polled item is navigate-to only ("offering a row the answer path would refuse is a control that
+   does nothing"). The latch's real case is the one this section's own mechanism describes: **an
+   answer whose outcome Talaria could not read leaves feed B's copy behind.** `settle_prompt` clears
+   the focused registry, which removes feed A's row; feed B's is derived from `approval_detail` and
+   survives until the gateway stops listing it, which for an ambiguous outcome may be never. It was
+   invisible before this unit because `approval_detail` was permanently empty.
+
+   Wired through one helper, called from both settle branches and from **neither** restore branch —
+   `not_sent` is the one outcome definite about non-delivery, so the control comes back and its queue
+   row must stay; latching there would tombstone a live question while its card still offered a
+   control. That carve-out survived the first mutation pass and now has its own probe.
+
+   One correction inside `settle_queue_item` itself: it took `session_id` verbatim, but `build_queue`
+   keys both feeds from the **durable** id while `respond_live` is handed whatever id the prompt
+   carries — a runtime id for a resumed session. A latch filed under the runtime id names an item the
+   queue never builds, so it would latch nothing and leave the control offered. It resolves through
+   the alias now, as `apply_approval_pending` does.
+
+4. **Per-connection gate replay. LANDED 2026-08-19, first of the two halves.** `measure_replay`,
+   `replay_headless` and `exercise_inert_controls` each constructed a bare `ReplaySource` from
+   records with no tags, so a tagged corpus replayed through any of them merged two gateways' equal
+   session ids into a session that never existed. All three now take one optional `tags` keyword
+   carrying a `FleetTags` — profiles, declared connections, derived focus — so the ten untagged
+   callers across the gate and its tests are unchanged, which is what kept a three-signature change
+   small. `replay_headless` returns the **fleet** for a tagged corpus rather than the focused
+   session, because comparing one connection's state while calling the result
+   `determinism_identical` is the same defect class this unit exists to close.
+
+   **U8's refusal is narrowed, not deleted.** It covered every version-2 corpus because no path
+   could carry tags. What remains genuinely unmeasurable is a version-2 log whose tags cannot
+   separate its connections — a header declaring none, or frames carrying no profile — and both put
+   every frame on one nameless connection, which is the silent merge wearing the tagged path's
+   clothes. That case still raises. Advisory F23 (`live_corpus_identity` hardcoding `v1`) is closed
+   in the same commit, because a version-2 corpus now reaches it.
+
+   **Proof order, per operator ruling:** the untagged path is shown *failing* a same-session-id
+   corpus — two gateways' turns in one transcript, nothing raised — before the tagged path is shown
+   passing the identical file. Eight mutations, all killed.
 
 **Covers:** KTD2 (the cadence proper), R14 and R24 (the queue stops disclosing a gap it no longer
 has), AE2's fleet-level leg, and KTD6 at the gate (a log with no tags is one connection — and a log
@@ -786,11 +911,25 @@ gateways. So U8B must land the gate's ability to *measure* such a corpus before 
 first one, or the recording arrives with nothing able to read it and the refusal U8 shipped is the
 only thing that happens to it.
 
-**A deletion this unit owns.** U7 added a standing line to `connection_notices` stating that foreign
-approval detail is not polled on any connection, because a present seam means "this gateway would
-answer" and never "we asked". **That line is deleted here**, along with the tests pinning it, and the
-bare `needs-you: none` becomes reachable again for the first time — which is the observable proof
-that this unit did what it says. Its trigger is now scheduled rather than indefinite.
+**A deletion this unit owns. DONE 2026-08-19.** U7 added a standing line to `connection_notices`
+stating that foreign approval detail is not polled on any connection, because a present seam means
+"this gateway would answer" and never "we asked", and wrote "Delete this line in U8B, and not
+before". The sentence is now false — the detail *is* polled, on every connection whose seam answered,
+for every session the trigger statuses admit — so the line and its constant are gone.
+
+Two tests moved with it, and neither was edited to pass:
+
+- `test_a_connection_says_its_foreign_approvals_are_unpolled_even_when_probed` is **retired** and
+  replaced by its successor, which asserts the present-seam connection is now *silent* and that the
+  absent-seam notice is unchanged. The absent case is still true — a gateway with no
+  `approval.pending` handler genuinely cannot be asked — so only the present half moved.
+- `test_a_fully_answered_quiet_fleet_says_none_without_qualification` is **restored to its original
+  meaning**. It asserted the bare `needs-you: none` until CR7 weakened it to require the
+  qualification, because Talaria was not entitled to the unqualified sentence. It is entitled to it
+  again, and the assertion can only pass while the foreign-wait path actually runs.
+
+The bare `needs-you: none` is reachable for the first time since U7, which is this unit's observable
+proof.
 
 **Files:** `talaria/ui/app.py` (the poll loop and its cadence timer, the `approval.pending` call site,
 the settle call site), `talaria/domain/queue.py` (delete the standing disclosure line),
@@ -815,7 +954,7 @@ none of them blocking, all of them on the read path this unit owns:
 | --- | --- | --- |
 | F18 | A connection a recording declares but that never answered replays as connected — the mount-time fold marks every declared connection up, because the log is evidence they answered, and a header entry is not that evidence | This unit reads connection state per connection; the fix is a fold that waits for a frame |
 | F21 | Five accessors on `TaggedReplaySource` have no reader in `talaria/` | The gate half above is what reads them; if it does not, they should go |
-| F23 | `live_corpus_identity` hardcodes the string `"v1"` in the identity it publishes, so a version-2 corpus would be cited under a version it is not | The gate half changes which versions reach that function |
+| F23 | `live_corpus_identity` hardcodes the string `"v1"` in the identity it publishes, so a version-2 corpus would be cited under a version it is not | **Closed 2026-08-19** in the gate half, which is what made a version-2 corpus reach it |
 
 Two more from the same lens are already closed: F20 (the age parser reading gateway text) and F22
 (`__all__` omitting U8's public names) were fixed in U8 itself. F19, a missing vacuity floor under

@@ -46,7 +46,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, overload
 
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
@@ -63,7 +63,12 @@ from talaria.domain.projection import (
 from talaria.domain.queue import summary_line, wait_line
 from talaria.domain.state import FleetState, SessionState, cancel_turn, fleet_queue
 from talaria.recorder.framelog import FRAME_LOG_VERSION_MULTI_CONNECTION
-from talaria.recorder.reader import FrameLogEntry, FrameLogHeader, RecordedConnectionRow
+from talaria.recorder.reader import (
+    FrameLogEntry,
+    FrameLogHeader,
+    RecordedConnectionRow,
+    iter_frame_log,
+)
 from talaria.replay.controls import MAX_SPEED, MIN_SPEED, ReplayControls
 from talaria.replay.source import (
     ReplaySource,
@@ -72,6 +77,7 @@ from talaria.replay.source import (
     derive_focus_profile,
     load_frame_records,
     load_header,
+    profiles_from_entries,
 )
 from talaria.replay.stress import (
     FeatureCorpus,
@@ -1094,13 +1100,109 @@ def content_is_complete(state: SessionState, view: TranscriptView) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class FleetTags:
+    """The connection identity a version-2 recording carries beside its records.
+
+    Three functions in this module replay a corpus through the real app, and
+    each of them constructed a bare :class:`~talaria.replay.source.ReplaySource`
+    — which is correct for a version-1 log and silently wrong for a version-2
+    one, because session ids are unique within a gateway process and not across
+    gateways. Two connections' equal ids merged into a session that never
+    existed, and the gate published a measurement of it.
+
+    Carried as one optional keyword rather than three separate parameters so the
+    untagged callers — ten of them across this module and its tests — stay
+    exactly as they were. ``None`` means "a version-1 log, one connection", which
+    is the reading ``talaria/recorder/reader.py`` already gives an absent tag.
+    """
+
+    profiles: tuple[str, ...]
+    connections: tuple[str, ...]
+    focus_profile: str
+
+
+def fleet_tags_from_log(path: str | Path) -> FleetTags | None:
+    """The tags a recording carries, or ``None`` if it is a single-connection log.
+
+    Reads the file a second time to get the entries. That is the right trade for
+    a gate: the alternative is widening ``load_frame_records`` to return two
+    things and touching every caller of it, to save one read of a file the gate
+    then replays three or four times.
+
+    **The tagged branch has no live input yet, and that is scheduled rather than
+    dead.** A version-2 recording cannot exist until a build carrying U8's
+    recorder fix has been run against two gateways, which is a U9 activity — so
+    today every corpus this sees is version-1 and returns ``None``. U8B was
+    slotted before U9 precisely so the gate can read that first capture when it
+    arrives rather than refuse it. A reader finding no production caller for the
+    tagged path is reading correctly; the schedule is in the plan's U8B entry.
+    """
+    header = load_header(path)
+    if header.version < FRAME_LOG_VERSION_MULTI_CONNECTION:
+        return None
+    entries = tuple(iter_frame_log(path))
+    profiles = profiles_from_entries(entries)
+    connections = tuple(row.profile for row in header.connections)
+    # **The refusal, narrowed rather than deleted.** U8 refused every version-2
+    # corpus because no path could carry tags. Now that all three can, what is
+    # left unmeasurable is a version-2 log whose tags cannot actually separate
+    # its connections: a header declaring none, or a frame carrying no profile.
+    # Both are reachable — ``iter_frame_log`` yields an empty profile for an
+    # entry that omits the key, and a version-2 log stripped of its per-frame
+    # tags is a fixture this suite already builds — and both put every frame on
+    # one nameless connection, which is the silent merge the version bump exists
+    # to prevent. A gate that cannot measure a file still must not publish a
+    # measurement of it.
+    if not connections or any(not profile for profile in profiles):
+        raise GateError(
+            f"live corpus {path} declares frame-log version {header.version} but its "
+            f"tags cannot separate its connections: {len(connections)} connection(s) in "
+            f"the header, {sum(1 for profile in profiles if not profile)} of "
+            f"{len(profiles)} frames untagged. Replaying it would put every frame on "
+            "one nameless connection and merge equal session ids. Refused rather "
+            "than measured."
+        )
+    return FleetTags(
+        profiles=profiles,
+        connections=connections,
+        focus_profile=derive_focus_profile(header, entries),
+    )
+
+
+def _replay_source(
+    records: tuple[FrameRecord, ...],
+    *,
+    controls: ReplayControls,
+    tags: FleetTags | None,
+) -> ReplaySource | TaggedReplaySource:
+    """One place that decides the source shape, so the three replays agree.
+
+    Three copies of this two-line decision is how one of them ends up wrong, and
+    the wrong one is invisible: an untagged replay of a tagged corpus produces a
+    plausible single-connection result rather than an error.
+    """
+    source = ReplaySource(
+        records, controls=controls, profiles=tags.profiles if tags is not None else ()
+    )
+    if tags is None:
+        return source
+    return TaggedReplaySource(
+        source, connections=tags.connections, focus_profile=tags.focus_profile
+    )
+
+
 def live_corpus_identity(path: str | Path, records: tuple[FrameRecord, ...]) -> CorpusIdentity:
     """Cite a recorded corpus by digest and count. The path never leaves this call."""
     digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     header = load_header(path)
     note = f"frame-log v{header.version}, recorded {header.started_at}"
+    # The header's version, not the literal ``v1`` this carried while only one
+    # version existed (advisory F23). A label is how a corpus is cited in a
+    # results document, and citing a two-connection recording as v1 misnames the
+    # only thing about it that changes how it must be read.
     return CorpusIdentity(
-        label=f"talaria-live-v1-{len(records)}f-{digest[:12]}",
+        label=f"talaria-live-v{header.version}-{len(records)}f-{digest[:12]}",
         sha256=digest,
         frame_count=len(records),
         kind="recorded-session",
@@ -1473,6 +1575,7 @@ async def measure_replay(
     timeout: float = 900.0,
     speed: float | None = None,
     sideband: tuple[SidebandAction, ...] = (),
+    tags: FleetTags | None = None,
 ) -> tuple[GateMeasurement, SessionState, tuple[str, ...]]:
     """Replay one corpus through the real app and measure it.
 
@@ -1498,8 +1601,14 @@ async def measure_replay(
         controls.set_unbounded()
     else:
         controls.set_speed(speed)
-    source = ReplaySource(records, controls=controls)
-    app = TalariaApp(source, mode="replay", controls=controls, mount_cap=mount_cap)
+    source = _replay_source(records, controls=controls, tags=tags)
+    app = TalariaApp(
+        source,
+        mode="replay",
+        controls=controls,
+        mount_cap=mount_cap,
+        current_profile=tags.focus_profile if tags is not None else "",
+    )
     if sideband:
         source.bind_sideband(sideband, lambda action: _apply_sideband_action(app, action))
 
@@ -1701,13 +1810,36 @@ async def measure_replay(
     return measurement, final_state, refusals
 
 
+@overload
+async def replay_headless(
+    records: tuple[FrameRecord, ...],
+    *,
+    speed: float,
+    pause_after: int | None = ...,
+    sideband: tuple[SidebandAction, ...] = ...,
+    tags: None = ...,
+) -> SessionState: ...
+
+
+@overload
+async def replay_headless(
+    records: tuple[FrameRecord, ...],
+    *,
+    speed: float,
+    pause_after: int | None = ...,
+    sideband: tuple[SidebandAction, ...] = ...,
+    tags: FleetTags,
+) -> FleetState: ...
+
+
 async def replay_headless(
     records: tuple[FrameRecord, ...],
     *,
     speed: float,
     pause_after: int | None = None,
     sideband: tuple[SidebandAction, ...] = (),
-) -> SessionState:
+    tags: FleetTags | None = None,
+) -> SessionState | FleetState:
     """Replay through the app at a given speed and return the final domain state.
 
     Used for AE11's determinism claim. Runs the real app rather than the reducer
@@ -1716,11 +1848,24 @@ async def replay_headless(
     weaker. ``sideband`` extends that claim to include U6's scripted actions
     (R12: "sideband included") — see :func:`measure_replay`'s own docstring
     for why the source is armed after the app exists rather than before.
+
+    **A tagged corpus returns the FLEET, and that is not a convenience.** The
+    focused :class:`SessionState` is one connection's, so comparing two runs of
+    a multi-connection corpus by it would leave every other connection's
+    determinism unasserted — and the caller's variable is named
+    ``determinism_identical``, which is what a reader would then believe. The
+    untagged overload returns exactly what it always did, so no existing caller
+    moves.
     """
     controls = ReplayControls()
     controls.set_speed(speed)
-    source = ReplaySource(records, controls=controls)
-    app = TalariaApp(source, mode="replay", controls=controls)
+    source = _replay_source(records, controls=controls, tags=tags)
+    app = TalariaApp(
+        source,
+        mode="replay",
+        controls=controls,
+        current_profile=tags.focus_profile if tags is not None else "",
+    )
     if sideband:
         source.bind_sideband(sideband, lambda action: _apply_sideband_action(app, action))
     async with app.run_test(size=GATE_SIZE) as pilot:
@@ -1731,7 +1876,7 @@ async def replay_headless(
             await pilot.pause()
             controls.resume()
         await app.drain()
-        state = app.state
+        state: SessionState | FleetState = app.fleet if tags is not None else app.state
         await app.shutdown_sources()
     return state
 
@@ -1798,12 +1943,19 @@ async def replay_fleet_trace(
     return tuple(trace)
 
 
-async def exercise_inert_controls(records: tuple[FrameRecord, ...]) -> tuple[str, ...]:
+async def exercise_inert_controls(
+    records: tuple[FrameRecord, ...], *, tags: FleetTags | None = None
+) -> tuple[str, ...]:
     """Invoke every mutation control mid-replay and collect the refusals (AE11)."""
     controls = ReplayControls()
     controls.set_speed(1.0)
-    source = ReplaySource(records, controls=controls)
-    app = TalariaApp(source, mode="replay", controls=controls)
+    source = _replay_source(records, controls=controls, tags=tags)
+    app = TalariaApp(
+        source,
+        mode="replay",
+        controls=controls,
+        current_profile=tags.focus_profile if tags is not None else "",
+    )
     async with app.run_test(size=GATE_SIZE) as pilot:
         await pilot.pause()
         app.action_interrupt()
@@ -1967,25 +2119,46 @@ async def run_gate(
         # three functions and is filed as its own work. Stopping is the half that
         # is correct on its own — a gate that cannot measure a file must not
         # publish a measurement of it.
-        live_header = load_header(live_corpus)
-        if live_header.version >= FRAME_LOG_VERSION_MULTI_CONNECTION:
-            raise GateError(
-                f"live corpus {live_corpus} is a version-{live_header.version} "
-                "(multi-connection) recording, and this gate replays it as a single "
-                "connection — which would merge two gateways' equal session ids. "
-                "Refused rather than measured; per-connection gate replay is filed "
-                "as its own work."
-            )
+        # **Measured per connection, not refused.** U8 shipped a refusal here
+        # because the three replays below each built a bare ``ReplaySource``,
+        # so a version-2 corpus would have merged two gateways' equal session
+        # ids into a session that never existed — and published
+        # ``determinism_identical: true`` over it. U8B threads the tags through
+        # instead. The refusal was the correct half to ship at the time and is
+        # gone now that the measurement it stood in for exists.
+        #
+        # ``None`` for a version-1 log, which is the whole of KTD6's "a log with
+        # no tags is one connection" — so every existing recording replays
+        # through exactly the path it did before.
+        live_tags = fleet_tags_from_log(live_corpus)
         records = load_frame_records(live_corpus)
         identity = live_corpus_identity(live_corpus, records)
-        live_measurement, _, _ = await measure_replay(records, identity, mount_cap=mount_cap)
+        live_measurement, _, _ = await measure_replay(
+            records, identity, mount_cap=mount_cap, tags=live_tags
+        )
 
-        # AE11: same corpus, three transport treatments, one final state.
-        fast = await replay_headless(records, speed=64.0)
-        paused = await replay_headless(records, speed=64.0, pause_after=len(records) // 2)
-        unbounded_state = await replay_headless(records, speed=float("inf"))
+        # AE11: same corpus, three transport treatments, one final state. For a
+        # tagged corpus that state is the FLEET — comparing the focused session
+        # alone would leave every other connection's determinism unasserted
+        # while the variable below still called itself identical.
+        if live_tags is None:
+            fast: SessionState | FleetState = await replay_headless(records, speed=64.0)
+            paused: SessionState | FleetState = await replay_headless(
+                records, speed=64.0, pause_after=len(records) // 2
+            )
+            unbounded_state: SessionState | FleetState = await replay_headless(
+                records, speed=float("inf")
+            )
+        else:
+            fast = await replay_headless(records, speed=64.0, tags=live_tags)
+            paused = await replay_headless(
+                records, speed=64.0, pause_after=len(records) // 2, tags=live_tags
+            )
+            unbounded_state = await replay_headless(
+                records, speed=float("inf"), tags=live_tags
+            )
         determinism_identical = fast == paused == unbounded_state
-        refusals = await exercise_inert_controls(records)
+        refusals = await exercise_inert_controls(records, tags=live_tags)
 
     checks: dict[str, dict[str, Any]] = {
         # U8's four, one per thing the unit's goal names. Each rides the

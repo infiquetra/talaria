@@ -34,6 +34,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from time import time as _wall_clock
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
 from textual import events
@@ -107,8 +108,12 @@ from talaria.domain.projection import (
     project,
     terminal_read,
 )
-from talaria.domain.queue import NeedsYouQueue
-from talaria.domain.registry import RegistryRow, attach_displaces_client
+from talaria.domain.queue import NeedsYouQueue, decode_pending_approvals
+from talaria.domain.registry import (
+    RegistryRow,
+    attach_displaces_client,
+    next_poll_due_at,
+)
 from talaria.domain.selection import PickerSource
 from talaria.domain.session_list import (
     SessionDirectory,
@@ -127,7 +132,9 @@ from talaria.domain.state import (
     activation_hydration_events,
     age_out_approvals,
     apply_active_list,
+    apply_approval_pending,
     apply_frame,
+    approval_detail_targets,
     attach_confirm_row,
     begin_fleet_answer,
     cancel_turn,
@@ -159,6 +166,7 @@ from talaria.domain.state import (
     seed_history,
     set_connection,
     settle_prompt,
+    settle_queue_item,
 )
 from talaria.domain.state import (
     SUBMIT_METHOD as SUBMIT_METHOD,
@@ -582,6 +590,20 @@ DEFAULT_PROFILE: Final[str] = "default"
 #: probed the only honest way instead: it is called, and a call that fails
 #: leaves the rows saying what they actually know (R10/R24).
 LIST_ACTIVE_METHOD: Final[str] = "session.active_list"
+
+#: Feed B's wire call (KTD11). Distinct from the bare presence probe of the same
+#: name that ``compat_check`` issues: that one carries no parameters at all, and
+#: MUST NOT, because a bare call cannot resolve a session and so cannot warm one.
+#: This one names a session, which is the whole difference — see
+#: :meth:`TalariaApp.poll_approval_detail` for what makes that acceptable.
+APPROVAL_PENDING_METHOD: Final[str] = "approval.pending"
+
+#: How often the poll loop asks whether any connection is due. A floor on the
+#: cadence rather than the cadence itself: :func:`~talaria.domain.registry.
+#: next_poll_due_at` is re-checked on every tick, so a faster timer cannot make
+#: the fleet poll faster than KTD2's 2-second coalesce allows — the same
+#: relationship ``PROBE_REVALIDATION_S`` has with ``seam_probe_due``.
+POLL_TICK_S: Final[float] = 1.0
 
 #: Said when the roster call failed and the picker fell back to identity-only
 #: rows. Names the absent capability rather than showing lifecycle zeroes.
@@ -1275,6 +1297,9 @@ class TalariaApp(App[None]):
         #: The five-minute seam revalidation timer (U5). Separate from the
         #: render tick above so the two cadences cannot be confused for one.
         self._seam_timer: Timer | None = None
+        #: KTD2's poll timer (U8B). Stopped in teardown beside the other two —
+        #: a timer left running past shutdown reaches a torn-down inventory.
+        self._poll_timer: Timer | None = None
         self._pump_task: asyncio.Task[None] | None = None
         #: KTD2's landing barrier: how many session landings are in flight.
         #:
@@ -1571,6 +1596,13 @@ class TalariaApp(App[None]):
         # ``seam_probe_due`` before doing anything, so the interval is a floor
         # rather than the only thing standing between here and a busy loop.
         self._seam_timer = self.set_interval(PROBE_REVALIDATION_S, self.revalidate_seams)
+        # KTD2's cadence. A third timer rather than a branch inside either of the
+        # two above, because it answers a different question on a different
+        # period: the render tick is 50ms and the seam re-probe is five minutes,
+        # while a poll that must coalesce within two seconds of a hint sits
+        # between them. The callback re-checks ``next_poll_due_at`` per
+        # connection, so this interval is a floor.
+        self._poll_timer = self.set_interval(POLL_TICK_S, self.poll_due_connections)
         # **A recording's connections were up, and the fleet must start saying
         # so.** ``ConnectionChannel.connected`` defaults False, so without this a
         # replayed two-connection log reports "connection down before it was ever
@@ -1642,6 +1674,9 @@ class TalariaApp(App[None]):
         if self._seam_timer is not None:
             self._seam_timer.stop()
             self._seam_timer = None
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
         for task in (
             self._pump_task,
             self._status_task,
@@ -3316,6 +3351,7 @@ class TalariaApp(App[None]):
             self.state = settle_prompt(
                 self.state, prompt.request_id, session_id=prompt.session_id
             )
+            self._latch_queue_copy(prompt)
             self.state = latch_resolved_prompts(self.state, (prompt,))
             if in_focus:
                 self.state = record_local_note(
@@ -3346,6 +3382,7 @@ class TalariaApp(App[None]):
             return
 
         self.state = settle_prompt(self.state, prompt.request_id, session_id=prompt.session_id)
+        self._latch_queue_copy(prompt)
         if verdict.disposition == "discarded":
             self._report_prompt_outcome(
                 prompt,
@@ -3377,6 +3414,40 @@ class TalariaApp(App[None]):
         # names a choice the *gateway* offered (:func:`echoable_answer`).
         self._report_prompt_outcome(prompt, line, in_focus=in_focus)
         self._dirty = True
+
+    def _latch_queue_copy(self, prompt: PendingPrompt) -> None:
+        """Settle the queue's copy of a prompt the card path just cleared (R18/AE2).
+
+        ``settle_prompt`` clears the focused engine's registry, which removes
+        feed A's row. It cannot touch feed B's: a polled approval is derived from
+        ``FleetState.approval_detail`` and stays there until the gateway stops
+        listing it, which is one poll away at best and never if the answer's
+        outcome was ambiguous. Until U8B wired feed B that was invisible, because
+        ``approval_detail`` was permanently empty — ``settle_queue_item`` had no
+        production caller and ``build_queue``'s ``settled=`` was always empty.
+
+        **Called from both settle branches and from neither restore branch**, and
+        that is the whole rule: a restored control is a question the operator can
+        still answer, so its queue row must stay. Every other outcome leaves the
+        control cleared, and an item offered with no control behind it is exactly
+        the inert control AE11 forbids.
+
+        One helper rather than the same two lines in two branches — this file's
+        own ``AnswerVerdict`` docstring records what happened the last time one
+        reading of an outcome was written twice.
+        """
+        # A prompt with no session id names no row, so there is no queue copy to
+        # settle — feed A builds its identity from the row the prompt anchors to
+        # and an unanchored prompt has none.
+        if not prompt.session_id:
+            return
+        self.fleet = settle_queue_item(
+            self._fleet,
+            profile=self.fleet_profile,
+            session_id=prompt.session_id,
+            request_key=prompt.request_id,
+            at=self.state.last_observed_at,
+        )
 
     def _report_prompt_outcome(
         self,
@@ -4144,6 +4215,24 @@ class TalariaApp(App[None]):
         await self._probe_round(
             profile, dispatcher, trigger=trigger, session_id="", health=None
         )
+        await self.sweep_roster(profile, dispatcher)
+
+    async def sweep_roster(self, profile: str, dispatcher: LiveDispatcher) -> None:
+        """The roster half of :meth:`sweep_connection`, on its own.
+
+        Factored out for :meth:`poll_due_connections`, which reaches the FOCUSED
+        connection too — and there the probe half would be a second, conflicting
+        probe path beside :meth:`verify_gateway`'s, issued with an empty session
+        id that connection never asked for.
+
+        Calling this alone on a *background* connection would be U7's defect in
+        reverse, so nothing does: :meth:`sweep_connection` remains the only way a
+        background connection is reached, and it still pairs the two halves. The
+        asymmetry is safe in this direction and not the other — a roster sweep
+        without a probe leaves ``connection_notices`` saying "capabilities not
+        probed", which stays true, whereas a probe without a roster sweep deletes
+        a true sentence and leaves the gap it described.
+        """
         outcome = await dispatcher.call(
             LIST_SESSIONS_METHOD, {"limit": SESSIONS_LIST_LIMIT}, timeout=self.call_timeout
         )
@@ -4258,6 +4347,123 @@ class TalariaApp(App[None]):
             # probe is overdue is the one whose silence the queue is least
             # entitled to read as quiet (R24).
             await self.sweep_connection(profile, trigger="revalidation")
+
+    async def poll_approval_detail(self, profile: str, dispatcher: LiveDispatcher) -> None:
+        """Feed B: ask one connection for its foreign sessions' pending approvals.
+
+        **This call warms an agent build on someone else's session, and the
+        trigger-status restriction is what makes that acceptable.** Read
+        first-hand rather than inferred: ``approval.pending``
+        (``tui_gateway/methods_prompt.py:1454``) resolves through ``_sess``,
+        which is ``_sess_building`` plus ``_wait_agent``, and
+        ``_sess_building``'s own docstring at ``tui_gateway/server.py:2519``
+        says it warms the agent build. That is exactly the side effect the
+        *probe* of this method exists to avoid, which is why the probe must stay
+        bare — ``_sessions.get("")`` misses and refuses 4001 before touching
+        anything.
+
+        A parameterless call cannot warm a build; this one can. So what covers it
+        is not the probe's argument but the operator ruling of 2026-08-17:
+        :func:`~talaria.domain.queue.approval_detail_due` restricts the call to
+        :data:`~talaria.domain.queue.APPROVAL_DETAIL_TRIGGER_STATUSES` —
+        ``waiting`` and ``working``. Pinned by
+        ``test_no_approval_detail_is_asked_for_a_session_outside_the_trigger_statuses``,
+        which asserts NO CALL rather than a call that returns nothing.
+
+        **Those two words are not merely "sessions that look busy" — they are
+        derived from the agent being live**, which is what makes the restriction
+        a safety property rather than a heuristic. ``_session_live_status``
+        (``tui_gateway/server.py:8545-8555``) returns ``waiting`` only when
+        ``_session_pending_kind`` finds a pending prompt, and ``working`` only
+        when the session is ``running``; both require a built agent. The two
+        words it returns for a session whose agent is NOT live are exactly the
+        two this gate excludes — ``starting`` (build in flight, where
+        ``_wait_agent`` would block) and ``idle`` (no build at all). So the
+        restriction cannot admit a session that a call here would build.
+
+        The ids named here are RUNTIME ids and the fold files the answer under
+        the durable key — see :func:`~talaria.domain.state.approval_detail_targets`
+        for the wire evidence that they differ.
+        """
+        for session_id in approval_detail_targets(self._fleet, profile):
+            outcome = await dispatcher.call(
+                APPROVAL_PENDING_METHOD,
+                {"session_id": session_id},
+                timeout=self.call_timeout,
+            )
+            if not outcome.confirmed:
+                # **Redundant by construction, and kept anyway — the comment says
+                # which, because a mutation pass proved it.** Removing this line
+                # changes no behaviour: ``RpcOutcome`` is constructed in exactly
+                # five places (``talaria/transport/rpc.py:332-388``) and passes
+                # ``result=`` in only one of them, the ``status="ok"`` branch, so
+                # an unconfirmed outcome always carries ``result=None`` —
+                # ``decode_pending_approvals`` then answers ``answered=False``
+                # and ``apply_approval_pending`` returns the fleet unchanged.
+                # That is a structural proof of equivalence rather than a
+                # surviving mutant read as inertness.
+                #
+                # It stays because it puts R10's rule where the call is made:
+                # a refused detail call is the seam's story, already told by
+                # ``connection_notices``, and must never read as "this session
+                # has no approvals". A reader of this loop should not have to
+                # trace two modules to learn that.
+                continue
+            self.fleet = apply_approval_pending(
+                self._fleet,
+                decode_pending_approvals(outcome.result, at=self.state.last_observed_at),
+                profile=profile,
+                session_id=session_id,
+                at=self.state.last_observed_at,
+            )
+            self._dirty = True
+
+    async def poll_due_connections(self) -> None:
+        """KTD2's cadence, finally driven: sweep every connection that is due.
+
+        ``next_poll_due_at`` has carried the whole rule since U3 — a 2-second
+        coalesce after a ``sessions.changed`` hint, a 30-second backstop — and
+        nothing called it, so a gateway announcing that its session list had
+        changed was heard and not acted on. ``route_frame`` records that hint for
+        every connection including the focused one, which is why this loop covers
+        the whole inventory rather than only the background half.
+
+        **The due-check reads the wall clock, and that is the point of the stamp
+        split.** ``last_poll_at`` is a schedule stamp, not an age; measuring it
+        against ``state.last_observed_at`` made a background connection's cadence
+        a function of traffic on the connection it is not, and a fleet quiet
+        everywhere never polled at all. In live mode the two clocks share a scale
+        anyway — ``talaria/transport/source.py:824`` stamps every live frame from
+        ``time.time()`` — so the hint and this comparison are directly
+        comparable, which is what ``next_poll_due_at``'s own ``max()`` needs.
+
+        Live-only, like every other scheduled round here: a replay has no gateway
+        to poll, so no determinism claim touches this.
+        """
+        if self.mode != "live" or self._teardown_started:
+            return
+        inventory = self.connections
+        if not isinstance(inventory, ConnectionInventory):
+            return
+        now = _wall_clock()
+        for profile in inventory.profiles:
+            channel = self._fleet.channels.get(profile)
+            # A connection with no channel yet has never been polled, which
+            # ``next_poll_due_at`` reads as due immediately — the same answer,
+            # reached without constructing a row for it first.
+            if channel is not None and now < next_poll_due_at(channel):
+                continue
+            dispatcher = inventory.source_for(profile)
+            if dispatcher is None:
+                continue
+            if profile == self.fleet_profile:
+                await self.sweep_roster(profile, dispatcher)
+            else:
+                await self.sweep_connection(profile, trigger="revalidation")
+            # Detail AFTER the roster, never before: which sessions are due is a
+            # function of the statuses the sweep just refreshed, so asking first
+            # would aim this at the previous poll's picture of the fleet.
+            await self.poll_approval_detail(profile, dispatcher)
 
     async def open_session(self, selection: StartupSelection) -> RpcOutcome | None:
         """Resolve KTD7's selection into one focused session (R2).
@@ -5263,6 +5469,11 @@ class TalariaApp(App[None]):
             profile=profile,
             at=at,
             poll_epoch=epoch,
+            # Two clocks, deliberately. ``at`` is the frame clock and stamps
+            # every age; this stamps only the poll schedule, which nothing reads
+            # as an age. See ``apply_active_list``'s docstring for the
+            # measurement that separated them.
+            polled_at=_wall_clock(),
         )
         return False
 

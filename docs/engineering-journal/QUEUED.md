@@ -4,6 +4,31 @@
 
 ## P0
 
+### The settled-item bound became live in U8B and nothing measures what it costs
+
+**Priority.** P3 — recorded because U8B is what activated it, not because it is urgent.
+
+**What.** `SETTLED_ITEM_LIMIT` (`talaria/domain/state.py:3938`) caps `settled_items` at 256 newest,
+and `settle_queue_item` has kept only that many since it was written. Until 2026-08-19 nothing wrote
+to it, so the bound was inert. U8B gave it a production caller, so eviction is now reachable: after
+256 further latches, an older tombstone falls off, and if the gateway is *still* listing the approval
+that tombstone named — which is exactly the ambiguous-outcome case the latch exists for — the item is
+offered again.
+
+**Why it is not blocking.** Re-offering after 256 latches is strictly better than the shipped
+behaviour it replaced, which was re-offering immediately, every poll, forever. U8B narrows the window
+rather than opening one. The failure needs a single session to answer 256 prompts while one
+ambiguously-answered approval stays outstanding on the gateway.
+
+**Worth it when.** A live run produces enough answered prompts for the bound to be reachable, or the
+first report of an approval re-appearing after it was answered. The measurement to take first is how
+many latches a real working session accumulates in a day — if that is two orders of magnitude below
+256, this stays closed.
+
+**Rejected without measuring.** Raising the cap. The bound exists for R3's fixed-size discipline and
+guessing a bigger number trades a known bound for an unknown one.
+
+
 ### ~~Pin a runtime alias while a prompt still references it~~ — GATE FAILED 2026-08-18, superseded
 
 **Not taken, and the measurement is why.** The operator gated this on quantifying the new bound —

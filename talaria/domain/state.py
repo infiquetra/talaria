@@ -3310,6 +3310,7 @@ def apply_active_list(
     profile: str,
     at: float,
     poll_epoch: int,
+    polled_at: float | None = None,
 ) -> FleetState:
     """Fold one successful ``session.active_list`` poll in (KTD2's live feed).
 
@@ -3319,7 +3320,30 @@ def apply_active_list(
     first poll that saw the wait), and a ``waiting`` row whose kind no event
     has named carries the flattened ``unobserved`` kind (the gateway exposes
     nothing finer for sessions other clients drive).
+
+    **Two stamps, because they are two clocks.** ``at`` is the frame clock and
+    stamps everything an operator reads as an age — R20 and KTD12 both rest on a
+    replayed recording reproducing those exactly. ``polled_at`` stamps only
+    ``last_poll_at``, which nothing reads as an age: its single consumer is
+    :func:`~talaria.domain.registry.next_poll_due_at`, the poll schedule.
+
+    They were one parameter until 2026-08-19, and the conflation made KTD2's
+    30-second backstop unable to fire. The frame clock advances on focused
+    traffic only — ``route_frame`` sends everything else to its registry row —
+    so a *background* connection's schedule was driven entirely by traffic on the
+    connection it is not. Measured: sixty frames spanning sixty seconds of frame
+    time on a background connection left the focused clock at 0.0 and that
+    connection's poll due at 130.0, while the registry learned a row from the
+    same frames. A fleet quiet everywhere never polled at all, which is when a
+    poll is the only way to learn anything.
+
+    ``polled_at`` defaults to ``at`` so every existing caller keeps its current
+    behaviour, and the live poll loop passes the wall clock. That is honest
+    rather than expedient: the loop is live-only (replay has no gateway to poll),
+    so no determinism claim touches this stamp.
     """
+    if polled_at is None:
+        polled_at = at
     fleet = replace(fleet, clock=max(fleet.clock, at))
     seen: set[RowKey] = set()
     for active in directory.sessions:
@@ -3432,7 +3456,9 @@ def apply_active_list(
     channel = replace(
         fleet.channel(profile),
         active_epoch=poll_epoch,
-        last_poll_at=at,
+        # The SCHEDULE clock, not the frame clock — see this function's own
+        # docstring for the measurement that separated them.
+        last_poll_at=polled_at,
         hint_at=None,
         connected=True,
     )
@@ -3941,11 +3967,43 @@ def approval_detail_targets(fleet: FleetState, profile: str) -> tuple[str, ...]:
     that call, so the safety property is checkable by reading one predicate:
     :func:`~talaria.domain.queue.approval_detail_due`.
 
-    Returns durable session ids, because that is what a caller must name on the
-    wire and what the reply's detail is stored under. An empty tuple is the
-    ordinary answer for a quiet or unprobed connection, and it is also the
-    answer whenever the seam is anything other than present — an absent method
-    is named in the queue's notices, never retried blind.
+    Returns **runtime** session ids, and the distinction is not cosmetic —
+    naming the wrong one answers ``4001 session not found`` for every call, and
+    :func:`apply_approval_pending` reads a non-answering reply as "changes
+    nothing", so the queue would simply stay empty while this path looked alive.
+
+    This function returned *durable* ids until 2026-08-19, on a docstring that
+    said durable "is what a caller must name on the wire". Measured against the
+    running gateway, that is false:
+
+    * ``tui_gateway/server.py:7025-7039`` registers ``_sessions[sid]`` — keyed by
+      the runtime id — and stores the durable id as a *field* named
+      ``session_key``. The function takes ``sid`` and ``key`` as two separate
+      parameters.
+    * ``server.py:2507-2509`` resolves ``params["session_id"]`` against that same
+      ``_sessions`` mapping, and ``approval.pending``
+      (``tui_gateway/methods_prompt.py:1454-1460``) then passes
+      ``session["session_key"]`` onward — which only makes sense if the two
+      differ.
+    * Two local recordings settle it on the wire rather than in source: the same
+      durable session ``20260806_120031_fd736f`` resumed 66 seconds apart
+      returned runtime ids ``99dcf142`` and ``fd0367c9``. The runtime id is
+      reminted on every resume.
+
+    The *other* half of the old sentence stays true and is now separate: the
+    reply's detail is stored under the durable key, because
+    :func:`apply_approval_pending` resolves what it is given through
+    ``_resolve_key``, which accepts an alias. So the caller names the runtime id
+    and the fold files it under the durable one, with nothing to translate.
+
+    **A due row with no runtime id is skipped here and NAMED in the queue**, by
+    :func:`~talaria.domain.queue.connection_notices`. It cannot be asked about at
+    all — the wire has no other handle for it — and a silent skip would be R14's
+    forbidden reading, where an empty queue means "we could not ask".
+
+    An empty tuple is the ordinary answer for a quiet or unprobed connection, and
+    it is also the answer whenever the seam is anything other than present — an
+    absent method is named in the queue's notices, never retried blind.
     """
     board = fleet_seam_board(fleet, profile)
     if board is None:
@@ -3955,10 +4013,34 @@ def approval_detail_targets(fleet: FleetState, profile: str) -> tuple[str, ...]:
     except KeyError:  # pragma: no cover - boards are built from the catalogue
         return ()
     return tuple(
-        key[1]
+        wire_handle(key, row)
         for key, row in sorted(fleet.rows.items())
         if key[0] == profile and approval_detail_due(row, seam=seam)
     )
+
+
+def wire_handle(key: RowKey, row: RegistryRow) -> str:
+    """The session id this row must be named by on the wire.
+
+    Newest runtime id when the row has one — ``_bind_alias`` keeps the most
+    recent ``MAX_RUNTIME_ALIASES`` in arrival order, and only the newest names a
+    session the gateway still holds in ``_sessions``.
+
+    **Falling back to the durable id is correct rather than a guess**, and the
+    first draft of this got it wrong by skipping such rows entirely.
+    ``_bind_alias`` records nothing when the runtime id *equals* the durable id
+    (``state.py:2794``), because there is no alias to make — so an empty
+    ``runtime_ids`` means the two coincide and the key itself is the handle, not
+    that no handle exists.
+
+    Every row this is called for has been through :func:`apply_active_list`,
+    which is the only place ``RegistryRow.status`` is ever written
+    (``state.py:3408``) and which binds the alias in the same fold. So a row that
+    :func:`~talaria.domain.queue.approval_detail_due` admits — status ``waiting``
+    or ``working`` — always has one of the two handles above. A row with neither
+    cannot exist while that remains true.
+    """
+    return row.runtime_ids[-1] if row.runtime_ids else key[1]
 
 
 def apply_approval_pending(
@@ -4074,7 +4156,16 @@ def settle_queue_item(
     item carries no control. The undercount stays on record because it is the
     evidence that counting key shapes here without citing them was unsafe.
     """
-    key: ItemKey = (profile, session_id, request_key)
+    # Resolved rather than taken verbatim, because callers hold whichever id
+    # they were working with and the queue's identity space is the DURABLE one
+    # (``build_queue`` keys both feeds from ``row_key[1]``). ``apply_approval_pending``
+    # already resolves for the same reason; a latch filed under a runtime id
+    # would name an item the queue never builds, so the control would stay
+    # offered and the latch would silently do nothing. A session with no row
+    # falls back to the id as given — there is nothing better to key it by, and
+    # recording the latch beats dropping it.
+    resolved = _resolve_key(fleet, profile, session_id)
+    key: ItemKey = (profile, resolved[1] if resolved else session_id, request_key)
     if key in fleet.settled_items:
         return replace(fleet, clock=max(fleet.clock, at))
     settled = (*fleet.settled_items, key)[-SETTLED_ITEM_LIMIT:]
