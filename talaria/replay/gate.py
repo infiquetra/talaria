@@ -61,8 +61,9 @@ from talaria.domain.projection import (
     transcript_view,
 )
 from talaria.domain.queue import summary_line, wait_line
-from talaria.domain.state import SessionState, cancel_turn, fleet_queue
-from talaria.recorder.reader import FrameLogHeader, RecordedConnectionRow
+from talaria.domain.state import FleetState, SessionState, cancel_turn, fleet_queue
+from talaria.recorder.framelog import FRAME_LOG_VERSION_MULTI_CONNECTION
+from talaria.recorder.reader import FrameLogEntry, FrameLogHeader, RecordedConnectionRow
 from talaria.replay.controls import MAX_SPEED, MIN_SPEED, ReplayControls
 from talaria.replay.source import (
     ReplaySource,
@@ -1201,20 +1202,20 @@ def fleet_trace(app: TalariaApp) -> FleetTrace:
     except NoMatches:  # pragma: no cover - the gate always mounts the screen
         rendered_row = ""
     return {
-        "registry": repr(
-            sorted(
-                (
-                    key,
-                    row.durable_id,
-                    row.status,
-                    row.waiting_kind,
-                    row.listed,
-                    row.live_listed,
-                    row.disconnected,
-                )
-                for key, row in fleet.rows.items()
-            )
-        ),
+        # **Nine fields of twenty-three, and the two added last are the point.**
+        # CR8 measured that rows differing only in ``message_count`` or
+        # ``open_turn`` fingerprinted identically — and ``message_count`` is
+        # exactly where a speed-dependent dropped delta would show, which is the
+        # defect a determinism gate over a replay exists to catch.
+        # ``frames_accounted_for`` closes that gap for the stress corpus and
+        # never for this one.
+        #
+        # The remainder are deliberately out: ``title`` and ``stale_since`` are
+        # covered by the ages aspect, and the rest are derived from these or are
+        # bookkeeping a replay cannot vary. Listing them explicitly rather than
+        # hashing the whole row keeps the check's failure legible — a diff names
+        # the field that moved.
+        "registry": registry_fingerprint(fleet),
         "queue": repr(
             (
                 tuple(
@@ -1286,6 +1287,60 @@ def ages_within_corpus_span(
     ages = [_rendered_age_seconds(checkpoint["wait_lines"]) for checkpoint in trace]
     largest = max((age for age in ages if age is not None), default=0.0)
     return (all(age is None or age <= span + 1.0 for age in ages), largest)
+
+
+def registry_fingerprint(fleet: FleetState) -> str:
+    """Nine of ``RegistryRow``'s twenty-three fields, named explicitly.
+
+    Factored out so it can be DRIVEN rather than described: a test that builds
+    two fleets differing in one field is the only thing that shows the field is
+    in here. CR8 measured the previous version missing ``message_count`` and
+    ``open_turn``, and ``message_count`` is exactly where a speed-dependent
+    dropped delta would show — the defect a determinism gate over a replay
+    exists to catch. ``frames_accounted_for`` closes that gap for the stress
+    corpus and never for the fleet one.
+
+    The rest are deliberately out: ``title`` and ``stale_since`` are covered by
+    the ages aspect, and the remainder are derived from these or are bookkeeping
+    a replay cannot vary. Listed rather than hashed whole so a failure names the
+    field that moved.
+    """
+    return repr(
+        sorted(
+            (
+                key,
+                row.durable_id,
+                row.status,
+                row.waiting_kind,
+                row.listed,
+                row.live_listed,
+                row.disconnected,
+                row.message_count,
+                row.open_turn,
+            )
+            for key, row in fleet.rows.items()
+        )
+    )
+
+
+def corpus_entries(corpus: FleetCorpus) -> tuple[FrameLogEntry, ...]:
+    """The corpus as the reader would have produced it, so the derivation is real.
+
+    ``derive_focus_profile`` takes what a frame log yields. A synthetic corpus
+    holds records and tags instead, and handing the derivation an empty sequence
+    — as this module first did — makes two of its three rules unreachable and the
+    gate check over it unfalsifiable.
+    """
+    return tuple(
+        FrameLogEntry(
+            seq=record.seq,
+            at=str(record.at),
+            dir=record.direction,
+            frame=record.frame,
+            profile=profile,
+        )
+        for record, profile in zip(corpus.records, corpus.profiles, strict=True)
+    )
 
 
 def _apply_sideband_action(app: TalariaApp, action: SidebandAction) -> None:
@@ -1655,6 +1710,12 @@ async def replay_fleet_trace(
     source = TaggedReplaySource(
         ReplaySource(corpus.records, controls=controls, profiles=corpus.profiles),
         connections=corpus.connections,
+        # **Real entries, not ``()``.** Passing an empty sequence left rules one
+        # and two of the derivation unreachable, so ``fleet_derived_focus``
+        # exercised only rule three — the header fallback — and could not fail
+        # for any mutation of the capability it names. Two mutations of
+        # ``derive_focus_profile`` (return the LAST connection; return ``""``)
+        # both left the check passing. Found by CR8's fixture lens.
         focus_profile=derive_focus_profile(
             FrameLogHeader(
                 version=2,
@@ -1665,7 +1726,7 @@ async def replay_fleet_trace(
                     for name in corpus.connections
                 ),
             ),
-            (),
+            corpus_entries(corpus),
         ),
     )
     app = TalariaApp(
@@ -1831,6 +1892,30 @@ async def run_gate(
         raise GateError(f"live corpus not found: {live_corpus}")
 
     if live_corpus is not None:
+        # **A version-2 corpus is REFUSED rather than mis-measured (CR8, F15).**
+        # This function holds the path and chose the untagged reader, so a tagged
+        # recording replayed here merged two gateways' equal session ids into one
+        # session that never existed — and published ``determinism_identical:
+        # true`` over it. That is verbatim the harm
+        # ``talaria/recorder/reader.py`` says the version bump exists to prevent:
+        # "the bump makes such a reader stop instead of misread." This gate was
+        # that reader and it did not stop.
+        #
+        # Refusing rather than threading tags through ``measure_replay``,
+        # ``replay_headless`` and ``exercise_inert_controls`` is deliberate and
+        # is NOT the finished answer: that threading is a signature change across
+        # three functions and is filed as its own work. Stopping is the half that
+        # is correct on its own — a gate that cannot measure a file must not
+        # publish a measurement of it.
+        live_header = load_header(live_corpus)
+        if live_header.version >= FRAME_LOG_VERSION_MULTI_CONNECTION:
+            raise GateError(
+                f"live corpus {live_corpus} is a version-{live_header.version} "
+                "(multi-connection) recording, and this gate replays it as a single "
+                "connection — which would merge two gateways' equal session ids. "
+                "Refused rather than measured; per-connection gate replay is filed "
+                "as its own work."
+            )
         records = load_frame_records(live_corpus)
         identity = live_corpus_identity(live_corpus, records)
         live_measurement, _, _ = await measure_replay(records, identity, mount_cap=mount_cap)

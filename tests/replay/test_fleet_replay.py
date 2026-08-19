@@ -396,16 +396,44 @@ async def test_the_checkpoint_trace_notices_a_corpus_it_should_notice() -> None:
 
     corpus = build_fleet_corpus()
     baseline = await replay_fleet_trace(corpus)
-    swapped = await replay_fleet_trace(
-        dataclasses.replace(corpus, profiles=tuple(reversed(corpus.profiles)))
-    )
 
-    pairs = list(zip(baseline, swapped, strict=True))
-    for aspect in ("registry", "queue", "focus", "ages"):
+    # **Two perturbations, not one, because one was never guaranteed to reach
+    # four aspects.** A single swap covered all four until the corpus's
+    # declaration order changed, at which point the ages stopped moving under it
+    # — the rendered strings are the same whichever connection holds the item.
+    # A falsifier that happens to cover an aspect is a falsifier that stops
+    # covering it the day the fixture moves.
+    # Collapse every frame onto one connection — precisely what a reader that
+    # ignored the tag would do, and the harm the version bump exists to prevent.
+    # NOT a reversal: the corpus alternates connections over an odd number of
+    # frames, so reversing its profiles yields the identical tuple and perturbs
+    # nothing. A falsifier that silently perturbs nothing is worse than none.
+    moved_by_swap = await replay_fleet_trace(
+        dataclasses.replace(corpus, profiles=(corpus.connections[0],) * len(corpus.records))
+    )
+    # Shift the clock so the same items are older at every checkpoint. Only the
+    # ages can see this: the rows, the queue and the focus are unchanged.
+    stretched = dataclasses.replace(
+        corpus,
+        records=tuple(
+            dataclasses.replace(record, at=record.at + index * 60.0)
+            for index, record in enumerate(corpus.records)
+        ),
+    )
+    moved_by_clock = await replay_fleet_trace(stretched)
+
+    for aspect in ("registry", "queue", "focus"):
+        pairs = list(zip(baseline, moved_by_swap, strict=True))
         assert any(first[aspect] != second[aspect] for first, second in pairs), (
-            f"the {aspect} fingerprint did not move when the corpus did, so the "
-            f"gate check reading it is measuring a constant"
+            f"the {aspect} fingerprint did not move when the connections did, so "
+            f"the gate check reading it is measuring a constant"
         )
+
+    age_pairs = list(zip(baseline, moved_by_clock, strict=True))
+    assert any(first["ages"] != second["ages"] for first, second in age_pairs), (
+        "the ages fingerprint did not move when the corpus's own clock did, so "
+        "the gate check reading it is measuring a constant"
+    )
 
 
 def test_the_fleet_corpus_carries_the_blind_approval_the_gate_must_see() -> None:
@@ -527,4 +555,200 @@ def test_the_gate_check_itself_is_unmoved_by_a_hostile_session_title() -> None:
     assert largest == 3.0, (
         "the measured age came from somewhere other than the wait lines, so "
         "gateway text reaches the number this check compares"
+    )
+
+
+#  ── CR8's blocking findings, pinned ──────────────────────────────────────
+
+
+def two_landing_log(path: Path) -> Path:
+    """The recording U7's own `/profiles` flow produces: land, switch, land again."""
+    recorder = FrameRecorder(
+        path,
+        "ws://gateway.invalid/",
+        connections=(
+            RecordedConnection(profile=WORK, endpoint="ws://work.invalid/"),
+            RecordedConnection(profile=LAB, endpoint="ws://lab.invalid/"),
+        ),
+    )
+    def resume(session: str) -> str:
+        return json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "session.resume",
+                "params": {"session_id": session},
+            }
+        )
+    recorder.view(LAB).record("out", resume("sess-lab"))
+    recorder.view(LAB).record("in", frame("sess-lab"))
+    recorder.view(WORK).record("out", resume("sess-work"))
+    for _ in range(3):
+        recorder.view(WORK).record(
+            "in",
+            json.dumps({"jsonrpc": "2.0", "method": "event",
+                        "params": {"type": "message.complete", "session_id": "sess-work",
+                                   "payload": {"text": "work said this"}}}),
+        )
+    recorder.close()
+    return path
+
+
+def test_the_last_landing_call_wins_not_the_first(tmp_path: Path) -> None:
+    """CR8's F14, and the flow that produces it is one U7 shipped.
+
+    ``/profiles`` moves home and the next session is created on the connection
+    just selected, so a recording of that has a landing call on the connection
+    the operator LEFT and one on the connection they moved to. Taking the first
+    focuses the one they moved away from — and then ``route_frame`` feeds the
+    focused engine nothing, which is the empty transcript this derivation exists
+    to prevent. Measured before the fix: 0 transcript entries against 6.
+    """
+    source = TaggedReplaySource.from_path(two_landing_log(tmp_path / "twice.jsonl"))
+    assert source.focus_profile == WORK, (
+        "the derivation focused the connection the operator moved away from"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_derived_focus_renders_the_traffic_the_run_was_driving(
+    tmp_path: Path,
+) -> None:
+    """The consequence half of F14, because the profile name alone proves nothing."""
+    from talaria.domain.state import FleetState, route_frame
+    from talaria.recorder.reader import read_frame_log
+
+    path = two_landing_log(tmp_path / "twice.jsonl")
+    log = read_frame_log(path)
+    source = TaggedReplaySource.from_path(path)
+
+    def transcript_at(focus: str) -> int:
+        fleet = FleetState(focused_profile=focus)
+        for entry in log.entries:
+            decoded = decode_frame(entry.frame, at=float(entry.seq), seq=entry.seq)
+            fleet = route_frame(fleet, decoded, profile=entry.profile, generation=1)
+        return len(fleet.focused.transcript)
+
+    assert transcript_at(LAB) == 0, "the precondition no longer holds"
+    assert transcript_at(source.focus_profile) > 0, (
+        "the derived focus still renders nothing, which is the defect itself"
+    )
+
+
+def test_the_fleet_corpus_can_tell_the_derivation_rules_apart() -> None:
+    """CR8's F16: a corpus whose rules agree cannot test what chooses between them.
+
+    The gate's ``fleet_derived_focus`` check ran with an EMPTY entry sequence, so
+    only rule three was ever exercised — and two mutations of the derivation
+    (return the last connection; return nothing at all) both left it passing.
+    The corpus now declares its connections in the opposite order to the one its
+    frames speak in, so rule two and rule three give different answers.
+    """
+    from talaria.recorder.reader import FrameLogHeader, RecordedConnectionRow
+    from talaria.replay.gate import corpus_entries
+    from talaria.replay.source import derive_focus_profile
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    header = FrameLogHeader(
+        version=2,
+        started_at="",
+        endpoint="",
+        connections=tuple(
+            RecordedConnectionRow(profile=name, endpoint="") for name in corpus.connections
+        ),
+    )
+
+    from_entries = derive_focus_profile(header, corpus_entries(corpus))
+    from_header_only = derive_focus_profile(header, ())
+    assert from_entries != from_header_only, (
+        "the corpus cannot distinguish the derivation's rules, so the gate check "
+        "over it cannot fail for any mutation of the derivation"
+    )
+    assert from_entries == corpus.profiles[0]
+
+
+def test_the_gate_refuses_a_recording_it_would_have_to_mis_measure(tmp_path: Path) -> None:
+    """CR8's F15: the gate held the path and chose the untagged reader.
+
+    A tagged recording replayed as one connection merges two gateways' equal
+    session ids into a session that never existed — and the gate published
+    ``determinism_identical: true`` over it. That is verbatim the harm the frame
+    log's version bump exists to prevent, and this gate was the reader that did
+    not stop.
+
+    Refusing is not the finished answer — per-connection gate replay is filed as
+    its own work — but it is the half that is correct on its own: a gate that
+    cannot measure a file must not publish a measurement of it.
+    """
+    import asyncio
+
+    from talaria.replay.gate import GateError, run_gate
+
+    path = two_connection_log(tmp_path / "fleet.jsonl")
+    with pytest.raises(GateError) as caught:
+        asyncio.run(run_gate(deltas=50, live_corpus=str(path)))
+    assert "multi-connection" in str(caught.value)
+    assert "Refused rather than measured" in str(caught.value)
+
+
+def test_the_registry_fingerprint_sees_a_dropped_delta() -> None:
+    """CR8's F17, driven rather than described.
+
+    Two fleets differing in ONE field. ``message_count`` is where a
+    speed-dependent dropped delta shows, and the previous fingerprint omitted
+    it — rows differing only in that field hashed identically. The falsifier
+    beside this one cannot reach it: collapsing the fleet moves the registry
+    through its keys, so it stays green whether or not the field is present.
+    """
+    import dataclasses
+
+    from talaria.domain.registry import RegistryRow
+    from talaria.domain.state import FleetState
+    from talaria.replay.gate import registry_fingerprint
+
+    row = RegistryRow(profile=WORK, durable_id="s-work", seeded_at=1.0, message_count=12)
+    base = FleetState(focused_profile=WORK, rows={(WORK, "s-work"): row})
+    fewer = FleetState(
+        focused_profile=WORK, rows={(WORK, "s-work"): dataclasses.replace(row, message_count=3)}
+    )
+
+    assert registry_fingerprint(base) != registry_fingerprint(fewer), (
+        "two registries differing by nine messages fingerprint identically, so "
+        "a replay that dropped deltas at speed would pass the determinism check"
+    )
+
+    mid_turn = FleetState(
+        focused_profile=WORK, rows={(WORK, "s-work"): dataclasses.replace(row, open_turn=True)}
+    )
+    assert registry_fingerprint(base) != registry_fingerprint(mid_turn), (
+        "a row mid-turn fingerprints the same as a settled one"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_trace_derives_its_focus_from_the_corpus_not_the_header() -> None:
+    """CR8's F16, driven rather than described — the third instance of that shape.
+
+    The test beside this one proves the CORPUS can tell the derivation's rules
+    apart. It does not prove ``replay_fleet_trace`` passes the entries that make
+    rules one and two reachable, and it stayed green under a mutation restoring
+    the empty sequence. This asserts the wiring: the trace's focused profile is
+    the entries-derived answer, which the corpus is built to make differ from
+    the header-derived one.
+    """
+    from talaria.replay.gate import replay_fleet_trace
+    from talaria.replay.stress import build_fleet_corpus
+
+    corpus = build_fleet_corpus()
+    trace = await replay_fleet_trace(corpus)
+
+    focused = trace[-1]["focus"]
+    assert corpus.profiles[0] in focused, (
+        "the trace focused the header's first connection, so the derivation ran "
+        "on an empty entry sequence and two of its three rules are unreachable"
+    )
+    assert corpus.connections[0] not in focused, (
+        "the trace focused the first DECLARED connection rather than the one the "
+        "corpus's frames name"
     )

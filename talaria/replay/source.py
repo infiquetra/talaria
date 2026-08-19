@@ -212,12 +212,25 @@ def derive_focus_profile(
     Three rules, in the plan's own order, each preferring recorded evidence over
     inference:
 
-    1. **A recorded landing reply.** An outbound ``session.create`` or
+    1. **The LAST recorded landing call.** An outbound ``session.create`` or
        ``session.resume`` is this run *choosing* a session, which is the
-       strongest statement the log makes about what it was driving.
-    2. **The first session named on the wire**, which is the adoption rule the
-       live engine already follows when it has no session of its own — so a log
-       with no landing call replays the way the run itself behaved.
+       strongest statement the log makes about what it was driving — and a run
+       may choose more than once.
+
+       **Last, not first, and the difference is a whole empty transcript.** U7
+       shipped the flow that produces two: ``/profiles`` moves home, and the
+       next session is created on the connection just selected. A recording of
+       that has a landing call on the connection the operator left AND one on
+       the connection they moved to. Taking the first focuses the one they moved
+       away from. Measured on a recording built exactly that way — land on
+       ``lab``, switch, land on ``work``, six turns of ``work`` traffic:
+       first-landing gives 0 transcript entries and last-landing gives 6.
+    2. **The FIRST session named on the wire**, which is the adoption rule the
+       live engine already follows when it has no session of its own
+       (``talaria/domain/state.py``'s adoption branch) — so a log with no landing
+       call replays the way the run itself behaved. First here and last above is
+       deliberate rather than an inconsistency: adoption genuinely is first-wins,
+       and choosing genuinely is latest-wins.
     3. **The header's first declared connection**, for a log whose frames name
        no session at all. A recording of a connection that only ever carried
        gateway-level traffic still belongs to that connection.
@@ -225,7 +238,7 @@ def derive_focus_profile(
     Returns ``""`` when the log declares nothing and names nothing, leaving the
     caller's own default in place rather than inventing a profile.
     """
-    for entry in entries:
+    for entry in reversed(list(entries)):
         if entry.dir == "out" and _frame_method(entry.frame) in LANDING_METHODS:
             return entry.profile
     for entry in entries:

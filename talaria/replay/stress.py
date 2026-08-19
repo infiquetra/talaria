@@ -535,7 +535,17 @@ class FleetCorpus:
         )
 
 
-FLEET_CORPUS_CONNECTIONS: Final[tuple[str, ...]] = ("work-gateway", "lab-gateway")
+#: The header's declaration order, which is DELIBERATELY not the order the
+#: frames speak in.
+#:
+#: ``work-gateway`` sends the corpus's first frame and ``lab-gateway`` is
+#: declared first, so ``derive_focus_profile``'s rule two (the first session
+#: named) and rule three (the header's first connection) give DIFFERENT answers.
+#: With them agreeing — as they did when this corpus was first written — the
+#: gate's ``fleet_derived_focus`` check could not tell which rule had run, and
+#: mutating the derivation left it passing. A corpus that cannot distinguish the
+#: rules cannot test the thing that chooses between them.
+FLEET_CORPUS_CONNECTIONS: Final[tuple[str, ...]] = ("lab-gateway", "work-gateway")
 
 
 def build_fleet_corpus(*, base_time: float = 1_785_000_000.0) -> FleetCorpus:
@@ -544,7 +554,7 @@ def build_fleet_corpus(*, base_time: float = 1_785_000_000.0) -> FleetCorpus:
     Deterministic by construction — no clock read, no randomness — so two calls
     produce identical records and the gate can cite the digest.
     """
-    work, lab = FLEET_CORPUS_CONNECTIONS
+    lab, work = FLEET_CORPUS_CONNECTIONS
     script: list[tuple[str, dict[str, Any]]] = [
         (work, {"type": "message.start", "session_id": "s-work", "payload": {}}),
         (lab, {"type": "message.start", "session_id": "s-lab", "payload": {}}),
@@ -581,6 +591,20 @@ def build_fleet_corpus(*, base_time: float = 1_785_000_000.0) -> FleetCorpus:
             },
         ),
         (lab, {"type": "message.complete", "session_id": "s-lab", "payload": {"text": "and lab"}}),
+        # **One more frame on the FOCUSED connection, after its approval.**
+        # Without it that approval is the focused connection's last frame, so the
+        # focused clock never advances past its opening and every rendered age in
+        # this corpus is "waiting 0s" — which made the gate's age checks compare
+        # zeros with zeros. An age that is always zero is stable for a reason
+        # that has nothing to do with the property being measured.
+        (
+            work,
+            {
+                "type": "message.complete",
+                "session_id": "s-work",
+                "payload": {"text": "and the work gateway again, later"},
+            },
+        ),
     ]
 
     records: list[FrameRecord] = []
