@@ -77,9 +77,9 @@ The plan uses current repository structure rather than the issue bodies' illustr
 | Existing surface | Implementation consequence |
 | --- | --- |
 | `talaria/config.py:49-74` declares defaults and scalar environment mappings; `talaria/config.py:220-247` merges default, user, repository, environment, and command-line layers into an immutable snapshot. | Add one normalization-and-notice pass after merging. Do not create a second config loader or add environment aliases for the new theme, bar, or motion settings. |
-| `talaria/ui/app.py:1115-1146` is the global binding registry; `talaria/domain/commands.py:352-480` is the Talaria-local slash-command registry. | New global and palette paths are registered once in these two places, with screen-local keys kept inside their modal widget. |
+| `talaria/ui/app.py:1115-1146` is the global binding registry; `talaria/domain/commands.py:352-480` is the Talaria-local slash-command registry. | New global and palette paths are registered once in these two places, with screen-local keys kept inside their owning UI surface. |
 | `talaria/ui/app.py:1515-1539` currently composes the body, composer, `NeedsYouBar`, then `HelpBar`; `StatusRegion` is inside the body. | One canonical final compose order is defined below and applied serially, not rediscovered by each lane. |
-| `talaria/ui/dialog.py:278-389` already gives a modal picker exclusive key ownership and layered Escape behavior. | Theme selection reuses this dialog model and adds a highlight-preview message plus a separate explicit scope choice; it does not put selection keys into the composer. |
+| `talaria/ui/palette.py:186` defines the existing `PaletteRegion` inside the body. | Theme selection extends that region with a theme-picker mode, as issue #104 requires; preview and selection keys stay inside the palette rather than entering the composer or a modal dialog. |
 | `talaria/ui/app.py:2013-2058` serializes projection and region updates; `talaria/domain/projection.py:362-370` exposes transcript, subagents, prompts, status, and change labels. | New status/inspector view models are computed once per render boundary and passed down; widgets do not read transport objects. |
 | `talaria/domain/state.py:1945-2000` already records tool context and strips/stores `tool.complete.inline_diff` as transcript content. | Inspector and diff data are projected from recorded entries; no gateway method, file scan, Git subprocess, or polling loop is added. |
 | `talaria/domain/projection.py:327-358` already carries connection, session, turn, prompt, subagent, and token-usage facts. | Status segments reuse this payload plus held fleet/model state and process-start cwd/branch facts. Missing facts render as unknown or are omitted; they are never fetched. |
@@ -115,17 +115,17 @@ one child edits the tree at a time.
 
 ```text
 TalariaApp Screen (vertical)
-├── Horizontal #workspace (height: 1fr)
-│   ├── Vertical #main-pane
+├── MainAndInspector (height: 1fr)
+│   ├── #body
 │   │   ├── TranscriptPane
 │   │   ├── AgentRows
 │   │   ├── PromptRegion
 │   │   ├── PaletteRegion
 │   │   └── StatusRegion        shell-command output, seam rows, focus marker
-│   └── InspectorPanel          right dock; width 0 when collapsed
+│   └── Inspector              docked only when eligible
 ├── Composer
 ├── HelpBar                     documented adjacent key-hint row
-└── StatusBar                   exactly one row and the true last screen row
+└── BottomStatusBar             exactly one row and the true last screen row
 ```
 
 `NeedsYouBar` no longer owns a separate row: its formatter and queue source feed the
@@ -133,8 +133,10 @@ TalariaApp Screen (vertical)
 summary, and avoids having two configurable-looking bottom rows.
 
 `HelpBar` remains the child contract's permitted documented adjacent row because it contains key
-hints rather than runtime status. `StatusBar` is always last, is always one row, and never wraps;
-`StatusRegion` remains inside `#main-pane`, preserving its independent multi-row cap and timer.
+hints rather than runtime status. `BottomStatusBar` is always last, is always one row, and never
+wraps; `StatusRegion` remains inside `#body`, preserving its independent multi-row cap and timer.
+Implementation may arrange `MainAndInspector` around the existing body rather than literally
+nesting it, but these names, this order, and the resulting geometry remain the merge contract.
 
 ### Command and key ownership
 
@@ -143,18 +145,17 @@ secondary, and no new priority chord steals an ordinary composer editing key.
 
 | Surface | Primary route | Keys owned only while open | Global alias |
 | --- | --- | --- | --- |
-| Theme picker | `/themes` | Up/Down preview, Enter opens explicit session/user/repository choice, Escape restores the pre-open theme | none |
+| Theme picker | `/theme`; `/theme save [user\|repository]` (user is the save default) | Up/Down preview, Enter accepts for this session and closes, Escape restores the pre-open theme | none |
 | Status bar session toggles | `/bar [segment]` | none; the command toggles one known segment in memory and never writes | none |
-| Inspector | `/inspector [toggle\|wider\|narrower]` | section navigation when the panel itself has focus | `F11` toggle, hidden from the footer and tested as an alias only |
-| Diff viewer | `/diffs` or Enter on an inspector file | `n`/`p` file, `j`/`k` hunk, `f` file list, `s` side-by-side, `u` unified, Escape close | none |
+| Inspector | `/inspector` | section navigation; Shift+Left/Shift+Right resize while docked; Escape closes a narrow overlay | `ctrl+b` toggle |
+| Diff viewer | `/diffs` or Enter on an inspector file | `n`/`p` hunk, `N`/`P` file, `f` file list, `s` side-by-side, `u` unified, Escape close | none |
 
 `/bar` is deliberately not `/status`: Hermes already owns `/status`, and Talaria must not shadow a
 working gateway command. The four new local command names are rows in
 `TALARIA_LOCAL_COMMANDS`; dispatch tests prove they never reach the gateway.
 
-The generic picker gains an optional highlighted-choice message, not theme behavior. Existing model,
-profile, session, and needs-you pickers pass no preview handler and retain their current key and
-dismissal behavior.
+Theme mode is isolated inside `PaletteRegion`. Existing model, profile, session, and needs-you
+picker behavior remains unchanged.
 
 ### Consolidated configuration schema
 
@@ -166,12 +167,13 @@ child, so independent branches cannot invent competing names or defaults.
 | #104 | `theme.name` | string, `"refined-default"` | Built-in or stored imported theme name. Unknown/non-string resolves to Refined Default and adds a visible startup note. | User `~/.talaria/config.toml`, repository `./.talaria/config.toml`, then an unsaved in-memory session override. No environment or command-line override. |
 | #105 | no `config.toml` key | Imported theme document at `<TALARIA_CONFIG_DIR>/themes/<slug>.json` | Strict JSON theme schema; invalid/empty input writes nothing. Canonical JSON is atomically replaced for the same slug. | User-scope theme library only; source file is never watched. Selection still persists through `theme.name`. |
 | #106 | `status.segments` | string array, `["cwd", "git_branch", "agent_model", "context", "task_progress", "connection", "version"]` | Known names only; preserve first occurrence, report and skip unknown or duplicate rows, and fall back to the full default if no known row remains. | File edits apply on restart; `/bar` changes only the running session. |
-| #106 | `status.compact_at_columns` | integer, `100` | Inclusive range 60–240; invalid uses 100 and adds a visible startup note. | Restart-to-apply. |
-| #106 | `status.minimal_at_columns` | integer, `72` | Inclusive range 40–160 and strictly below `compact_at_columns`; invalid uses 72 and adds a visible startup note. | Restart-to-apply. |
+| #106 | `status.cwd_max_columns` | integer, `24` | Inclusive range 8–48; invalid uses 24 and adds a visible startup note. | Restart-to-apply; layout breakpoints remain fixed. |
+| #106 | `status.git_branch_max_columns` | integer, `18` | Inclusive range 8–40; invalid uses 18 and adds a visible startup note. | Restart-to-apply; layout breakpoints remain fixed. |
+| #106 | `status.agent_model_max_columns` | integer, `24` | Inclusive range 10–48; invalid uses 24 and adds a visible startup note. | Restart-to-apply; layout breakpoints remain fixed. |
 | #106 | `status.command` | existing optional string, `None` | `None` disables it; a non-string, empty, or unparseable value disables only the shell-command region and adds a visible startup note. | Existing restart-to-apply behavior. |
 | #106 | `status.interval_seconds` | existing integer, `5` | Inclusive range 1–3600; negative, zero, oversized, or non-integer uses 5 and adds a visible startup note. | Existing restart-to-apply behavior. |
-| #107 | no key | panel width, requested collapsed state, and automatic narrow state are fields on the running app | Width clamps to 28–60 columns in four-column steps; auto-collapse below 90 columns is distinct from the operator's requested state. | Session only by approved contract; no panel geometry is written. |
-| #108 | no key | preferred diff mode is held by the open viewer | Side-by-side is effective at 120 columns or wider; a narrower screen forces unified without overwriting the preference. | Viewer session only. |
+| #107 | no key | panel width, requested collapsed state, automatic narrow state, and overlay state are fields on the running app | Width clamps to 28–48 columns in four-column steps; below 120 columns docking auto-collapses and toggle opens an overlay without changing the requested dock state. | Session only by approved contract; no panel geometry is written. |
+| #108 | no key | preferred diff mode is held by the open viewer | Side-by-side is effective at 112 columns or wider; a narrower screen forces unified without overwriting the preference. | Viewer session only. |
 | #109 | `ui.reduced_motion` | boolean, `false` | Non-boolean uses false and adds a visible startup note. | Restart-to-apply; no environment alias. |
 | #110 | no key | tester isolation uses `TALARIA_CONFIG_DIR` | Each tester points it at a unique scratch directory. | Test harness only, never the operator's real config. |
 | #111 | no new key | documents every row above | Examples are parsed in tests or copied exactly from tested fixtures. | Documentation only. |
@@ -188,67 +190,35 @@ atomic replace; the existing credential writer in `talaria/transport/refresh.py:
 
 ### Theme token vocabulary and Visual Studio Code mapping
 
-`ThemeSpec` contains the complete tokens below. Core tokens populate Textual's theme fields or named
-CSS variables; Talaria extensions use `$talaria-*` variables, so status, transcript, focus, and diff
-widgets never embed literal colors.
+The visual specification's [Complete registry](../design/2026-08-30-talaria-v0-5-0-visual-spec.md#complete-registry)
+is the sole normative 54-token vocabulary, including exact dotted public names, `$talaria-*`
+bridges, Textual compatibility variables, values for all four built-ins, and the twelve transcript
+foreground/background channels. U1 implements that registry directly rather than maintaining a
+second plan-local copy. The obsolete plan-only `diff_changed` name is not implemented;
+`talaria.diff.hunk` and `talaria.diff.hunk.background` carry changed-hunk treatment as specified.
+
+The following D2-reserved cell is intentionally unchanged while the operator decides whether the
+bottom bar has bar-scoped semantic tokens. It is not a second normative registry:
 
 | Token group | Required Talaria tokens |
 | --- | --- |
-| Textual core | `background`, `surface`, `panel`, `text`, `text_muted`, `primary`, `secondary`, `accent`, `success`, `warning`, `error` |
 | Interaction | `focus`, `queue_attention` |
-| Transcript | `transcript_operator`, `transcript_assistant`, `transcript_reasoning`, `transcript_activity`, `transcript_session`, `transcript_fault` |
-| Diff | `diff_added`, `diff_removed`, `diff_changed`, `diff_intraline_added`, `diff_intraline_removed` |
-| Syntax | `syntax_keyword`, `syntax_string`, `syntax_comment`, `syntax_number`, `syntax_function` |
 
-The importer recognizes exactly this mapping. A `colors` key or `tokenColors` scope outside the table
-is unsupported and appears in the report; a missing mapped token falls back through #104's resolver.
+U2 implements the visual specification's [Supported workbench colors](../design/2026-08-30-talaria-v0-5-0-visual-spec.md#supported-workbench-colors)
+table verbatim. For a token with multiple candidate keys, the first present valid key in listed
+order wins. Supported `tokenColors` scopes use longest matching supported scope prefix, with a later
+rule winning only a tie; unsupported keys and scopes are reported rather than inferred.
 
-The six transcript tokens preserve the held readability mapping already approved for the twelve
-`TranscriptKind` members. #109 changes treatment through these channels; it does not alter entry
-kinds or block rendering.
+Input may use `#RGB`, `#RGBA`, `#RRGGBB`, or `#RRGGBBAA`, but stored and runtime values are opaque
+uppercase `#RRGGBB`. Alpha input is composited in sRGB against the destination's normative
+background; background tokens use their enclosing canvas or panel, falling back to the Refined
+Default background when that destination has not mapped yet. The import report names every alpha
+composite.
 
-| Transcript kinds | Theme channel |
-| --- | --- |
-| `user` | `transcript_operator` |
-| `assistant` | `transcript_assistant` |
-| `reasoning` | `transcript_reasoning` |
-| `tool`, `subagent` | `transcript_activity` |
-| `system`, `prompt`, `prompt-expired`, `cancelled` | `transcript_session` |
-| `error`, `protocol-error`, `unknown-event` | `transcript_fault` |
-
-| Visual Studio Code source | Talaria token |
-| --- | --- |
-| `colors.editor.background` | `background` |
-| `colors.editor.foreground` | `text` |
-| `colors.sideBar.background` | `surface` |
-| `colors.panel.background` | `panel` |
-| `colors.descriptionForeground` | `text_muted` |
-| `colors.activityBar.foreground` | `primary` |
-| `colors.statusBar.foreground` | `secondary` |
-| `colors.button.background` | `accent` |
-| `colors.testing.iconPassed` | `success` |
-| `colors.editorWarning.foreground` | `warning` |
-| `colors.editorError.foreground` | `error` |
-| `colors.focusBorder` | `focus` |
-| `colors.gitDecoration.addedResourceForeground` | `diff_added` |
-| `colors.gitDecoration.deletedResourceForeground` | `diff_removed` |
-| `colors.gitDecoration.modifiedResourceForeground` | `diff_changed` |
-| `colors.diffEditor.insertedTextBackground` | `diff_intraline_added` |
-| `colors.diffEditor.removedTextBackground` | `diff_intraline_removed` |
-| `tokenColors` scopes `keyword`, `storage`, `storage.type` | `syntax_keyword` |
-| `tokenColors` scope `string` | `syntax_string` |
-| `tokenColors` scope `comment` | `syntax_comment` |
-| `tokenColors` scope `constant.numeric` | `syntax_number` |
-| `tokenColors` scopes `entity.name.function`, `support.function` | `syntax_function` |
-
-For `tokenColors`, the last valid matching rule in document order wins, and a rule must carry a
-supported hexadecimal foreground. JSON color values are limited to `#RGB`, `#RGBA`, `#RRGGBB`, and
-`#RRGGBBAA`; no TextMate selector engine, includes, JSON-with-comments parser, or guessed alias is
-introduced.
-
-`queue_attention` and all six `transcript_*` tokens are Talaria extensions with no Visual Studio
-Code source and are always filled from Refined Default with named warnings. Any other mapped token
-absent from the input is also filled by the same per-token fallback and listed separately.
+The current non-D2 fallback contract is the specification's exact fourteen fallback-only tokens:
+`talaria.secondary`, `talaria.status.muted`, and all twelve transcript foreground/background
+tokens. U2 asserts that count and names every fallback; any other missing mapped token is reported
+separately. The unresolved D2 cell above remains for the later operator-decision cycle.
 
 ## Dependency graph and execution capacity
 
@@ -315,10 +285,10 @@ operation/file/hunk views. Status facts are assembled from the existing status p
 records, and process-start cwd/Git-branch values; no new transport, poll, filesystem scan, or
 per-render subprocess exists.
 
-**KTD2 — Theme selection is preview first, then a separate explicit scope choice.** Highlight
-changes set the Textual theme immediately; Escape restores the theme and session override held when
-the picker opened. Enter opens three explicit outcomes—session only, save user, save repository—so
-browsing and accepting a session choice never accidentally write.
+**KTD2 — Theme selection is preview first, and persistence is a separate command.** Highlight
+changes in `PaletteRegion` set the Textual theme immediately; Escape restores the theme and session
+override held when the picker opened. Enter closes the picker with a session-only choice. Only
+`/theme save` writes, targeting user scope by default or repository scope when explicitly chosen.
 
 **KTD3 — Theme files are data, built-ins are Python constants, and imported files are canonical
 JSON.** `talaria/themes/builtins.py` keeps all four built-ins in the wheel without package-data
@@ -332,13 +302,13 @@ clear launch error because no safe document boundary exists to recover from.
 
 **KTD5 — The bottom bar absorbs task progress, while help and shell status retain distinct jobs.**
 The queue summary moves from `NeedsYouBar` into the default `task_progress` segment; `HelpBar` remains
-one documented row above the bar; `StatusRegion` stays bounded inside the main pane. Only
-`StatusBar` occupies the last row.
+one documented row above the bar; `StatusRegion` stays bounded inside `#body`. Only
+`BottomStatusBar` occupies the last row.
 
-**KTD6 — Palette commands are primary; modal keys are local; one F11 alias is structural only.**
-This follows the repository's measured macOS function-key behavior and avoids stealing composer
-keys. Tests drive slash commands and modal keys behaviorally and describe F11 only as an alias whose
-desktop delivery still requires #110's real-terminal evidence.
+**KTD6 — Palette commands own settings actions; screen keys stay local.** Theme selection and save,
+status toggles, inspector fallback, and diff entry remain reachable through slash commands without
+stealing composer keys. The inspector also owns the rendered `ctrl+b` global toggle, while diff
+navigation keys are active only inside the viewer; #110 still proves real terminal delivery.
 
 **KTD7 — Inspector and diff share one immutable selection protocol.** `ChangedFileView.key` and
 `DiffSelection(file_key, hunk_index)` are the handoff. The inspector publishes selection messages;
@@ -373,7 +343,7 @@ may run early, but U7 acceptance execution waits for U1–U6; U8 waits for U7 ev
 ### U1. #104 — theme token foundation, four built-ins, preview, and explicit persistence
 
 **Goal.** Establish the complete token contract, register the four built-ins, add preview/cancel and
-explicit scope selection, and make saved or invalid choices reach a fresh app visibly.
+explicit persistence targets, and make saved or invalid choices reach a fresh app visibly.
 
 **Requirements.** R1, R7, R8, R12.
 
@@ -381,8 +351,8 @@ explicit scope selection, and make saved or invalid choices reach a fresh app vi
 U6; U5 may prototype against existing Textual variables but rebases before integration.
 
 **Files.** Add `talaria/themes/__init__.py`, `talaria/themes/builtins.py`, and
-`talaria/ui/theme.py`. Update `talaria/ui/dialog.py`, `talaria/ui/palette.py`,
-`talaria/domain/commands.py`, `talaria/config.py`, `talaria/cli.py`, and `talaria/ui/app.py`.
+`talaria/ui/theme.py`. Update `talaria/ui/palette.py`, `talaria/domain/commands.py`,
+`talaria/config.py`, `talaria/cli.py`, and `talaria/ui/app.py`.
 
 **Approach.** Define frozen `ThemeSpec` records for Refined Default, Dark Green Terminal, Neutral
 Dark, and Accessible High Contrast, plus a `ThemeRegistry` that merges each specification onto
@@ -390,22 +360,25 @@ Refined Default, returns the filled-token list, converts the resolved result to 
 registers stable slugs. Apply configured theme and startup notes before the first visible render,
 then hold a separate in-memory session selection.
 
-Extend `PickerDialog` with a non-theme-specific highlighted-choice message. `/themes` opens a flat
-theme source, app applies each highlight, Escape restores the open-time selection, and Enter opens a
-small scope dialog whose three explicit results perform session, user-save, or repository-save.
+Extend `PaletteRegion` with a theme-picker mode. `/theme` captures the open-time selection, app
+applies each highlighted row immediately, Escape restores the captured selection, and Enter closes
+the mode with an in-memory session selection only. `/theme save` is the separate deliberate write:
+it targets user scope by default and repository scope only when explicitly requested.
 
 Implement the surgical `[theme]` writer in `talaria/config.py` with pre/post semantic verification,
 atomic replacement, and preserved neighboring bytes. User save targets
 `global_config_dir()/config.toml`; repository save targets `cwd/.talaria/config.toml`.
 
-**Reuse.** Reuse `PickerDialog`'s modal focus and layered cancellation, `literal_text` for all names
-and notices, the existing config merge order, and the credential writer's verify-then-atomic-replace
-discipline without importing transport into config.
+**Reuse.** Reuse `PaletteRegion`'s existing focus, command routing, and cancellation behavior,
+`literal_text` for all names and notices, the existing config merge order, and the credential
+writer's verify-then-atomic-replace discipline without importing transport into config.
 
 **Tests.** Add `tests/ui/test_theme.py` for four rows, highlight preview, cancel restoration, the
-three explicit outcomes, session precedence, startup selection, and missing-token warnings. Update
-`tests/ui/test_dialog.py`, `tests/ui/test_slash_palette.py`, and
-`tests/domain/test_commands.py` to prove existing pickers are unchanged and `/themes` is local.
+session-only Enter result, explicit user/repository saves, session precedence, startup selection,
+the exact 54-token registry and four built-in value sets, every Textual bridge including
+`$text-warning`, and missing-token warnings. Update `tests/ui/test_slash_palette.py` and
+`tests/domain/test_commands.py` to prove existing palette modes are unchanged and `/theme` plus its
+`save` action are local.
 
 Add `tests/test_config_write.py` for create/replace, comments and sibling-table byte preservation,
 user/repository targets, no write while browsing, atomic failure, and a semantic-diff guard. Update
@@ -413,7 +386,7 @@ user/repository targets, no write while browsing, atomic failure, and a semantic
 unknown/non-string fallback notes, and both launch paths; contrast assertions cover Accessible High
 Contrast token pairs.
 
-**Verification.** Run `uv run pytest tests/ui/test_theme.py tests/ui/test_dialog.py
+**Verification.** Run `uv run pytest tests/ui/test_theme.py tests/ui/test_slash_palette.py
 tests/test_config.py tests/test_config_write.py tests/test_cli.py -q`, then Ruff, mypy, Bandit, and
 `git diff --check` before the shared-surface lease is released.
 
@@ -437,14 +410,21 @@ one supported mapped value, accept only the documented hex forms, and produce a 
 `ImportReport` containing mapped values, unsupported source entries, fallback tokens, target name,
 and target path.
 
+Apply the visual specification's workbench mapping and candidate-key precedence verbatim. Resolve
+overlapping `tokenColors` rules by longest supported prefix, then by later document order only for
+ties. Composite alpha inputs in sRGB against the specified destination background before building
+the theme, store opaque uppercase `#RRGGBB` values only, and list every composite in the report.
+The report and tests distinguish the exact fourteen always-fallback tokens from additional mapped
+tokens whose sources happen to be absent or invalid.
+
 Resolve the name in the fixed order `--name`, top-level `name`, file stem. Validate a lowercase
 hyphenated storage slug with no separators or traversal, render canonical sorted JSON with one
 trailing newline, then atomically replace `<config>/themes/<slug>.json`; parsing and the complete
 report happen before any directory or file is changed.
 
-The mapping table in this plan is copied verbatim to `docs/formats/vscode-theme-import.md` and
-referenced by U8. Do not interpret `include`, icon/product theme fields, JSON comments, or unmapped
-TextMate selectors.
+The authoritative mapping table in the visual specification is copied verbatim to
+`docs/formats/vscode-theme-import.md` and referenced by U8. Do not interpret `include`, icon/product
+theme fields, JSON comments, or unmapped TextMate selectors.
 
 **Reuse.** Reuse U1's `ThemeSpec`, resolver, name registry, atomic-write helper, and token fallback;
 do not create a second theme model or persistence path.
@@ -456,7 +436,10 @@ Update `tests/test_cli.py` for argv, exit status, stdout/stderr report, and fres
 
 Assert exact mapped values and warning counts, not merely that an output file exists. Round-trip the
 stored JSON through U1's registry and `theme.name` precedence, and keep fixtures small enough for
-their expected mapping to be reviewed in one screen.
+their expected mapping to be reviewed in one screen. Include counterexamples for first-valid
+workbench candidate precedence, `constant.numeric` beating a later broader `constant` rule,
+later-rule tie breaking, alpha compositing to the exact opaque value, and the fourteen-token
+always-fallback count.
 
 **Verification.** Run `uv run pytest tests/ui/test_theme_import.py tests/test_cli.py -q`, invoke the
 built entry point against the representative fixture in a temporary `TALARIA_CONFIG_DIR`, confirm
@@ -476,9 +459,10 @@ rebase before integration.
 `talaria/ui/status_region.py`, `talaria/ui/needs_you.py`, `talaria/status/contract.py`,
 `talaria/config.py`, `talaria/cli.py`, and `talaria/domain/commands.py`.
 
-**Approach.** Define one immutable `StatusBarView` assembled at the app render boundary and seven
-`SegmentSpec` records with full/compact renderers, minimum cell budgets, and fixed drop priorities:
-connection 100, task progress 90, context 80, agent/model 70, cwd 60, Git branch 50, version 10.
+**Approach.** Define one immutable `BottomStatusBarView` assembled at the app render boundary and
+seven `SegmentSpec` records with full/compact/minimum renderers, maximum cell budgets, and the visual
+specification's fixed priorities: version 0, cwd 10, Git branch 20, context 40, agent/model 50, task
+progress 80, connection 100. Lower values drop first; connection is never deliberately dropped.
 Display order remains exactly the configured order; priority controls truncation/drop only.
 
 Capture cwd and Git branch once at launch from local process state, never per render. Use the
@@ -486,10 +470,14 @@ existing status payload for connection/turn/usage, held model/fleet state for ag
 progress, and `talaria.__version__`; absent values render a compact `?` or an honest text label rather
 than causing a fetch.
 
-At or below `compact_at_columns`, use each segment's compact form. Measure literal cell widths,
-truncate variable parts to their declared minima, then drop lowest-priority segments until the row
-fits; at or below `minimal_at_columns`, start in compact form and drop immediately. The widget has
+Implement the visual specification's fixed bands verbatim: all seven use full forms at 144 and
+wider; all seven use compact forms from 120–143; version drops from 112–119 and remains absent at
+96–111; cwd also drops at 80–95; Git branch at 64–79; context at 48–63; agent/model at 32–47; task
+progress at 20–31; below 20 only the minimum connection form survives. Within each band, apply the
+specified full-to-compact-to-minimum truncation before priority-based drop. The three configurable
+maximums cap cwd, Git branch, and agent/model values but never move a breakpoint. The widget has
 `height: 1`, `overflow: hidden`, and a Pilot invariant that its rendered height is always one.
+Render that view through the canonical `BottomStatusBar` widget.
 
 Move the existing needs-you summary formatter into `task_progress`, remove `NeedsYouBar` from
 compose, retain HelpBar above the new last row, and leave `StatusRegion` in the main pane. Add
@@ -498,21 +486,25 @@ produce notices.
 
 Extend status parsing to return a reason as well as an optional argv, preserve the existing runner
 caps, process group, timer, stderr, and ANSI-defanged output, and pass config normalization notices
-into the app on live and replay paths. Invalid interval/threshold values use the schema defaults and
-identify both the bad key and fallback.
+into the app on live and replay paths. Invalid interval or width-cap values use the schema defaults
+and identify both the bad key and fallback.
 
 **Reuse.** Reuse `StatusPayload`, the needs-you queue formatter, `literal_text`, Textual cell-width
 measurement, and all `StatusRunner` behavior. Do not duplicate status command execution inside the
 new bar.
 
 **Tests.** Add `tests/ui/test_status_bar.py` for all seven segments, configured order, hiding,
-duplicates/unknowns, fixed priorities, truncation before drop, 100/72-column transitions, arbitrary
-resizes, literal hostile values, and one-row height. Update `tests/ui/test_needs_you.py` and
-`tests/ui/test_a4_function_key_row.py` for the migrated summary and final bottom-row pins.
+duplicates/unknowns, the exact fixed priorities, truncation before drop, and the complete transition
+walk at 144, 143, 120, 119, 112, 111, 96, 95, 80, 79, 64, 63, 48, 47, 32, 31, 20, and 19
+columns, plus arbitrary resizes, literal hostile values, and one-row height. Update
+`tests/ui/test_needs_you.py` and
+`tests/ui/test_a4_function_key_row.py` for the migrated summary and final bottom-row pins; keep the
+existing `#body` queries in `tests/ui/test_needs_you.py` and `tests/ui/test_status_region.py` passing
+against the canonical compose identifiers.
 
 Update `tests/test_config.py`, `tests/test_cli.py`, `tests/status/test_runner.py`, and
 `tests/ui/test_status_region.py` for malformed `status.command`, negative/zero/3601 interval,
-threshold type/range/cross-field validation, visible startup notes, and unchanged shell-command
+width-cap type/range validation, visible startup notes, and unchanged shell-command
 timer/cap/failure behavior. Each fallback test includes a counterexample with a valid value so it
 cannot pass by always using defaults.
 
@@ -545,18 +537,24 @@ needs-you queue and agent rows, context from focused session/profile/endpoint/mo
 usage, changed files from `DiffDocument`, and operation details from the selected held operation;
 empty sections say what has not been observed.
 
-The panel width starts at 36 columns, clamps 28–60 in steps of four, and stays in app memory.
-`requested_collapsed` records `/inspector toggle`; `auto_collapsed` applies below 90 screen columns,
-where toggle reports that the panel will reopen when space returns rather than overlaying content.
+The panel width starts at 36 columns, clamps 28–48 in steps of four, and stays in app memory.
+`requested_collapsed` records `ctrl+b` or `/inspector`; `auto_collapsed` applies below 120 screen
+columns without overwriting that request. Crossing 120 to 119 collapses a docked panel, and returning
+to 120 restores only a panel that the operator had left open.
+
+Below 120, toggle opens a right overlay without reflowing or resizing the transcript. From 32–119
+columns its width is `min(saved width, terminal width - 2)`; below 32 it occupies the terminal width.
+The existing border title includes `[overlay]`, and Escape closes it and restores prior focus.
 
 **Reuse.** Reuse `entry_scoped_view`, `fleet_queue`, current model/profile records, and Textual
 messages. No `Path.rglob`, Git invocation, watcher, RPC method, or timer is introduced.
 
 **Tests.** Add `tests/domain/test_changes.py` using real `tool.start`/`tool.complete.inline_diff`
 event shapes to prove file/hunk identity and literal unknown details. Add
-`tests/ui/test_inspector.py` for open/collapse, resize bounds, 89/90-column transitions, restoration
-of requested state, all four seeded sections, honest empty states, selection messages, and no
-transport/dispatcher calls.
+`tests/ui/test_inspector.py` for `ctrl+b` and `/inspector`, open/collapse, 28/48 resize bounds,
+119/120-column transitions, restoration of requested state, narrow overlay geometry and no-reflow
+behavior, Escape focus restoration, all four seeded sections, honest empty states, selection
+messages, and no transport/dispatcher calls.
 
 Run existing transcript and agent-row tests with the panel both present and collapsed. The domain
 boundary test must fail if `talaria/domain/changes.py` imports Textual.
@@ -581,7 +579,7 @@ for final color wiring. Development begins immediately and rebases onto both bef
 refresh `uv.lock` because production code must not rely on an undeclared transitive dependency.
 
 **Approach.** Consume U4's `DiffDocument`; do not open repository files or run Git. Index files and
-hunks once, retain a preferred mode, force unified below 120 columns, and render a viewport window
+hunks once, retain a preferred mode, force unified below 112 columns, and render a viewport window
 plus ten rows of overscan on each side.
 
 Pair deletion/addition runs within one hunk and use a bounded sequence comparison to mark changed
@@ -593,16 +591,20 @@ unknown extension, then translate token classes through U1's syntax tokens. Intr
 applied after syntax spans so changed text remains perceivable in both Refined Default and Accessible
 High Contrast.
 
-Open the modal from `/diffs` or an inspector selection. Modal-local navigation updates file/hunk
-indices only; there is no dispatcher, subprocess, filesystem writer, or writable text control.
+Open the modal from `/diffs` or an inspector selection. Modal-local `n`/`p` navigation updates the
+hunk index, `N`/`P` updates the file index, `f` opens the file projection, `u` selects unified, and
+`s` requests side-by-side. Below 112, `s` leaves unified active and writes the refusal into the
+existing header row without adding height. There is no dispatcher, subprocess, filesystem writer,
+or writable text control.
 
 **Reuse.** Reuse `PickerDialog` for the jump-to-file list, U4's immutable selection messages,
 `literal_text` at every path/content boundary, and the transcript's window/anchor concepts without
 sharing mutable widget state.
 
-**Tests.** Add `tests/ui/test_diff_viewer.py` for unified and side-by-side rendering, 119/120-column
-effective mode, restoration of preferred mode, next/previous file and hunk, file picker, intraline
-spans, unknown-language fallback, two themes, hostile filenames/content, and honest no-diff state.
+**Tests.** Add `tests/ui/test_diff_viewer.py` for unified and side-by-side rendering, 111/112-column
+effective mode, restoration of preferred mode, exact `n`/`p` hunk and `N`/`P` file navigation, file
+picker, below-threshold header refusal, intraline spans, unknown-language fallback, two themes,
+hostile filenames/content, and honest no-diff state.
 
 The large fixture asserts rendered rows are bounded by viewport plus overscan and that intraline work
 counts only visible pairs. An AST/keymap/command-table test rejects edit, stage, revert, apply,
@@ -633,10 +635,10 @@ the shell result marker. It renders `caret: composer`, `caret: transcript`, `car
 `caret: inspector`, or the actual focused region; focus changes update text/token only and never
 mount, remove, or resize a widget.
 
-Apply transcript kind styles through `transcript_*` tokens while retaining existing block factories,
-entry identity, spacing bounds, and raw content. Add a glyph or word to connection, agent lifecycle,
-and queue-attention renderers so tests can distinguish every state after all colors are normalized to
-one value.
+Apply transcript kind styles through the six canonical `talaria.transcript.*` marker/background
+pairs while retaining existing block factories, entry identity, spacing bounds, and raw content. Add
+a glyph or word to connection, agent lifecycle, and queue-attention renderers so tests can
+distinguish every state after all colors are normalized to one value.
 
 Introduce one `MotionPolicy` from `ui.reduced_motion`. Widgets route nonessential spinner frames and
 any scroll transition through it; reduced mode uses static progress text and zero-duration scrolling,
@@ -805,11 +807,11 @@ below appears in the U7 checklist and evidence manifest.
 
 | Child | Tester and flow | Required observation |
 | --- | --- | --- |
-| #104 | `talaria-t1`: `/themes`, move highlight, cancel, choose session, save user, save repository, restart, then configure unknown theme | Preview changes immediately; cancel restores; browse/session choice writes nothing; explicit target writes only `[theme]`; restart selects the saved winner; unknown name starts in Refined Default with a visible note. |
+| #104 | `talaria-t1`: `/theme`, move highlight, cancel, choose the session theme, run `/theme save` for user and explicit repository targets, restart, then configure an unknown theme | Preview changes immediately; cancel restores; browse/session choice writes nothing; explicit save writes only `[theme]`; restart selects the saved winner; unknown name starts in Refined Default with a visible note. |
 | #105 | `talaria-t1`: import representative JSON through installed CLI, inspect warning report, restart and select it; repeat malformed import | Exact mapped theme appears and persists; unsupported and extension fallbacks are listed; same-name import is deterministic; malformed input exits clearly with no artifact. |
-| #106 | `talaria-t2`: reorder/hide segments, restart, `/bar` toggle, resize through both thresholds, observe status cadence, start with malformed command and invalid interval | Config order/hide applies only after restart; session toggle is immediate and unsaved; bar remains one row and drops by priority; shell status retains cadence/caps; bad values name fallback instead of blanking or hanging. |
-| #107 | `talaria-t2`: open inspector, resize past both clamps, collapse, narrow/widen, select seeded changed file, and open empty replay | State restores within session but not restart; narrow mode is honest; four sections reflect held state; empty sections say so; no network or file scan occurs. |
-| #108 | `talaria-t2`: enter from inspector and `/diffs`, switch modes, navigate files/hunks, resize below/above 120, use two themes | Wide default is side-by-side, narrow effective mode is unified and restores preference, navigation stays within held files, large fixture remains responsive/bounded, and no mutation command or key exists. |
+| #106 | `talaria-t2`: reorder/hide segments, restart, `/bar` toggle, resize through 144, 143, 120, 119, 112, 111, 96, 95, 80, 79, 64, 63, 48, 47, 32, 31, 20, and 19 columns, observe status cadence, then start with a malformed command, invalid interval, and invalid width caps | Config order/hide applies only after restart; session toggle is immediate and unsaved; bar remains one row and drops in the specified priority order; shell status retains cadence/caps; bad values name fallback instead of blanking or hanging. |
+| #107 | `talaria-t2`: use `ctrl+b` and `/inspector`, resize past both clamps, cross 120→119→120, exercise the narrow overlay, select a seeded changed file, and open an empty replay | Requested dock state restores within the session but not after restart; the overlay does not reflow the transcript and Escape restores focus; four sections reflect held state; empty sections say so; no network or file scan occurs. |
+| #108 | `talaria-t2`: enter from inspector and `/diffs`, switch modes, navigate with `n`/`p` and `N`/`P`, resize below/above 112, use two themes | Wide default is side-by-side, narrow effective mode is unified and restores preference, navigation stays within held files, large fixture remains responsive/bounded, and no mutation command or key exists. |
 | #109 | `talaria-t1`: move focus among composer/transcript/prompt/inspector, answer a real approval with its documented keys, stream and resize while scrolled, follow bottom, restart with reduced motion, inspect all themes | Palette, focus, and approval keys reach the intended control; focus marker changes without any widget-height delta; reading anchor remains stable; follow bottom is predictable; reduced motion is static; transcript kinds and all attention states remain distinguishable without color; High Contrast meets its visual target. |
 | #110 | both testers: fresh-wheel probes, deterministic assigned track, one live throwaway session, restart and bad-config/dead-credential/malformed-status/killed-session failures | Executable and wheel provenance match; every flow has raw capture, screenshot, verdict, and model route; failures are visible and bounded; fallback is only the named model for a permitted, recorded reason. |
 | #111 | both testers' accepted receipts feed install docs and release notes; post-closeout wheel probes repeat U7 commands | Documentation commands match commands already observed to work; release notes link—not reinterpret—the evidence; released `talaria --version` is `0.5.0`. |
