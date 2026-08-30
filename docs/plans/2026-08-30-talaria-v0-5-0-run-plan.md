@@ -191,18 +191,23 @@ atomic replace; the existing credential writer in `talaria/transport/refresh.py:
 ### Theme token vocabulary and Visual Studio Code mapping
 
 The visual specification's [Complete registry](../design/2026-08-30-talaria-v0-5-0-visual-spec.md#complete-registry)
-is the sole normative 54-token vocabulary, including exact dotted public names, `$talaria-*`
+is the sole normative 58-token vocabulary, including exact dotted public names, `$talaria-*`
 bridges, Textual compatibility variables, values for all four built-ins, and the twelve transcript
 foreground/background channels. U1 implements that registry directly rather than maintaining a
 second plan-local copy. The obsolete plan-only `diff_changed` name is not implemented;
 `talaria.diff.hunk` and `talaria.diff.hunk.background` carry changed-hunk treatment as specified.
 
-The following D2-reserved cell is intentionally unchanged while the operator decides whether the
-bottom bar has bar-scoped semantic tokens. It is not a second normative registry:
+The resolved bottom-bar additions are part of every built-in `ThemeSpec` exactly as follows:
 
-| Token group | Required Talaria tokens |
-| --- | --- |
-| Interaction | `focus`, `queue_attention` |
+| Talaria token | Semantic role | Textual bridge | Refined Default | Dark Green Terminal | Neutral Dark | Accessible High Contrast |
+| --- | --- | --- | --- | --- | --- | --- |
+| `talaria.status.success` | Connected and successful-state text in the bottom status bar | `$talaria-status-success` | `#3FB950` | `#6EE7A0` | `#82C99A` | `#63FF90` |
+| `talaria.status.warning` | Connecting and reconnecting state text in the bottom status bar | `$talaria-status-warning` | `#D29922` | `#FFD166` | `#E4C07A` | `#FFD75F` |
+| `talaria.status.error` | Disconnected and authentication-failed state text in the bottom status bar | `$talaria-status-error` | `#FF7B72` | `#FF7B72` | `#F08C8C` | `#FF6B6B` |
+| `talaria.status.attention` | Queue-attention `!N` marker in the bottom status bar | `$talaria-status-attention` | `#58A6FF` | `#39FF88` | `#9AB7D3` | `#00FF85` |
+
+The plan-only `queue_attention` name is retired. The literal `!N` marker uses
+`talaria.status.attention`; its glyph and count remain present when color is disabled.
 
 U2 implements the visual specification's [Supported workbench colors](../design/2026-08-30-talaria-v0-5-0-visual-spec.md#supported-workbench-colors)
 table verbatim. For a token with multiple candidate keys, the first present valid key in listed
@@ -215,10 +220,10 @@ background; background tokens use their enclosing canvas or panel, falling back 
 Default background when that destination has not mapped yet. The import report names every alpha
 composite.
 
-The current non-D2 fallback contract is the specification's exact fourteen fallback-only tokens:
+The fallback contract is the specification's exact fourteen fallback-only tokens:
 `talaria.secondary`, `talaria.status.muted`, and all twelve transcript foreground/background
 tokens. U2 asserts that count and names every fallback; any other missing mapped token is reported
-separately. The unresolved D2 cell above remains for the later operator-decision cycle.
+separately.
 
 ## Dependency graph and execution capacity
 
@@ -358,7 +363,9 @@ U6; U5 may prototype against existing Textual variables but rebases before integ
 Dark, and Accessible High Contrast, plus a `ThemeRegistry` that merges each specification onto
 Refined Default, returns the filled-token list, converts the resolved result to a Textual theme, and
 registers stable slugs. Apply configured theme and startup notes before the first visible render,
-then hold a separate in-memory session selection.
+then hold a separate in-memory session selection. Each `ThemeSpec` defines all 58 canonical tokens,
+including the four bar-scoped semantic tokens and exact per-theme values in the vocabulary table
+above.
 
 Extend `PaletteRegion` with a theme-picker mode. `/theme` captures the open-time selection, app
 applies each highlighted row immediately, Escape restores the captured selection, and Enter closes
@@ -375,8 +382,9 @@ writer's verify-then-atomic-replace discipline without importing transport into 
 
 **Tests.** Add `tests/ui/test_theme.py` for four rows, highlight preview, cancel restoration, the
 session-only Enter result, explicit user/repository saves, session precedence, startup selection,
-the exact 54-token registry and four built-in value sets, every Textual bridge including
-`$text-warning`, and missing-token warnings. Update `tests/ui/test_slash_palette.py` and
+the exact 58-token registry and four built-in value sets, every Textual bridge including
+`$text-warning` and the four `$talaria-status-*` semantic variables, and missing-token warnings.
+Update `tests/ui/test_slash_palette.py` and
 `tests/domain/test_commands.py` to prove existing palette modes are unchanged and `/theme` plus its
 `save` action are local.
 
@@ -470,6 +478,13 @@ existing status payload for connection/turn/usage, held model/fleet state for ag
 progress, and `talaria.__version__`; absent values render a compact `?` or an honest text label rather
 than causing a fetch.
 
+Render connected state through `talaria.status.success`, connecting and reconnecting through
+`talaria.status.warning`, and disconnected and authentication-failed state through
+`talaria.status.error`. Render only the literal `!N` portion of `task_progress` through
+`talaria.status.attention`. These bar-scoped tokens sit on `talaria.status.background`; do not reuse
+the canvas-scoped `talaria.success`, `talaria.warning`, or `talaria.error`. Preserve `[ok]`, `[..]`,
+`[~]`, `[x]`, `[!]`, and `!N` so no state depends on color alone.
+
 Implement the visual specification's fixed bands verbatim: all seven use full forms at 144 and
 wider; all seven use compact forms from 120–143; version drops from 112–119 and remains absent at
 96–111; cwd also drops at 80–95; Git branch at 64–79; context at 48–63; agent/model at 32–47; task
@@ -496,7 +511,8 @@ new bar.
 **Tests.** Add `tests/ui/test_status_bar.py` for all seven segments, configured order, hiding,
 duplicates/unknowns, the exact fixed priorities, truncation before drop, and the complete transition
 walk at 144, 143, 120, 119, 112, 111, 96, 95, 80, 79, 64, 63, 48, 47, 32, 31, 20, and 19
-columns, plus arbitrary resizes, literal hostile values, and one-row height. Update
+columns, plus exact connection/attention token assignment with every redundant ASCII form,
+arbitrary resizes, literal hostile values, and one-row height. Update
 `tests/ui/test_needs_you.py` and
 `tests/ui/test_a4_function_key_row.py` for the migrated summary and final bottom-row pins; keep the
 existing `#body` queries in `tests/ui/test_needs_you.py` and `tests/ui/test_status_region.py` passing
@@ -654,6 +670,12 @@ ordinary-text pair targets at least 4.5:1 and every focus boundary or large/bold
 Accessible High Contrast permits no lower decorative/muted exception and therefore meets Web Content
 Accessibility Guidelines (WCAG) AA across its complete token-pair matrix.
 
+The same helper covers each bar-scoped semantic token against `talaria.status.background` in every
+built-in theme. The automated contrast test asserts all sixteen pairs at 4.5:1 or higher and checks
+the specification's exact ratios in theme order: success 5.77/13.15/9.85/16.24, warning
+5.80/14.08/11.09/15.14, error 5.81/8.05/8.08/7.57, and attention
+5.80/15.31/9.23/15.64.
+
 **Reuse.** Complete the recorded status-region caret decision, use the existing `CaretReleased`
 events and transcript anchor, and keep the ADR-0006 block renderer unchanged.
 
@@ -665,8 +687,8 @@ existing behavior.
 Update `tests/ui/test_transcript_blocks.py`, `tests/ui/test_transcript_bounds.py`,
 `tests/ui/test_kind_styles.py`, `tests/ui/test_agent_rows.py`, `tests/ui/test_needs_you.py`,
 `tests/ui/test_status_bar.py`, `tests/ui/test_theme.py`, and `tests/test_config.py` for append/resize/
-status-update anchors, follow-bottom boundary behavior, token-only styles, contrast ratios,
-non-color states, and restart-only reduced motion.
+status-update anchors, follow-bottom boundary behavior, token-only styles, the sixteen bar-token
+contrast pairs, non-color states, and restart-only reduced motion.
 
 **Verification.** Run `uv run pytest tests/ui/test_focus_indication.py tests/ui/test_motion.py
 tests/ui/test_transcript_bounds.py tests/ui/test_kind_styles.py tests/ui/test_agent_rows.py
