@@ -126,6 +126,10 @@ The v0.5.0 token layer preserves those meanings while ending the accidental coup
 | talaria.status.text | Primary status segment text | $talaria-status-text |
 | talaria.status.muted | Secondary status text | $talaria-status-muted |
 | talaria.status.separator | One-column segment separator | $talaria-status-separator |
+| talaria.status.success | Connected and successful-state text in the bottom status bar | $talaria-status-success |
+| talaria.status.warning | Connecting and reconnecting state text in the bottom status bar | $talaria-status-warning |
+| talaria.status.error | Disconnected and authentication-failed state text in the bottom status bar | $talaria-status-error |
+| talaria.status.attention | Queue-attention `!N` marker in the bottom status bar | $talaria-status-attention |
 | talaria.inspector.background | Docked or overlay inspector fill | $talaria-inspector-background |
 | talaria.inspector.border | Inspector boundary | $talaria-inspector-border |
 | talaria.inspector.heading | Inspector section headings and selected file | $talaria-inspector-heading |
@@ -189,6 +193,10 @@ For inactive block cursors, $block-cursor-blurred-foreground MUST use talaria.te
 | talaria.status.text | #F6F8FA | #D6F5DC | #E6E9EC | #FFFFFF |
 | talaria.status.muted | #C6CDD5 | #8FB99A | #A6ADB4 | #D6D6D6 |
 | talaria.status.separator | #8C959F | #4BAA6A | #68717A | #FFFFFF |
+| talaria.status.success | #3FB950 | #6EE7A0 | #82C99A | #63FF90 |
+| talaria.status.warning | #D29922 | #FFD166 | #E4C07A | #FFD75F |
+| talaria.status.error | #FF7B72 | #FF7B72 | #F08C8C | #FF6B6B |
+| talaria.status.attention | #58A6FF | #39FF88 | #9AB7D3 | #00FF85 |
 | talaria.inspector.background | #FFFFFF | #0B1A10 | #1D2023 | #0A0A0A |
 | talaria.inspector.border | #6E7781 | #4BAA6A | #68717A | #FFFFFF |
 | talaria.inspector.heading | #0969DA | #6EE7A0 | #B3C7DB | #00FFFF |
@@ -247,6 +255,7 @@ The tables below are exhaustive for allowed foreground/background combinations:
 - Transcript code blocks use the opaque talaria.surface behind syntax colors; syntax colors do not sit directly on group tints.
 - Diff syntax uses canvas, added-line, or removed-line backgrounds. Inside an intraline changed span, diff added/removed foreground replaces syntax foreground.
 - The added, removed, and hunk fills are redundant decoration because each line also has a +, -, or @@ text marker. Their required colored foreground/component marker is nevertheless measured against each fill.
+- Bottom-bar connection state and queue attention use talaria.status.success, talaria.status.warning, talaria.status.error, and talaria.status.attention only on talaria.status.background. The automated contrast test MUST cover all four pairs for every built-in theme.
 - Introducing any other pair requires adding it to this table and to the automated contrast test before release.
 
 ### Text and glyph contrast measurements
@@ -269,6 +278,10 @@ The tables below are exhaustive for allowed foreground/background combinations:
 | cursor text / focus | 5.19:1 | 14.62:1 | 10.82:1 | 16.75:1 |
 | status text / status | 13.76:1 | 17.36:1 | 15.77:1 | 21.00:1 |
 | status muted / status | 9.14:1 | 9.26:1 | 8.47:1 | 14.45:1 |
+| status success / status | 5.77:1 | 13.15:1 | 9.85:1 | 16.24:1 |
+| status warning / status | 5.80:1 | 14.08:1 | 11.09:1 | 15.14:1 |
+| status error / status | 5.81:1 | 8.05:1 | 8.08:1 | 7.57:1 |
+| status attention / status | 5.80:1 | 15.31:1 | 9.23:1 | 15.64:1 |
 | inspector body / inspector | 15.80:1 | 15.35:1 | 13.43:1 | 19.80:1 |
 | inspector heading / inspector | 5.19:1 | 11.63:1 | 9.44:1 | 15.79:1 |
 | transcript body / operator | 14.00:1 | 14.26:1 | 12.87:1 | 18.14:1 |
@@ -388,7 +401,7 @@ The final terminal row at 144 columns or wider uses one-cell separators and neve
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ~~~
 
-Left to right the seven annotated segments are [1] cwd, [2] git_branch, [3] agent_model, [4] context, [5] task_progress, [6] connection, and [7] version. The runtime row has no outer border; it has talaria.status.background across every cell. Primary segment content uses talaria.status.text, secondary labels use talaria.status.muted, and each │ uses talaria.status.separator.
+Left to right the seven annotated segments are [1] cwd, [2] git_branch, [3] agent_model, [4] context, [5] task_progress, [6] connection, and [7] version. The runtime row has no outer border; it has talaria.status.background across every cell. Ordinary primary segment content uses talaria.status.text, secondary labels use talaria.status.muted, and each │ uses talaria.status.separator. The connection indicator and state text use talaria.status.success, talaria.status.warning, or talaria.status.error as specified in the Connection states table. The task_progress segment's literal !N marker uses talaria.status.attention.
 
 ### Right inspector expanded
 
@@ -693,11 +706,11 @@ Every status meaning has an ASCII glyph and a word or number in addition to colo
 
 | Runtime state | Required visible form | Color token |
 |---|---|---|
-| connected | [ok] connected; compact [ok] up | success |
-| connecting | [..] connecting | warning |
-| reconnecting | [~] reconnecting | warning |
-| disconnected | [x] disconnected | error |
-| authentication failed | [!] authentication failed | error |
+| connected | [ok] connected; compact [ok] up | talaria.status.success |
+| connecting | [..] connecting | talaria.status.warning |
+| reconnecting | [~] reconnecting | talaria.status.warning |
+| disconnected | [x] disconnected | talaria.status.error |
+| authentication failed | [!] authentication failed | talaria.status.error |
 
 The full sentence appears wherever space permits and in the connection detail. A minimum status segment retains at least [ok], [..], [~], [x], or [!].
 
@@ -727,7 +740,7 @@ AgentRows currently recognizes exactly these seven normalized states. A row may 
 | Status command failed | [x] status followed by exit/timeout/config reason |
 | Status output truncated | [!] status truncated followed by the existing row-limit marker |
 
-The task_progress segment replaces only NeedsYouBar's one-line summary. /needs continues to show the current queue's full, literal detail. A narrow breakpoint may drop task_progress, but opening /needs must still expose these non-color forms.
+In the bottom bar's task_progress segment, the literal !N queue-attention marker uses talaria.status.attention; the glyph and count remain present when color is disabled. The task_progress segment replaces only NeedsYouBar's one-line summary. /needs continues to show the current queue's full, literal detail. A narrow breakpoint may drop task_progress, but opening /needs must still expose these non-color forms.
 
 ### Selection and transcript identity
 
