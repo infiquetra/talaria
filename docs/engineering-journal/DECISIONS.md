@@ -2706,3 +2706,51 @@ Two things generalize past the incident. First, **an agent's model of "who else 
 **Rejected alternatives.** *Commit-time-only block rendering* — rejected by operator choice in the brainstorm; streaming is fully progressive with accepted fence flicker. *Pinning the internal `MarkdownStream`* — buys backpressure Talaria's 50 ms coalescing already provides, at the price of a private-API dependency. *Restating the flattened line buffer* — would break `terminal_read` (v0.1 KTD10) and the projection pin `test_every_transcript_entry_survives_into_the_line_buffer`; instead the projection grows a second, entry-scoped surface and the line buffer moves zero bytes.
 
 **Revisit when.** U6's gate re-run measures the widget family's cost against the ceilings — a red run with numbers attached is the only trigger for the fallback; or Textual is upgraded past 8.2.8, which trips the U3 pin test.
+
+## 2026-08-30
+
+### Talaria v0.5.0 has one shared-surface contract and one evidence-bound candidate
+
+**Author.** Talaria v0.5.0 integrated run planning for issues #103–#111; full rationale, file map,
+tests, and acceptance mapping are in
+[`docs/plans/2026-08-30-talaria-v0-5-0-run-plan.md`](../plans/2026-08-30-talaria-v0-5-0-run-plan.md).
+
+**Decisions.** The plan records eleven Key Technical Decisions (KTDs), mirrored here so later work
+does not have to infer them from concurrent child branches:
+
+1. **KTD1:** inspector, diff, and status projections are framework-free and consume only state the
+   app already holds; no new transport, polling, repository scan, or per-render subprocess exists.
+2. **KTD2:** theme browsing previews immediately, Escape restores the pre-open theme, and Enter
+   leads to an explicit session/user/repository scope choice; browsing never writes.
+3. **KTD3:** built-in themes are Python constants under `talaria/themes/`; imported themes are
+   strict, canonical user-scope JSON documents with deterministic names and replacement.
+4. **KTD4:** config normalization returns resolved values plus immutable visible startup notes.
+   Invalid optional settings fall back; syntactically invalid TOML remains a clear launch error.
+5. **KTD5:** the needs-you summary becomes the `task_progress` status segment, HelpBar remains the
+   documented adjacent key-hint row, StatusRegion retains shell output, and one StatusBar is last.
+6. **KTD6:** slash-palette commands are primary, modal keys stay local, and F11 is only a secondary
+   inspector alias whose real desktop delivery is measured during acceptance.
+7. **KTD7:** inspector and diff share immutable changed-file and diff-selection view models; neither
+   widget owns or mutates session state.
+8. **KTD8:** a diff is indexed once, while every render is bounded to the viewport plus fixed
+   overscan; intraline comparison is limited to visible pairs and capped long lines.
+9. **KTD9:** requested inspector collapse and preferred diff mode remain separate from narrow-screen
+   effective state, so widening restores session intent without persistence.
+10. **KTD10:** every acceptance receipt names one run-branch commit and wheel digest. A repair makes
+    a new candidate and invalidates evidence from the old one; installed environments are not patched.
+11. **KTD11:** documentation and release consume the acceptance verdict exactly as observed and
+    cannot improve it; version, tag, and release follow accepted integration through normal authority.
+
+**Concurrency decision.** Four primary lanes develop new modules in exclusive linked worktrees. The
+run owner serializes final edits to `talaria/ui/app.py`, `talaria/domain/commands.py`, and
+`talaria/config.py` through a child-scoped lease against one canonical compose tree, command table,
+and schema ledger. #109 uses its own worktree and begins its independent focus/scroll tests while its
+theme-dependent half waits for #104.
+
+**Candidate decision.** The unmerged run branch integrates #104, #105, #106, #107, #108, then #109;
+only that checked and hashed tree produces the wheel tested by `talaria-t1` and `talaria-t2`. #110
+records pseudo-terminal and live-session evidence, and #111 runs last.
+
+**Revisit when.** An approved child issue changes, an accepted architecture decision is superseded,
+or observed implementation evidence falsifies one of the fixed seams. A textual merge conflict or a
+preference for another key name is not by itself a reason to reopen the decisions.
