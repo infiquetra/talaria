@@ -24,7 +24,7 @@ from talaria.ui.status_bar import (
     build_status_bar_view,
     render_status_bar,
 )
-from tests.ui.conftest import RecordingDispatcher, event, paused_app
+from tests.ui.conftest import RecordingDispatcher, event, live_app, paused_app
 
 
 def _screen_text(app: App[None]) -> str:
@@ -253,6 +253,30 @@ def test_every_connection_state_keeps_its_ascii_form_and_bar_semantic_token(
     assert full_render.runs[0].token == token
     assert compact_render.runs[0].token == token
     assert minimum_render.runs[0].token == token
+
+
+@pytest.mark.asyncio
+async def test_live_reconnecting_transition_repaints_the_status_form_immediately() -> None:
+    """The transport callback must paint a transient reconnect before a
+    following dial state can replace it; the coalescing timer is too late.
+    """
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test(size=(180, 24)) as pilot:
+        app.note_connection_state("connected")
+        await app._render_tick()
+        await pilot.pause()
+        assert "[ok] connected" in app.bottom_status_bar.last_render.plain
+
+        app.note_connection_state("reconnecting")
+        await pilot.pause()
+
+        assert app.state.connection == "reconnecting"
+        assert "connection lost — reconnecting" in app.composer.notice
+        assert app.bottom_status_bar.view.connection == "reconnecting"
+        assert "[~] reconnecting" in app.bottom_status_bar.last_render.plain
+        assert "[~] reconnecting" in _screen_text(app)
+        await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
