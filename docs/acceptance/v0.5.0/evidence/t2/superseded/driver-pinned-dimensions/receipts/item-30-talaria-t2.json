@@ -11,21 +11,21 @@
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
     "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
-  "checklist_item": 20,
+  "checklist_item": 30,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-20-refusal-resize-fix.ansi",
-    "capture_sha256": "fa3e4236ae45eaad5fd624dc1a3bb17c2c54b0cddad920c8ab29e1330d3c9eba",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-20-refusal-resize-fix-pty.json",
-    "pty_result_sha256": "4a749cc0e00f19d4a17df87881d04326901cd10b4941af054514f498a2022ac1",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-30-screenshot.ansi",
+    "capture_sha256": "d50221f9c9db6746f90e8fc22446eabfb4ca0019b7cec72faa38aeab143d4d8f",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-30-screenshot-pty.json",
+    "pty_result_sha256": "529664a82484955f5a1a1a08dc82296f3218a2b80b6515280ac596ce52c941c0",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-refusal-resize-fix.png",
-    "screenshot_sha256": "5162b8239b3fecc0696347a88d495f57bf11643457bb7bd20e4cc279bb167451"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screenshot.png",
+    "screenshot_sha256": "3beb28396c15b75383dd5afbcce022a507627d401376007a39f7ed10d5ed0661"
   },
   "observations": [
-    "At a real 111-column terminal width the viewer remained unified and visibly reported side-by-side needs 112 columns; the full drive also crossed 112 and 111 repeatedly without losing diff context."
+    "The 78-column capture uses unified diff, no docked inspector, the specified compact status, and no wrapped footer."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T21:53:04+00:00",
+  "recorded_at": "2026-08-31T20:28:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -40,12 +40,12 @@
     "profile": "deterministic-replay"
   },
   "terminal": {
-    "columns": 111,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "columns": 78,
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },
   "tester": "talaria-t2",
-  "title": "Unified fallback",
+  "title": "Narrow screenshot",
   "verdict": "pass"
 }

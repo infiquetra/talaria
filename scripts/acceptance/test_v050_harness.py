@@ -31,6 +31,69 @@ from scripts.acceptance.v050_receipt import _portable_json, validate_receipt, ve
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+_TEXTUAL_RESIZE_PROGRAM = r"""
+import os
+
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.events import Resize
+from textual.widgets import Static
+
+from talaria.ui.status_bar import BottomStatusBar, BottomStatusBarView
+
+
+VIEW = BottomStatusBarView(
+    cwd="/workspace/acceptance",
+    git_branch="orch/talaria-v0-5-0",
+    agent_provider="OpenCode",
+    agent_model="Muse Spark 1.2 Contributor",
+    input_tokens=32000,
+    output_tokens=0,
+    context_window=128000,
+    tasks_completed=3,
+    tasks_total=7,
+    attention_count=1,
+    connection="connected",
+    version="0.5.0",
+)
+
+
+class ResizeProbe(App[None]):
+    CSS = '''
+    Screen { layout: vertical; }
+    #body { height: 1fr; }
+    '''
+    BINDINGS = [Binding("ctrl+q", "quit", "Quit")]
+
+    def compose(self) -> ComposeResult:
+        yield Static("real Textual resize probe", id="body")
+        yield BottomStatusBar(VIEW, id="bottom-status")
+
+    def get_theme_variable_defaults(self) -> dict[str, str]:
+        return {
+            "talaria-status-background": "#010203",
+            "talaria-status-text": "#111213",
+            "talaria-status-muted": "#212223",
+            "talaria-status-separator": "#313233",
+            "talaria-status-success": "#41A243",
+            "talaria-status-warning": "#B18223",
+            "talaria-status-error": "#C14243",
+            "talaria-status-attention": "#5182D3",
+        }
+
+    def on_resize(self, event: Resize) -> None:
+        if event.size.width == 19:
+            self.set_timer(0.20, self.report_narrow_form)
+
+    def report_narrow_form(self) -> None:
+        bar = self.query_one("#bottom-status", BottomStatusBar)
+        rendered = bar.render()
+        os.write(1, f"\r\nTEXTUAL-NARROW:{rendered.plain}:{bar.size.width}\r\n".encode())
+
+
+ResizeProbe().run()
+"""
+
 
 def _complete_gate_report(
     *,
@@ -92,7 +155,8 @@ raise SystemExit({exit_code})
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
-def test_real_pty_preserves_ansi_keys_and_resize(tmp_path: Path) -> None:
+def test_real_pty_preserves_ansi_keys_and_kernel_resize(tmp_path: Path) -> None:
+    """The low-level probe proves TIOCGWINSZ changes, not Textual reflow."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     environment = isolated_environment(
@@ -131,6 +195,44 @@ def test_real_pty_preserves_ansi_keys_and_resize(tmp_path: Path) -> None:
     assert result.columns == 80
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
+def test_real_textual_child_observes_pty_resize_and_renders_narrow_form(tmp_path: Path) -> None:
+    """The environment must not hide a real pseudo-terminal resize from Textual."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    environment = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=36,
+        columns=144,
+    )
+    result = run_pty(
+        executable=Path(sys.executable),
+        argv=[sys.executable, "-c", _TEXTUAL_RESIZE_PROGRAM],
+        cwd=_REPO_ROOT,
+        environment=environment,
+        capture_path=tmp_path / "raw" / "textual-resize.ansi",
+        events=[
+            DriveEvent(1.50, "resize", (36, 19)),
+            DriveEvent(3.00, "key", "CTRL_Q"),
+        ],
+        expected_literals=["TEXTUAL-NARROW:[ok]:19"],
+        rows=36,
+        columns=144,
+        term="xterm-256color",
+        terminal_program="real Textual child through the acceptance pseudo-terminal",
+        timeout=5.0,
+    )
+
+    assert result.exit_code == 0
+    assert not result.timed_out
+    assert result.missing_literals == ()
+    assert "COLUMNS" not in environment
+    assert "LINES" not in environment
+    assert result.rows == 36
+    assert result.columns == 19
+
+
 def test_isolated_environment_makes_colour_mode_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -138,6 +240,8 @@ def test_isolated_environment_makes_colour_mode_explicit(
     config_dir.mkdir()
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setenv("FORCE_COLOR", "0")
+    monkeypatch.setenv("COLUMNS", "999")
+    monkeypatch.setenv("LINES", "999")
 
     colour = isolated_environment(
         config_dir=config_dir,
@@ -155,6 +259,8 @@ def test_isolated_environment_makes_colour_mode_explicit(
 
     assert "NO_COLOR" not in colour
     assert "FORCE_COLOR" not in colour
+    assert "COLUMNS" not in colour
+    assert "LINES" not in colour
     assert colour["COLORTERM"] == "truecolor"
     assert monochrome["NO_COLOR"] == "1"
     assert "COLORTERM" not in monochrome

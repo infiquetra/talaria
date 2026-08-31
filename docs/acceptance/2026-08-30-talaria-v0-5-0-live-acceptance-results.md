@@ -1,17 +1,16 @@
 # Talaria v0.5.0 real-terminal acceptance evidence
 
 This Talaria repository document is the issue #110 evidence record for the exact installed v0.5.0
-candidate. The current T1 evidence is a targeted rerun of five repaired or disputed items using an
-independently installed wheel and an isolated scratch configuration directory. The earlier complete
-T1 sweep and the T2 sweep bind to the preceding candidate and remain preserved as stale evidence.
+candidate. Both testers drove the final installed wheel through isolated scratch configuration
+directories. A subsequent driver audit reran every verdict that depended on a pseudo-terminal width
+change after removing environment variables that had prevented Textual from observing those changes.
 
 ## Status
 
-**NOT SATISFIED.** T1 installed candidate commit
-`17ce4eda8e82a18b5d47766c0c279aa9751dce9f` and reran only items 2, 23, 24, 25, and 27. Items 2, 25,
-and 27 passed, item 23 failed, and item 24 remains blocked. The exact install probe also passed. The
-other T1 items were deliberately not rerun, and every T2 receipt still binds to candidate `d9c82443`.
-Those prior T1 and T2 results therefore cannot satisfy the current candidate.
+**BLOCKED.** The active item receipts contain 33 passes, no failures, and one accepted block. Item 24
+cannot reach the keyless, possibly-duplicate approval state through either the live gateway or the
+shipped replay contract without simulating acceptance. Both exact install probes passed, and every
+active receipt binds to final candidate commit `0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398`.
 
 The source checklist is the **Visual acceptance checklist** in
 `docs/design/2026-08-30-talaria-v0-5-0-visual-spec.md`. The machine-readable owner registry is
@@ -72,7 +71,7 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | 11 | Visual Studio Code import | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
 | 12 | All status segments | — | `PASS` | T2 shows all seven ordered segments without wrapping. |
 | 13 | Status configuration | — | `PASS` | T2 proves reorder, omission, and unknown-segment notice after restart. |
-| 14 | Status responsive sequence | — | `FAIL` | T2 shows resize-driven status repainting is broken: the full cwd-first row remains and clips instead of compacting or dropping segments through 19 columns. |
+| 14 | Status responsive sequence | — | `PASS` | The corrected T2 drive traverses every breakpoint and reaches the connection-only `[ok]` form at 19 columns. |
 | 15 | Status failure visibility | `NO RECEIPT` | `PASS` | T2 shows malformed-value fallbacks visibly and renders the bounded command's literal output. |
 | 16 | Inspector dock and resize | — | `PASS` | T2 proves four-column actions, limits, and retained data. |
 | 17 | Inspector content and empty states | — | `PASS` | Current populated and empty-state captures show all four sections accurately, with no synthetic `needs-you unavailable` task. |
@@ -85,8 +84,8 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | 24 | Agent and queue non-color states | `BLOCKED` | — | The available gateway always anchors approvals with a request identifier, so the possibly-duplicate state is unreachable without simulation. |
 | 25 | Transcript identity without color | `PASS` | — | All six textual identities appear on consecutive monochrome rows without spacer rows. |
 | 26 | Reduced motion | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 27 | Stable unpinned scroll | `PASS` | — | A real wheel event unpins at `READING-ANCHOR-007`; later frames and a resize preserve that top anchor. |
-| 28 | Stable pinned scroll | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 27 | Stable unpinned scroll | `PASS` | — | The corrected drive preserves the unpinned reading region across later frames and real 132-to-119-to-132-column changes. |
+| 28 | Stable pinned scroll | `PASS` | — | The corrected drive keeps `NEWEST-BOTTOM-ENTRY` visible across later frames and real 132-to-119-to-132-column changes. |
 | 29 | Wide screenshot | — | `PASS` | T2 provides the required 132-by-36 evidence. |
 | 30 | Narrow screenshot | — | `PASS` | T2 provides the required 78-by-36 evidence. |
 | 31 | Malformed Visual Studio Code import | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
@@ -100,25 +99,39 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 ## Evidence custody
 
 Reviewed raw captures, screenshots, exact install receipts, pseudo-terminal results, and item
-receipts are committed under `docs/acceptance/v0.5.0/evidence/`. The T1 screenshots were rendered
+receipts are committed under `docs/acceptance/v0.5.0/evidence/`. The screenshots were rendered
 directly from raw pseudo-terminal bytes with Pyte and Pillow; no Computer Use or graphical user
-interface automation was used. The T1 publication review found no scratch credential, token-query
-parameter, bearer header, email address, or operator home path. All five current T1 item receipts
-passed file-hash and candidate validation. The preceding complete T1 sweep is retained under
-`docs/acceptance/v0.5.0/evidence/t1/superseded/d9c82443/`.
+interface automation was used. The publication review found no scratch credential, token-query
+parameter, bearer header, email address, or operator home path. Superseded evidence remains in each
+tester's `superseded/` directory and is excluded from the generated manifest.
+
+## Resize-driver correction audit
+
+The original shared driver exported `COLUMNS=144` and `LINES=36`. Textual's terminal-size lookup
+therefore ignored later pseudo-terminal resize events even though the kernel window size changed.
+The corrected driver leaves both variables unset and sets the initial slave pseudo-terminal size
+before launching the child.
+
+Seventeen event scripts contain a resize action. Items 14, 18, 20, 27, 28, 29, and 30 depended on a
+width transition, so their active captures and receipts were replaced after corrected reruns; all
+seven pass. Items 3, 12, 13, 17, and 32 use a same-size setup event, and their verdicts do not depend
+on a transition. Items 16, 19, and 21 exercise inspector-width controls or diff content at an already
+sufficient initial width rather than a terminal breakpoint. Item 23's live verdict is based on the
+five observed text-and-symbol connection states, all present at the initial width. Item 24 remains
+blocked by the unavailable protocol state, independent of geometry. The invalid captures for the
+seven rerun items are retained under `superseded/driver-pinned-dimensions/`.
 
 ## Repository checks
 
 - `uv run ruff check .`: passed.
 - `uv run mypy`: passed with no issues.
-- `/opt/homebrew/bin/uv run pytest`: passed, 2,411 tests passed and 7 skipped in 592.13 seconds.
+- `/opt/homebrew/bin/uv run pytest`: passed, 2,413 tests passed and 7 skipped in 597.31 seconds.
 - `uv run bandit -r talaria -q`: passed; Bandit emitted only its existing comment-token warnings.
 - `git diff --check`: passed after the evidence update.
 
 ## Final verdict
 
-**NOT SATISFIED.** The current targeted T1 rerun proves three repaired items and the live primary
-route, but item 23 still fails and item 24 remains unreachable through the real gateway contract.
-The fourteen deliberately omitted T1 items and all T2 items also lack current-candidate evidence.
-The generated cells exclude every superseded verdict rather than allowing an older candidate to
-satisfy this revision.
+**BLOCKED.** All 33 reachable active item receipts pass. Item 24 remains honestly blocked because the
+available gateway always anchors approvals with a request identifier and replay cannot encode the
+keyless admin-polled state. The generated cells exclude every superseded verdict rather than letting
+an invalid or older capture satisfy the final candidate.
