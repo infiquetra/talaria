@@ -220,16 +220,23 @@ def test_gate_probe_records_known_v040_exceedance_at_designed_scale(tmp_path: Pa
     assert result["argv"][2:4] == ["--deltas", "50000"]
     assert result["exit_code"] == 1
     assert result["report_verdict"] == "fail"
-    assert result["accepted_failed_checks"] == [
+    assert result["decision_verdict"] == "pass"
+    assert result["excluded_failed_checks"] == [
         "workload_latency_growing-one-column-table"
     ]
     assert comparison == {
         "check": "workload_latency_growing-one-column-table",
-        "measured_ms": 54.45,
+        "current_sample_ms": 54.45,
         "threshold_ms": 50.0,
-        "v0.4_baseline_ms": 61.988,
-        "delta_from_v0.4_ms": -7.538,
-        "direction_from_v0.4": "improved",
+        "v0.4_sample_ms": 61.988,
+        "block_markdown_reference_ms": 44.0,
+        "v0.5_samples_ms": [54.45, 60.229, 68.861, 54.45],
+        "v0.5_spread_ms": 14.411,
+        "excluded_from_decision": True,
+        "reason": (
+            "known pre-existing exceedance excluded because its run-to-run variance on the "
+            "unchanged v0.5 candidate exceeds the difference it would be used to detect"
+        ),
     }
 
 
@@ -251,20 +258,25 @@ def test_gate_probe_refuses_any_other_failed_check(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the acceptance subprocess is POSIX-only")
-def test_gate_probe_refuses_latency_worse_than_v040_baseline(tmp_path: Path) -> None:
+def test_gate_probe_records_noisy_latency_above_v040_sample(tmp_path: Path) -> None:
     gate_program = tmp_path / "gate-program"
     report = _complete_gate_report(measured_ms=62.0)
     _write_gate_program(gate_program, report, exit_code=1)
     receipt_dir = tmp_path / "receipts"
     receipt_dir.mkdir()
 
-    with pytest.raises(HarnessError, match="regressed from the v0.4 baseline"):
-        _probe_gate(
-            gate_program,
-            work_dir=tmp_path,
-            environment={},
-            receipt_dir=receipt_dir,
-        )
+    result = _probe_gate(
+        gate_program,
+        work_dir=tmp_path,
+        environment={},
+        receipt_dir=receipt_dir,
+    )
+
+    comparison = result["known_preexisting_exceedance"]
+    assert result["decision_verdict"] == "pass"
+    assert comparison["current_sample_ms"] == 62.0
+    assert comparison["v0.4_sample_ms"] == 61.988
+    assert comparison["v0.5_spread_ms"] == 14.411
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the acceptance subprocess is POSIX-only")
