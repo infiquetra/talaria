@@ -337,6 +337,7 @@ wheels = [
 name = "talaria"
 source = { editable = "." }
 dependencies = [
+    { name = "pygments" },
     { name = "textual" },
     { name = "websockets" },
 ]
@@ -352,6 +353,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "pygments", specifier = ">=2.20,<3" },
     { name = "textual", specifier = ">=8.2.8,<9" },
     { name = "websockets", specifier = ">=13,<16" },
 ]
