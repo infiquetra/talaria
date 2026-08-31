@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+from dataclasses import replace
 
 import pytest
 from rich.cells import cell_len
@@ -13,6 +14,8 @@ from textual.widgets import Static
 
 from talaria.domain.projection import StatusPayload
 from talaria.domain.queue import NeedsYouQueue
+from talaria.domain.session_list import decode_active_list
+from talaria.domain.state import apply_active_list
 from talaria.status.contract import StatusBarSettings, normalize_status_segments
 from talaria.status.local import LocalStatus
 from talaria.ui.status_bar import (
@@ -21,7 +24,7 @@ from talaria.ui.status_bar import (
     build_status_bar_view,
     render_status_bar,
 )
-from tests.ui.conftest import RecordingDispatcher, event, paused_app
+from tests.ui.conftest import RecordingDispatcher, event, live_app, paused_app
 
 
 def _screen_text(app: App[None]) -> str:
@@ -253,6 +256,30 @@ def test_every_connection_state_keeps_its_ascii_form_and_bar_semantic_token(
 
 
 @pytest.mark.asyncio
+async def test_live_reconnecting_transition_repaints_the_status_form_immediately() -> None:
+    """The transport callback must paint a transient reconnect before a
+    following dial state can replace it; the coalescing timer is too late.
+    """
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test(size=(180, 24)) as pilot:
+        app.note_connection_state("connected")
+        await app._render_tick()
+        await pilot.pause()
+        assert "[ok] connected" in app.bottom_status_bar.last_render.plain
+
+        app.note_connection_state("reconnecting")
+        await pilot.pause()
+
+        assert app.state.connection == "reconnecting"
+        assert "connection lost — reconnecting" in app.composer.notice
+        assert app.bottom_status_bar.view.connection == "reconnecting"
+        assert "[~] reconnecting" in app.bottom_status_bar.last_render.plain
+        assert "[~] reconnecting" in _screen_text(app)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
 async def test_connection_and_attention_use_only_bar_tokens_on_the_bar_background() -> None:
     app = StatusBarHarness(
         _view(), StatusBarSettings(segments=("task_progress", "connection"))
@@ -343,6 +370,45 @@ async def test_missing_context_and_model_facts_render_unknown_without_dispatchin
             "agent: ?│context: ?/? ?%│[x] disconnected"
         )
         assert dispatcher.operator_calls == []
+
+
+@pytest.mark.asyncio
+async def test_live_registry_model_replaces_unknown_after_the_first_render() -> None:
+    app, _controls = paused_app(
+        [],
+        status_bar_settings=StatusBarSettings(segments=("agent_model", "connection")),
+    )
+    app.state = replace(app.state, focused_session_id="live-primary")
+
+    async with app.run_test(size=(160, 36)) as pilot:
+        await pilot.pause()
+        assert app.bottom_status_bar.view.agent_model == ""
+        assert "agent: ?" in app.bottom_status_bar.last_render.plain
+
+        app.fleet = apply_active_list(
+            app.fleet,
+            decode_active_list(
+                {
+                    "sessions": [
+                        {
+                            "id": "live-primary",
+                            "status": "idle",
+                            "model": "muse-spark-1.2-contributor",
+                        }
+                    ]
+                }
+            ),
+            profile=app.fleet_profile,
+            at=1_785_000_001.0,
+            poll_epoch=1,
+        )
+        app._dirty = True
+        await app._render_tick()
+        await pilot.pause()
+
+        assert app.bottom_status_bar.view.agent_model == "muse-spark-1.2-contributor"
+        assert "agent: muse-spa…tributor" in app.bottom_status_bar.last_render.plain
+        assert "agent: ?" not in app.bottom_status_bar.last_render.plain
 
 
 def test_runtime_view_reuses_held_status_and_queue_facts() -> None:
