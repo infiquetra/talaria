@@ -45,14 +45,17 @@ class StatusRegion(Vertical):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, *, initial_marker: str = "", **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._rows: list[Static] = []
         self._seam_rows: list[Static] = []
         self._marker: Static | None = None
+        self._initial_marker = initial_marker
 
     def compose(self) -> ComposeResult:
-        self._marker = Static(literal_text(""), markup=False, classes="status--marker")
+        self._marker = Static(
+            literal_text(self._initial_marker), markup=False, classes="status--marker"
+        )
         yield self._marker
 
     @property
@@ -66,6 +69,12 @@ class StatusRegion(Vertical):
     @property
     def marker_text(self) -> str:
         return "" if self._marker is None else str(self._marker.content)
+
+    def show_configuration_notice(self, message: str) -> None:
+        """Keep a malformed optional status command visible without a runner."""
+        self._initial_marker = message
+        if self._marker is not None:
+            self._marker.update(literal_text(message))
 
     async def apply_seams(self, lines: Sequence[str]) -> None:
         """Render one connection's seam board (v0.4 U5: R9, R10, R12, R24).

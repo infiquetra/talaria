@@ -10,11 +10,36 @@ the terminal together produce a status command that can clear the screen.
 from __future__ import annotations
 
 import pytest
+from textual.app import App, ComposeResult
 
 from talaria.status.contract import TRUNCATION_MARKER
 from talaria.status.runner import StatusTickResult
 from talaria.ui.literal import defang
+from talaria.ui.status_region import StatusRegion
 from tests.ui.conftest import event, paused_app
+
+
+class _StatusRegionHarness(App[None]):
+    def __init__(self, initial_marker: str) -> None:
+        super().__init__()
+        self._initial_marker = initial_marker
+
+    def compose(self) -> ComposeResult:
+        yield StatusRegion(initial_marker=self._initial_marker, id="status")
+
+    @property
+    def status_region(self) -> StatusRegion:
+        return self.query_one("#status", StatusRegion)
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_command_notice_is_visible_without_a_status_runner() -> None:
+    notice = "status.command has invalid quoting; the status command is disabled"
+    app = _StatusRegionHarness(notice)
+
+    async with app.run_test(size=(100, 20)) as pilot:
+        await pilot.pause()
+        assert app.status_region.marker_text == notice
 
 
 @pytest.mark.asyncio

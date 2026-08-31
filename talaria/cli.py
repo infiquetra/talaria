@@ -208,7 +208,7 @@ def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
     from talaria.status.contract import parse_command
     from talaria.status.runner import StatusRunner
 
-    argv = parse_command(cfg.get("status", "command"))
+    argv, _notice = parse_command(cfg.get("status", "command"))
     if argv is None:
         return None
     allowlist = cfg.get("environment", "allowlist", default=[]) or []
