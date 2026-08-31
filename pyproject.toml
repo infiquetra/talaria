@@ -67,7 +67,7 @@ strict = true
 files = ["talaria", "tests", "scripts"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "scripts/acceptance"]
 # Strict mode, not auto: an async test without the marker should fail loudly
 # rather than be silently collected and skipped, which is the failure mode auto
 # mode is designed to hide.

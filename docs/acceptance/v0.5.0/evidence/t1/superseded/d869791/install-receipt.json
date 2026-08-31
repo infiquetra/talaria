@@ -21,7 +21,7 @@
     "branch": "orch/talaria-v0-5-0",
     "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
     "commit_short": "d86979127",
-    "integration_tree": "/Users/jefcox/workspace/infiquetra/orch-candidate",
+    "integration_tree": "<integration-tree>",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
     "wheel_path": "/private/tmp/talaria-v050-candidate-final/wheel/talaria-0.5.0-py3-none-any.whl",
     "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"

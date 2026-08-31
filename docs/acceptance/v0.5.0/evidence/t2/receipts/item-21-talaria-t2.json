@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
-    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/install-receipt.json",
-    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
-    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
+    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
+    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
   },
   "checklist_item": 21,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-21.ansi",
-    "capture_sha256": "863cdd7f82e9e5949ccfc735bcc6be62d578d75bbc7a3bdad668267ef888427f",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/receipts/item-21-pty.json",
-    "pty_result_sha256": "b7183a8529fb6f66c35a01b0b8b56fa82ded09d9a05680185ebd01d1b08ccdb6",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-21-screenshot-width.ansi",
+    "capture_sha256": "0c3661ca5ee866bc01f7bf91d1af76715416ce39416508a276324f24ca3d4a9d",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-21-screenshot-width-pty.json",
+    "pty_result_sha256": "8a0f6768bec9635484aecb90b3ca1f98447bf984b21e00d962f27f67881d3120",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-21.png",
-    "screenshot_sha256": "ec94bbea5b37e4f8be1d0f9f79fe190183598ca3b0294259e6140014337e8540"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-21.png",
+    "screenshot_sha256": "f30406653e10160858cf3baf05d5332e2e78afb909f0982999d82247d4884639"
   },
   "observations": [
-    "Hunk and file navigation wrap deterministically across three files and five hunks, the overlong line clips with bounded horizontal movement, and unbound e/a/r/d input does not change held data.",
-    "The command-palette capture at raw/item-21-palette.ansi offers only Open the session's read-only diff viewer for /diffs, while the viewer hint offers only navigation, mode, files, and close actions; no mutation action is offered."
+    "Hunk and file navigation wrap deterministically across three files and five hunks, the overlong line clips with bounded horizontal movement, and unbound mutation keys do not change held data.",
+    "The committed raw/item-21-palette.ansi capture offers only the read-only diff command; the viewer hint offers navigation, mode, files, and close actions with no mutation action."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "recorded_at": "2026-08-31T14:40:22+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -42,7 +42,7 @@
   },
   "terminal": {
     "columns": 112,
-    "program": "Terminal.app 2.14",
+    "program": "Headless POSIX pseudo-terminal",
     "rows": 36,
     "term": "xterm-256color"
   },
