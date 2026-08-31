@@ -17,6 +17,7 @@ import talaria.cli as cli_module
 from talaria import config as config_module
 from talaria.cli import main, parse_args, selection_from_args
 from talaria.recorder.command import RecordTarget
+from talaria.status.contract import StatusBarSettings
 from talaria.transport.credentials import LoopbackTokenProvider
 
 
@@ -205,6 +206,26 @@ def test_the_live_launcher_forwards_theme_config_and_save_targets(
     assert app._startup_notices == ()
 
 
+def test_the_live_launcher_forwards_normalized_status_bar_settings(
+    isolated_global_config_dir: Path,
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[status]\n"
+        'segments = ["connection", "cwd"]\n'
+        "cwd_max_columns = 36\n"
+        "git_branch_max_columns = 30\n"
+        "agent_model_max_columns = 40\n",
+        encoding="utf-8",
+    )
+
+    app, _ = cli_module.build_live_app(parse_args([]), config_module.load_config())
+
+    assert app.status_bar_settings.segments == ("connection", "cwd")
+    assert app.status_bar_settings.cwd_max_columns == 36
+    assert app.status_bar_settings.git_branch_max_columns == 30
+    assert app.status_bar_settings.agent_model_max_columns == 40
+
+
 def test_the_replay_launcher_forwards_theme_fallback_notices(
     isolated_global_config_dir: Path,
     tmp_path: Path,
@@ -243,6 +264,17 @@ def test_the_replay_launcher_forwards_theme_fallback_notices(
     assert "must be a string" in notices[0]
     assert captured["theme_config_dir"] == isolated_global_config_dir
     assert captured["launch_cwd"] == Path.cwd()
+    status_settings = captured["status_bar_settings"]
+    assert isinstance(status_settings, StatusBarSettings)
+    assert status_settings.segments == (
+        "cwd",
+        "git_branch",
+        "agent_model",
+        "context",
+        "task_progress",
+        "connection",
+        "version",
+    )
     assert captured["ran"] is True
 
 
@@ -333,9 +365,13 @@ def test_a_status_command_written_as_a_toml_array_does_not_stop_the_launch(
     app, _ = cli_module.build_live_app(parse_args([]), config_module.load_config())
 
     assert app.status_runner is None
-    # The positive half: the same config file is otherwise being read, so this
-    # is not passing because nothing was loaded.
-    assert config_module.load_config().get("status", "command") == ("sh", "-c", "date")
+    cfg = config_module.load_config()
+    assert cfg.get("status", "command") is None
+    assert any(
+        "status.command" in notice and "disabled" in notice
+        for notice in cfg.notices
+    )
+    assert any("status.command" in notice for notice in app._status_notices)
 
 
 def test_the_live_launcher_can_record_the_session_it_drives(

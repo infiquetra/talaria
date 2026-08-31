@@ -41,6 +41,14 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+from talaria.status.contract import (
+    DEFAULT_AGENT_MODEL_MAX_COLUMNS,
+    DEFAULT_CWD_MAX_COLUMNS,
+    DEFAULT_GIT_BRANCH_MAX_COLUMNS,
+    DEFAULT_STATUS_SEGMENTS,
+    normalize_status_settings,
+    parse_command,
+)
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
 
 
@@ -59,7 +67,14 @@ class ConfigError(Exception):
 #: to, so a default of ``None`` means "string-valued, no default".
 DEFAULTS: dict[str, Any] = {
     "theme": {"name": REFINED_DEFAULT.slug},
-    "status": {"command": None, "interval_seconds": 5},
+    "status": {
+        "command": None,
+        "interval_seconds": 5,
+        "segments": list(DEFAULT_STATUS_SEGMENTS),
+        "cwd_max_columns": DEFAULT_CWD_MAX_COLUMNS,
+        "git_branch_max_columns": DEFAULT_GIT_BRANCH_MAX_COLUMNS,
+        "agent_model_max_columns": DEFAULT_AGENT_MODEL_MAX_COLUMNS,
+    },
     "environment": {"allowlist": []},
     "composer": {"paste_collapse_lines": 6, "paste_collapse_bytes": 512},
     # U4's profile endpoints: a name-to-gateway-URL map the operator writes.
@@ -178,7 +193,16 @@ def _env_overrides() -> dict[str, Any]:
         if raw is None:
             continue
         default = DEFAULTS.get(section, {}).get(key)
-        overrides.setdefault(section, {})[key] = _coerce_env_value(env_name, raw, default)
+        try:
+            value = _coerce_env_value(env_name, raw, default)
+        except ConfigError:
+            if (section, key) != ("status", "interval_seconds"):
+                raise
+            # This setting has a visible fallback contract. Preserve the
+            # winning malformed value until the one post-precedence status
+            # normalization pass can name the key and apply that fallback.
+            value = raw
+        overrides.setdefault(section, {})[key] = value
     return overrides
 
 
@@ -255,6 +279,26 @@ def _normalize_config(merged: dict[str, Any]) -> tuple[dict[str, Any], tuple[str
             f"theme {requested!r} is not available; using Refined Default "
             f"({REFINED_DEFAULT.slug})"
         )
+
+    status_source = merged.get("status")
+    normalized_status = normalize_status_settings(status_source)
+    status = dict(status_source) if isinstance(status_source, Mapping) else {}
+    command = status.get("command")
+    _argv, command_notice = parse_command(command)
+    status.update(
+        {
+            "command": None if command_notice is not None else command,
+            "interval_seconds": normalized_status.interval_seconds,
+            "segments": list(normalized_status.bar.segments),
+            "cwd_max_columns": normalized_status.bar.cwd_max_columns,
+            "git_branch_max_columns": normalized_status.bar.git_branch_max_columns,
+            "agent_model_max_columns": normalized_status.bar.agent_model_max_columns,
+        }
+    )
+    merged["status"] = status
+    notices.extend(normalized_status.notices)
+    if command_notice is not None:
+        notices.append(command_notice)
     return merged, tuple(notices)
 
 
