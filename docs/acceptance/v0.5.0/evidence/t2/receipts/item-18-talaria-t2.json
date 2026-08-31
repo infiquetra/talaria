@@ -13,19 +13,19 @@
   },
   "checklist_item": 18,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-18.ansi",
-    "capture_sha256": "c886c9d0726fa04463b4046bf3b514071bfee98de88b273b8b99ed4c43525536",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-18-pty.json",
-    "pty_result_sha256": "e5fbdf1b40ab693a8a101c6390c3b3f47be366da03f91a8f75ab068c10257c8e",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-18-resize-fix.ansi",
+    "capture_sha256": "741128e922d5c9c9d5f0dd2d7e8a26c5b47cd0e3232886b7c5a056daf13d1575",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-18-resize-fix-pty.json",
+    "pty_result_sha256": "0784e6059b80826944b78e05c324fb3e5e5fc69810f9e02effc1afc4930b3606",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18.png",
-    "screenshot_sha256": "166336cae95a30cf9fb17c1869a0298c4f556ff31270316639cac17312139062"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18-resize-fix.png",
+    "screenshot_sha256": "9a3f7a01d2fb6d4fb185161ef59bed8453ce1220a7dd6c473557f74dd940e46d"
   },
   "observations": [
-    "Dock, overlay, manual preference, reflow, and fresh-process geometry reset behave as specified."
+    "The corrected drive emitted both Inspector [docked 36] and Inspector [overlay] across real 120-to-119-column transitions, restored the manual preference at 120, and a supplemental 119-column capture visibly confirms overlay without transcript reflow."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T20:28:39+00:00",
+  "recorded_at": "2026-08-31T21:53:04+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +41,7 @@
   },
   "terminal": {
     "columns": 120,
-    "program": "POSIX pseudo-terminal capture",
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

@@ -13,19 +13,19 @@
   },
   "checklist_item": 14,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-14.ansi",
-    "capture_sha256": "0a8eb1c3a019e89eca80278ca611c34a8399fd3db1c8e7e2cffc63fe65fe25a3",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-14-pty.json",
-    "pty_result_sha256": "ec700a69dd3ccb0c3c1575716c119d0822f690660ed878039cfbc9060f007deb",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-14-resize-fix.ansi",
+    "capture_sha256": "e3d82cec0f935ac0a9463b8208eca3b95e6eb7c5c173c90e4522b8f9dc62d8b2",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-14-resize-fix-pty.json",
+    "pty_result_sha256": "1949e0d3a94e490250d71473b07a2e7b32f86d933119a1560efce16c79726086",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14.png",
-    "screenshot_sha256": "c0baeb4f3df85971fb36a9772bf2360b73cb3f409233baf85eabfcb9c710ae4f"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-resize-fix.png",
+    "screenshot_sha256": "44f26f8259651f76f0a0a56716131f363fa3626852cce0e3a825e79606fa8f39"
   },
   "observations": [
-    "Resizing from 144 through the specified sequence leaves the full cwd-first bar clipped; at 19 columns it shows cwd rather than the required connection-only form. Eighteen independent resize drives reproduce it."
+    "With COLUMNS and LINES unpinned, the real child reflowed at every breakpoint from 144 through 19 columns; the final 19-column frame contains only the connection [ok] form and exactly fifteen background cells."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T20:28:38+00:00",
+  "recorded_at": "2026-08-31T21:53:04+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,11 +41,11 @@
   },
   "terminal": {
     "columns": 19,
-    "program": "POSIX pseudo-terminal capture",
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },
   "tester": "talaria-t2",
   "title": "Status responsive sequence",
-  "verdict": "fail"
+  "verdict": "pass"
 }

@@ -13,19 +13,19 @@
   },
   "checklist_item": 27,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27-resize-fix.ansi",
-    "capture_sha256": "61ae0c124b4361028b1cfcfe2c230c2302fbcb87df86344e144c9bff439d07c4",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-resize-fix-pty.json",
-    "pty_result_sha256": "d1ce39eae2fe1ba5fbf421b78b4c35190e60403233212d0a6ebbab50a2d68760",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27-final2.ansi",
+    "capture_sha256": "9105959faf64ff5ee495e6e1933330277420885cd921f8a2d2c15d09338b6d07",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-final2-pty.json",
+    "pty_result_sha256": "e441f746ba6668db0a3258af7400b8e122a44d5a49afcc342fde2e7c697c417d",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-resize-fix.png",
-    "screenshot_sha256": "641c271ff0758112f685477648b313ac54c91cb1051fa0a4a946c16428000edd"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-final2.png",
+    "screenshot_sha256": "9f84e09b1a48983fecee3dd546f11f36fdf89ded8752987ab3b6b31e94ecf818"
   },
   "observations": [
-    "A real wheel event unpinned the long transcript at the reading anchor; later replay frames and actual 132-to-119-to-132-column resizes preserved the reading region rather than jumping to the newest output."
+    "A real wheel event unpinned the long transcript at the reading anchor; later replay frames and a mid-drive resize preserved the reading region rather than jumping to the newest output."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T21:53:05+00:00",
+  "recorded_at": "2026-08-31T20:44:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +41,7 @@
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "program": "Python pty.fork on macOS",
     "rows": 36,
     "term": "xterm-256color"
   },

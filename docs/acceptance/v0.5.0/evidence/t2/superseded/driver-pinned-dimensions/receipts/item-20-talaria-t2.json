@@ -13,19 +13,19 @@
   },
   "checklist_item": 20,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-20-refusal-resize-fix.ansi",
-    "capture_sha256": "fa3e4236ae45eaad5fd624dc1a3bb17c2c54b0cddad920c8ab29e1330d3c9eba",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-20-refusal-resize-fix-pty.json",
-    "pty_result_sha256": "4a749cc0e00f19d4a17df87881d04326901cd10b4941af054514f498a2022ac1",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-20-screenshot.ansi",
+    "capture_sha256": "5de8091b4a268c83a1fcb0bb439f351399a2655244deba18a4955ebf4dad93e9",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-20-screenshot-pty.json",
+    "pty_result_sha256": "ae5f44694549ca72aced451ef2b045f7b8071ae91e60437b205ec46e3adae046",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-refusal-resize-fix.png",
-    "screenshot_sha256": "5162b8239b3fecc0696347a88d495f57bf11643457bb7bd20e4cc279bb167451"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-screenshot.png",
+    "screenshot_sha256": "f1404bb420456e33fad6709631663916601122d32ef40498a110d948fefb6175"
   },
   "observations": [
-    "At a real 111-column terminal width the viewer remained unified and visibly reported side-by-side needs 112 columns; the full drive also crossed 112 and 111 repeatedly without losing diff context."
+    "The viewer falls back to unified below 112 columns and visibly refuses side-by-side at 111 while preserving context."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T21:53:04+00:00",
+  "recorded_at": "2026-08-31T20:28:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -40,8 +40,8 @@
     "profile": "deterministic-replay"
   },
   "terminal": {
-    "columns": 111,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "columns": 112,
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },

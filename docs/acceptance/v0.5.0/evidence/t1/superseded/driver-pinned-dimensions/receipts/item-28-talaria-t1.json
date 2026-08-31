@@ -11,21 +11,21 @@
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
     "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
-  "checklist_item": 27,
+  "checklist_item": 28,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27-resize-fix.ansi",
-    "capture_sha256": "61ae0c124b4361028b1cfcfe2c230c2302fbcb87df86344e144c9bff439d07c4",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-resize-fix-pty.json",
-    "pty_result_sha256": "d1ce39eae2fe1ba5fbf421b78b4c35190e60403233212d0a6ebbab50a2d68760",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-28-final2.ansi",
+    "capture_sha256": "d28fd24eac455b42ade02b2292c91be292c4111b6215a8857b85709fd636eb48",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-28-final2-pty.json",
+    "pty_result_sha256": "27516d62a81dd1ef84b878d790cfba920b0e2fa4ee4cbf114b5d71fa1e3ace49",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-resize-fix.png",
-    "screenshot_sha256": "641c271ff0758112f685477648b313ac54c91cb1051fa0a4a946c16428000edd"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-28-final2.png",
+    "screenshot_sha256": "c4e29a48b044609c82702a2b0a2ddd71849b71744933c74c23701594ae74e577"
   },
   "observations": [
-    "A real wheel event unpinned the long transcript at the reading anchor; later replay frames and actual 132-to-119-to-132-column resizes preserved the reading region rather than jumping to the newest output."
+    "After returning to follow mode, the long transcript stayed pinned to NEWEST-BOTTOM-ENTRY across later output and the mid-drive resize."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T21:53:05+00:00",
+  "recorded_at": "2026-08-31T20:44:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,15 +37,15 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "isolated-unpinned-scroll"
+    "profile": "isolated-pinned-scroll"
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "program": "Python pty.fork on macOS",
     "rows": 36,
     "term": "xterm-256color"
   },
   "tester": "talaria-t1",
-  "title": "Stable unpinned scroll",
+  "title": "Stable pinned scroll",
   "verdict": "pass"
 }
