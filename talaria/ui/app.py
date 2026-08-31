@@ -34,6 +34,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from pathlib import Path
 from time import time as _wall_clock
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
@@ -45,6 +46,7 @@ from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Static
 
+from talaria.config import ConfigError, ThemeSaveScope, save_theme
 from talaria.domain.commands import (
     CATALOG_METHOD,
     DISPATCH_METHOD,
@@ -235,6 +237,7 @@ from talaria.ui.prompts import (
     respond_params,
 )
 from talaria.ui.status_region import StatusRegion
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY, DEFAULT_THEME_SLUG, ThemeRegistry
 from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptPane
 
 #: KTD14's coalescing boundary. Deltas accumulate in the domain transcript and
@@ -1165,8 +1168,25 @@ class TalariaApp(App[None]):
         call_timeout: float | None = 30.0,
         paste_threshold: PasteThreshold | None = None,
         startup: StartupSelection | None = None,
+        theme_name: object = DEFAULT_THEME_SLUG,
+        theme_registry: ThemeRegistry | None = None,
+        startup_notices: tuple[str, ...] = (),
+        theme_config_dir: Path | None = None,
+        launch_cwd: Path | None = None,
     ) -> None:
         super().__init__()
+        self.theme_registry = theme_registry or BUILTIN_THEME_REGISTRY
+        resolved_theme = self.theme_registry.resolve(theme_name)
+        self.theme_registry.register(self)
+        self.configured_theme_slug = resolved_theme.slug
+        self.session_theme_slug: str | None = None
+        self.theme_config_dir = theme_config_dir
+        self.launch_cwd = launch_cwd if launch_cwd is not None else Path.cwd()
+        self._startup_notices = (*startup_notices, *resolved_theme.notices)
+        # Registration, selection, and notices are all resolved before mount,
+        # so the first frame cannot flash Textual's stock theme or hide a
+        # configured fallback until a later render tick.
+        self.theme = resolved_theme.slug
         self.source = source
         self.mode: RunMode = mode
         self.controls = controls if controls is not None else ReplayControls()
@@ -1283,6 +1303,10 @@ class TalariaApp(App[None]):
         self._fleet = FleetState(
             focused=SessionState(), focused_profile=current_profile or DEFAULT_PROFILE
         )
+        for notice in self._startup_notices:
+            self.state = record_local_note(
+                self.state, notice, at=self.state.last_observed_at
+            )
         #: The poll epoch the two listing sweeps share. The dual-listing
         #: retirement rule only fires when ``session.list`` and
         #: ``session.active_list`` agree on an epoch, so both sweeps of one
@@ -3731,6 +3755,26 @@ class TalariaApp(App[None]):
     async def action_toggle_palette(self) -> None:
         await self.palette.toggle()
 
+    async def open_theme_picker(self) -> None:
+        """Open theme mode at the currently applied session selection."""
+        await self.palette.open_theme_picker(
+            self.theme_registry.specs,
+            current_slug=self.theme,
+            session_slug=self.session_theme_slug,
+        )
+
+    def on_palette_region_theme_selected(
+        self, message: PaletteRegion.ThemeSelected
+    ) -> None:
+        """Keep an accepted picker choice in memory for this process only."""
+        self.session_theme_slug = message.slug
+
+    def on_palette_region_theme_cancelled(
+        self, message: PaletteRegion.ThemeCancelled
+    ) -> None:
+        """Restore the exact session selection captured when theme mode opened."""
+        self.session_theme_slug = message.session_slug
+
     # ── U2: the model picker ──────────────────────────────────────────────
 
     async def action_toggle_picker(self) -> None:
@@ -4852,7 +4896,7 @@ class TalariaApp(App[None]):
         await palette.apply(self.catalog)
 
     def perform_local_command(self, invocation: LocalInvocation) -> bool:
-        """Act on one of PC6's four, or U2's fifth, ``/models``.
+        """Act on one command from Talaria's closed local command table.
 
         Returns whether the line was dispatched and should enter history.
         Refused submissions (pacing controls in live mode, malformed rate)
@@ -4912,6 +4956,9 @@ class TalariaApp(App[None]):
             self.composer.clear()
             self._spawn_live(self._toggle_agents_and_discard())
             return True
+        if command.action == "theme":
+            self._perform_theme(invocation.argument)
+            return True
         if command.action == "pause":
             self.controls.pause()
         elif command.action == "resume":
@@ -4929,6 +4976,42 @@ class TalariaApp(App[None]):
         self.composer.clear()
         self._notice(self._pacing_notice())
         return True
+
+    def _perform_theme(self, argument: str) -> None:
+        """Open theme browsing or explicitly persist the current selection."""
+        self.composer.clear()
+        words = argument.strip().lower().split()
+        if not words:
+            self._spawn_live(self.open_theme_picker())
+            return
+        if words[0] != "save" or len(words) > 2:
+            self._notice(
+                f"/theme {argument.strip()!r} is not understood — "
+                "try /theme, /theme save, or /theme save repository"
+            )
+            return
+        scope: ThemeSaveScope = "user"
+        if len(words) == 2:
+            if words[1] not in ("user", "repository"):
+                self._notice(
+                    f"/theme save {words[1]!r} is not understood — "
+                    "choose user or repository"
+                )
+                return
+            scope = "repository" if words[1] == "repository" else "user"
+
+        selected = self.session_theme_slug or self.configured_theme_slug
+        try:
+            path = save_theme(
+                selected,
+                scope,
+                config_dir=self.theme_config_dir,
+                cwd=self.launch_cwd,
+            )
+        except ConfigError as exc:
+            self._notice(f"theme was not saved — {exc}")
+            return
+        self._notice(f"saved theme {selected!r} to the {scope} config at {path}")
 
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.
