@@ -4,15 +4,42 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Final, Protocol
 
 from textual.theme import Theme
 
-from talaria.themes import THEME_TOKENS, ThemeSpec
+from talaria.config import atomic_replace_bytes, global_config_dir
+from talaria.themes import THEME_TOKENS, ThemeSpec, theme_fallback_notice
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
+from talaria.themes.storage import (
+    StoredThemeError,
+    load_user_theme_specs,
+    serialize_user_theme,
+)
 
 DEFAULT_THEME_SLUG: Final[str] = REFINED_DEFAULT.slug
+
+
+def relative_luminance(color: str) -> float:
+    """Return WCAG 2.2 relative luminance for one opaque ``#RRGGBB`` colour."""
+    channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in channels
+    ]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast_ratio(first: str, second: str) -> float:
+    """Measure the WCAG 2.2 contrast ratio between two opaque colours."""
+    lighter, darker = sorted(
+        (relative_luminance(first), relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 class ThemeRegistrar(Protocol):
@@ -125,17 +152,11 @@ class ThemeRegistry:
         notices: list[str] = []
         if not isinstance(requested, str):
             spec = self.default
-            notices.append(
-                "theme.name must be a string; using Refined Default "
-                f"({self._default_slug})"
-            )
+            notices.append(theme_fallback_notice(requested, self._default_slug))
         else:
             spec = self._by_slug.get(requested, self.default)
             if spec is self.default and requested != self._default_slug:
-                notices.append(
-                    f"theme {requested!r} is not available; using Refined Default "
-                    f"({self._default_slug})"
-                )
+                notices.append(theme_fallback_notice(requested, self._default_slug))
 
         filled = tuple(token for token in THEME_TOKENS if token not in spec.tokens)
         tokens = {
@@ -191,10 +212,41 @@ class ThemeRegistry:
 
 BUILTIN_THEME_REGISTRY = ThemeRegistry(BUILTIN_THEMES)
 
+
+def user_theme_path(slug: str, *, config_dir: Path | None = None) -> Path:
+    """Return the user-theme target for an already validated theme slug."""
+    try:
+        ThemeSpec(slug=slug, name=slug, dark=False, tokens={})
+    except ValueError as exc:
+        raise StoredThemeError(str(exc)) from exc
+    root = config_dir if config_dir is not None else global_config_dir()
+    return root / "themes" / f"{slug}.json"
+
+
+def write_user_theme(spec: ThemeSpec, *, config_dir: Path | None = None) -> Path:
+    """Atomically create or replace one complete user theme."""
+    path = user_theme_path(spec.slug, config_dir=config_dir)
+    atomic_replace_bytes(path, serialize_user_theme(spec))
+    return path
+
+
+def theme_registry_for_config(*, config_dir: Path | None = None) -> ThemeRegistry:
+    """Build the restart-scoped registry from built-ins and stored user themes."""
+    root = config_dir if config_dir is not None else global_config_dir()
+    specs, _notices = load_user_theme_specs(config_dir=root)
+    return ThemeRegistry((*BUILTIN_THEMES, *specs))
+
 __all__ = [
     "BUILTIN_THEME_REGISTRY",
     "DEFAULT_THEME_SLUG",
     "ResolvedTheme",
+    "StoredThemeError",
     "ThemeRegistry",
+    "contrast_ratio",
+    "relative_luminance",
+    "serialize_user_theme",
+    "theme_registry_for_config",
     "textual_variable_name",
+    "user_theme_path",
+    "write_user_theme",
 ]

@@ -1,0 +1,107 @@
+{
+  "artifact": {
+    "direct_url": {
+      "archive_info": {
+        "hash": "sha256=a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126",
+        "hashes": {
+          "sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+        }
+      },
+      "url": "file:///private/tmp/talaria-110-repair.VrtBF2/candidate/wheel/talaria-0.5.0-py3-none-any.whl"
+    },
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
+    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "installed_file_count": 145,
+    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "package_file": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages/talaria/__init__.py",
+    "version": "0.5.0"
+  },
+  "candidate": {
+    "branch": "acceptance-reviewed-122",
+    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+    "commit_short": "122bd918e",
+    "integration_tree": "<integration-tree>",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_path": "/private/tmp/talaria-110-repair.VrtBF2/candidate/wheel/talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+  },
+  "config_dir": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/config",
+  "installed_at": "2026-08-31T14:12:57+00:00",
+  "probes": {
+    "bare_launch": {
+      "argv": [
+        "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria"
+      ],
+      "capture": {
+        "bytes": 255,
+        "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/raw/install-bare-launch.ansi",
+        "sha256": "13bb6d4d9761030ced3dfff5bb5f7772823f564409ac7b6f971a8d64f7e14783"
+      },
+      "columns": 132,
+      "duration_seconds": 1.069207,
+      "exit_code": 2,
+      "expected_literals": [],
+      "missing_literals": [],
+      "probe_note": "Fresh isolated config: reaching either the credential prompt or the interface is valid; the scripted ctrl+d/ctrl+q exits the reached surface.",
+      "rows": 36,
+      "term": "xterm-256color",
+      "terminal_program": "Python pty.fork install probe",
+      "timed_out": false
+    },
+    "gate": {
+      "argv": [
+        "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
+        "gate",
+        "--deltas",
+        "50000",
+        "--json",
+        "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/receipts/install-gate.json"
+      ],
+      "decision_verdict": "pass",
+      "excluded_failed_checks": [
+        "workload_latency_growing-one-column-table"
+      ],
+      "exit_code": 1,
+      "json_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/receipts/install-gate.json",
+      "json_sha256": "ebce183ccfc24e6adf6e23c4ea8ae22e943e49bf25a78467d82255012c80ec96",
+      "known_preexisting_exceedance": {
+        "block_markdown_reference_ms": 44.0,
+        "check": "workload_latency_growing-one-column-table",
+        "current_sample_ms": 80.208,
+        "excluded_from_decision": true,
+        "reason": "known pre-existing exceedance excluded because its run-to-run variance on the unchanged v0.5 candidate exceeds the difference it would be used to detect",
+        "threshold_ms": 50.0,
+        "v0.4_sample_ms": 61.988,
+        "v0.5_samples_ms": [
+          54.45,
+          60.229,
+          68.861,
+          80.208
+        ],
+        "v0.5_spread_ms": 25.758
+      },
+      "report_verdict": "fail",
+      "stderr_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/receipts/install-gate.stderr.log",
+      "stdout_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/receipts/install-gate.stdout.log"
+    },
+    "version": {
+      "argv": [
+        "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "talaria 0.5.0"
+    }
+  },
+  "schema_version": "talaria-v0.5.0-install-v1",
+  "scratch_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8",
+  "terminal": {
+    "columns": 132,
+    "program": "POSIX pseudo-terminal",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "venv": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv"
+}

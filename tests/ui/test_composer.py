@@ -59,6 +59,42 @@ async def test_multi_line_entry_and_the_bindings_are_discoverable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_f7_selects_the_full_focused_composer_document() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test() as pilot:
+        text_area = app.composer.text_area
+        app.composer.text = "first line\nsecond line"
+        text_area.focus()
+
+        await pilot.press("f7")
+        await pilot.pause()
+
+        assert text_area.selected_text == "first line\nsecond line"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_f6_and_f7_reach_both_pickers_when_focus_is_elsewhere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    reached: list[str] = []
+
+    async def record_picker(mode: str) -> None:
+        reached.append(mode)
+
+    monkeypatch.setattr(app, "open_picker", record_picker)
+    async with app.run_test() as pilot:
+        app.transcript.focus()
+        await pilot.press("f6")
+        await pilot.press("f7")
+        await pilot.pause()
+
+        assert reached == ["models", "profiles"]
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
 async def test_a_several_hundred_line_paste_inserts_without_submitting() -> None:
     """R11/AE4: bracketed paste arrives as one event and must not submit."""
     pasted = "\n".join(f"pasted line {index}" for index in range(400))
@@ -130,7 +166,7 @@ async def test_the_border_is_present_while_the_transcript_streams() -> None:
         composer = app.query_one(Composer)
         styles = composer.styles
         assert styles.border_top[0] not in ("", "none", "hidden")
-        assert composer.border_title == "compose"
+        assert composer.border_title == "compose [*] caret here"
         assert composer.display is True
         await app.shutdown_sources()
 

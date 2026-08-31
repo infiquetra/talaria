@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
+    "replay",
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/fixtures/acceptance-populated.jsonl"
+  ],
+  "capture": {
+    "bytes": 109517,
+    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-21-palette.ansi",
+    "sha256": "dd798ed4a042d07dfcac61b33df521b946ff5e0fe091f2bdc235294335e47ac0"
+  },
+  "columns": 112,
+  "duration_seconds": 7.771048,
+  "exit_code": 0,
+  "expected_literals": [
+    "/diffs",
+    "read-only diff viewer"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Terminal.app 2.14",
+  "tester": "talaria-t2",
+  "timed_out": false
+}

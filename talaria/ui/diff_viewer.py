@@ -44,12 +44,15 @@ from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.widgets import Static
 
+from talaria.domain.changes import DiffDocument
 from talaria.domain.selection import Choice, PickerSource, Selection, Stage
 from talaria.ui.dialog import PickerDialog
 from talaria.ui.literal import defang, literal_text
+from talaria.ui.motion import STANDARD_MOTION, MotionPolicy
 
 DiffMode = Literal["side-by-side", "unified"]
 LineKind = Literal["context", "added", "removed", "hunk", "metadata"]
+_DIFF_SCROLL_ANIMATES: Final = False
 
 SIDE_BY_SIDE_MIN_WIDTH: Final = 112
 OVERSCAN_ROWS: Final = 10
@@ -99,6 +102,20 @@ class DiffViewerDocument:
     """The session-reported file set; an empty tuple is an honest empty state."""
 
     files: tuple[DiffViewerFile, ...] = ()
+
+
+def adapt_diff_document(document: DiffDocument) -> DiffViewerDocument:
+    """Copy the domain's held diff set into the read-only presentation shape."""
+    return DiffViewerDocument(
+        tuple(
+            DiffViewerFile(
+                key=changed_file.key,
+                path=changed_file.path,
+                unified_diff=changed_file.unified_diff,
+            )
+            for changed_file in document.files
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -397,9 +414,15 @@ class DiffCanvas(ScrollView, can_focus=True):
     }
     """
 
-    def __init__(self, files: tuple[_IndexedFile, ...]) -> None:
+    def __init__(
+        self,
+        files: tuple[_IndexedFile, ...],
+        *,
+        motion: MotionPolicy = STANDARD_MOTION,
+    ) -> None:
         super().__init__(id="diff-canvas")
         self._files = files
+        self.motion = motion
         self.file_index = 0
         self.hunk_index = 0
         self.mode: DiffMode = "unified"
@@ -464,10 +487,12 @@ class DiffCanvas(ScrollView, can_focus=True):
         self.mode = mode
         self._invalidate()
         self._update_virtual_size()
+        motion = self.motion.scroll(animate=_DIFF_SCROLL_ANIMATES)
         if preserve_anchor:
             self.scroll_to(
                 y=self._row_for_anchor(anchor),
-                animate=False,
+                animate=motion.animate,
+                duration=motion.duration,
                 immediate=True,
                 force=True,
             )
@@ -475,7 +500,8 @@ class DiffCanvas(ScrollView, can_focus=True):
             self.scroll_to(
                 x=0,
                 y=self._hunk_row(),
-                animate=False,
+                animate=motion.animate,
+                duration=motion.duration,
                 immediate=True,
                 force=True,
             )
@@ -883,6 +909,7 @@ class DiffViewer(ModalScreen[None]):
         *,
         file_key: str | None = None,
         hunk_index: int = 0,
+        motion: MotionPolicy = STANDARD_MOTION,
     ) -> None:
         super().__init__()
         self._files = tuple(_parse_unified(file) for file in document.files)
@@ -895,7 +922,7 @@ class DiffViewer(ModalScreen[None]):
         self._header: Static | None = None
         self._columns: Static | None = None
         self._hint: Static | None = None
-        self.canvas = DiffCanvas(self._files)
+        self.canvas = DiffCanvas(self._files, motion=motion)
 
     def _index_for_key(self, key: str | None) -> int:
         if key is not None:
