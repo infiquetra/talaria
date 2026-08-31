@@ -805,10 +805,16 @@ async def test_markup_and_control_canaries_reach_the_seam_line_inert() -> None:
     from textual.app import App, ComposeResult
 
     from talaria.ui.status_region import StatusRegion
+    from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 
     canary = "[bold red]markup[/] \x1b[2J <script>x</script>"
 
     class Host(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            BUILTIN_THEME_REGISTRY.register(self)
+            self.theme = "refined-default"
+
         def compose(self) -> ComposeResult:
             yield StatusRegion(id="status")
 
@@ -850,8 +856,14 @@ async def test_the_seam_rows_render_every_seam_in_catalogue_order() -> None:
     from textual.app import App, ComposeResult
 
     from talaria.ui.status_region import StatusRegion
+    from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 
     class Host(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            BUILTIN_THEME_REGISTRY.register(self)
+            self.theme = "refined-default"
+
         def compose(self) -> ComposeResult:
             yield StatusRegion(id="status")
 
@@ -875,8 +887,14 @@ async def test_seam_rows_survive_a_status_command_tick() -> None:
 
     from talaria.status.runner import StatusTickResult
     from talaria.ui.status_region import StatusRegion
+    from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 
     class Host(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            BUILTIN_THEME_REGISTRY.register(self)
+            self.theme = "refined-default"
+
         def compose(self) -> ComposeResult:
             yield StatusRegion(id="status")
 

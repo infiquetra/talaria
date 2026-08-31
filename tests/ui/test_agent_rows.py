@@ -166,5 +166,21 @@ async def test_f2_with_rows_present_collapses_without_a_notice() -> None:
 def test_the_row_format_is_the_five_projection_fields_and_nothing_else() -> None:
     with_detail = format_row("a0", "indexer", "running", 12.25, "reading src/")
     without = format_row("a0", "indexer", "running", 12.25, None)
-    assert with_detail == "running       12.2s  indexer — reading src/"
-    assert without == "running       12.2s  indexer"
+    assert with_detail == "  [>] running       12.2s  indexer — reading src/"
+    assert without == "  [>] running       12.2s  indexer"
+
+
+@pytest.mark.parametrize(
+    ("status", "form"),
+    [
+        ("queued", "[..] queued"),
+        ("running", "[>] running"),
+        ("completed", "[ok] completed"),
+        ("error", "[!] error"),
+        ("failed", "[x] failed"),
+        ("interrupted", "[-] interrupted"),
+        ("timeout", "[t] timeout"),
+    ],
+)
+def test_every_agent_state_keeps_its_ascii_form(status: str, form: str) -> None:
+    assert form in format_row("a0", "worker", status, 1.0, None)

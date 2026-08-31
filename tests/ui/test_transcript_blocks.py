@@ -29,9 +29,11 @@ import gc
 import re
 import weakref
 from collections.abc import Sequence
+from typing import cast
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.content import Content
 from textual.widget import Widget
 from textual.widgets._markdown import (
     MarkdownBlockQuote,
@@ -43,6 +45,7 @@ from textual.widgets._markdown import (
     MarkdownTable,
     MarkdownTableCellContents,
 )
+from textual.widgets.markdown import MarkdownBlock
 
 from talaria.domain.models import TranscriptKind
 from talaria.domain.projection import (
@@ -58,6 +61,7 @@ from talaria.domain.projection import (
     TranscriptView,
 )
 from talaria.ui.blocks import EntryMarkdown
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from talaria.ui.transcript import (
     DEFAULT_MOUNT_CAP,
     DESCENDANT_ESTIMATE_TRIGGER,
@@ -73,6 +77,8 @@ from talaria.ui.transcript import (
 class _Harness(App[None]):
     def __init__(self, mount_cap: int = DEFAULT_MOUNT_CAP) -> None:
         super().__init__()
+        BUILTIN_THEME_REGISTRY.register(self)
+        self.theme = "refined-default"
         self._mount_cap = mount_cap
 
     def compose(self) -> ComposeResult:
@@ -142,6 +148,43 @@ def _fallback_entries(
             )
         )
     return tuple(out)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "label"),
+    [("assistant", "A Talaria"), ("reasoning", ". Reasoning")],
+)
+async def test_block_entries_add_the_fixed_label_without_changing_raw_markdown(
+    kind: TranscriptKind,
+    label: str,
+) -> None:
+    raw = "# heading\n\nbody with **emphasis**"
+    entry = TranscriptEntryRecord(
+        entry_id=1,
+        kind=kind,
+        raw_body=raw,
+        committed=True,
+        line_span=(0, 3),
+    )
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(TranscriptPane)
+        await _apply(pane, (entry,))
+        await pilot.pause()
+
+        unit = pane._entries[1]
+        assert unit.block is not None
+        first = next(
+            block
+            for block in unit.block.query(MarkdownBlock)
+            if cast(Content, block.content).plain
+        )
+        content = cast(Content, first.content)
+        assert content.plain.startswith(f"{label}  ")
+        assert content.get_style_at_offset(0).bold is True
+        assert unit.applied_text == raw
+        assert unit.block.source == raw
 
 
 # ── construct-aware estimate calibration (KTD1(a)) ──────────────────────────

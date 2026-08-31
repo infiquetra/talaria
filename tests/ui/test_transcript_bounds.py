@@ -17,13 +17,16 @@ from textual.widgets import Static
 
 from talaria.domain.projection import terminal_read, transcript_view
 from talaria.replay.gate import content_is_complete
+from talaria.status.runner import StatusTickResult
 from talaria.ui.app import ALREADY_FOLLOWING_BOTTOM
 from tests.ui.conftest import (
     RecordingDispatcher,
     event,
+    feed,
     live_app,
     paused_app,
     records,
+    settle,
     streaming_turn,
 )
 
@@ -242,6 +245,89 @@ async def test_a_resize_storm_preserves_reflow_anchors_and_content(
         # Reflow, not truncation: the narrow pass must not have clipped text.
         assert "line 39.5" in view.text
         assert app.transcript.follow is False
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_identity_anchor_survives_append_status_growth_and_resize(
+    stress_frames: list[dict[str, Any]],
+) -> None:
+    app, controls = paused_app(stress_frames, mount_cap=200)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        assert pane.max_scroll_y > 2
+
+        pane.scroll_to(y=max(1, pane.max_scroll_y // 2), animate=False, immediate=True)
+        await pilot.pause()
+        pane.hold_anchor()
+        await pilot.pause()
+        held = pane.capture_reading_anchor()
+        assert held is not None
+
+        for seq, frame in enumerate(
+            streaming_turn(["new output one\n", "new output two\n"]),
+            start=10_000,
+        ):
+            feed(app, frame, seq=seq)
+        await settle(app, pilot)
+        assert pane.follow is False
+        assert pane.capture_reading_anchor() == held
+        assert pane.scroll_offset.y < pane.max_scroll_y
+
+        status_anchor = pane.capture_reading_anchor()
+        await app.status_region.apply(
+            StatusTickResult(outcome="ok", rows=("branch: main", "tests: passing"))
+        )
+        pane.restore_reading_anchor(status_anchor)
+        await pilot.pause()
+        await pilot.pause()
+        assert pane.capture_reading_anchor() == status_anchor
+
+        resize_anchor = pane.capture_reading_anchor()
+        await pilot.resize_terminal(62, 24)
+        await pilot.pause()
+        await pilot.pause()
+        assert pane.follow is False
+        assert pane.capture_reading_anchor() == resize_anchor
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_only_the_exact_bottom_follows_the_next_append() -> None:
+    app = live_app(RecordingDispatcher())
+    async with app.run_test(size=(70, 18)) as pilot:
+        seq = 100
+        for turn in range(20):
+            for frame in streaming_turn([f"turn {turn} line one\nline two\n"]):
+                feed(app, frame, seq=seq)
+                seq += 1
+        await settle(app, pilot)
+        pane = app.transcript
+
+        pane.follow_bottom()
+        await pilot.pause()
+        assert pane.scroll_offset.y == pane.max_scroll_y
+        for frame in streaming_turn(["pinned append\n"]):
+            feed(app, frame, seq=seq)
+            seq += 1
+        await settle(app, pilot)
+        assert pane.follow is True
+        assert pane.scroll_offset.y == pane.max_scroll_y
+
+        pane.scroll_to(y=max(0, pane.max_scroll_y - 1), animate=False, immediate=True)
+        await pilot.pause()
+        pane.hold_anchor()
+        await pilot.pause()
+        one_row_away = pane.capture_reading_anchor()
+        assert one_row_away is not None
+        for frame in streaming_turn(["unpinned append\n"]):
+            feed(app, frame, seq=seq)
+            seq += 1
+        await settle(app, pilot)
+        assert pane.follow is False
+        assert pane.capture_reading_anchor() == one_row_away
+        assert pane.scroll_offset.y < pane.max_scroll_y
         await app.shutdown_sources()
 
 
