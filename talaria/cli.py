@@ -358,6 +358,10 @@ def run_replay(args: argparse.Namespace) -> int:
         # at the tagged profile. ``""`` for a single-connection log keeps the
         # default, which is what that log means.
         current_profile=getattr(source, "focus_profile", ""),
+        theme_name=cfg.get("theme", "name"),
+        startup_notices=cfg.notices,
+        theme_config_dir=cfg.config_dir,
+        launch_cwd=Path.cwd(),
     )
     app.run()
     return 0
@@ -617,6 +621,10 @@ def build_live_app(
         status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
         paste_threshold=_build_paste_threshold(cfg),
         startup=selection_from_args(args),
+        theme_name=cfg.get("theme", "name"),
+        startup_notices=cfg.notices,
+        theme_config_dir=cfg.config_dir,
+        launch_cwd=Path.cwd(),
     )
     holder.append(app)
     # ``source`` is no longer bound, and the removal is the point rather than an

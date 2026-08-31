@@ -219,7 +219,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
     assert catalog.available is False
     assert "refused" in catalog.failure
     assert catalog.gateway_entries == ()
-    # The nine that never needed a gateway to be *listed* are still there
+    # The ten that never needed a gateway to be *listed* are still there
     # (``/models`` still needs one to actually select — see U2 —
     # ``/profiles`` needs one to have listed anything at all, see U4, and
     # ``/sessions`` likewise needs one to list anything to switch to, see U7),
@@ -240,6 +240,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
         "/sessions",
         "/needs",
         "/agents",
+        "/theme",
     }
 
 
@@ -441,7 +442,7 @@ def test_dispatch_has_exactly_one_method_and_it_is_the_pinned_one() -> None:
 # ── the local control set ────────────────────────────────────────────────
 
 
-def test_the_local_set_is_pc6s_four_plus_the_pickers_and_the_needs_you_list() -> None:
+def test_the_local_set_includes_the_theme_picker_and_explicit_save_surface() -> None:
     """The whole Talaria-local set, enumerated so an addition is deliberate.
 
     ``/needs`` joins in v0.4's U7 and is the only member that shadows nothing:
@@ -461,7 +462,20 @@ def test_the_local_set_is_pc6s_four_plus_the_pickers_and_the_needs_you_list() ->
         "/sessions",
         "/needs",
         "/agents",
+        "/theme",
     }
+
+
+def test_theme_and_its_save_action_always_resolve_locally() -> None:
+    picker = resolve_command("/theme", None)
+    save = resolve_command("/theme save repository", None)
+
+    assert isinstance(picker, LocalInvocation)
+    assert picker.command.action == "theme"
+    assert picker.argument == ""
+    assert isinstance(save, LocalInvocation)
+    assert save.command.action == "theme"
+    assert save.argument == "save repository"
 
 
 def test_needs_is_free_of_the_gateway_registry_unlike_sessions() -> None:

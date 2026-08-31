@@ -73,6 +73,23 @@ def test_the_dispatcher_double_satisfies_the_protocol() -> None:
     assert isinstance(RecordingDispatcher(), LiveDispatcher)
 
 
+@pytest.mark.asyncio
+async def test_theme_command_opens_locally_without_a_gateway_call() -> None:
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test() as pilot:
+        app.composer.text = "/theme"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.palette.is_theme_active
+        assert dispatcher.operator_calls == []
+        await app.shutdown_sources()
+
+
 def live_app(dispatcher: RecordingDispatcher, frames: list[Any] | None = None) -> TalariaApp:
     controls = ReplayControls(paused=True)
     source = ReplaySource(records(frames or [event("gateway.ready", {})]), controls=controls)

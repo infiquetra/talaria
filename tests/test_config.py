@@ -25,10 +25,72 @@ from tests.conftest import HERMES_DASHBOARD_TOKEN_VAR
 
 def test_defaults_apply_when_nothing_else_is_set(tmp_path: Path) -> None:
     cfg = load_config(cwd=tmp_path)
+    assert cfg.get("theme", "name") == "refined-default"
+    assert cfg.notices == ()
     assert cfg.get("status", "command") is None
     assert cfg.get("status", "interval_seconds") == 5
     assert cfg.get("composer", "paste_collapse_lines") == 6
     assert cfg.get("composer", "paste_collapse_bytes") == 512
+
+
+def test_theme_precedence_is_default_then_user_then_repository(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "dark-green-terminal"\n', encoding="utf-8"
+    )
+    repository = tmp_path / ".talaria"
+    repository.mkdir()
+    (repository / "config.toml").write_text(
+        '[theme]\nname = "neutral-dark"\n', encoding="utf-8"
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("theme", "name") == "neutral-dark"
+    assert cfg.notices == ()
+
+
+def test_invalid_winning_theme_falls_to_default_not_a_weaker_scope(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "dark-green-terminal"\n', encoding="utf-8"
+    )
+    repository = tmp_path / ".talaria"
+    repository.mkdir()
+    (repository / "config.toml").write_text(
+        '[theme]\nname = "not-installed"\n', encoding="utf-8"
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("theme", "name") == "refined-default"
+    assert len(cfg.notices) == 1
+    assert "not-installed" in cfg.notices[0]
+    assert "Refined Default" in cfg.notices[0]
+
+
+def test_non_string_theme_falls_back_with_an_immutable_notice(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[theme]\nname = 7\n", encoding="utf-8"
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("theme", "name") == "refined-default"
+    assert isinstance(cfg.notices, tuple)
+    assert "must be a string" in cfg.notices[0]
+
+
+def test_theme_has_no_command_line_override(tmp_path: Path) -> None:
+    cfg = load_config(
+        cli_overrides={"theme": {"name": "neutral-dark"}}, cwd=tmp_path
+    )
+
+    assert cfg.get("theme", "name") == "refined-default"
 
 
 def test_global_config_toml_overrides_default(

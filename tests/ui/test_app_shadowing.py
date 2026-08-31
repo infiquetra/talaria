@@ -41,6 +41,9 @@ DELIBERATE_OVERRIDES: frozenset[str] = frozenset(
         "on_mount",
         "on_unmount",
         "on_key",
+        # Textual's documented Reactive theme selector. Issue #104 assigns it
+        # deliberately after registering Talaria's four stable theme names.
+        "theme",
         "__init__",
         "__module__",
         "__qualname__",
