@@ -1,0 +1,7 @@
+{
+  "$schema": "./artifact-manifest.schema.json",
+  "schema_version": "talaria-v0.5.0-artifact-manifest-v1",
+  "status": "not-run",
+  "candidate": null,
+  "receipts": []
+}
