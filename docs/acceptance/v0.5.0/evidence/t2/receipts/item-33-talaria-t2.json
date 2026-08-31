@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "c96c75197ba8e8ecc353cebcae13f66f431ab5f8a510246d718dffa934883726",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+  },
+  "checklist_item": 33,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-33-invalid-credential.ansi",
+    "capture_sha256": "7beab079fe9e896d0ed4aa54cb1ebdd3a016bf3b9ddb2ea69dc1c0b59f4c46f9",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-33-invalid-credential-pty.json",
+    "pty_result_sha256": "829f375db603dae5d7b350ebb5aea0269e3c3231a0a37a1307aa94142b6d70b7",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-33-invalid-credential.png",
+    "screenshot_sha256": "f33c5e864e3be1e149fd31dc1390091baaeea40277bd98b624bce4180055e463"
+  },
+  "observations": [
+    "A deliberately invalid scratch credential produced a visible authentication failed status and an HTTP 403 handshake rejection without a hang or silent blank; Talaria exited cleanly.",
+    "The raw capture and rendered screenshot contain neither the invalid credential nor operator private identifiers; the dashboard was not restarted or modified."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-08-31T22:32:09+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "failure",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "not-reached"
+    },
+    "profile": "default on isolated dashboard 8790 with deliberately invalid scratch credential"
+  },
+  "terminal": {
+    "columns": 160,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; isolated Hermes dashboard 8790; deliberately invalid scratch credential",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Dead gateway credential",
+  "verdict": "pass"
+}
