@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import html
 import inspect
+import os
 import re
+import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from rich.color import Color
@@ -18,24 +22,80 @@ from textual.binding import Binding
 from textual.theme import Theme
 from textual.widgets import Static
 
-from talaria.domain.commands import TALARIA_LOCAL_COMMANDS
+from talaria.domain.commands import CATALOG_METHOD, TALARIA_LOCAL_COMMANDS
 from talaria.themes.builtins import ACCESSIBLE_HIGH_CONTRAST, REFINED_DEFAULT
+from talaria.transport.rpc import RpcOutcome
+from talaria.ui import dialog as dialog_module
 from talaria.ui import diff_viewer as diff_viewer_module
+from talaria.ui import literal as literal_module
+from talaria.ui import motion as motion_module
 from talaria.ui.dialog import PickerDialog
 from talaria.ui.diff_viewer import (
     INTRALINE_CELL_CAP,
     OVERSCAN_ROWS,
     SIDE_BY_SIDE_REFUSAL,
+    DiffCanvas,
     DiffViewer,
     DiffViewerDocument,
     DiffViewerFile,
 )
 from talaria.ui.inspector import InspectorFileRow
+from talaria.ui.motion import MotionPolicy, ScrollMotion
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from tests.domain.conftest import raw_event, replay
 from tests.ui.conftest import RecordingDispatcher, live_app
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "diffs"
+
+
+@pytest.fixture(autouse=True)
+def _forbid_mutation_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any runtime write, subprocess, or operator dispatch fail loudly."""
+    real_open = builtins.open
+    real_os_open = os.open
+    real_popen = subprocess.Popen
+    real_dispatch = RecordingDispatcher.call
+
+    def viewer_is_calling() -> bool:
+        return any(
+            frame.frame.f_globals.get("__name__") == "talaria.ui.diff_viewer"
+            for frame in inspect.stack()
+        )
+
+    def guarded_open(*args: Any, **kwargs: Any) -> Any:
+        mode = kwargs.get("mode", args[1] if len(args) > 1 else "r")
+        if viewer_is_calling() and any(marker in str(mode) for marker in "wax+"):
+            raise AssertionError("the read-only diff viewer attempted a filesystem write")
+        return real_open(*args, **kwargs)
+
+    write_flags = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+
+    def guarded_os_open(*args: Any, **kwargs: Any) -> int:
+        flags = kwargs.get("flags", args[1] if len(args) > 1 else 0)
+        if viewer_is_calling() and int(flags) & write_flags:
+            raise AssertionError("the read-only diff viewer attempted os.open for writing")
+        return real_os_open(*args, **kwargs)
+
+    def guarded_popen(*args: Any, **kwargs: Any) -> Any:
+        if viewer_is_calling():
+            raise AssertionError("the read-only diff viewer attempted a subprocess")
+        return real_popen(*args, **kwargs)
+
+    async def guarded_dispatch(
+        dispatcher: RecordingDispatcher,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> RpcOutcome:
+        if method != CATALOG_METHOD:
+            raise AssertionError("the read-only diff viewer attempted a gateway dispatch")
+        return await real_dispatch(dispatcher, method, params, timeout=timeout)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(os, "open", guarded_os_open)
+    monkeypatch.setattr(subprocess, "Popen", guarded_popen)
+    monkeypatch.setattr(RecordingDispatcher, "call", guarded_dispatch)
 
 THEME_A = Theme(
     name="diff-a",
@@ -116,11 +176,13 @@ class Host(App[None]):
         *,
         file_key: str | None = None,
         hunk_index: int = 0,
+        motion: MotionPolicy | None = None,
     ) -> None:
         super().__init__()
         self.document = document
         self.file_key = file_key
         self.hunk_index = hunk_index
+        self.motion = motion
         self.closed = False
 
     def compose(self) -> ComposeResult:
@@ -135,14 +197,21 @@ class Host(App[None]):
         def closed(_: None) -> None:
             self.closed = True
 
-        self.push_screen(
+        diff = (
             DiffViewer(
                 self.document,
                 file_key=self.file_key,
                 hunk_index=self.hunk_index,
-            ),
-            closed,
+            )
+            if self.motion is None
+            else DiffViewer(
+                self.document,
+                file_key=self.file_key,
+                hunk_index=self.hunk_index,
+                motion=self.motion,
+            )
         )
+        self.push_screen(diff, closed)
 
 
 def viewer(app: Host) -> DiffViewer:
@@ -243,6 +312,52 @@ async def test_111_112_fallback_preserves_selection_anchor_and_preference() -> N
         await pilot.pause()
         assert str(diff.preferred_mode) == "unified"
         assert diff.effective_mode == "unified"
+
+
+@pytest.mark.asyncio
+async def test_scroll_arguments_come_from_the_standard_motion_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    motion = MotionPolicy(reduced=False)
+    policy_calls: list[tuple[MotionPolicy, bool, float | None]] = []
+    scroll_calls: list[dict[str, Any]] = []
+
+    def policy_scroll(
+        policy: MotionPolicy,
+        *,
+        animate: bool,
+        duration: float | None = None,
+    ) -> ScrollMotion:
+        policy_calls.append((policy, animate, duration))
+        return ScrollMotion(animate=False, duration=0.125)
+
+    def canvas_scroll_to(
+        _canvas: DiffCanvas,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        scroll_calls.append(kwargs)
+
+    monkeypatch.setattr(MotionPolicy, "scroll", policy_scroll)
+    monkeypatch.setattr(DiffCanvas, "scroll_to", canvas_scroll_to)
+
+    app = Host(sample_document(), motion=motion)
+    async with app.run_test(size=(112, 28)) as pilot:
+        await pilot.pause()
+        diff = viewer(app)
+        diff.canvas.set_view(
+            file_index=0,
+            hunk_index=1,
+            mode="side-by-side",
+            preserve_anchor=False,
+        )
+
+        assert policy_calls
+        assert all(call[0] is motion for call in policy_calls)
+        assert all(call[1:] == (False, None) for call in policy_calls)
+        assert scroll_calls
+        assert scroll_calls[-1]["animate"] is False
+        assert scroll_calls[-1]["duration"] == 0.125
 
 
 @pytest.mark.asyncio
@@ -519,8 +634,211 @@ def _tree(module: ModuleType) -> ast.Module:
     return ast.parse(inspect.getsource(module))
 
 
+_EXPECTED_IMPORTS = {
+    "talaria.ui.diff_viewer": frozenset(
+        {
+            "__future__",
+            "dataclasses",
+            "difflib",
+            "pygments",
+            "pygments.lexer",
+            "pygments.lexers",
+            "pygments.token",
+            "re",
+            "rich.cells",
+            "rich.style",
+            "rich.text",
+            "talaria.domain.changes",
+            "talaria.domain.selection",
+            "talaria.ui.dialog",
+            "talaria.ui.literal",
+            "talaria.ui.motion",
+            "textual",
+            "textual.app",
+            "textual.binding",
+            "textual.containers",
+            "textual.geometry",
+            "textual.screen",
+            "textual.scroll_view",
+            "textual.strip",
+            "textual.widgets",
+            "typing",
+        }
+    ),
+    "talaria.ui.dialog": frozenset(
+        {
+            "__future__",
+            "dataclasses",
+            "talaria.domain.selection",
+            "talaria.ui.literal",
+            "textual",
+            "textual.app",
+            "textual.containers",
+            "textual.screen",
+            "textual.widgets",
+        }
+    ),
+    "talaria.ui.literal": frozenset({"__future__", "rich.text", "typing"}),
+    "talaria.ui.motion": frozenset({"__future__", "dataclasses", "typing"}),
+}
+
+_EXPECTED_CALLS = {
+    "talaria.ui.diff_viewer": frozenset(
+        {
+            "Binding",
+            "Choice",
+            "DiffCanvas",
+            "DiffViewerDocument",
+            "DiffViewerFile",
+            "PickerDialog",
+            "SequenceMatcher",
+            "Size",
+            "Stage",
+            "Static",
+            "Strip",
+            "Style",
+            "Text",
+            "Vertical",
+            "_DiffLine",
+            "_FilePickerSource",
+            "_IndexedFile",
+            "_IntralineSpans",
+            "_SideRow",
+            "__init__",
+            "_active_lexer",
+            "_apply_intraline",
+            "_color",
+            "_extension",
+            "_format_pane",
+            "_format_row",
+            "_format_side",
+            "_format_unified",
+            "_hunk_row",
+            "_index_for_key",
+            "_intraline_spans",
+            "_invalidate",
+            "_lexer",
+            "_line_style",
+            "_number_width",
+            "_pad",
+            "_pair_change_runs",
+            "_parse_unified",
+            "_prepare_window",
+            "_repaint_chrome",
+            "_row_for_anchor",
+            "_select",
+            "_settle_mode",
+            "_style",
+            "_syntax_text",
+            "_syntax_token",
+            "_to_side_rows",
+            "_update_virtual_size",
+            "_visible_intraline_spans",
+            "add",
+            "any",
+            "append",
+            "append_text",
+            "apply_offsets",
+            "blank",
+            "casefold",
+            "cell_len",
+            "clear",
+            "compile",
+            "crop_extend",
+            "dataclass",
+            "defang",
+            "dismiss",
+            "enumerate",
+            "focus",
+            "frozenset",
+            "get",
+            "get_lexer_by_name",
+            "get_opcodes",
+            "getattr",
+            "group",
+            "int",
+            "items",
+            "join",
+            "len",
+            "lex",
+            "list",
+            "literal_text",
+            "match",
+            "max",
+            "min",
+            "opened",
+            "push_screen",
+            "range",
+            "refresh",
+            "render",
+            "rfind",
+            "rsplit",
+            "scroll",
+            "scroll_to",
+            "set",
+            "set_view",
+            "sorted",
+            "splitlines",
+            "startswith",
+            "str",
+            "stylize",
+            "super",
+            "tuple",
+            "update",
+        }
+    ),
+    "talaria.ui.dialog": frozenset(
+        {
+            "Static",
+            "Vertical",
+            "__init__",
+            "_back",
+            "_choose",
+            "_move",
+            "_repaint",
+            "_replace_selection",
+            "_row_text",
+            "append",
+            "backspaced",
+            "bool",
+            "cleared",
+            "descend",
+            "dismiss",
+            "enumerate",
+            "has_class",
+            "isinstance",
+            "isprintable",
+            "len",
+            "literal_text",
+            "max",
+            "min",
+            "mount",
+            "move",
+            "pop",
+            "remove",
+            "replace",
+            "root",
+            "set_class",
+            "stop",
+            "str",
+            "super",
+            "tuple",
+            "typed",
+            "update",
+            "window",
+        }
+    ),
+    "talaria.ui.literal": frozenset(
+        {"Text", "defang", "items", "range", "setdefault", "translate"}
+    ),
+    "talaria.ui.motion": frozenset(
+        {"MotionPolicy", "ScrollMotion", "dataclass", "len"}
+    ),
+}
+
+
 def test_read_only_boundary_is_proved_by_ast_keymap_and_command_introspection() -> None:
-    """Reject mutation surfaces structurally; labels and prose are not evidence."""
+    """Allow only the reviewed module graph, imports, calls, keys, and commands."""
     forbidden_actions = {
         "edit",
         "stage",
@@ -550,7 +868,9 @@ def test_read_only_boundary_is_proved_by_ast_keymap_and_command_introspection() 
         for forbidden in forbidden_actions
     )
 
-    tree = _tree(diff_viewer_module)
+    modules = (diff_viewer_module, dialog_module, literal_module, motion_module)
+    trees = {module.__name__: _tree(module) for module in modules}
+    tree = trees[diff_viewer_module.__name__]
     action_methods = {
         node.name.removeprefix("action_")
         for node in ast.walk(tree)
@@ -559,39 +879,27 @@ def test_read_only_boundary_is_proved_by_ast_keymap_and_command_introspection() 
     }
     assert action_methods == allowed_actions
 
-    forbidden_calls = {
-        "open",
-        "write_text",
-        "write_bytes",
-        "unlink",
-        "rename",
-        "replace",
-        "run",
-        "popen",
-        "dispatch",
-        "call",
-    }
-    calls = {
-        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, (ast.Attribute, ast.Name))
-    }
-    assert calls.isdisjoint(forbidden_calls)
+    for module_name, module_tree in trees.items():
+        direct_imports = {
+            alias.name
+            for node in ast.walk(module_tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        from_imports = {
+            node.module
+            for node in ast.walk(module_tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        assert direct_imports | from_imports == _EXPECTED_IMPORTS[module_name]
 
-    direct_imports = {
-        alias.name.split(".", 1)[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    }
-    from_imports = {
-        node.module.split(".", 1)[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module is not None
-    }
-    imports = direct_imports | from_imports
-    assert imports.isdisjoint({"pathlib", "subprocess", "shutil", "os"})
+        calls = {
+            node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+            for node in ast.walk(module_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, (ast.Attribute, ast.Name))
+        }
+        assert calls == _EXPECTED_CALLS[module_name]
 
     assert any(command.name == "/quit" for command in TALARIA_LOCAL_COMMANDS)
     diff_commands = tuple(
