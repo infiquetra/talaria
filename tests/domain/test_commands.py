@@ -242,6 +242,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
         "/agents",
         "/theme",
         "/bar",
+        "/inspector",
     }
 
 
@@ -465,6 +466,7 @@ def test_the_local_set_includes_the_theme_picker_and_explicit_save_surface() -> 
         "/agents",
         "/theme",
         "/bar",
+        "/inspector",
     }
 
 
@@ -478,6 +480,14 @@ def test_theme_and_its_save_action_always_resolve_locally() -> None:
     assert isinstance(save, LocalInvocation)
     assert save.command.action == "theme"
     assert save.argument == "save repository"
+
+
+def test_inspector_always_resolves_locally() -> None:
+    invocation = resolve_command("/inspector", None)
+
+    assert isinstance(invocation, LocalInvocation)
+    assert invocation.command.action == "inspector"
+    assert invocation.argument == ""
 
 
 def test_status_bar_toggles_always_resolve_locally() -> None:
