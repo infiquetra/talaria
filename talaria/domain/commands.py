@@ -291,19 +291,19 @@ def decode_catalog(result: Any) -> CommandCatalog:
     local_entries = _local_entries()
     # Preserve the existing browse order and its first-screen unsupported
     # evidence as local controls are added. ``/theme``, ``/bar``, and
-    # ``/inspector`` remain in the catalogue and in slash filtering, but follow
-    # the gateway rows in
-    # the unfiltered browse list rather than displacing ``/density`` and its
+    # ``/inspector``, and ``/diffs`` remain in the catalogue and in slash
+    # filtering, but follow the gateway rows in the unfiltered browse list
+    # rather than displacing ``/density`` and its
     # dispatchable neighbour below the established 14-row viewport.
     deferred_local = tuple(
         entry
         for entry in local_entries
-        if entry.name in {"/theme", "/bar", "/inspector"}
+        if entry.name in {"/theme", "/bar", "/inspector", "/diffs"}
     )
     entries: list[CommandEntry] = [
         entry
         for entry in local_entries
-        if entry.name not in {"/theme", "/bar", "/inspector"}
+        if entry.name not in {"/theme", "/bar", "/inspector", "/diffs"}
     ]
     seen = {entry.name.lower() for entry in local_entries}
 
@@ -374,6 +374,7 @@ LocalAction = Literal[
     "theme",
     "bar",
     "inspector",
+    "diffs",
 ]
 
 
@@ -495,6 +496,11 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "/inspector",
         "inspector",
         "Toggle the session inspector (ctrl+b)",
+    ),
+    LocalCommand(
+        "/diffs",
+        "diffs",
+        "Open the session's read-only diff viewer",
     ),
 )
 
