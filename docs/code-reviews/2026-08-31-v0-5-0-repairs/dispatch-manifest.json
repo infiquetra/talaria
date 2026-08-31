@@ -1,0 +1,772 @@
+{
+  "schema": "talaria_v0_5_0_repair_dispatch.v1",
+  "generated": "2026-08-31",
+  "reviewed_revision": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+  "diff_base": "5efa19ccba31f84d8e732591b18767bf736d00c2",
+  "review": {
+    "outcome": "repairs_requested",
+    "engine": "saga code-review 0.149.0",
+    "artifact": "docs/evidence/adhoc-orch-talaria-v0-5-0/artifacts/2b64a225506486bf59489bdefe3158ac95d5c8d1c9edebf9a985e60f303fdb1d.md",
+    "criteria": "docs/evidence/adhoc-orch-talaria-v0-5-0/criteria-code-review-122bd918e0056404e576ae5623ce9e97bfe1ad93.json",
+    "lenses": [
+      "architecture-maintainability",
+      "correctness",
+      "security",
+      "testing",
+      "api-contract",
+      "accessibility-human-usability",
+      "documentation-clarity"
+    ],
+    "acceptance_rule": "derived_overall >= 9.0 AND every applicable dimension >= 7.0"
+  },
+  "totals": {
+    "findings": 43,
+    "fix_requests_in_typed_result": 27,
+    "dispatch_entries": 37,
+    "children": 8
+  },
+  "session_assignments_note": "session is populated only where the coordinator named one. A null session means the coordinator assigns it; it is not a guess withheld.",
+  "children": [
+    {
+      "child": "#104",
+      "title": "theme token foundation",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-repairs/repair-104.md",
+      "request_count": 4,
+      "requests": [
+        {
+          "fix_id": "fix-f65bdcd773f6 (part A)",
+          "kind": "fix_request",
+          "findings": [
+            "F-18",
+            "F-21",
+            "F-36"
+          ],
+          "severity": "P2, P3",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/config.py",
+            "talaria/themes/__init__.py",
+            "talaria/ui/theme.py",
+            "tests/test_config.py",
+            "tests/ui/test_theme.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-e4824f8bcf50",
+          "kind": "fix_request",
+          "findings": [
+            "F-39"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/config.py",
+            "tests/test_config.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-9f9329adccac",
+          "kind": "fix_request",
+          "findings": [
+            "F-38"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/palette.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-17 (no fix request \u2014 pre-existing)",
+          "kind": "uncovered_pre_existing",
+          "findings": [
+            "F-17"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/config.py",
+            "tests/test_config.py"
+          ],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#105",
+      "title": "Visual Studio Code theme import",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-repairs/repair-105.md",
+      "request_count": 7,
+      "requests": [
+        {
+          "fix_id": "fix-f7593197c3d1",
+          "kind": "fix_request",
+          "findings": [
+            "F-3"
+          ],
+          "severity": "P1",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/cli.py",
+            "talaria/ui/theme_import.py",
+            "tests/test_cli.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-f65bdcd773f6 (part B)",
+          "kind": "fix_request",
+          "findings": [
+            "F-2"
+          ],
+          "severity": "P1",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/themes/storage.py",
+            "talaria/config.py",
+            "tests/test_config.py",
+            "tests/ui/test_theme_import.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-8dea4e57a7f7",
+          "kind": "fix_request",
+          "findings": [
+            "F-14"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/formats/vscode-theme-import.md",
+            "docs/design/2026-08-30-talaria-v0-5-0-visual-spec.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-bd91ff76f38d",
+          "kind": "fix_request",
+          "findings": [
+            "F-35"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "tests/ui/test_theme_import.py",
+            "docs/formats/vscode-theme-import.md"
+          ],
+          "depends_on": [
+            "fix-8dea4e57a7f7"
+          ]
+        },
+        {
+          "fix_id": "fix-f0185fd1bb3a",
+          "kind": "fix_request",
+          "findings": [
+            "F-27",
+            "F-29"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "downstream-resolver",
+          "session": null,
+          "touched_paths": [
+            "talaria/cli.py",
+            "talaria/ui/theme_import.py",
+            "tests/test_cli.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-88f7ff757945",
+          "kind": "fix_request",
+          "findings": [
+            "F-25"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "human",
+          "session": null,
+          "touched_paths": [
+            "talaria/themes/storage.py",
+            "docs/formats/stored-theme.schema.json"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-19 (no fix request \u2014 pre-existing)",
+          "kind": "uncovered_pre_existing",
+          "findings": [
+            "F-19"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": "talaria-w2",
+          "touched_paths": [
+            "talaria/cli.py",
+            "tests/test_cli.py"
+          ],
+          "depends_on": [
+            "fix-f65bdcd773f6 (part B)"
+          ]
+        }
+      ]
+    },
+    {
+      "child": "#106",
+      "title": "true-bottom status bar",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-repairs/repair-106.md",
+      "request_count": 5,
+      "requests": [
+        {
+          "fix_id": "fix-be74fdf7fea8",
+          "kind": "fix_request",
+          "findings": [
+            "F-23"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "downstream-resolver",
+          "session": null,
+          "touched_paths": [
+            "talaria/status/local.py",
+            "talaria/ui/status_bar.py",
+            "talaria/ui/app.py",
+            "tests/ui/test_status_bar.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-f382e9cc6103",
+          "kind": "fix_request",
+          "findings": [
+            "F-22"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/needs_you.py",
+            "docs/engineering-journal/DECISIONS.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-ea3a40a2682e",
+          "kind": "fix_request",
+          "findings": [
+            "F-40"
+          ],
+          "severity": "P3",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "tests/ui/test_status_bar.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-26 (advisory \u2014 no fix request)",
+          "kind": "advisory",
+          "findings": [
+            "F-26"
+          ],
+          "severity": "P2",
+          "autofix_class": "advisory",
+          "owner": "human",
+          "session": null,
+          "touched_paths": [
+            "docs/plans/2026-08-30-talaria-v0-5-0-run-plan.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-41 (advisory \u2014 no fix request)",
+          "kind": "advisory",
+          "findings": [
+            "F-41"
+          ],
+          "severity": "P3",
+          "autofix_class": "advisory",
+          "owner": "human",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/status_bar.py",
+            "docs/design/2026-08-30-talaria-v0-5-0-visual-spec.md",
+            "tests/ui/test_status_bar.py"
+          ],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#107",
+      "title": "right inspector",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-repairs/repair-107.md",
+      "request_count": 1,
+      "requests": [
+        {
+          "fix_id": "fix-8fb716f69948",
+          "kind": "fix_request",
+          "findings": [
+            "F-4"
+          ],
+          "severity": "P1",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/inspector.py",
+            "tests/ui/test_inspector.py"
+          ],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#108",
+      "title": "read-only diff viewer",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-repairs/repair-108.md",
+      "request_count": 3,
+      "requests": [
+        {
+          "fix_id": "fix-9ba02a80147e",
+          "kind": "fix_request",
+          "findings": [
+            "F-11"
+          ],
+          "severity": "P1",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "tests/ui/test_diff_viewer.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-da36d4b8df99",
+          "kind": "fix_request",
+          "findings": [
+            "F-37"
+          ],
+          "severity": "P3",
+          "autofix_class": "gated_auto",
+          "owner": "downstream-resolver",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/diff_viewer.py",
+            "talaria/ui/app.py",
+            "tests/ui/test_diff_viewer.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-33 (no fix request \u2014 pre-existing)",
+          "kind": "uncovered_pre_existing",
+          "findings": [
+            "F-33"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": "talaria-w4",
+          "touched_paths": [
+            "talaria/ui/app.py",
+            "tests/ui/test_composer.py"
+          ],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#109",
+      "title": "interaction and readability polish",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-repairs/repair-109.md",
+      "request_count": 2,
+      "requests": [
+        {
+          "fix_id": "fix-d5fd7c121ecf",
+          "kind": "fix_request",
+          "findings": [
+            "F-1"
+          ],
+          "severity": "P1",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/app.py",
+            "tests/ui/test_motion.py",
+            "docs/terminal-ui.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-33e4c93833a2",
+          "kind": "fix_request",
+          "findings": [
+            "F-20"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": "talaria-w1",
+          "touched_paths": [
+            "tests/domain/test_boundary.py",
+            "tests/test_framework_boundaries.py"
+          ],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#110",
+      "title": "acceptance harness",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-repairs/repair-110.md",
+      "request_count": 7,
+      "requests": [
+        {
+          "fix_id": "fix-e920ba479916",
+          "kind": "fix_request",
+          "findings": [
+            "F-10",
+            "F-13",
+            "F-30"
+          ],
+          "severity": "P1, P2",
+          "autofix_class": "manual",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/v0.5.0/artifact-manifest.json",
+            "docs/acceptance/v0.5.0/evidence/t2/receipts/",
+            "scripts/acceptance/v050_receipt.py",
+            "scripts/acceptance/test_v050_harness.py",
+            ".github/workflows/release.yml"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-8f43cd8eaaf9",
+          "kind": "fix_request",
+          "findings": [
+            "F-9"
+          ],
+          "severity": "P1",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "pyproject.toml",
+            ".github/workflows/validate.yml",
+            ".github/workflows/release.yml",
+            "scripts/acceptance/test_v050_harness.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-b9a75043ad5e",
+          "kind": "fix_request",
+          "findings": [
+            "F-12",
+            "F-31"
+          ],
+          "severity": "P1, P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "scripts/acceptance/v050_receipt.py",
+            "scripts/acceptance/test_v050_harness.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-a8b6b76bb8cf",
+          "kind": "fix_request",
+          "findings": [
+            "F-7",
+            "F-32"
+          ],
+          "severity": "P1, P2",
+          "autofix_class": "manual",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md",
+            "docs/acceptance/v0.5.0/evidence/"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-d4c6f02783f5",
+          "kind": "fix_request",
+          "findings": [
+            "F-16"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+            "scripts/acceptance/v050_receipt.py",
+            "scripts/acceptance/v050_install_probe.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-7795189b39a5",
+          "kind": "fix_request",
+          "findings": [
+            "F-28"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/v0.5.0/artifact-manifest.schema.json",
+            "pyproject.toml"
+          ],
+          "depends_on": [
+            "fix-e920ba479916"
+          ]
+        },
+        {
+          "fix_id": "F-42 (advisory \u2014 no fix request)",
+          "kind": "advisory",
+          "findings": [
+            "F-42"
+          ],
+          "severity": "P3",
+          "autofix_class": "advisory",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/v0.5.0/evidence/t2/README.md"
+          ],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#111",
+      "title": "documentation and version",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-repairs/repair-111.md",
+      "request_count": 8,
+      "requests": [
+        {
+          "fix_id": "fix-fbd11376fc37",
+          "kind": "fix_request",
+          "findings": [
+            "F-5"
+          ],
+          "severity": "P1",
+          "autofix_class": "safe_auto",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/themes.md",
+            "docs/configuration.md",
+            "docs/engineering-journal/DECISIONS.md",
+            "CHANGELOG.md",
+            "tests/test_config.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-ecc401dea49d",
+          "kind": "fix_request",
+          "findings": [
+            "F-8"
+          ],
+          "severity": "P1",
+          "autofix_class": "manual",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "README.md",
+            "CHANGELOG.md"
+          ],
+          "depends_on": [
+            "fix-a8b6b76bb8cf"
+          ]
+        },
+        {
+          "fix_id": "fix-8a6b9d37c595",
+          "kind": "fix_request",
+          "findings": [
+            "F-15"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/themes.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-69a7d0e9ddfa (documentation half)",
+          "kind": "fix_request",
+          "findings": [
+            "F-6"
+          ],
+          "severity": "P1",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/configuration.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-7a7de5ca40c2",
+          "kind": "fix_request",
+          "findings": [
+            "F-34"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/00-index.md",
+            "README.md",
+            "CHANGELOG.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-43 (no fix request \u2014 pre-existing)",
+          "kind": "uncovered_pre_existing",
+          "findings": [
+            "F-43"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "CHANGELOG.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "debt-environment-allowlist (deferred \u2014 record, do not repair)",
+          "kind": "debt_entry",
+          "findings": [
+            "F-6"
+          ],
+          "severity": "P2 (deferred)",
+          "autofix_class": "advisory",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/engineering-journal/QUEUED.md"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "debt-talariaapp-size (deferred \u2014 record, do not repair)",
+          "kind": "debt_entry",
+          "findings": [
+            "F-24"
+          ],
+          "severity": "P2 (deferred, advisory)",
+          "autofix_class": "advisory",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/engineering-journal/QUEUED.md"
+          ],
+          "depends_on": []
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "child": "110",
+      "strength": "hard",
+      "after": "fix-7795189b39a5",
+      "before": "fix-e920ba479916",
+      "reason": "The manifest-schema invariant is designed to reject the manifest as it stands, so the acceptance rerun must populate candidate and receipts first or the new schema fails on landing."
+    },
+    {
+      "child": "111",
+      "strength": "hard",
+      "after": "fix-ecc401dea49d",
+      "before": "fix-a8b6b76bb8cf",
+      "reason": "The README and changelog rewrite quotes the acceptance verdict, so the acceptance record must already state the corrected verdict or the rewrite propagates a second stale claim."
+    },
+    {
+      "child": "105",
+      "strength": "hard",
+      "after": "fix-bd91ff76f38d",
+      "before": "fix-8dea4e57a7f7",
+      "reason": "The drift guard asserts the document equals the code, so the fourteen-to-eighteen correction must land first or the guard locks in the wrong table."
+    },
+    {
+      "child": "105",
+      "strength": "soft",
+      "after": "F-19 (no fix request \u2014 pre-existing)",
+      "before": "fix-f65bdcd773f6 (part B)",
+      "reason": "The stored-theme guard removes the StoredThemeError escape at its source; the entry-point handler is the backstop for ConfigError and should be written against the narrowed set."
+    }
+  ],
+  "deferred": [
+    {
+      "id": "debt-environment-allowlist",
+      "finding": "F-6 code half",
+      "child": "111",
+      "decision": "deferred-to-debt",
+      "rationale": "environment.allowlist predates v0.5.0 and belongs to no child in this release; repairing it is scope expansion against a run contract that names scope expansion as a stop condition.",
+      "review_position": "Deferral confirmed. It blocks no P1 \u2014 the documentation half is independently repairable \u2014 and the failure direction is restrictive rather than permissive, so the release is imperfect here, not unsafe.",
+      "measured": [
+        "environment.allowlist = 42 raises TypeError: 'int' object is not iterable",
+        "environment.allowlist = true raises TypeError: 'bool' object is not iterable",
+        "environment.allowlist = \"FOO\" does not raise; talaria/cli.py:270-274 iterates the string and the runner receives ('F', 'O', 'O') with no notice"
+      ]
+    },
+    {
+      "id": "debt-talariaapp-size",
+      "finding": "F-24",
+      "child": "111",
+      "decision": "deferred-to-debt",
+      "rationale": "The repair is a refactor rather than a fix, and the shared-surface lease was the mitigation this release chose.",
+      "review_position": "Deferral confirmed. It blocks no P1, it is advisory and pre-existing, and this diff did not materially worsen it: talaria/ui/app.py grew about 4.7% while every child's substance landed in new modules.",
+      "measured": [
+        "talaria/ui/app.py:1117 begins TalariaApp; the file ends at line 6651",
+        "roughly 5,534 lines and 181 methods in one class",
+        "+367/-66 against a 6,350-line base, across 28 hunks"
+      ]
+    }
+  ]
+}

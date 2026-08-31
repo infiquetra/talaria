@@ -1206,6 +1206,7 @@ class TalariaApp(App[None]):
         # One restart-scoped value is injected into every motion-aware widget.
         # It never changes in response to a file edit or session command.
         self.motion = MotionPolicy(reduced=reduced_motion)
+        self.animation_level = "none" if reduced_motion else self.animation_level
         self._theme_preview_anchor: TranscriptAnchor | None = None
         self._startup_notices = (*startup_notices, *resolved_theme.notices)
         self._status_notices = tuple(

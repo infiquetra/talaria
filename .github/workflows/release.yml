@@ -139,7 +139,12 @@ jobs:
         run: uv run pytest
 
       - name: bandit
-        run: uv run bandit -r talaria -q
+        run: uv run bandit -r talaria scripts -q -ll
+
+      - name: Verify the v0.5.0 acceptance run
+        run: >-
+          uv run python -m scripts.acceptance.v050_receipt verify-run
+          --manifest docs/acceptance/v0.5.0/artifact-manifest.json
 
       - name: The gate must read READY
         shell: bash
