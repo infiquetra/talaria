@@ -197,14 +197,14 @@ def format_item_label(item: QueueItem, clock: float) -> str:
     if item.possibly_duplicate:
         # Never silently merged: U6 shows both sightings and says the doubt out
         # loud, so the row has to carry it or the doubt dies at the boundary.
-        parts.append("possibly the same as another row")
+        parts.append("[?] possibly duplicate")
     return " · ".join(part for part in parts if part)
 
 
 def format_item_detail(item: QueueItem) -> str:
     """The row's second line: the prompt itself, or why it cannot be answered."""
     if not item.answerable and item.blocked_reason:
-        return item.blocked_reason
+        return f"[x] blocked — {item.blocked_reason}"
     return item.command or item.summary
 
 
@@ -248,7 +248,8 @@ class NeedsYouBar(Static):
         contract: the render tick calls this at its own cadence and a repaint per
         tick would fight the transcript for the terminal.
         """
-        line = summary_line(queue, clock)
+        summary = summary_line(queue, clock)
+        line = f"{'[!]' if queue.count else '[ok]'} {summary}"
         if line == self._line:
             return
         self._line = line

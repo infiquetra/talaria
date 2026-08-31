@@ -18,6 +18,26 @@ from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
 DEFAULT_THEME_SLUG: Final[str] = REFINED_DEFAULT.slug
 
 
+def relative_luminance(color: str) -> float:
+    """Return WCAG 2.2 relative luminance for one opaque ``#RRGGBB`` colour."""
+    channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in channels
+    ]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast_ratio(first: str, second: str) -> float:
+    """Measure the WCAG 2.2 contrast ratio between two opaque colours."""
+    lighter, darker = sorted(
+        (relative_luminance(first), relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 class ThemeRegistrar(Protocol):
     """The one application operation theme registration requires."""
 
@@ -302,7 +322,9 @@ __all__ = [
     "ResolvedTheme",
     "StoredThemeError",
     "ThemeRegistry",
+    "contrast_ratio",
     "load_user_theme_specs",
+    "relative_luminance",
     "serialize_user_theme",
     "theme_registry_for_config",
     "textual_variable_name",
