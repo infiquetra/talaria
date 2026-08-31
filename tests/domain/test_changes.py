@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from talaria.domain.changes import DiffSelection, inspector_view
 from talaria.domain.projection import entry_scoped_view
+from talaria.domain.queue import NeedsYouQueue
 from tests.domain.conftest import raw_event, replay
 
 
@@ -116,3 +117,12 @@ def test_empty_runtime_state_produces_four_empty_inspector_sources() -> None:
     assert view.changed_files == ()
     assert view.operations == ()
     assert view.selected_operation is None
+
+
+def test_a_needs_you_notice_is_not_a_task() -> None:
+    view = inspector_view(
+        entry_scoped_view(replay([])),
+        queue=NeedsYouQueue(notices=("needs-you unavailable",)),
+    )
+
+    assert view.tasks == ()
