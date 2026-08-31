@@ -195,7 +195,8 @@ def _probe_bare_launch(
     term: str,
 ) -> dict[str, Any]:
     # A fresh scratch config may reach either the interactive credential prompt
-    # or the interface. ctrl+c exits the prompt; ctrl+q exits the interface.
+    # or the interface. ctrl+d ends getpass's blocking read; ctrl+q exits the
+    # interface.
     run = run_pty(
         executable=executable,
         argv=[str(executable)],
@@ -203,7 +204,7 @@ def _probe_bare_launch(
         environment=environment,
         capture_path=raw_dir / "install-bare-launch.ansi",
         events=[
-            DriveEvent(1.0, "key", "CTRL_C"),
+            DriveEvent(1.0, "key", "CTRL_D"),
             DriveEvent(2.0, "key", "CTRL_Q"),
         ],
         expected_literals=[],
@@ -222,7 +223,7 @@ def _probe_bare_launch(
     document = run.as_json()
     document["probe_note"] = (
         "Fresh isolated config: reaching either the credential prompt or the interface is valid; "
-        "the scripted ctrl+c/ctrl+q exits the reached surface."
+        "the scripted ctrl+d/ctrl+q exits the reached surface."
     )
     return document
 
