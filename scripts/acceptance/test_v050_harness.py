@@ -124,6 +124,35 @@ def test_real_pty_preserves_ansi_keys_and_resize(tmp_path: Path) -> None:
     assert result.columns == 80
 
 
+def test_isolated_environment_makes_colour_mode_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("FORCE_COLOR", "0")
+
+    colour = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=30,
+        columns=100,
+    )
+    monochrome = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=30,
+        columns=100,
+        monochrome=True,
+    )
+
+    assert "NO_COLOR" not in colour
+    assert "FORCE_COLOR" not in colour
+    assert colour["COLORTERM"] == "truecolor"
+    assert monochrome["NO_COLOR"] == "1"
+    assert "COLORTERM" not in monochrome
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
 def test_timeout_kills_the_real_pty_child_loudly(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
@@ -409,6 +438,18 @@ def test_primary_route_is_a_valid_first_class_receipt_field() -> None:
     }
     # Fallback unavailability does not invalidate a successful primary route.
     assert validate_receipt(_receipt(route=route), verify_files=False) == []
+
+
+def test_receipt_schema_uses_the_gateway_route_identifiers() -> None:
+    schema = json.loads(
+        (_REPO_ROOT / "docs" / "acceptance" / "v0.5.0" / "receipt.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    route_properties = schema["properties"]["session"]["properties"]["model_route"]["properties"]
+    expected = [PRIMARY_MODEL_ROUTE, FALLBACK_MODEL_ROUTE, None]
+    assert route_properties["requested"]["enum"] == expected
+    assert route_properties["observed"]["enum"] == expected
 
 
 def test_unavailable_fallback_cannot_be_recorded_as_a_pass() -> None:

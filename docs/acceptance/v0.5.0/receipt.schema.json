@@ -88,16 +88,16 @@
             "requested": {
               "type": ["string", "null"],
               "enum": [
-                "OpenCode Muse Spark 1.2 Contributor Free",
-                "Ollama GLM 5.3 Flash",
+                "opencode-go / muse-spark-1.2-contributor",
+                "ollama (ollama-cloud) / glm-5.3-flash",
                 null
               ]
             },
             "observed": {
               "type": ["string", "null"],
               "enum": [
-                "OpenCode Muse Spark 1.2 Contributor Free",
-                "Ollama GLM 5.3 Flash",
+                "opencode-go / muse-spark-1.2-contributor",
+                "ollama (ollama-cloud) / glm-5.3-flash",
                 null
               ]
             },
