@@ -23,10 +23,10 @@ Graphics screenshot after a completed private-data review.
 <!-- BEGIN GENERATED ACCEPTANCE PROVENANCE -->
 | Field | Generated value |
 | --- | --- |
-| Manifest status | `BLOCKED` |
-| Current reviewed candidate commit | `122bd918e0056404e576ae5623ce9e97bfe1ad93` |
-| Current candidate wheel SHA-256 | `a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126` |
-| Receipt candidate identities | `122bd91` / `a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126` (1 install, 15 item receipts) |
+| Manifest status | `IN-PROGRESS` |
+| Current reviewed candidate commit | `d9c82443f51932483ecb37c653d5c0cd8c342dac` |
+| Current candidate wheel SHA-256 | `839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda` |
+| Receipt candidate identities | `d9c8244` / `839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda` (1 install, 15 item receipts) |
 | Receipt counts | 1 install; 15 item; 16 current; 0 stale; 0 invalid |
 <!-- END GENERATED ACCEPTANCE PROVENANCE -->
 
@@ -73,7 +73,7 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | 12 | All status segments | — | `PASS` | T2 shows all seven ordered segments without wrapping. |
 | 13 | Status configuration | — | `PASS` | T2 proves reorder, omission, and unknown-segment notice after restart. |
 | 14 | Status responsive sequence | — | `PASS` | T2 proves the specified 144-to-19-column compaction sequence. |
-| 15 | Status failure visibility | `NO RECEIPT` | `PASS` | T2 shows malformed values and bounded command failures visibly. |
+| 15 | Status failure visibility | `NO RECEIPT` | `PASS` | T2 shows malformed-value fallbacks visibly and renders the bounded command's literal output. |
 | 16 | Inspector dock and resize | — | `PASS` | T2 proves four-column actions, limits, and retained data. |
 | 17 | Inspector content and empty states | — | `PASS` | Current populated and empty-state captures show all four sections accurately, with no synthetic `needs-you unavailable` task. |
 | 18 | Inspector responsive state | — | `PASS` | T2 proves manual and automatic state behavior across breakpoints. |
@@ -92,7 +92,7 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | 31 | Malformed Visual Studio Code import | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
 | 32 | Session-only status toggle | — | `PASS` | T2 proves session-only change and clean restart restoration. |
 | 33 | Dead gateway credential | `NO RECEIPT` | `NO RECEIPT` | Producing a real stale credential requires gateway revocation or restart authority. |
-| 34 | Killed session | `NO RECEIPT` | `BLOCKED` | T2 could not establish an approved model-backed session to kill. |
+| 34 | Killed session | `NO RECEIPT` | `PASS` | T2 completed a primary-model turn, closed exactly that session, and retained a bounded visible `session not found` recovery state. |
 | 35 | Restart-only configuration | `NO RECEIPT` | `NO RECEIPT` | The earlier T1 receipt is superseded; no current evidence exists. |
 | 36 | Cross-tester evidence | `NO RECEIPT` | `NO RECEIPT` | Coordinator assembly follows both tester reports. |
 <!-- END GENERATED ACCEPTANCE VERDICTS -->

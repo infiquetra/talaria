@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
+    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
+    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+  },
+  "checklist_item": 18,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-18.ansi",
+    "capture_sha256": "d459ff0afc7359c88acec2e4cc79cf04c3e945f14949e4e3918c6f43b39e7653",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-18-pty.json",
+    "pty_result_sha256": "03901be3cd4c6a3490672e6650df915eb715cf7d63e6039ac75edeeca5a24914",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18.png",
+    "screenshot_sha256": "465ad5349f233cde8727af6cf2de4e4025eddc0017e90fa5083246a66b4c73c6"
+  },
+  "observations": [
+    "The wide round trips restore only an open preference, manual close survives, and the committed raw/item-18-overlay.ansi capture shows Inspector overlay at 119 columns without transcript reflow; a fresh process begins at the 36-column default."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-08-31T14:40:21+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-acceptance-corpus"
+  },
+  "terminal": {
+    "columns": 120,
+    "program": "Headless POSIX pseudo-terminal",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Inspector responsive state",
+  "verdict": "pass"
+}

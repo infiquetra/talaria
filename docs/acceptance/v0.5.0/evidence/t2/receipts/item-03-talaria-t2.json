@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
-    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
-    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
+    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 3,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-03.ansi",
-    "capture_sha256": "b31ec9e2d55494912a768968b39cab9390fa8d112fcf99649f68d6a66ff3d244",
+    "capture_sha256": "4361d9849db7a0d4dbbc4a36269f9d3bf22c2c375ec863edd34c0a796c5a514d",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-03-pty.json",
-    "pty_result_sha256": "db654d870494300d0a88b03f5cc02083466173b754d7163326f5549d3aef7898",
+    "pty_result_sha256": "23670e1db07d5b680d733df5f6744391a7ce14086fa877f04924b301b3b9c2f6",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-03.png",
-    "screenshot_sha256": "0b9a4d7547040caf5247e2af397cdb636f42e3dece17380f15fe1221d72e3ba6"
+    "screenshot_sha256": "7bc982ea1d22930c620894ea56caa2fc7653e6279ad190fb2332cde24220d953"
   },
   "observations": [
-    "At 144 columns the settled capture keeps transcript and StatusRegion in the flexible body, Composer below them, HelpBar above the final one-cell BottomStatusBar."
+    "The final row is BottomStatusBar, HelpBar is directly above it, and StatusRegion remains inside the flexible body."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T14:40:21+00:00",
+  "recorded_at": "2026-08-31T16:57:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-frame-log"
   },
   "terminal": {
     "columns": 144,
-    "program": "Headless POSIX pseudo-terminal",
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },
