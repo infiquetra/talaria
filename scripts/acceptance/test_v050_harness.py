@@ -18,6 +18,7 @@ from scripts.acceptance.v050_common import (
     validate_config_dir,
     validate_wheel_direct_url,
 )
+from scripts.acceptance.v050_install_probe import _probe_bare_launch
 from scripts.acceptance.v050_pty_driver import DriveEvent, parse_events, run_pty
 from scripts.acceptance.v050_receipt import validate_receipt
 
@@ -91,6 +92,55 @@ def test_timeout_kills_the_real_pty_child_loudly(tmp_path: Path) -> None:
     assert result.timed_out
     assert result.exit_code != 0
     assert result.capture_bytes > 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
+def test_bare_launch_ends_blocking_worker_prompt_with_eof(tmp_path: Path) -> None:
+    prompt_program = tmp_path / "blocking-worker-prompt"
+    prompt_program.write_text(
+        f"""#!{sys.executable}
+import asyncio
+import getpass
+
+
+async def prompt() -> int:
+    try:
+        await asyncio.to_thread(getpass.getpass, "WORKER-PROMPT: ")
+    except EOFError:
+        print("PROMPT-EOF", flush=True)
+        return 2
+    return 0
+
+
+raise SystemExit(asyncio.run(prompt()))
+""",
+        encoding="utf-8",
+    )
+    prompt_program.chmod(0o755)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    environment = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=20,
+        columns=60,
+    )
+
+    result = _probe_bare_launch(
+        prompt_program,
+        work_dir=tmp_path,
+        environment=environment,
+        raw_dir=tmp_path / "raw",
+        rows=20,
+        columns=60,
+        term="xterm-256color",
+    )
+
+    capture = Path(result["capture"]["path"]).read_bytes()
+    assert result["exit_code"] == 2
+    assert not result["timed_out"]
+    assert b"WORKER-PROMPT: " in capture
+    assert b"PROMPT-EOF" in capture
 
 
 def test_event_script_rejects_ambiguous_actions(tmp_path: Path) -> None:
