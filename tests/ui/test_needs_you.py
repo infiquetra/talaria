@@ -374,7 +374,7 @@ def test_an_items_label_carries_the_duplicate_doubt_it_was_given() -> None:
         opened_at=BASE_TIME,
         possibly_duplicate=True,
     )
-    assert "possibly the same as another row" in format_item_label(item, BASE_TIME)
+    assert "[?] possibly duplicate" in format_item_label(item, BASE_TIME)
 
 
 def test_an_unanswerable_items_detail_is_the_reason_not_the_command() -> None:
@@ -399,7 +399,9 @@ def test_an_unanswerable_items_detail_is_the_reason_not_the_command() -> None:
     )
     from talaria.ui.needs_you import format_item_detail
 
-    assert format_item_detail(item) == "an earlier approval in this session is still waiting"
+    assert format_item_detail(item) == (
+        "[x] blocked — an earlier approval in this session is still waiting"
+    )
     assert wait_line(item, BASE_TIME + 5) == "waiting 5s"
 
 

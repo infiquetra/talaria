@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""B1: the caret row is gone, replaced by a latched composer notice (R5').
+"""B1 discard notices coexist with U6's always-mounted caret row.
 
 Covers AE1-AE5 (plan:421-457) and KTD2 truncation
 and the truncation clause KTD2. Each test names which AE and which fact it
@@ -49,21 +49,17 @@ def _notice(app: TalariaApp) -> str:
     return app.composer.notice
 
 def _has_caret_row(app: TalariaApp) -> bool:
-    # AE1: presence-of-text check, not "caret" substring elsewhere in tree.
-    # The caret row, if it existed, would be a caret:-prefixed Static in the
-    # status region. Check both the region's own row/marker text and the full
-    # screen for a rendered caret: line to catch a future re-introduction that
-    # renders via a different widget.
+    # Presence-of-text check, not a broad "caret" substring search. The U6 row
+    # is separate from shell-status rows and the shell failure marker, so scan
+    # those first and then the painted screen for the dedicated Static.
     for txt in app.status_region.row_texts:
         if txt.startswith("caret:"):
             return True
     if app.status_region.marker_text.startswith("caret:"):
         return True
-    # Also scan screen text for a rendered caret line - a future slot could be
-    # rendered outside StatusRegion's row_texts property (e.g., via mount).
-    # This is the conservative direction: a blank screen satisfies "no caret"
-    # but the test pairs it with a present-status-row assertion so a blank
-    # screen is not a pass.
+    # The focus row intentionally is not part of row_texts: that property is
+    # the status command's payload. Read the painted screen as the independent
+    # observation that the focus row is mounted.
     screen = _screen_text(app)
     for line in screen.splitlines():
         if line.strip().startswith("caret:"):
@@ -74,12 +70,8 @@ def _has_caret_row(app: TalariaApp) -> bool:
 # ── AE1 ───────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_ae1_no_caret_row_ever_appears() -> None:
-    """AE1: tab into transcript, onto prompts container, focus helper onto a card, and a
-    click on a sub-agent row each leave the status region with no caret:-
-    prefixed text, and the rendered row set is identical to the composer-focused
-    baseline. The absence is a text-presence check, not a substring search for
-    "caret" anywhere in the tree (plan :424-427)."""
+async def test_u6_caret_row_stays_mounted_without_changing_status_rows() -> None:
+    """Focus moves keep the U6 caret row and the shell-status payload stable."""
     app = live_app(RecordingDispatcher())
     async with app.run_test(size=(100, 30)) as pilot:
         # Seed status rows so "identical row set" is not vacuously true for an
@@ -89,7 +81,7 @@ async def test_ae1_no_caret_row_ever_appears() -> None:
         baseline_rows = app.status_region.row_texts
         baseline_marker = app.status_region.marker_text
         assert baseline_rows != (), "baseline empty — this test proves nothing"
-        assert not _has_caret_row(app)
+        assert _has_caret_row(app)
 
         # 1. tab into transcript
         feed(app, event("message.start", {}))
@@ -99,7 +91,7 @@ async def test_ae1_no_caret_row_ever_appears() -> None:
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
-        assert not _has_caret_row(app), "caret row appeared after tab into transcript"
+        assert _has_caret_row(app), "caret row disappeared after tab into transcript"
         assert app.status_region.row_texts == baseline_rows
         assert app.status_region.marker_text == baseline_marker
 
@@ -112,15 +104,14 @@ async def test_ae1_no_caret_row_ever_appears() -> None:
         # direct focus is more deterministic than a second tab which may land on
         # the agents region when populated; we assert the no-text region itself.
         assert app.prompts.has_focus or app.screen.focused is app.prompts
-        assert not _has_caret_row(app), "caret row appeared on prompts container"
+        assert _has_caret_row(app), "caret row disappeared on prompts container"
         assert app.status_region.row_texts == baseline_rows
 
         app.composer.text_area.focus()
         await pilot.pause()
 
-        # 3. F1 onto a card's control — the answerable away-state that keeps its
-        #    own announcement (R2). No caret row here either, but the status rows
-        #    must still be identical.
+        # 3. A card's control keeps its own announcement (R2), while the caret
+        #    row and shell-status payload remain mounted independently.
         feed(app, event("approval.request", {"description": "delete build", "command": "rm -rf build", "choices": ["once", "deny"]}), seq=102)
         await settle(app, pilot)
         # A4: card auto-focuses when composer empty; helper still works for the deliberate case.
@@ -128,7 +119,7 @@ async def test_ae1_no_caret_row_ever_appears() -> None:
         assert app.prompts.focus_first_unanswered()
         await pilot.pause()
         await pilot.pause()
-        assert not _has_caret_row(app), "caret row appeared after F1 jump onto card"
+        assert _has_caret_row(app), "caret row disappeared on a prompt card"
         assert app.status_region.row_texts == baseline_rows
 
         # Return composer focus (answering will do it, but we need to test the 4th
@@ -137,14 +128,14 @@ async def test_ae1_no_caret_row_ever_appears() -> None:
         await pilot.pause()
 
         # 4. click on a sub-agent row — also a no-text region per KTD5, but with
-        #    its own tint. Still no caret row.
+        #    its own tint. The independent caret row stays mounted.
         feed(app, event("subagent.start", {"subagent_id": "a0", "goal": "indexer", "depth": 1, "task_index": 0}), seq=103)
         await settle(app, pilot)
         row = app.agents.row_for("a0")
         assert row is not None and row.interruptible
         row.focus()
         await pilot.pause()
-        assert not _has_caret_row(app), "caret row appeared after focusing sub-agent row"
+        assert _has_caret_row(app), "caret row disappeared on a sub-agent row"
         assert app.status_region.row_texts == baseline_rows
 
         await app.shutdown_sources()

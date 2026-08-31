@@ -67,6 +67,7 @@ class ConfigError(Exception):
 #: to, so a default of ``None`` means "string-valued, no default".
 DEFAULTS: dict[str, Any] = {
     "theme": {"name": REFINED_DEFAULT.slug},
+    "ui": {"reduced_motion": False},
     "status": {
         "command": None,
         "interval_seconds": 5,
@@ -280,6 +281,16 @@ def _normalize_config(merged: dict[str, Any]) -> tuple[dict[str, Any], tuple[str
             f"({REFINED_DEFAULT.slug})"
         )
 
+    ui_source = merged.get("ui")
+    reduced_motion = (
+        ui_source.get("reduced_motion") if isinstance(ui_source, Mapping) else None
+    )
+    if not isinstance(reduced_motion, bool):
+        ui = dict(ui_source) if isinstance(ui_source, Mapping) else {}
+        ui["reduced_motion"] = False
+        merged["ui"] = ui
+        notices.append("ui.reduced_motion must be a boolean; using false")
+
     status_source = merged.get("status")
     normalized_status = normalize_status_settings(status_source)
     status = dict(status_source) if isinstance(status_source, Mapping) else {}
@@ -468,6 +479,10 @@ def load_config(
         # the operator explicitly invokes ``/theme save``.
         allowed_cli_overrides = dict(cli_overrides)
         allowed_cli_overrides.pop("theme", None)
+        # Reduced motion is restart-to-apply configuration with no environment
+        # or command-line alias. A caller's unrelated launch overrides must not
+        # create a second, undocumented live-control path.
+        allowed_cli_overrides.pop("ui", None)
         merged = _deep_merge(merged, allowed_cli_overrides)
 
     merged, notices = _normalize_config(merged)

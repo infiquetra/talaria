@@ -41,6 +41,7 @@ def test_defaults_apply_when_nothing_else_is_set(tmp_path: Path) -> None:
     assert cfg.get("status", "cwd_max_columns") == 24
     assert cfg.get("status", "git_branch_max_columns") == 18
     assert cfg.get("status", "agent_model_max_columns") == 24
+    assert cfg.get("ui", "reduced_motion") is False
     assert cfg.get("composer", "paste_collapse_lines") == 6
     assert cfg.get("composer", "paste_collapse_bytes") == 512
 
@@ -103,6 +104,57 @@ def test_theme_has_no_command_line_override(tmp_path: Path) -> None:
     )
 
     assert cfg.get("theme", "name") == "refined-default"
+
+
+def test_reduced_motion_precedence_is_default_then_user_then_repository(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[ui]\nreduced_motion = true\n", encoding="utf-8"
+    )
+    repository = tmp_path / ".talaria"
+    repository.mkdir()
+    (repository / "config.toml").write_text(
+        "[ui]\nreduced_motion = false\n", encoding="utf-8"
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("ui", "reduced_motion") is False
+    assert cfg.notices == ()
+
+
+def test_invalid_winning_reduced_motion_uses_false_not_a_weaker_scope(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[ui]\nreduced_motion = true\n", encoding="utf-8"
+    )
+    repository = tmp_path / ".talaria"
+    repository.mkdir()
+    (repository / "config.toml").write_text(
+        '[ui]\nreduced_motion = "yes"\n', encoding="utf-8"
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("ui", "reduced_motion") is False
+    assert isinstance(cfg.notices, tuple)
+    assert cfg.notices == ("ui.reduced_motion must be a boolean; using false",)
+
+
+def test_reduced_motion_has_no_environment_or_command_line_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TALARIA_UI_REDUCED_MOTION", "true")
+
+    cfg = load_config(
+        cli_overrides={"ui": {"reduced_motion": True}},
+        cwd=tmp_path,
+    )
+
+    assert cfg.get("ui", "reduced_motion") is False
+    assert cfg.notices == ()
 
 
 def test_global_config_toml_overrides_default(
