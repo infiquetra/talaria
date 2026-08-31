@@ -43,6 +43,19 @@ async def test_a_malformed_command_notice_is_visible_without_a_status_runner() -
 
 
 @pytest.mark.asyncio
+async def test_running_app_routes_status_configuration_notices_to_status_region() -> None:
+    notice = "status.command has invalid quoting; the status command is disabled"
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        startup_notices=(notice, "theme fallback stayed in the startup transcript"),
+    )
+
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        assert app.status_region.marker_text == notice
+
+
+@pytest.mark.asyncio
 async def test_a_multi_row_payload_renders_one_row_per_line() -> None:
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(100, 30)) as pilot:

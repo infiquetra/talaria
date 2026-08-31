@@ -290,13 +290,15 @@ def decode_catalog(result: Any) -> CommandCatalog:
     categories = _category_index(result.get("categories"))
     local_entries = _local_entries()
     # Preserve the existing browse order and its first-screen unsupported
-    # evidence when issue #104 adds one more local row. ``/theme`` remains in
-    # the catalogue and in slash filtering, but follows the gateway rows in
+    # evidence as local controls are added. ``/theme`` and ``/bar`` remain in
+    # the catalogue and in slash filtering, but follow the gateway rows in
     # the unfiltered browse list rather than displacing ``/density`` and its
     # dispatchable neighbour below the established 14-row viewport.
-    deferred_local = tuple(entry for entry in local_entries if entry.name == "/theme")
+    deferred_local = tuple(
+        entry for entry in local_entries if entry.name in {"/theme", "/bar"}
+    )
     entries: list[CommandEntry] = [
-        entry for entry in local_entries if entry.name != "/theme"
+        entry for entry in local_entries if entry.name not in {"/theme", "/bar"}
     ]
     seen = {entry.name.lower() for entry in local_entries}
 
@@ -365,6 +367,7 @@ LocalAction = Literal[
     "agents",
     "needs",
     "theme",
+    "bar",
 ]
 
 
@@ -475,6 +478,12 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "theme",
         "Preview or save the session theme",
         argument_hint="[save [user|repository]]",
+    ),
+    LocalCommand(
+        "/bar",
+        "bar",
+        "Show the status-bar segments or toggle one for this session",
+        argument_hint="[segment]",
     ),
 )
 
