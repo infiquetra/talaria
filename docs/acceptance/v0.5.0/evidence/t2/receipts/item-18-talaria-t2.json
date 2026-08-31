@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
-    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
-    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
+    "install_receipt_sha256": "c96c75197ba8e8ecc353cebcae13f66f431ab5f8a510246d718dffa934883726",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 18,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-18.ansi",
-    "capture_sha256": "08f7c5da8054435e1db245f99207e62141ef4303194c3c7b5f4efbb550bbb14c",
+    "capture_sha256": "c886c9d0726fa04463b4046bf3b514071bfee98de88b273b8b99ed4c43525536",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-18-pty.json",
-    "pty_result_sha256": "2046f83bbc4bec94cb725936e5ef2a6a017a0bb4b3c5c64b0087ee550f7407c9",
+    "pty_result_sha256": "e5fbdf1b40ab693a8a101c6390c3b3f47be366da03f91a8f75ab068c10257c8e",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18.png",
-    "screenshot_sha256": "85b1e0c4907d3332de8975035d86fbc90f3ef213a703db923c23727d0d48a388"
+    "screenshot_sha256": "166336cae95a30cf9fb17c1869a0298c4f556ff31270316639cac17312139062"
   },
   "observations": [
-    "The 120/119 transitions preserved manual preference, the separate 119-column capture showed an overlay, and a fresh 120-column process reset geometry to the 36-column default before interaction."
+    "Dock, overlay, manual preference, reflow, and fresh-process geometry reset behave as specified."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T16:57:40+00:00",
+  "recorded_at": "2026-08-31T20:28:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-frame-log"
+    "profile": "deterministic-replay"
   },
   "terminal": {
     "columns": 120,

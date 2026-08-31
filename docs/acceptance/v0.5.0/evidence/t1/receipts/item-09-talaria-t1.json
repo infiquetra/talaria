@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
-    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
-    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 9,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-09-session.ansi",
-    "capture_sha256": "2e095b4513fe4169551d7af600f854cd6b821fa6ecdb38c1ef4908d25fee8c8c",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-09-session-pty.json",
-    "pty_result_sha256": "890a4c54a48e0153d16ac20e0de93d921ac9a7b56c952e7efb9c81b27fb8f9b1",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-09-session-final2.ansi",
+    "capture_sha256": "74468c24b71e2d7ff85c3442559fd3cba15927bec6b601ee01008e8a71fa1854",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-09-session-final2-pty.json",
+    "pty_result_sha256": "2ef4a72bf3d045f2f57aadc9747976db8faedf57733471310ab72f819df8d8ee",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-09-session.png",
-    "screenshot_sha256": "403a21aebf8e2f5ab81e1b6e72e595a4b8ee533f61a5bb71bc0fdb20db9f8ba3"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-09-session-final2.png",
+    "screenshot_sha256": "6a99b0f414a9e9cff9b9ea738487912749ce3a3415e1fc54e06fa590ad53e759"
   },
   "observations": [
-    "Three real installed-binary legs proved user save, repository override, and session-only preview precedence; the session leg left both user and repository files byte-identical.",
-    "The user config hash after save was e1486ac1788ae2a59a51545a34ea0df77591ede0268313d73c46d19dd1d1c900; the repository config hash was bc74886467ba259b3a2f4e2966a4d2ebb153ec2c5395e91cdfe79f40ef044bb3."
+    "Three installed-binary legs proved user save, repository override, and session-only preview precedence; the session leg left both user and repository files byte-identical.",
+    "The final user config hash was 126e3d59fce2646f70d5aa5748cefe909e66538d507aeef35d25a78918c7df7f and the repository config hash was fabff0bbd0902a86aac6e7c9e1b7a20f6f309b8f0eec8659e34b0f116a2aa101."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T17:30:33+00:00",
+  "recorded_at": "2026-08-31T20:43:49+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

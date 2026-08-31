@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
-    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
-    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 8,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-08-final.ansi",
-    "capture_sha256": "cbea038f3223a5bc73d7b3182b77773a9ebd7082f90407f42e9673800d35036d",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-08-final-pty.json",
-    "pty_result_sha256": "7baa7e922291e311f1399308102d7c2a0136613401b8516eae01e33ff5c86f59",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-08-final2b.ansi",
+    "capture_sha256": "12e06001ec9492d71a29aa806aed182199d9d74290e79034aea25a96cca83eb0",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-08-final2b-pty.json",
+    "pty_result_sha256": "20bbcd31ebc4fd14211ccdea09b226d963a3567a044cfe1a0e7a76e77660ac78",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-08-final.png",
-    "screenshot_sha256": "14a59fa205858c964e73a19bd9f9b8adf16b62c472116eb6ec9e42f8e5e6f5a7"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-08-final2b.png",
+    "screenshot_sha256": "11eea6d32ecb297b3196f56e5e108c57a3f2bd0cb36c99dbab4733a664de6fd3"
   },
   "observations": [
-    "The picker preview changed twice, Escape restored Refined Default, and the prepared scratch config retained both its SHA-256 ac8e69b87db427c43f3f0304b935ecdccf0b4f92e3a79b266513a054ced257a0 and mtime 1788197121."
+    "The picker preview changed twice, Escape restored Refined Default, and the prepared scratch config retained SHA-256 d52792f63d1007367c808ded991d822a3d3180f02cfbd0d4a5486486a100ef5 and mtime 1788206599."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T17:30:33+00:00",
+  "recorded_at": "2026-08-31T20:43:49+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

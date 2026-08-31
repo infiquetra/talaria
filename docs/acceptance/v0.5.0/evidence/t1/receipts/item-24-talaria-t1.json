@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
-    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
-    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 24,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-24.ansi",
-    "capture_sha256": "fc8f56fd77eeadd6704a32966efd22b53c4f9d3b4887a787fe7aa17c2f6b9259",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-24-pty.json",
-    "pty_result_sha256": "bb5ab6f1b02271052f99a82bd9c64b3252089159739277fb58989b1822598917",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-24-final2.ansi",
+    "capture_sha256": "ad83048d0418e19ca71aea15afc375dc090cbd0aa652ccd0fd9d8647b98f0344",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-24-final2-pty.json",
+    "pty_result_sha256": "7a433456f7382e828a8383b4250b8cdb8dbf81cd24ded1840eaa3fac01f7330a",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-24.png",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-24-final2.png",
     "screenshot_sha256": "b4f62e98b2052dcaa6300bb66309bc5defa358bb1ff9ed3fe14c526687b6a7b6"
   },
   "observations": [
-    "The corpus displayed queued, running, waiting, completed, error, failed and cancelled agents plus waiting, blocked and empty queue detail in monochrome.",
-    "Blocked: the replay contract cannot supply the admin-polled possibly-duplicate row, so the required [?] possibly duplicate state was not present and was not inferred."
+    "The deterministic corpus displayed queued, running, completed, error, failed, interrupted and timeout agent states plus waiting approval and clarification rows in monochrome.",
+    "Blocked: the gateway assigns request identifiers, so live approvals are anchored and never possibly duplicate; replay cannot encode the keyless admin-polled shape without simulating acceptance."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T17:30:34+00:00",
+  "recorded_at": "2026-08-31T20:43:49+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,7 +38,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-agent-queue-states"
+    "profile": "isolated-agent-queue-states"
   },
   "terminal": {
     "columns": 132,

@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
+    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
+    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+  },
+  "checklist_item": 27,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27.ansi",
+    "capture_sha256": "c818896bbef8e9e6814e4ec62501160139e71a7f3e414cecfaa904b8215fe8ab",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-pty.json",
+    "pty_result_sha256": "3530b4937ba53fa30e3fb928fb2d5d0a30c0a30c12fffe91cb9eb3f4e7e5b96a",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27.png",
+    "screenshot_sha256": "2ddf4626fec3f0f9f12d0aee597422cd174798d170f9e8027ebfd26456eff586"
+  },
+  "observations": [
+    "The long deterministic transcript exceeded one viewport and the drive scrolled away from the tail before a mid-drive resize.",
+    "Failure: visible transcript ranges jumped from 58-81 to 95-119 after later interface updates, so unpinned position was not stable."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T17:32:19+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-long-scroll"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Stable unpinned scroll",
+  "verdict": "fail"
+}

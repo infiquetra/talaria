@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
-    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
-    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 35,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-35-after-restart.ansi",
-    "capture_sha256": "f2debfa96f78d785acff83e6e0d4feccd3599a145430b18ee82f5f1480b06c0b",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-35-after-restart-pty.json",
-    "pty_result_sha256": "98dee24c62e514b75793e37bf9e278c5d6499a1fad15b3f86ecb6d4f24322059",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-35-after-final2.ansi",
+    "capture_sha256": "cf458eea457181c1c94a583531631ee8ec36c431b0aad7db0dbeb341fd9ef211",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-35-after-final2-pty.json",
+    "pty_result_sha256": "47aa55940d8a9c46c5e33cf712010d9dc614ab89b8931dca01b1bc6f758623d6",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-35-after-restart.png",
-    "screenshot_sha256": "fb90fe982cd159dcaa872e481b8dfaba9e75db24556d2c0105c17266e38abcdb"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-35-after-final2.png",
+    "screenshot_sha256": "5e216bab414550eff01fbf82bb64802d3a40ee36e4d889b6616229524f0e4c1c"
   },
   "observations": [
     "The running interface stayed Accessible High Contrast after the scratch config changed to Neutral Dark; only a clean restart applied Neutral Dark."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T17:32:20+00:00",
+  "recorded_at": "2026-08-31T20:44:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

@@ -2576,6 +2576,12 @@ class TalariaApp(App[None]):
                 )
                 self._sweep_connection_soon(named, trigger)
 
+        if focused:
+            # A reconnect can advance to the next dial state before the 50ms
+            # coalescing tick. Hand this observed state to the existing bar now
+            # so its non-colour form is not skipped between timer frames.
+            self._refresh_bottom_status_bar()
+
     def note_reconnect(self, epoch: int) -> None:
         """Mark a successful reconnect in the transcript, once (F6).
 
@@ -6609,9 +6615,6 @@ class TalariaApp(App[None]):
             self._notice("")
 
     # ── scroll anchoring ─────────────────────────────────────────────────
-
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self.transcript.hold_anchor()
 
     def on_paste(self, event: events.Paste) -> None:
         """Paste is typing's bigger sibling (KTD2, R5').

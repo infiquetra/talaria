@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
-    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
-    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 23,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-live-states-final.ansi",
-    "capture_sha256": "f1fa0e24a6c091db1e0b6ce91c867675eeb7ceb835a414109c73d23071739c77",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-live-states-final-pty.json",
-    "pty_result_sha256": "17d6855db5800b641769c9e410032d20abd3e5fe12bac3c14d076cc03a193b37",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-reconnect-final2.ansi",
+    "capture_sha256": "31de6cdc122d2d47b894964740150b48cce518630cb28d24ee10091643139784",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-reconnect-final2-pty.json",
+    "pty_result_sha256": "70d7d89fd9c4690613ea95a634c1fd3dc8a9fd1e9bff813a79cac5a9f4a39354",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-live-states-final.png",
-    "screenshot_sha256": "7e033ca49076f45f87879b7a75f9c10e08af7f25300b88206af6f8c56fb3fd9b"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-reconnect-final2.png",
+    "screenshot_sha256": "b6ece92ed440d36f56fb89b1991f4df77b77f44da1d7e237430885d4cf36e42d"
   },
   "observations": [
-    "The monochrome controlled restart produced visible connecting-to-gateway, [x] down, and [!] auth states and completed cleanly.",
-    "Failure: the capture did not retain the required [ok] connected, [..] connecting, and [~] reconnecting token-plus-text forms, so the five-state condition is not proven."
+    "Separate drives reached all five non-colour connection forms: [..] wait, [ok] up, [~] retry, [x] down, and [!] auth.",
+    "The genuine reconnect cycle held and resumed the same authorized dashboard process; the raw capture contains both 'connection lost \u2014 reconnecting' and [~] retry before recovery. No fallback route was attempted."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T17:32:20+00:00",
+  "recorded_at": "2026-08-31T20:43:49+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -34,9 +34,9 @@
     "model_route": {
       "fallback_availability": "not-checked",
       "fallback_reason": null,
-      "observed": null,
+      "observed": "opencode-go / muse-spark-1.2-contributor",
       "requested": "opencode-go / muse-spark-1.2-contributor",
-      "status": "not-reached"
+      "status": "used"
     },
     "profile": "default on isolated dashboard 8790"
   },
@@ -48,5 +48,5 @@
   },
   "tester": "talaria-t1",
   "title": "Connection non-color states",
-  "verdict": "fail"
+  "verdict": "pass"
 }
