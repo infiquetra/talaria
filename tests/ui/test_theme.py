@@ -9,7 +9,12 @@ import pytest
 
 from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
-from talaria.ui.theme import BUILTIN_THEME_REGISTRY, ThemeRegistry, textual_variable_name
+from talaria.ui.theme import (
+    BUILTIN_THEME_REGISTRY,
+    ThemeRegistry,
+    contrast_ratio,
+    textual_variable_name,
+)
 from tests.ui.conftest import event, paused_app, screen_text
 
 VISUAL_SPEC = (
@@ -72,24 +77,6 @@ def _visual_spec_values() -> dict[str, dict[str, str]]:
         for name, color in zip(BUILTIN_NAMES, colors, strict=True):
             values[name][token] = color
     return values
-
-
-def _relative_luminance(color: str) -> float:
-    channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
-    linear = [
-        channel / 12.92
-        if channel <= 0.04045
-        else ((channel + 0.055) / 1.055) ** 2.4
-        for channel in channels
-    ]
-    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
-
-
-def _contrast(first: str, second: str) -> float:
-    lighter, darker = sorted(
-        (_relative_luminance(first), _relative_luminance(second)), reverse=True
-    )
-    return (lighter + 0.05) / (darker + 0.05)
 
 
 def test_the_registry_is_the_exact_58_token_visual_specification() -> None:
@@ -169,7 +156,7 @@ def test_all_sixteen_status_semantic_pairs_match_the_measured_ratios() -> None:
     for state, ratios in expected.items():
         observed = tuple(
             round(
-                _contrast(
+                contrast_ratio(
                     spec.tokens[f"talaria.status.{state}"],
                     spec.tokens["talaria.status.background"],
                 ),
@@ -179,6 +166,174 @@ def test_all_sixteen_status_semantic_pairs_match_the_measured_ratios() -> None:
         )
         assert observed == ratios
         assert min(observed) >= 4.5
+
+
+def _measurement_table(heading: str) -> dict[str, tuple[float, ...]]:
+    text = VISUAL_SPEC.read_text(encoding="utf-8")
+    table = text.split(heading, 1)[1].split("| **Minimum**", 1)[0]
+    measurements: dict[str, tuple[float, ...]] = {}
+    for line in table.splitlines():
+        if not line.startswith("| ") or line.startswith("| Pair") or line.startswith("|---"):
+            continue
+        pair, *ratios = (cell.strip() for cell in line.strip("|").split("|"))
+        measurements[pair] = tuple(float(ratio.removesuffix(":1")) for ratio in ratios)
+    return measurements
+
+
+_TEXT_PAIRS: dict[str, tuple[str, str]] = {
+    "body / canvas": ("talaria.text", "talaria.canvas"),
+    "body / surface": ("talaria.text", "talaria.surface"),
+    "body / panel": ("talaria.text", "talaria.panel"),
+    "muted / canvas": ("talaria.text.muted", "talaria.canvas"),
+    "muted / surface": ("talaria.text.muted", "talaria.surface"),
+    "muted / panel": ("talaria.text.muted", "talaria.panel"),
+    "primary / canvas": ("talaria.primary", "talaria.canvas"),
+    "secondary / canvas": ("talaria.secondary", "talaria.canvas"),
+    "accent / canvas": ("talaria.accent", "talaria.canvas"),
+    "success / canvas": ("talaria.success", "talaria.canvas"),
+    "warning / canvas": ("talaria.warning", "talaria.canvas"),
+    "error / canvas": ("talaria.error", "talaria.canvas"),
+    "selection text / selection": (
+        "talaria.selection.text",
+        "talaria.selection.background",
+    ),
+    "cursor text / focus": ("talaria.selection.text", "talaria.focus"),
+    "status text / status": ("talaria.status.text", "talaria.status.background"),
+    "status muted / status": ("talaria.status.muted", "talaria.status.background"),
+    "status success / status": (
+        "talaria.status.success",
+        "talaria.status.background",
+    ),
+    "status warning / status": (
+        "talaria.status.warning",
+        "talaria.status.background",
+    ),
+    "status error / status": ("talaria.status.error", "talaria.status.background"),
+    "status attention / status": (
+        "talaria.status.attention",
+        "talaria.status.background",
+    ),
+    "inspector body / inspector": (
+        "talaria.text",
+        "talaria.inspector.background",
+    ),
+    "inspector heading / inspector": (
+        "talaria.inspector.heading",
+        "talaria.inspector.background",
+    ),
+    "diff context / canvas": ("talaria.diff.context", "talaria.canvas"),
+    "diff line number / canvas": ("talaria.diff.line-number", "talaria.canvas"),
+    "diff added / added line": ("talaria.diff.added", "talaria.diff.added.background"),
+    "diff removed / removed line": (
+        "talaria.diff.removed",
+        "talaria.diff.removed.background",
+    ),
+    "diff hunk / hunk line": ("talaria.diff.hunk", "talaria.diff.hunk.background"),
+    "diff added / intraline": (
+        "talaria.diff.added",
+        "talaria.diff.intraline-added.background",
+    ),
+    "diff removed / intraline": (
+        "talaria.diff.removed",
+        "talaria.diff.intraline-removed.background",
+    ),
+}
+for group in ("operator", "assistant", "reasoning", "activity", "session", "fault"):
+    _TEXT_PAIRS[f"transcript body / {group}"] = (
+        "talaria.text",
+        f"talaria.transcript.{group}.background",
+    )
+for syntax in (
+    "comment",
+    "keyword",
+    "string",
+    "number",
+    "function",
+    "type",
+    "variable",
+    "operator",
+    "constant",
+):
+    for background, token in (
+        ("surface", "talaria.surface"),
+        ("canvas", "talaria.canvas"),
+        ("added line", "talaria.diff.added.background"),
+        ("removed line", "talaria.diff.removed.background"),
+    ):
+        _TEXT_PAIRS[f"syntax {syntax} / {background}"] = (
+            f"talaria.syntax.{syntax}",
+            token,
+        )
+
+_COMPONENT_PAIRS: dict[str, tuple[str, str]] = {
+    "border / surface": ("talaria.border", "talaria.surface"),
+    "muted border / canvas": ("talaria.border.muted", "talaria.canvas"),
+    "focus / canvas": ("talaria.focus", "talaria.canvas"),
+    "selection / canvas": ("talaria.selection.background", "talaria.canvas"),
+    "status separator / status": (
+        "talaria.status.separator",
+        "talaria.status.background",
+    ),
+    "inspector border / canvas": ("talaria.inspector.border", "talaria.canvas"),
+    "added marker / added line": (
+        "talaria.diff.added",
+        "talaria.diff.added.background",
+    ),
+    "removed marker / removed line": (
+        "talaria.diff.removed",
+        "talaria.diff.removed.background",
+    ),
+    "hunk marker / hunk line": (
+        "talaria.diff.hunk",
+        "talaria.diff.hunk.background",
+    ),
+    "added marker / intraline": (
+        "talaria.diff.added",
+        "talaria.diff.intraline-added.background",
+    ),
+    "removed marker / intraline": (
+        "talaria.diff.removed",
+        "talaria.diff.intraline-removed.background",
+    ),
+}
+for group in ("operator", "assistant", "reasoning", "activity", "session", "fault"):
+    _COMPONENT_PAIRS[f"{group} marker / {group} fill"] = (
+        f"talaria.transcript.{group}",
+        f"talaria.transcript.{group}.background",
+    )
+
+
+@pytest.mark.parametrize(
+    ("heading", "pairs", "minimum"),
+    [
+        ("### Text and glyph contrast measurements", _TEXT_PAIRS, 4.5),
+        ("### Non-text component contrast measurements", _COMPONENT_PAIRS, 3.0),
+    ],
+)
+def test_the_complete_contrast_matrix_matches_the_measured_visual_specification(
+    heading: str,
+    pairs: dict[str, tuple[str, str]],
+    minimum: float,
+) -> None:
+    expected = _measurement_table(heading)
+    assert set(pairs) == set(expected)
+
+    for pair, (foreground, background) in pairs.items():
+        observed = tuple(
+            round(contrast_ratio(spec.tokens[foreground], spec.tokens[background]), 2)
+            for spec in BUILTIN_THEMES
+        )
+        assert observed == expected[pair], pair
+        assert min(observed) >= minimum, pair
+
+    accessible = min(
+        contrast_ratio(
+            BUILTIN_THEMES[-1].tokens[foreground],
+            BUILTIN_THEMES[-1].tokens[background],
+        )
+        for foreground, background in pairs.values()
+    )
+    assert round(accessible, 2) >= (6.22 if minimum == 4.5 else 6.08)
 
 
 @pytest.mark.asyncio

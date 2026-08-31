@@ -1,0 +1,18 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "resize": {"rows": 36, "columns": 120}},
+    {"at_seconds": 5.5, "key": "CTRL_B"},
+    {"at_seconds": 6.25, "key": "CTRL_B"},
+    {"at_seconds": 7.0, "hex_bytes": "1b5b313b3243"},
+    {"at_seconds": 8.0, "resize": {"rows": 36, "columns": 119}},
+    {"at_seconds": 9.5, "resize": {"rows": 36, "columns": 120}},
+    {"at_seconds": 11.0, "key": "CTRL_B"},
+    {"at_seconds": 12.0, "resize": {"rows": 36, "columns": 119}},
+    {"at_seconds": 13.5, "resize": {"rows": 36, "columns": 120}},
+    {"at_seconds": 15.0, "resize": {"rows": 36, "columns": 119}},
+    {"at_seconds": 16.5, "key": "CTRL_B"},
+    {"at_seconds": 18.0, "key": "ESCAPE"},
+    {"at_seconds": 19.0, "resize": {"rows": 36, "columns": 120}},
+    {"at_seconds": 21.0, "key": "CTRL_Q"}
+  ]
+}
