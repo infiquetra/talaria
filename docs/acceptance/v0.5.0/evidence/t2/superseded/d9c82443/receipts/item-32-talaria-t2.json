@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
+    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+  },
+  "checklist_item": 32,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-32.ansi",
+    "capture_sha256": "4437d9282848c4c74ef0f0cf07a07c9be48df703a53dca4b760e0b356c936f52",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-32-pty.json",
+    "pty_result_sha256": "c6c2714296bbcffa5cdb1b48aff3f2bb07b1f5b2696ec3fff0e32a7627ff9bf1",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-32.png",
+    "screenshot_sha256": "853c51af17e6ddaedf1a3a3d55cda676e2904c369608848112a570056c1a1892"
+  },
+  "observations": [
+    "The cwd segment disappeared immediately with a session-only notice. Config SHA-256, 74-byte size, and mtime were unchanged through the toggle and a fresh process restored cwd."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-08-31T16:57:40+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-frame-log"
+  },
+  "terminal": {
+    "columns": 144,
+    "program": "POSIX pseudo-terminal capture",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Session-only status toggle",
+  "verdict": "pass"
+}
