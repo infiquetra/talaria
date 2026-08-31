@@ -243,6 +243,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
         "/theme",
         "/bar",
         "/inspector",
+        "/diffs",
     }
 
 
@@ -467,6 +468,7 @@ def test_the_local_set_includes_the_theme_picker_and_explicit_save_surface() -> 
         "/theme",
         "/bar",
         "/inspector",
+        "/diffs",
     }
 
 
@@ -487,6 +489,14 @@ def test_inspector_always_resolves_locally() -> None:
 
     assert isinstance(invocation, LocalInvocation)
     assert invocation.command.action == "inspector"
+    assert invocation.argument == ""
+
+
+def test_diffs_always_resolves_locally() -> None:
+    invocation = resolve_command("/diffs", None)
+
+    assert isinstance(invocation, LocalInvocation)
+    assert invocation.command.action == "diffs"
     assert invocation.argument == ""
 
 

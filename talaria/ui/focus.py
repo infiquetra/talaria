@@ -28,10 +28,39 @@ focus moves are untouched, because no control was taken away in one.
 
 from __future__ import annotations
 
+from typing import Final, Literal
+
 from textual.app import ScreenStackError
 from textual.dom import NoScreen
 from textual.message import Message
 from textual.widget import Widget
+
+FocusRegion = Literal[
+    "composer",
+    "transcript",
+    "prompts",
+    "agents",
+    "inspector",
+    "palette",
+    "dialog",
+    "diff",
+]
+
+_REGION_BY_CSS_TYPE: Final[dict[str, FocusRegion]] = {
+    "ChatTextArea": "composer",
+    "Composer": "composer",
+    "TranscriptPane": "transcript",
+    "PromptCard": "prompts",
+    "PromptRegion": "prompts",
+    "AgentRow": "agents",
+    "AgentRows": "agents",
+    "Inspector": "inspector",
+    "InspectorPane": "inspector",
+    "PaletteRegion": "palette",
+    "PickerDialog": "dialog",
+    "ConfirmDialog": "dialog",
+    "DiffViewer": "diff",
+}
 
 
 class CaretReleased(Message):
@@ -64,3 +93,25 @@ def holds_caret(widget: Widget) -> bool:
     if focused is None:
         return False
     return focused is widget or widget in focused.ancestors
+
+
+def focused_region(widget: Widget | None) -> str:
+    """Name the visible region containing the focused widget.
+
+    The result is display text, not application state. Known compound widgets
+    collapse to the operator-facing region names from the visual specification;
+    a later focusable surface still gets an honest, stable name derived from its
+    id or CSS type instead of being reported as ``unknown``.
+    """
+    if widget is None:
+        return "none"
+    lineage = (widget, *tuple(widget.ancestors))
+    for node in lineage:
+        for cls in type(node).__mro__:
+            region = _REGION_BY_CSS_TYPE.get(cls.__name__)
+            if region is not None:
+                return region
+    for node in lineage:
+        if node.id:
+            return node.id.replace("-", " ")
+    return type(widget).__name__.replace("-", " ").lower()

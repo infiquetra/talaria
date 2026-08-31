@@ -48,7 +48,7 @@ from textual.widgets import Static
 
 from talaria import __version__
 from talaria.config import ConfigError, ThemeSaveScope, save_theme
-from talaria.domain.changes import InspectorView, inspector_view
+from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.commands import (
     CATALOG_METHOD,
     DISPATCH_METHOD,
@@ -206,8 +206,10 @@ from talaria.transport.source import FrameRecord, FrameSource, SwitchReport
 from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
 from talaria.ui.dialog import ConfirmDialog, PickerDialog
-from talaria.ui.focus import CaretReleased
+from talaria.ui.diff_viewer import DiffViewer, adapt_diff_document
+from talaria.ui.focus import CaretReleased, focused_region
 from talaria.ui.inspector import Inspector
+from talaria.ui.motion import MotionPolicy
 from talaria.ui.needs_you import (
     ITEM_NO_LONGER_WAITING,
     NeedsSelection,
@@ -248,7 +250,7 @@ from talaria.ui.status_bar import (
 )
 from talaria.ui.status_region import StatusRegion
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY, DEFAULT_THEME_SLUG, ThemeRegistry
-from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptPane
+from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptAnchor, TranscriptPane
 
 #: KTD14's coalescing boundary. Deltas accumulate in the domain transcript and
 #: the UI flushes on this tick rather than per token.
@@ -1188,6 +1190,7 @@ class TalariaApp(App[None]):
         startup: StartupSelection | None = None,
         theme_name: object = DEFAULT_THEME_SLUG,
         theme_registry: ThemeRegistry | None = None,
+        reduced_motion: bool = False,
         startup_notices: tuple[str, ...] = (),
         theme_config_dir: Path | None = None,
         launch_cwd: Path | None = None,
@@ -1200,6 +1203,10 @@ class TalariaApp(App[None]):
         self.session_theme_slug: str | None = None
         self.theme_config_dir = theme_config_dir
         self.launch_cwd = launch_cwd if launch_cwd is not None else Path.cwd()
+        # One restart-scoped value is injected into every motion-aware widget.
+        # It never changes in response to a file edit or session command.
+        self.motion = MotionPolicy(reduced=reduced_motion)
+        self._theme_preview_anchor: TranscriptAnchor | None = None
         self._startup_notices = (*startup_notices, *resolved_theme.notices)
         self._status_notices = tuple(
             notice for notice in startup_notices if notice.startswith("status")
@@ -1620,9 +1627,13 @@ class TalariaApp(App[None]):
     def compose(self) -> ComposeResult:
         with Horizontal(id="main-and-inspector"):
             with Vertical(id="body"):
-                yield TranscriptPane(mount_cap=self.mount_cap, id="transcript")
+                yield TranscriptPane(
+                    mount_cap=self.mount_cap,
+                    motion=self.motion,
+                    id="transcript",
+                )
                 yield AgentRows(id="agents")
-                yield PromptRegion(id="prompts")
+                yield PromptRegion(motion=self.motion, id="prompts")
                 yield PaletteRegion(id="palette")
                 yield StatusRegion(
                     initial_marker="\n".join(self._status_notices),
@@ -1691,10 +1702,49 @@ class TalariaApp(App[None]):
     def _idle_notice(self) -> str:
         return INERT_NOTICE if self.mode == "replay" else ""
 
+    # ── U6: layout-stable focus and chrome changes ──────────────────────
+
+    def _capture_layout_anchor(self) -> TranscriptAnchor | None:
+        """Capture an unpinned reading position before chrome can reflow it."""
+        try:
+            transcript = self.transcript
+        except NoMatches:
+            return None
+        if transcript.follow:
+            return None
+        return transcript.capture_reading_anchor()
+
+    def _restore_layout_anchor(self, anchor: TranscriptAnchor | None) -> None:
+        """Restore one captured position, or the exact bottom when following."""
+        try:
+            transcript = self.transcript
+        except NoMatches:
+            return
+        if transcript.follow or anchor is not None:
+            transcript.restore_reading_anchor(anchor)
+
+    def _sync_focus_indication(self) -> None:
+        """Repaint both caret cues without mounting or resizing anything."""
+        region = focused_region(self.focused)
+        try:
+            self.status_region.set_caret(region)
+            self.composer.show_caret_location(region == "composer")
+        except NoMatches:
+            # The first focus event may arrive while compose is still mounting.
+            return
+
+    def _restore_after_theme_change(self, _theme: object) -> None:
+        """Keep the open-time reading anchor through every picker preview."""
+        self._restore_layout_anchor(self._theme_preview_anchor)
+
+    def _clear_theme_preview_anchor(self) -> None:
+        self._theme_preview_anchor = None
+
     # ── lifecycle ────────────────────────────────────────────────────────
 
     async def on_mount(self) -> None:
         self._started_at = time.monotonic()
+        self.theme_changed_signal.subscribe(self, self._restore_after_theme_change)
         self._coalesce_timer = self.set_interval(self.coalesce_interval, self._render_tick)
         # A separate, far slower timer than the render tick, and deliberately
         # not folded into it: R12 wants the probe story kept live, and a probe
@@ -1761,14 +1811,17 @@ class TalariaApp(App[None]):
         except NoMatches:
             pass
         self.composer.text_area.focus()
+        self.call_after_refresh(self._sync_focus_indication)
 
     def on_resize(self, event: events.Resize) -> None:
-        """Pass the production terminal width to the inspector synchronously."""
+        """Pass terminal width to the inspector without losing the reader."""
+        anchor = self._capture_layout_anchor()
         try:
             self.inspector.set_terminal_width(event.size.width)
         except NoMatches:
             # Textual can publish the app's first resize before compose mounts.
             pass
+        self._restore_layout_anchor(anchor)
 
     async def on_unmount(self) -> None:
         await self.shutdown_sources()
@@ -2190,7 +2243,11 @@ class TalariaApp(App[None]):
         if self.snapshot is None:
             self.snapshot = project(self.state, mode=self.mode)
         result = await runner.tick(self.snapshot.status)
-        await self.status_region.apply(result)
+        anchor = self._capture_layout_anchor()
+        try:
+            await self.status_region.apply(result)
+        finally:
+            self._restore_layout_anchor(anchor)
         return result
 
     # ── replay controls (R40, AE11) ──────────────────────────────────────
@@ -2240,7 +2297,34 @@ class TalariaApp(App[None]):
 
     def action_toggle_inspector(self) -> None:
         """Toggle the process-local dock or narrow overlay."""
+        anchor = self._capture_layout_anchor()
         self.inspector.toggle()
+        self._restore_layout_anchor(anchor)
+
+    def on_inspector_file_selected(self, message: Inspector.FileSelected) -> None:
+        """Open the selected held file without reading or dispatching anything."""
+        message.stop()
+        self._open_diffs(message.selection)
+
+    def _open_diffs(self, selection: DiffSelection | None = None) -> None:
+        anchor = self._capture_layout_anchor()
+        inspector = self.inspector
+        inspector.set_diff_open(inspector.is_docked)
+        self._restore_layout_anchor(anchor)
+        self.push_screen(
+            DiffViewer(
+                adapt_diff_document(inspector.document),
+                file_key=None if selection is None else selection.file_key,
+                hunk_index=0 if selection is None else selection.hunk_index,
+            ),
+            self._diff_closed,
+        )
+
+    def _diff_closed(self, _: None) -> None:
+        """Restore the inspector state that the diff modal left untouched."""
+        anchor = self._capture_layout_anchor()
+        self.inspector.set_diff_open(False)
+        self._restore_layout_anchor(anchor)
 
     async def action_toggle_agents(self) -> None:
         if not self.agents.is_populated:
@@ -3847,23 +3931,29 @@ class TalariaApp(App[None]):
 
     async def open_theme_picker(self) -> None:
         """Open theme mode at the currently applied session selection."""
+        self._theme_preview_anchor = self._capture_layout_anchor()
         await self.palette.open_theme_picker(
             self.theme_registry.specs,
             current_slug=self.theme,
             session_slug=self.session_theme_slug,
         )
+        self._restore_layout_anchor(self._theme_preview_anchor)
 
     def on_palette_region_theme_selected(
         self, message: PaletteRegion.ThemeSelected
     ) -> None:
         """Keep an accepted picker choice in memory for this process only."""
         self.session_theme_slug = message.slug
+        self._restore_layout_anchor(self._theme_preview_anchor)
+        self.call_after_refresh(self._clear_theme_preview_anchor)
 
     def on_palette_region_theme_cancelled(
         self, message: PaletteRegion.ThemeCancelled
     ) -> None:
         """Restore the exact session selection captured when theme mode opened."""
         self.session_theme_slug = message.session_slug
+        self._restore_layout_anchor(self._theme_preview_anchor)
+        self.call_after_refresh(self._clear_theme_preview_anchor)
 
     # ── U2: the model picker ──────────────────────────────────────────────
 
@@ -4255,7 +4345,11 @@ class TalariaApp(App[None]):
         except NoMatches:  # pragma: no cover - teardown race
             return
         self._seam_lines = lines
-        await region.apply_seams(lines)
+        anchor = self._capture_layout_anchor()
+        try:
+            await region.apply_seams(lines)
+        finally:
+            self._restore_layout_anchor(anchor)
 
     async def _refresh_seam_ages(self) -> None:
         """Let a painted seam line grow older on screen.
@@ -5054,7 +5148,11 @@ class TalariaApp(App[None]):
             return True
         if command.action == "inspector":
             self.composer.clear()
-            self.inspector.toggle()
+            self.action_toggle_inspector()
+            return True
+        if command.action == "diffs":
+            self.composer.clear()
+            self._open_diffs()
             return True
         if command.action == "pause":
             self.controls.pause()
@@ -6321,11 +6419,13 @@ class TalariaApp(App[None]):
             if focused_id != self._agents_toggle_latch:
                 self._agents_toggle_latch = ""
 
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+    def on_descendant_focus(self, _event: events.DescendantFocus) -> None:
         self._clear_discard_latch_if_needed()
+        self._sync_focus_indication()
 
-    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+    def on_descendant_blur(self, _event: events.DescendantBlur) -> None:
         self._clear_discard_latch_if_needed()
+        self.call_after_refresh(self._sync_focus_indication)
 
     # ── the caret comes home ─────────────────────────────────────────────
 

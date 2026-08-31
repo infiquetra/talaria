@@ -1,0 +1,27 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "resize": {"rows": 36, "columns": 112}},
+    {"at_seconds": 5.5, "text": "/diffs"},
+    {"at_seconds": 6.5, "key": "ESCAPE"},
+    {"at_seconds": 7.0, "key": "ENTER"},
+    {"at_seconds": 8.5, "text": "n"},
+    {"at_seconds": 9.25, "text": "n"},
+    {"at_seconds": 10.0, "text": "p"},
+    {"at_seconds": 10.75, "text": "N"},
+    {"at_seconds": 11.5, "text": "N"},
+    {"at_seconds": 12.25, "text": "P"},
+    {"at_seconds": 13.0, "text": "f"},
+    {"at_seconds": 14.0, "key": "UP"},
+    {"at_seconds": 14.75, "key": "ENTER"},
+    {"at_seconds": 16.0, "key": "RIGHT"},
+    {"at_seconds": 16.4, "key": "RIGHT"},
+    {"at_seconds": 16.8, "key": "RIGHT"},
+    {"at_seconds": 17.2, "key": "RIGHT"},
+    {"at_seconds": 18.0, "text": "e"},
+    {"at_seconds": 18.5, "text": "a"},
+    {"at_seconds": 19.0, "text": "r"},
+    {"at_seconds": 19.5, "text": "d"},
+    {"at_seconds": 21.0, "key": "ESCAPE"},
+    {"at_seconds": 22.0, "key": "CTRL_Q"}
+  ]
+}

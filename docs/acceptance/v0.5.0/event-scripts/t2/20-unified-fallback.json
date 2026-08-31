@@ -1,0 +1,20 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "resize": {"rows": 36, "columns": 112}},
+    {"at_seconds": 5.5, "text": "/diffs "},
+    {"at_seconds": 5.8, "key": "ENTER"},
+    {"at_seconds": 7.5, "text": "n"},
+    {"at_seconds": 8.0, "key": "PAGE_DOWN"},
+    {"at_seconds": 8.5, "key": "PAGE_DOWN"},
+    {"at_seconds": 9.5, "resize": {"rows": 36, "columns": 111}},
+    {"at_seconds": 11.0, "text": "s"},
+    {"at_seconds": 12.5, "resize": {"rows": 36, "columns": 112}},
+    {"at_seconds": 14.0, "text": "u"},
+    {"at_seconds": 15.0, "text": "s"},
+    {"at_seconds": 16.0, "resize": {"rows": 36, "columns": 111}},
+    {"at_seconds": 17.0, "text": "s"},
+    {"at_seconds": 18.5, "resize": {"rows": 36, "columns": 112}},
+    {"at_seconds": 20.0, "key": "ESCAPE"},
+    {"at_seconds": 21.0, "key": "CTRL_Q"}
+  ]
+}
