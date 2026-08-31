@@ -22,6 +22,9 @@ from talaria.config import (
     load_config,
     recordings_dir,
 )
+from talaria.themes import ThemeSpec
+from talaria.themes.builtins import REFINED_DEFAULT
+from talaria.themes.storage import serialize_user_theme
 from tests.conftest import HERMES_DASHBOARD_TOKEN_VAR
 
 
@@ -98,6 +101,51 @@ def test_non_string_theme_falls_back_with_an_immutable_notice(
     assert cfg.get("theme", "name") == "refined-default"
     assert isinstance(cfg.notices, tuple)
     assert "must be a string" in cfg.notices[0]
+
+
+@pytest.mark.parametrize(
+    ("state", "content"),
+    [
+        (
+            "extra-field",
+            '{"dark":true,"extra":1,"name":"Broken","slug":"broken","tokens":{}}',
+        ),
+        ("unrelated-json", '{"bogus":1}'),
+        ("truncated-json", '{"dark":'),
+        ("empty-file", ""),
+        (
+            "missing-tokens",
+            '{"dark":true,"name":"Broken","slug":"broken","tokens":{}}',
+        ),
+    ],
+)
+def test_broken_stored_themes_are_skipped_without_hiding_valid_themes(
+    isolated_global_config_dir: Path,
+    state: str,
+    content: str,
+) -> None:
+    themes = isolated_global_config_dir / "themes"
+    themes.mkdir()
+    broken = themes / f"broken-{state}.json"
+    broken.write_text(content, encoding="utf-8")
+    valid = ThemeSpec(
+        slug="valid-user",
+        name="Valid User",
+        dark=REFINED_DEFAULT.dark,
+        tokens=REFINED_DEFAULT.tokens,
+    )
+    (themes / "valid-user.json").write_bytes(serialize_user_theme(valid))
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "valid-user"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config()
+
+    assert cfg.get("theme", "name") == "valid-user"
+    assert len(cfg.notices) == 1
+    assert str(broken) in cfg.notices[0]
+    assert "skipped" in cfg.notices[0]
 
 
 def test_theme_has_no_command_line_override(tmp_path: Path) -> None:

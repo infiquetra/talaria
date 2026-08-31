@@ -241,7 +241,8 @@ def write_user_theme(spec: ThemeSpec, *, config_dir: Path | None = None) -> Path
 def load_user_theme_specs(*, config_dir: Path | None = None) -> tuple[ThemeSpec, ...]:
     """Load canonical user themes in stable filename order for one fresh run."""
     root = config_dir if config_dir is not None else global_config_dir()
-    return load_stored_theme_specs(config_dir=root)
+    specs, _notices = load_stored_theme_specs(config_dir=root)
+    return specs
 
 
 def theme_registry_for_config(*, config_dir: Path | None = None) -> ThemeRegistry:
