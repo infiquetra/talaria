@@ -41,13 +41,14 @@ from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 from textual import events
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Static
 
 from talaria import __version__
 from talaria.config import ConfigError, ThemeSaveScope, save_theme
+from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.commands import (
     CATALOG_METHOD,
     DISPATCH_METHOD,
@@ -205,7 +206,9 @@ from talaria.transport.source import FrameRecord, FrameSource, SwitchReport
 from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
 from talaria.ui.dialog import ConfirmDialog, PickerDialog
+from talaria.ui.diff_viewer import DiffViewer, adapt_diff_document
 from talaria.ui.focus import CaretReleased
+from talaria.ui.inspector import Inspector
 from talaria.ui.needs_you import (
     ITEM_NO_LONGER_WAITING,
     NeedsSelection,
@@ -1089,17 +1092,18 @@ class HelpBar(Static):
         from talaria.ui.literal import literal_text  # local import to avoid cycle
 
         if mode == "replay":
-            # Replay: the three pacing keys are primary; live interrupt is inert.
-            # Fits 80 columns at 80x24 (P1-D) — 79 chars, no ellipsis at standard
-            # width. Cut to four entries rather than clip nine.
-            text = "F8 pause · F9 slow · F10 fast · end follow · ctrl+q quit — F1/F2 eaten on macOS"
-        else:
-            # Live: pacing keys are inert, so not advertised.
-            # Fits 80 columns (80 chars) — four primaries plus eaten note.
-            # F3/F6/F7 are slash primaries already discoverable via palette.
+            # Replay: keep the pacing controls and the inspector's reliable
+            # routes visible without clipping at the standard 80-column size.
             text = (
-                "ctrl+g/F2 agents · ctrl+c stop · end follow · "
-                "ctrl+q quit — F1/F2 eaten on macOS"
+                "ctrl+b inspector · / commands · F8 pause · "
+                "F9/F10 speed · F1/F2 eaten on macOS"
+            )
+        else:
+            # Live: pacing keys are inert, so not advertised. The inspector's
+            # global chord is rendered beside its slash-command fallback.
+            text = (
+                "ctrl+b inspector · / commands · ctrl+g · ctrl+c · "
+                "F1/F2 eaten on macOS"
             )
         self._help_text = text
         self.update(literal_text(text))
@@ -1120,11 +1124,17 @@ class TalariaApp(App[None]):
     }
     #body {
         height: 1fr;
+        width: 1fr;
+    }
+    #main-and-inspector {
+        height: 1fr;
+        width: 1fr;
     }
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("ctrl+q", "quit", "quit", priority=True),
+        Binding("ctrl+b", "toggle_inspector", "inspector", priority=True),
         # A4 KTD1/KTD2: F1 removed — the focus-owning card (A1) is the anchor,
         # so the jump has no job on this desktop. On macOS F1/F2 are eaten before
         # Talaria sees them; a eaten key sends no bytes and the program cannot
@@ -1330,6 +1340,7 @@ class TalariaApp(App[None]):
         self._poll_epoch = 0
         self.composer_history = ComposerHistory()
         self.snapshot: Snapshot | None = None
+        self._inspector_view: InspectorView | None = None
 
         self._dirty = True
         self._teardown_started = False
@@ -1590,16 +1601,35 @@ class TalariaApp(App[None]):
             version=__version__,
         )
 
-    def compose(self) -> ComposeResult:
-        with Vertical(id="body"):
-            yield TranscriptPane(mount_cap=self.mount_cap, id="transcript")
-            yield AgentRows(id="agents")
-            yield PromptRegion(id="prompts")
-            yield PaletteRegion(id="palette")
-            yield StatusRegion(
-                initial_marker="\n".join(self._status_notices),
-                id="status",
+    def _inspector_model(self) -> str:
+        """Return the most specific focused-session model Talaria already holds."""
+        provider, model = self._status_agent()
+        if self.session_model_in_focus is not None:
+            return "/".join(part for part in (provider, model) if part)
+
+        session_id = self.state.session_key or self.state.focused_session_id or ""
+        if session_id:
+            row = fleet_row(
+                self.fleet,
+                profile=self.fleet_profile,
+                session_id=session_id,
             )
+            if row is not None and row.model:
+                return row.model
+        return "/".join(part for part in (provider, model) if part)
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="main-and-inspector"):
+            with Vertical(id="body"):
+                yield TranscriptPane(mount_cap=self.mount_cap, id="transcript")
+                yield AgentRows(id="agents")
+                yield PromptRegion(id="prompts")
+                yield PaletteRegion(id="palette")
+                yield StatusRegion(
+                    initial_marker="\n".join(self._status_notices),
+                    id="status",
+                )
+            yield Inspector(id="inspector")
         yield Composer(
             notice=self._idle_notice(),
             paste_threshold=self.paste_threshold,
@@ -1643,6 +1673,10 @@ class TalariaApp(App[None]):
     @property
     def bottom_status_bar(self) -> BottomStatusBar:
         return self.query_one("#bottom-status", BottomStatusBar)
+
+    @property
+    def inspector(self) -> Inspector:
+        return self.query_one("#inspector", Inspector)
 
     @property
     def needs_you(self) -> NeedsYouQueue:
@@ -1728,6 +1762,14 @@ class TalariaApp(App[None]):
         except NoMatches:
             pass
         self.composer.text_area.focus()
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Pass the production terminal width to the inspector synchronously."""
+        try:
+            self.inspector.set_terminal_width(event.size.width)
+        except NoMatches:
+            # Textual can publish the app's first resize before compose mounts.
+            pass
 
     async def on_unmount(self) -> None:
         await self.shutdown_sources()
@@ -2093,6 +2135,7 @@ class TalariaApp(App[None]):
         previous = self.snapshot
         snapshot = project(self.state, mode=self.mode, previous=previous)
         self.snapshot = snapshot
+        entries = entry_scoped_view(self.state)
 
         if "transcript" in snapshot.changed:
             # KTD6: the pane needs entry identity and raw (unwelded) bodies
@@ -2100,7 +2143,7 @@ class TalariaApp(App[None]):
             # U4 computes the entry-scoped surface here rather than growing
             # Snapshot's frozen shape — entry_scoped_view is a pure function
             # of the same SessionState project() already read this tick.
-            await self.transcript.apply(snapshot.transcript, entry_scoped_view(self.state))
+            await self.transcript.apply(snapshot.transcript, entries)
         if "subagents" in snapshot.changed:
             await self.agents.apply(snapshot.subagents)
         if {"prompts", "status"} & snapshot.changed:
@@ -2113,6 +2156,20 @@ class TalariaApp(App[None]):
                 snapshot.status.turn,
                 focus_new=not self.composer.text.strip(),
             )
+        profile = self.current_profile
+        inspector_projection = inspector_view(
+            entries,
+            queue=self.needs_you,
+            agents=snapshot.subagents,
+            session_id=self.state.focused_session_id or "",
+            profile=profile,
+            endpoint=self.profile_endpoints.get(profile, "") if profile else "",
+            model=self._inspector_model(),
+            usage=self.state.usage,
+        )
+        if inspector_projection != self._inspector_view:
+            self._inspector_view = inspector_projection
+            await self.inspector.apply(inspector_projection)
         self._answer_unattended_prompts(snapshot)
         self._refresh_bottom_status_bar()
 
@@ -2181,6 +2238,31 @@ class TalariaApp(App[None]):
             return
         self.controls.slow_down()
         self._notice(self._pacing_notice())
+
+    def action_toggle_inspector(self) -> None:
+        """Toggle the process-local dock or narrow overlay."""
+        self.inspector.toggle()
+
+    def on_inspector_file_selected(self, message: Inspector.FileSelected) -> None:
+        """Open the selected held file without reading or dispatching anything."""
+        message.stop()
+        self._open_diffs(message.selection)
+
+    def _open_diffs(self, selection: DiffSelection | None = None) -> None:
+        inspector = self.inspector
+        inspector.set_diff_open(inspector.is_docked)
+        self.push_screen(
+            DiffViewer(
+                adapt_diff_document(inspector.document),
+                file_key=None if selection is None else selection.file_key,
+                hunk_index=0 if selection is None else selection.hunk_index,
+            ),
+            self._diff_closed,
+        )
+
+    def _diff_closed(self, _: None) -> None:
+        """Restore the inspector state that the diff modal left untouched."""
+        self.inspector.set_diff_open(False)
 
     async def action_toggle_agents(self) -> None:
         if not self.agents.is_populated:
@@ -4991,6 +5073,14 @@ class TalariaApp(App[None]):
             return True
         if command.action == "bar":
             self._perform_bar(invocation.argument)
+            return True
+        if command.action == "inspector":
+            self.composer.clear()
+            self.inspector.toggle()
+            return True
+        if command.action == "diffs":
+            self.composer.clear()
+            self._open_diffs()
             return True
         if command.action == "pause":
             self.controls.pause()

@@ -23,7 +23,9 @@ from talaria.ui.inspector import (
     MIN_INSPECTOR_WIDTH,
     Inspector,
 )
+from talaria.ui.picker import SessionModel
 from tests.domain.conftest import raw_event, replay
+from tests.ui.conftest import RecordingDispatcher, live_app, paused_app
 
 
 class FocusTarget(Static):
@@ -278,3 +280,123 @@ async def test_every_empty_section_says_no_state_was_observed() -> None:
         assert app.inspector.file_texts == ()
         assert EMPTY_SECTION in app.inspector.operation_text
         assert app.inspector.query(".inspector--empty").nodes
+
+
+@pytest.mark.asyncio
+async def test_production_app_ctrl_b_and_inspector_command_are_socket_free() -> None:
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        assert app.inspector.is_docked
+        assert "ctrl+b inspector" in app.help_bar.help_text
+        assert "/ commands" in app.help_bar.help_text
+
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.inspector.is_effectively_collapsed
+
+        app.composer.text = "/inspector"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.inspector.is_docked
+        assert app.composer.text == ""
+        assert dispatcher.operator_calls == []
+
+
+@pytest.mark.asyncio
+async def test_production_resize_adapter_preserves_dock_and_overlay_geometry() -> None:
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert app.inspector.is_docked
+
+        await pilot.resize_terminal(119, 30)
+        await pilot.pause()
+        assert app.inspector.auto_collapsed
+        assert not app.inspector.requested_collapsed
+
+        await pilot.resize_terminal(120, 30)
+        await pilot.pause()
+        assert app.inspector.is_docked
+
+        await pilot.resize_terminal(78, 30)
+        await pilot.pause()
+        body_width = app.query_one("#body").region.width
+        app.composer.text_area.focus()
+
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.inspector.is_overlay
+        assert app.inspector.region.width == 36
+        assert app.query_one("#body").region.width == body_width
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.inspector.is_effectively_collapsed
+        assert app.focused is app.composer.text_area
+
+
+@pytest.mark.asyncio
+async def test_production_render_boundary_populates_all_held_sections() -> None:
+    app, _controls = paused_app(
+        [],
+        current_profile="default",
+        profile_endpoints={"default": "http://gateway.example"},
+    )
+    app.state = replay(
+        [
+            raw_event("session.info", {"usage": {"input_tokens": 25}}),
+            raw_event("message.start"),
+            raw_event(
+                "subagent.start",
+                {"subagent_id": "tests", "goal": "run tests"},
+            ),
+            raw_event("approval.request", {"description": "approve change"}),
+            raw_event(
+                "tool.start",
+                {"name": "edit_file", "context": "talaria/config.py"},
+            ),
+            raw_event(
+                "tool.complete",
+                {
+                    "name": "edit_file",
+                    "summary": "1 hunk completed",
+                    "inline_diff": (
+                        "--- a/talaria/config.py\n"
+                        "+++ b/talaria/config.py\n"
+                        "@@ -1 +1 @@\n"
+                        "-old\n"
+                        "+new"
+                    ),
+                },
+            ),
+        ]
+    )
+    app.session_model = SessionModel(
+        session_id="sess-focus",
+        provider_slug="Muse",
+        model="Spark 1.2",
+    )
+
+    async with app.run_test(size=(132, 30)) as pilot:
+        await app.render_snapshot()
+        await pilot.pause()
+
+        assert any("approval" in row for row in app.inspector.task_texts)
+        assert any("run tests" in row for row in app.inspector.task_texts)
+        assert "session  sess-focus" in app.inspector.context_text
+        assert "profile  default" in app.inspector.context_text
+        assert "endpoint http://gateway.example" in app.inspector.context_text
+        assert "model    Muse/Spark 1.2" in app.inspector.context_text
+        assert "usage    25 input" in app.inspector.context_text
+        assert app.inspector.file_texts == ("  M talaria/config.py",)
+        assert "edit_file · talaria/config.py" in app.inspector.operation_text
+
+        app.inspector.query_one(".inspector--file").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.inspector.selected_file_key == "talaria/config.py"
+        assert app.dispatcher is None
