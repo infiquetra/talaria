@@ -1,32 +1,31 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
-    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/install-receipt.json",
-    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
-    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
+    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 32,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-32-rerun.ansi",
-    "capture_sha256": "0ac6cf3c7da5509c742fc60b682e0ef0d189a3828fb1aa0320c7c46224cbe9c0",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/receipts/item-32-rerun-pty.json",
-    "pty_result_sha256": "f3b99034c335e22db216aa622b778c7e174cfc9af82775858c23ecadc3165fa0",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-32.ansi",
+    "capture_sha256": "4437d9282848c4c74ef0f0cf07a07c9be48df703a53dca4b760e0b356c936f52",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-32-pty.json",
+    "pty_result_sha256": "c6c2714296bbcffa5cdb1b48aff3f2bb07b1f5b2696ec3fff0e32a7627ff9bf1",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-32.png",
-    "screenshot_sha256": "20b79b04a0f3d241dae9800b44e3faa734cd3196803828e214863e558f45cbd5"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-32.png",
+    "screenshot_sha256": "853c51af17e6ddaedf1a3a3d55cda676e2904c369608848112a570056c1a1892"
   },
   "observations": [
-    "The command immediately removes cwd and says it is hidden for this session; config SHA-256 stays 0c639dc2495adcc566a32389763497b477574a30c2d0ad13cca002c6d177e126 and mtime stays 1788156286 before and after.",
-    "A fresh process at raw/item-32-restart.ansi restores cwd before any command."
+    "The cwd segment disappeared immediately with a session-only notice. Config SHA-256, 74-byte size, and mtime were unchanged through the toggle and a fresh process restored cwd."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "recorded_at": "2026-08-31T16:57:40+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-frame-log"
   },
   "terminal": {
     "columns": 144,
-    "program": "Terminal.app 2.14",
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },

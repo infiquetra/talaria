@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
-    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/install-receipt.json",
-    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
-    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
+    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 20,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-20.ansi",
-    "capture_sha256": "7bfc4042c2c4bff4582da474bb186ada3607e0895f09c380572e651c47289bf0",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/receipts/item-20-pty.json",
-    "pty_result_sha256": "8ed85854c1b05d7c050438f02f2f3ae2d5a3e7e65a76e88148342e4f961031e4",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-20-screenshot.ansi",
+    "capture_sha256": "93fe9a5cbce4842e3d8807ea26e4b099d4ed97054bc723e35d923f0c4dcee985",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-20-screenshot-pty.json",
+    "pty_result_sha256": "8316506995f3975130450b170875bf17d21a87329c42ccd14872b9730dc897fc",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-20.png",
-    "screenshot_sha256": "777dbb15386200c582dae957abf3340aa0a165bf971ef32f444ea7f0c3711081"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20.png",
+    "screenshot_sha256": "f1404bb420456e33fad6709631663916601122d32ef40498a110d948fefb6175"
   },
   "observations": [
-    "The same held file survives 112-to-111-to-112 transitions and explicit u/s changes with its selected hunk and horizontal anchor; raw/item-20-refusal.ansi shows the one-row side-by-side needs 112 columns refusal at 111."
+    "The 112/111/112 sequence changed between side-by-side and unified while retaining selection; the separate 111-column refusal reused the one-row header."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "recorded_at": "2026-08-31T16:57:40+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-frame-log"
   },
   "terminal": {
     "columns": 112,
-    "program": "Terminal.app 2.14",
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },

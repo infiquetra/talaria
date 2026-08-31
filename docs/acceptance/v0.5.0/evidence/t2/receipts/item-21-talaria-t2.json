@@ -1,32 +1,31 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
-    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/install-receipt.json",
-    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
-    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
+    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 21,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-21.ansi",
-    "capture_sha256": "863cdd7f82e9e5949ccfc735bcc6be62d578d75bbc7a3bdad668267ef888427f",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/receipts/item-21-pty.json",
-    "pty_result_sha256": "b7183a8529fb6f66c35a01b0b8b56fa82ded09d9a05680185ebd01d1b08ccdb6",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-21-screenshot.ansi",
+    "capture_sha256": "ac44fdaa035d8f566a2f51394b04a375550c1f6dab32a9330745dda80f3e8d6d",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-21-screenshot-pty.json",
+    "pty_result_sha256": "1730eab3dbb2fba2086d5f25f40cd8949fe7865f6d3858e42ec0b02458cb956e",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-21.png",
-    "screenshot_sha256": "ec94bbea5b37e4f8be1d0f9f79fe190183598ca3b0294259e6140014337e8540"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-21.png",
+    "screenshot_sha256": "f30406653e10160858cf3baf05d5332e2e78afb909f0982999d82247d4884639"
   },
   "observations": [
-    "Hunk and file navigation wrap deterministically across three files and five hunks, the overlong line clips with bounded horizontal movement, and unbound e/a/r/d input does not change held data.",
-    "The command-palette capture at raw/item-21-palette.ansi offers only Open the session's read-only diff viewer for /diffs, while the viewer hint offers only navigation, mode, files, and close actions; no mutation action is offered."
+    "Hunk and file navigation cycled held multi-file state, long lines clipped with horizontal movement, unbound edit-like keys left state unchanged, and palette and hints exposed only read-only navigation."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "recorded_at": "2026-08-31T16:57:40+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-frame-log"
   },
   "terminal": {
     "columns": 112,
-    "program": "Terminal.app 2.14",
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },

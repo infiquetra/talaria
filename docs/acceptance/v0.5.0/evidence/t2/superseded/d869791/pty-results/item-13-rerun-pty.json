@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
+    "replay",
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/fixtures/acceptance-populated.jsonl"
+  ],
+  "capture": {
+    "bytes": 159937,
+    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-13-rerun.ansi",
+    "sha256": "3339116ac0fa492ccee69b00ef240c3af18476b8d0d2c447ead4182eecb6dfd8"
+  },
+  "columns": 144,
+  "duration_seconds": 8.780995,
+  "exit_code": 0,
+  "expected_literals": [
+    "status.segments contains an unknown segment",
+    "bar: visible segments: connection, task_progress, context, agent_model, git_branch"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Terminal.app 2.14",
+  "tester": "talaria-t2",
+  "timed_out": false
+}

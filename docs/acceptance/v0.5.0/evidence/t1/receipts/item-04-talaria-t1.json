@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
-    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
-    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
-    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
+    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
+    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 4,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-04-color2.ansi",
-    "capture_sha256": "849e37691a29a34d297ff389ac19cf49da11765988fa43d9dab1e3077d9096b0",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-04-color2-pty.json",
-    "pty_result_sha256": "8452d3bcb310fbddcae1699e7cc134cf8e5c5c9bce3bc5b6b7bc87e539a37c67",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-04.ansi",
+    "capture_sha256": "f5c95c246a0beb70b83b3cbe963daf4aa44de7cb11667ff6fd06acb76e0e6c67",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-04-pty.json",
+    "pty_result_sha256": "0ddc3b52cb244a3b489ddb3e0ed04d5b3aacadf98c70e4de323e92ba2c6b2f8d",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-04.png",
-    "screenshot_sha256": "eb9ddaddd284d05ba2fd2d7488500c4b732e54c1427dc4c1728c23ed2cc382ed"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-04.png",
+    "screenshot_sha256": "14a59fa205858c964e73a19bd9f9b8adf16b62c472116eb6ec9e42f8e5e6f5a7"
   },
   "observations": [
-    "The settled Refined Default frame uses the light token palette across transcript, Composer, status bar, inspector, selection, focus, and diff surfaces without geometry movement."
+    "Refined Default settled across transcript, composer, inspector, status region, help bar and bottom status bar with distinct user, assistant, reasoning, tool, divider, code and diff roles."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T12:13:38+00:00",
+  "recorded_at": "2026-08-31T17:30:33+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +41,7 @@
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork acceptance driver; explicit truecolor",
+    "program": "Python pty.fork on macOS",
     "rows": 36,
     "term": "xterm-256color"
   },

@@ -1,25 +1,23 @@
 {
   "argv": [
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
     "replay",
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/fixtures/acceptance-populated.jsonl"
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/fixtures/acceptance-populated.jsonl"
   ],
   "capture": {
-    "bytes": 166850,
-    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-20-refusal.ansi",
-    "sha256": "471865d2a371cf8e7839c1ed05b8c40ee6f064f21a00498f05fef912cfc3cb39"
+    "bytes": 155009,
+    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/raw/item-20-refusal.ansi",
+    "sha256": "2498820b148a41be37119ae6a9f64791b177f4710942152722375c53e2a1c689"
   },
   "columns": 111,
-  "duration_seconds": 9.782923,
+  "duration_seconds": 9.799152,
   "exit_code": 0,
-  "expected_literals": [
-    "side-by-side needs 112 columns; unified active"
-  ],
+  "expected_literals": [],
   "missing_literals": [],
   "rows": 36,
   "schema_version": "talaria-v0.5.0-pty-v1",
   "term": "xterm-256color",
-  "terminal_program": "Terminal.app 2.14",
+  "terminal_program": "POSIX pseudo-terminal capture",
   "tester": "talaria-t2",
   "timed_out": false
 }

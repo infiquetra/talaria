@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from talaria.config import load_config
 from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
 from talaria.ui.theme import (
@@ -143,6 +144,20 @@ def test_partial_and_unknown_themes_fall_back_with_complete_visible_notes() -> N
     wrong_type = registry.resolve(7)
     assert wrong_type.slug == "refined-default"
     assert "must be a string" in wrong_type.notices[0]
+
+
+def test_config_and_registry_unknown_theme_notices_are_byte_identical(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    requested = "not-installed"
+    (isolated_global_config_dir / "config.toml").write_text(
+        f'[theme]\nname = "{requested}"\n', encoding="utf-8"
+    )
+
+    config_notice = load_config(cwd=tmp_path).notices
+    registry_notice = BUILTIN_THEME_REGISTRY.resolve(requested).notices
+
+    assert config_notice == registry_notice
 
 
 def test_all_sixteen_status_semantic_pairs_match_the_measured_ratios() -> None:

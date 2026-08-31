@@ -219,6 +219,67 @@ async def test_119_120_transitions_restore_only_the_requested_open_state() -> No
 
 
 @pytest.mark.asyncio
+async def test_docked_request_returns_after_narrow_overlay_open_and_close() -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        assert app.inspector.is_docked
+        assert not app.inspector.requested_collapsed
+
+        await pilot.resize_terminal(78, 30)
+        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+
+        assert not app.inspector.requested_collapsed
+        await pilot.resize_terminal(132, 30)
+        await pilot.pause()
+        assert app.inspector.is_docked
+
+
+@pytest.mark.asyncio
+async def test_collapsed_request_survives_a_narrow_overlay_peek() -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.press("ctrl+b")
+        assert app.inspector.is_effectively_collapsed
+        assert app.inspector.requested_collapsed
+
+        await pilot.resize_terminal(78, 30)
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.inspector.is_overlay
+        assert app.inspector.requested_collapsed
+
+        await pilot.resize_terminal(132, 30)
+        await pilot.pause()
+        assert app.inspector.is_effectively_collapsed
+        assert app.inspector.requested_collapsed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start_collapsed", [False, True])
+async def test_narrow_overlay_cycle_never_changes_requested_collapsed(
+    start_collapsed: bool,
+) -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        if start_collapsed:
+            await pilot.press("ctrl+b")
+        assert app.inspector.requested_collapsed is start_collapsed
+
+        await pilot.resize_terminal(78, 30)
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.inspector.is_overlay
+        assert app.inspector.requested_collapsed is start_collapsed
+
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.inspector.is_effectively_collapsed
+        assert app.inspector.requested_collapsed is start_collapsed
+
+
+@pytest.mark.asyncio
 async def test_narrow_overlay_keeps_main_width_and_escape_restores_focus() -> None:
     app = InspectorHarness(_seeded_view())
     async with app.run_test(size=(78, 30)) as pilot:

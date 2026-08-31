@@ -1,44 +1,43 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
-    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
-    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
-    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
+    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
+    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 10,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-10-ui.ansi",
-    "capture_sha256": "49129906b0eed6e893dde65a0209ac29e150df82f6228435faef80dc8b6fb043",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-10-ui-pty.json",
-    "pty_result_sha256": "1875fc890647bb74c3d1a5938ed07b4e7bac0e93381e2ca8e604cbc7911d6138",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-10.ansi",
+    "capture_sha256": "17fafbdf0dc9fe429dcdb9cbfd5846b44d43286efbb2c64fd749e77b36147e29",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-10-pty.json",
+    "pty_result_sha256": "adcc6c2bdd124060d8bd1244bb5fd7d5d3e027137735d18b707207a1727acbb0",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-10.png",
-    "screenshot_sha256": "2079f060f3a44473c1799eececde02ec1fc27683f34c397695ba2ab62bc55e40"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-10.png",
+    "screenshot_sha256": "c9dab03adbc7225f4e719c6f127bbaabfba59066421e2e77c33edc5e782fc0a2"
   },
   "observations": [
-    "Fresh installed startup visibly reported that not-installed was unavailable and that Refined Default was used; no model turn was invoked.",
-    "The installed importer supplemental capture raw/item-10-import-final2.ansi lists 2 source tokens, 56 Refined Default fallback tokens, and 19 warnings; raw/item-10-color.ansi and screenshots/item-10-color.png show the partial imported theme in truecolor."
+    "An unknown configured theme produced the visible fallback notice and Refined Default, while the installed partial import remained selectable with its fallback accounting visible."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T12:14:08+00:00",
+  "recorded_at": "2026-08-31T17:30:33+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
-    "mode": "failure",
+    "mode": "replay",
     "model_route": {
-      "fallback_availability": "not-checked",
+      "fallback_availability": "not-applicable",
       "fallback_reason": null,
       "observed": null,
       "requested": null,
-      "status": "not-reached"
+      "status": "not-applicable"
     },
-    "profile": "isolated-theme-fallback"
+    "profile": "deterministic-theme-fallback"
   },
   "terminal": {
     "columns": 132,

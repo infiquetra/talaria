@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
-    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
-    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
-    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
+    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
+    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 25,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-25-monochrome.ansi",
-    "capture_sha256": "bce9407b7dca79907b2f7485ee1dbd5bd5450af6458d1faef118e81e665a443c",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-25-monochrome-pty.json",
-    "pty_result_sha256": "0ff144aebad575b1a7eec6901656558874a316c37713244352748e604fc3fc7d",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-25.ansi",
+    "capture_sha256": "59b841cd11111d94bdc0ca7e165c4b9fe4dd555e94c23285c74365ebdc30496c",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-25-pty.json",
+    "pty_result_sha256": "87d4c964bd876e4041171e7b9c3d71e3dfc1b13030346a267d8998addfbded44",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-25.png",
-    "screenshot_sha256": "ee0b8a2fe50c85db05bf96629e4a744e38511a48fcfffb4615465358052a27a3"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-25.png",
+    "screenshot_sha256": "887e89a6242c6da1cba271c458bc5be8c1afd28f7351ce7293bb71ff89c13448"
   },
   "observations": [
-    "The monochrome capture shows all six required identities: > You, A Talaria, . Reasoning, $ Tool/Subagent, - Session, and ! Error.",
-    "Blank spacer rows remain after Reasoning and Talaria assistant entries, violating the requirement that no entry gain a spacer row."
+    "All six transcript identities remained identifiable without colour: user, assistant, reasoning, tool, system and error.",
+    "Failure: blank spacer rows remained after the Reasoning and A Talaria entries, violating the no-blank-row condition."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T12:13:38+00:00",
+  "recorded_at": "2026-08-31T17:30:58+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -42,7 +42,7 @@
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork acceptance driver; explicit NO_COLOR monochrome",
+    "program": "Python pty.fork on macOS; NO_COLOR",
     "rows": 36,
     "term": "xterm-256color"
   },

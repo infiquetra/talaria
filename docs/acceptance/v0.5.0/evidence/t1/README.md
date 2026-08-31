@@ -1,108 +1,53 @@
-# Talaria v0.5.0 acceptance evidence — talaria-t1
+# Talaria v0.5.0 T1 acceptance evidence
 
-This directory records issue #110 acceptance against frozen candidate commit
-`d86979127f871a479eb104fc10c886b5c5480a8c` and wheel Secure Hash Algorithm 256-bit
-(SHA-256) digest `a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb`.
-The acceptance harness installed that wheel at
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2`.
-Its exact install receipt is committed as `install-receipt.json`; raw American National Standards
-Institute (ANSI) pseudo-terminal captures remain under the scratch root.
+This active evidence set was produced from the installed wheel for candidate commit
+`d9c82443f51932483ecb37c653d5c0cd8c342dac`, wheel SHA-256
+`839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda`. The T1 sweep recorded 15
+passes, four failures, and one blocked item. The earlier evidence remains unchanged under
+`superseded/` and is excluded from the active manifest.
 
-Every item receipt in `receipts/` was written by `scripts.acceptance.v050_receipt`, not by hand, and
-passed that validator with capture and screenshot hash checks enabled. The screenshots are
-deterministic Portable Network Graphics renderings of reviewed raw pseudo-terminal bytes through a
-Pyte terminal screen and Pillow image renderer. This is the same headless method used for the T2
-evidence. No Computer Use or graphical user interface automation was used.
+| Item | Verdict | Receipt | Raw pseudo-terminal capture | Screenshot |
+| ---: | --- | --- | --- | --- |
+| 1 | passed | [install receipt](install-receipt.json) | recorded by install probe | not applicable |
+| 2 | failed | [receipt](receipts/item-02-talaria-t1.json) | [raw](raw/item-02-live-primary-final.ansi) | [screenshot](screenshots/item-02-live-primary-final.png) |
+| 4 | passed | [receipt](receipts/item-04-talaria-t1.json) | [raw](raw/item-04.ansi) | [screenshot](screenshots/item-04.png) |
+| 5 | passed | [receipt](receipts/item-05-talaria-t1.json) | [raw](raw/item-05.ansi) | [screenshot](screenshots/item-05.png) |
+| 6 | passed | [receipt](receipts/item-06-talaria-t1.json) | [raw](raw/item-06.ansi) | [screenshot](screenshots/item-06.png) |
+| 7 | passed | [receipt](receipts/item-07-talaria-t1.json) | [raw](raw/item-07.ansi) | [screenshot](screenshots/item-07.png) |
+| 8 | passed | [receipt](receipts/item-08-talaria-t1.json) | [raw](raw/item-08-final.ansi) | [screenshot](screenshots/item-08-final.png) |
+| 9 | passed | [receipt](receipts/item-09-talaria-t1.json) | [user](raw/item-09-user.ansi), [repository](raw/item-09-repository.ansi), [session](raw/item-09-session.ansi) | [user](screenshots/item-09-user.png), [repository](screenshots/item-09-repository.png), [session](screenshots/item-09-session.png) |
+| 10 | passed | [receipt](receipts/item-10-talaria-t1.json) | [import](raw/item-10-import.ansi), [interface](raw/item-10.ansi) | [import](screenshots/item-10-import.png), [interface](screenshots/item-10.png) |
+| 11 | passed | [receipt](receipts/item-11-talaria-t1.json) | [first import](raw/item-11-import-1.ansi), [second import](raw/item-11-import-2.ansi), [interface](raw/item-11.ansi) | [screenshot](screenshots/item-11.png) |
+| 22 | passed | [receipt](receipts/item-22-talaria-t1.json) | [raw](raw/item-22.ansi) | [screenshot](screenshots/item-22.png) |
+| 23 | failed | [receipt](receipts/item-23-talaria-t1.json) | [raw](raw/item-23-live-states-final.ansi) | [screenshot](screenshots/item-23-live-states-final.png) |
+| 24 | blocked | [receipt](receipts/item-24-talaria-t1.json) | [raw](raw/item-24.ansi) | [screenshot](screenshots/item-24.png) |
+| 25 | failed | [receipt](receipts/item-25-talaria-t1.json) | [raw](raw/item-25.ansi) | [screenshot](screenshots/item-25.png) |
+| 26 | passed | [receipt](receipts/item-26-talaria-t1.json) | [standard](raw/item-26-standard.ansi), [reduced](raw/item-26-reduced.ansi) | [standard](screenshots/item-26-standard.png), [reduced](screenshots/item-26-reduced.png) |
+| 27 | failed | [receipt](receipts/item-27-talaria-t1.json) | [raw](raw/item-27.ansi) | [screenshot](screenshots/item-27.png) |
+| 28 | passed | [receipt](receipts/item-28-talaria-t1.json) | [raw](raw/item-28.ansi) | [screenshot](screenshots/item-28.png) |
+| 31 | passed | [receipt](receipts/item-31-talaria-t1.json) | [raw](raw/item-31-final2.ansi) | [screenshot](screenshots/item-31-final2.png) |
+| 33 | passed | [receipt](receipts/item-33-talaria-t1.json) | [raw](raw/item-23-and-33-live-restart-final.ansi) | [screenshot](screenshots/item-23-and-33-live-restart-final.png) |
+| 35 | passed | [receipt](receipts/item-35-talaria-t1.json) | [before restart](raw/item-35-before-restart.ansi), [after restart](raw/item-35-after-restart.ansi) | [before restart](screenshots/item-35-before-restart.png), [after restart](screenshots/item-35-after-restart.png) |
 
-## Verdicts
+Item 2 completed a real Hermes-backed turn on the approved primary route,
+`opencode-go / muse-spark-1.2-contributor`, and the inspector named that model. It failed because the
+required bottom-status `agent_model` segment still displayed `agent: ?`. Item 23 failed because its
+monochrome restart capture did not retain all five required token-plus-text connection forms. Item
+25 failed because blank spacer rows remained after reasoning and assistant entries. Item 27 failed
+because the unpinned transcript jumped after later interface updates. Item 24 is blocked because the
+replay boundary cannot provide the admin-polled `possibly duplicate` agent state; the receipt does
+not infer that absent row.
 
-| Item | Verdict | Judgment |
-| ---: | :--- | :--- |
-| 1 | passed | The install receipt proves the exact frozen wheel, version 0.5.0, installed entry point, bare launch, and complete 50,000-delta gate report. |
-| 2 | blocked | The gateway rejects Talaria's `/model` dispatch as command class 4018, so the approved primary route cannot be established from this client. |
-| 4 | passed | Refined Default is visibly applied across transcript, Composer, status bar, inspector, selection, focus, and diff surfaces. |
-| 5 | passed | Dark Green Terminal previews, accepts, and retains readable content across the full wide layout. |
-| 6 | passed | Neutral Dark previews, accepts, and retains the same geometry with its low-saturation palette. |
-| 7 | passed | Accessible High Contrast applies to the complete layout and read-only diff; its runtime colors match the specified contrast-qualified built-in tokens. |
-| 8 | passed | Two immediate previews cancel back to Refined Default, and the scratch config hash and modification time remain exact. |
-| 9 | passed | Three launches prove user, repository, and session theme precedence; only the two explicit save actions mutate their intended files. |
-| 10 | passed | An unknown saved theme produces the visible Refined Default fallback notice, while the partial import reports every warning and filled token. |
-| 11 | passed | Two Visual Studio Code imports store identical bytes, and a fresh installed launch loads the imported theme without a fallback notice. |
-| 22 | passed | Focus visits every required surface with correct caret-location cues and stable Composer, transcript, HelpBar, and BottomStatusBar geometry. |
-| 23 | blocked | Reconnecting and authentication-failure states require coordinated control of the shared Hermes gateway; no unowned gateway mutation was made. |
-| 24 | blocked | The capture proves all seven agent states and empty, waiting, and blocked queue forms, but shipped replay cannot create a genuine possibly-duplicate polled-feed state. |
-| 25 | failed | All six transcript identities remain legible without color, but blank spacer rows appear after Reasoning and Talaria assistant entries. |
-| 26 | passed | Restarting with reduced motion changes animated `working…` to static `[..] working` without losing transcript, agent, elapsed-time, scroll, theme, layout, or connection-state updates. |
-| 27 | failed | A genuine middle reading position jumps back to the newest transcript after later appends and chrome changes. |
-| 28 | passed | F5 follows new output, manual wheel input releases follow mode, and the last F5 returns predictably to the newest entry. |
-| 31 | passed | The installed importer exits 2 on the malformed repository fixture and creates no stored theme. |
-| 33 | blocked | A real dead or stale gateway credential requires gateway revocation or restart authority that this tester does not hold. |
-| 35 | passed | A config edit leaves the running theme unchanged and takes effect only in the fresh process after restart. |
+Item 33 used only the authorized isolated dashboard on port 8790. The deliberate restart changed
+the listener from process 99486 to process 6547 with the identical command. A later evidence retry
+left the same dashboard command running as process 18366 with parent process 1 and refreshed only the
+scratch credential. Talaria displayed an HTTP 403 authentication failure with `[!] auth`, exited
+cleanly, and exposed no credential in the reviewed capture. No fallback model was used in any live
+leg.
 
-Item 34 was assigned to T2, not this tester. It remains blocked on the same gateway-owned live-session
-control seam and was deliberately not retried here.
-
-## Failed and blocked evidence
-
-Item 25's raw capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-25-monochrome.ansi`.
-Its screenshot is `screenshots/item-25.png`. The monochrome frame shows `> You`, `. Reasoning`, `A
-Talaria`, `$ Tool/Subagent`, `- Session`, and `! Error`, but visible blank rows follow the Reasoning
-and assistant entries.
-
-Item 27's raw capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-27-wheels.ansi`.
-Its screenshot is `screenshots/item-27.png`. Forty-five real terminal wheel-up inputs reached the
-middle anchors around 66–89; later transcript appends, theme and inspector operations, and resizes
-returned the viewport to anchors 98–120 at the bottom.
-
-Item 24's blocking capture is `raw/item-24-monochrome.ansi` under the scratch root, with screenshot
-`screenshots/item-24.png`. It shows the seven fixed agent glyph-and-word forms, waiting and blocked
-queue rows, and narrow `/needs` detail. No `[?] possibly duplicate` state was produced, so prompt text
-containing those words was not treated as evidence of the state.
-
-Items 2, 23, and 33 remain blocked on gateway-owned controls. The operator-confirmed route names are
-OpenCode Muse Spark 1.2 Contributor (`opencode-go / muse-spark-1.2-contributor`) and the permitted
-fallback Ollama GLM 5.3 Flash (`ollama (ollama-cloud) / glm-5.3-flash`). Talaria's `/models` path
-composes `/model <name> --provider <slug>`, but this gateway rejects that entire dispatch with code
-4018: `not a quick/plugin/bundle/skill command: model`. No approved route reached a model turn, no
-third route was accepted, and no live receipt was fabricated.
-
-## Supplemental evidence
-
-- Item 8 kept the config SHA-256 at
-  `c0556af7ec91823950e3428c60c7cdd73dfc88e93c3fa436580699c3225547b6` and modification time at
-  `1788163146` across preview cancellation.
-- Item 9's user config changed only in its save leg from
-  `c0556af7ec91823950e3428c60c7cdd73dfc88e93c3fa436580699c3225547b6` to
-  `ee71172786c771bb5b47199be11901fbf2805f690091aea5911d316e432a9ce2`. The repository config became
-  `bc74886467ba259b3a2f4e2966a4d2ebb153ec2c5395e91cdfe79f40ef044bb3`; the session leg changed
-  neither. Screenshots for all three launches are committed.
-- Item 10's installed import capture is `raw/item-10-import-final2.ansi` under the scratch root. It
-  reports 2 source tokens, 56 Refined Default fallback tokens, and 19 warnings. The truecolor
-  supplemental screenshot is `screenshots/item-10-color.png`.
-- Item 11's installed import captures are `raw/item-11-import-1-final.ansi` and
-  `raw/item-11-import-2-final.ansi` under the scratch root. Both stored files have SHA-256
-  `4b96379b79089cce8bde457f2ac8b7a8cd86c9e44114eaad883c4823bafcf6ed`.
-- Item 26 includes standard and reduced replay screenshots plus standard and reduced isolated
-  dead-endpoint screenshots. The latter prove connection-state updates without touching the shared
-  gateway or invoking a model.
-- Item 35's paired screenshots are `screenshots/item-35-before-restart.png` and
-  `screenshots/item-35-after-restart.png`.
-
-## Review and validation
-
-The 49 selected raw captures and text-rendered screenshots were searched for authorization headers,
-bearer values, token- or credential-bearing URLs, operator home paths, usernames, and private
-email/domain identifiers; no match was found. All 16 T1 item receipts validate against their raw
-capture and screenshot hashes. The event scripts parse through
-`scripts.acceptance.v050_pty_driver.parse_events`, and all six committed corpora parse through the
-shipped frame-log reader.
-
-- `uv run ruff check .`: passed.
-- `uv run mypy`: passed with no issues.
-- `/opt/homebrew/bin/uv run pytest`: passed, 2,329 tests passed and 7 skipped in 564.30 seconds. An
-  initial whole-suite run had one intermittent status-process timing failure after 2,328 passes; the
-  exact test then passed five consecutive focused runs, and the second complete run passed.
-- `uv run bandit -r talaria -q`: passed; Bandit emitted only its existing comment-token warnings.
-- `git diff --check`: passed after the evidence update.
+The screenshots were rendered from the corresponding raw ANSI pseudo-terminal bytes with Pyte and
+Pillow. The renderer preserves terminal colours and layout; it does not automate a graphical user
+interface or simulate Talaria. Before publication, all selected raw captures were checked for
+credential values, token-query parameters, bearer headers, email addresses, and operator home
+paths. Receipt and pseudo-terminal-result paths are repository relative wherever they identify
+committed files.

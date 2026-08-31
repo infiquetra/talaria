@@ -1,32 +1,31 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
-    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
-    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
-    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
+    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
+    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 26,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-26-reduced-final.ansi",
-    "capture_sha256": "2db3c9e8ba56df42981fe87c6b1817a65766358cb3e4dbdf173cd3bf13ed4bec",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-26-reduced-final-pty.json",
-    "pty_result_sha256": "f07446ce646f6b4f4db5d937991e640acf04f962fd65419599b53a7a0f1931ed",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-26-reduced.ansi",
+    "capture_sha256": "81e28858cd31a780ab3a60970de71b99ef452a40547bf9d6ed13b781455a3476",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-26-reduced-pty.json",
+    "pty_result_sha256": "681bd340feee365badd1570ef0e3302fe0d0493ee9e5e3d61301be796c14a7ef",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-26-reduced.png",
-    "screenshot_sha256": "a0d81da22e8e663d342ff33df08313a5af2574af351f6e1679707e07a922bdbb"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-26-reduced.png",
+    "screenshot_sha256": "ff642206bfddb4c2849715677df64ac01a588c8b141604488132068fd225e687"
   },
   "observations": [
-    "Restarting with ui.reduced_motion=false produced animated working\u2026; restarting with true produced the static [..] working form while transcript appends, agent updates, scrolling, theme cancellation, elapsed state, and layout updates continued.",
-    "Supplemental dead-endpoint installed drives showed connection state updates under both values without invoking a model: raw/item-26-standard-dead-endpoint.ansi and raw/item-26-reduced-dead-endpoint.ansi."
+    "Separate restart legs proved standard working animation and reduced-motion static [..] working forms; elapsed updates, transcript anchoring and replay connection progress continued."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T12:13:39+00:00",
+  "recorded_at": "2026-08-31T17:32:19+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-motion-and-scroll"
+    "profile": "deterministic-reduced-motion"
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork acceptance driver",
+    "program": "Python pty.fork on macOS",
     "rows": 36,
     "term": "xterm-256color"
   },
