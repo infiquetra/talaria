@@ -17,7 +17,10 @@ import talaria.cli as cli_module
 from talaria import config as config_module
 from talaria.cli import main, parse_args, selection_from_args
 from talaria.recorder.command import RecordTarget
+from talaria.status.contract import StatusBarSettings
 from talaria.transport.credentials import LoopbackTokenProvider
+
+VSCODE_THEME_FIXTURES = Path(__file__).parent / "fixtures" / "vscode-themes"
 
 
 def test_explicit_session_beats_resume_and_default() -> None:
@@ -93,6 +96,142 @@ def test_a_conflicting_pair_never_reaches_the_launcher(
 
     assert excinfo.value.code == 2
     assert launched == []
+
+
+# ── issue #105: bounded Visual Studio Code theme import ─────────────────
+
+
+def test_theme_import_parses_the_nested_argv_and_optional_name() -> None:
+    args = parse_args(
+        ["theme", "import", "/tmp/source-theme.json", "--name", "stored-theme"]
+    )
+
+    assert args.command == "theme"
+    assert args.theme_command == "import"
+    assert args.source == Path("/tmp/source-theme.json")
+    assert args.name == "stored-theme"
+
+
+def test_theme_requires_a_nested_operation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        parse_args(["theme"])
+
+    assert excinfo.value.code == 2
+    assert "required" in capsys.readouterr().err
+
+
+def test_theme_import_prints_the_complete_success_report_and_exits_zero(
+    isolated_global_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "sample-dark.json"
+
+    assert main(["theme", "import", str(source), "--name", "cli-sample"]) == 0
+
+    printed = capsys.readouterr()
+    assert printed.err == ""
+    assert (
+        "Imported cli-sample as user theme cli-sample: "
+        "40 source tokens, 18 fallbacks, 0 warnings."
+    ) in printed.out
+    assert (
+        "composite: colors.editor.selectionBackground -> "
+        "talaria.selection.background: #FF000080 over #102030 = #881018"
+    ) in printed.out
+    assert "fallback: talaria.secondary <- Refined Default #6F42C1" in printed.out
+    assert (isolated_global_config_dir / "themes" / "cli-sample.json").is_file()
+
+
+def test_theme_import_warnings_use_stderr_without_turning_success_into_failure(
+    isolated_global_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "unsupported-dark.json"
+
+    assert main(["theme", "import", str(source)]) == 0
+
+    printed = capsys.readouterr()
+    assert (
+        "Imported warnings-dark as user theme warnings-dark: "
+        "2 source tokens, 56 fallbacks, 19 warnings."
+    ) in printed.out
+    assert "warning:" not in printed.out
+    warnings = printed.err.splitlines()
+    assert len(warnings) == 19
+    assert all(line.startswith("warning: ") for line in warnings)
+    assert warnings[0] == (
+        "warning: root.include is unsupported; external theme files are not read"
+    )
+
+
+def test_theme_import_failure_uses_stderr_exits_two_and_writes_nothing(
+    isolated_global_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "malformed.json"
+
+    assert main(["theme", "import", str(source)]) == 2
+
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert "talaria: theme import failed:" in printed.err
+    assert "not strict JSON" in printed.err
+    assert not (isolated_global_config_dir / "themes").exists()
+
+
+def test_a_fresh_live_and_replay_launch_receive_the_imported_registry(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "sample-dark.json"
+    cfg_before = config_module.load_config(cwd=tmp_path)
+    assert "restart-dark" not in cli_module._theme_registry(cfg_before).slugs
+
+    assert main(["theme", "import", str(source), "--name", "restart-dark"]) == 0
+    capsys.readouterr()
+
+    cfg_after = config_module.load_config(cwd=tmp_path)
+    live, _source = cli_module.build_live_app(parse_args([]), cfg_after)
+    live_theme = live.theme_registry.resolve("restart-dark")
+    assert "restart-dark" in live.theme_registry.slugs
+    assert live_theme.tokens["talaria.selection.background"] == "#881018"
+
+    captured: dict[str, object] = {}
+
+    class FakeSource:
+        focus_profile = ""
+
+    class CapturingApp:
+        def __init__(self, source: object, **kwargs: object) -> None:
+            captured["source"] = source
+            captured.update(kwargs)
+
+        def run(self) -> None:
+            captured["ran"] = True
+
+    import talaria.replay.source as replay_source_module
+    import talaria.ui.app as app_module
+
+    monkeypatch.setattr(
+        replay_source_module,
+        "source_from_path",
+        lambda *args, **kwargs: FakeSource(),
+    )
+    monkeypatch.setattr(app_module, "TalariaApp", CapturingApp)
+
+    assert cli_module.run_replay(parse_args(["replay", str(tmp_path / "corpus")])) == 0
+    replay_registry = captured["theme_registry"]
+    from talaria.ui.theme import ThemeRegistry
+
+    assert isinstance(replay_registry, ThemeRegistry)
+    assert replay_registry.resolve("restart-dark").tokens[
+        "talaria.selection.background"
+    ] == "#881018"
+    assert captured["ran"] is True
 
 
 # ── U10: the live launcher is assembled, without dialling anything ───────
@@ -192,7 +331,8 @@ def test_the_live_launcher_forwards_theme_config_and_save_targets(
     isolated_global_config_dir: Path, tmp_path: Path
 ) -> None:
     (isolated_global_config_dir / "config.toml").write_text(
-        '[theme]\nname = "neutral-dark"\n', encoding="utf-8"
+        '[theme]\nname = "neutral-dark"\n\n[ui]\nreduced_motion = true\n',
+        encoding="utf-8",
     )
     cfg = config_module.load_config(cwd=tmp_path)
 
@@ -202,7 +342,28 @@ def test_the_live_launcher_forwards_theme_config_and_save_targets(
     assert app.configured_theme_slug == "neutral-dark"
     assert app.theme_config_dir == isolated_global_config_dir
     assert app.launch_cwd == Path.cwd()
+    assert app.motion.reduced is True
     assert app._startup_notices == ()
+
+
+def test_the_live_launcher_forwards_normalized_status_bar_settings(
+    isolated_global_config_dir: Path,
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[status]\n"
+        'segments = ["connection", "cwd"]\n'
+        "cwd_max_columns = 36\n"
+        "git_branch_max_columns = 30\n"
+        "agent_model_max_columns = 40\n",
+        encoding="utf-8",
+    )
+
+    app, _ = cli_module.build_live_app(parse_args([]), config_module.load_config())
+
+    assert app.status_bar_settings.segments == ("connection", "cwd")
+    assert app.status_bar_settings.cwd_max_columns == 36
+    assert app.status_bar_settings.git_branch_max_columns == 30
+    assert app.status_bar_settings.agent_model_max_columns == 40
 
 
 def test_the_replay_launcher_forwards_theme_fallback_notices(
@@ -211,7 +372,7 @@ def test_the_replay_launcher_forwards_theme_fallback_notices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (isolated_global_config_dir / "config.toml").write_text(
-        "[theme]\nname = 7\n", encoding="utf-8"
+        "[theme]\nname = 7\n\n[ui]\nreduced_motion = true\n", encoding="utf-8"
     )
     captured: dict[str, object] = {}
 
@@ -243,6 +404,18 @@ def test_the_replay_launcher_forwards_theme_fallback_notices(
     assert "must be a string" in notices[0]
     assert captured["theme_config_dir"] == isolated_global_config_dir
     assert captured["launch_cwd"] == Path.cwd()
+    assert captured["reduced_motion"] is True
+    status_settings = captured["status_bar_settings"]
+    assert isinstance(status_settings, StatusBarSettings)
+    assert status_settings.segments == (
+        "cwd",
+        "git_branch",
+        "agent_model",
+        "context",
+        "task_progress",
+        "connection",
+        "version",
+    )
     assert captured["ran"] is True
 
 
@@ -333,9 +506,13 @@ def test_a_status_command_written_as_a_toml_array_does_not_stop_the_launch(
     app, _ = cli_module.build_live_app(parse_args([]), config_module.load_config())
 
     assert app.status_runner is None
-    # The positive half: the same config file is otherwise being read, so this
-    # is not passing because nothing was loaded.
-    assert config_module.load_config().get("status", "command") == ("sh", "-c", "date")
+    cfg = config_module.load_config()
+    assert cfg.get("status", "command") is None
+    assert any(
+        "status.command" in notice and "disabled" in notice
+        for notice in cfg.notices
+    )
+    assert any("status.command" in notice for notice in app._status_notices)
 
 
 def test_the_live_launcher_can_record_the_session_it_drives(

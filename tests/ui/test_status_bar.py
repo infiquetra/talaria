@@ -9,6 +9,7 @@ from dataclasses import replace
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.widgets import Static
 
 from talaria.domain.projection import StatusPayload
@@ -21,6 +22,7 @@ from talaria.ui.status_bar import (
     build_status_bar_view,
     render_status_bar,
 )
+from tests.ui.conftest import event, paused_app
 
 
 def _screen_text(app: App[None]) -> str:
@@ -359,3 +361,46 @@ def test_runtime_view_reuses_held_status_and_queue_facts() -> None:
     assert view.connection == "reconnecting"
     assert view.input_tokens == 31_000
     assert view.output_tokens == 1_000
+
+
+@pytest.mark.asyncio
+async def test_running_app_composes_help_above_the_true_bottom_status_row() -> None:
+    app, _controls = paused_app([event("gateway.ready", {})])
+
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+
+        assert app.help_bar.region.y == 22
+        assert app.bottom_status_bar.region.y == 23
+        assert app.bottom_status_bar.region.height == 1
+        assert not list(app.query("#needs-you"))
+        assert "[x]" in app.bottom_status_bar.last_render.plain
+
+
+@pytest.mark.asyncio
+async def test_bar_command_toggles_one_known_segment_only_in_the_running_session() -> None:
+    app, _controls = paused_app([event("gateway.ready", {})])
+
+    async with app.run_test(size=(180, 24)) as pilot:
+        await pilot.pause()
+        configured = app.status_bar_settings
+        assert "cwd" in app.bottom_status_bar.settings.segments
+
+        app.composer.text = "/bar cwd"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "cwd" not in app.bottom_status_bar.settings.segments
+        assert "cwd:" not in app.bottom_status_bar.last_render.plain
+        assert "hidden for this session" in app.composer.notice
+        assert app.status_bar_settings is configured
+
+        before = app.bottom_status_bar.settings
+        app.composer.text = "/bar made-up"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.bottom_status_bar.settings == before
+        assert "unknown segment" in app.composer.notice
+        assert all(
+            not isinstance(binding, Binding) or binding.action != "bar"
+            for binding in app.BINDINGS
+        )

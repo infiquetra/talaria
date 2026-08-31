@@ -29,6 +29,19 @@ def test_defaults_apply_when_nothing_else_is_set(tmp_path: Path) -> None:
     assert cfg.notices == ()
     assert cfg.get("status", "command") is None
     assert cfg.get("status", "interval_seconds") == 5
+    assert cfg.get("status", "segments") == (
+        "cwd",
+        "git_branch",
+        "agent_model",
+        "context",
+        "task_progress",
+        "connection",
+        "version",
+    )
+    assert cfg.get("status", "cwd_max_columns") == 24
+    assert cfg.get("status", "git_branch_max_columns") == 18
+    assert cfg.get("status", "agent_model_max_columns") == 24
+    assert cfg.get("ui", "reduced_motion") is False
     assert cfg.get("composer", "paste_collapse_lines") == 6
     assert cfg.get("composer", "paste_collapse_bytes") == 512
 
@@ -91,6 +104,57 @@ def test_theme_has_no_command_line_override(tmp_path: Path) -> None:
     )
 
     assert cfg.get("theme", "name") == "refined-default"
+
+
+def test_reduced_motion_precedence_is_default_then_user_then_repository(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[ui]\nreduced_motion = true\n", encoding="utf-8"
+    )
+    repository = tmp_path / ".talaria"
+    repository.mkdir()
+    (repository / "config.toml").write_text(
+        "[ui]\nreduced_motion = false\n", encoding="utf-8"
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("ui", "reduced_motion") is False
+    assert cfg.notices == ()
+
+
+def test_invalid_winning_reduced_motion_uses_false_not_a_weaker_scope(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[ui]\nreduced_motion = true\n", encoding="utf-8"
+    )
+    repository = tmp_path / ".talaria"
+    repository.mkdir()
+    (repository / "config.toml").write_text(
+        '[ui]\nreduced_motion = "yes"\n', encoding="utf-8"
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("ui", "reduced_motion") is False
+    assert isinstance(cfg.notices, tuple)
+    assert cfg.notices == ("ui.reduced_motion must be a boolean; using false",)
+
+
+def test_reduced_motion_has_no_environment_or_command_line_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TALARIA_UI_REDUCED_MOTION", "true")
+
+    cfg = load_config(
+        cli_overrides={"ui": {"reduced_motion": True}},
+        cwd=tmp_path,
+    )
+
+    assert cfg.get("ui", "reduced_motion") is False
+    assert cfg.notices == ()
 
 
 def test_global_config_toml_overrides_default(
@@ -287,14 +351,91 @@ def test_integer_setting_coerces_a_numeric_env_value(
     assert cfg.get("status", "interval_seconds") == 11
 
 
-def test_malformed_integer_env_value_names_the_variable(
+def test_malformed_status_interval_env_value_falls_back_visibly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TALARIA_STATUS_INTERVAL_SECONDS", "--5")
 
-    with pytest.raises(ConfigError) as excinfo:
-        load_config(cwd=tmp_path)
-    assert "TALARIA_STATUS_INTERVAL_SECONDS" in str(excinfo.value)
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("status", "interval_seconds") == 5
+    assert any(
+        "status.interval_seconds" in notice and "using 5" in notice
+        for notice in cfg.notices
+    )
+
+
+@pytest.mark.parametrize("bad", (-1, 0, 3601, "5", 2.5, True))
+def test_invalid_winning_status_interval_uses_default_with_a_notice(
+    tmp_path: Path, bad: object
+) -> None:
+    cfg = load_config(cli_overrides={"status": {"interval_seconds": bad}}, cwd=tmp_path)
+
+    assert cfg.get("status", "interval_seconds") == 5
+    assert any(
+        "status.interval_seconds" in notice and "using 5" in notice
+        for notice in cfg.notices
+    )
+
+
+@pytest.mark.parametrize("valid", (1, 17, 3600))
+def test_valid_status_interval_counterexamples_survive_normalization(
+    tmp_path: Path, valid: int
+) -> None:
+    cfg = load_config(
+        cli_overrides={"status": {"interval_seconds": valid}}, cwd=tmp_path
+    )
+
+    assert cfg.get("status", "interval_seconds") == valid
+    assert not any("status.interval_seconds" in notice for notice in cfg.notices)
+
+
+@pytest.mark.parametrize(
+    ("key", "bad", "fallback", "valid"),
+    [
+        ("cwd_max_columns", 7, 24, 48),
+        ("cwd_max_columns", "24", 24, 8),
+        ("git_branch_max_columns", 41, 18, 40),
+        ("git_branch_max_columns", False, 18, 8),
+        ("agent_model_max_columns", 9, 24, 48),
+        ("agent_model_max_columns", 24.0, 24, 10),
+    ],
+)
+def test_status_width_caps_validate_type_and_range_after_precedence(
+    tmp_path: Path,
+    key: str,
+    bad: object,
+    fallback: int,
+    valid: int,
+) -> None:
+    invalid = load_config(cli_overrides={"status": {key: bad}}, cwd=tmp_path)
+    accepted = load_config(cli_overrides={"status": {key: valid}}, cwd=tmp_path)
+
+    assert invalid.get("status", key) == fallback
+    assert any(f"status.{key}" in notice for notice in invalid.notices)
+    assert accepted.get("status", key) == valid
+    assert not any(f"status.{key}" in notice for notice in accepted.notices)
+
+
+def test_status_segment_order_is_normalized_once_and_frozen(tmp_path: Path) -> None:
+    cfg = load_config(
+        cli_overrides={
+            "status": {
+                "segments": ["version", "unknown", "connection", "version"]
+            }
+        },
+        cwd=tmp_path,
+    )
+
+    assert cfg.get("status", "segments") == ("version", "connection")
+    assert any("unknown segment" in notice for notice in cfg.notices)
+    assert any("duplicate" in notice for notice in cfg.notices)
+
+    fallback = load_config(
+        cli_overrides={"status": {"segments": ["unknown"]}}, cwd=tmp_path
+    )
+    assert fallback.get("status", "segments") == ("connection",)
+    assert any("connection only" in notice for notice in fallback.notices)
 
 
 def test_malformed_toml_names_the_offending_file(

@@ -20,7 +20,7 @@ def _subagent_start() -> dict[str, object]:
 @pytest.mark.asyncio
 async def test_focus_cues_change_text_and_colour_without_any_geometry_delta() -> None:
     app = live_app(RecordingDispatcher())
-    async with app.run_test(size=(110, 34)) as pilot:
+    async with app.run_test(size=(132, 34)) as pilot:
         feed(app, event("message.start", {}))
         feed(app, event("message.delta", {"text": "focus body"}), seq=100)
         feed(app, _subagent_start(), seq=101)
@@ -48,6 +48,7 @@ async def test_focus_cues_change_text_and_colour_without_any_geometry_delta() ->
             (app.transcript, "transcript"),
             (card.action_widget, "prompts"),
             (row, "agents"),
+            (app.inspector, "inspector"),
         )
 
         def geometry() -> dict[str, object]:
@@ -56,14 +57,13 @@ async def test_focus_cues_change_text_and_colour_without_any_geometry_delta() ->
                 "transcript": app.transcript.region,
                 "prompts": app.prompts.region,
                 "agents": app.agents.region,
+                "inspector": app.inspector.region,
                 "composer": app.composer.region,
-                "needs-you": app.needs_you_bar.region,
                 "help": app.help_bar.region,
+                "bottom-status": app.bottom_status_bar.region,
             }
 
         app.composer.text_area.focus()
-        app.status_region.set_caret("composer")
-        app.composer.show_caret_location(True)
         await pilot.pause()
         baseline = geometry()
         composer_top = app.composer.region.y
@@ -76,9 +76,6 @@ async def test_focus_cues_change_text_and_colour_without_any_geometry_delta() ->
                 target.focus()
             await pilot.pause()
             region = focused_region(app.focused)
-            app.status_region.set_caret(region)
-            app.composer.show_caret_location(region == "composer")
-            await pilot.pause()
 
             assert region == expected
             assert app.status_region.focus_text == f"caret: {expected}"
