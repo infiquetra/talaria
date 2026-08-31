@@ -2800,10 +2800,11 @@ remains a named launch error. There is no external-file watcher or live reload. 
 configuration-like actions are the process-local theme and bar controls, with explicit theme save
 still taking effect from the next startup file read.
 
-**Known implementation gap, not a decision.** Imported themes are loaded into a fresh process's
-theme registry, but configuration normalization currently accepts only built-in slugs. Selecting and
-saving an imported theme therefore falls back visibly to Refined Default at the next restart. The
-documentation records the observed limit; correction belongs to the theme-owning feature child.
+**Superseded implementation note (2026-08-31).** This record previously said configuration
+normalization accepted only built-in theme slugs. That reading was wrong: `load_config` includes the
+canonical stored user-theme slugs when it validates `theme.name`. Once an imported theme document
+exists under the user theme directory, saving its slug survives restart. The library is still read
+only once per process, consistent with the release's restart-to-apply decision.
 
 **Evidence boundary.** These decisions record merged code and its tests. They do not claim the
 candidate wheel has passed issue #110's real-terminal acceptance run; installation and release notes
