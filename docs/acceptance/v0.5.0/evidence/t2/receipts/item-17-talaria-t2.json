@@ -1,32 +1,31 @@
 {
   "artifact": {
-    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
-    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
-    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
+    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 17,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-17-empty.ansi",
-    "capture_sha256": "38a5142cb0f1dd4ab7397c077348beef034bcbe1ad954cc5ee8e1582ac7b7089",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-17-empty-pty.json",
-    "pty_result_sha256": "cdd0fad9926d6f9e32f700110392a44aaba17cddfdb1d7c13fa6bac16952ab01",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-17-empty-rerun.ansi",
+    "capture_sha256": "8d5d5d6372b83d485da99b482b5eebda0a9c21b703a2e7b008ec52e9096d9571",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-17-empty-rerun-pty.json",
+    "pty_result_sha256": "8a7d736caa2c3fe4c9cfa9062730abbfca688ab9c2ca99006901d73592161775",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-17-empty.png",
-    "screenshot_sha256": "0ae24483babaf350873bca88affca21da1843bba02566645a669b0823516dc2a"
+    "screenshot_sha256": "0c8e9d7035c549780725975063f426b1a60cfe6701ec728ca28f64111332d479"
   },
   "observations": [
-    "The populated companion capture, raw/item-17-populated.ansi, accurately renders held task, context, three changed files, and operation details.",
-    "In the header-only replay, all four headings remain and every section says none available from this session; the former synthetic needs-you unavailable task is absent."
+    "Separate populated and header-only processes kept all four headings. The empty process rendered none available from this session in every section and no synthetic needs-you row; the populated process matched held task, context, files, and operation state."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T14:40:21+00:00",
+  "recorded_at": "2026-08-31T16:57:40+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-frame-log"
   },
   "terminal": {
     "columns": 132,
-    "program": "Headless POSIX pseudo-terminal",
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },
