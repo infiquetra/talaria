@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from talaria.config import load_config
 from talaria.themes import THEME_TOKENS
 from talaria.ui.theme import serialize_user_theme, theme_registry_for_config
 from talaria.ui.theme_import import (
@@ -109,6 +110,44 @@ def test_import_is_canonical_idempotent_and_loads_in_a_fresh_registry(
     assert resolved.filled_tokens == ()
     assert dict(resolved.tokens) == dict(first.theme.tokens)
     assert restarted.resolve("not-installed").slug == "refined-default"
+
+
+def test_imported_theme_survives_restart_configuration_validation(
+    isolated_global_config_dir: Path,
+) -> None:
+    import_vscode_theme(
+        SAMPLE,
+        name="probe-theme",
+        config_dir=isolated_global_config_dir,
+    )
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "probe-theme"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config()
+
+    assert cfg.get("theme", "name") == "probe-theme"
+    assert cfg.notices == ()
+    restarted = theme_registry_for_config(config_dir=cfg.config_dir)
+    assert restarted.resolve(cfg.get("theme", "name")).slug == "probe-theme"
+
+
+def test_unknown_theme_still_falls_back_with_visible_notice(
+    isolated_global_config_dir: Path,
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "not-installed"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config()
+
+    assert cfg.get("theme", "name") == "refined-default"
+    assert cfg.notices == (
+        "theme 'not-installed' is not available; "
+        "using Refined Default (refined-default)",
+    )
 
 
 def test_unsupported_fixture_reports_every_occurrence_and_exact_counts(

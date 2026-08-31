@@ -18,10 +18,70 @@ from scripts.acceptance.v050_common import (
     validate_config_dir,
     validate_wheel_direct_url,
 )
+from scripts.acceptance.v050_install_probe import _probe_bare_launch, _probe_gate
 from scripts.acceptance.v050_pty_driver import DriveEvent, parse_events, run_pty
 from scripts.acceptance.v050_receipt import validate_receipt
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _complete_gate_report(
+    *,
+    measured_ms: float = 54.45,
+    known_check_passed: bool = False,
+    other_check_passed: bool = True,
+) -> dict[str, Any]:
+    checks: dict[str, dict[str, Any]] = {
+        "content_loss": {
+            "measured": 0 if other_check_passed else 1,
+            "threshold": 0,
+            "comparison": "<=",
+            "description": "content-loss fixture",
+            "pass": other_check_passed,
+        },
+        "workload_latency_growing-one-column-table": {
+            "measured": measured_ms,
+            "threshold": 50.0,
+            "comparison": "<=",
+            "description": "streaming p99 fixture",
+            "pass": known_check_passed,
+        },
+    }
+    return {
+        "verdict": "pass" if all(check["pass"] for check in checks.values()) else "fail",
+        "matrix": {},
+        "checks": checks,
+        "stress": {},
+        "cadence": {},
+        "live": None,
+        "feature": {},
+        "determinism_identical": None,
+        "sideband_determinism_identical": True,
+        "sideband_structure_identical": True,
+        "inert_controls_refused": [],
+        "workloads": {},
+    }
+
+
+def _write_gate_program(path: Path, report: dict[str, Any], *, exit_code: int) -> None:
+    encoded_report = json.dumps(report)
+    path.write_text(
+        f"""#!{sys.executable}
+import json
+import sys
+from pathlib import Path
+
+if sys.argv[1:4] != ["gate", "--deltas", "50000"]:
+    raise SystemExit(9)
+output = Path(sys.argv[sys.argv.index("--json") + 1])
+report = json.loads({encoded_report!r})
+output.write_text(json.dumps(report), encoding="utf-8")
+print(json.dumps(report))
+raise SystemExit({exit_code})
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
@@ -64,6 +124,35 @@ def test_real_pty_preserves_ansi_keys_and_resize(tmp_path: Path) -> None:
     assert result.columns == 80
 
 
+def test_isolated_environment_makes_colour_mode_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("FORCE_COLOR", "0")
+
+    colour = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=30,
+        columns=100,
+    )
+    monochrome = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=30,
+        columns=100,
+        monochrome=True,
+    )
+
+    assert "NO_COLOR" not in colour
+    assert "FORCE_COLOR" not in colour
+    assert colour["COLORTERM"] == "truecolor"
+    assert monochrome["NO_COLOR"] == "1"
+    assert "COLORTERM" not in monochrome
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
 def test_timeout_kills_the_real_pty_child_loudly(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
@@ -91,6 +180,150 @@ def test_timeout_kills_the_real_pty_child_loudly(tmp_path: Path) -> None:
     assert result.timed_out
     assert result.exit_code != 0
     assert result.capture_bytes > 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
+def test_bare_launch_ends_blocking_worker_prompt_with_eof(tmp_path: Path) -> None:
+    prompt_program = tmp_path / "blocking-worker-prompt"
+    prompt_program.write_text(
+        f"""#!{sys.executable}
+import asyncio
+import getpass
+
+
+async def prompt() -> int:
+    try:
+        await asyncio.to_thread(getpass.getpass, "WORKER-PROMPT: ")
+    except EOFError:
+        print("PROMPT-EOF", flush=True)
+        return 2
+    return 0
+
+
+raise SystemExit(asyncio.run(prompt()))
+""",
+        encoding="utf-8",
+    )
+    prompt_program.chmod(0o755)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    environment = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=20,
+        columns=60,
+    )
+
+    result = _probe_bare_launch(
+        prompt_program,
+        work_dir=tmp_path,
+        environment=environment,
+        raw_dir=tmp_path / "raw",
+        rows=20,
+        columns=60,
+        term="xterm-256color",
+    )
+
+    capture = Path(result["capture"]["path"]).read_bytes()
+    assert result["exit_code"] == 2
+    assert not result["timed_out"]
+    assert b"WORKER-PROMPT: " in capture
+    assert b"PROMPT-EOF" in capture
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance subprocess is POSIX-only")
+def test_gate_probe_records_known_v040_exceedance_at_designed_scale(tmp_path: Path) -> None:
+    gate_program = tmp_path / "gate-program"
+    _write_gate_program(gate_program, _complete_gate_report(), exit_code=1)
+    receipt_dir = tmp_path / "receipts"
+    receipt_dir.mkdir()
+
+    result = _probe_gate(
+        gate_program,
+        work_dir=tmp_path,
+        environment={},
+        receipt_dir=receipt_dir,
+    )
+
+    comparison = result["known_preexisting_exceedance"]
+    assert result["argv"][2:4] == ["--deltas", "50000"]
+    assert result["exit_code"] == 1
+    assert result["report_verdict"] == "fail"
+    assert result["decision_verdict"] == "pass"
+    assert result["excluded_failed_checks"] == [
+        "workload_latency_growing-one-column-table"
+    ]
+    assert comparison == {
+        "check": "workload_latency_growing-one-column-table",
+        "current_sample_ms": 54.45,
+        "threshold_ms": 50.0,
+        "v0.4_sample_ms": 61.988,
+        "block_markdown_reference_ms": 44.0,
+        "v0.5_samples_ms": [54.45, 60.229, 68.861, 54.45],
+        "v0.5_spread_ms": 14.411,
+        "excluded_from_decision": True,
+        "reason": (
+            "known pre-existing exceedance excluded because its run-to-run variance on the "
+            "unchanged v0.5 candidate exceeds the difference it would be used to detect"
+        ),
+    }
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance subprocess is POSIX-only")
+def test_gate_probe_refuses_any_other_failed_check(tmp_path: Path) -> None:
+    gate_program = tmp_path / "gate-program"
+    report = _complete_gate_report(other_check_passed=False)
+    _write_gate_program(gate_program, report, exit_code=1)
+    receipt_dir = tmp_path / "receipts"
+    receipt_dir.mkdir()
+
+    with pytest.raises(HarnessError, match="failed checks beyond the known v0.4 exceedance"):
+        _probe_gate(
+            gate_program,
+            work_dir=tmp_path,
+            environment={},
+            receipt_dir=receipt_dir,
+        )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance subprocess is POSIX-only")
+def test_gate_probe_records_noisy_latency_above_v040_sample(tmp_path: Path) -> None:
+    gate_program = tmp_path / "gate-program"
+    report = _complete_gate_report(measured_ms=62.0)
+    _write_gate_program(gate_program, report, exit_code=1)
+    receipt_dir = tmp_path / "receipts"
+    receipt_dir.mkdir()
+
+    result = _probe_gate(
+        gate_program,
+        work_dir=tmp_path,
+        environment={},
+        receipt_dir=receipt_dir,
+    )
+
+    comparison = result["known_preexisting_exceedance"]
+    assert result["decision_verdict"] == "pass"
+    assert comparison["current_sample_ms"] == 62.0
+    assert comparison["v0.4_sample_ms"] == 61.988
+    assert comparison["v0.5_spread_ms"] == 14.411
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance subprocess is POSIX-only")
+def test_gate_probe_refuses_an_incomplete_report(tmp_path: Path) -> None:
+    gate_program = tmp_path / "gate-program"
+    report = _complete_gate_report()
+    del report["workloads"]
+    _write_gate_program(gate_program, report, exit_code=1)
+    receipt_dir = tmp_path / "receipts"
+    receipt_dir.mkdir()
+
+    with pytest.raises(HarnessError, match="report is incomplete; missing: workloads"):
+        _probe_gate(
+            gate_program,
+            work_dir=tmp_path,
+            environment={},
+            receipt_dir=receipt_dir,
+        )
 
 
 def test_event_script_rejects_ambiguous_actions(tmp_path: Path) -> None:
@@ -205,6 +438,18 @@ def test_primary_route_is_a_valid_first_class_receipt_field() -> None:
     }
     # Fallback unavailability does not invalidate a successful primary route.
     assert validate_receipt(_receipt(route=route), verify_files=False) == []
+
+
+def test_receipt_schema_uses_the_gateway_route_identifiers() -> None:
+    schema = json.loads(
+        (_REPO_ROOT / "docs" / "acceptance" / "v0.5.0" / "receipt.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    route_properties = schema["properties"]["session"]["properties"]["model_route"]["properties"]
+    expected = [PRIMARY_MODEL_ROUTE, FALLBACK_MODEL_ROUTE, None]
+    assert route_properties["requested"]["enum"] == expected
+    assert route_properties["observed"]["enum"] == expected
 
 
 def test_unavailable_fallback_cannot_be_recorded_as_a_pass() -> None:

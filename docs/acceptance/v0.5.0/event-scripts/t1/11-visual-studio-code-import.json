@@ -1,0 +1,8 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "text": "/diffs "},
+    {"at_seconds": 4.25, "key": "ENTER"},
+    {"at_seconds": 8.25, "key": "ESCAPE"},
+    {"at_seconds": 10.25, "key": "CTRL_Q"}
+  ]
+}

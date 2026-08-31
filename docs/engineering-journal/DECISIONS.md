@@ -2754,3 +2754,61 @@ records pseudo-terminal and live-session evidence, and #111 runs last.
 **Revisit when.** An approved child issue changes, an accepted architecture decision is superseded,
 or observed implementation evidence falsifies one of the fixed seams. A textual merge conflict or a
 preference for another key name is not by itself a reason to reopen the decisions.
+
+## 2026-08-31
+
+### Talaria v0.5.0's visual surfaces are projections of one startup snapshot and already-held runtime state
+
+**Author.** Talaria v0.5.0 implementation for issues #104–#109, recorded by issue #111 after all six
+feature children were integrated.
+
+**Decision.** The release candidate has one 58-token semantic theme vocabulary and four complete built-in
+themes. `/theme` previews immediately, `Escape` restores, and `Enter` accepts only for the running
+process; persistence is a separate `/theme save [user|repository]` action. The selection scopes are
+built-in default, user file, repository file, and process session in increasing precedence. The
+theme writer is deliberately narrow: it changes only `[theme].name`, verifies the semantic edit,
+preserves all other bytes, and atomically replaces the file.
+
+The true-bottom bar is exactly one row after the help bar. It receives the held projection once per
+serialized render boundary, and captures the launch directory and Git branch once when the app is
+built. Its seven segment names, order, caps, fallback notices, and breakpoints are configuration;
+`/bar` is a process-only toggle. `StatusRegion` remains a separate body surface for bounded command
+output and startup notices. The needs-you summary feeds `task_progress`; `/needs` retains the full
+queue.
+
+The inspector and diff viewer are views over immutable domain projections derived from the current
+session's retained state. Neither opens a gateway method, scans the working tree, nor starts a poll.
+The inspector separates requested open state from its automatic below-120-column collapse. The diff
+viewer separates preferred mode from its forced below-112-column unified mode. Both restore intent
+when the terminal widens and persist no geometry, selection, or mode across process restart. Empty
+state is literal. Diff behavior is read-only in data source, labels, commands, keymap, and helpers.
+
+Focus cues, transcript identity, connection state, and queue attention retain words or glyphs rather
+than depending on color. Focus changes repaint existing cells without changing height. One immutable
+`ui.reduced_motion` startup value controls static decorative frames and immediate routed scroll, and
+one entry/source-offset anchor rule carries unpinned transcript reading across streaming, status,
+theme, inspector, and resize changes.
+
+**Implementation corrections to the planning record.** The global inspector binding is `Ctrl+B`,
+not the F11 alias described in the 2026-08-30 Key Technical Decision summary. Theme `Enter` accepts
+the current process selection directly; user and repository persistence are explicit commands, not
+a scope chooser shown by `Enter`. These are the merged bindings documented for v0.5.0.
+
+**Configuration decision.** Files are additive startup inputs. Missing new keys take defaults, and
+old files remain valid. Optional invalid values produce visible bounded fallbacks; malformed TOML
+remains a named launch error. There is no external-file watcher or live reload. The only live
+configuration-like actions are the process-local theme and bar controls, with explicit theme save
+still taking effect from the next startup file read.
+
+**Known implementation gap, not a decision.** Imported themes are loaded into a fresh process's
+theme registry, but configuration normalization currently accepts only built-in slugs. Selecting and
+saving an imported theme therefore falls back visibly to Refined Default at the next restart. The
+documentation records the observed limit; correction belongs to the theme-owning feature child.
+
+**Evidence boundary.** These decisions record merged code and its tests. They do not claim the
+candidate wheel has passed issue #110's real-terminal acceptance run; installation and release notes
+remain evidence-bound until that run produces receipts.
+
+**Revisit when.** A new visual surface needs data the process does not hold, a setting genuinely
+needs live external reload, or a writable diff action is separately approved. None is implied by
+this release.

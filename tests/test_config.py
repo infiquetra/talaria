@@ -8,6 +8,8 @@ read or written by any test in this suite.
 from __future__ import annotations
 
 import os
+import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -521,3 +523,31 @@ def test_a_profiles_section_of_the_wrong_shape_yields_no_endpoints(
     )
     cfg = load_config(cwd=tmp_path)
     assert config_module.profile_endpoints(cfg) == {}
+
+
+def test_v050_user_guide_toml_examples_parse_and_match_runtime_defaults() -> None:
+    """Every TOML fence added with the v0.5 guides is executable documentation."""
+    repository = Path(__file__).resolve().parents[1]
+    fence = re.compile(r"(?ms)^```toml\n(.*?)^```[ \t]*$")
+    documents = (
+        repository / "docs" / "themes.md",
+        repository / "docs" / "configuration.md",
+        repository / "docs" / "terminal-ui.md",
+    )
+
+    examples = [
+        tomllib.loads(source)
+        for document in documents
+        for source in fence.findall(document.read_text(encoding="utf-8"))
+    ]
+
+    assert len(examples) == 1
+    example = examples[0]
+    assert example["theme"] == DEFAULTS["theme"]
+    assert example["ui"] == DEFAULTS["ui"]
+    assert example["status"] == {
+        key: value for key, value in DEFAULTS["status"].items() if key != "command"
+    }
+    assert example["environment"] == DEFAULTS["environment"]
+    assert example["composer"] == DEFAULTS["composer"]
+    assert example["profiles"] == DEFAULTS["profiles"]
