@@ -26,6 +26,8 @@ from talaria.domain.startup import (
     resolve_startup,
 )
 from talaria.status.contract import StatusBarSettings, StatusSegmentName
+from talaria.themes.storage import StoredThemeError
+from talaria.ui.literal import defang
 
 if TYPE_CHECKING:
     from talaria.status.runner import StatusRunner
@@ -164,6 +166,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help="lowercase hyphenated storage name (default: source name or file stem)",
     )
+    theme_import_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="write one versioned machine-readable report to standard output",
+    )
 
     gate_parser = subparsers.add_parser(
         "gate",
@@ -210,26 +217,32 @@ def selection_from_args(args: argparse.Namespace) -> StartupSelection:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    if getattr(args, "command", None) == "record":
-        return run_record_command(args)
+    try:
+        if getattr(args, "command", None) == "record":
+            return run_record_command(args)
 
-    if getattr(args, "command", None) == "replay":
-        return run_replay(args)
+        if getattr(args, "command", None) == "replay":
+            return run_replay(args)
 
-    if getattr(args, "command", None) == "refresh-credential":
-        return run_refresh_credential(args)
+        if getattr(args, "command", None) == "refresh-credential":
+            return run_refresh_credential(args)
 
-    if getattr(args, "command", None) == "theme":
-        return run_theme_import_command(args)
+        if getattr(args, "command", None) == "theme":
+            return run_theme_import_command(args)
 
-    if getattr(args, "command", None) == "gate":
-        return run_gate_command(args)
+        if getattr(args, "command", None) == "gate":
+            return run_gate_command(args)
 
-    return run_live(args)
+        return run_live(args)
+    except (config_module.ConfigError, StoredThemeError) as exc:
+        print(defang(f"talaria: {exc}"), file=sys.stderr)
+        return 2
 
 
 def run_theme_import_command(args: argparse.Namespace) -> int:
     """Import one bounded theme and route its settled report by severity."""
+    import json
+
     from talaria.ui.theme_import import ThemeImportError, import_vscode_theme
 
     try:
@@ -239,12 +252,20 @@ def run_theme_import_command(args: argparse.Namespace) -> int:
             config_dir=config_module.global_config_dir(),
         )
     except ThemeImportError as exc:
-        print(f"talaria: theme import failed: {exc}", file=sys.stderr)
-        return 2
+        print(defang(f"talaria: theme import failed: {exc}"), file=sys.stderr)
+        if exc.kind in {"unreadable", "empty", "malformed", "wrong-root"}:
+            return 3
+        if exc.kind in {"reserved-slug", "invalid-slug"}:
+            return 4
+        return 5
 
-    for line in report.lines():
-        stream = sys.stderr if line.startswith("warning: ") else sys.stdout
-        print(line, file=stream)
+    if args.json:
+        print(json.dumps(report.to_json_dict(), sort_keys=True))
+        return 0
+
+    for record in report.records():
+        stream = sys.stderr if record.severity == "warning" else sys.stdout
+        print(defang(record.text), file=stream)
     return 0
 
 

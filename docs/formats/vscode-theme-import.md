@@ -118,6 +118,24 @@ These eighteen Talaria extension tokens have no entry in either supported mappin
 
 Any other token falls back only when its listed source is absent or invalid. The successful import report states source-mapped count, fallback count, unsupported count, and every affected path/token. Successful imports with warnings exit successfully but visibly print the report; malformed imports write nothing and exit unsuccessfully.
 
+## Command-line reports and exit status
+
+The default report remains prose: informational lines use standard output and
+warnings use standard error. `talaria theme import FILE --json` instead writes
+one JSON object and nothing else to standard output. Its
+`schema_version` is `talaria-theme-import-report-v1`; the object also carries
+`slug`, `target_path`, `source_token_count`, `fallback_count`, `warning_count`,
+and ordered `fallbacks` and `warnings` arrays. Every array record has an
+explicit `severity`, so consumers never infer routing from English text.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | Import completed; warnings, if any, are present in the report |
+| 2 | Command-line usage error |
+| 3 | Source file unreadable, empty, malformed, or structurally unsupported |
+| 4 | Requested storage slug invalid or reserved |
+| 5 | Validated theme could not be written |
+
 ## Stored user-theme format
 
 The selected storage name uses this fixed precedence: command-line `--name`,
@@ -126,9 +144,16 @@ hyphenated slug with no separators or traversal. Built-in theme slugs are
 reserved.
 
 Talaria writes `<config>/themes/<slug>.json` only after parsing and reporting
-complete successfully. The stored object contains `dark`, `name`, `slug`, and
-the complete `tokens` mapping. Keys are sorted, values are opaque uppercase
-`#RRGGBB`, and the file has exactly one trailing newline. A later import of the
-same slug atomically replaces that file. Imported themes are read only when a
-new Talaria process constructs its theme registry; source-file changes are not
-watched.
+complete successfully. The stored object contains `schema_version` with the
+value `talaria-theme-v1`, `dark`, `name`, `slug`, and the complete `tokens`
+mapping. The normative schema is
+[`stored-theme.schema.json`](stored-theme.schema.json). Keys are sorted, values
+are opaque uppercase `#RRGGBB`, and the file has exactly one trailing newline.
+A later import of the same slug atomically replaces that file. Imported themes
+are read only when a new Talaria process constructs its theme registry;
+source-file changes are not watched.
+
+For one release, the reader treats a stored theme without `schema_version` as
+version one. A file carrying any other version, or any other invalid stored
+document, is skipped with a visible notice; it cannot prevent valid themes or
+the application from loading.

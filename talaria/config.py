@@ -490,11 +490,16 @@ def load_config(
         allowed_cli_overrides.pop("ui", None)
         merged = _deep_merge(merged, allowed_cli_overrides)
 
-    user_theme_slugs = frozenset(
-        spec.slug for spec in load_user_theme_specs(config_dir=config_dir)
+    user_theme_specs, user_theme_notices = load_user_theme_specs(
+        config_dir=config_dir
     )
+    user_theme_slugs = frozenset(spec.slug for spec in user_theme_specs)
     merged, notices = _normalize_config(
         merged,
         available_theme_slugs=_BUILTIN_THEME_SLUGS | user_theme_slugs,
     )
-    return Config(values=_freeze(merged), config_dir=config_dir, notices=notices)
+    return Config(
+        values=_freeze(merged),
+        config_dir=config_dir,
+        notices=(*notices, *user_theme_notices),
+    )
