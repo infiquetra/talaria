@@ -172,6 +172,9 @@ def test_every_domain_directory_is_an_importable_package() -> None:
 def test_domain_package_imports_only_stdlib_and_its_own_package() -> None:
     module_names = _domain_module_names()
     assert module_names, "the ADR-0002 sweep found no domain modules to import"
+    assert "talaria.domain.changes" in module_names, (
+        "the issue #107 inspector domain module fell outside the ADR-0002 import sweep"
+    )
 
     payload = json.dumps(
         [module_names, list(_ALLOWED_INTERNAL_EXACT), list(_ALLOWED_INTERNAL_TREES)]
