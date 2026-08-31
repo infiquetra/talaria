@@ -1,0 +1,11 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "resize": {"rows": 36, "columns": 78}},
+    {"at_seconds": 5.5, "key": "CTRL_B"},
+    {"at_seconds": 7.0, "key": "ESCAPE"},
+    {"at_seconds": 8.0, "text": "/diffs "},
+    {"at_seconds": 8.3, "key": "ENTER"},
+    {"at_seconds": 11.5, "key": "ESCAPE"},
+    {"at_seconds": 12.5, "key": "CTRL_Q"}
+  ]
+}
