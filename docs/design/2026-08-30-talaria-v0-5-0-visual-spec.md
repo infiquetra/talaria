@@ -494,7 +494,7 @@ All widths are terminal cell columns reported by Textual after the resize event.
 | 64–79 | Also drop git_branch | Auto-collapsed; overlay available | Forced unified |
 | 48–63 | Also drop context | Auto-collapsed; overlay available | Forced unified |
 | 32–47 | Also drop agent_model | Auto-collapsed; overlay available | Forced unified |
-| 20–31 | Also drop task_progress; connection remains | Auto-collapsed; overlay is terminal width minus two | Forced unified |
+| 20–31 | Keep task_progress at minimum; connection remains compact | Auto-collapsed; overlay is terminal width minus two | Forced unified |
 | Fewer than 20 | Minimum connection form, hard-clipped only as a last resort | Full-terminal overlay only | Forced unified |
 
 ### Status-bar truncation and drop contract
@@ -744,7 +744,7 @@ AgentRows currently recognizes exactly these seven normalized states. A row may 
 | Status command failed | [x] status followed by exit/timeout/config reason |
 | Status output truncated | [!] status truncated followed by the existing row-limit marker |
 
-In the bottom bar's task_progress segment, the literal !N queue-attention marker uses talaria.status.attention; the glyph and count remain present when color is disabled. The task_progress segment replaces only NeedsYouBar's one-line summary. /needs continues to show the current queue's full, literal detail. A narrow breakpoint may drop task_progress, but opening /needs must still expose these non-color forms.
+In the bottom bar's task_progress segment, the literal !N queue-attention marker uses talaria.status.attention; the glyph and count remain present when color is disabled. The task_progress segment replaces only NeedsYouBar's one-line summary. /needs continues to show the current queue's full, literal detail. Below 20 columns or on real overflow task_progress may drop, but opening /needs must still expose these non-color forms.
 
 ### Selection and transcript identity
 

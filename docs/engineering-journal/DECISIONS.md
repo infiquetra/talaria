@@ -2726,8 +2726,10 @@ does not have to infer them from concurrent child branches:
    strict, canonical user-scope JSON documents with deterministic names and replacement.
 4. **KTD4:** config normalization returns resolved values plus immutable visible startup notes.
    Invalid optional settings fall back; syntactically invalid TOML remains a clear launch error.
-5. **KTD5:** the needs-you summary becomes the `task_progress` status segment, HelpBar remains the
-   documented adjacent key-hint row, StatusRegion retains shell output, and one StatusBar is last.
+5. **KTD5:** `task_progress` replaces the needs-you summary row but computes its own
+   completed-of-total form from held status facts and appends the queue-attention count; it does not
+   reuse `talaria.domain.queue.summary_line`. HelpBar remains the documented adjacent key-hint row,
+   StatusRegion retains shell output, and one StatusBar is last.
 6. **KTD6:** slash-palette commands are primary, modal keys stay local, and F11 is only a secondary
    inspector alias whose real desktop delivery is measured during acceptance.
 7. **KTD7:** inspector and diff share immutable changed-file and diff-selection view models; neither
@@ -2773,8 +2775,9 @@ The true-bottom bar is exactly one row after the help bar. It receives the held 
 serialized render boundary, and captures the launch directory and Git branch once when the app is
 built. Its seven segment names, order, caps, fallback notices, and breakpoints are configuration;
 `/bar` is a process-only toggle. `StatusRegion` remains a separate body surface for bounded command
-output and startup notices. The needs-you summary feeds `task_progress`; `/needs` retains the full
-queue.
+output and startup notices. `task_progress` computes completed-of-total from held status facts and
+appends the queue-attention count rather than reusing `talaria.domain.queue.summary_line`; `/needs`
+retains the full queue.
 
 The inspector and diff viewer are views over immutable domain projections derived from the current
 session's retained state. Neither opens a gateway method, scans the working tree, nor starts a poll.

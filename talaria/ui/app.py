@@ -179,6 +179,7 @@ from talaria.domain.state import (
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.replay.source import REPLAY_EPOCH
 from talaria.status.contract import StatusBarSettings
+from talaria.status.local import capture_local_status
 from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
@@ -246,7 +247,6 @@ from talaria.ui.status_bar import (
     BottomStatusBar,
     BottomStatusBarView,
     build_status_bar_view,
-    capture_local_status,
 )
 from talaria.ui.status_region import StatusRegion
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY, DEFAULT_THEME_SLUG, ThemeRegistry

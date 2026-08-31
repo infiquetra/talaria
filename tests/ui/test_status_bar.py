@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 import re
-from dataclasses import replace
 
 import pytest
 from rich.cells import cell_len
@@ -15,14 +14,14 @@ from textual.widgets import Static
 from talaria.domain.projection import StatusPayload
 from talaria.domain.queue import NeedsYouQueue
 from talaria.status.contract import StatusBarSettings, normalize_status_segments
+from talaria.status.local import LocalStatus
 from talaria.ui.status_bar import (
     BottomStatusBar,
     BottomStatusBarView,
-    LocalStatus,
     build_status_bar_view,
     render_status_bar,
 )
-from tests.ui.conftest import event, paused_app
+from tests.ui.conftest import RecordingDispatcher, event, paused_app
 
 
 def _screen_text(app: App[None]) -> str:
@@ -161,8 +160,8 @@ _TRANSITIONS = (
     (48, ("agent_model", "task_progress", "connection"), "compact"),
     (47, ("task_progress", "connection"), "compact"),
     (32, ("task_progress", "connection"), "compact"),
-    (31, ("connection",), "compact"),
-    (20, ("connection",), "compact"),
+    (31, ("task_progress", "connection"), ("minimum", "compact")),
+    (20, ("task_progress", "connection"), ("minimum", "compact")),
     (19, ("connection",), "minimum"),
 )
 
@@ -178,7 +177,10 @@ async def test_complete_breakpoint_walk_reflows_in_place_and_never_grows_a_secon
             rendered = app.bar.last_render
 
             assert tuple(segment.name for segment in rendered.segments) == expected_names
-            assert all(segment.form == expected_form for segment in rendered.segments)
+            if isinstance(expected_form, tuple):
+                assert tuple(segment.form for segment in rendered.segments) == expected_form
+            else:
+                assert all(segment.form == expected_form for segment in rendered.segments)
             assert rendered.width <= width
             assert cell_len(rendered.plain) <= width
             assert app.bar.region.height == 1
@@ -205,6 +207,17 @@ def test_overflow_shortens_then_drops_each_lower_priority_segment_before_the_nex
     assert "cwd" not in names, "the next-lowest row was not handled before higher-priority rows"
     assert "connection" in names
     assert rendered.width <= 144
+
+
+def test_attention_marker_survives_at_thirty_one_columns_when_queue_is_nonempty() -> None:
+    rendered = render_status_bar(_view(attention_count=2), 31)
+
+    assert tuple(segment.name for segment in rendered.segments) == (
+        "task_progress",
+        "connection",
+    )
+    assert "!2" in rendered.plain
+    assert any(run.text == "!2" and run.token == "attention" for run in rendered.runs)
 
 
 @pytest.mark.parametrize(
@@ -312,22 +325,24 @@ async def test_session_toggle_changes_only_the_held_segment_set() -> None:
         assert app.bar.settings == before
 
 
-def test_missing_context_and_model_facts_render_unknown_instead_of_triggering_a_fetch() -> None:
-    view = replace(
-        _view(),
-        agent_provider="",
-        agent_model="",
-        input_tokens=None,
-        output_tokens=None,
-        context_window=None,
-    )
-    rendered = render_status_bar(
-        view,
-        180,
-        StatusBarSettings(segments=("agent_model", "context", "connection")),
+@pytest.mark.asyncio
+async def test_missing_context_and_model_facts_render_unknown_without_dispatching() -> None:
+    dispatcher = RecordingDispatcher()
+    app, _controls = paused_app(
+        [],
+        dispatcher=dispatcher,
+        status_bar_settings=StatusBarSettings(
+            segments=("agent_model", "context", "connection")
+        ),
     )
 
-    assert rendered.plain == "agent: ?│context: ?/? ?%│[ok] connected"
+    async with app.run_test(size=(180, 24)) as pilot:
+        await pilot.pause()
+
+        assert app.bottom_status_bar.last_render.plain == (
+            "agent: ?│context: ?/? ?%│[x] disconnected"
+        )
+        assert dispatcher.operator_calls == []
 
 
 def test_runtime_view_reuses_held_status_and_queue_facts() -> None:
