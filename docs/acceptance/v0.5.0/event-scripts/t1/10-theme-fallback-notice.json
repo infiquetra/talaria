@@ -1,6 +1,6 @@
 {
   "events": [
-    {"at_seconds": 4.0, "text": "/theme"},
+    {"at_seconds": 4.0, "text": "/theme "},
     {"at_seconds": 4.25, "key": "ENTER"},
     {"at_seconds": 5.75, "key": "DOWN"},
     {"at_seconds": 7.0, "key": "DOWN"},

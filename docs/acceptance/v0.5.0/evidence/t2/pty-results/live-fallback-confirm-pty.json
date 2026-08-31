@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria"
+  ],
+  "capture": {
+    "bytes": 101739,
+    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/live-fallback-confirm.ansi",
+    "sha256": "38c46fb84beda262eb354c194d1c98a84ebc1a9767ce1c2dc8c5952f79fe3e17"
+  },
+  "columns": 132,
+  "duration_seconds": 25.273262,
+  "exit_code": 0,
+  "expected_literals": [
+    "TALARIA-T2-FALLBACK-ROUTE-OK"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Terminal.app 2.14",
+  "tester": "talaria-t2",
+  "timed_out": false
+}

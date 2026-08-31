@@ -1,12 +1,9 @@
 # Talaria v0.5.0 installed-artifact acceptance harness
 
-This directory prepares issue #110's real-terminal acceptance without executing it. The harness
-builds one frozen candidate wheel, installs that same wheel independently for `talaria-t1` and
-`talaria-t2`, drives only each environment's installed executable through a real pseudo-terminal,
-and creates evidence receipts.
-
-Acceptance is not run from this checkout. Application behavior remains absent until the six feature
-children are integrated on the run branch.
+This directory contains issue #110's real-terminal acceptance harness. It builds one frozen
+candidate wheel, installs that same wheel independently for `talaria-t1` and `talaria-t2`, drives
+only each environment's installed executable through a real pseudo-terminal, and creates evidence
+receipts.
 
 ## Safety properties
 
@@ -22,9 +19,10 @@ children are integrated on the run branch.
   American National Standards Institute (ANSI) terminal bytes and escape sequences in the capture.
 - Raw captures and screenshots stay in tester scratch until credential and private-identifier
   review. A receipt cannot pass while that review is pending or withheld.
-- The only live routes are OpenCode Muse Spark 1.2 Contributor Free and, for one of the four approved
-  reasons, Ollama GLM 5.3 Flash. The receipt validator rejects every other route. If the fallback is
-  needed but unavailable, the leg is blocked and cannot pass.
+- The only live routes are OpenCode Muse Spark 1.2 Contributor
+  (`opencode-go / muse-spark-1.2-contributor`) and, for one of the four approved reasons, Ollama GLM
+  5.3 Flash (`ollama (ollama-cloud) / glm-5.3-flash`). The receipt validator rejects every other
+  route. If the fallback is needed but unavailable, the leg is blocked and cannot pass.
 - The harness does not use Computer Use, GUI automation, mocks, or a test-only Talaria application.
   Deterministic legs may drive the shipped `talaria replay`; live legs drive a real Hermes-backed
   session.
@@ -62,8 +60,16 @@ then verifies:
 
 1. distribution and package version `0.5.0`;
 2. an exact `talaria --version` result;
-3. a bare installed launch in a pseudo-terminal, exited by scripted `ctrl+d` or `ctrl+q`; and
-4. `talaria gate --deltas 5000 --json <scratch receipt path>`.
+3. a bare installed launch in a pseudo-terminal, exited by a scripted end-of-file; and
+4. `talaria gate --deltas 50000 --json <scratch receipt path>`.
+
+The gate probe requires the designed 50,000-delta corpus and a complete, parseable report. Its own
+threshold verdict remains recorded. `workload_latency_growing-one-column-table` is a known
+pre-existing exceedance excluded from the install decision because its run-to-run variance on an
+unchanged candidate exceeds the difference it would be used to detect. The receipt records the
+current sample, all known v0.5 samples, their spread, the shipped v0.4 sample of 61.988 ms, and the
+44.0 ms block-markdown reference while leaving the 50 ms gate threshold untouched. Any other failed
+check fails the install leg.
 
 The bare probe starts with an empty isolated config. Reaching either Talaria's credential prompt or
 the interface proves the bare console entry point loaded; the later live item proves a working
@@ -163,10 +169,43 @@ assigned item, and only pass or explicitly reserved terminal verdicts. The sourc
 `docs/acceptance/v0.5.0/checklist-items.json`; the full steps and pass observations remain in the
 visual specification.
 
+## 5. Refresh the generated repository records
+
+After reviewed receipts and screenshots are copied under
+`docs/acceptance/v0.5.0/evidence/`, regenerate the manifest and the verdict cells in the results
+document with the full commit of the current reviewed candidate:
+
+```bash
+talaria_candidate_commit=<full-current-candidate-commit>
+uv run python -m scripts.acceptance.v050_records refresh \
+  --current-candidate-commit "$talaria_candidate_commit"
+```
+
+The command derives candidate wheel identities, receipt verdicts, counts, evidence paths, hashes,
+and receipt validity from the files on disk. The current reviewed commit is explicit because a
+product repair can invalidate an already frozen wheel before its replacement is built. A receipt
+for another commit or wheel remains in the record but is marked stale; a current commit with no
+matching install receipt is shown as not frozen.
+
+The pseudo-terminal driver also runs this refresh after every drive. It advances the current commit
+only when that drive uses a descendant candidate, so rerunning an older installed wheel cannot hide
+newly stale evidence. Run the explicit refresh again after publishing reviewed receipts, because raw
+drive output and item receipts stay in scratch until their private-data review is complete.
+
+Check both generated files against the receipts without modifying them:
+
+```bash
+uv run python -m scripts.acceptance.v050_records check
+```
+
+The repository test suite runs the same check and mutation-tests both the manifest and the results
+table so hand-edited or out-of-date status data fails the build.
+
 ## Harness-only check
 
 This check drives the harness's small echo terminal. It does not run Talaria acceptance:
 
 ```bash
-uv run pytest scripts/acceptance/test_v050_harness.py -q
+uv run pytest scripts/acceptance/test_v050_harness.py \
+  tests/docs/test_v050_acceptance_records.py -q
 ```

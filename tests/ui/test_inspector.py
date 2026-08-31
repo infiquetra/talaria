@@ -283,6 +283,22 @@ async def test_every_empty_section_says_no_state_was_observed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_notice_only_queue_renders_the_tasks_empty_state() -> None:
+    empty = inspector_view(
+        entry_scoped_view(replay([])),
+        queue=NeedsYouQueue(notices=("needs-you unavailable",)),
+    )
+    app = InspectorHarness(empty)
+
+    async with app.run_test(size=(132, 30)):
+        task_section = app.inspector.query(".inspector--section").nodes[0]
+        task_empty = task_section.query_one(".inspector--empty", Static)
+
+        assert app.inspector.task_texts == ()
+        assert str(task_empty.content) == f"  {EMPTY_SECTION}"
+
+
+@pytest.mark.asyncio
 async def test_production_app_ctrl_b_and_inspector_command_are_socket_free() -> None:
     dispatcher = RecordingDispatcher()
     app = live_app(dispatcher)

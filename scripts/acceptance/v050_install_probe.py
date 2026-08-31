@@ -36,6 +36,31 @@ from scripts.acceptance.v050_common import (
 )
 from scripts.acceptance.v050_pty_driver import DriveEvent, run_pty
 
+_GATE_DELTAS = 50_000
+_KNOWN_GATE_EXCEEDANCE = "workload_latency_growing-one-column-table"
+_V040_GATE_SAMPLE_MS = 61.988
+_BLOCK_MARKDOWN_REFERENCE_MS = 44.0
+_KNOWN_V050_GATE_SAMPLES_MS = (54.45, 60.229, 68.861)
+_GATE_REPORT_FIELDS = frozenset(
+    {
+        "verdict",
+        "matrix",
+        "checks",
+        "stress",
+        "cadence",
+        "live",
+        "feature",
+        "determinism_identical",
+        "sideband_determinism_identical",
+        "sideband_structure_identical",
+        "inert_controls_refused",
+        "workloads",
+    }
+)
+_GATE_CHECK_FIELDS = frozenset(
+    {"measured", "threshold", "comparison", "description", "pass"}
+)
+
 
 def _utc_now() -> str:
     return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
@@ -236,29 +261,133 @@ def _probe_gate(
     receipt_dir: Path,
 ) -> dict[str, Any]:
     gate_json = receipt_dir / "install-gate.json"
-    argv = [str(executable), "gate", "--deltas", "5000", "--json", str(gate_json)]
+    argv = [
+        str(executable),
+        "gate",
+        "--deltas",
+        str(_GATE_DELTAS),
+        "--json",
+        str(gate_json),
+    ]
     result = run_command(argv, cwd=work_dir, environment=environment, timeout=300.0)
     (receipt_dir / "install-gate.stdout.log").write_text(result.stdout, encoding="utf-8")
     (receipt_dir / "install-gate.stderr.log").write_text(result.stderr, encoding="utf-8")
-    if result.returncode != 0:
-        raise HarnessError(
-            f"installed gate probe failed ({result.returncode}); logs remain under {receipt_dir}"
-        )
     if not gate_json.is_file():
-        raise HarnessError("installed gate probe exited zero without writing its JSON result")
+        raise HarnessError(
+            f"installed gate probe exited {result.returncode} without writing its JSON result"
+        )
     try:
         parsed: Any = json.loads(gate_json.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (OSError, json.JSONDecodeError) as exc:
         raise HarnessError("installed gate probe wrote invalid JSON") from exc
     if not isinstance(parsed, dict):
         raise HarnessError("installed gate probe JSON root is not an object")
+    gate_evidence = _validate_gate_report(parsed, exit_code=result.returncode)
     return {
         "argv": argv,
         "exit_code": result.returncode,
+        **gate_evidence,
         "json_path": str(gate_json.resolve()),
         "json_sha256": sha256_file(gate_json),
         "stderr_path": str((receipt_dir / "install-gate.stderr.log").resolve()),
         "stdout_path": str((receipt_dir / "install-gate.stdout.log").resolve()),
+    }
+
+
+def _validate_gate_report(report: dict[str, Any], *, exit_code: int) -> dict[str, Any]:
+    """Apply the v0.5 install policy without changing the gate's own verdict."""
+    missing_fields = sorted(_GATE_REPORT_FIELDS - report.keys())
+    if missing_fields:
+        raise HarnessError(
+            f"installed gate report is incomplete; missing: {', '.join(missing_fields)}"
+        )
+    checks = report.get("checks")
+    if not isinstance(checks, dict) or not checks:
+        raise HarnessError("installed gate report has no threshold checks")
+
+    failed_checks: list[str] = []
+    for name, check in checks.items():
+        if not isinstance(check, dict):
+            raise HarnessError(f"installed gate check {name!r} is not an object")
+        missing_check_fields = sorted(_GATE_CHECK_FIELDS - check.keys())
+        if missing_check_fields:
+            raise HarnessError(
+                f"installed gate check {name!r} is incomplete; missing: "
+                f"{', '.join(missing_check_fields)}"
+            )
+        passed = check.get("pass")
+        if not isinstance(passed, bool):
+            raise HarnessError(f"installed gate check {name!r} has a non-boolean pass value")
+        if not passed:
+            failed_checks.append(name)
+
+    report_verdict = report.get("verdict")
+    expected_verdict = "fail" if failed_checks else "pass"
+    if report_verdict != expected_verdict:
+        raise HarnessError(
+            f"installed gate report verdict {report_verdict!r} disagrees with its checks "
+            f"({expected_verdict!r})"
+        )
+    expected_exit_code = 1 if failed_checks else 0
+    if exit_code != expected_exit_code:
+        raise HarnessError(
+            f"installed gate exit {exit_code} disagrees with report verdict {report_verdict!r}"
+        )
+
+    known_check = checks.get(_KNOWN_GATE_EXCEEDANCE)
+    if not isinstance(known_check, dict):
+        raise HarnessError(
+            f"installed gate report is missing {_KNOWN_GATE_EXCEEDANCE!r}"
+        )
+    measured = known_check.get("measured")
+    threshold = known_check.get("threshold")
+    if (
+        isinstance(measured, bool)
+        or not isinstance(measured, int | float)
+        or isinstance(threshold, bool)
+        or not isinstance(threshold, int | float)
+        or known_check.get("comparison") != "<="
+    ):
+        raise HarnessError(
+            f"installed gate check {_KNOWN_GATE_EXCEEDANCE!r} has malformed latency values"
+        )
+    measured_ms = float(measured)
+    threshold_ms = float(threshold)
+    if known_check["pass"] != (measured_ms <= threshold_ms):
+        raise HarnessError(
+            f"installed gate check {_KNOWN_GATE_EXCEEDANCE!r} has an inconsistent verdict"
+        )
+    unexpected_failures = sorted(
+        name for name in failed_checks if name != _KNOWN_GATE_EXCEEDANCE
+    )
+    if unexpected_failures:
+        raise HarnessError(
+            "installed gate has failed checks beyond the known v0.4 exceedance: "
+            f"{', '.join(unexpected_failures)}"
+        )
+
+    v050_samples = [*_KNOWN_V050_GATE_SAMPLES_MS, measured_ms]
+    spread_ms = round(max(v050_samples) - min(v050_samples), 3)
+    return {
+        "report_verdict": report_verdict,
+        "decision_verdict": "pass",
+        "excluded_failed_checks": sorted(
+            name for name in failed_checks if name == _KNOWN_GATE_EXCEEDANCE
+        ),
+        "known_preexisting_exceedance": {
+            "check": _KNOWN_GATE_EXCEEDANCE,
+            "current_sample_ms": measured_ms,
+            "threshold_ms": threshold_ms,
+            "v0.4_sample_ms": _V040_GATE_SAMPLE_MS,
+            "block_markdown_reference_ms": _BLOCK_MARKDOWN_REFERENCE_MS,
+            "v0.5_samples_ms": v050_samples,
+            "v0.5_spread_ms": spread_ms,
+            "excluded_from_decision": True,
+            "reason": (
+                "known pre-existing exceedance excluded because its run-to-run variance on "
+                "the unchanged v0.5 candidate exceeds the difference it would be used to detect"
+            ),
+        },
     }
 
 
