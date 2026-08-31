@@ -1,0 +1,11 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "resize": {"rows": 36, "columns": 132}},
+    {"at_seconds": 5.5, "key": "CTRL_B"},
+    {"at_seconds": 6.5, "key": "CTRL_B"},
+    {"at_seconds": 7.5, "key": "DOWN"},
+    {"at_seconds": 8.0, "key": "DOWN"},
+    {"at_seconds": 8.5, "key": "DOWN"},
+    {"at_seconds": 10.5, "key": "CTRL_Q"}
+  ]
+}

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,10 @@ from scripts.acceptance.v050_common import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_CHECKLIST_PATH = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0" / "checklist-items.json"
+_ACCEPTANCE_ROOT = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+_CHECKLIST_PATH = _ACCEPTANCE_ROOT / "checklist-items.json"
+_MANIFEST_PATH = _ACCEPTANCE_ROOT / "artifact-manifest.json"
+_EVIDENCE_ROOT = _ACCEPTANCE_ROOT / "evidence"
 _ROUTE_ALIASES: dict[str, str | None] = {
     "primary": PRIMARY_MODEL_ROUTE,
     "fallback": FALLBACK_MODEL_ROUTE,
@@ -46,6 +50,25 @@ def _string(value: Any, *, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise HarnessError(f"receipt field {field} must be a non-empty string")
     return value
+
+
+def _contains_home_path(value: Any, *, home: str | None = None) -> bool:
+    """Return whether any nested string exposes the current operator home path."""
+    home_path = home or str(Path.home().resolve())
+    if isinstance(value, str):
+        return home_path in value
+    if isinstance(value, dict):
+        return any(_contains_home_path(item, home=home_path) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_home_path(item, home=home_path) for item in value)
+    return False
+
+
+def _evidence_path(value: Any, *, field: str, repo_root: Path) -> Path:
+    path = Path(_string(value, field=field)).expanduser()
+    if not path.is_absolute():
+        path = repo_root / path
+    return path.resolve()
 
 
 def _checklist() -> dict[int, dict[str, Any]]:
@@ -81,9 +104,17 @@ def _tester_owns(owner: str, tester: str) -> bool:
     return owner == "shared" or owner == tester
 
 
-def validate_receipt(receipt: dict[str, Any], *, verify_files: bool = True) -> list[str]:
+def validate_receipt(
+    receipt: dict[str, Any],
+    *,
+    verify_files: bool = True,
+    expected_commit: str | None = None,
+    repo_root: Path = _REPO_ROOT,
+) -> list[str]:
     """Return every receipt defect; an empty list means the receipt is coherent."""
     errors: list[str] = []
+    if _contains_home_path(receipt):
+        errors.append("receipt contains the current user's home path")
     items = _checklist()
     if receipt.get("schema_version") != "talaria-v0.5.0-receipt-v1":
         errors.append("schema_version is not talaria-v0.5.0-receipt-v1")
@@ -128,6 +159,8 @@ def validate_receipt(receipt: dict[str, Any], *, verify_files: bool = True) -> l
             _string(artifact.get(field), field=f"artifact.{field}")
         if artifact.get("version") != RELEASE_VERSION:
             errors.append(f"artifact.version is not {RELEASE_VERSION}")
+        if expected_commit is not None and artifact.get("commit") != expected_commit:
+            errors.append("artifact.commit does not match the release candidate")
     except HarnessError as exc:
         errors.append(str(exc))
 
@@ -207,10 +240,14 @@ def validate_receipt(receipt: dict[str, Any], *, verify_files: bool = True) -> l
         redaction = evidence.get("redaction_review")
         if redaction not in {"passed", "withheld", "pending"}:
             errors.append("evidence.redaction_review must be passed, withheld, or pending")
-        capture_path = Path(_string(evidence.get("capture_path"), field="evidence.capture_path"))
+        capture_path = _evidence_path(
+            evidence.get("capture_path"), field="evidence.capture_path", repo_root=repo_root
+        )
         capture_hash = _string(evidence.get("capture_sha256"), field="evidence.capture_sha256")
-        screenshot_path = Path(
-            _string(evidence.get("screenshot_path"), field="evidence.screenshot_path")
+        screenshot_path = _evidence_path(
+            evidence.get("screenshot_path"),
+            field="evidence.screenshot_path",
+            repo_root=repo_root,
         )
         screenshot_hash = _string(
             evidence.get("screenshot_sha256"), field="evidence.screenshot_sha256"
@@ -350,6 +387,240 @@ def record_receipt(args: argparse.Namespace) -> Path:
     return output
 
 
+def _repo_relative(path: Path, *, repo_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError as exc:
+        raise HarnessError(f"published evidence escaped the repository: {path}") from exc
+
+
+def _copy_new(source: Path, destination: Path) -> None:
+    if not source.is_file():
+        raise HarnessError(f"evidence source does not exist: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        raise HarnessError(f"refusing to replace published evidence: {destination}")
+    shutil.copyfile(source, destination)
+
+
+def _portable_json(value: Any, *, repo_root: Path) -> Any:
+    """Return public JSON with checkout paths made relative and home paths redacted."""
+    if isinstance(value, dict):
+        return {key: _portable_json(item, repo_root=repo_root) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_portable_json(item, repo_root=repo_root) for item in value]
+    if not isinstance(value, str):
+        return value
+    repository = str(repo_root.resolve())
+    home = str(Path.home().resolve())
+    if value == repository:
+        return "."
+    if value.startswith(f"{repository}/"):
+        return value.removeprefix(f"{repository}/")
+    return value.replace(home, "<home>")
+
+
+def _write_portable_json(source: Path, destination: Path, *, repo_root: Path) -> None:
+    if destination.exists():
+        raise HarnessError(f"refusing to replace published evidence: {destination}")
+    document = read_json_object(source)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    write_json_object(destination, _portable_json(document, repo_root=repo_root))
+
+
+def publish_receipt(
+    source_path: Path,
+    *,
+    public_install_receipt: Path,
+    evidence_root: Path = _EVIDENCE_ROOT,
+    repo_root: Path = _REPO_ROOT,
+) -> Path:
+    """Publish one reviewed scratch receipt with checkout-relative evidence paths."""
+    source_path = source_path.expanduser().resolve()
+    public_install_receipt = public_install_receipt.expanduser().resolve()
+    evidence_root = evidence_root.expanduser().resolve()
+    repo_root = repo_root.expanduser().resolve()
+    if not is_within(evidence_root, repo_root):
+        raise HarnessError("published evidence root must stay inside the repository")
+    if not is_within(public_install_receipt, evidence_root):
+        raise HarnessError("public install receipt must stay inside the evidence root")
+
+    receipt = read_json_object(source_path)
+    source_errors = validate_receipt(receipt, verify_files=True, repo_root=repo_root)
+    if source_errors:
+        raise HarnessError("scratch receipt is invalid:\n- " + "\n- ".join(source_errors))
+    tester = validate_tester(_string(receipt.get("tester"), field="tester"))
+    number = receipt.get("checklist_item")
+    if isinstance(number, bool) or not isinstance(number, int) or number not in range(1, 37):
+        raise HarnessError("checklist_item must be from 1 through 36")
+
+    public_install = _install_receipt(public_install_receipt, tester)
+    candidate = _object(public_install.get("candidate"), field="install.candidate")
+    expected_commit = _string(candidate.get("commit"), field="install.candidate.commit")
+    artifact = _object(receipt.get("artifact"), field="artifact")
+    if artifact.get("commit") != expected_commit:
+        raise HarnessError("scratch receipt does not match the public install receipt candidate")
+
+    tester_root = evidence_root / tester.removeprefix("talaria-")
+    evidence = _object(receipt.get("evidence"), field="evidence")
+    capture_source = _evidence_path(
+        evidence.get("capture_path"), field="evidence.capture_path", repo_root=repo_root
+    )
+    screenshot_source = _evidence_path(
+        evidence.get("screenshot_path"), field="evidence.screenshot_path", repo_root=repo_root
+    )
+    pty_source = _evidence_path(
+        evidence.get("pty_result_path"), field="evidence.pty_result_path", repo_root=repo_root
+    )
+    capture_destination = tester_root / "raw" / capture_source.name
+    screenshot_destination = tester_root / "screenshots" / screenshot_source.name
+    pty_destination = tester_root / "pty-results" / pty_source.name
+    output = tester_root / "receipts" / f"item-{number:02d}-{tester}.json"
+
+    _copy_new(capture_source, capture_destination)
+    _copy_new(screenshot_source, screenshot_destination)
+    _write_portable_json(pty_source, pty_destination, repo_root=repo_root)
+    evidence["capture_path"] = _repo_relative(capture_destination, repo_root=repo_root)
+    evidence["screenshot_path"] = _repo_relative(screenshot_destination, repo_root=repo_root)
+    evidence["pty_result_path"] = _repo_relative(pty_destination, repo_root=repo_root)
+    evidence["pty_result_sha256"] = sha256_file(pty_destination)
+    artifact["install_receipt_path"] = _repo_relative(
+        public_install_receipt, repo_root=repo_root
+    )
+    artifact["install_receipt_sha256"] = sha256_file(public_install_receipt)
+
+    errors = validate_receipt(
+        receipt,
+        verify_files=True,
+        expected_commit=expected_commit,
+        repo_root=repo_root,
+    )
+    if errors:
+        raise HarnessError("published receipt is invalid:\n- " + "\n- ".join(errors))
+    write_json_object(output, receipt)
+    return output
+
+
+def _manifest_candidate(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    candidate = manifest.get("current_candidate", manifest.get("candidate"))
+    if candidate is None:
+        return None
+    return _object(candidate, field="manifest.current_candidate")
+
+
+def verify_run(
+    manifest_path: Path = _MANIFEST_PATH,
+    *,
+    evidence_root: Path = _EVIDENCE_ROOT,
+    repo_root: Path = _REPO_ROOT,
+) -> list[str]:
+    """Bind every active receipt and its files to the manifest's current candidate."""
+    manifest_path = manifest_path.expanduser().resolve()
+    evidence_root = evidence_root.expanduser().resolve()
+    repo_root = repo_root.expanduser().resolve()
+    manifest = read_json_object(manifest_path)
+    receipt_paths = sorted(evidence_root.glob("*/receipts/*.json"))
+    install_paths = sorted(evidence_root.glob("*/install-receipt.json"))
+    errors: list[str] = []
+
+    try:
+        candidate = _manifest_candidate(manifest)
+    except HarnessError as exc:
+        errors.append(str(exc))
+        candidate = None
+    if candidate is None:
+        if receipt_paths or install_paths:
+            errors.append("manifest candidate is null while receipts exist")
+        return errors
+
+    try:
+        expected_commit = _string(candidate.get("commit"), field="manifest.candidate.commit")
+        expected_wheel = _string(
+            candidate.get("wheel_sha256"), field="manifest.candidate.wheel_sha256"
+        )
+    except HarnessError as exc:
+        errors.append(str(exc))
+        return errors
+
+    manifest_receipts = manifest.get("receipts")
+    if not isinstance(manifest_receipts, list):
+        errors.append("manifest.receipts must be an array")
+        manifest_receipts = []
+    manifest_installs = manifest.get("install_receipts", [])
+    if not isinstance(manifest_installs, list):
+        errors.append("manifest.install_receipts must be an array")
+        manifest_installs = []
+    receipt_entries: dict[str, dict[str, Any]] = {}
+    for raw_entry in manifest_receipts:
+        if isinstance(raw_entry, dict) and isinstance(raw_entry.get("receipt_path"), str):
+            receipt_entries[raw_entry["receipt_path"]] = raw_entry
+    install_entries: dict[str, dict[str, Any]] = {}
+    for raw_entry in manifest_installs:
+        if isinstance(raw_entry, dict) and isinstance(raw_entry.get("receipt_path"), str):
+            install_entries[raw_entry["receipt_path"]] = raw_entry
+
+    active_receipt_names: set[str] = set()
+    for path in receipt_paths:
+        relative = _repo_relative(path, repo_root=repo_root)
+        active_receipt_names.add(relative)
+        receipt = read_json_object(path)
+        for error in validate_receipt(
+            receipt,
+            verify_files=True,
+            expected_commit=expected_commit,
+            repo_root=repo_root,
+        ):
+            errors.append(f"{relative}: {error}")
+        artifact = receipt.get("artifact")
+        if isinstance(artifact, dict) and artifact.get("wheel_sha256") != expected_wheel:
+            errors.append(f"{relative}: artifact.wheel_sha256 does not match the release candidate")
+        entry = receipt_entries.get(relative)
+        if entry is None:
+            errors.append(f"receipt is absent from manifest: {relative}")
+        else:
+            if entry.get("receipt_sha256") != sha256_file(path):
+                errors.append(f"manifest receipt digest does not match: {relative}")
+            for receipt_field, manifest_field in (
+                ("checklist_item", "checklist_item"),
+                ("tester", "tester"),
+                ("verdict", "verdict"),
+            ):
+                if entry.get(manifest_field) != receipt.get(receipt_field):
+                    errors.append(f"manifest {manifest_field} does not match: {relative}")
+
+    for relative in sorted(set(receipt_entries) - active_receipt_names):
+        errors.append(f"manifest names an absent receipt: {relative}")
+
+    active_install_names: set[str] = set()
+    for path in install_paths:
+        relative = _repo_relative(path, repo_root=repo_root)
+        active_install_names.add(relative)
+        install = read_json_object(path)
+        if _contains_home_path(install):
+            errors.append(f"{relative}: install receipt contains the current user's home path")
+        try:
+            install_candidate = _object(
+                install.get("candidate"), field=f"{relative}: candidate"
+            )
+            if install_candidate.get("commit") != expected_commit:
+                errors.append(f"{relative}: candidate commit does not match the manifest")
+            if install_candidate.get("wheel_sha256") != expected_wheel:
+                errors.append(f"{relative}: wheel digest does not match the manifest")
+        except HarnessError as exc:
+            errors.append(str(exc))
+        entry = install_entries.get(relative)
+        if entry is None:
+            errors.append(f"install receipt is absent from manifest: {relative}")
+        elif entry.get("receipt_sha256") != sha256_file(path):
+            errors.append(f"manifest install receipt digest does not match: {relative}")
+
+    for relative in sorted(set(install_entries) - active_install_names):
+        errors.append(f"manifest names an absent install receipt: {relative}")
+    if manifest.get("status") == "not-run" and (receipt_paths or install_paths):
+        errors.append("manifest status is not-run while receipts exist")
+    return errors
+
+
 def validate_matrix(directory: Path) -> list[str]:
     items = _checklist()
     expected = {
@@ -418,12 +689,25 @@ def _parser() -> argparse.ArgumentParser:
     )
     record.add_argument("--observation", action="append", default=[])
 
+    publish = subparsers.add_parser(
+        "publish", help="copy one reviewed scratch receipt into repository evidence"
+    )
+    publish.add_argument("receipt", type=Path)
+    publish.add_argument("--public-install-receipt", type=Path, required=True)
+    publish.add_argument("--evidence-root", type=Path, default=_EVIDENCE_ROOT)
+
     validate = subparsers.add_parser("validate", help="validate one existing receipt")
     validate.add_argument("receipt", type=Path)
     validate.add_argument("--skip-file-checks", action="store_true")
+    validate.add_argument("--manifest", type=Path)
 
     matrix = subparsers.add_parser("validate-matrix", help="require every owned receipt")
     matrix.add_argument("directory", type=Path)
+    verify = subparsers.add_parser(
+        "verify-run", help="verify active receipts against the generated manifest"
+    )
+    verify.add_argument("--manifest", type=Path, default=_MANIFEST_PATH)
+    verify.add_argument("--evidence-root", type=Path, default=_EVIDENCE_ROOT)
     return parser
 
 
@@ -433,12 +717,32 @@ def _main(argv: list[str] | None = None) -> int:
         path = record_receipt(args)
         print(path)
         return 0 if args.verdict in {"pass", "reserved"} else 1
-    if args.command == "validate":
-        errors = validate_receipt(
-            read_json_object(args.receipt), verify_files=not args.skip_file_checks
+    if args.command == "publish":
+        path = publish_receipt(
+            args.receipt,
+            public_install_receipt=args.public_install_receipt,
+            evidence_root=args.evidence_root,
         )
-    else:
+        print(path)
+        return 0
+    if args.command == "validate":
+        expected_commit = None
+        if args.manifest is not None:
+            manifest_candidate = _manifest_candidate(read_json_object(args.manifest))
+            if manifest_candidate is None:
+                raise HarnessError("manifest candidate is null")
+            expected_commit = _string(
+                manifest_candidate.get("commit"), field="manifest.candidate.commit"
+            )
+        errors = validate_receipt(
+            read_json_object(args.receipt),
+            verify_files=not args.skip_file_checks,
+            expected_commit=expected_commit,
+        )
+    elif args.command == "validate-matrix":
         errors = validate_matrix(args.directory)
+    else:
+        errors = verify_run(args.manifest, evidence_root=args.evidence_root)
     if errors:
         for error in errors:
             print(f"v050_receipt: {error}", file=sys.stderr)

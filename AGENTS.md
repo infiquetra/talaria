@@ -8,7 +8,7 @@ Talaria is a standalone client that connects to a Hermes gateway it did not laun
 
 ## Read the ADRs before writing code
 
-Four decisions are settled and are not open for re-litigation in an implementation change:
+Six decisions are settled and are not open for re-litigation in an implementation change:
 
 | ADR                                                                                          | What it settles                                                                              |
 | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -16,7 +16,8 @@ Four decisions are settled and are not open for re-litigation in an implementati
 | [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | The domain core never imports the terminal framework; the UI is a projection of domain state |
 | [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)   | Hermes's terminal UI is documentation of behavior, not a source tree to translate            |
 | [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is written in Python; the terminal framework is decided by a validation gate         |
-| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)   | Textual 8.2.8 is the presentation layer — `proposed`, on the U5 gate's pass verdict          |
+| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)   | Textual 8.2.8 is the accepted presentation layer                                             |
+| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) | Block rendering is bounded by work and rendered height                                |
 
 **The transition is done, and `src/` is what survived it.** The Ink prototype, the command-line entry point, the recording command and the transport shim were removed on 2026-08-07. The three remaining TypeScript files are the reference recorder and its redaction rules, kept because `tests/recorder/test_equivalence.py` runs the real thing in a subprocess and asserts the Python recorder matches it across the credential redaction boundary. Do not add behavior to them. Do not port them file by file. Do not delete them without first saying what replaces that guarantee.
 
@@ -31,7 +32,7 @@ Four decisions are settled and are not open for re-litigation in an implementati
 
 ## Commands
 
-The Python implementation has started (ADR-0004). The project check is:
+The active implementation is Python (ADR-0004). The project check is:
 
 ```bash
 uv sync --all-groups

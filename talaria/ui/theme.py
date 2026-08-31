@@ -2,20 +2,46 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Final, Protocol
+from typing import Final, Protocol
 
 from textual.theme import Theme
 
 from talaria.config import atomic_replace_bytes, global_config_dir
 from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
+from talaria.themes.storage import (
+    StoredThemeError,
+    serialize_user_theme,
+)
+from talaria.themes.storage import (
+    load_user_theme_specs as load_stored_theme_specs,
+)
 
 DEFAULT_THEME_SLUG: Final[str] = REFINED_DEFAULT.slug
+
+
+def relative_luminance(color: str) -> float:
+    """Return WCAG 2.2 relative luminance for one opaque ``#RRGGBB`` colour."""
+    channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in channels
+    ]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast_ratio(first: str, second: str) -> float:
+    """Measure the WCAG 2.2 contrast ratio between two opaque colours."""
+    lighter, darker = sorted(
+        (relative_luminance(first), relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 class ThemeRegistrar(Protocol):
@@ -195,10 +221,6 @@ class ThemeRegistry:
 BUILTIN_THEME_REGISTRY = ThemeRegistry(BUILTIN_THEMES)
 
 
-class StoredThemeError(ValueError):
-    """A stored user theme is not one of Talaria's canonical theme files."""
-
-
 def user_theme_path(slug: str, *, config_dir: Path | None = None) -> Path:
     """Return the user-theme target for an already validated theme slug."""
     try:
@@ -209,22 +231,6 @@ def user_theme_path(slug: str, *, config_dir: Path | None = None) -> Path:
     return root / "themes" / f"{slug}.json"
 
 
-def serialize_user_theme(spec: ThemeSpec) -> bytes:
-    """Serialize one complete user theme as canonical, deterministic JSON."""
-    missing = tuple(token for token in THEME_TOKENS if token not in spec.tokens)
-    if missing:
-        raise StoredThemeError(
-            "stored user themes must define every canonical token: " + ", ".join(missing)
-        )
-    payload = {
-        "dark": spec.dark,
-        "name": spec.name,
-        "slug": spec.slug,
-        "tokens": dict(spec.tokens),
-    }
-    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
-
-
 def write_user_theme(spec: ThemeSpec, *, config_dir: Path | None = None) -> Path:
     """Atomically create or replace one complete user theme."""
     path = user_theme_path(spec.slug, config_dir=config_dir)
@@ -232,61 +238,10 @@ def write_user_theme(spec: ThemeSpec, *, config_dir: Path | None = None) -> Path
     return path
 
 
-def _reject_json_constant(value: str) -> Any:
-    raise ValueError(f"non-JSON numeric constant {value}")
-
-
-def _load_user_theme(path: Path) -> ThemeSpec:
-    try:
-        source = path.read_text(encoding="utf-8")
-        payload = json.loads(source, parse_constant=_reject_json_constant)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        raise StoredThemeError(f"{path} is not a valid stored user theme: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise StoredThemeError(f"{path} stored user theme root must be an object")
-    if set(payload) != {"dark", "name", "slug", "tokens"}:
-        raise StoredThemeError(f"{path} stored user theme fields are not canonical")
-
-    dark = payload["dark"]
-    name = payload["name"]
-    slug = payload["slug"]
-    tokens = payload["tokens"]
-    if not isinstance(dark, bool):
-        raise StoredThemeError(f"{path} stored user theme dark field must be boolean")
-    if not isinstance(name, str) or not isinstance(slug, str):
-        raise StoredThemeError(f"{path} stored user theme name and slug must be strings")
-    if not isinstance(tokens, dict):
-        raise StoredThemeError(f"{path} stored user theme tokens must be an object")
-    if any(
-        not isinstance(token, str) or not isinstance(value, str)
-        for token, value in tokens.items()
-    ):
-        raise StoredThemeError(
-            f"{path} stored user theme token names and values must be strings"
-        )
-    if path.stem != slug:
-        raise StoredThemeError(f"{path} filename does not match stored slug {slug!r}")
-    try:
-        spec = ThemeSpec(slug=slug, name=name, dark=dark, tokens=tokens)
-    except ValueError as exc:
-        raise StoredThemeError(f"{path} is not a valid stored user theme: {exc}") from exc
-    serialize_user_theme(spec)
-    return spec
-
-
 def load_user_theme_specs(*, config_dir: Path | None = None) -> tuple[ThemeSpec, ...]:
     """Load canonical user themes in stable filename order for one fresh run."""
     root = config_dir if config_dir is not None else global_config_dir()
-    themes_dir = root / "themes"
-    if not themes_dir.is_dir():
-        return ()
-    specs = tuple(_load_user_theme(path) for path in sorted(themes_dir.glob("*.json")))
-    builtins = frozenset(BUILTIN_THEME_REGISTRY.slugs)
-    collisions = tuple(spec.slug for spec in specs if spec.slug in builtins)
-    if collisions:
-        raise StoredThemeError(
-            "stored user themes cannot replace built-ins: " + ", ".join(collisions)
-        )
+    specs, _notices = load_stored_theme_specs(config_dir=root)
     return specs
 
 
@@ -302,7 +257,9 @@ __all__ = [
     "ResolvedTheme",
     "StoredThemeError",
     "ThemeRegistry",
+    "contrast_ratio",
     "load_user_theme_specs",
+    "relative_luminance",
     "serialize_user_theme",
     "theme_registry_for_config",
     "textual_variable_name",

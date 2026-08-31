@@ -67,7 +67,17 @@ from talaria.replay.workloads import (
 )
 from talaria.ui.app import TalariaApp
 from talaria.ui.blocks import EntryMarkdown
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from talaria.ui.transcript import TranscriptPane
+
+
+class _ThemedApp(App[None]):
+    """A minimal harness with Talaria's canonical variables available."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        BUILTIN_THEME_REGISTRY.register(self)
+        self.theme = "refined-default"
 
 
 def _identity() -> CorpusIdentity:
@@ -365,7 +375,7 @@ async def test_measuring_a_replay_reports_the_frames_it_actually_applied() -> No
 # `test_gate.py`'s own module docstring states for the gate as a whole).
 
 
-class _DocHarness(App[None]):
+class _DocHarness(_ThemedApp):
     """Mounts one EntryMarkdown so the ownership proof can be probed
     directly, without a full TalariaApp/domain replay."""
 
@@ -560,7 +570,7 @@ async def test_block_documents_are_owned_catches_a_real_mounted_entry_swapped_fo
     swapped widget is checked against.
     """
 
-    class _PaneHarness(App[None]):
+    class _PaneHarness(_ThemedApp):
         def compose(self) -> ComposeResult:
             yield TranscriptPane(id="t")
 
@@ -762,7 +772,7 @@ async def test_block_documents_are_owned_over_committed_entries_and_both_live_ta
     from talaria.domain.projection import EntryScopedView, ProvisionalTail, TranscriptEntryRecord
     from talaria.ui.transcript import TranscriptPane
 
-    class _PaneHarness(App[None]):
+    class _PaneHarness(_ThemedApp):
         def compose(self) -> ComposeResult:
             yield TranscriptPane(id="t")
 
@@ -803,7 +813,7 @@ async def test_a_zero_block_entry_line_renders_and_mounts_no_entry_markdown() ->
     from talaria.domain.projection import EntryScopedView, ProvisionalTail, TranscriptEntryRecord
     from talaria.ui.transcript import TranscriptPane
 
-    class _PaneHarness(App[None]):
+    class _PaneHarness(_ThemedApp):
         def compose(self) -> ComposeResult:
             yield TranscriptPane(id="t")
 
@@ -853,7 +863,7 @@ async def test_a_collapsing_tail_demotes_and_the_gate_rejects_the_zero_block_sha
     from talaria.domain.projection import EntryScopedView, ProvisionalTail
     from talaria.ui.transcript import TranscriptPane
 
-    class _PaneHarness(App[None]):
+    class _PaneHarness(_ThemedApp):
         def compose(self) -> ComposeResult:
             yield TranscriptPane(id="t")
 
@@ -894,7 +904,7 @@ async def test_a_collapsing_tail_demotes_and_the_gate_rejects_the_zero_block_sha
     # document, so the rejection is exercised against one mounted
     # synthetically — if the upstream demotion ever regresses, this is the
     # check that still fails the gate.
-    class _ZeroBlockHarness(App[None]):
+    class _ZeroBlockHarness(_ThemedApp):
         def compose(self) -> ComposeResult:
             yield EntryMarkdown("\n")
 
@@ -1035,7 +1045,7 @@ async def _apply_fold_fixture(
     widgets ``run_test``'s own teardown already unmounted.
     """
 
-    class _PaneHarness(App[None]):
+    class _PaneHarness(_ThemedApp):
         def compose(self) -> ComposeResult:
             yield TranscriptPane(id="t")
 
@@ -1190,7 +1200,7 @@ async def test_mounted_window_ownership_holds_mid_stream_for_two_growing_tails_a
     from talaria.domain.projection import EntryScopedView, ProvisionalTail
     from talaria.ui.transcript import TranscriptPane
 
-    class _PaneHarness(App[None]):
+    class _PaneHarness(_ThemedApp):
         def compose(self) -> ComposeResult:
             yield TranscriptPane(id="t")
 

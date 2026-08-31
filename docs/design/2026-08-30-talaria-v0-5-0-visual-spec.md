@@ -665,12 +665,16 @@ $schema, name, and type are metadata and do not warn. type may set the imported 
 
 ### Tokens with no Visual Studio Code source
 
-These fourteen Talaria extension tokens have no entry in either supported mapping and therefore always come from Refined Default during import:
+These eighteen Talaria extension tokens have no entry in either supported mapping and therefore always come from Refined Default during import:
 
 | Fallback-only token | Reason |
 |---|---|
 | talaria.secondary | No bounded workbench key has the same semantic role |
 | talaria.status.muted | Visual Studio Code exposes status foreground but no secondary status text role |
+| talaria.status.success | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.warning | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.error | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.attention | Visual Studio Code has no bounded per-state status-bar colour role |
 | talaria.transcript.operator | Talaria-specific transcript channel |
 | talaria.transcript.operator.background | Talaria-specific transcript channel |
 | talaria.transcript.assistant | Talaria-specific transcript channel |
@@ -689,13 +693,13 @@ Any other token falls back only when its listed source is absent or invalid. The
 Example report shape:
 
 ~~~text
-Imported solar-example as user theme solar-example: 37 source tokens, 17 fallbacks.
+Imported solar-example as user theme solar-example: 40 source tokens, 18 fallbacks, 3 warnings.
 warning: root.include is unsupported; external theme files are not read
 warning: colors.editorCursor.foreground is unsupported
 warning: tokenColors[7].settings.fontStyle is unsupported
 fallback: talaria.secondary <- Refined Default #6F42C1
 fallback: talaria.transcript.operator <- Refined Default #0969DA
-… 15 more fallback tokens
+… 16 more fallback tokens
 ~~~
 
 ## Non-color signaling

@@ -20,6 +20,8 @@ from talaria.recorder.command import RecordTarget
 from talaria.status.contract import StatusBarSettings
 from talaria.transport.credentials import LoopbackTokenProvider
 
+VSCODE_THEME_FIXTURES = Path(__file__).parent / "fixtures" / "vscode-themes"
+
 
 def test_explicit_session_beats_resume_and_default() -> None:
     selection = selection_from_args(parse_args(["--session", "abc123"]))
@@ -94,6 +96,306 @@ def test_a_conflicting_pair_never_reaches_the_launcher(
 
     assert excinfo.value.code == 2
     assert launched == []
+
+
+# ── issue #105: bounded Visual Studio Code theme import ─────────────────
+
+
+def test_theme_import_parses_the_nested_argv_and_optional_name() -> None:
+    args = parse_args(
+        ["theme", "import", "/tmp/source-theme.json", "--name", "stored-theme"]
+    )
+
+    assert args.command == "theme"
+    assert args.theme_command == "import"
+    assert args.source == Path("/tmp/source-theme.json")
+    assert args.name == "stored-theme"
+
+
+def test_theme_requires_a_nested_operation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        parse_args(["theme"])
+
+    assert excinfo.value.code == 2
+    assert "required" in capsys.readouterr().err
+
+
+def test_theme_import_prints_the_complete_success_report_and_exits_zero(
+    isolated_global_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "sample-dark.json"
+
+    assert main(["theme", "import", str(source), "--name", "cli-sample"]) == 0
+
+    printed = capsys.readouterr()
+    assert printed.err == ""
+    assert (
+        "Imported cli-sample as user theme cli-sample: "
+        "40 source tokens, 18 fallbacks, 0 warnings."
+    ) in printed.out
+    assert (
+        "composite: colors.editor.selectionBackground -> "
+        "talaria.selection.background: #FF000080 over #102030 = #881018"
+    ) in printed.out
+    assert "fallback: talaria.secondary <- Refined Default #6F42C1" in printed.out
+    assert (isolated_global_config_dir / "themes" / "cli-sample.json").is_file()
+
+
+def test_theme_import_warnings_use_stderr_without_turning_success_into_failure(
+    isolated_global_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "unsupported-dark.json"
+
+    assert main(["theme", "import", str(source)]) == 0
+
+    printed = capsys.readouterr()
+    assert (
+        "Imported warnings-dark as user theme warnings-dark: "
+        "2 source tokens, 56 fallbacks, 19 warnings."
+    ) in printed.out
+    assert "warning:" not in printed.out
+    warnings = printed.err.splitlines()
+    assert len(warnings) == 19
+    assert all(line.startswith("warning: ") for line in warnings)
+    assert warnings[0] == (
+        "warning: root.include is unsupported; external theme files are not read"
+    )
+
+
+def test_theme_import_defangs_attacker_controlled_warning_keys(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    escape = chr(27)
+    source = tmp_path / "hostile-key.json"
+    source.write_text(
+        json.dumps(
+            {
+                "colors": {
+                    "editor.background": "#123456",
+                    f"junk{escape}]0;PWNED{chr(7)}{escape}[2J": "#FFFFFF",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["theme", "import", str(source)]) == 0
+
+    printed = capsys.readouterr()
+    assert b"\x1b" not in printed.out.encode()
+    assert b"\x1b" not in printed.err.encode()
+    assert (isolated_global_config_dir / "themes" / "hostile-key.json").is_file()
+
+
+def test_theme_import_defangs_an_attacker_controlled_error_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / f"missing{chr(27)}[2J.json"
+
+    assert main(["theme", "import", str(source)]) == 3
+
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert b"\x1b" not in printed.err.encode()
+
+
+def test_theme_import_json_report_is_one_versioned_stdout_object(
+    isolated_global_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "unsupported-dark.json"
+
+    assert main(["theme", "import", str(source), "--json"]) == 0
+
+    printed = capsys.readouterr()
+    assert printed.err == ""
+    report = json.loads(printed.out)
+    assert report == {
+        "fallback_count": 56,
+        "fallbacks": report["fallbacks"],
+        "schema_version": "talaria-theme-import-report-v1",
+        "slug": "warnings-dark",
+        "source_token_count": 2,
+        "target_path": str(
+            isolated_global_config_dir / "themes" / "warnings-dark.json"
+        ),
+        "warning_count": 19,
+        "warnings": report["warnings"],
+    }
+    assert len(report["fallbacks"]) == 56
+    assert report["fallbacks"][0] == {
+        "severity": "info",
+        "source": "refined-default",
+        "token": "talaria.surface",
+        "value": "#FFFFFF",
+    }
+    assert len(report["warnings"]) == 19
+    assert report["warnings"][0] == {
+        "message": "root.include is unsupported; external theme files are not read",
+        "severity": "warning",
+    }
+
+
+@pytest.mark.parametrize(
+    ("fixture", "extra_argv", "expected"),
+    [
+        ("does-not-exist.json", (), 3),
+        ("empty.json", (), 3),
+        ("malformed.json", (), 3),
+        ("wrong-root.json", (), 3),
+        ("sample-dark.json", ("--name", "refined-default"), 4),
+        ("sample-dark.json", ("--name", "Bad Name"), 4),
+    ],
+    ids=[
+        "unreadable",
+        "empty",
+        "malformed",
+        "wrong-root",
+        "reserved-slug",
+        "invalid-slug",
+    ],
+)
+def test_theme_import_failure_kinds_have_non_usage_exit_codes(
+    fixture: str,
+    extra_argv: tuple[str, ...],
+    expected: int,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / fixture
+
+    assert main(["theme", "import", str(source), *extra_argv]) == expected
+
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.startswith("talaria: theme import failed: ")
+
+
+def test_theme_import_unwritable_failure_has_write_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import talaria.ui.theme_import as theme_import_module
+
+    def fail_write(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise OSError("write refused")
+
+    monkeypatch.setattr(theme_import_module, "write_user_theme", fail_write)
+    source = VSCODE_THEME_FIXTURES / "sample-dark.json"
+
+    assert main(["theme", "import", str(source)]) == 5
+    assert "write refused" in capsys.readouterr().err
+
+
+def test_theme_import_argparse_usage_error_remains_two(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["theme", "import"])
+
+    assert excinfo.value.code == 2
+    assert "required" in capsys.readouterr().err
+
+
+def test_theme_import_failure_uses_stderr_exits_three_and_writes_nothing(
+    isolated_global_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "malformed.json"
+
+    assert main(["theme", "import", str(source)]) == 3
+
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert "talaria: theme import failed:" in printed.err
+    assert "not strict JSON" in printed.err
+    assert not (isolated_global_config_dir / "themes").exists()
+
+
+def test_invalid_config_is_one_operator_error_and_gate_failure_stays_one(
+    isolated_global_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = isolated_global_config_dir / "config.toml"
+    path.write_text("[broken\n", encoding="utf-8")
+
+    assert main([]) == 2
+
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.splitlines() == [
+        next(
+            line
+            for line in printed.err.splitlines()
+            if str(path) in line and "not valid TOML" in line
+        )
+    ]
+    assert "Traceback" not in printed.err
+
+    path.unlink()
+    monkeypatch.setattr(cli_module, "run_gate_command", lambda args: 1)
+    assert main(["gate"]) == 1
+
+
+def test_a_fresh_live_and_replay_launch_receive_the_imported_registry(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "sample-dark.json"
+    cfg_before = config_module.load_config(cwd=tmp_path)
+    assert "restart-dark" not in cli_module._theme_registry(cfg_before).slugs
+
+    assert main(["theme", "import", str(source), "--name", "restart-dark"]) == 0
+    capsys.readouterr()
+
+    cfg_after = config_module.load_config(cwd=tmp_path)
+    live, _source = cli_module.build_live_app(parse_args([]), cfg_after)
+    live_theme = live.theme_registry.resolve("restart-dark")
+    assert "restart-dark" in live.theme_registry.slugs
+    assert live_theme.tokens["talaria.selection.background"] == "#881018"
+
+    captured: dict[str, object] = {}
+
+    class FakeSource:
+        focus_profile = ""
+
+    class CapturingApp:
+        def __init__(self, source: object, **kwargs: object) -> None:
+            captured["source"] = source
+            captured.update(kwargs)
+
+        def run(self) -> None:
+            captured["ran"] = True
+
+    import talaria.replay.source as replay_source_module
+    import talaria.ui.app as app_module
+
+    monkeypatch.setattr(
+        replay_source_module,
+        "source_from_path",
+        lambda *args, **kwargs: FakeSource(),
+    )
+    monkeypatch.setattr(app_module, "TalariaApp", CapturingApp)
+
+    assert cli_module.run_replay(parse_args(["replay", str(tmp_path / "corpus")])) == 0
+    replay_registry = captured["theme_registry"]
+    from talaria.ui.theme import ThemeRegistry
+
+    assert isinstance(replay_registry, ThemeRegistry)
+    assert replay_registry.resolve("restart-dark").tokens[
+        "talaria.selection.background"
+    ] == "#881018"
+    assert captured["ran"] is True
 
 
 # ── U10: the live launcher is assembled, without dialling anything ───────
@@ -193,7 +495,8 @@ def test_the_live_launcher_forwards_theme_config_and_save_targets(
     isolated_global_config_dir: Path, tmp_path: Path
 ) -> None:
     (isolated_global_config_dir / "config.toml").write_text(
-        '[theme]\nname = "neutral-dark"\n', encoding="utf-8"
+        '[theme]\nname = "neutral-dark"\n\n[ui]\nreduced_motion = true\n',
+        encoding="utf-8",
     )
     cfg = config_module.load_config(cwd=tmp_path)
 
@@ -203,6 +506,7 @@ def test_the_live_launcher_forwards_theme_config_and_save_targets(
     assert app.configured_theme_slug == "neutral-dark"
     assert app.theme_config_dir == isolated_global_config_dir
     assert app.launch_cwd == Path.cwd()
+    assert app.motion.reduced is True
     assert app._startup_notices == ()
 
 
@@ -232,7 +536,7 @@ def test_the_replay_launcher_forwards_theme_fallback_notices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (isolated_global_config_dir / "config.toml").write_text(
-        "[theme]\nname = 7\n", encoding="utf-8"
+        "[theme]\nname = 7\n\n[ui]\nreduced_motion = true\n", encoding="utf-8"
     )
     captured: dict[str, object] = {}
 
@@ -264,6 +568,7 @@ def test_the_replay_launcher_forwards_theme_fallback_notices(
     assert "must be a string" in notices[0]
     assert captured["theme_config_dir"] == isolated_global_config_dir
     assert captured["launch_cwd"] == Path.cwd()
+    assert captured["reduced_motion"] is True
     status_settings = captured["status_bar_settings"]
     assert isinstance(status_settings, StatusBarSettings)
     assert status_settings.segments == (

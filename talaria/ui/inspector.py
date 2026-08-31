@@ -326,10 +326,8 @@ class Inspector(VerticalScroll):
         """Toggle the dock on wide screens or the non-reflowing narrow overlay."""
         if self.auto_collapsed:
             if self.overlay_open:
-                self.requested_collapsed = True
                 self._close_overlay(restore_focus=True)
                 return
-            self.requested_collapsed = False
             self._remember_focus()
             self.overlay_open = True
             self._sync_geometry()

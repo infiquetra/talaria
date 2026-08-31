@@ -16,12 +16,15 @@ from talaria.status.contract import TRUNCATION_MARKER
 from talaria.status.runner import StatusTickResult
 from talaria.ui.literal import defang
 from talaria.ui.status_region import StatusRegion
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from tests.ui.conftest import event, paused_app
 
 
 class _StatusRegionHarness(App[None]):
     def __init__(self, initial_marker: str) -> None:
         super().__init__()
+        BUILTIN_THEME_REGISTRY.register(self)
+        self.theme = "refined-default"
         self._initial_marker = initial_marker
 
     def compose(self) -> ComposeResult:
@@ -39,7 +42,7 @@ async def test_a_malformed_command_notice_is_visible_without_a_status_runner() -
 
     async with app.run_test(size=(100, 20)) as pilot:
         await pilot.pause()
-        assert app.status_region.marker_text == notice
+        assert app.status_region.marker_text == f"[x] {notice}"
 
 
 @pytest.mark.asyncio
@@ -52,7 +55,7 @@ async def test_running_app_routes_status_configuration_notices_to_status_region(
 
     async with app.run_test(size=(100, 24)) as pilot:
         await pilot.pause()
-        assert app.status_region.marker_text == notice
+        assert app.status_region.marker_text == f"[x] {notice}"
 
 
 @pytest.mark.asyncio
@@ -109,7 +112,9 @@ async def test_truncation_is_visible_rather_than_silent() -> None:
             StatusTickResult(outcome="ok", rows=tuple(f"row {n}" for n in range(8)), truncated=True)
         )
         await pilot.pause()
-        assert app.status_region.row_texts[-1] == TRUNCATION_MARKER
+        assert app.status_region.row_texts[-1] == (
+            f"[!] status truncated — {TRUNCATION_MARKER}"
+        )
         await app.shutdown_sources()
 
 
@@ -125,7 +130,7 @@ async def test_every_failure_shows_its_categorical_marker(outcome: str) -> None:
             StatusTickResult(outcome=outcome, marker=f"status: {outcome}")  # type: ignore[arg-type]
         )
         await pilot.pause()
-        assert app.status_region.marker_text == f"status: {outcome}"
+        assert app.status_region.marker_text == f"[x] status: {outcome}"
         assert app.status_region.row_texts == ()
         await app.shutdown_sources()
 
@@ -135,24 +140,12 @@ def test_defang_leaves_ordinary_text_alone() -> None:
     assert defang("端末 é עברית 🜁") == "端末 é עברית 🜁"
 
 
-# ── B1: the caret slot is gone (R5' replaces R5) ─────────────────────────
-#
-# B1 removed the dedicated caret slot (KTD1, docs/plans/2026-08-11-v0-3-unit-b1-
-# caret-status-row.md). The two U3 tests that asserted its properties — the
-# caret word surviving a status tick and the geometry invariant via set_caret —
-# are deleted with this note. The geometry invariant is re-asserted below
-# without the slot, so a regression that re-introduces a focus-dependent row
-# still fails loudly (AE8).
+# ── U6: the dedicated caret row is always mounted ────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_status_region_geometry_is_invariant_across_focus_states() -> None:
-    """AE8: removing the caret slot cannot move any region, across all focus
-    states B1 touches (transcript pane, prompts container) and across a
-    failing status tick. The old R5 falsifier measured the same property via
-    set_caret; this measures it via real focus moves, because the slot no
-    longer exists to drive directly.
-    """
+    """Focus changes only repaint the dedicated row and never move a region."""
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(100, 30)) as pilot:
 
@@ -168,7 +161,7 @@ async def test_status_region_geometry_is_invariant_across_focus_states() -> None
         await pilot.pause()
         baseline_empty = regions()
 
-        # Focus moves must not change geometry when the status region is empty
+        # Focus moves must not change geometry when shell status output is empty.
         await pilot.press("tab")
         await pilot.pause()
         assert regions() == baseline_empty, "focus in the transcript moved a region"
@@ -182,9 +175,8 @@ async def test_status_region_geometry_is_invariant_across_focus_states() -> None
         assert regions() == baseline_empty, "returning focus to the composer moved a region"
 
         # Now with status rows showing — the same focus moves must still be invariant.
-        # This is the post-B1 analogue of the old R5 falsifier: a focus-dependent
-        # row would change the status region's height, which would move every other
-        # region; asserting the geometry stays equal proves no such row exists.
+        # A dynamically mounted focus row would change the status region's height;
+        # asserting equal geometry catches that exact regression.
         await app.status_region.apply(
             StatusTickResult(outcome="ok", rows=("branch: main", "tests: 296"))
         )
