@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
-    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "commit": "17ce4eda8e82a18b5d47766c0c279aa9751dce9f",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/bin/talaria",
+    "executable_sha256": "e6aba3508aff5fd148f2ed99f08f7bd2db39b7532484943060944d0561e1606a",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
-    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "install_receipt_sha256": "70fcb039c3adb1934a7e328a5e15807709cd4407f16ff3303c9599a3df59c06b",
+    "installed_files_sha256": "6be60d3c7e4f23d856c4e3b9a3dd0f941dc596fd38f13a37f6dfd55473a5de41",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "0ed001392dabbc52071e8b795b31a68adb988c9d1639146da0a958764f2c31eb"
   },
   "checklist_item": 25,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-25.ansi",
-    "capture_sha256": "59b841cd11111d94bdc0ca7e165c4b9fe4dd555e94c23285c74365ebdc30496c",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-25-pty.json",
-    "pty_result_sha256": "87d4c964bd876e4041171e7b9c3d71e3dfc1b13030346a267d8998addfbded44",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-25-r3.ansi",
+    "capture_sha256": "d15dc8ce20a9799cf3c9a98312e469b3fcc59c44141173ecff2e4130eeb43800",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-25-r3-pty.json",
+    "pty_result_sha256": "c60855bde8c28a5db018814987faaaec18040deca60b41c973daf011f07a727b",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-25.png",
-    "screenshot_sha256": "887e89a6242c6da1cba271c458bc5be8c1afd28f7351ce7293bb71ff89c13448"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-25-r3.png",
+    "screenshot_sha256": "a396e3565e3075b9d1235c4da5cde40cd84549478a3a7b530d2aeaa757f39a47"
   },
   "observations": [
-    "All six transcript identities remained identifiable without colour: user, assistant, reasoning, tool, system and error.",
-    "Failure: blank spacer rows remained after the Reasoning and A Talaria entries, violating the no-blank-row condition."
+    "In monochrome, consecutive transcript rows retained the textual identities > You, . Reasoning, A Talaria, $ Tool/Subagent, - Session, and ! Error.",
+    "No trailing Markdown margin inserted spacer rows between the assistant and reasoning identities."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T17:30:58+00:00",
+  "recorded_at": "2026-08-31T19:07:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -48,5 +48,5 @@
   },
   "tester": "talaria-t1",
   "title": "Transcript identity without color",
-  "verdict": "fail"
+  "verdict": "pass"
 }
