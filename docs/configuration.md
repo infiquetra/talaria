@@ -72,7 +72,7 @@ defaults.
 
 | Path | Type and default | Contract |
 | --- | --- | --- |
-| `theme.name` | string, `"refined-default"` | Selects a theme. The four built-in slugs are accepted at startup. An unknown or non-string value visibly falls back to Refined Default. There is no environment or command-line alias. See [Themes](themes.md) for scopes and the current imported-theme persistence limitation. |
+| `theme.name` | string, `"refined-default"` | Selects a theme. The four built-in slugs and canonical stored imported slugs discovered under `<TALARIA_CONFIG_DIR>/themes/` are accepted at startup. An unknown or non-string value visibly falls back to Refined Default. There is no environment or command-line alias. See [Themes](themes.md) for scopes and persistence. |
 | `ui.reduced_motion` | boolean, `false` | Makes nonessential progress frames static and routed scrolling immediate. A non-boolean value visibly falls back to `false`. There is no environment or command-line alias. |
 | `status.command` | optional string, omitted/disabled | Runs as a fixed argument vector without a shell in the existing multi-row `StatusRegion`. An empty, non-string, or unparseable value disables only that region and produces a startup notice. `TALARIA_STATUS_COMMAND` is its environment alias. |
 | `status.interval_seconds` | integer, `5` | Status-command cadence, inclusive range 1–3600. An invalid value visibly falls back to 5. `TALARIA_STATUS_INTERVAL_SECONDS` is its environment alias. |
@@ -91,9 +91,17 @@ a breakpoint. See [Terminal UI](terminal-ui.md#responsive-status-bar) for that t
 ## Validation and compatibility
 
 Talaria deep-merges each configured table onto the defaults, so files written before 0.5.0 do not
-need migration. A missing table or key takes the new default. Invalid optional values use the
-documented fallback and add a visible startup notice. Syntactically invalid TOML is different: it is
-a launch error that names the offending file.
+need migration. A missing table or key takes the new default. After precedence resolves, only the
+`theme`, `ui`, and `status` tables are normalized: an invalid value in those tables uses its
+documented fallback and adds a visible startup notice.
+
+The other tables reach their launch consumers without that normalization. A malformed `composer`
+threshold remains raw in the loaded configuration, then is silently replaced by its default when
+the paste threshold is built. Blank or non-string `profiles.endpoints` rows are silently dropped. A
+numeric or Boolean `environment.allowlist` raises `TypeError` when an enabled status command is
+built. A string does not raise or produce a notice; it is read character by character, so `"FOO"`
+becomes `('F', 'O', 'O')`, an effectively empty default-deny allowlist rather than the requested
+name. Syntactically invalid TOML is different: it is a launch error that names the offending file.
 
 ## What Talaria writes
 

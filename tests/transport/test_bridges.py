@@ -49,10 +49,10 @@ SCREEN = (80, 24)
 #: 15, and the arithmetic is a running tally of chrome rows rather than a
 #: constant anyone chose. B1 reclaimed a row, taking 17 to 18. A4 added the
 #: one-row help footer (``talaria/ui/app.py:HelpBar``) and took it back, 18 to
-#: 17. v0.4's U7 adds the reserved needs-you row
-#: (``talaria/ui/needs_you.py:NeedsYouBar``), 17 to 16 — one row of transcript
-#: given up at every terminal height, permanently, in exchange for a summary
-#: that never moves anything by appearing. v0.5's U6 restores one permanently
+#: 17. v0.4's U7 adds the reserved needs-you row, 17 to 16 — one row of
+#: transcript given up at every terminal height, permanently, in exchange for
+#: a summary that never moves anything by appearing. v0.5 replaces that row
+#: with the true-bottom status bar. Its U6 restores one permanently
 #: mounted status-region caret row, taking 16 to 15 without focus-dependent
 #: geometry.
 #:

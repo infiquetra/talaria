@@ -9,7 +9,8 @@ widget the interface is built around.
 So this is a foldable region that stays out of the way until it is asked for: a
 header naming the counts by availability, then one line per command carrying
 its marker. Three markers, from :data:`~talaria.domain.commands.AVAILABILITY_MARKER`
-— blank for a gateway command that dispatches, ``local`` for Talaria's own four
+— blank for a gateway command that dispatches, ``local`` for each of Talaria's
+own controls in :data:`~talaria.domain.commands.TALARIA_LOCAL_COMMANDS`
 (PC6 asks they be marked local in any listing), and ``unsupported`` for the
 entries Hermes's own React client implements and the gateway does not.
 
@@ -103,7 +104,7 @@ def slash_prefix_from_text(text: str) -> str | None:
 
 
 def _local_entries_tuple() -> tuple[CommandEntry, ...]:
-    """The seven Talaria-local entries, built without importing a private helper."""
+    """The Talaria-local entries, built without importing a private helper."""
     from talaria.domain.commands import TALARIA_LOCAL_COMMANDS
 
     return tuple(
