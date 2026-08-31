@@ -364,16 +364,6 @@ def _task_views(
                 detail=item.summary,
             )
         )
-    for index, notice in enumerate(queue.notices):
-        tasks.append(
-            InspectorTaskView(
-                key=f"queue-notice:{index}",
-                label="needs-you",
-                status="unavailable",
-                source="queue",
-                detail=notice,
-            )
-        )
     if agents is not None:
         for row in agents.rows:
             tasks.append(

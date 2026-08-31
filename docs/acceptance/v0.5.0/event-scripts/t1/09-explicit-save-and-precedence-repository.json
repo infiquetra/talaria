@@ -1,0 +1,11 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "text": "/theme "},
+    {"at_seconds": 4.25, "key": "ENTER"},
+    {"at_seconds": 5.75, "key": "DOWN"},
+    {"at_seconds": 7.25, "key": "ENTER"},
+    {"at_seconds": 8.75, "text": "/theme save repository "},
+    {"at_seconds": 9.0, "key": "ENTER"},
+    {"at_seconds": 12.0, "key": "CTRL_Q"}
+  ]
+}

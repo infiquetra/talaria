@@ -41,7 +41,16 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+from talaria.status.contract import (
+    DEFAULT_AGENT_MODEL_MAX_COLUMNS,
+    DEFAULT_CWD_MAX_COLUMNS,
+    DEFAULT_GIT_BRANCH_MAX_COLUMNS,
+    DEFAULT_STATUS_SEGMENTS,
+    normalize_status_settings,
+    parse_command,
+)
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
+from talaria.themes.storage import load_user_theme_specs
 
 
 class ConfigError(Exception):
@@ -59,7 +68,15 @@ class ConfigError(Exception):
 #: to, so a default of ``None`` means "string-valued, no default".
 DEFAULTS: dict[str, Any] = {
     "theme": {"name": REFINED_DEFAULT.slug},
-    "status": {"command": None, "interval_seconds": 5},
+    "ui": {"reduced_motion": False},
+    "status": {
+        "command": None,
+        "interval_seconds": 5,
+        "segments": list(DEFAULT_STATUS_SEGMENTS),
+        "cwd_max_columns": DEFAULT_CWD_MAX_COLUMNS,
+        "git_branch_max_columns": DEFAULT_GIT_BRANCH_MAX_COLUMNS,
+        "agent_model_max_columns": DEFAULT_AGENT_MODEL_MAX_COLUMNS,
+    },
     "environment": {"allowlist": []},
     "composer": {"paste_collapse_lines": 6, "paste_collapse_bytes": 512},
     # U4's profile endpoints: a name-to-gateway-URL map the operator writes.
@@ -178,7 +195,16 @@ def _env_overrides() -> dict[str, Any]:
         if raw is None:
             continue
         default = DEFAULTS.get(section, {}).get(key)
-        overrides.setdefault(section, {})[key] = _coerce_env_value(env_name, raw, default)
+        try:
+            value = _coerce_env_value(env_name, raw, default)
+        except ConfigError:
+            if (section, key) != ("status", "interval_seconds"):
+                raise
+            # This setting has a visible fallback contract. Preserve the
+            # winning malformed value until the one post-precedence status
+            # normalization pass can name the key and apply that fallback.
+            value = raw
+        overrides.setdefault(section, {})[key] = value
     return overrides
 
 
@@ -238,7 +264,11 @@ def profile_endpoints(cfg: Config) -> Mapping[str, str]:
     }
 
 
-def _normalize_config(merged: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+def _normalize_config(
+    merged: dict[str, Any],
+    *,
+    available_theme_slugs: frozenset[str],
+) -> tuple[dict[str, Any], tuple[str, ...]]:
     """Normalize winning configured values once, after every file layer merged."""
     notices: list[str] = []
     theme = merged.get("theme")
@@ -249,12 +279,42 @@ def _normalize_config(merged: dict[str, Any]) -> tuple[dict[str, Any], tuple[str
             "theme.name must be a string; using Refined Default "
             f"({REFINED_DEFAULT.slug})"
         )
-    elif requested not in _BUILTIN_THEME_SLUGS:
+    elif requested not in available_theme_slugs:
         merged["theme"] = {"name": REFINED_DEFAULT.slug}
         notices.append(
             f"theme {requested!r} is not available; using Refined Default "
             f"({REFINED_DEFAULT.slug})"
         )
+
+    ui_source = merged.get("ui")
+    reduced_motion = (
+        ui_source.get("reduced_motion") if isinstance(ui_source, Mapping) else None
+    )
+    if not isinstance(reduced_motion, bool):
+        ui = dict(ui_source) if isinstance(ui_source, Mapping) else {}
+        ui["reduced_motion"] = False
+        merged["ui"] = ui
+        notices.append("ui.reduced_motion must be a boolean; using false")
+
+    status_source = merged.get("status")
+    normalized_status = normalize_status_settings(status_source)
+    status = dict(status_source) if isinstance(status_source, Mapping) else {}
+    command = status.get("command")
+    _argv, command_notice = parse_command(command)
+    status.update(
+        {
+            "command": None if command_notice is not None else command,
+            "interval_seconds": normalized_status.interval_seconds,
+            "segments": list(normalized_status.bar.segments),
+            "cwd_max_columns": normalized_status.bar.cwd_max_columns,
+            "git_branch_max_columns": normalized_status.bar.git_branch_max_columns,
+            "agent_model_max_columns": normalized_status.bar.agent_model_max_columns,
+        }
+    )
+    merged["status"] = status
+    notices.extend(normalized_status.notices)
+    if command_notice is not None:
+        notices.append(command_notice)
     return merged, tuple(notices)
 
 
@@ -424,7 +484,22 @@ def load_config(
         # the operator explicitly invokes ``/theme save``.
         allowed_cli_overrides = dict(cli_overrides)
         allowed_cli_overrides.pop("theme", None)
+        # Reduced motion is restart-to-apply configuration with no environment
+        # or command-line alias. A caller's unrelated launch overrides must not
+        # create a second, undocumented live-control path.
+        allowed_cli_overrides.pop("ui", None)
         merged = _deep_merge(merged, allowed_cli_overrides)
 
-    merged, notices = _normalize_config(merged)
-    return Config(values=_freeze(merged), config_dir=config_dir, notices=notices)
+    user_theme_specs, user_theme_notices = load_user_theme_specs(
+        config_dir=config_dir
+    )
+    user_theme_slugs = frozenset(spec.slug for spec in user_theme_specs)
+    merged, notices = _normalize_config(
+        merged,
+        available_theme_slugs=_BUILTIN_THEME_SLUGS | user_theme_slugs,
+    )
+    return Config(
+        values=_freeze(merged),
+        config_dir=config_dir,
+        notices=(*notices, *user_theme_notices),
+    )

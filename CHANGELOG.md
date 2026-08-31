@@ -10,6 +10,63 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+The v0.5.0 candidate makes the terminal interface themeable and adds persistent bottom-of-screen
+context, an inspector, and a bounded read-only view of session-reported changes. These notes describe
+the merged behavior only; the release's terminal acceptance evidence is not yet recorded.
+
+### Added
+
+- **Four built-in themes and 58 semantic tokens.** Refined Default, Dark Green Terminal, Neutral
+  Dark, and Accessible High Contrast cover the application, transcript identities, status bar,
+  inspector, diff, and syntax classes. `/theme` previews without writing, `Escape` restores the
+  prior theme, `Enter` selects for the process, and `/theme save [user|repository]` explicitly
+  persists a built-in selection by changing only `[theme]`.
+- **A bounded Visual Studio Code theme importer.** `talaria theme import FILE [--name NAME]` accepts
+  a documented allowlist of workbench colors and syntax scopes, reports unsupported input and
+  Refined Default fallbacks, atomically replaces a deterministic user-theme JSON file, and writes
+  nothing on malformed or empty input.
+- **A configurable true-bottom status bar.** Seven reorderable/hideable segments show launch
+  directory and branch, held agent/context/task state, connection, and version in one non-wrapping
+  row. Fixed breakpoints shorten and drop lower-priority segments while retaining a literal
+  connection glyph. `/bar` toggles segments for the process without writing configuration.
+- **A right inspector from held session state.** `Ctrl+B` and `/inspector` expose Tasks, Context,
+  Changed files, and Operation details. It docks from 120 columns, becomes a non-reflowing overlay
+  below that width, preserves the requested state across resize, and renders honest empty sections.
+- **A full-terminal, read-only diff viewer.** `/diffs` or `Enter` on an inspector file opens
+  session-reported unified diff text. Side-by-side mode requires 112 columns and falls back to
+  unified without losing the preference; file/hunk navigation, syntax treatment, intraline spans,
+  long lines, and rendered work are bounded. No working-tree mutation path exists.
+- **Configuration for the new surfaces.** `theme.name`, status-bar segment/cap rows, and
+  `ui.reduced_motion` join the additive startup snapshot with visible fallback notices and no
+  external-file live reload.
+
+### Changed
+
+- **The interface uses semantic theme colors throughout.** Six transcript groups retain literal
+  labels and fixed gutters as well as their own fills, so identity does not depend on color.
+  Connection, queue, approval, agent, selection, and diff states likewise keep words or glyphs.
+- **Focus no longer changes screen height.** The composer changes its existing border title and
+  color, and other controls use reserved gutters or fixed borders. Moving focus cannot add a row or
+  move the transcript viewport.
+- **The needs-you summary now feeds `task_progress`.** The queue count remains visible in the
+  default bottom bar while `/needs` continues to provide the full detail.
+- **Reduced motion and stable scroll are explicit policies.** `ui.reduced_motion = true` freezes
+  decorative frames and makes routed scrolling immediate. Layout, status, theme, inspector, and
+  streaming updates preserve an unpinned reader's held transcript anchor; `End` or `F5` follows the
+  bottom again.
+
+### Fixed
+
+- Invalid status intervals, width caps, segment lists, and commands now produce visible startup
+  notices and bounded fallbacks instead of handing bad values to the runner or silently removing
+  the status-command region.
+
+### Known limitations
+
+- Imported themes load into the picker after restart, but saving an imported slug does not survive
+  another restart in the current candidate: startup normalization accepts only built-in slugs and
+  visibly falls back to Refined Default. The import artifact itself remains installed.
+
 ## [0.4.0] — 2026-08-19
 
 Talaria becomes a fleet client. One running instance now dials every

@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infiquetra.github.io/talaria/acceptance/v0.5.0/artifact-manifest.schema.json",
+  "title": "Talaria v0.5.0 generated acceptance artifact manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "generated_command",
+    "status",
+    "current_candidate",
+    "counts",
+    "candidates",
+    "install_receipts",
+    "receipts",
+    "missing_receipts_on_disk",
+    "missing_current_receipts"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "not-run"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "current_candidate": {
+            "properties": {
+              "wheel_filename": {"type": "null"},
+              "wheel_sha256": {"type": "null"},
+              "has_install_receipt": {"const": false}
+            }
+          },
+          "install_receipts": {"maxItems": 0},
+          "receipts": {"maxItems": 0}
+        }
+      },
+      "else": {
+        "properties": {
+          "current_candidate": {
+            "properties": {
+              "wheel_filename": {"type": "string", "pattern": "\\.whl$"},
+              "wheel_sha256": {"$ref": "#/$defs/digest"},
+              "has_install_receipt": {"const": true}
+            }
+          },
+          "install_receipts": {"minItems": 1},
+          "receipts": {"minItems": 1}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tester": {"enum": ["talaria-t1", "talaria-t2"]},
+    "missingReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checklist_item", "tester"],
+      "properties": {
+        "checklist_item": {"type": "integer", "minimum": 1, "maximum": 36},
+        "tester": {"$ref": "#/$defs/tester"}
+      }
+    }
+  },
+  "properties": {
+    "$schema": {"const": "./artifact-manifest.schema.json"},
+    "schema_version": {"const": "talaria-v0.5.0-artifact-manifest-v2"},
+    "generated_command": {"type": "string", "minLength": 1},
+    "status": {"enum": ["not-run", "in-progress", "complete", "blocked", "stale"]},
+    "current_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "wheel_filename",
+        "wheel_sha256",
+        "version",
+        "has_install_receipt"
+      ],
+      "properties": {
+        "commit": {"$ref": "#/$defs/commit"},
+        "wheel_filename": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "string", "pattern": "\\.whl$"}
+          ]
+        },
+        "wheel_sha256": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/digest"}
+          ]
+        },
+        "version": {"const": "0.5.0"},
+        "has_install_receipt": {"type": "boolean"}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_receipts",
+        "install_receipts",
+        "item_receipts",
+        "current_receipts",
+        "stale_receipts",
+        "invalid_item_receipts",
+        "missing_receipts_on_disk",
+        "missing_current_receipts",
+        "item_verdicts"
+      ],
+      "properties": {
+        "expected_receipts": {"type": "integer", "minimum": 0},
+        "install_receipts": {"type": "integer", "minimum": 0},
+        "item_receipts": {"type": "integer", "minimum": 0},
+        "current_receipts": {"type": "integer", "minimum": 0},
+        "stale_receipts": {"type": "integer", "minimum": 0},
+        "invalid_item_receipts": {"type": "integer", "minimum": 0},
+        "missing_receipts_on_disk": {"type": "integer", "minimum": 0},
+        "missing_current_receipts": {"type": "integer", "minimum": 0},
+        "item_verdicts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pass", "fail", "blocked", "reserved"],
+          "properties": {
+            "pass": {"type": "integer", "minimum": 0},
+            "fail": {"type": "integer", "minimum": 0},
+            "blocked": {"type": "integer", "minimum": 0},
+            "reserved": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "commit",
+          "wheel_filename",
+          "wheel_sha256",
+          "version",
+          "install_receipt_count",
+          "item_receipt_count",
+          "matches_current_candidate"
+        ],
+        "properties": {
+          "commit": {"$ref": "#/$defs/commit"},
+          "wheel_filename": {"type": "string", "pattern": "\\.whl$"},
+          "wheel_sha256": {"$ref": "#/$defs/digest"},
+          "version": {"const": "0.5.0"},
+          "install_receipt_count": {"type": "integer", "minimum": 0},
+          "item_receipt_count": {"type": "integer", "minimum": 0},
+          "matches_current_candidate": {"type": "boolean"}
+        }
+      }
+    },
+    "install_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tester",
+          "candidate_commit",
+          "wheel_filename",
+          "wheel_sha256",
+          "version",
+          "receipt_path",
+          "receipt_sha256",
+          "stale_candidate",
+          "stale_reason"
+        ],
+        "properties": {
+          "tester": {"$ref": "#/$defs/tester"},
+          "candidate_commit": {"$ref": "#/$defs/commit"},
+          "wheel_filename": {"type": "string", "pattern": "\\.whl$"},
+          "wheel_sha256": {"$ref": "#/$defs/digest"},
+          "version": {"const": "0.5.0"},
+          "receipt_path": {"type": "string", "minLength": 1},
+          "receipt_sha256": {"$ref": "#/$defs/digest"},
+          "stale_candidate": {"type": "boolean"},
+          "stale_reason": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "checklist_item",
+          "title",
+          "tester",
+          "verdict",
+          "candidate_commit",
+          "wheel_sha256",
+          "stale_candidate",
+          "stale_reason",
+          "contract_status",
+          "contract_errors",
+          "receipt_path",
+          "receipt_sha256",
+          "capture_path",
+          "capture_sha256",
+          "screenshot_path",
+          "screenshot_sha256"
+        ],
+        "properties": {
+          "checklist_item": {"type": "integer", "minimum": 1, "maximum": 36},
+          "title": {"type": "string", "minLength": 1},
+          "tester": {"$ref": "#/$defs/tester"},
+          "verdict": {"enum": ["pass", "fail", "blocked", "reserved"]},
+          "candidate_commit": {"$ref": "#/$defs/commit"},
+          "wheel_sha256": {"$ref": "#/$defs/digest"},
+          "stale_candidate": {"type": "boolean"},
+          "stale_reason": {"type": ["string", "null"]},
+          "contract_status": {"enum": ["valid", "invalid"]},
+          "contract_errors": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "receipt_path": {"type": "string", "minLength": 1},
+          "receipt_sha256": {"$ref": "#/$defs/digest"},
+          "capture_path": {"type": "string", "minLength": 1},
+          "capture_sha256": {"$ref": "#/$defs/digest"},
+          "screenshot_path": {"type": "string", "minLength": 1},
+          "screenshot_sha256": {"$ref": "#/$defs/digest"}
+        }
+      }
+    },
+    "missing_receipts_on_disk": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/missingReceipt"}
+    },
+    "missing_current_receipts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/missingReceipt"}
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "resize": {"rows": 36, "columns": 144}},
+    {"at_seconds": 5.0, "resize": {"rows": 36, "columns": 143}},
+    {"at_seconds": 6.0, "resize": {"rows": 36, "columns": 120}},
+    {"at_seconds": 7.0, "resize": {"rows": 36, "columns": 119}},
+    {"at_seconds": 8.0, "resize": {"rows": 36, "columns": 112}},
+    {"at_seconds": 9.0, "resize": {"rows": 36, "columns": 111}},
+    {"at_seconds": 10.0, "resize": {"rows": 36, "columns": 96}},
+    {"at_seconds": 11.0, "resize": {"rows": 36, "columns": 95}},
+    {"at_seconds": 12.0, "resize": {"rows": 36, "columns": 80}},
+    {"at_seconds": 13.0, "resize": {"rows": 36, "columns": 79}},
+    {"at_seconds": 14.0, "resize": {"rows": 36, "columns": 64}},
+    {"at_seconds": 15.0, "resize": {"rows": 36, "columns": 63}},
+    {"at_seconds": 16.0, "resize": {"rows": 36, "columns": 48}},
+    {"at_seconds": 17.0, "resize": {"rows": 36, "columns": 47}},
+    {"at_seconds": 18.0, "resize": {"rows": 36, "columns": 32}},
+    {"at_seconds": 19.0, "resize": {"rows": 36, "columns": 31}},
+    {"at_seconds": 20.0, "resize": {"rows": 36, "columns": 20}},
+    {"at_seconds": 21.0, "resize": {"rows": 36, "columns": 19}},
+    {"at_seconds": 23.0, "key": "CTRL_Q"}
+  ]
+}
