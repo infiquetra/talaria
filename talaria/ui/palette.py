@@ -36,9 +36,11 @@ import re
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.message import Message
 from textual.widgets import Static
 
 from talaria.domain.commands import CommandCatalog, CommandEntry
+from talaria.themes import ThemeSpec
 from talaria.ui.literal import literal_text
 
 #: Width of the name column, so descriptions line up without a table widget.
@@ -63,6 +65,9 @@ CATALOG_WARNING_PREFIX = "the gateway reported: "
 #: Shown when the filter has excluded every row. Lowercase, contains the
 #: phrase the plan requires tests to assert on.
 NO_MATCHING = "no matching commands"
+
+#: Theme mode reuses the palette region but gives it its own honest header.
+THEME_HEADER = "themes: Up/Down preview · Enter use this session · Escape cancel"
 
 #: Regex for the slash-name class that KTD2 defines: slash, then a letter,
 #: then letters/digits/underscore/hyphen, end-anchored, no trailing space.
@@ -225,6 +230,21 @@ class PaletteRegion(Vertical):
     }
     """
 
+    class ThemeSelected(Message):
+        """The highlighted theme was accepted for the current session."""
+
+        def __init__(self, slug: str) -> None:
+            super().__init__()
+            self.slug = slug
+
+    class ThemeCancelled(Message):
+        """Theme browsing was cancelled and the open-time state was restored."""
+
+        def __init__(self, slug: str, session_slug: str | None) -> None:
+            super().__init__()
+            self.slug = slug
+            self.session_slug = session_slug
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._browse_showing = False
@@ -235,6 +255,14 @@ class PaletteRegion(Vertical):
         self._degraded: Static | None = None
         self._rows: list[Static] = []
         self._catalog: CommandCatalog | None = None
+        self._theme_specs: tuple[ThemeSpec, ...] = ()
+        self._theme_selected: int | None = None
+        self._theme_restore_slug = ""
+        self._theme_restore_session_slug: str | None = None
+        self._theme_restore_browse = False
+        # Browse and slash-filtered modes leave focus in the composer. Theme
+        # mode enables focus only for its lifetime so its keys stay local.
+        self.can_focus = False
 
     def compose(self) -> ComposeResult:
         self._header = Static(
@@ -265,7 +293,11 @@ class PaletteRegion(Vertical):
     @property
     def showing(self) -> bool:
         """Whether the region is currently visible (browse or slash)."""
-        return self._browse_showing or self._slash_prefix is not None
+        return (
+            self._browse_showing
+            or self._slash_prefix is not None
+            or self.is_theme_active
+        )
 
     @showing.setter
     def showing(self, value: bool) -> None:
@@ -274,6 +306,21 @@ class PaletteRegion(Vertical):
     @property
     def is_slash_active(self) -> bool:
         return self._slash_prefix is not None
+
+    @property
+    def is_theme_active(self) -> bool:
+        return bool(self._theme_specs)
+
+    @property
+    def theme_specs(self) -> tuple[ThemeSpec, ...]:
+        return self._theme_specs
+
+    @property
+    def selected_theme(self) -> ThemeSpec | None:
+        selected = self._theme_selected
+        if selected is None or not (0 <= selected < len(self._theme_specs)):
+            return None
+        return self._theme_specs[selected]
 
     @property
     def slash_prefix(self) -> str | None:
@@ -300,6 +347,28 @@ class PaletteRegion(Vertical):
     async def apply(self, catalog: CommandCatalog | None) -> None:
         """Render the listing. Safe to call before anything has been fetched."""
         self._catalog = catalog
+        if self.is_theme_active:
+            self.set_class(True, "-showing")
+            if self._header is not None:
+                self._header.update(literal_text(THEME_HEADER))
+            if self._degraded is not None:
+                self._degraded.update(literal_text(""))
+                self._degraded.set_class(False, "-said")
+            await self._remove_rows()
+            for index, spec in enumerate(self._theme_specs):
+                active = index == self._theme_selected
+                classes = "palette--row"
+                if active:
+                    classes += " -active"
+                widget = Static(
+                    literal_text(self._format_theme_row(spec, active=active)),
+                    markup=False,
+                    classes=classes,
+                )
+                self._rows.append(widget)
+                await self.mount(widget)
+            return
+
         # Recompute filtered when slash is active and catalog may have changed.
         if self._slash_prefix is not None:
             self._filtered = _filtered_entries(catalog, self._slash_prefix)
@@ -327,9 +396,7 @@ class PaletteRegion(Vertical):
 
         # Rebuild rows from scratch — the list is at most ~100 and the
         # correctness of highlight and muted handling matters more than diffing.
-        for row in self._rows:
-            await row.remove()
-        self._rows = []
+        await self._remove_rows()
 
         if self._slash_prefix is not None:
             if self._filtered:
@@ -356,6 +423,16 @@ class PaletteRegion(Vertical):
             self._rows.append(widget)
             await self.mount(widget)
 
+    async def _remove_rows(self) -> None:
+        for row in self._rows:
+            await row.remove()
+        self._rows = []
+
+    @staticmethod
+    def _format_theme_row(spec: ThemeSpec, *, active: bool) -> str:
+        """One theme row with the visual contract's fixed focus gutter."""
+        return f"{'>' if active else ' '} {spec.name}"
+
     @staticmethod
     def _degraded_line(catalog: CommandCatalog | None) -> str:
         if catalog is None:
@@ -378,6 +455,111 @@ class PaletteRegion(Vertical):
         self._browse_showing = not self._browse_showing
         await self.apply(self._catalog)
         return self.showing
+
+    # ── theme-picker mode ────────────────────────────────────────────────
+
+    async def open_theme_picker(
+        self,
+        specs: tuple[ThemeSpec, ...],
+        *,
+        current_slug: str,
+        session_slug: str | None,
+    ) -> None:
+        """Open four-row theme browsing and capture the exact restore point."""
+        if not specs:
+            raise ValueError("theme picker requires at least one theme")
+        slugs = tuple(spec.slug for spec in specs)
+        if current_slug not in slugs:
+            raise ValueError(f"current theme {current_slug!r} is not in the picker")
+
+        self._theme_restore_browse = self._browse_showing
+        self._browse_showing = False
+        self._slash_prefix = None
+        self._filtered = ()
+        self._selected = None
+        self._theme_specs = specs
+        self._theme_selected = slugs.index(current_slug)
+        self._theme_restore_slug = current_slug
+        self._theme_restore_session_slug = session_slug
+        self.can_focus = True
+        await self.apply(self._catalog)
+        self.focus()
+
+    def move_theme_selection(self, delta: int) -> None:
+        """Move one row, previewing the resulting theme immediately."""
+        if not self.is_theme_active or self._theme_selected is None:
+            return
+        current = self._theme_selected
+        selected = min(max(current + delta, 0), len(self._theme_specs) - 1)
+        if selected == current:
+            return
+        self._theme_selected = selected
+        for index, row in enumerate(self._rows):
+            active = index == selected
+            row.set_class(active, "-active")
+            row.update(
+                literal_text(self._format_theme_row(self._theme_specs[index], active=active))
+            )
+        self._preview_selected_theme()
+        try:
+            self.scroll_to_widget(self._rows[selected], animate=False)
+        except (AttributeError, ValueError):
+            pass
+
+    def _preview_selected_theme(self) -> None:
+        selected = self.selected_theme
+        if selected is not None:
+            self.app.theme = selected.slug
+
+    async def accept_theme_selection(self) -> None:
+        """Keep the preview as the current session choice and close the mode."""
+        selected = self.selected_theme
+        if selected is None:
+            return
+        slug = selected.slug
+        await self._close_theme_picker()
+        self.post_message(self.ThemeSelected(slug))
+
+    async def cancel_theme_selection(self) -> None:
+        """Restore both the applied theme and the open-time session choice."""
+        if not self.is_theme_active:
+            return
+        slug = self._theme_restore_slug
+        session_slug = self._theme_restore_session_slug
+        self.app.theme = slug
+        await self._close_theme_picker()
+        self.post_message(self.ThemeCancelled(slug, session_slug))
+
+    async def _close_theme_picker(self) -> None:
+        self._theme_specs = ()
+        self._theme_selected = None
+        self._theme_restore_slug = ""
+        self._theme_restore_session_slug = None
+        self._browse_showing = self._theme_restore_browse
+        self._theme_restore_browse = False
+        self.can_focus = False
+        await self.apply(self._catalog)
+        try:
+            self.app.composer.text_area.focus()  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+
+    async def on_key(self, event: events.Key) -> None:
+        """Keep preview, acceptance, and cancellation inside theme mode."""
+        if not self.is_theme_active:
+            return
+        if event.key == "up":
+            self.move_theme_selection(-1)
+        elif event.key == "down":
+            self.move_theme_selection(1)
+        elif event.key == "enter":
+            await self.accept_theme_selection()
+        elif event.key == "escape":
+            await self.cancel_theme_selection()
+        else:
+            return
+        event.stop()
+        event.prevent_default()
 
     # ── slash-filtered mode ──────────────────────────────────────────────
 
@@ -451,6 +633,14 @@ class PaletteRegion(Vertical):
 
     async def on_click(self, event: events.Click) -> None:
         """Click on a filtered row selects it (same insert rule as Enter)."""
+        if self.is_theme_active:
+            target = event.widget
+            if isinstance(target, Static) and target in self._rows:
+                selected = self._rows.index(target)
+                delta = selected - (self._theme_selected or 0)
+                self.move_theme_selection(delta)
+                event.stop()
+            return
         if self._slash_prefix is None or not self._filtered:
             return
         # Textual delivers Click with event.widget as the widget under the cursor.

@@ -357,6 +357,7 @@ async def test_ae6_row_is_discoverable() -> None:
     assert "F6" in descs["/models"]
     assert "F7" in descs["/profiles"]
     assert "F2" in descs["/agents"] and "ctrl+g" in descs["/agents"]
+    assert "status-bar" in descs["/bar"]
 
     # Help bar scoped to mode and fits 80 columns — assert on what renders,
     # not on the backing property (P2-H). len() on the stored string cannot
@@ -374,6 +375,9 @@ async def test_ae6_row_is_discoverable() -> None:
         await pilot.pause()
         strips = app_live.screen._compositor.render_strips()
         row = app_live.help_bar.region.y
+        assert row == 22
+        assert app_live.bottom_status_bar.region.y == 23
+        assert app_live.bottom_status_bar.region.height == 1
         rendered = "".join(seg.text for seg in strips[row])
         assert "…" not in rendered, f"live footer clipped at 80x24: {rendered!r}"
         assert "eaten on macOS" in rendered, f"live tail missing: {rendered!r}"
@@ -395,6 +399,9 @@ async def test_ae6_row_is_discoverable() -> None:
         await pilot.pause()
         strips = app_replay.screen._compositor.render_strips()
         row = app_replay.help_bar.region.y
+        assert row == 22
+        assert app_replay.bottom_status_bar.region.y == 23
+        assert app_replay.bottom_status_bar.region.height == 1
         rendered = "".join(seg.text for seg in strips[row])
         assert "…" not in rendered, f"replay footer clipped at 80x24: {rendered!r}"
         assert "eaten on macOS" in rendered, f"replay tail missing: {rendered!r}"

@@ -1,0 +1,31 @@
+{
+  "name": "warnings-dark",
+  "type": "dim",
+  "include": "./base-theme.json",
+  "semanticHighlighting": true,
+  "semanticTokenColors": {"variable": "#FFFFFF"},
+  "productIconTheme": "icons",
+  "unknownRoot": true,
+  "colors": {
+    "editor.background": "#101820",
+    "input.background": "rgb(10, 20, 30)",
+    "editorCursor.foreground": "#FFFFFF",
+    "terminal.ansiBlack": "#000000"
+  },
+  "tokenColors": [
+    {"settings": {"foreground": "#FFFFFF"}},
+    {"scope": "source.python keyword", "settings": {"foreground": "#FFFFFF"}},
+    {
+      "scope": "markup.bold",
+      "settings": {
+        "foreground": "#FFFFFF",
+        "background": "#000000",
+        "fontStyle": "bold",
+        "strikethrough": true
+      }
+    },
+    {"scope": ["comment", 42], "settings": {"foreground": "#ABCDEF"}},
+    {"name": "named rule", "scope": "keyword*", "settings": {"foreground": "#FFFFFF", "fontStyle": ""}},
+    "not-a-rule"
+  ]
+}

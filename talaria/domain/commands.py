@@ -288,8 +288,24 @@ def decode_catalog(result: Any) -> CommandCatalog:
         return unavailable_catalog(f"{CATALOG_UNAVAILABLE}: it carried no command list")
 
     categories = _category_index(result.get("categories"))
-    entries: list[CommandEntry] = list(_local_entries())
-    seen = {entry.name.lower() for entry in entries}
+    local_entries = _local_entries()
+    # Preserve the existing browse order and its first-screen unsupported
+    # evidence as local controls are added. ``/theme``, ``/bar``, and
+    # ``/inspector`` remain in the catalogue and in slash filtering, but follow
+    # the gateway rows in
+    # the unfiltered browse list rather than displacing ``/density`` and its
+    # dispatchable neighbour below the established 14-row viewport.
+    deferred_local = tuple(
+        entry
+        for entry in local_entries
+        if entry.name in {"/theme", "/bar", "/inspector"}
+    )
+    entries: list[CommandEntry] = [
+        entry
+        for entry in local_entries
+        if entry.name not in {"/theme", "/bar", "/inspector"}
+    ]
+    seen = {entry.name.lower() for entry in local_entries}
 
     for row in rows:
         pair = _pair(row)
@@ -315,6 +331,8 @@ def decode_catalog(result: Any) -> CommandCatalog:
                 ),
             )
         )
+
+    entries.extend(deferred_local)
 
     canon = result.get("canon")
     warning = result.get("warning")
@@ -344,7 +362,18 @@ def _is_client_local(name: str, category: str) -> bool:
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
 LocalAction = Literal[
-    "quit", "pause", "resume", "speed", "models", "profiles", "sessions", "agents", "needs"
+    "quit",
+    "pause",
+    "resume",
+    "speed",
+    "models",
+    "profiles",
+    "sessions",
+    "agents",
+    "needs",
+    "theme",
+    "bar",
+    "inspector",
 ]
 
 
@@ -449,6 +478,23 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "/agents",
         "agents",
         "Toggle sub-agent rows (F2 / ctrl+g)",
+    ),
+    LocalCommand(
+        "/theme",
+        "theme",
+        "Preview or save the session theme",
+        argument_hint="[save [user|repository]]",
+    ),
+    LocalCommand(
+        "/bar",
+        "bar",
+        "Show the status-bar segments or toggle one for this session",
+        argument_hint="[segment]",
+    ),
+    LocalCommand(
+        "/inspector",
+        "inspector",
+        "Toggle the session inspector (ctrl+b)",
     ),
 )
 
