@@ -18,6 +18,7 @@ from typing import get_args
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets._markdown import MarkdownParagraph
 
 from talaria.domain.models import TranscriptKind
 from talaria.themes.builtins import REFINED_DEFAULT
@@ -298,6 +299,57 @@ async def test_block_document_height_unchanged_by_group_styling() -> None:
         assert unstyled.outer_size.height == styled.outer_size.height
         assert unstyled.outer_size.height > 1  # the paragraph actually wraps
         assert unstyled.styles.background != styled.styles.background
+
+
+@pytest.mark.asyncio
+async def test_one_line_markdown_entries_do_not_add_blank_rows_between_identities() -> None:
+    """Reasoning and assistant entries are Markdown documents, unlike the
+    other four identity groups. A paragraph's stock bottom margin must not
+    make those two kinds consume an otherwise blank transcript row.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        reasoning = EntryMarkdown(
+            ". Reasoning identity entry.",
+            classes=kind_group_css_class("reasoning"),
+        )
+        assistant = EntryMarkdown(
+            "A Talaria Assistant identity entry.",
+            classes=kind_group_css_class("assistant"),
+        )
+        activity = TranscriptLine("• Tool activity identity entry.", kind="tool")
+        await pane.mount_all([reasoning, assistant, activity])
+        await pilot.pause()
+
+        assert reasoning.outer_size.height == 1
+        assert assistant.outer_size.height == 1
+        assert assistant.virtual_region.y == reasoning.virtual_region.bottom
+        assert activity.virtual_region.y == assistant.virtual_region.bottom
+
+
+@pytest.mark.asyncio
+async def test_entry_trailing_trim_preserves_spacing_between_markdown_blocks() -> None:
+    """Only the final block loses its stock margin; paragraphs inside one
+    transcript entry retain the blank row that makes Markdown readable.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        document = EntryMarkdown(
+            "first paragraph",
+            classes=kind_group_css_class("assistant"),
+        )
+        await pane.mount(document)
+        await pilot.pause()
+        await document.append("\n\nsecond paragraph")
+        await pilot.pause()
+
+        paragraphs = list(document.query(MarkdownParagraph))
+        assert len(paragraphs) == 2
+        assert paragraphs[0].styles.margin.bottom == 1
+        assert paragraphs[1].styles.margin.bottom == 0
+        assert document.outer_size.height == 3
 
 
 # ── KTD5: no new theme variable ─────────────────────────────────────────────

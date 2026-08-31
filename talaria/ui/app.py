@@ -6590,9 +6590,6 @@ class TalariaApp(App[None]):
 
     # ── scroll anchoring ─────────────────────────────────────────────────
 
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self.transcript.hold_anchor()
-
     def on_paste(self, event: events.Paste) -> None:
         """Paste is typing's bigger sibling (KTD2, R5').
 
