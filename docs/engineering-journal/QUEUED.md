@@ -906,8 +906,8 @@ So the operator types a password into a focused control that draws nothing, with
 ### The shipped block-markdown gate misses its steady-state table-apply ceiling
 
 **Author.** Talaria v0.5.0 candidate gate comparison, 2026-08-31.
-**Priority.** P2 — the release instrument is honestly red, but the candidate improved the inherited
-latency and no v0.5.0 feature caused the exceedance.
+**Priority.** P2 — the release instrument is honestly red, but the candidate did not worsen the
+inherited latency and no v0.5.0 feature caused the exceedance.
 **Effort.** Small to reproduce and profile; repair size depends on where that profile places the
 remaining cost.
 
@@ -915,11 +915,12 @@ remaining cost.
 `growing-one-column-table` steady-state p99 `TranscriptPane.apply` latency exceeds its 50 ms ceiling,
 so `talaria gate` returns `fail`. Every other check in the 32-check gate passes.
 
-| Tree | Verdict | `growing-one-column-table` streaming p99 |
-| --- | --- | ---: |
-| v0.4 baseline, `origin/main` at `5efa19c` | `fail` | 61.988 ms |
-| v0.5.0 candidate | `fail` | 54.45 ms |
-| Ceiling |  | 50 ms |
+| Tree | Measurement | Verdict | `growing-one-column-table` streaming p99 |
+| --- | --- | --- | ---: |
+| v0.4 baseline, `origin/main` at `5efa19c` | Coordinator gate run | `fail` | 61.988 ms |
+| v0.5.0 candidate | Coordinator gate run | `fail` | 54.45 ms |
+| Same v0.5.0 candidate | `talaria-t1` gate run | `fail` | 60.229 ms |
+| Ceiling |  |  | 50 ms |
 
 **Since when.** Line 35 of the
 [block-markdown gate results](../analysis/2026-08-09-block-markdown-gate-results.md) records the same
@@ -927,11 +928,17 @@ metric at 44.0 ms against the same 50 ms ceiling, so it passed on
 2026-08-09. The exceedance appeared between that run and v0.4.0, then shipped in v0.4.0 unnoticed
 because v0.4 acceptance did not run the gate.
 
-**Not caused by v0.5.0, and improved by it.** The measured result moved from 61.988 ms before the
-release work to 54.45 ms after it — roughly twelve percent faster — while v0.5.0 added a status bar,
-an inspector, and a diff viewer. The candidate inherited the failure and reduced it; it did not
-create it. This is distinct from the block-phase hitch below: this entry records the enforced
-steady-state p99 that changes the whole gate verdict.
+**Not caused by v0.5.0, and not worse under the evidence.** Three measurements exist: v0.4.0 at
+61.988 ms, and the unchanged v0.5.0 candidate at both 54.45 ms and 60.229 ms. The candidate's 5.8 ms
+run-to-run spread is comparable to the 7.5 ms gap between the v0.4.0 result and its best v0.5.0
+result, so the evidence does not support an improvement claim. It does support the weaker conclusion
+that v0.5.0 did not make the metric worse and did not cause the exceedance. This is distinct from the
+block-phase hitch below: this entry records the enforced steady-state p99 that changes the whole gate
+verdict.
+
+**The variance is itself worth knowing.** A threshold check whose run-to-run spread approaches its
+own margin over the ceiling can flake between verdicts, which matters to whoever profiles and repairs
+this path.
 
 **Why it is not being fixed here.** No approved v0.5.0 child covers `TranscriptPane.apply` latency.
 Repairing it in the documentation unit would expand scope into the block-markdown implementation.
