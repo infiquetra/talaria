@@ -148,6 +148,29 @@ def test_broken_stored_themes_are_skipped_without_hiding_valid_themes(
     assert "skipped" in cfg.notices[0]
 
 
+def test_a_stored_imported_theme_slug_is_accepted_at_startup(
+    isolated_global_config_dir: Path,
+) -> None:
+    themes = isolated_global_config_dir / "themes"
+    themes.mkdir()
+    imported = ThemeSpec(
+        slug="stored-import",
+        name="Stored Import",
+        dark=REFINED_DEFAULT.dark,
+        tokens=REFINED_DEFAULT.tokens,
+    )
+    (themes / "stored-import.json").write_bytes(serialize_user_theme(imported))
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "stored-import"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config()
+
+    assert cfg.get("theme", "name") == "stored-import"
+    assert cfg.notices == ()
+
+
 def test_theme_has_no_command_line_override(tmp_path: Path) -> None:
     cfg = load_config(
         cli_overrides={"theme": {"name": "neutral-dark"}}, cwd=tmp_path

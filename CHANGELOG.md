@@ -11,8 +11,11 @@ with the usual caveat that a `0.x` line may break anything between releases.
 ## [Unreleased]
 
 The v0.5.0 candidate makes the terminal interface themeable and adds persistent bottom-of-screen
-context, an inspector, and a bounded read-only view of session-reported changes. These notes describe
-the merged behavior only; the release's terminal acceptance evidence is not yet recorded.
+context, an inspector, and a bounded read-only view of session-reported changes. The
+[v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md) was
+executed on 2026-08-31 and returned **NOT SATISFIED**. The installed artifact was proven, but the
+approved live primary model route did not produce a passing receipt and `talaria-t1` item receipts
+and screenshots do not exist.
 
 ### Added
 
@@ -20,7 +23,7 @@ the merged behavior only; the release's terminal acceptance evidence is not yet 
   Dark, and Accessible High Contrast cover the application, transcript identities, status bar,
   inspector, diff, and syntax classes. `/theme` previews without writing, `Escape` restores the
   prior theme, `Enter` selects for the process, and `/theme save [user|repository]` explicitly
-  persists a built-in selection by changing only `[theme]`.
+  persists a selection by changing only `[theme]`.
 - **A bounded Visual Studio Code theme importer.** `talaria theme import FILE [--name NAME]` accepts
   a documented allowlist of workbench colors and syntax scopes, reports unsupported input and
   Refined Default fallbacks, atomically replaces a deterministic user-theme JSON file, and writes
@@ -63,9 +66,17 @@ the merged behavior only; the release's terminal acceptance evidence is not yet 
 
 ### Known limitations
 
-- Imported themes load into the picker after restart, but saving an imported slug does not survive
-  another restart in the current candidate: startup normalization accepts only built-in slugs and
-  visibly falls back to Refined Default. The import artifact itself remains installed.
+- The [v0.5.0 acceptance verdict](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
+  is **NOT SATISFIED**. The installed artifact and 14 assigned `talaria-t2` items are proven, but no
+  approved live primary model receipt exists and `talaria-t1` has no current item receipts or
+  screenshots.
+- The `growing-one-column-table` steady-state p99 `TranscriptPane.apply` latency exceeds its 50 ms
+  ceiling. Its run-to-run spread makes it unsuitable as a release gate; the measured debt and revisit
+  condition are recorded in [QUEUED.md](docs/engineering-journal/QUEUED.md#the-shipped-block-markdown-gate-misses-its-steady-state-table-apply-ceiling).
+- The v0.4.0 limitations remain unchanged: no person has driven Talaria on Linux; no run has used a
+  real terminal emulator; gateway compatibility checks only top-level response shapes;
+  `terminal.read.respond` has no runtime evidence; and the intermittent full-suite failure remains
+  under investigation.
 
 ## [0.4.0] — 2026-08-19
 
@@ -402,6 +413,7 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/infiquetra/talaria/releases/tag/v0.4.0
 [0.3.0]: https://github.com/infiquetra/talaria/releases/tag/v0.3.0
 [0.2.0]: https://github.com/infiquetra/talaria/releases/tag/v0.2.0
