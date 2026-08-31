@@ -17,6 +17,40 @@
     "missing_receipts_on_disk",
     "missing_current_receipts"
   ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "not-run"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "current_candidate": {
+            "properties": {
+              "wheel_filename": {"type": "null"},
+              "wheel_sha256": {"type": "null"},
+              "has_install_receipt": {"const": false}
+            }
+          },
+          "install_receipts": {"maxItems": 0},
+          "receipts": {"maxItems": 0}
+        }
+      },
+      "else": {
+        "properties": {
+          "current_candidate": {
+            "properties": {
+              "wheel_filename": {"type": "string", "pattern": "\\.whl$"},
+              "wheel_sha256": {"$ref": "#/$defs/digest"},
+              "has_install_receipt": {"const": true}
+            }
+          },
+          "install_receipts": {"minItems": 1},
+          "receipts": {"minItems": 1}
+        }
+      }
+    }
+  ],
   "$defs": {
     "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
