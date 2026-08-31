@@ -11,42 +11,42 @@
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
     "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
-  "checklist_item": 23,
+  "checklist_item": 9,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-reconnect-final2.ansi",
-    "capture_sha256": "31de6cdc122d2d47b894964740150b48cce518630cb28d24ee10091643139784",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-reconnect-final2-pty.json",
-    "pty_result_sha256": "70d7d89fd9c4690613ea95a634c1fd3dc8a9fd1e9bff813a79cac5a9f4a39354",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-09-session-final2.ansi",
+    "capture_sha256": "74468c24b71e2d7ff85c3442559fd3cba15927bec6b601ee01008e8a71fa1854",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-09-session-final2-pty.json",
+    "pty_result_sha256": "2ef4a72bf3d045f2f57aadc9747976db8faedf57733471310ab72f819df8d8ee",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-reconnect-final2.png",
-    "screenshot_sha256": "b6ece92ed440d36f56fb89b1991f4df77b77f44da1d7e237430885d4cf36e42d"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-09-session-final2.png",
+    "screenshot_sha256": "6a99b0f414a9e9cff9b9ea738487912749ce3a3415e1fc54e06fa590ad53e759"
   },
   "observations": [
-    "Separate drives reached all five non-colour connection forms: [..] wait, [ok] up, [~] retry, [x] down, and [!] auth.",
-    "The genuine reconnect cycle held and resumed the same authorized dashboard process; the raw capture contains both 'connection lost \u2014 reconnecting' and [~] retry before recovery. No fallback route was attempted."
+    "Three installed-binary legs proved user save, repository override, and session-only preview precedence; the session leg left both user and repository files byte-identical.",
+    "The final user config hash was 126e3d59fce2646f70d5aa5748cefe909e66538d507aeef35d25a78918c7df7f and the repository config hash was fabff0bbd0902a86aac6e7c9e1b7a20f6f309b8f0eec8659e34b0f116a2aa101."
   ],
   "owner": "talaria-t1",
   "recorded_at": "2026-08-31T20:43:49+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
-    "mode": "live",
+    "mode": "replay",
     "model_route": {
-      "fallback_availability": "not-checked",
+      "fallback_availability": "not-applicable",
       "fallback_reason": null,
-      "observed": "opencode-go / muse-spark-1.2-contributor",
-      "requested": "opencode-go / muse-spark-1.2-contributor",
-      "status": "used"
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
     },
-    "profile": "default on isolated dashboard 8790"
+    "profile": "isolated-theme-precedence"
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS; NO_COLOR; isolated Hermes dashboard 8790",
+    "program": "Python pty.fork on macOS",
     "rows": 36,
     "term": "xterm-256color"
   },
   "tester": "talaria-t1",
-  "title": "Connection non-color states",
+  "title": "Explicit save and precedence",
   "verdict": "pass"
 }

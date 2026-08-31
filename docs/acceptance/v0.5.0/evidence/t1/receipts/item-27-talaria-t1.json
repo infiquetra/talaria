@@ -1,32 +1,31 @@
 {
   "artifact": {
-    "commit": "17ce4eda8e82a18b5d47766c0c279aa9751dce9f",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/bin/talaria",
-    "executable_sha256": "e6aba3508aff5fd148f2ed99f08f7bd2db39b7532484943060944d0561e1606a",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "70fcb039c3adb1934a7e328a5e15807709cd4407f16ff3303c9599a3df59c06b",
-    "installed_files_sha256": "6be60d3c7e4f23d856c4e3b9a3dd0f941dc596fd38f13a37f6dfd55473a5de41",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "0ed001392dabbc52071e8b795b31a68adb988c9d1639146da0a958764f2c31eb"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 27,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27-r3.ansi",
-    "capture_sha256": "c3fe64db207aa0372361ee5729c17fa895f66ee0bb0af46f93f557b8ae47ebc7",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-r3-pty.json",
-    "pty_result_sha256": "fbb81e3c22a9ef8c01433580f8bb3edb64f4032d314d633494ad67f453a7aa96",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27-final2.ansi",
+    "capture_sha256": "9105959faf64ff5ee495e6e1933330277420885cd921f8a2d2c15d09338b6d07",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-final2-pty.json",
+    "pty_result_sha256": "e441f746ba6668db0a3258af7400b8e122a44d5a49afcc342fde2e7c697c417d",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-r3.png",
-    "screenshot_sha256": "2ca139d2e711c550a1edab0f0b9bbabac12b73507f9f12891b76c9f97b4b92b8"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-final2.png",
+    "screenshot_sha256": "9f84e09b1a48983fecee3dd546f11f36fdf89ded8752987ab3b6b31e94ecf818"
   },
   "observations": [
-    "A real wheel-up event moved the transcript to READING-ANCHOR-007 and disabled follow-bottom.",
-    "While unpinned, later replay frames and the scripted resize preserved the same top anchor instead of jumping to the newest frame."
+    "A real wheel event unpinned the long transcript at the reading anchor; later replay frames and a mid-drive resize preserved the reading region rather than jumping to the newest output."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T19:07:32+00:00",
+  "recorded_at": "2026-08-31T20:44:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-motion-and-scroll"
+    "profile": "isolated-unpinned-scroll"
   },
   "terminal": {
     "columns": 132,

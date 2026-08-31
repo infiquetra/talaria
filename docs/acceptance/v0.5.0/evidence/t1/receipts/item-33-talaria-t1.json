@@ -11,32 +11,33 @@
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
     "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
-  "checklist_item": 23,
+  "checklist_item": 33,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-reconnect-final2.ansi",
-    "capture_sha256": "31de6cdc122d2d47b894964740150b48cce518630cb28d24ee10091643139784",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-reconnect-final2-pty.json",
-    "pty_result_sha256": "70d7d89fd9c4690613ea95a634c1fd3dc8a9fd1e9bff813a79cac5a9f4a39354",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-33-auth-final2b.ansi",
+    "capture_sha256": "cb5c8c1ea3053bef98c91b17f86180f79874e488fab2a84eef6116de95e73291",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-33-auth-final2b-pty.json",
+    "pty_result_sha256": "2ece3b43f7a87e2c0ce027e50b1716e9bc9fcd447a2673e8102e8269528971bd",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-reconnect-final2.png",
-    "screenshot_sha256": "b6ece92ed440d36f56fb89b1991f4df77b77f44da1d7e237430885d4cf36e42d"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-33-auth-final2b.png",
+    "screenshot_sha256": "7e033ca49076f45f87879b7a75f9c10e08af7f25300b88206af6f8c56fb3fd9b"
   },
   "observations": [
-    "Separate drives reached all five non-colour connection forms: [..] wait, [ok] up, [~] retry, [x] down, and [!] auth.",
-    "The genuine reconnect cycle held and resumed the same authorized dashboard process; the raw capture contains both 'connection lost \u2014 reconnecting' and [~] retry before recovery. No fallback route was attempted."
+    "The authorized isolated dashboard restart changed the listener from PID 74947 to PID 19785 using the identical hermes -p default dashboard --host 127.0.0.1 --port 8790 --no-open command.",
+    "Talaria reached a visible authentication-failed HTTP 403 state with [!] auth instead of hanging or showing a blank interface; the selected capture contains no credential value, token query, or bearer header.",
+    "The replacement dashboard remains detached under parent PID 1, and the scratch credential was freshly re-minted after the failure leg."
   ],
-  "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "owner": "shared",
+  "recorded_at": "2026-08-31T20:44:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
-    "mode": "live",
+    "mode": "failure",
     "model_route": {
       "fallback_availability": "not-checked",
       "fallback_reason": null,
-      "observed": "opencode-go / muse-spark-1.2-contributor",
+      "observed": null,
       "requested": "opencode-go / muse-spark-1.2-contributor",
-      "status": "used"
+      "status": "not-reached"
     },
     "profile": "default on isolated dashboard 8790"
   },
@@ -47,6 +48,6 @@
     "term": "xterm-256color"
   },
   "tester": "talaria-t1",
-  "title": "Connection non-color states",
+  "title": "Dead gateway credential",
   "verdict": "pass"
 }

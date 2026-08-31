@@ -11,42 +11,41 @@
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
     "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
-  "checklist_item": 2,
+  "checklist_item": 35,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-02-final2d.ansi",
-    "capture_sha256": "406a3a4864c590d6334cf2fb87cab911a9562eacc3ab816b35a8248731b1049f",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-02-final2d-pty.json",
-    "pty_result_sha256": "128e4bc21ff40737dfef8140c6f0788f1d7c88b61cfb38bc932daa3016640daa",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-35-after-final2.ansi",
+    "capture_sha256": "cf458eea457181c1c94a583531631ee8ec36c431b0aad7db0dbeb341fd9ef211",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-35-after-final2-pty.json",
+    "pty_result_sha256": "47aa55940d8a9c46c5e33cf712010d9dc614ab89b8931dca01b1bc6f758623d6",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-02-final2d.png",
-    "screenshot_sha256": "32133a7681cb9467b147024456d1cf4457eb94ee272d1352bedd0656dbb7c82e"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-35-after-final2.png",
+    "screenshot_sha256": "5e216bab414550eff01fbf82bb64802d3a40ee36e4d889b6616229524f0e4c1c"
   },
   "observations": [
-    "A real Hermes-backed turn returned 1517; the inspector and final status-bar agent_model segment both named muse-spark-1.2-contributor.",
-    "The status bar showed the healthy [ok] connection form; no fallback route was attempted."
+    "The running interface stayed Accessible High Contrast after the scratch config changed to Neutral Dark; only a clean restart applied Neutral Dark."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "recorded_at": "2026-08-31T20:44:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
-    "mode": "live",
+    "mode": "replay",
     "model_route": {
-      "fallback_availability": "not-checked",
+      "fallback_availability": "not-applicable",
       "fallback_reason": null,
-      "observed": "opencode-go / muse-spark-1.2-contributor",
-      "requested": "opencode-go / muse-spark-1.2-contributor",
-      "status": "used"
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
     },
-    "profile": "default on isolated dashboard 8790"
+    "profile": "isolated-restart-only-configuration"
   },
   "terminal": {
-    "columns": 160,
-    "program": "Python pty.fork on macOS; isolated Hermes dashboard 8790",
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
     "rows": 36,
     "term": "xterm-256color"
   },
   "tester": "talaria-t1",
-  "title": "Live primary route",
+  "title": "Restart-only configuration",
   "verdict": "pass"
 }
