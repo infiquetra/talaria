@@ -1,12 +1,9 @@
 # Talaria v0.5.0 installed-artifact acceptance harness
 
-This directory prepares issue #110's real-terminal acceptance without executing it. The harness
-builds one frozen candidate wheel, installs that same wheel independently for `talaria-t1` and
-`talaria-t2`, drives only each environment's installed executable through a real pseudo-terminal,
-and creates evidence receipts.
-
-Acceptance is not run from this checkout. Application behavior remains absent until the six feature
-children are integrated on the run branch.
+This directory contains issue #110's real-terminal acceptance harness. It builds one frozen
+candidate wheel, installs that same wheel independently for `talaria-t1` and `talaria-t2`, drives
+only each environment's installed executable through a real pseudo-terminal, and creates evidence
+receipts.
 
 ## Safety properties
 
@@ -172,10 +169,43 @@ assigned item, and only pass or explicitly reserved terminal verdicts. The sourc
 `docs/acceptance/v0.5.0/checklist-items.json`; the full steps and pass observations remain in the
 visual specification.
 
+## 5. Refresh the generated repository records
+
+After reviewed receipts and screenshots are copied under
+`docs/acceptance/v0.5.0/evidence/`, regenerate the manifest and the verdict cells in the results
+document with the full commit of the current reviewed candidate:
+
+```bash
+talaria_candidate_commit=<full-current-candidate-commit>
+uv run python -m scripts.acceptance.v050_records refresh \
+  --current-candidate-commit "$talaria_candidate_commit"
+```
+
+The command derives candidate wheel identities, receipt verdicts, counts, evidence paths, hashes,
+and receipt validity from the files on disk. The current reviewed commit is explicit because a
+product repair can invalidate an already frozen wheel before its replacement is built. A receipt
+for another commit or wheel remains in the record but is marked stale; a current commit with no
+matching install receipt is shown as not frozen.
+
+The pseudo-terminal driver also runs this refresh after every drive. It advances the current commit
+only when that drive uses a descendant candidate, so rerunning an older installed wheel cannot hide
+newly stale evidence. Run the explicit refresh again after publishing reviewed receipts, because raw
+drive output and item receipts stay in scratch until their private-data review is complete.
+
+Check both generated files against the receipts without modifying them:
+
+```bash
+uv run python -m scripts.acceptance.v050_records check
+```
+
+The repository test suite runs the same check and mutation-tests both the manifest and the results
+table so hand-edited or out-of-date status data fails the build.
+
 ## Harness-only check
 
 This check drives the harness's small echo terminal. It does not run Talaria acceptance:
 
 ```bash
-uv run pytest scripts/acceptance/test_v050_harness.py -q
+uv run pytest scripts/acceptance/test_v050_harness.py \
+  tests/docs/test_v050_acceptance_records.py -q
 ```
