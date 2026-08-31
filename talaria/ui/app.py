@@ -48,7 +48,7 @@ from textual.widgets import Static
 
 from talaria import __version__
 from talaria.config import ConfigError, ThemeSaveScope, save_theme
-from talaria.domain.changes import InspectorView, inspector_view
+from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.commands import (
     CATALOG_METHOD,
     DISPATCH_METHOD,
@@ -206,6 +206,7 @@ from talaria.transport.source import FrameRecord, FrameSource, SwitchReport
 from talaria.ui.agents import AgentRow, AgentRows
 from talaria.ui.composer import ChatTextArea, Composer
 from talaria.ui.dialog import ConfirmDialog, PickerDialog
+from talaria.ui.diff_viewer import DiffViewer, adapt_diff_document
 from talaria.ui.focus import CaretReleased
 from talaria.ui.inspector import Inspector
 from talaria.ui.needs_you import (
@@ -2241,6 +2242,27 @@ class TalariaApp(App[None]):
     def action_toggle_inspector(self) -> None:
         """Toggle the process-local dock or narrow overlay."""
         self.inspector.toggle()
+
+    def on_inspector_file_selected(self, message: Inspector.FileSelected) -> None:
+        """Open the selected held file without reading or dispatching anything."""
+        message.stop()
+        self._open_diffs(message.selection)
+
+    def _open_diffs(self, selection: DiffSelection | None = None) -> None:
+        inspector = self.inspector
+        inspector.set_diff_open(inspector.is_docked)
+        self.push_screen(
+            DiffViewer(
+                adapt_diff_document(inspector.document),
+                file_key=None if selection is None else selection.file_key,
+                hunk_index=0 if selection is None else selection.hunk_index,
+            ),
+            self._diff_closed,
+        )
+
+    def _diff_closed(self, _: None) -> None:
+        """Restore the inspector state that the diff modal left untouched."""
+        self.inspector.set_diff_open(False)
 
     async def action_toggle_agents(self) -> None:
         if not self.agents.is_populated:
@@ -5055,6 +5077,10 @@ class TalariaApp(App[None]):
         if command.action == "inspector":
             self.composer.clear()
             self.inspector.toggle()
+            return True
+        if command.action == "diffs":
+            self.composer.clear()
+            self._open_diffs()
             return True
         if command.action == "pause":
             self.controls.pause()

@@ -14,6 +14,7 @@ from textual.widgets import Static
 
 from talaria.domain.changes import (
     ChangedFileView,
+    DiffDocument,
     DiffSelection,
     InspectorTaskView,
     InspectorView,
@@ -197,6 +198,7 @@ class Inspector(VerticalScroll):
         self.requested_collapsed = False
         self.auto_collapsed = False
         self.overlay_open = False
+        self._diff_open = False
         self._terminal_width = INSPECTOR_DOCK_BREAKPOINT
         self._previous_focus: Widget | None = None
         self._view: InspectorView | None = None
@@ -235,7 +237,17 @@ class Inspector(VerticalScroll):
 
     @property
     def is_effectively_collapsed(self) -> bool:
-        return not self.is_docked and not self.is_overlay
+        return self._diff_open or (not self.is_docked and not self.is_overlay)
+
+    @property
+    def document(self) -> DiffDocument:
+        """Return the immutable diff set from the most recent projection."""
+        return DiffDocument() if self._view is None else self._view.document
+
+    @property
+    def is_temporarily_hidden(self) -> bool:
+        """Whether a modal diff currently owns the full terminal width."""
+        return self._diff_open
 
     @property
     def effective_width(self) -> int:
@@ -330,6 +342,11 @@ class Inspector(VerticalScroll):
         if not self.requested_collapsed:
             self.call_after_refresh(self._focus_first_row)
 
+    def set_diff_open(self, opened: bool) -> None:
+        """Hide for a diff modal without changing the operator's preference."""
+        self._diff_open = opened
+        self._sync_geometry()
+
     def action_shrink(self) -> None:
         self._resize_by(-INSPECTOR_WIDTH_STEP)
 
@@ -362,7 +379,7 @@ class Inspector(VerticalScroll):
         self._sync_geometry()
 
     def _sync_geometry(self) -> None:
-        visible = self.is_docked or self.is_overlay
+        visible = (self.is_docked or self.is_overlay) and not self._diff_open
         self.set_class(not visible, "-inspector-hidden")
         self.set_class(self.is_overlay, "-inspector-overlay")
         self.styles.overlay = "screen" if self.is_overlay else "none"
