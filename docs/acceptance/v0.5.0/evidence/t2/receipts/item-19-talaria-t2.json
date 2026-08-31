@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
-    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
-    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
+    "install_receipt_sha256": "c96c75197ba8e8ecc353cebcae13f66f431ab5f8a510246d718dffa934883726",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 19,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-19-screenshot.ansi",
-    "capture_sha256": "1fe0fb2352f55cea793f88219228f17f9cbc611c19d1b685fd4442796b16e75e",
+    "capture_sha256": "ff99a6a1e811fb5fb3f1fbfc4ba9bf712f6e4946a8cce1b13734d6c581b5b042",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-19-screenshot-pty.json",
-    "pty_result_sha256": "29be9b13a9583c64174efa923294eb645bea761a60adea836ab86638601c6f61",
+    "pty_result_sha256": "992209767b265de7f52fd93d4c1c717aaecab600ac0fdf8407c06d8d71158752",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-19.png",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-19-screenshot.png",
     "screenshot_sha256": "2649c2a61892823473d0de543691a383dbce6e3f5decff5cd5902830c0347b6e"
   },
   "observations": [
-    "The 132-column viewer showed aligned base and working panes, old/new line numbers, three-file position, multiple hunks, intraline and syntax treatment, read-only labels, and no inspector."
+    "The three-file, five-hunk diff renders aligned side-by-side panes, line numbers, marks, intraline changes, and read-only status."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T16:57:40+00:00",
+  "recorded_at": "2026-08-31T20:28:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-frame-log"
+    "profile": "deterministic-replay"
   },
   "terminal": {
     "columns": 132,

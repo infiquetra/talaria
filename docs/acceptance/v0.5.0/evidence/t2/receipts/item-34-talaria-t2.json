@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
-    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
-    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
+    "install_receipt_sha256": "c96c75197ba8e8ecc353cebcae13f66f431ab5f8a510246d718dffa934883726",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 34,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-34-live-killed-rerun.ansi",
-    "capture_sha256": "30db493476df7250a879d9018704ab34e708641136f01db6ca9c23f8c8e4fc3f",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-34-live-killed-rerun-pty.json",
-    "pty_result_sha256": "e970c6d352600fc41e414e0ba3b5e4bbf7b464aae06e7d2cc9e25400cb9f477f",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-34-live-killed-final.ansi",
+    "capture_sha256": "02748aed0067ab76cd1ae6e161ef90676f2b3143b2efdfc9f8dd1ada287257c1",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-34-live-killed-final-pty.json",
+    "pty_result_sha256": "9b4643a9cb427dc0adb735d8e757fee29637867d13dbeb9376f95f7745e9e7b5",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-34.png",
-    "screenshot_sha256": "5551edccd28c669dd8d244964adf7b612105922d73cb7e6085ef36432ff57f84"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-34-final.png",
+    "screenshot_sha256": "d6465177d2b42b01d33cd8b075bd4a66c134952f374410387ac241bc2637d5d1"
   },
   "observations": [
-    "The opencode-go Muse Spark primary completed TALARIA-T2-LIVE-OK. Hermes session.close returned closed true for that recorded session only; the next prompt rendered bounded code 4001 session not found while the transcript, session context, connection context, and clean exit remained available."
+    "A real primary-route turn completed, the exact tester-created session was closed, and the next prompt visibly returned gateway code 4001 session not found without a hang or blank."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T16:57:40+00:00",
+  "recorded_at": "2026-08-31T20:28:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
