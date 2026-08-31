@@ -19,6 +19,8 @@ The domain already carries both facts — ``NeedsYouQueue.notices`` and
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.widgets import Button, Input
 
@@ -93,7 +95,7 @@ def waiting_sessions(
 
 
 @pytest.mark.asyncio
-async def test_the_needs_you_bar_holds_one_row_from_empty_to_many_and_back() -> None:
+async def test_the_bottom_bar_holds_one_row_from_empty_to_many_and_back() -> None:
     """AE9 verbatim: empty → one → many → empty, and nothing else moves.
 
     The comparison is over every region rather than over the bar's own height,
@@ -108,7 +110,7 @@ async def test_the_needs_you_bar_holds_one_row_from_empty_to_many_and_back() -> 
 
         def regions() -> dict[str, object]:
             return {
-                "needs-you": app.needs_you_bar.region,
+                "bottom-status": app.bottom_status_bar.region,
                 "help": app.help_bar.region,
                 "composer": app.composer.region,
                 "body": app.query_one("#body").region,
@@ -119,18 +121,21 @@ async def test_the_needs_you_bar_holds_one_row_from_empty_to_many_and_back() -> 
         await settle(app, pilot)
         empty = regions()
         assert app.needs_you.is_empty
-        assert app.needs_you_bar.region.height == 1
+        assert app.bottom_status_bar.region.height == 1
+        assert "!" not in app.bottom_status_bar.last_render.plain
 
         waiting_sessions(app, 1, at=BASE_TIME + 10)
         await settle(app, pilot)
         assert app.needs_you.count == 1
         assert regions() == empty, "one waiting item moved a region"
+        assert "!1" in app.bottom_status_bar.last_render.plain
 
         waiting_sessions(app, 6, at=BASE_TIME + 20)
         await settle(app, pilot)
         assert app.needs_you.count == 6
         assert regions() == empty, "a filling queue moved a region"
-        assert app.needs_you_bar.region.height == 1, "the bar grew a second row"
+        assert "!6" in app.bottom_status_bar.last_render.plain
+        assert app.bottom_status_bar.region.height == 1, "the bar grew a second row"
 
         # And back to empty — by the sessions ceasing to report a wait, which is
         # how a queue actually empties. Dropping the rows instead would have
@@ -144,7 +149,8 @@ async def test_the_needs_you_bar_holds_one_row_from_empty_to_many_and_back() -> 
         await settle(app, pilot)
         assert app.needs_you.is_empty, "the sweep did not retire the waiting rows"
         assert regions() == empty, "an emptying queue moved a region"
-        assert app.needs_you_bar.region.height == 1
+        assert "!" not in app.bottom_status_bar.last_render.plain
+        assert app.bottom_status_bar.region.height == 1
 
 
 @pytest.mark.asyncio
@@ -168,45 +174,33 @@ async def test_the_row_is_reserved_by_the_stylesheet_not_by_the_summary_never_be
 
     async with app.run_test(size=(100, 30)) as pilot:
         await settle(app, pilot)
-        bar = app.needs_you_bar
-
-        bar.update("")
-        await pilot.pause()
-        assert bar.region.height == 1, "the reserved row collapsed when emptied"
-
-        # The state that actually separates the two declarations.
-        bar.update("a summary\nthat somehow\narrived as three lines")
+        bar = app.bottom_status_bar
+        bar.apply(
+            replace(
+                bar.view,
+                cwd="a hostile\nworking\ndirectory",
+                git_branch="a hostile\nbranch",
+            )
+        )
         await pilot.pause()
         assert bar.region.height == 1, (
-            "the row grew to fit its content — a longer summary would now push "
+            "the row grew to fit hostile content — a longer value would now push "
             "the composer and the transcript up the screen"
         )
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
-async def test_the_reserved_row_hedges_at_mount_because_nothing_has_been_asked_yet() -> None:
-    """The empty state is a rendered sentence, and at mount it is the hedged one.
-
-    Before any connection has been probed there is no seam board, so the queue
-    carries a notice per connection and the row reads "none seen · 1 notice: part
-    of the fleet could not be asked" rather than the bare ``needs-you: none``.
-    That is the rider of 2026-08-18 working rather than a wording accident: a
-    client that has asked nothing yet must not render as a client that asked and
-    was told nothing is waiting. The bare sentence is reserved for a fleet every
-    member of which answered.
-    """
+async def test_the_bottom_bar_starts_without_a_false_attention_marker() -> None:
+    """An unprobed empty queue must not invent work needing attention."""
     app = live_app(RecordingDispatcher())
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        line = app.needs_you_bar.line
+        line = app.bottom_status_bar.last_render.plain
 
-        assert line.startswith(NEEDS_YOU_NONE)
-        assert line != NEEDS_YOU_NONE, (
-            "an unprobed fleet rendered as though every connection had answered"
-        )
-        assert "could not be asked" in line
+        assert "[x]" in line
+        assert "!" not in line
         await app.shutdown_sources()
 
 
@@ -1066,7 +1060,7 @@ async def test_no_withheld_answer_value_reaches_a_queue_row() -> None:
         queue = fleet_queue(app.fleet)
         rendered = [
             summary_line(queue, app.state.last_observed_at),
-            app.needs_you_bar.line,
+            app.bottom_status_bar.last_render.plain,
             *(format_item_label(item, app.state.last_observed_at) for item in queue.items),
             *(format_item_detail(item) for item in queue.items),
         ]

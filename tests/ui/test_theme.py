@@ -240,3 +240,100 @@ async def test_enter_keeps_the_preview_in_memory_and_browsing_writes_nothing(
         assert app.palette.is_theme_active is False
         assert not config_dir.exists()
         await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_startup_theme_and_fallback_notice_are_visible_from_first_mount() -> None:
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="not-installed",
+    )
+
+    assert app.theme == "refined-default"
+    assert any("not-installed" in entry.text for entry in app.state.transcript)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.render_snapshot()
+        await pilot.pause()
+        assert "not-installed" in screen_text(app)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_command_applies_session_precedence_and_cancel_restores_it(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="dark-green-terminal",
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.palette.is_theme_active
+        assert app.palette.selected_theme is not None
+        assert app.palette.selected_theme.slug == "dark-green-terminal"
+
+        await pilot.press("down", "enter")
+        await pilot.pause()
+        assert app.theme == "neutral-dark"
+        assert app.session_theme_slug == "neutral-dark"
+        assert not config_dir.exists(), "an in-memory selection wrote user config"
+        assert not (tmp_path / ".talaria").exists(), (
+            "an in-memory selection wrote repository config"
+        )
+
+        app.composer.text = "/theme"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.press("down", "escape")
+        await pilot.pause()
+
+        assert app.theme == "neutral-dark"
+        assert app.session_theme_slug == "neutral-dark"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_save_command_writes_user_default_and_explicit_repository(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="neutral-dark",
+        theme_config_dir=config_dir,
+        launch_cwd=repository,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme save"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        user_path = config_dir / "config.toml"
+        assert user_path.read_text(encoding="utf-8") == (
+            '[theme]\nname = "neutral-dark"\n'
+        )
+
+        app.composer.text = "/theme save repository"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        repository_path = repository / ".talaria" / "config.toml"
+        assert repository_path.read_text(encoding="utf-8") == (
+            '[theme]\nname = "neutral-dark"\n'
+        )
+        await app.shutdown_sources()

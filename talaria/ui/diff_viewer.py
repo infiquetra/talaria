@@ -44,6 +44,7 @@ from textual.scroll_view import ScrollView
 from textual.strip import Strip
 from textual.widgets import Static
 
+from talaria.domain.changes import DiffDocument
 from talaria.domain.selection import Choice, PickerSource, Selection, Stage
 from talaria.ui.dialog import PickerDialog
 from talaria.ui.literal import defang, literal_text
@@ -99,6 +100,20 @@ class DiffViewerDocument:
     """The session-reported file set; an empty tuple is an honest empty state."""
 
     files: tuple[DiffViewerFile, ...] = ()
+
+
+def adapt_diff_document(document: DiffDocument) -> DiffViewerDocument:
+    """Copy the domain's held diff set into the read-only presentation shape."""
+    return DiffViewerDocument(
+        tuple(
+            DiffViewerFile(
+                key=changed_file.key,
+                path=changed_file.path,
+                unified_diff=changed_file.unified_diff,
+            )
+            for changed_file in document.files
+        )
+    )
 
 
 @dataclass(frozen=True)

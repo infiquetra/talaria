@@ -19,6 +19,7 @@ from textual.theme import Theme
 from textual.widgets import Static
 
 from talaria.domain.commands import TALARIA_LOCAL_COMMANDS
+from talaria.themes.builtins import ACCESSIBLE_HIGH_CONTRAST, REFINED_DEFAULT
 from talaria.ui import diff_viewer as diff_viewer_module
 from talaria.ui.dialog import PickerDialog
 from talaria.ui.diff_viewer import (
@@ -29,6 +30,10 @@ from talaria.ui.diff_viewer import (
     DiffViewerDocument,
     DiffViewerFile,
 )
+from talaria.ui.inspector import InspectorFileRow
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
+from tests.domain.conftest import raw_event, replay
+from tests.ui.conftest import RecordingDispatcher, live_app
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "diffs"
 
@@ -122,6 +127,7 @@ class Host(App[None]):
         yield Static("session behind diff")
 
     def on_mount(self) -> None:
+        BUILTIN_THEME_REGISTRY.register(self)
         self.register_theme(THEME_A)
         self.register_theme(THEME_B)
         self.theme = THEME_A.name
@@ -303,6 +309,123 @@ async def test_intraline_spans_overlay_syntax_and_resolve_from_each_theme() -> N
 
 
 @pytest.mark.asyncio
+async def test_real_builtin_diff_tokens_repaint_refined_and_high_contrast() -> None:
+    app = Host(sample_document())
+    async with app.run_test(size=(111, 28)) as pilot:
+        await pilot.pause()
+        diff = viewer(app)
+
+        app.theme = REFINED_DEFAULT.slug
+        diff.canvas.refresh()
+        await pilot.pause()
+        refined = rendered_segments(diff)
+        refined_changed = {
+            color_hex(segment.style.bgcolor if segment.style is not None else None)
+            for segment in refined
+            if segment.text in {"5", "10"}
+        }
+        assert (
+            REFINED_DEFAULT.tokens["talaria.diff.intraline-removed.background"]
+            in refined_changed
+        )
+        assert (
+            REFINED_DEFAULT.tokens["talaria.diff.intraline-added.background"]
+            in refined_changed
+        )
+        assert REFINED_DEFAULT.tokens["talaria.syntax.keyword"] in segment_colors(
+            refined, "return"
+        )
+
+        app.theme = ACCESSIBLE_HIGH_CONTRAST.slug
+        diff.canvas.refresh()
+        await pilot.pause()
+        high_contrast = rendered_segments(diff)
+        high_contrast_changed = {
+            color_hex(segment.style.bgcolor if segment.style is not None else None)
+            for segment in high_contrast
+            if segment.text in {"5", "10"}
+        }
+        assert (
+            ACCESSIBLE_HIGH_CONTRAST.tokens[
+                "talaria.diff.intraline-removed.background"
+            ]
+            in high_contrast_changed
+        )
+        assert (
+            ACCESSIBLE_HIGH_CONTRAST.tokens[
+                "talaria.diff.intraline-added.background"
+            ]
+            in high_contrast_changed
+        )
+        assert ACCESSIBLE_HIGH_CONTRAST.tokens[
+            "talaria.syntax.keyword"
+        ] in segment_colors(high_contrast, "return")
+
+
+@pytest.mark.asyncio
+async def test_production_command_and_inspector_selection_open_only_held_diffs() -> None:
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+    app.state = replay(
+        [
+            raw_event("message.start"),
+            raw_event("tool.start", {"name": "edit_file", "context": "first.py"}),
+            raw_event(
+                "tool.complete",
+                {
+                    "name": "edit_file",
+                    "summary": "two files changed",
+                    "inline_diff": (
+                        "--- a/first.py\n"
+                        "+++ b/first.py\n"
+                        "@@ -1 +1 @@\n"
+                        "-old first\n"
+                        "+new first\n"
+                        "--- a/second.py\n"
+                        "+++ b/second.py\n"
+                        "@@ -1 +1 @@\n"
+                        "-old second\n"
+                        "+new second"
+                    ),
+                },
+            ),
+        ]
+    )
+
+    async with app.run_test(size=(132, 30)) as pilot:
+        await app.render_snapshot()
+        await pilot.pause()
+        inspector = app.inspector
+        assert inspector.document.file_for("second.py") is not None
+
+        app.composer.text = "/diffs"
+        await pilot.press("enter")
+        await pilot.pause()
+        diff = app.screen
+        assert isinstance(diff, DiffViewer)
+        assert diff.active_file_key == "first.py"
+        assert inspector.is_temporarily_hidden
+        assert dispatcher.operator_calls == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert inspector.is_docked
+        assert not inspector.is_temporarily_hidden
+
+        rows = list(inspector.query(InspectorFileRow))
+        assert len(rows) == 2
+        rows[1].focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        selected = app.screen
+        assert isinstance(selected, DiffViewer)
+        assert selected.active_file_key == "second.py"
+        assert inspector.selected_file_key == "second.py"
+        assert inspector.is_temporarily_hidden
+        assert dispatcher.operator_calls == []
+
+
+@pytest.mark.asyncio
 async def test_unknown_language_and_hostile_text_are_literal() -> None:
     hostile = DiffViewerFile(
         key="hostile",
@@ -474,6 +597,7 @@ def test_read_only_boundary_is_proved_by_ast_keymap_and_command_introspection() 
     diff_commands = tuple(
         command for command in TALARIA_LOCAL_COMMANDS if "diff" in command.name
     )
+    assert {command.name for command in diff_commands} == {"/diffs"}
     assert not any(
         forbidden in f"{command.name} {command.action} {command.description}".casefold()
         for command in diff_commands

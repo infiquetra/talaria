@@ -49,7 +49,6 @@ from pathlib import Path
 from typing import Any, Final, overload
 
 from textual.containers import Horizontal
-from textual.css.query import NoMatches
 from textual.widgets._markdown import MarkdownBlock, MarkdownFence
 
 from talaria.domain.models import ConnectionStatus, TerminalCause, TranscriptKind
@@ -91,6 +90,7 @@ from talaria.replay.workloads import WARMUP_BOUNDARIES, WorkloadResults, run_adv
 from talaria.transport.source import FrameRecord
 from talaria.ui.app import TalariaApp
 from talaria.ui.blocks import EntryMarkdown, parser_factory
+from talaria.ui.status_bar import render_status_bar
 from talaria.ui.transcript import (
     DEFAULT_MOUNT_CAP,
     MARKDOWN_KINDS,
@@ -1282,27 +1282,22 @@ def fleet_trace(app: TalariaApp) -> FleetTrace:
     float compared against itself reproduces the same wrong number in both runs
     and passes a determinism check while failing correctness.
 
-    **And the ROW itself, not only a recomputation of it.** The first draft read
-    :func:`~talaria.domain.queue.summary_line` alone and carried a comment about
-    running the render tick first — which was false, because a pure function of
-    the fleet does not care whether any widget has repainted. Reading the bar's
-    own text is what makes the claim "the rendered age is deterministic" a claim
-    about the surface rather than about a function the surface happens to share.
-    Both are kept: the pure strings pin the domain, and the row pins that the
-    two agree.
+    **And the ROW itself, not only a recomputation of it.** The bottom bar now
+    carries the queue as the literal ``!N`` attention count rather than as the
+    old age summary. The pure strings still pin age determinism; the rendered
+    row pins that the migrated attention surface is deterministic too.
     """
     fleet = app.fleet
     queue = fleet_queue(fleet)
     clock = app.state.last_observed_at
-    # Synchronous, so it can run inside the sideband callback that produced this
-    # checkpoint — the bar is repainted from the render tick in ordinary running,
-    # and a checkpoint that read it without refreshing would fingerprint whatever
-    # the last tick happened to leave there.
-    app._refresh_needs_you()
-    try:
-        rendered_row = app.needs_you_bar.line
-    except NoMatches:  # pragma: no cover - the gate always mounts the screen
-        rendered_row = ""
+    # Synchronous and fixed to the gate's terminal width, so an unbounded replay
+    # cannot finish before Textual mounts the widget and leave a speed-dependent
+    # empty row in this checkpoint.
+    rendered_row = render_status_bar(
+        app._bottom_status_view(),
+        GATE_SIZE[0],
+        app.status_bar_settings,
+    ).plain
     return {
         # **Nine fields of twenty-three, and the two added last are the point.**
         # CR8 measured that rows differing only in ``message_count`` or

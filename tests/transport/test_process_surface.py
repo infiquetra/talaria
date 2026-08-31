@@ -265,6 +265,7 @@ SUBCOMMAND_CLASSIFICATION: dict[str, bool] = {
     "refresh-credential": True,  # fetches a dashboard token and writes it to disk
     "replay": False,  # drives a recorded corpus; never touches a credential
     "gate": False,  # runs the validation gate; never touches a credential
+    "theme": False,  # imports local theme data; never touches a credential
 }
 
 
