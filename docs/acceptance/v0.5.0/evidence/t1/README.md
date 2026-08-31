@@ -1,53 +1,44 @@
-# Talaria v0.5.0 T1 acceptance evidence
+# Talaria v0.5.0 T1 targeted acceptance evidence
 
-This active evidence set was produced from the installed wheel for candidate commit
-`d9c82443f51932483ecb37c653d5c0cd8c342dac`, wheel SHA-256
-`839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda`. The T1 sweep recorded 15
-passes, four failures, and one blocked item. The earlier evidence remains unchanged under
-`superseded/` and is excluded from the active manifest.
+This active evidence set contains only the five targeted reruns against installed candidate commit
+`17ce4eda8e82a18b5d47766c0c279aa9751dce9f`, wheel SHA-256
+`0ed001392dabbc52071e8b795b31a68adb988c9d1639146da0a958764f2c31eb`. Three items passed, item 23
+failed, and item 24 remains blocked. The complete earlier T1 sweep for candidate `d9c82443` is
+preserved under `superseded/d9c82443/`; it is excluded from the active generated manifest because
+those receipts bind to a different candidate.
 
 | Item | Verdict | Receipt | Raw pseudo-terminal capture | Screenshot |
 | ---: | --- | --- | --- | --- |
-| 1 | passed | [install receipt](install-receipt.json) | recorded by install probe | not applicable |
-| 2 | failed | [receipt](receipts/item-02-talaria-t1.json) | [raw](raw/item-02-live-primary-final.ansi) | [screenshot](screenshots/item-02-live-primary-final.png) |
-| 4 | passed | [receipt](receipts/item-04-talaria-t1.json) | [raw](raw/item-04.ansi) | [screenshot](screenshots/item-04.png) |
-| 5 | passed | [receipt](receipts/item-05-talaria-t1.json) | [raw](raw/item-05.ansi) | [screenshot](screenshots/item-05.png) |
-| 6 | passed | [receipt](receipts/item-06-talaria-t1.json) | [raw](raw/item-06.ansi) | [screenshot](screenshots/item-06.png) |
-| 7 | passed | [receipt](receipts/item-07-talaria-t1.json) | [raw](raw/item-07.ansi) | [screenshot](screenshots/item-07.png) |
-| 8 | passed | [receipt](receipts/item-08-talaria-t1.json) | [raw](raw/item-08-final.ansi) | [screenshot](screenshots/item-08-final.png) |
-| 9 | passed | [receipt](receipts/item-09-talaria-t1.json) | [user](raw/item-09-user.ansi), [repository](raw/item-09-repository.ansi), [session](raw/item-09-session.ansi) | [user](screenshots/item-09-user.png), [repository](screenshots/item-09-repository.png), [session](screenshots/item-09-session.png) |
-| 10 | passed | [receipt](receipts/item-10-talaria-t1.json) | [import](raw/item-10-import.ansi), [interface](raw/item-10.ansi) | [import](screenshots/item-10-import.png), [interface](screenshots/item-10.png) |
-| 11 | passed | [receipt](receipts/item-11-talaria-t1.json) | [first import](raw/item-11-import-1.ansi), [second import](raw/item-11-import-2.ansi), [interface](raw/item-11.ansi) | [screenshot](screenshots/item-11.png) |
-| 22 | passed | [receipt](receipts/item-22-talaria-t1.json) | [raw](raw/item-22.ansi) | [screenshot](screenshots/item-22.png) |
-| 23 | failed | [receipt](receipts/item-23-talaria-t1.json) | [raw](raw/item-23-live-states-final.ansi) | [screenshot](screenshots/item-23-live-states-final.png) |
-| 24 | blocked | [receipt](receipts/item-24-talaria-t1.json) | [raw](raw/item-24.ansi) | [screenshot](screenshots/item-24.png) |
-| 25 | failed | [receipt](receipts/item-25-talaria-t1.json) | [raw](raw/item-25.ansi) | [screenshot](screenshots/item-25.png) |
-| 26 | passed | [receipt](receipts/item-26-talaria-t1.json) | [standard](raw/item-26-standard.ansi), [reduced](raw/item-26-reduced.ansi) | [standard](screenshots/item-26-standard.png), [reduced](screenshots/item-26-reduced.png) |
-| 27 | failed | [receipt](receipts/item-27-talaria-t1.json) | [raw](raw/item-27.ansi) | [screenshot](screenshots/item-27.png) |
-| 28 | passed | [receipt](receipts/item-28-talaria-t1.json) | [raw](raw/item-28.ansi) | [screenshot](screenshots/item-28.png) |
-| 31 | passed | [receipt](receipts/item-31-talaria-t1.json) | [raw](raw/item-31-final2.ansi) | [screenshot](screenshots/item-31-final2.png) |
-| 33 | passed | [receipt](receipts/item-33-talaria-t1.json) | [raw](raw/item-23-and-33-live-restart-final.ansi) | [screenshot](screenshots/item-23-and-33-live-restart-final.png) |
-| 35 | passed | [receipt](receipts/item-35-talaria-t1.json) | [before restart](raw/item-35-before-restart.ansi), [after restart](raw/item-35-after-restart.ansi) | [before restart](screenshots/item-35-before-restart.png), [after restart](screenshots/item-35-after-restart.png) |
+| 2 | passed | [receipt](receipts/item-02-talaria-t1.json) | [raw](raw/item-02-r3.ansi) | [screenshot](screenshots/item-02-r3.png) |
+| 23 | failed | [receipt](receipts/item-23-talaria-t1.json) | [reconnect](raw/item-23-reconnect-r3.ansi), [connect/disconnect](raw/item-23-r3.ansi), [authentication](raw/item-23-auth-r3.ansi) | [reconnect](screenshots/item-23-reconnect-r3.png), [connect/disconnect](screenshots/item-23-r3.png), [authentication](screenshots/item-23-auth-r3.png) |
+| 24 | blocked | [receipt](receipts/item-24-talaria-t1.json) | [live approval](raw/item-24-live-r3.ansi), [relaunch](raw/item-24-polled-r3.ansi), [replay states](raw/item-24-r3.ansi) | [live approval](screenshots/item-24-live-r3.png), [relaunch](screenshots/item-24-polled-r3.png), [replay states](screenshots/item-24-r3.png) |
+| 25 | passed | [receipt](receipts/item-25-talaria-t1.json) | [raw](raw/item-25-r3.ansi) | [screenshot](screenshots/item-25-r3.png) |
+| 27 | passed | [receipt](receipts/item-27-talaria-t1.json) | [raw](raw/item-27-r3.ansi) | [screenshot](screenshots/item-27-r3.png) |
 
 Item 2 completed a real Hermes-backed turn on the approved primary route,
-`opencode-go / muse-spark-1.2-contributor`, and the inspector named that model. It failed because the
-required bottom-status `agent_model` segment still displayed `agent: ?`. Item 23 failed because its
-monochrome restart capture did not retain all five required token-plus-text connection forms. Item
-25 failed because blank spacer rows remained after reasoning and assistant entries. Item 27 failed
-because the unpinned transcript jumped after later interface updates. Item 24 is blocked because the
-replay boundary cannot provide the admin-polled `possibly duplicate` agent state; the receipt does
-not infer that absent row.
+`opencode-go / muse-spark-1.2-contributor`. The response was `1517`; both the inspector and the final
+status-bar model segment named `muse-spark-1.2-contributor`. No fallback route was attempted.
 
-Item 33 used only the authorized isolated dashboard on port 8790. The deliberate restart changed
-the listener from process 99486 to process 6547 with the identical command. A later evidence retry
-left the same dashboard command running as process 18366 with parent process 1 and refreshed only the
-scratch credential. Talaria displayed an HTTP 403 authentication failure with `[!] auth`, exited
-cleanly, and exposed no credential in the reviewed capture. No fallback model was used in any live
-leg.
+Item 23 used separate monochrome drives so the authentication failure did not hide the healthy and
+reconnecting states. The captures contain `[..] wait`, `[ok] up`, `[x] down`, and `[!] auth`. After
+a healthy connection was deliberately lost, Talaria also displayed `connection lost —
+reconnecting…`, proving that the reconnect cycle ran, but the footer never displayed its required
+`[~]` reconnecting form. The footer remained `[x] down`, so the item failed rather than being
+inferred from focused tests.
+
+Item 24 exercised a real approval on the live gateway and every replayable agent and queue state.
+The live approval was anchored by the gateway and appeared as `[!] approval waiting`, without a
+`possibly duplicate` marker. A clean relaunch found no lingering approval row. The installed Hermes
+gateway assigns each approval a `request_id`, while Talaria sets `possibly_duplicate` only for a
+keyless or otherwise unanchored approval. The available live protocol therefore cannot produce that
+state, and replay cannot encode the required admin-polled shape. Authoring such a frame would be
+simulated acceptance, so the receipt remains blocked.
+
+Item 25 shows the six required transcript identities on consecutive monochrome rows without spacer
+rows. Item 27 shows a real wheel event moving the transcript to `READING-ANCHOR-007`; later replay
+frames and the scripted resize preserve that top anchor while the view remains unpinned.
 
 The screenshots were rendered from the corresponding raw ANSI pseudo-terminal bytes with Pyte and
-Pillow. The renderer preserves terminal colours and layout; it does not automate a graphical user
-interface or simulate Talaria. Before publication, all selected raw captures were checked for
-credential values, token-query parameters, bearer headers, email addresses, and operator home
-paths. Receipt and pseudo-terminal-result paths are repository relative wherever they identify
-committed files.
+Pillow. This preserves terminal layout without Computer Use or graphical user-interface automation.
+Before publication, the selected evidence was checked for the scratch credential, token-query
+parameters, bearer headers, email addresses, and operator home paths; none were present.

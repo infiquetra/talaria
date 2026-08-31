@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
-    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "commit": "17ce4eda8e82a18b5d47766c0c279aa9751dce9f",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/bin/talaria",
+    "executable_sha256": "e6aba3508aff5fd148f2ed99f08f7bd2db39b7532484943060944d0561e1606a",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "f2dba4ac4189dbd20545ba839fe576f719d7ec7a94356849b9809424f91a49d9",
-    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "install_receipt_sha256": "70fcb039c3adb1934a7e328a5e15807709cd4407f16ff3303c9599a3df59c06b",
+    "installed_files_sha256": "6be60d3c7e4f23d856c4e3b9a3dd0f941dc596fd38f13a37f6dfd55473a5de41",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "0ed001392dabbc52071e8b795b31a68adb988c9d1639146da0a958764f2c31eb"
   },
   "checklist_item": 2,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-02-live-primary-final.ansi",
-    "capture_sha256": "f477d30b8c95d42acd7539b75b3991ac7a6ea7e214b54f0ef53907c9c1be8e12",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-02-live-primary-final-pty.json",
-    "pty_result_sha256": "bf658c16ed10ae47817d981cafeeb2cd7736455ac12ebb350fba00fca9c941ae",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-02-r3.ansi",
+    "capture_sha256": "aa4896d53770dd0de85bdc87406d338f1909aa4eec6706dbbcc024267e068a02",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-02-r3-pty.json",
+    "pty_result_sha256": "efe09da37ad8749096f60bb4be61757e5e1bf26427760bcd0319b3dbb2cf764a",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-02-live-primary-final.png",
-    "screenshot_sha256": "b86e7090be57b1723953c3318803ed8442a22c26f1c429b0e45f85c9de01b4fc"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-02-r3.png",
+    "screenshot_sha256": "f5f8add75434046a3d92042c2f5d023a2783a3240faa8965157ec238af9196cd"
   },
   "observations": [
-    "A bounded real Hermes-backed turn returned exactly TALARIA-T1-LIVE-PRIMARY-OK and the inspector named muse-spark-1.2-contributor.",
-    "Failure: the required bottom-status agent_model segment still rendered agent: ? rather than muse-spark-1.2-contributor."
+    "A real Hermes-backed turn returned 1517; the inspector and final status-bar agent_model segment both named muse-spark-1.2-contributor.",
+    "The final status bar showed [ok] connected; no fallback was attempted."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T17:32:20+00:00",
+  "recorded_at": "2026-08-31T19:07:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -48,5 +48,5 @@
   },
   "tester": "talaria-t1",
   "title": "Live primary route",
-  "verdict": "fail"
+  "verdict": "pass"
 }
