@@ -1,0 +1,19 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "text": "/needs"},
+    {"at_seconds": 4.25, "key": "ENTER"},
+    {"at_seconds": 6.75, "key": "ESCAPE"},
+    {"at_seconds": 8.0, "text": "/needs"},
+    {"at_seconds": 8.25, "key": "ENTER"},
+    {"at_seconds": 10.75, "key": "ESCAPE"},
+    {"at_seconds": 12.0, "text": "/needs"},
+    {"at_seconds": 12.25, "key": "ENTER"},
+    {"at_seconds": 14.75, "key": "ESCAPE"},
+    {"at_seconds": 16.0, "resize": {"rows": 36, "columns": 31}},
+    {"at_seconds": 18.0, "text": "/needs"},
+    {"at_seconds": 18.25, "key": "ENTER"},
+    {"at_seconds": 21.25, "key": "ESCAPE"},
+    {"at_seconds": 22.75, "resize": {"rows": 36, "columns": 132}},
+    {"at_seconds": 25.5, "key": "CTRL_Q"}
+  ]
+}
