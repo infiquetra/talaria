@@ -1,0 +1,11 @@
+{
+  "completed_text": "TALARIA-T1-LIVE-OK",
+  "endpoint": "ws://127.0.0.1:8790/api/ws",
+  "profile": "default",
+  "rpc_method": "session.close",
+  "rpc_result": {
+    "closed": true
+  },
+  "schema_version": "talaria-v0.5.0-item34-close-v1",
+  "session_id_sha256": "2bd26e1db45925d0c9e2aeafa493702b4cec2315ea9478858d80bcfbe81aa44d"
+}

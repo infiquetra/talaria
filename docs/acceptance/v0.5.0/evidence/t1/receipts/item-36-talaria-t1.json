@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+  },
+  "checklist_item": 36,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-36-t1-half.ansi",
+    "capture_sha256": "b2abe0aafa62a3de099ca3b6f8654f6e6979581862c8d98878d7f7d7fb64e0b2",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-36-t1-half-pty.json",
+    "pty_result_sha256": "494b7cda664c0836b18a380dbcd981bebc63566cccbd3c660ed517d60dcfe757",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-36-t1-half.png",
+    "screenshot_sha256": "d47fa6af840a33e768df11600030d60eeb6b083b26156fdfa7c1b6d86505ed7c"
+  },
+  "observations": [
+    "Talaria-t1 independently supplies current-candidate receipts for shared items 2, 15, 33, 34, 35, and this cross-tester half, plus every assigned-track item; each receipt names a real capture and screenshot.",
+    "The T1 live receipts for items 2 and 34 both observed opencode-go / muse-spark-1.2-contributor with no fallback; full cross-tester completion is a generated-manifest property once the parallel T2 item 36 receipt is combined."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-08-31T22:37:16+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "talaria-t1 final-candidate evidence half"
+  },
+  "terminal": {
+    "columns": 160,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; talaria-t1 cross-tester evidence half",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Cross-tester evidence",
+  "verdict": "pass"
+}
