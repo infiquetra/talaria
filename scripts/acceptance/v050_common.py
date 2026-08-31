@@ -89,7 +89,13 @@ def validate_config_dir(config_dir: Path, *, scratch_root: Path) -> Path:
 
 
 def isolated_environment(
-    *, config_dir: Path, term: str, rows: int, columns: int, venv_bin: Path | None = None
+    *,
+    config_dir: Path,
+    term: str,
+    rows: int,
+    columns: int,
+    venv_bin: Path | None = None,
+    monochrome: bool = False,
 ) -> dict[str, str]:
     """Build the child environment without source or operator Talaria overrides."""
     if not term.strip():
@@ -103,6 +109,8 @@ def isolated_environment(
             environment.pop(name)
     environment.pop("PYTHONHOME", None)
     environment.pop("PYTHONPATH", None)
+    for name in ("NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "COLORTERM"):
+        environment.pop(name, None)
     # This legacy Hermes value must never become an accidental live credential
     # source for an acceptance process.
     environment.pop("HERMES_DASHBOARD_SESSION_TOKEN", None)
@@ -112,6 +120,10 @@ def isolated_environment(
         LINES=str(rows),
         COLUMNS=str(columns),
     )
+    if monochrome:
+        environment["NO_COLOR"] = "1"
+    elif "256color" in term:
+        environment["COLORTERM"] = "truecolor"
     if venv_bin is not None:
         current_path = environment.get("PATH", os.defpath)
         environment["PATH"] = f"{venv_bin}{os.pathsep}{current_path}"

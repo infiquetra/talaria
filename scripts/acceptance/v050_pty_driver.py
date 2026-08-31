@@ -369,6 +369,11 @@ def _main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--rows", type=int, default=36)
     parser.add_argument("--columns", type=int, default=132)
+    parser.add_argument(
+        "--monochrome",
+        action="store_true",
+        help="set NO_COLOR=1 explicitly for non-colour acceptance legs",
+    )
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--expect", action="append", default=[])
     parser.add_argument("--accept-exit", action="append", type=int, default=[])
@@ -416,6 +421,7 @@ def _main(argv: list[str] | None = None) -> int:
         rows=args.rows,
         columns=args.columns,
         venv_bin=venv / "bin",
+        monochrome=args.monochrome,
     )
     artifact = receipt.get("artifact")
     candidate = receipt.get("candidate")
