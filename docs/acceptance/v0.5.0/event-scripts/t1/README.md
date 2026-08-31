@@ -3,7 +3,7 @@
 Pass each JSON file to `uv run python -m scripts.acceptance.v050_pty_driver --event-script
 <file>` with the installed-artifact receipt and tester `talaria-t1`; user-interface legs use a
 36-row by 132-column pseudo-terminal unless the item receipt says otherwise. The four-second launch
-interval lets a real Hermes-backed session and the first Textual frame settle, theme previews remain
+interval lets the installed application and first Textual frame settle, theme previews remain
 visible for at least 1.25 seconds, modal or final-theme frames remain visible for at least two
 seconds, and every interactive leg exits through `CTRL_Q`. Command-line import legs use the same
 item script: the installed command exits before its first scheduled user-interface event.
@@ -35,8 +35,8 @@ do not move.
 
 ## 7. Accessible High Contrast
 
-Run `07-accessible-high-contrast.json` in a wide real Hermes-backed session whose held transcript
-already includes a completed operation with a unified diff, so `/diffs` opens actual additions,
+Run `07-accessible-high-contrast.json` in a wide replay of the generated `visual-surfaces.jsonl`
+corpus, whose held transcript includes a completed operation with a unified diff, so `/diffs` opens actual additions,
 removals, context, and syntax rather than an empty modal. The drive previews each intervening built-in,
 accepts Accessible High Contrast, opens the read-only diff for four seconds, closes it with Escape,
 and quits; judge focus, selection, transcript groups, status, inspector, diff boundaries and marks,
@@ -89,10 +89,9 @@ diff, and lets the capture show the mapped canvas and comment syntax values befo
 
 ## 22. Composer caret location
 
-Run `22-composer-caret-location.json` at 36 rows by 132 columns against a settled session containing
-transcript content, exactly one interruptible agent row, one free-text prompt control, and at least
-one inspector task or changed-file row; a sanitized frame log recorded from a real Hermes session
-may be run as `replay <corpus> --speed 0` to establish that fixed state. Shift+Tab first reaches the inspector,
+Run `22-composer-caret-location.json` at 36 rows by 132 columns against a settled replay of the
+generated `focus-surface.jsonl` corpus, which contains transcript content, exactly one interruptible
+agent row, one free-text prompt control, and inspector task and changed-file rows. Shift+Tab first reaches the inspector,
 then the forward Tab sequence returns through Composer, transcript, agent, prompt region and prompt
 control with 1.5 seconds per focus frame. Judge every transition for the `compose [*] caret here` or
 `compose [ ] caret elsewhere` title, active border and reserved `>` cues, while comparing Composer
@@ -113,11 +112,11 @@ wide before `CTRL_Q` so the terminal state is bounded and readable.
 
 ## 24. Agent and queue non-colour states
 
-Run `24-agent-and-queue-non-colour-states.json` with `replay <corpus> --speed 0.25`, where the corpus
-is a sanitized recording from a real Hermes session whose timed plateaus expose queued, running,
-completed, error, failed, interrupted and timeout agent rows between the four `/needs` dialogs, and
-whose queue plateaus at those openings are respectively empty, waiting, blocked and possibly
-duplicate. The 2.5-to-3-second dialog holds make complete queue detail readable; the 31-column leg
+Run `24-agent-and-queue-non-colour-states.json` with `replay
+docs/acceptance/v0.5.0/corpora/t1/agent-queue-states.jsonl --speed 0.25`. The corpus is generated
+through Talaria's production frame recorder and its timed plateaus expose queued, running,
+completed, error, failed, interrupted and timeout agent rows between the `/needs` dialogs. The
+2.5-to-3-second dialog holds make complete queue detail readable; the 31-column leg
 drops `task_progress` before the final `/needs` opening, while the preceding wide waiting frame must
 show its literal `!N` attention count. Judge all seven fixed agent glyph-and-word forms plus `[ok]`,
 `[!]`, `[x]`, `[?]` and `[..]` queue forms in the raw capture, then require the same full drill-down
@@ -126,7 +125,7 @@ detail at narrow width before the script restores 132 columns and exits.
 ## 25. Transcript identity without colour
 
 Run `25-transcript-identity-without-colour.json` in a monochrome real-terminal profile against a
-maximum-speed replay of a sanitized real Hermes recording containing six short consecutive entries:
+maximum-speed replay of generated `transcript-identities.jsonl`, which contains six short consecutive entries:
 operator, assistant, reasoning, tool or subagent activity, system or prompt session record, and fault.
 All six must fit together in the settled 36-by-132 frame before the eight-second clean exit. Judge
 the first rows for `> You`, `A Talaria`, `. Reasoning`, `$ Tool/Subagent`, `- Session`, and `! Error`,
@@ -135,22 +134,24 @@ to the visual specification's six transcript marker/background token pairs and c
 
 ## 26. Reduced motion
 
-Item 26 is two drives of the same `26-reduced-motion.json` events and the same controlled live
-Hermes-backed session: first prepare scratch `TALARIA_CONFIG_DIR/config.toml` with a `[ui]` table
+Item 26 is two drives of the same `26-reduced-motion.json` events and generated
+`motion-and-scroll.jsonl` corpus: first prepare scratch `TALARIA_CONFIG_DIR/config.toml` with a `[ui]` table
 whose `reduced_motion` value is `false`, then change that value to `true` and restart because the
 landed setting has no command-line or environment override and never reloads in-process. Each drive
-needs a long transcript, one visible working or waiting state, populated agents, and an externally
-coordinated gateway stop/restart between seconds 15 and 23. The mouse-wheel and F5 events compare scroll motion,
+gets a long transcript, visible working state, and populated agents from the production-recorder
+corpus. The mouse-wheel and F5 events compare scroll motion,
 the picker previews and cancels a theme, the agent toggle preserves current state, and the gateway
-bounce proves reconnection updates continue; compare captures for ordinary `working…` versus static
-`[..] working`, immediate reduced scrolling and single repaint transitions, with no lost elapsed-time
-or connection updates, and record the exact scratch config bytes used by each restart.
+theme and agent updates continue; compare captures for ordinary `working…` versus static `[..]
+working`, immediate reduced scrolling and single repaint transitions, with no lost elapsed-time
+updates. Use separate installed drives against an isolated dead endpoint to prove connection-state
+updates under each value without controlling the shared gateway or invoking a model, and record the
+exact scratch config bytes used by each restart.
 
 ## 27. Stable unpinned scroll
 
-Run `27-stable-unpinned-scroll.json` as `replay <corpus> --speed 0.25` with a sanitized frame log
-created by the installed `talaria record` from a real Hermes session, not a hand-authored or mocked
-frame sequence. The recording must fill at least three transcript viewports, place a distinctive
+Run `27-stable-unpinned-scroll.json` as `replay
+docs/acceptance/v0.5.0/corpora/t1/motion-and-scroll.jsonl --speed 0.25`. The corpus is generated by
+Talaria's production frame recorder and fills at least three transcript viewports, places a distinctive
 safe entry and source-line offset near the middle, continue appending after second 5, and carry an
 agent update while a configured two-second bounded status command refreshes StatusRegion. The three
 `hex_bytes` actions are real XTerm SGR mouse-wheel-up events at transcript column 20, row 8, which is
@@ -162,8 +163,8 @@ bottom before the clean exit.
 
 ## 28. Stable pinned scroll
 
-Run `28-stable-pinned-scroll.json` against the same kind of long, still-streaming sanitized real
-Hermes recording at `--speed 0.25`, with safe visible lines that identify both the middle anchor and
+Run `28-stable-pinned-scroll.json` against the same long, still-streaming production-recorder corpus
+at `--speed 0.25`, with safe visible lines that identify both the middle anchor and
 the newest bottom entry and with the same two-second StatusRegion refresh. Two real mouse-wheel-up
 events first move away from the bottom, F5 at second 6 establishes follow mode before later appends
 and the 132→119→132 resize, and the single wheel-up event at second 13 exercises the landed manual

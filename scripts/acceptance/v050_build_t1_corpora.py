@@ -146,7 +146,7 @@ def build_visual_surfaces() -> None:
                 "goal": "Review theme coverage",
                 "depth": 1,
                 "task_index": 0,
-                "model": "muse-spark-1.2-contributor-free",
+                "model": "muse-spark-1.2-contributor",
             },
         ),
     )

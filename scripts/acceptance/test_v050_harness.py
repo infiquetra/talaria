@@ -440,6 +440,18 @@ def test_primary_route_is_a_valid_first_class_receipt_field() -> None:
     assert validate_receipt(_receipt(route=route), verify_files=False) == []
 
 
+def test_receipt_schema_uses_the_gateway_route_identifiers() -> None:
+    schema = json.loads(
+        (_REPO_ROOT / "docs" / "acceptance" / "v0.5.0" / "receipt.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    route_properties = schema["properties"]["session"]["properties"]["model_route"]["properties"]
+    expected = [PRIMARY_MODEL_ROUTE, FALLBACK_MODEL_ROUTE, None]
+    assert route_properties["requested"]["enum"] == expected
+    assert route_properties["observed"]["enum"] == expected
+
+
 def test_unavailable_fallback_cannot_be_recorded_as_a_pass() -> None:
     route = {
         "requested": FALLBACK_MODEL_ROUTE,

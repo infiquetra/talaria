@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 RELEASE_VERSION = "0.5.0"
-PRIMARY_MODEL_ROUTE = "OpenCode Muse Spark 1.2 Contributor Free"
-FALLBACK_MODEL_ROUTE = "Ollama GLM 5.3 Flash"
+PRIMARY_MODEL_ROUTE = "opencode-go / muse-spark-1.2-contributor"
+FALLBACK_MODEL_ROUTE = "ollama (ollama-cloud) / glm-5.3-flash"
 TESTERS = frozenset({"talaria-t1", "talaria-t2"})
 FALLBACK_REASON_CODES = frozenset(
     {

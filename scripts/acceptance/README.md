@@ -22,9 +22,10 @@ children are integrated on the run branch.
   American National Standards Institute (ANSI) terminal bytes and escape sequences in the capture.
 - Raw captures and screenshots stay in tester scratch until credential and private-identifier
   review. A receipt cannot pass while that review is pending or withheld.
-- The only live routes are OpenCode Muse Spark 1.2 Contributor Free and, for one of the four approved
-  reasons, Ollama GLM 5.3 Flash. The receipt validator rejects every other route. If the fallback is
-  needed but unavailable, the leg is blocked and cannot pass.
+- The only live routes are OpenCode Muse Spark 1.2 Contributor
+  (`opencode-go / muse-spark-1.2-contributor`) and, for one of the four approved reasons, Ollama GLM
+  5.3 Flash (`ollama (ollama-cloud) / glm-5.3-flash`). The receipt validator rejects every other
+  route. If the fallback is needed but unavailable, the leg is blocked and cannot pass.
 - The harness does not use Computer Use, GUI automation, mocks, or a test-only Talaria application.
   Deterministic legs may drive the shipped `talaria replay`; live legs drive a real Hermes-backed
   session.
@@ -62,7 +63,7 @@ then verifies:
 
 1. distribution and package version `0.5.0`;
 2. an exact `talaria --version` result;
-3. a bare installed launch in a pseudo-terminal, exited by scripted `ctrl+d` or `ctrl+q`; and
+3. a bare installed launch in a pseudo-terminal, exited by a scripted end-of-file; and
 4. `talaria gate --deltas 50000 --json <scratch receipt path>`.
 
 The gate probe requires the designed 50,000-delta corpus and a complete, parseable report. Its own
