@@ -93,12 +93,16 @@ $schema, name, and type are metadata and do not warn. type may set the imported 
 
 ## Tokens with no Visual Studio Code source
 
-These fourteen Talaria extension tokens have no entry in either supported mapping and therefore always come from Refined Default during import:
+These eighteen Talaria extension tokens have no entry in either supported mapping and therefore always come from Refined Default during import:
 
 | Fallback-only token | Reason |
 |---|---|
 | talaria.secondary | No bounded workbench key has the same semantic role |
 | talaria.status.muted | Visual Studio Code exposes status foreground but no secondary status text role |
+| talaria.status.success | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.warning | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.error | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.attention | Visual Studio Code has no bounded per-state status-bar colour role |
 | talaria.transcript.operator | Talaria-specific transcript channel |
 | talaria.transcript.operator.background | Talaria-specific transcript channel |
 | talaria.transcript.assistant | Talaria-specific transcript channel |
