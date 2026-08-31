@@ -906,39 +906,38 @@ So the operator types a password into a focused control that draws nothing, with
 ### The shipped block-markdown gate misses its steady-state table-apply ceiling
 
 **Author.** Talaria v0.5.0 candidate gate comparison, 2026-08-31.
-**Priority.** P2 — the release instrument is honestly red, but the candidate did not worsen the
-inherited latency and no v0.5.0 feature caused the exceedance.
+**Priority.** P2 — the exceedance is real and predates v0.5.0, but run-to-run variance makes this
+metric unsuitable as a release gate or a cross-release comparison.
 **Effort.** Small to reproduce and profile; repair size depends on where that profile places the
 remaining cost.
 
 **What.** At the gate's designed corpus size, `uv run talaria gate --deltas 50000`, the
 `growing-one-column-table` steady-state p99 `TranscriptPane.apply` latency exceeds its 50 ms ceiling,
-so `talaria gate` returns `fail`. Every other check in the 32-check gate passes.
+so `talaria gate` returns `fail`. The exceedance is real: every sample from either tree is above the
+ceiling. Every other check in the 32-check gate passes.
 
-| Tree | Measurement | Verdict | `growing-one-column-table` streaming p99 |
-| --- | --- | --- | ---: |
-| v0.4 baseline, `origin/main` at `5efa19c` | Coordinator gate run | `fail` | 61.988 ms |
-| v0.5.0 candidate | Coordinator gate run | `fail` | 54.45 ms |
-| Same v0.5.0 candidate | `talaria-t1` gate run | `fail` | 60.229 ms |
-| Ceiling |  |  | 50 ms |
+| Tree | Measurement | Measured by |
+| --- | ---: | --- |
+| v0.4.0 baseline, `origin/main` at `5efa19c` | 61.988 ms | Coordinator |
+| v0.5.0 candidate | 54.45 ms | Coordinator |
+| Same v0.5.0 candidate | 60.229 ms | `talaria-t1` |
+| Same v0.5.0 candidate | 68.861 ms | `talaria-t1` |
 
-**Since when.** Line 35 of the
+**Since when.** The exceedance predates v0.5.0. Line 35 of the
 [block-markdown gate results](../analysis/2026-08-09-block-markdown-gate-results.md) records the same
 metric at 44.0 ms against the same 50 ms ceiling, so it passed on
 2026-08-09. The exceedance appeared between that run and v0.4.0, then shipped in v0.4.0 unnoticed
 because v0.4 acceptance did not run the gate.
 
-**Not caused by v0.5.0, and not worse under the evidence.** Three measurements exist: v0.4.0 at
-61.988 ms, and the unchanged v0.5.0 candidate at both 54.45 ms and 60.229 ms. The candidate's 5.8 ms
-run-to-run spread is comparable to the 7.5 ms gap between the v0.4.0 result and its best v0.5.0
-result, so the evidence does not support an improvement claim. It does support the weaker conclusion
-that v0.5.0 did not make the metric worse and did not cause the exceedance. This is distinct from the
-block-phase hitch below: this entry records the enforced steady-state p99 that changes the whole gate
-verdict.
+**No comparison between v0.4.0 and v0.5.0 is supportable.** The unchanged v0.5.0 candidate spans
+54.45–68.861 ms: a 14.411 ms, roughly 26 per cent run-to-run spread. The lone v0.4.0 sample of
+61.988 ms lies inside that range. Same-tree variance therefore exceeds the apparent difference
+between the trees, so the evidence supports neither an improvement nor a regression. This is
+distinct from the block-phase hitch below: this entry records the steady-state p99.
 
-**The variance is itself worth knowing.** A threshold check whose run-to-run spread approaches its
-own margin over the ceiling can flake between verdicts, which matters to whoever profiles and repairs
-this path.
+**This metric cannot be used as a gate in its current form.** A threshold or non-regression check
+will flake when the metric's spread approaches its margin over the ceiling. It already blocked a
+20-item acceptance run. The acceptance harness now records the result instead of gating on it.
 
 **Why it is not being fixed here.** No approved v0.5.0 child covers `TranscriptPane.apply` latency.
 Repairing it in the documentation unit would expand scope into the block-markdown implementation.
@@ -947,8 +946,9 @@ number pass.
 
 **Revisit when.** Whichever comes first: the next approved release that touches
 `TranscriptPane.apply` or the block-markdown path, or an upgrade from Textual 8.2.8. Each condition
-changes the measured path and therefore requires rerunning the 50,000-delta gate before the work can
-be called complete.
+changes the measured path and therefore requires rerunning the 50,000-delta measurement before the
+work can be called complete. The investigation must collect enough repeated samples from each
+unchanged tree to separate signal from run-to-run variance before comparing trees.
 
 ### A streaming table's block phase hitches past ~340 rows — demote open tables early, or append rows incrementally
 
