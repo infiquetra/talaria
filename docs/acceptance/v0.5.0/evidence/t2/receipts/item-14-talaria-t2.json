@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
-    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
-    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
+    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 14,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-14.ansi",
-    "capture_sha256": "a65bdf5809873b5e260f6e5718acb670b14679819b2367eb2c778ac2edd85e04",
+    "capture_sha256": "6e6476caff6bdc54031a1ab9f9e4c0cec6ef73c362e39795103d35c2e84947e6",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-14-pty.json",
-    "pty_result_sha256": "21ce607d9d6dbdaa476c9d4549afbbbef2e61b6f1627665681d17f8aa93820f2",
+    "pty_result_sha256": "5a5adc1f06f836febbedc76789a7ab664a2fe097fe9db01185a15acd5897cc40",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14.png",
-    "screenshot_sha256": "f6a075b3f2edd9d30bb5ff4f13884f591f72fa79f3f199c17986ec4d0389eae2"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-width-19.png",
+    "screenshot_sha256": "29ae3fbca0117a2f3e5732ece568ee1eb221a738f9e36161fb0202b05f19faf3"
   },
   "observations": [
-    "The raw drive records the specified 144-to-19 sequence; forms compact and segments drop in the specified bands while the bar stays one row, with compact connection retained at the narrowest width."
+    "The scripted 18-width sequence stayed one row; independent fixed-width captures confirmed every breakpoint from 144 through 19 columns and connection remained at 19."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T14:40:21+00:00",
+  "recorded_at": "2026-08-31T16:57:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-frame-log"
   },
   "terminal": {
     "columns": 19,
-    "program": "Headless POSIX pseudo-terminal",
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },

@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
-    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
-    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
+    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "checklist_item": 12,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-12.ansi",
-    "capture_sha256": "7741177f4e32cd53ddaa5c44cb90c4c3d392fd04d356b1b0dd2cc6804250f724",
+    "capture_sha256": "c8adaa4905f016c27d1a6f57edbea6f108d305dc0da763ee7d6d9a23dbe2a853",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-12-pty.json",
-    "pty_result_sha256": "9837f8800828fc3c6ff329b207b048deb0890b6468273d2ce92de19ffe872d4f",
+    "pty_result_sha256": "4c0f4b4e5f98660fc090a4d9a24e8f68a94636b52d241180446a68470a0ed8d7",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-12.png",
-    "screenshot_sha256": "4a8f71747ea12f9ad9504737e2f79e4fb90992790784bb03327b5126fafb75ac"
+    "screenshot_sha256": "ae9e29607b1753ebe47bd3dbf2a4d0bf8b26502a339e3dc95062b0846f723e73"
   },
   "observations": [
-    "The final row shows cwd, git_branch, agent_model, context, task_progress, connection, and version in order with six separators and no wrap."
+    "At 144 columns the one-row status bar renders cwd, git branch, agent, context, task, connection, and version with six separators."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T14:40:21+00:00",
+  "recorded_at": "2026-08-31T16:57:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-frame-log"
   },
   "terminal": {
     "columns": 144,
-    "program": "Headless POSIX pseudo-terminal",
+    "program": "POSIX pseudo-terminal capture",
     "rows": 36,
     "term": "xterm-256color"
   },

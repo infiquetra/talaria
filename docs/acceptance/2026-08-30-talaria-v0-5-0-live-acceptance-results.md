@@ -24,10 +24,10 @@ Graphics screenshot after a completed private-data review.
 | Field | Generated value |
 | --- | --- |
 | Manifest status | `BLOCKED` |
-| Current reviewed candidate commit | `122bd918e0056404e576ae5623ce9e97bfe1ad93` |
-| Current candidate wheel SHA-256 | `a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126` |
-| Receipt candidate identities | `122bd91` / `a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126` (1 install, 15 item receipts) |
-| Receipt counts | 1 install; 15 item; 16 current; 0 stale; 0 invalid |
+| Current reviewed candidate commit | `d9c82443f51932483ecb37c653d5c0cd8c342dac` |
+| Current candidate wheel SHA-256 | `839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda` |
+| Receipt candidate identities | `d9c8244` / `839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda` (2 install, 34 item receipts) |
+| Receipt counts | 2 install; 34 item; 36 current; 0 stale; 0 invalid |
 <!-- END GENERATED ACCEPTANCE PROVENANCE -->
 
 The current T2 install probe rejected source, editable, and global executables. Its gate leg ran the
@@ -59,41 +59,41 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 <!-- BEGIN GENERATED ACCEPTANCE VERDICTS -->
 | Item | Checklist item | T1 | T2 | Evidence and observation |
 | ---: | --- | :--- | :--- | --- |
-| 1 | Installed artifact | `NO RECEIPT` | `PASS` | T2's exact install receipt proves a fresh install of the reviewed wheel; T1 has no current install receipt. |
-| 2 | Live primary route | `NO RECEIPT` | `NO RECEIPT` | Gateway command class 4018 prevents the approved client-side model switch. |
+| 1 | Installed artifact | `PASS` | `PASS` | T2's exact install receipt proves a fresh install of the reviewed wheel; T1 has no current install receipt. |
+| 2 | Live primary route | `FAIL` | `NO RECEIPT` | Gateway command class 4018 prevents the approved client-side model switch. |
 | 3 | Main hierarchy | — | `PASS` | T2 receipt and screenshot prove the required hierarchy. |
-| 4 | Refined Default | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 5 | Dark Green Terminal | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 6 | Neutral Dark | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 7 | Accessible High Contrast | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 8 | Preview cancellation | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 9 | Explicit save and precedence | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 10 | Theme fallback notice | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 11 | Visual Studio Code import | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 4 | Refined Default | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 5 | Dark Green Terminal | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 6 | Neutral Dark | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 7 | Accessible High Contrast | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 8 | Preview cancellation | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 9 | Explicit save and precedence | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 10 | Theme fallback notice | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 11 | Visual Studio Code import | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
 | 12 | All status segments | — | `PASS` | T2 shows all seven ordered segments without wrapping. |
 | 13 | Status configuration | — | `PASS` | T2 proves reorder, omission, and unknown-segment notice after restart. |
 | 14 | Status responsive sequence | — | `PASS` | T2 proves the specified 144-to-19-column compaction sequence. |
-| 15 | Status failure visibility | `NO RECEIPT` | `PASS` | T2 shows malformed values and bounded command failures visibly. |
+| 15 | Status failure visibility | `NO RECEIPT` | `PASS` | T2 shows malformed-value fallbacks visibly and renders the bounded command's literal output. |
 | 16 | Inspector dock and resize | — | `PASS` | T2 proves four-column actions, limits, and retained data. |
 | 17 | Inspector content and empty states | — | `PASS` | Current populated and empty-state captures show all four sections accurately, with no synthetic `needs-you unavailable` task. |
 | 18 | Inspector responsive state | — | `PASS` | T2 proves manual and automatic state behavior across breakpoints. |
 | 19 | Side-by-side diff | — | `PASS` | T2 proves aligned, read-only side-by-side diff content. |
 | 20 | Unified fallback | — | `PASS` | T2 proves fallback and restoration with selection and scroll retained. |
 | 21 | Diff navigation and boundary | — | `PASS` | T2 proves navigation, clipping, horizontal scroll, and read-only boundaries. |
-| 22 | Composer caret location | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 23 | Connection non-color states | `NO RECEIPT` | — | Reconnect and authentication-failure plateaus require shared-gateway control. |
-| 24 | Agent and queue non-color states | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 25 | Transcript identity without color | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 26 | Reduced motion | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 27 | Stable unpinned scroll | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
-| 28 | Stable pinned scroll | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 22 | Composer caret location | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 23 | Connection non-color states | `FAIL` | — | Reconnect and authentication-failure plateaus require shared-gateway control. |
+| 24 | Agent and queue non-color states | `BLOCKED` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 25 | Transcript identity without color | `FAIL` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 26 | Reduced motion | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 27 | Stable unpinned scroll | `FAIL` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 28 | Stable pinned scroll | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
 | 29 | Wide screenshot | — | `PASS` | T2 provides the required 132-by-36 evidence. |
 | 30 | Narrow screenshot | — | `PASS` | T2 provides the required 78-by-36 evidence. |
-| 31 | Malformed Visual Studio Code import | `NO RECEIPT` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 31 | Malformed Visual Studio Code import | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
 | 32 | Session-only status toggle | — | `PASS` | T2 proves session-only change and clean restart restoration. |
-| 33 | Dead gateway credential | `NO RECEIPT` | `NO RECEIPT` | Producing a real stale credential requires gateway revocation or restart authority. |
-| 34 | Killed session | `NO RECEIPT` | `BLOCKED` | T2 could not establish an approved model-backed session to kill. |
-| 35 | Restart-only configuration | `NO RECEIPT` | `NO RECEIPT` | The earlier T1 receipt is superseded; no current evidence exists. |
+| 33 | Dead gateway credential | `PASS` | `NO RECEIPT` | Producing a real stale credential requires gateway revocation or restart authority. |
+| 34 | Killed session | `NO RECEIPT` | `PASS` | T2 completed a primary-model turn, closed exactly that session, and retained a bounded visible `session not found` recovery state. |
+| 35 | Restart-only configuration | `PASS` | `NO RECEIPT` | The earlier T1 receipt is superseded; no current evidence exists. |
 | 36 | Cross-tester evidence | `NO RECEIPT` | `NO RECEIPT` | Coordinator assembly follows both tester reports. |
 <!-- END GENERATED ACCEPTANCE VERDICTS -->
 
