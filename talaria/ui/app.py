@@ -1577,11 +1577,31 @@ class TalariaApp(App[None]):
         if session is not None:
             provider_slug = session.provider_slug
             model = session.model
-        elif catalog is not None:
-            provider_slug = catalog.current_provider
-            model = catalog.current_model
         else:
-            return "", ""
+            session_id = self.state.session_key or self.state.focused_session_id or ""
+            row = (
+                fleet_row(
+                    self.fleet,
+                    profile=self.fleet_profile,
+                    session_id=session_id,
+                )
+                if session_id
+                else None
+            )
+            if row is not None and row.model:
+                # The roster row is an observation of this session's actual
+                # model; the catalogue describes configured defaults instead.
+                provider_slug = (
+                    catalog.current_provider
+                    if catalog is not None and catalog.current_model == row.model
+                    else ""
+                )
+                model = row.model
+            elif catalog is not None:
+                provider_slug = catalog.current_provider
+                model = catalog.current_model
+            else:
+                return "", ""
 
         provider = provider_slug
         if catalog is not None:
@@ -6589,9 +6609,6 @@ class TalariaApp(App[None]):
             self._notice("")
 
     # ── scroll anchoring ─────────────────────────────────────────────────
-
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self.transcript.hold_anchor()
 
     def on_paste(self, event: events.Paste) -> None:
         """Paste is typing's bigger sibling (KTD2, R5').

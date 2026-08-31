@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+from dataclasses import replace
 
 import pytest
 from rich.cells import cell_len
@@ -13,6 +14,8 @@ from textual.widgets import Static
 
 from talaria.domain.projection import StatusPayload
 from talaria.domain.queue import NeedsYouQueue
+from talaria.domain.session_list import decode_active_list
+from talaria.domain.state import apply_active_list
 from talaria.status.contract import StatusBarSettings, normalize_status_segments
 from talaria.status.local import LocalStatus
 from talaria.ui.status_bar import (
@@ -343,6 +346,45 @@ async def test_missing_context_and_model_facts_render_unknown_without_dispatchin
             "agent: ?│context: ?/? ?%│[x] disconnected"
         )
         assert dispatcher.operator_calls == []
+
+
+@pytest.mark.asyncio
+async def test_live_registry_model_replaces_unknown_after_the_first_render() -> None:
+    app, _controls = paused_app(
+        [],
+        status_bar_settings=StatusBarSettings(segments=("agent_model", "connection")),
+    )
+    app.state = replace(app.state, focused_session_id="live-primary")
+
+    async with app.run_test(size=(160, 36)) as pilot:
+        await pilot.pause()
+        assert app.bottom_status_bar.view.agent_model == ""
+        assert "agent: ?" in app.bottom_status_bar.last_render.plain
+
+        app.fleet = apply_active_list(
+            app.fleet,
+            decode_active_list(
+                {
+                    "sessions": [
+                        {
+                            "id": "live-primary",
+                            "status": "idle",
+                            "model": "muse-spark-1.2-contributor",
+                        }
+                    ]
+                }
+            ),
+            profile=app.fleet_profile,
+            at=1_785_000_001.0,
+            poll_epoch=1,
+        )
+        app._dirty = True
+        await app._render_tick()
+        await pilot.pause()
+
+        assert app.bottom_status_bar.view.agent_model == "muse-spark-1.2-contributor"
+        assert "agent: muse-spa…tributor" in app.bottom_status_bar.last_render.plain
+        assert "agent: ?" not in app.bottom_status_bar.last_render.plain
 
 
 def test_runtime_view_reuses_held_status_and_queue_facts() -> None:
