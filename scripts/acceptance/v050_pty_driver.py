@@ -34,6 +34,7 @@ from scripts.acceptance.v050_common import (
     validate_tester,
     write_json_object,
 )
+from scripts.acceptance.v050_records import refresh_records_after_drive
 
 _KEY_BYTES = {
     "ENTER": b"\r",
@@ -369,6 +370,11 @@ def _main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--rows", type=int, default=36)
     parser.add_argument("--columns", type=int, default=132)
+    parser.add_argument(
+        "--monochrome",
+        action="store_true",
+        help="set NO_COLOR=1 explicitly for non-colour acceptance legs",
+    )
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--expect", action="append", default=[])
     parser.add_argument("--accept-exit", action="append", type=int, default=[])
@@ -416,6 +422,7 @@ def _main(argv: list[str] | None = None) -> int:
         rows=args.rows,
         columns=args.columns,
         venv_bin=venv / "bin",
+        monochrome=args.monochrome,
     )
     artifact = receipt.get("artifact")
     candidate = receipt.get("candidate")
@@ -423,9 +430,14 @@ def _main(argv: list[str] | None = None) -> int:
         raise HarnessError("install receipt has no candidate or artifact identity")
     version = artifact.get("version")
     wheel_sha256 = candidate.get("wheel_sha256")
+    candidate_commit = candidate.get("commit")
     integration_tree_raw = candidate.get("integration_tree")
-    if not isinstance(version, str) or not isinstance(wheel_sha256, str):
-        raise HarnessError("install receipt has incomplete version or wheel identity")
+    if (
+        not isinstance(version, str)
+        or not isinstance(wheel_sha256, str)
+        or not isinstance(candidate_commit, str)
+    ):
+        raise HarnessError("install receipt has incomplete candidate or wheel identity")
     integration_tree = (
         Path(integration_tree_raw)
         if isinstance(integration_tree_raw, str) and integration_tree_raw
@@ -466,6 +478,7 @@ def _main(argv: list[str] | None = None) -> int:
         **run.as_json(),
     }
     write_json_object(result_path, result_document)
+    refresh_records_after_drive(candidate_commit)
 
     accepted_exits = set(args.accept_exit or [0])
     failures: list[str] = []

@@ -143,8 +143,9 @@ changing widget height. Transcript kinds retain both a literal label/gutter and 
 background, and connection, task, approval, and diff states retain glyphs or words when color is
 unavailable.
 
-With `ui.reduced_motion = true`, nonessential spinners use a static `[..]` form and routed scrolling
-jumps directly to the same destination. Protocol progress and elapsed-time text still update.
+With `ui.reduced_motion = true`, nonessential spinners use a static `[..]` form. All scrolling jumps
+directly to the same destination, including scrolling driven by arrow keys, Page Up, Page Down, Home,
+and End. Protocol progress and elapsed-time text still update.
 
 When the transcript is following the bottom, new content stays followed. When the operator has
 scrolled away, render updates preserve the held entry identifier and source-line offset as closely

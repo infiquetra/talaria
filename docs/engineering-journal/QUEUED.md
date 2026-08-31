@@ -903,35 +903,100 @@ So the operator types a password into a focused control that draws nothing, with
 
 ## P2
 
+### Validate `environment.allowlist` before constructing the status runner
+
+**Author.** Talaria v0.5.0 code review finding F-6, measured at reviewed revision `122bd918`,
+2026-08-31.
+**Priority.** P2 — the malformed cases either stop launch or silently produce an ineffective
+default-deny allowlist; they do not widen the status child's environment.
+**Effort.** Small.
+
+**What.** The configuration normalization pass at `talaria/config.py:267-317` covers only the
+`theme`, `ui`, and `status` tables. Values under `environment`, `composer`, and `profiles` therefore
+reach their launch consumers unvalidated. At the reviewed revision, `talaria/cli.py:270-274` reads
+`environment.allowlist` and iterates it while constructing the status runner. The measured results
+with a valid `status.command` are:
+
+- `environment.allowlist = 42` raises `TypeError: 'int' object is not iterable` at launch;
+- `environment.allowlist = true` raises `TypeError: 'bool' object is not iterable` at launch; and
+- `environment.allowlist = "FOO"` does not raise or produce a notice. It is iterated character by
+  character and the runner receives `('F', 'O', 'O')`.
+
+The string result is garbage rather than an expansion: those single-character names match no
+ordinary environment variable, so the status command receives an effectively empty allowlist. In
+this release, [configuration.md](../configuration.md) was narrowed to describe these outcomes rather
+than promising that every optional value receives a visible normalized fallback.
+
+**Why it is not being fixed here.** `environment.allowlist` predates v0.5.0 and no approved child in
+issues #104 through #111 owns its validation. Changing the launch consumer during the documentation
+repair would expand the release scope. The code and its default-deny direction are unchanged.
+
+**Revisit when.** Whichever comes first: the next release that changes configuration reads in
+`talaria/cli.py`, or a second unvalidated table causes an operator-visible launch failure. That work
+must cover the integer, Boolean, and non-raising string cases together.
+
+### Extract slash-command dispatch from `TalariaApp` before the next parallel UI release
+
+**Author.** Talaria v0.5.0 code review finding F-24, measured at reviewed revision `122bd918`,
+2026-08-31.
+**Priority.** P2 — the current class is a coordination bottleneck, not a newly observed behavior or
+safety defect.
+**Effort.** Medium.
+
+**What.** At the reviewed revision, `TalariaApp` begins at `talaria/ui/app.py:1117` and the file ends
+at line 6651: roughly 5,534 lines and 181 methods in one class. All six feature children edited this
+shared file, so the run could not parallelize those edits structurally.
+
+**What this release changed.** Against the 6,350-line v0.4.0 base, the file grew by 367 lines and
+lost 66, or about 4.7 per cent net. That did not materially worsen the underlying concentration: the
+substance of the six features lives in new `inspector.py`, `diff_viewer.py`, `status_bar.py`,
+`themes/`, and `domain/changes.py` modules, and those seams held.
+
+**Mitigation, not repair.** The shared-surface lease serialized each child's `app.py` edit and was
+the mitigation chosen for v0.5.0. The class size itself remains unaddressed; the lease works only
+while a coordinator enforces it. The candidate extraction is the slash-command dispatch table,
+which should move into its own module because issues #106 through #109 each added a verb and the
+last two releases both grew that axis.
+
+**Revisit when.** Before the next release that plans three or more parallel lanes against
+`talaria/ui/app.py`. Make the extraction a separately reviewed refactor before feature lanes need
+the shared surface again.
+
 ### The shipped block-markdown gate misses its steady-state table-apply ceiling
 
 **Author.** Talaria v0.5.0 candidate gate comparison, 2026-08-31.
-**Priority.** P2 — the release instrument is honestly red, but the candidate improved the inherited
-latency and no v0.5.0 feature caused the exceedance.
+**Priority.** P2 — the exceedance is real and predates v0.5.0, but run-to-run variance makes this
+metric unsuitable as a release gate or a cross-release comparison.
 **Effort.** Small to reproduce and profile; repair size depends on where that profile places the
 remaining cost.
 
 **What.** At the gate's designed corpus size, `uv run talaria gate --deltas 50000`, the
 `growing-one-column-table` steady-state p99 `TranscriptPane.apply` latency exceeds its 50 ms ceiling,
-so `talaria gate` returns `fail`. Every other check in the 32-check gate passes.
+so `talaria gate` returns `fail`. The exceedance is real: every sample from either tree is above the
+ceiling. Every other check in the 32-check gate passes.
 
-| Tree | Verdict | `growing-one-column-table` streaming p99 |
-| --- | --- | ---: |
-| v0.4 baseline, `origin/main` at `5efa19c` | `fail` | 61.988 ms |
-| v0.5.0 candidate | `fail` | 54.45 ms |
-| Ceiling |  | 50 ms |
+| Tree | Measurement | Measured by |
+| --- | ---: | --- |
+| v0.4.0 baseline, `origin/main` at `5efa19c` | 61.988 ms | Coordinator |
+| v0.5.0 candidate | 54.45 ms | Coordinator |
+| Same v0.5.0 candidate | 60.229 ms | `talaria-t1` |
+| Same v0.5.0 candidate | 68.861 ms | `talaria-t1` |
 
-**Since when.** Line 35 of the
+**Since when.** The exceedance predates v0.5.0. Line 35 of the
 [block-markdown gate results](../analysis/2026-08-09-block-markdown-gate-results.md) records the same
 metric at 44.0 ms against the same 50 ms ceiling, so it passed on
 2026-08-09. The exceedance appeared between that run and v0.4.0, then shipped in v0.4.0 unnoticed
 because v0.4 acceptance did not run the gate.
 
-**Not caused by v0.5.0, and improved by it.** The measured result moved from 61.988 ms before the
-release work to 54.45 ms after it — roughly twelve percent faster — while v0.5.0 added a status bar,
-an inspector, and a diff viewer. The candidate inherited the failure and reduced it; it did not
-create it. This is distinct from the block-phase hitch below: this entry records the enforced
-steady-state p99 that changes the whole gate verdict.
+**No comparison between v0.4.0 and v0.5.0 is supportable.** The unchanged v0.5.0 candidate spans
+54.45–68.861 ms: a 14.411 ms, roughly 26 per cent run-to-run spread. The lone v0.4.0 sample of
+61.988 ms lies inside that range. Same-tree variance therefore exceeds the apparent difference
+between the trees, so the evidence supports neither an improvement nor a regression. This is
+distinct from the block-phase hitch below: this entry records the steady-state p99.
+
+**This metric cannot be used as a gate in its current form.** A threshold or non-regression check
+will flake when the metric's spread approaches its margin over the ceiling. It already blocked a
+20-item acceptance run. The acceptance harness now records the result instead of gating on it.
 
 **Why it is not being fixed here.** No approved v0.5.0 child covers `TranscriptPane.apply` latency.
 Repairing it in the documentation unit would expand scope into the block-markdown implementation.
@@ -940,8 +1005,9 @@ number pass.
 
 **Revisit when.** Whichever comes first: the next approved release that touches
 `TranscriptPane.apply` or the block-markdown path, or an upgrade from Textual 8.2.8. Each condition
-changes the measured path and therefore requires rerunning the 50,000-delta gate before the work can
-be called complete.
+changes the measured path and therefore requires rerunning the 50,000-delta measurement before the
+work can be called complete. The investigation must collect enough repeated samples from each
+unchanged tree to separate signal from run-to-run variance before comparing trees.
 
 ### A streaming table's block phase hitches past ~340 rows — demote open tables early, or append rows incrementally
 

@@ -11,14 +11,12 @@ from typing import Final, Protocol
 from textual.theme import Theme
 
 from talaria.config import atomic_replace_bytes, global_config_dir
-from talaria.themes import THEME_TOKENS, ThemeSpec
+from talaria.themes import THEME_TOKENS, ThemeSpec, theme_fallback_notice
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
 from talaria.themes.storage import (
     StoredThemeError,
+    load_user_theme_specs,
     serialize_user_theme,
-)
-from talaria.themes.storage import (
-    load_user_theme_specs as load_stored_theme_specs,
 )
 
 DEFAULT_THEME_SLUG: Final[str] = REFINED_DEFAULT.slug
@@ -154,17 +152,11 @@ class ThemeRegistry:
         notices: list[str] = []
         if not isinstance(requested, str):
             spec = self.default
-            notices.append(
-                "theme.name must be a string; using Refined Default "
-                f"({self._default_slug})"
-            )
+            notices.append(theme_fallback_notice(requested, self._default_slug))
         else:
             spec = self._by_slug.get(requested, self.default)
             if spec is self.default and requested != self._default_slug:
-                notices.append(
-                    f"theme {requested!r} is not available; using Refined Default "
-                    f"({self._default_slug})"
-                )
+                notices.append(theme_fallback_notice(requested, self._default_slug))
 
         filled = tuple(token for token in THEME_TOKENS if token not in spec.tokens)
         tokens = {
@@ -238,17 +230,11 @@ def write_user_theme(spec: ThemeSpec, *, config_dir: Path | None = None) -> Path
     return path
 
 
-def load_user_theme_specs(*, config_dir: Path | None = None) -> tuple[ThemeSpec, ...]:
-    """Load canonical user themes in stable filename order for one fresh run."""
-    root = config_dir if config_dir is not None else global_config_dir()
-    return load_stored_theme_specs(config_dir=root)
-
-
 def theme_registry_for_config(*, config_dir: Path | None = None) -> ThemeRegistry:
     """Build the restart-scoped registry from built-ins and stored user themes."""
-    return ThemeRegistry(
-        (*BUILTIN_THEMES, *load_user_theme_specs(config_dir=config_dir))
-    )
+    root = config_dir if config_dir is not None else global_config_dir()
+    specs, _notices = load_user_theme_specs(config_dir=root)
+    return ThemeRegistry((*BUILTIN_THEMES, *specs))
 
 __all__ = [
     "BUILTIN_THEME_REGISTRY",
@@ -257,7 +243,6 @@ __all__ = [
     "StoredThemeError",
     "ThemeRegistry",
     "contrast_ratio",
-    "load_user_theme_specs",
     "relative_luminance",
     "serialize_user_theme",
     "theme_registry_for_config",

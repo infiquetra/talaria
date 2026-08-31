@@ -1,12 +1,12 @@
 {
   "events": [
-    {"at_seconds": 4.0, "text": "/theme"},
+    {"at_seconds": 4.0, "text": "/theme "},
     {"at_seconds": 4.25, "key": "ENTER"},
     {"at_seconds": 5.75, "key": "DOWN"},
     {"at_seconds": 7.25, "key": "DOWN"},
     {"at_seconds": 8.75, "key": "DOWN"},
     {"at_seconds": 10.25, "key": "ENTER"},
-    {"at_seconds": 12.25, "text": "/diffs"},
+    {"at_seconds": 12.25, "text": "/diffs "},
     {"at_seconds": 12.5, "key": "ENTER"},
     {"at_seconds": 16.5, "key": "ESCAPE"},
     {"at_seconds": 18.0, "key": "CTRL_Q"}
