@@ -111,10 +111,9 @@ candidate. T1 has no current evidence; its earlier artifacts are retained under
 
 - `uv run ruff check .`: passed.
 - `uv run mypy`: passed with no issues.
-- `/opt/homebrew/bin/uv run pytest`: passed, 2,329 tests passed and 7 skipped in 564.30 seconds. The
-  first full run had one intermittent status-process timing failure after 2,328 passes; that exact
-  test passed five consecutive focused reruns, and the second complete run passed.
+- `/opt/homebrew/bin/uv run pytest`: passed, 2,367 tests passed and 7 skipped in 576.93 seconds.
 - `uv run bandit -r talaria -q`: passed; Bandit emitted only its existing comment-token warnings.
+  The workflow's broader `talaria scripts` scan also reports no medium or high findings.
 - `git diff --check`: passed after the evidence update.
 
 ## Final verdict

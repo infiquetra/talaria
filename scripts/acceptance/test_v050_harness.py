@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from scripts.acceptance.v050_common import (
     FALLBACK_MODEL_ROUTE,
@@ -734,3 +736,58 @@ def test_portable_json_makes_repository_paths_relative_and_scrubs_home(
         "event_script": "docs/event.json",
         "external_home_path": "<home>/private/capture.json",
     }
+
+
+def test_acceptance_schemas_validate_current_manifest_and_active_receipts() -> None:
+    acceptance_root = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+    manifest_schema = json.loads(
+        (acceptance_root / "artifact-manifest.schema.json").read_text(encoding="utf-8")
+    )
+    receipt_schema = json.loads(
+        (acceptance_root / "receipt.schema.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator.check_schema(manifest_schema)
+    Draft202012Validator.check_schema(receipt_schema)
+
+    manifest = json.loads(
+        (acceptance_root / "artifact-manifest.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator(manifest_schema).validate(manifest)
+    receipt_paths = sorted((acceptance_root / "evidence").glob("*/receipts/*.json"))
+    assert receipt_paths
+    receipt_validator = Draft202012Validator(receipt_schema)
+    for receipt_path in receipt_paths:
+        receipt_validator.validate(json.loads(receipt_path.read_text(encoding="utf-8")))
+
+
+def test_manifest_schema_rejects_non_not_run_status_without_receipts() -> None:
+    acceptance_root = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+    schema = json.loads(
+        (acceptance_root / "artifact-manifest.schema.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (acceptance_root / "artifact-manifest.json").read_text(encoding="utf-8")
+    )
+    invalid = copy.deepcopy(manifest)
+    invalid["status"] = "blocked"
+    invalid["receipts"] = []
+
+    errors = list(Draft202012Validator(schema).iter_errors(invalid))
+
+    assert any(error.validator == "minItems" for error in errors)
+
+
+def test_manifest_schema_rejects_receipts_when_status_is_not_run() -> None:
+    acceptance_root = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+    schema = json.loads(
+        (acceptance_root / "artifact-manifest.schema.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (acceptance_root / "artifact-manifest.json").read_text(encoding="utf-8")
+    )
+    invalid = copy.deepcopy(manifest)
+    invalid["status"] = "not-run"
+
+    errors = list(Draft202012Validator(schema).iter_errors(invalid))
+
+    assert any(error.validator == "maxItems" for error in errors)
