@@ -13,19 +13,19 @@
   },
   "checklist_item": 30,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-30-screenshot.ansi",
-    "capture_sha256": "d50221f9c9db6746f90e8fc22446eabfb4ca0019b7cec72faa38aeab143d4d8f",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-30-screenshot-pty.json",
-    "pty_result_sha256": "529664a82484955f5a1a1a08dc82296f3218a2b80b6515280ac596ce52c941c0",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-30-screenshot-resize-fix.ansi",
+    "capture_sha256": "2166f82e845bbb77486078d415b546da3d444d50bcc7442501be1ecee0ad4c11",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-30-screenshot-resize-fix-pty.json",
+    "pty_result_sha256": "d441d5891c95ce7047381df2b0b683118fd7a391f5a191ec43d5fab9829a9c02",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screenshot.png",
-    "screenshot_sha256": "3beb28396c15b75383dd5afbcce022a507627d401376007a39f7ed10d5ed0661"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screenshot-resize-fix.png",
+    "screenshot_sha256": "5afa8756a347ef606553d024842e4ded1929605b81e46a2544045f11e9044053"
   },
   "observations": [
-    "The 78-column capture uses unified diff, no docked inspector, the specified compact status, and no wrapped footer."
+    "After a real 132-to-78-column resize, the narrow capture uses unified diff, has no docked inspector, and keeps a single compact footer row."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T20:28:39+00:00",
+  "recorded_at": "2026-08-31T21:53:05+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +41,7 @@
   },
   "terminal": {
     "columns": 78,
-    "program": "POSIX pseudo-terminal capture",
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

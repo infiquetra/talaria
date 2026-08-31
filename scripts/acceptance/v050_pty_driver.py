@@ -245,6 +245,10 @@ def run_pty(
     pid, master = pty.fork()
     if pid == 0:  # pragma: no cover - the child replaces this process
         try:
+            # Set the real slave terminal before exec so the child cannot race
+            # its first size read. COLUMNS/LINES stay absent and later
+            # TIOCSWINSZ events remain authoritative for Textual.
+            _set_size(0, rows, columns)
             os.chdir(cwd)
             os.execve(str(executable), argv, environment)
         except BaseException:
