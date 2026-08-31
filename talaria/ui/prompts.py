@@ -65,6 +65,7 @@ from talaria.domain.models import PromptKind, TurnStatus
 from talaria.domain.projection import PromptRow, PromptView
 from talaria.ui.focus import CaretReleased, holds_caret
 from talaria.ui.literal import defang, literal_text
+from talaria.ui.motion import STANDARD_MOTION, MotionPolicy
 
 __all__ = [
     "ANSWER_HINT",
@@ -484,7 +485,11 @@ def attended_rows(view: PromptView) -> tuple[PromptRow, ...]:
     return tuple(row for row in view.rows if row.kind not in UNATTENDED_KINDS)
 
 
-def activity_line(turn: TurnStatus, view: PromptView) -> str:
+def activity_line(
+    turn: TurnStatus,
+    view: PromptView,
+    motion: MotionPolicy = STANDARD_MOTION,
+) -> str:
     """One line that never lets waiting-on-a-human look like working (R8).
 
     The distinction is the requirement, not the wording. A session blocked on an
@@ -541,7 +546,7 @@ def activity_line(turn: TurnStatus, view: PromptView) -> str:
     if turn == "streaming":
         if view.withdrawn:
             return withdrawn_activity_line(view.withdrawn)
-        return view.notice or "working…"
+        return view.notice or motion.progress_text("working", ordinary="working…")
     if turn == "cancelled":
         return "interrupted"
     return ""
@@ -989,8 +994,14 @@ class PromptRegion(VerticalScroll):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        motion: MotionPolicy = STANDARD_MOTION,
+        **kwargs: object,
+    ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.motion = motion
         self._activity: Static | None = None
         self._cards: dict[str, PromptCard] = {}
 
@@ -1029,7 +1040,12 @@ class PromptRegion(VerticalScroll):
             target = card.action_widget
             if target is None:
                 continue
-            self.scroll_to_widget(target, animate=False)
+            scroll = self.motion.scroll(animate=False)
+            self.scroll_to_widget(
+                target,
+                animate=scroll.animate,
+                duration=scroll.duration,
+            )
             card.focus_answer()
             return True
         return False
@@ -1105,7 +1121,12 @@ class PromptRegion(VerticalScroll):
         for card in self.query(PromptCard):
             target = card.action_widget
             if target is not None and target.is_mounted:
-                self.scroll_to_widget(target, animate=False)
+                scroll = self.motion.scroll(animate=False)
+                self.scroll_to_widget(
+                    target,
+                    animate=scroll.animate,
+                    duration=scroll.duration,
+                )
                 break
         # Deferred again, and for the same reason the caller deferred: the
         # scroll above moves every other card, so a reachability test run here
@@ -1203,7 +1224,7 @@ class PromptRegion(VerticalScroll):
         waiting = turn == "waiting" and bool(wanted)
         self.set_class(waiting, "-waiting")
         if self._activity is not None:
-            self._activity.update(literal_text(activity_line(turn, view)))
+            self._activity.update(literal_text(activity_line(turn, view, self.motion)))
 
         # Announced last, so the mount loop above has already had its chance to
         # claim the caret. A card whose row changed is removed and replaced in

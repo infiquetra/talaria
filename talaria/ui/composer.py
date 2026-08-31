@@ -454,6 +454,10 @@ class ChatTextArea(TextArea):
         return False
 
     async def on_blur(self, event: events.Blur) -> None:
+        for ancestor in self.ancestors:
+            if isinstance(ancestor, Composer):
+                ancestor.show_caret_location(False)
+                break
         try:
             app = self.app
             palette = app.palette  # type: ignore[attr-defined]
@@ -467,7 +471,10 @@ class ChatTextArea(TextArea):
         # (ruling 3). This handler is intentionally a no-op for opening;
         # closing is handled by on_blur. Keeping it as a method ensures the
         # focus event is consumed and not bubbled, but it does not sync.
-        return
+        for ancestor in self.ancestors:
+            if isinstance(ancestor, Composer):
+                ancestor.show_caret_location(True)
+                break
 
     def _is_slash_palette_open(self) -> bool:
         """Whether C2's slash-command palette claims Up/Down/Enter/Esc/Tab.
@@ -503,9 +510,12 @@ class Composer(Vertical):
     Composer {
         height: auto;
         max-height: 12;
-        border: round $accent;
+        border: round $talaria-border-muted;
         border-title-align: left;
         padding: 0 1;
+    }
+    Composer.-caret-here {
+        border: round $talaria-focus;
     }
     Composer > ChatTextArea {
         height: auto;
@@ -574,7 +584,18 @@ class Composer(Vertical):
         yield self._notice_widget
 
     def on_mount(self) -> None:
-        self.border_title = "compose"
+        self.show_caret_location(False)
+        self.call_after_refresh(self._sync_caret_location)
+
+    def _sync_caret_location(self) -> None:
+        self.show_caret_location(self.text_area.has_focus)
+
+    def show_caret_location(self, caret_here: bool) -> None:
+        """Update the two focus cues without changing Composer geometry."""
+        self.border_title = (
+            "compose [*] caret here" if caret_here else "compose [ ] caret elsewhere"
+        )
+        self.set_class(caret_here, "-caret-here")
 
     # ── text access, so tests never reach through to the framework ───────
 

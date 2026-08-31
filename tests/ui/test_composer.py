@@ -130,7 +130,7 @@ async def test_the_border_is_present_while_the_transcript_streams() -> None:
         composer = app.query_one(Composer)
         styles = composer.styles
         assert styles.border_top[0] not in ("", "none", "hidden")
-        assert composer.border_title == "compose"
+        assert composer.border_title == "compose [*] caret here"
         assert composer.display is True
         await app.shutdown_sources()
 

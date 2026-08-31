@@ -331,7 +331,8 @@ def test_the_live_launcher_forwards_theme_config_and_save_targets(
     isolated_global_config_dir: Path, tmp_path: Path
 ) -> None:
     (isolated_global_config_dir / "config.toml").write_text(
-        '[theme]\nname = "neutral-dark"\n', encoding="utf-8"
+        '[theme]\nname = "neutral-dark"\n\n[ui]\nreduced_motion = true\n',
+        encoding="utf-8",
     )
     cfg = config_module.load_config(cwd=tmp_path)
 
@@ -341,6 +342,7 @@ def test_the_live_launcher_forwards_theme_config_and_save_targets(
     assert app.configured_theme_slug == "neutral-dark"
     assert app.theme_config_dir == isolated_global_config_dir
     assert app.launch_cwd == Path.cwd()
+    assert app.motion.reduced is True
     assert app._startup_notices == ()
 
 
@@ -370,7 +372,7 @@ def test_the_replay_launcher_forwards_theme_fallback_notices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (isolated_global_config_dir / "config.toml").write_text(
-        "[theme]\nname = 7\n", encoding="utf-8"
+        "[theme]\nname = 7\n\n[ui]\nreduced_motion = true\n", encoding="utf-8"
     )
     captured: dict[str, object] = {}
 
@@ -402,6 +404,7 @@ def test_the_replay_launcher_forwards_theme_fallback_notices(
     assert "must be a string" in notices[0]
     assert captured["theme_config_dir"] == isolated_global_config_dir
     assert captured["launch_cwd"] == Path.cwd()
+    assert captured["reduced_motion"] is True
     status_settings = captured["status_bar_settings"]
     assert isinstance(status_settings, StatusBarSettings)
     assert status_settings.segments == (

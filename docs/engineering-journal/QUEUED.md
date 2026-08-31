@@ -1149,9 +1149,15 @@ Talaria also keeps sub-agent rows past the end of their turn, where Hermes drops
 Neither is a leak today at prototype scale, and eviction interacts with replay determinism (AE2) and scrollback in ways that need the projection to exist first — which is exactly why the plan deferred it. The input to the decision is the growth *slope* the U5 gate records, not the endpoint.
 **Refs.** [Hermes reconciliation-rule catalogue](../analysis/2026-08-02-hermes-reconciliation-rules.md) rules RR-21 and RR-32, [v0.1 plan KTD14](../plans/2026-08-02-talaria-v0-1-prototype-plan.md)
 
-### Range-validate the integer configuration settings
+### ~~Range-validate the integer configuration settings~~ — CLOSED 2026-08-31
 
 **Author.** v0.1 scaffold code review (delta re-review), 2026-08-03
+**Closed by.** Talaria v0.5.0 validates the remaining status interval and the three new status-bar
+width caps after precedence resolution. `status.interval_seconds` accepts 1–3600; the caps accept
+their documented inclusive ranges. Every invalid winner uses a bounded default and contributes a
+visible startup notice. The paste half was already resolved deliberately: a non-positive line or
+byte threshold disables that half rather than becoming an invalid interval-like value. The runtime
+defaults and fallback paths are pinned in `tests/test_config.py`.
 **Priority.** P2
 **Effort.** Small
 **Worth it when.** U6 builds the status runner and U5 the composer — those units know what a valid bound is, and this module does not.
@@ -1290,9 +1296,13 @@ No individual line grows — that was round 3's defect. But the buffer accumulat
 
 **Recommendation on file.** Do the diagnosis half whenever the connection path is next touched; open the launch half as its own ADR conversation. The incident is an argument for better error reporting, and only weakly an argument for changing who owns the gateway's lifetime.
 
-### Nothing on screen says where the caret is when it is not in the composer
+### ~~Nothing on screen says where the caret is when it is not in the composer~~ — CLOSED 2026-08-31
 
 **Author.** First operator-supervised live run, 2026-08-04.
+**Closed by.** Talaria v0.5.0 changes only cells that already exist. The composer's fixed border
+switches between `compose [*] caret here` and `compose [ ] caret elsewhere`, and focused rows use
+their reserved `>` gutter. `tests/ui/test_focus_indication.py::test_focus_cues_change_text_and_colour_without_any_geometry_delta`
+asserts the composer, transcript viewport, and footer geometry do not move while the cue changes.
 **Priority.** P2
 **Effort.** Small, but it reopens a settled layout decision.
 **Worth it when.** The next time the composer's border or the focus styling is touched, or the first time an operator reports typing into a dead interface after the `CaretReleased` fix has shipped.
@@ -1305,9 +1315,16 @@ So the requirement is narrow and real: **an indication of where the caret is tha
 
 **Why it is still worth doing with the bug fixed.** The `CaretReleased` rule covers the three transitions known today, and its own `DECISIONS.md` entry names the condition under which a fourth appears. A focus indicator is the thing that would let an operator *see* the fourth one in the second it happens, rather than reporting it as "the app stopped responding" a session later.
 
-### Block-level markdown: headings, fenced code, lists, tables, block quotes
+### ~~Block-level markdown: headings, fenced code, lists, tables, block quotes~~ — CLOSED 2026-08-31 (shipped in v0.2)
 
 **Author.** First operator-supervised live run, 2026-08-04.
+**Closed by.** This queue entry was stale. Talaria v0.2 shipped committed and progressively
+streaming block markdown behind accepted
+[ADR-0006](../../platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md).
+The 24-of-24 gate and its explicit bounds are recorded in the
+[block-markdown gate results](../analysis/2026-08-09-block-markdown-gate-results.md). The remaining
+streaming-table hitch and transient-mount cases are separate, still-open entries below; closing this
+feature request does not close them.
 **Priority.** P2 — **operator has asked for this explicitly**, to be taken up once the defects found in the core build are cleared.
 **Effort.** Large, and it reopens U5's measured gate results.
 **Worth it when.** The core-build defect list is empty. That is the operator's stated sequencing, recorded here so the next session does not have to re-derive it.
@@ -1352,9 +1369,14 @@ observations 2, 3 and 5. All three are cosmetic or documentation-sized; none blo
    path, doing its job loudly on every occurrence. Worth teaching (or deliberately ignoring)
    both kinds once their payloads are understood.
 
-### A malformed `status.command` turns the status line off without saying so
+### ~~A malformed `status.command` turns the status line off without saying so~~ — CLOSED 2026-08-31
 
 **Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Closed by.** Talaria v0.5.0 normalizes the winning value once, disables only the optional command,
+and passes the resulting notice into the already-mounted `StatusRegion`. The same visible fallback
+path covers empty, non-string, and shell-split failures in live and replay. It is pinned by
+`tests/ui/test_status_region.py::test_a_malformed_command_notice_is_visible_without_a_status_runner`
+and the configuration normalization tests.
 **Priority.** P3
 **Effort.** Small for a stderr line; medium for an in-interface notice, which is the version worth having.
 **Worth it when.** A second configuration setting acquires the same silent-fallback behaviour, or an operator reports that their status line "just stopped working".

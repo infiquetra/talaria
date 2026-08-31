@@ -32,14 +32,23 @@ from talaria.domain.projection import SubagentView
 from talaria.ui.focus import CaretReleased, holds_caret
 from talaria.ui.literal import literal_text
 
-#: Status column width, so rows line up without a table widget. The longest
-#: member of the frozen seven-value enum is ``interrupted`` (11).
-_STATUS_WIDTH = 11
+#: Each lifecycle state keeps a fixed ASCII form when colour is unavailable.
+_STATUS_FORMS = {
+    "queued": "[..] queued",
+    "running": "[>] running",
+    "completed": "[ok] completed",
+    "error": "[!] error",
+    "failed": "[x] failed",
+    "interrupted": "[-] interrupted",
+    "timeout": "[t] timeout",
+}
+_STATUS_WIDTH = max(len(form) for form in _STATUS_FORMS.values())
 
 
 def format_row(row_id: str, name: str, status: str, elapsed: float, detail: str | None) -> str:
     """One row's plain text. Pure, so a test asserts on it without a screen."""
-    head = f"{status:<{_STATUS_WIDTH}} {elapsed:6.1f}s  {name}"
+    state = _STATUS_FORMS.get(status, f"[?] {status or 'unknown'}")
+    head = f"  {state:<{_STATUS_WIDTH}} {elapsed:6.1f}s  {name}"
     if detail:
         return f"{head} — {detail}"
     return head
@@ -79,6 +88,17 @@ class AgentRow(Static):
         self.subagent_id = ""
         self.subagent_name = ""
         self.interruptible = False
+
+    def _show_focus_prefix(self, focused: bool) -> None:
+        text = str(self.content)
+        if len(text) >= 2 and text[1] == " ":
+            self.update(literal_text((">" if focused else " ") + text[1:]))
+
+    def on_focus(self, _event: events.Focus) -> None:
+        self._show_focus_prefix(True)
+
+    def on_blur(self, _event: events.Blur) -> None:
+        self._show_focus_prefix(False)
 
     def bind_row(self, *, subagent_id: str, name: str, status: str) -> None:
         """Point this widget at a row. Reused across renders, so it is re-pointed
@@ -190,6 +210,7 @@ class AgentRows(Vertical):
             if index < len(self._rows):
                 widget = self._rows[index]
                 widget.update(text)
+                widget._show_focus_prefix(widget.has_focus)
             else:
                 widget = AgentRow(text, markup=False)
                 self._rows.append(widget)

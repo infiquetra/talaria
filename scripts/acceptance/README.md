@@ -62,7 +62,7 @@ then verifies:
 
 1. distribution and package version `0.5.0`;
 2. an exact `talaria --version` result;
-3. a bare installed launch in a pseudo-terminal, exited by scripted `ctrl+c` or `ctrl+q`; and
+3. a bare installed launch in a pseudo-terminal, exited by scripted `ctrl+d` or `ctrl+q`; and
 4. `talaria gate --deltas 5000 --json <scratch receipt path>`.
 
 The bare probe starts with an empty isolated config. Reaching either Talaria's credential prompt or

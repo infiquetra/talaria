@@ -1,0 +1,12 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "key": "SHIFT_TAB"},
+    {"at_seconds": 5.5, "key": "TAB"},
+    {"at_seconds": 7.0, "key": "TAB"},
+    {"at_seconds": 8.5, "key": "TAB"},
+    {"at_seconds": 10.0, "key": "TAB"},
+    {"at_seconds": 11.5, "key": "TAB"},
+    {"at_seconds": 13.0, "key": "TAB"},
+    {"at_seconds": 15.5, "key": "CTRL_Q"}
+  ]
+}

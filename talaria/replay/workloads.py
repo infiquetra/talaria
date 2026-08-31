@@ -100,6 +100,7 @@ from talaria.domain.projection import (
 )
 from talaria.ui.blocks import EntryMarkdown
 from talaria.ui.literal import defang
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from talaria.ui.transcript import (
     DESCENDANT_ESTIMATE_TRIGGER,
     TranscriptPane,
@@ -392,6 +393,11 @@ def reparse_window_bytes(widget: EntryMarkdown, fragment: str) -> int:
 @asynccontextmanager
 async def _pane_harness(*, size: tuple[int, int]) -> AsyncIterator[tuple[Any, TranscriptPane]]:
     class _WorkloadHarness(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            BUILTIN_THEME_REGISTRY.register(self)
+            self.theme = "refined-default"
+
         def compose(self) -> ComposeResult:
             yield TranscriptPane(id="t")
 
