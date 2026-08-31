@@ -14,7 +14,7 @@ import asyncio
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from talaria import __version__
 from talaria import config as config_module
@@ -25,6 +25,7 @@ from talaria.domain.startup import (
     StartupSelection,
     resolve_startup,
 )
+from talaria.status.contract import StatusBarSettings, StatusSegmentName
 
 if TYPE_CHECKING:
     from talaria.status.runner import StatusRunner
@@ -208,7 +209,7 @@ def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
     from talaria.status.contract import parse_command
     from talaria.status.runner import StatusRunner
 
-    argv = parse_command(cfg.get("status", "command"))
+    argv, _notice = parse_command(cfg.get("status", "command"))
     if argv is None:
         return None
     allowlist = cfg.get("environment", "allowlist", default=[]) or []
@@ -216,6 +217,23 @@ def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
         argv=argv,
         launch_cwd=Path.cwd(),
         allowlist=tuple(str(name) for name in allowlist),
+    )
+
+
+def _build_status_bar_settings(cfg: config_module.Config) -> StatusBarSettings:
+    """Forward the once-normalized status-bar configuration into the app."""
+    return StatusBarSettings(
+        segments=cast(
+            tuple[StatusSegmentName, ...],
+            cfg.get("status", "segments"),
+        ),
+        cwd_max_columns=cast(int, cfg.get("status", "cwd_max_columns")),
+        git_branch_max_columns=cast(
+            int, cfg.get("status", "git_branch_max_columns")
+        ),
+        agent_model_max_columns=cast(
+            int, cfg.get("status", "agent_model_max_columns")
+        ),
     )
 
 
@@ -342,7 +360,8 @@ def run_replay(args: argparse.Namespace) -> int:
         mode="replay",
         controls=controls,
         status_runner=_build_status_runner(cfg),
-        status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
+        status_interval=float(cfg.get("status", "interval_seconds")),
+        status_bar_settings=_build_status_bar_settings(cfg),
         paste_threshold=_build_paste_threshold(cfg),
         # **Derived from the recording, because replay has no other way to learn
         # it.** ``route_frame`` feeds the focused engine only frames whose profile
@@ -358,6 +377,10 @@ def run_replay(args: argparse.Namespace) -> int:
         # at the tagged profile. ``""`` for a single-connection log keeps the
         # default, which is what that log means.
         current_profile=getattr(source, "focus_profile", ""),
+        theme_name=cfg.get("theme", "name"),
+        startup_notices=cfg.notices,
+        theme_config_dir=cfg.config_dir,
+        launch_cwd=Path.cwd(),
     )
     app.run()
     return 0
@@ -614,9 +637,14 @@ def build_live_app(
         current_profile=connections.home,
         profile_endpoints=config_module.profile_endpoints(cfg),
         status_runner=_build_status_runner(cfg),
-        status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
+        status_interval=float(cfg.get("status", "interval_seconds")),
+        status_bar_settings=_build_status_bar_settings(cfg),
         paste_threshold=_build_paste_threshold(cfg),
         startup=selection_from_args(args),
+        theme_name=cfg.get("theme", "name"),
+        startup_notices=cfg.notices,
+        theme_config_dir=cfg.config_dir,
+        launch_cwd=Path.cwd(),
     )
     holder.append(app)
     # ``source`` is no longer bound, and the removal is the point rather than an

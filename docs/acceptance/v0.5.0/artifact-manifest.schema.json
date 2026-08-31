@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infiquetra.github.io/talaria/acceptance/v0.5.0/artifact-manifest.schema.json",
+  "title": "Talaria v0.5.0 sanitized acceptance artifact manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "candidate", "receipts"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": "talaria-v0.5.0-artifact-manifest-v1"},
+    "status": {"enum": ["not-run", "in-progress", "complete", "blocked"]},
+    "candidate": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commit", "wheel_filename", "wheel_sha256", "version"],
+          "properties": {
+            "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "wheel_filename": {"type": "string", "pattern": "\\.whl$"},
+            "wheel_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "version": {"const": "0.5.0"}
+          }
+        }
+      ]
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "checklist_item",
+          "tester",
+          "verdict",
+          "receipt_path",
+          "receipt_sha256",
+          "capture_path",
+          "capture_sha256",
+          "screenshot_path",
+          "screenshot_sha256"
+        ],
+        "properties": {
+          "checklist_item": {"type": "integer", "minimum": 1, "maximum": 36},
+          "tester": {"enum": ["talaria-t1", "talaria-t2"]},
+          "verdict": {"enum": ["pass", "fail", "blocked", "reserved"]},
+          "receipt_path": {"type": "string", "minLength": 1},
+          "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "capture_path": {"type": "string", "minLength": 1},
+          "capture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "screenshot_path": {"type": "string", "minLength": 1},
+          "screenshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  }
+}

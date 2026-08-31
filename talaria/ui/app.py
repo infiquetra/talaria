@@ -34,6 +34,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from pathlib import Path
 from time import time as _wall_clock
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
@@ -45,6 +46,8 @@ from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Static
 
+from talaria import __version__
+from talaria.config import ConfigError, ThemeSaveScope, save_theme
 from talaria.domain.commands import (
     CATALOG_METHOD,
     DISPATCH_METHOD,
@@ -106,6 +109,7 @@ from talaria.domain.projection import (
     TranscriptView,
     entry_scoped_view,
     project,
+    status_payload,
     terminal_read,
 )
 from talaria.domain.queue import NeedsYouQueue, decode_pending_approvals
@@ -173,6 +177,7 @@ from talaria.domain.state import (
 )
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.replay.source import REPLAY_EPOCH
+from talaria.status.contract import StatusBarSettings
 from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
@@ -204,7 +209,6 @@ from talaria.ui.focus import CaretReleased
 from talaria.ui.needs_you import (
     ITEM_NO_LONGER_WAITING,
     NeedsSelection,
-    NeedsYouBar,
     NeedsYouPickerSource,
     decode_selection,
 )
@@ -234,7 +238,14 @@ from talaria.ui.prompts import (
     gateway_refusal,
     respond_params,
 )
+from talaria.ui.status_bar import (
+    BottomStatusBar,
+    BottomStatusBarView,
+    build_status_bar_view,
+    capture_local_status,
+)
 from talaria.ui.status_region import StatusRegion
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY, DEFAULT_THEME_SLUG, ThemeRegistry
 from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptPane
 
 #: KTD14's coalescing boundary. Deltas accumulate in the domain transcript and
@@ -1153,6 +1164,7 @@ class TalariaApp(App[None]):
         controls: ReplayControls | None = None,
         status_runner: StatusRunner | None = None,
         status_interval: float = 5.0,
+        status_bar_settings: StatusBarSettings | None = None,
         coalesce_interval: float = COALESCE_INTERVAL,
         mount_cap: int = DEFAULT_MOUNT_CAP,
         dispatcher: LiveDispatcher | None = None,
@@ -1165,13 +1177,37 @@ class TalariaApp(App[None]):
         call_timeout: float | None = 30.0,
         paste_threshold: PasteThreshold | None = None,
         startup: StartupSelection | None = None,
+        theme_name: object = DEFAULT_THEME_SLUG,
+        theme_registry: ThemeRegistry | None = None,
+        startup_notices: tuple[str, ...] = (),
+        theme_config_dir: Path | None = None,
+        launch_cwd: Path | None = None,
     ) -> None:
         super().__init__()
+        self.theme_registry = theme_registry or BUILTIN_THEME_REGISTRY
+        resolved_theme = self.theme_registry.resolve(theme_name)
+        self.theme_registry.register(self)
+        self.configured_theme_slug = resolved_theme.slug
+        self.session_theme_slug: str | None = None
+        self.theme_config_dir = theme_config_dir
+        self.launch_cwd = launch_cwd if launch_cwd is not None else Path.cwd()
+        self._startup_notices = (*startup_notices, *resolved_theme.notices)
+        self._status_notices = tuple(
+            notice for notice in startup_notices if notice.startswith("status")
+        )
+        # Registration, selection, and notices are all resolved before mount,
+        # so the first frame cannot flash Textual's stock theme or hide a
+        # configured fallback until a later render tick.
+        self.theme = resolved_theme.slug
         self.source = source
         self.mode: RunMode = mode
         self.controls = controls if controls is not None else ReplayControls()
         self.status_runner = status_runner
         self.status_interval = status_interval
+        self.status_bar_settings = (
+            status_bar_settings if status_bar_settings is not None else StatusBarSettings()
+        )
+        self.local_status = capture_local_status(self.launch_cwd)
         self.coalesce_interval = coalesce_interval
         self.mount_cap = mount_cap
         self.dispatcher = dispatcher
@@ -1283,6 +1319,10 @@ class TalariaApp(App[None]):
         self._fleet = FleetState(
             focused=SessionState(), focused_profile=current_profile or DEFAULT_PROFILE
         )
+        for notice in self._startup_notices:
+            self.state = record_local_note(
+                self.state, notice, at=self.state.last_observed_at
+            )
         #: The poll epoch the two listing sweeps share. The dual-listing
         #: retirement rule only fires when ``session.list`` and
         #: ``session.active_list`` agree on an epoch, so both sweeps of one
@@ -1512,31 +1552,65 @@ class TalariaApp(App[None]):
 
     # ── layout ───────────────────────────────────────────────────────────
 
+    def _status_agent(self) -> tuple[str, str]:
+        """Return the model facts already held for the focused session."""
+        session = self.session_model_in_focus
+        catalog = self.model_catalog
+        if session is not None:
+            provider_slug = session.provider_slug
+            model = session.model
+        elif catalog is not None:
+            provider_slug = catalog.current_provider
+            model = catalog.current_model
+        else:
+            return "", ""
+
+        provider = provider_slug
+        if catalog is not None:
+            provider = next(
+                (
+                    candidate.name
+                    for candidate in catalog.providers
+                    if candidate.slug == provider_slug
+                ),
+                provider_slug,
+            )
+        return provider, model
+
+    def _bottom_status_view(self) -> BottomStatusBarView:
+        """Assemble the bar from state Talaria already holds, without fetching."""
+        provider, model = self._status_agent()
+        return build_status_bar_view(
+            local=self.local_status,
+            status=status_payload(self.state, mode=self.mode),
+            queue=self.needs_you,
+            agent_provider=provider,
+            agent_model=model,
+            context_window=None,
+            version=__version__,
+        )
+
     def compose(self) -> ComposeResult:
         with Vertical(id="body"):
             yield TranscriptPane(mount_cap=self.mount_cap, id="transcript")
             yield AgentRows(id="agents")
             yield PromptRegion(id="prompts")
             yield PaletteRegion(id="palette")
-            yield StatusRegion(id="status")
+            yield StatusRegion(
+                initial_marker="\n".join(self._status_notices),
+                id="status",
+            )
         yield Composer(
             notice=self._idle_notice(),
             paste_threshold=self.paste_threshold,
             id="composer",
         )
-        # KTD7's reserved row, and it is composed here — outside ``#body``,
-        # between the composer and the help footer — for the property that gives
-        # it its name. Inside ``#body`` it would share the ``1fr`` the transcript
-        # stretches into, so a queue that filled would take rows from the
-        # transcript and give them back when it emptied. Out here it is one row
-        # that exists whether or not anything is in it, which is what lets the
-        # empty state be a rendered sentence rather than an absent widget.
-        #
-        # This is the second time the screen-row pins move (the first was
-        # HelpBar's own arrival, A4): the bottom two rows are now needs-you then
-        # help. ``tests/ui/test_a4_function_key_row.py`` holds those pins.
-        yield NeedsYouBar(id="needs-you")
         yield HelpBar(id="help")
+        yield BottomStatusBar(
+            self._bottom_status_view(),
+            settings=self.status_bar_settings,
+            id="bottom-status",
+        )
 
     @property
     def transcript(self) -> TranscriptPane:
@@ -1567,8 +1641,8 @@ class TalariaApp(App[None]):
         return self.query_one("#help", HelpBar)
 
     @property
-    def needs_you_bar(self) -> NeedsYouBar:
-        return self.query_one("#needs-you", NeedsYouBar)
+    def bottom_status_bar(self) -> BottomStatusBar:
+        return self.query_one("#bottom-status", BottomStatusBar)
 
     @property
     def needs_you(self) -> NeedsYouQueue:
@@ -1634,10 +1708,7 @@ class TalariaApp(App[None]):
                     generation=REPLAY_EPOCH,
                     at=self.state.last_observed_at,
                 )
-        # The reserved row starts saying what it will go on saying, rather than
-        # blank: an empty widget and "needs-you: none" occupy the same space and
-        # only one of them is an answer.
-        self._refresh_needs_you()
+        self._refresh_bottom_status_bar()
         self._pump_task = asyncio.create_task(self._pump())
         if isinstance(self.connections, ConnectionFleet):
             # Dialled here rather than in the launcher because the set's dials are
@@ -1956,37 +2027,19 @@ class TalariaApp(App[None]):
         # is: a seam line growing older is a change with no event behind it, so
         # nothing else marks the app dirty when it becomes due.
         await self._refresh_seam_ages()
-        # Third member of the same family: a wait's age climbs with no frame
-        # behind it, so the bar would otherwise refresh only when something
-        # unrelated happened to arrive — which for a fleet sitting quietly on one
-        # unanswered approval is precisely never, and a stalled age on this
-        # surface is the wrong number in the one place the operator reads for it.
-        self._refresh_needs_you()
+        self._refresh_bottom_status_bar()
         if not self._dirty:
             return
         self._dirty = False
         await self.render_snapshot()
 
-    def _refresh_needs_you(self) -> None:
-        """Repaint the reserved row from the queue as it now stands.
-
-        The clock is ``state.last_observed_at`` — the frame clock — and never a
-        wall clock read at render time. Structurally rather than by convention:
-        the value is read out of state on the line below, so there is no
-        ``time.time()`` here for a replay to differ on, which is the property
-        ``tests/domain/test_probe_replay.py``'s
-        ``test_two_replays_of_one_corpus_render_identical_lines`` gates for the
-        seam board's ages and this row shares by using the same clock.
-        :meth:`_render_seams` reads it the same way for the same reason.
-
-        The bar itself skips the repaint when the text has not moved, which is
-        what lets this be called at the render tick's own cadence.
-        """
+    def _refresh_bottom_status_bar(self) -> None:
+        """Repaint the true-bottom row from facts already held by the app."""
         try:
-            bar = self.needs_you_bar
+            bar = self.bottom_status_bar
         except NoMatches:  # pragma: no cover - teardown race
             return
-        bar.update_queue(self.needs_you, self.state.last_observed_at)
+        bar.apply(self._bottom_status_view())
 
     def _age_out_approvals(self) -> None:
         """Withdraw an approval the gateway has almost certainly stopped holding.
@@ -2061,6 +2114,7 @@ class TalariaApp(App[None]):
                 focus_new=not self.composer.text.strip(),
             )
         self._answer_unattended_prompts(snapshot)
+        self._refresh_bottom_status_bar()
 
     # ── the status region (U6) ───────────────────────────────────────────
 
@@ -3731,6 +3785,26 @@ class TalariaApp(App[None]):
     async def action_toggle_palette(self) -> None:
         await self.palette.toggle()
 
+    async def open_theme_picker(self) -> None:
+        """Open theme mode at the currently applied session selection."""
+        await self.palette.open_theme_picker(
+            self.theme_registry.specs,
+            current_slug=self.theme,
+            session_slug=self.session_theme_slug,
+        )
+
+    def on_palette_region_theme_selected(
+        self, message: PaletteRegion.ThemeSelected
+    ) -> None:
+        """Keep an accepted picker choice in memory for this process only."""
+        self.session_theme_slug = message.slug
+
+    def on_palette_region_theme_cancelled(
+        self, message: PaletteRegion.ThemeCancelled
+    ) -> None:
+        """Restore the exact session selection captured when theme mode opened."""
+        self.session_theme_slug = message.session_slug
+
     # ── U2: the model picker ──────────────────────────────────────────────
 
     async def action_toggle_picker(self) -> None:
@@ -4852,7 +4926,7 @@ class TalariaApp(App[None]):
         await palette.apply(self.catalog)
 
     def perform_local_command(self, invocation: LocalInvocation) -> bool:
-        """Act on one of PC6's four, or U2's fifth, ``/models``.
+        """Act on one command from Talaria's closed local command table.
 
         Returns whether the line was dispatched and should enter history.
         Refused submissions (pacing controls in live mode, malformed rate)
@@ -4912,6 +4986,12 @@ class TalariaApp(App[None]):
             self.composer.clear()
             self._spawn_live(self._toggle_agents_and_discard())
             return True
+        if command.action == "theme":
+            self._perform_theme(invocation.argument)
+            return True
+        if command.action == "bar":
+            self._perform_bar(invocation.argument)
+            return True
         if command.action == "pause":
             self.controls.pause()
         elif command.action == "resume":
@@ -4929,6 +5009,63 @@ class TalariaApp(App[None]):
         self.composer.clear()
         self._notice(self._pacing_notice())
         return True
+
+    def _perform_bar(self, argument: str) -> None:
+        """Show or toggle the session-only status-bar segment set."""
+        self.composer.clear()
+        words = argument.strip().split()
+        if not words:
+            visible = ", ".join(self.bottom_status_bar.settings.segments) or "none"
+            self._notice(f"bar: visible segments: {visible}")
+            return
+        if len(words) != 1:
+            self._notice("/bar takes one segment name — nothing changed")
+            return
+
+        segment = words[0]
+        was_visible = segment in self.bottom_status_bar.settings.segments
+        notice = self.bottom_status_bar.toggle_segment(segment)
+        if notice is not None:
+            self._notice(f"{notice} — nothing changed")
+            return
+        state = "hidden" if was_visible else "shown"
+        self._notice(f"bar: {segment} {state} for this session")
+
+    def _perform_theme(self, argument: str) -> None:
+        """Open theme browsing or explicitly persist the current selection."""
+        self.composer.clear()
+        words = argument.strip().lower().split()
+        if not words:
+            self._spawn_live(self.open_theme_picker())
+            return
+        if words[0] != "save" or len(words) > 2:
+            self._notice(
+                f"/theme {argument.strip()!r} is not understood — "
+                "try /theme, /theme save, or /theme save repository"
+            )
+            return
+        scope: ThemeSaveScope = "user"
+        if len(words) == 2:
+            if words[1] not in ("user", "repository"):
+                self._notice(
+                    f"/theme save {words[1]!r} is not understood — "
+                    "choose user or repository"
+                )
+                return
+            scope = "repository" if words[1] == "repository" else "user"
+
+        selected = self.session_theme_slug or self.configured_theme_slug
+        try:
+            path = save_theme(
+                selected,
+                scope,
+                config_dir=self.theme_config_dir,
+                cwd=self.launch_cwd,
+            )
+        except ConfigError as exc:
+            self._notice(f"theme was not saved — {exc}")
+            return
+        self._notice(f"saved theme {selected!r} to the {scope} config at {path}")
 
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.

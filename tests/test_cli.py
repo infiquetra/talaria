@@ -17,6 +17,7 @@ import talaria.cli as cli_module
 from talaria import config as config_module
 from talaria.cli import main, parse_args, selection_from_args
 from talaria.recorder.command import RecordTarget
+from talaria.status.contract import StatusBarSettings
 from talaria.transport.credentials import LoopbackTokenProvider
 
 
@@ -188,6 +189,95 @@ def test_the_launcher_carries_the_startup_selection_it_was_given() -> None:
     assert fresh.startup is not None and fresh.startup.mode == "new"
 
 
+def test_the_live_launcher_forwards_theme_config_and_save_targets(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "neutral-dark"\n', encoding="utf-8"
+    )
+    cfg = config_module.load_config(cwd=tmp_path)
+
+    app, _ = cli_module.build_live_app(parse_args([]), cfg)
+
+    assert app.theme == "neutral-dark"
+    assert app.configured_theme_slug == "neutral-dark"
+    assert app.theme_config_dir == isolated_global_config_dir
+    assert app.launch_cwd == Path.cwd()
+    assert app._startup_notices == ()
+
+
+def test_the_live_launcher_forwards_normalized_status_bar_settings(
+    isolated_global_config_dir: Path,
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[status]\n"
+        'segments = ["connection", "cwd"]\n'
+        "cwd_max_columns = 36\n"
+        "git_branch_max_columns = 30\n"
+        "agent_model_max_columns = 40\n",
+        encoding="utf-8",
+    )
+
+    app, _ = cli_module.build_live_app(parse_args([]), config_module.load_config())
+
+    assert app.status_bar_settings.segments == ("connection", "cwd")
+    assert app.status_bar_settings.cwd_max_columns == 36
+    assert app.status_bar_settings.git_branch_max_columns == 30
+    assert app.status_bar_settings.agent_model_max_columns == 40
+
+
+def test_the_replay_launcher_forwards_theme_fallback_notices(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[theme]\nname = 7\n", encoding="utf-8"
+    )
+    captured: dict[str, object] = {}
+
+    class FakeSource:
+        focus_profile = ""
+
+    class CapturingApp:
+        def __init__(self, source: object, **kwargs: object) -> None:
+            captured["source"] = source
+            captured.update(kwargs)
+
+        def run(self) -> None:
+            captured["ran"] = True
+
+    import talaria.replay.source as replay_source_module
+    import talaria.ui.app as app_module
+
+    monkeypatch.setattr(
+        replay_source_module,
+        "source_from_path",
+        lambda *args, **kwargs: FakeSource(),
+    )
+    monkeypatch.setattr(app_module, "TalariaApp", CapturingApp)
+
+    assert cli_module.run_replay(parse_args(["replay", str(tmp_path / "corpus")])) == 0
+    assert captured["theme_name"] == "refined-default"
+    notices = captured["startup_notices"]
+    assert isinstance(notices, tuple)
+    assert "must be a string" in notices[0]
+    assert captured["theme_config_dir"] == isolated_global_config_dir
+    assert captured["launch_cwd"] == Path.cwd()
+    status_settings = captured["status_bar_settings"]
+    assert isinstance(status_settings, StatusBarSettings)
+    assert status_settings.segments == (
+        "cwd",
+        "git_branch",
+        "agent_model",
+        "context",
+        "task_progress",
+        "connection",
+        "version",
+    )
+    assert captured["ran"] is True
+
+
 def test_the_configured_paste_thresholds_reach_the_live_app(
     isolated_global_config_dir: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -275,9 +365,13 @@ def test_a_status_command_written_as_a_toml_array_does_not_stop_the_launch(
     app, _ = cli_module.build_live_app(parse_args([]), config_module.load_config())
 
     assert app.status_runner is None
-    # The positive half: the same config file is otherwise being read, so this
-    # is not passing because nothing was loaded.
-    assert config_module.load_config().get("status", "command") == ("sh", "-c", "date")
+    cfg = config_module.load_config()
+    assert cfg.get("status", "command") is None
+    assert any(
+        "status.command" in notice and "disabled" in notice
+        for notice in cfg.notices
+    )
+    assert any("status.command" in notice for notice in app._status_notices)
 
 
 def test_the_live_launcher_can_record_the_session_it_drives(

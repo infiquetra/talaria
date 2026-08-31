@@ -1,0 +1,13 @@
+diff --git a/talaria/config.py b/talaria/config.py
+index 1111111..2222222 100644
+--- a/talaria/config.py
++++ b/talaria/config.py
+@@ -41,4 +41,4 @@ def defaults():
+     "status": {
+-        "interval_seconds": 5,
++        "interval_seconds": 10,
+     },
+@@ -91,3 +91,4 @@ def load_config():
+     merged = deepcopy(DEFAULTS)
++    validate_intervals(merged)
+     return Config(merged)

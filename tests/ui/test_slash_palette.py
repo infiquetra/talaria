@@ -20,7 +20,9 @@ from talaria.domain.commands import (
     CommandEntry,
 )
 from talaria.domain.composer_history import ComposerHistory
+from talaria.themes.builtins import BUILTIN_THEMES
 from talaria.transport.rpc import RpcOutcome
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from tests.ui.conftest import event, live_app, paused_app
 
 
@@ -48,6 +50,34 @@ def _catalog_with(entries: list[tuple[str, str, str, str]]) -> CommandCatalog:
         canon={},
         available=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_theme_mode_restores_browse_and_leaves_slash_filtering_unchanged() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test() as pilot:
+        BUILTIN_THEME_REGISTRY.register(app)
+        app.theme = "refined-default"
+        await app.palette.toggle()
+        assert app.palette.showing
+
+        await app.palette.open_theme_picker(
+            BUILTIN_THEMES,
+            current_slug="refined-default",
+            session_slug=None,
+        )
+        await pilot.press("down", "escape")
+        await pilot.pause()
+        assert app.palette.showing, "cancel did not restore the open browse listing"
+
+        await app.palette.toggle()
+        app.composer.text_area.focus()
+        for character in "/mod":
+            await pilot.press(character)
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert all(entry.name.startswith("/mod") for entry in app.palette.filtered_entries)
+        await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
