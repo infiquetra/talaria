@@ -1,0 +1,12 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "hex_bytes": "1b5b3c36343b32303b384d"},
+    {"at_seconds": 4.5, "hex_bytes": "1b5b3c36343b32303b384d"},
+    {"at_seconds": 6.0, "key": "F5"},
+    {"at_seconds": 9.0, "resize": {"rows": 36, "columns": 119}},
+    {"at_seconds": 11.0, "resize": {"rows": 36, "columns": 132}},
+    {"at_seconds": 13.0, "hex_bytes": "1b5b3c36343b32303b384d"},
+    {"at_seconds": 17.0, "key": "F5"},
+    {"at_seconds": 20.0, "key": "CTRL_Q"}
+  ]
+}

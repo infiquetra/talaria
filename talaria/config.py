@@ -50,6 +50,7 @@ from talaria.status.contract import (
     parse_command,
 )
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
+from talaria.themes.storage import load_user_theme_specs
 
 
 class ConfigError(Exception):
@@ -67,6 +68,7 @@ class ConfigError(Exception):
 #: to, so a default of ``None`` means "string-valued, no default".
 DEFAULTS: dict[str, Any] = {
     "theme": {"name": REFINED_DEFAULT.slug},
+    "ui": {"reduced_motion": False},
     "status": {
         "command": None,
         "interval_seconds": 5,
@@ -262,7 +264,11 @@ def profile_endpoints(cfg: Config) -> Mapping[str, str]:
     }
 
 
-def _normalize_config(merged: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+def _normalize_config(
+    merged: dict[str, Any],
+    *,
+    available_theme_slugs: frozenset[str],
+) -> tuple[dict[str, Any], tuple[str, ...]]:
     """Normalize winning configured values once, after every file layer merged."""
     notices: list[str] = []
     theme = merged.get("theme")
@@ -273,12 +279,22 @@ def _normalize_config(merged: dict[str, Any]) -> tuple[dict[str, Any], tuple[str
             "theme.name must be a string; using Refined Default "
             f"({REFINED_DEFAULT.slug})"
         )
-    elif requested not in _BUILTIN_THEME_SLUGS:
+    elif requested not in available_theme_slugs:
         merged["theme"] = {"name": REFINED_DEFAULT.slug}
         notices.append(
             f"theme {requested!r} is not available; using Refined Default "
             f"({REFINED_DEFAULT.slug})"
         )
+
+    ui_source = merged.get("ui")
+    reduced_motion = (
+        ui_source.get("reduced_motion") if isinstance(ui_source, Mapping) else None
+    )
+    if not isinstance(reduced_motion, bool):
+        ui = dict(ui_source) if isinstance(ui_source, Mapping) else {}
+        ui["reduced_motion"] = False
+        merged["ui"] = ui
+        notices.append("ui.reduced_motion must be a boolean; using false")
 
     status_source = merged.get("status")
     normalized_status = normalize_status_settings(status_source)
@@ -468,7 +484,17 @@ def load_config(
         # the operator explicitly invokes ``/theme save``.
         allowed_cli_overrides = dict(cli_overrides)
         allowed_cli_overrides.pop("theme", None)
+        # Reduced motion is restart-to-apply configuration with no environment
+        # or command-line alias. A caller's unrelated launch overrides must not
+        # create a second, undocumented live-control path.
+        allowed_cli_overrides.pop("ui", None)
         merged = _deep_merge(merged, allowed_cli_overrides)
 
-    merged, notices = _normalize_config(merged)
+    user_theme_slugs = frozenset(
+        spec.slug for spec in load_user_theme_specs(config_dir=config_dir)
+    )
+    merged, notices = _normalize_config(
+        merged,
+        available_theme_slugs=_BUILTIN_THEME_SLUGS | user_theme_slugs,
+    )
     return Config(values=_freeze(merged), config_dir=config_dir, notices=notices)

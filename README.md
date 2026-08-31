@@ -4,9 +4,13 @@ Talaria is an experimental, Hermes-native terminal UI focused on a calmer, more 
 
 The name comes from the _talaria_, Hermes's winged sandals. The project is intentionally named for the Hermes ecosystem rather than as a private product fork.
 
-> **Status: v0.1, installed from a git tag.** The Hermes integration is implemented: Talaria dials a running gateway, streams turns, records every frame, and replays a recording through the whole interface with no socket open. The v0.1 daily-driver verdict reached **ready** on 2026-08-07 — under limits that are stated, not buried. Read them under "Quick start" before relying on it.
+> **Status: v0.5.0 release candidate.** Talaria dials a fleet of configured Hermes gateways, tracks
+> their sessions and waiting work, records every frame, and replays a recording with no socket open.
+> The v0.5.0 feature code is integrated, but its release acceptance evidence is still outstanding;
+> this is not a claim that the candidate has passed that run. Read the limits under "Quick start"
+> before relying on it.
 >
-> **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)) with **Textual** as its terminal framework, which passed its validation gate on 2026-08-03 — see the [gate results](docs/analysis/2026-08-03-textual-validation-gate-results.md) and [ADR-0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) (`proposed`). A small TypeScript tree remains under `src/`, reduced to the reference recorder the Python one is tested against; it is not the product and is described at the end of this page.
+> **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)) with **Textual** as its terminal framework, which passed its validation gate on 2026-08-03 — see the [gate results](docs/analysis/2026-08-03-textual-validation-gate-results.md) and accepted [ADR-0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md). A small TypeScript tree remains under `src/`, reduced to the reference recorder the Python one is tested against; it is not the product and is described at the end of this page.
 
 ## Goals
 
@@ -35,7 +39,9 @@ The name comes from the _talaria_, Hermes's winged sandals. The project is inten
   runs/sessions     rich events       typed operations
 ```
 
-The first implementation will validate the boundary before building a large UI. The architecture is a direction, not a claim that all adapters exist today.
+These are the product's integration boundaries, not a claim that every pictured adapter exists
+today. The Hermes API and terminal gateway paths are implemented; a deterministic Kanban adapter
+remains future work.
 
 Across all of it, one rule is already settled: the domain core has no dependency on the terminal
 framework. Frames become normalized events, normalized events become domain state, and only then does
@@ -43,33 +49,19 @@ anything render. See [ADR-0002](platform-specs/04-architecture/adrs/0002-the-dom
 
 ## Quick start
 
-The Python implementation is at v0.1. A bare `talaria` dials a running Hermes gateway and opens a
-session; `talaria replay` drives the entire interface from a recorded frame log with no socket open
-anywhere in the process.
+The Python implementation is at the v0.5.0 release candidate. A bare `talaria` dials the configured
+Hermes gateway fleet and opens a session; `talaria replay` drives the entire interface from a
+recorded frame log with no socket open anywhere in the process.
 
-**Read the verdict before you rely on it.** Talaria has attached to a real Hermes gateway and
-streamed turns to completion — first on 2026-08-04, and the recordings are cited by digest in the
-verdict's evidence table. Every _test_ in this repository still dials a loopback stub built from a
-reading of Hermes's own source at a pinned revision, so the live evidence is a set of recordings, not
-a suite. The v0.1 daily-driver verdict reached **ready** on 2026-08-07, when the last three blocking
-rows closed. Read what that word covers before relying on it: it means every row of the verdict's
-evidence table is measured or met across the requirements that document was scoped to check, and it
-means nothing beyond them. Nobody has driven the interface on Linux. No run on either platform has
-used a real terminal emulator rather than a bare pseudo-terminal. Gateway method compatibility is
-compared at the top level of each response only. The suite fails intermittently — twelve runs green
-in thirteen.
-[docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md](docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md)
-sets out what is measured, what is inferred, and what is out of scope, row by row, and its
-`What would move this verdict back to not ready` section says what would reverse it. Run it with the
-recorder on.
-
-_This paragraph has now gone stale twice, which is why the note is kept rather than tidied away. It
-first opened "Talaria has never been connected to a Hermes gateway: every transport test in this
-repository dials a loopback stub" and reasoned from that premise; true when written, false from
-2026-08-04. It then carried **not ready** with three reasons — F1 and F7 undemonstrated, the
-credential precedence question undecided, ten methods without runtime evidence — and kept carrying
-them after all three were settled. Nothing links this page to the verdict automatically. The
-verdict's own `Gate record` block is the part a test can read; this paragraph is not._
+**Read the limits before you rely on it.** The latest published statement is the
+[v0.4.0 release note](docs/releases/v0.4.0.md): no person has driven Talaria on Linux; a credential
+exported by the parent shell remains in the inherited process environment; and the framework
+measurements used a bare pseudo-terminal rather than a real terminal emulator. That release also
+shipped without its reserved human drive of a real foreign approval. The v0.5.0 acceptance run is
+still outstanding, so this page does not claim that any of those limits has closed or that the new
+theme, status, inspector, diff, and polish surfaces have terminal evidence. The historical
+[v0.1 daily-driver verdict](docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md) remains useful for
+the narrower evidence it recorded, but it is not the current release verdict.
 
 ```bash
 uv sync --all-groups
@@ -113,20 +105,19 @@ uv run talaria replay <recording.jsonl>
 uv run talaria gate --corpus <recording.jsonl> --deltas 50000
 ```
 
-Talaria also installs as an ordinary command, from a release tag:
+After v0.5.0 is tagged, Talaria installs as an ordinary command from that release tag:
 
 ```bash
-uv tool install git+https://github.com/infiquetra/talaria@v0.1.0
+uv tool install git+https://github.com/infiquetra/talaria@v0.5.0
 talaria --version
 talaria
 ```
 
 **Do not `uv tool install talaria`.** The name `talaria` on the Python Package Index belongs to an
 unrelated content management system whose last upload was 2010-06-19, and installing it gets you that
-project, not this one. Talaria is not published to PyPI and this is deliberate: the v0.1 verdict
-records that nobody has driven the interface on Linux and that no run on either platform has used a
-real terminal emulator rather than a bare pseudo-terminal, which is not the claim a package index
-makes on your behalf. Install from a tag until those gaps close.
+project, not this one. Talaria is not published to PyPI and this is deliberate. The latest published
+release still records no human Linux drive and bare-pseudo-terminal framework measurements, and the
+v0.5.0 candidate has not completed its acceptance run. Install from a release tag.
 
 ### Switching Hermes profile
 
@@ -268,6 +259,9 @@ parity proof had stopped running.
 ## Documentation
 
 - [Documentation index](docs/00-index.md)
+- [Themes](docs/themes.md)
+- [Configuration](docs/configuration.md)
+- [Terminal UI](docs/terminal-ui.md)
 - [Architecture decisions](platform-specs/04-architecture/adrs/) — what is settled and why
 - [Project direction and conversation analysis](docs/analysis/2026-08-01-hermes-tui-project-direction.md)
 - [Engineering journal](docs/engineering-journal/README.md)
@@ -281,7 +275,8 @@ parity proof had stopped running.
 | [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | The domain core is framework-independent; the terminal UI is a projection   |
 | [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)   | Talaria re-encodes the Hermes terminal UI's behavior rather than porting it |
 | [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is a Python client; the terminal framework is decided by a gate     |
-| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)   | Textual is the presentation layer (`proposed`, on the gate's pass verdict)  |
+| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)   | Textual is the accepted presentation layer                                 |
+| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) | Block rendering is bounded by work and rendered height                 |
 
 ## Contributing
 
