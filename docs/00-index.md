@@ -24,6 +24,7 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 ## Release evidence
 
 - [v0.5.0 live acceptance results](acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
+- [v0.5.0 T1 evidence index](acceptance/v0.5.0/evidence/t1/README.md)
 - [v0.5.0 T2 evidence index](acceptance/v0.5.0/evidence/t2/README.md)
 - [v0.5.0 visual specification](design/2026-08-30-talaria-v0-5-0-visual-spec.md)
 - [v0.5.0 run plan](plans/2026-08-30-talaria-v0-5-0-run-plan.md)
