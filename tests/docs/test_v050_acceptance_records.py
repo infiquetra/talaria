@@ -10,7 +10,11 @@ from typing import Any, cast
 import pytest
 from jsonschema import Draft202012Validator
 
-from scripts.acceptance.v050_common import HarnessError
+from scripts.acceptance.v050_common import (
+    ORDERED_VERDICTS,
+    HarnessError,
+    active_receipt_paths,
+)
 from scripts.acceptance.v050_records import (
     acceptance_summary,
     check_records,
@@ -115,6 +119,8 @@ def test_acceptance_summary_distinguishes_coverage_from_receipt_files() -> None:
     assert acceptance_summary(manifest) == (
         "**BLOCKED**: 43 of 43 expected checklist/tester slots are covered. "
         "The evidence set separately contains 44 current receipts (42 item and 2 install). "
+        "The one-receipt overlap is checklist item 1 for talaria-t2, which has both an "
+        "item receipt and an install receipt. "
         "Item verdicts are 41 pass, 1 blocked, and 0 fail."
     )
 
@@ -134,9 +140,7 @@ def test_results_status_drift_is_detected(tmp_path: Path) -> None:
 
 
 def test_receipt_schema_requires_observations() -> None:
-    receipt_path = next(
-        iter(sorted((_ACCEPTANCE_ROOT / "evidence").glob("*/receipts/*.json")))
-    )
+    receipt_path = active_receipt_paths(_ACCEPTANCE_ROOT / "evidence")[0]
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     del receipt["observations"]
     schema = json.loads(
@@ -146,6 +150,49 @@ def test_receipt_schema_requires_observations() -> None:
     errors = list(Draft202012Validator(schema).iter_errors(receipt))
 
     assert any(error.validator == "required" for error in errors)
+
+
+def test_receipt_schema_requires_the_drive_time_harness_commit() -> None:
+    schema = json.loads(
+        (_ACCEPTANCE_ROOT / "receipt.schema.json").read_text(encoding="utf-8")
+    )
+    receipt_path = active_receipt_paths(_ACCEPTANCE_ROOT / "evidence")[0]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt.pop("harness_commit", None)
+
+    assert "harness_commit" in schema["required"]
+    errors = list(Draft202012Validator(schema).iter_errors(receipt))
+    assert any(
+        error.validator == "required" and "harness_commit" in error.message
+        for error in errors
+    )
+
+
+def test_every_manifest_count_has_machine_readable_meaning() -> None:
+    schema = json.loads(
+        (_ACCEPTANCE_ROOT / "artifact-manifest.schema.json").read_text(encoding="utf-8")
+    )
+    counts = schema["properties"]["counts"]
+
+    assert "expected_receipts - missing_current_receipts" in counts["description"]
+    for name, definition in counts["properties"].items():
+        assert definition.get("description"), name
+
+
+def test_verdict_schemas_match_the_ordered_runtime_vocabulary() -> None:
+    receipt_schema = json.loads(
+        (_ACCEPTANCE_ROOT / "receipt.schema.json").read_text(encoding="utf-8")
+    )
+    manifest_schema = json.loads(
+        (_ACCEPTANCE_ROOT / "artifact-manifest.schema.json").read_text(encoding="utf-8")
+    )
+    manifest_verdicts = manifest_schema["properties"]["counts"]["properties"][
+        "item_verdicts"
+    ]
+
+    assert receipt_schema["properties"]["verdict"]["enum"] == list(ORDERED_VERDICTS)
+    assert manifest_verdicts["required"] == list(ORDERED_VERDICTS)
+    assert list(manifest_verdicts["properties"]) == list(ORDERED_VERDICTS)
 
 
 def test_every_old_candidate_receipt_is_flagged_stale() -> None:

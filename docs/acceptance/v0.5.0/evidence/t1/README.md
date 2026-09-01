@@ -50,8 +50,10 @@ approval rows, so they are anchored and never enter the possibly-duplicate state
 format cannot encode the keyless admin-polled row that triggers that state without simulating the
 acceptance condition. Item 36 records the independently complete T1 half: all assigned and shared T1
 receipts bind to candidate `788fc791f`, and both T1 live-session receipts name the approved primary
-route with no fallback. The generated manifest still flags the T2 receipts currently on this branch
-as stale; combined cross-tester completion becomes true only after the parallel T2 half is merged.
+route with no fallback. The generated manifest reports 0 stale receipts, 0 missing current receipts,
+and 42 invalid item receipts. Both testers' evidence is merged and covers every expected slot, but
+the new required harness provenance deliberately invalidates the old item receipts until the full
+acceptance re-drive replaces them.
 
 All screenshots were rendered from the corresponding real raw American National Standards
 Institute terminal bytes with Pyte and Pillow. This preserves pseudo-terminal geometry and colours

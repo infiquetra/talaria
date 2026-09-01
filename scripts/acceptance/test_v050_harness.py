@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -18,8 +19,11 @@ from scripts.acceptance.v050_common import (
     FALLBACK_MODEL_ROUTE,
     PRIMARY_MODEL_ROUTE,
     HarnessError,
+    active_receipt_paths,
     isolated_environment,
     probe_installed_artifact,
+    receipt_paths,
+    repository_head,
     sha256_file,
     validate_config_dir,
     validate_wheel_direct_url,
@@ -29,7 +33,13 @@ from scripts.acceptance.v050_install_probe import (
     _probe_gate,
     write_public_install_receipt,
 )
-from scripts.acceptance.v050_pty_driver import DriveEvent, parse_events, run_pty
+from scripts.acceptance.v050_pty_driver import (
+    DriveEvent,
+    PtyResult,
+    parse_events,
+    pty_result_document,
+    run_pty,
+)
 from scripts.acceptance.v050_receipt import (
     _portable_json,
     _verify_evidence_file,
@@ -38,6 +48,7 @@ from scripts.acceptance.v050_receipt import (
     validate_scratch_evidence_paths,
     verify_run,
 )
+from scripts.acceptance.v050_records import refresh_records
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -326,6 +337,7 @@ def test_isolated_environment_makes_colour_mode_explicit(
     monkeypatch.setenv("FORCE_COLOR", "0")
     monkeypatch.setenv("COLUMNS", "999")
     monkeypatch.setenv("LINES", "999")
+    monkeypatch.setenv("ACCEPTANCE_UNEXPECTED_PARENT", "must-not-leak")
 
     colour = isolated_environment(
         config_dir=config_dir,
@@ -345,6 +357,7 @@ def test_isolated_environment_makes_colour_mode_explicit(
     assert "FORCE_COLOR" not in colour
     assert "COLUMNS" not in colour
     assert "LINES" not in colour
+    assert "ACCEPTANCE_UNEXPECTED_PARENT" not in colour
     assert colour["COLORTERM"] == "truecolor"
     assert monochrome["NO_COLOR"] == "1"
     assert "COLORTERM" not in monochrome
@@ -592,6 +605,7 @@ def _receipt(*, route: dict[str, Any], redaction: str = "passed") -> dict[str, A
     return {
         "schema_version": "talaria-v0.5.0-receipt-v1",
         "release": "0.5.0",
+        "harness_commit": "9" * 40,
         "checklist_item": 2,
         "owner": "shared",
         "tester": "talaria-t1",
@@ -635,6 +649,30 @@ def test_primary_route_is_a_valid_first_class_receipt_field() -> None:
     }
     # Fallback unavailability does not invalidate a successful primary route.
     assert validate_receipt(_receipt(route=route), verify_files=False) == []
+
+
+def test_pty_result_records_the_drive_time_harness_commit() -> None:
+    run = PtyResult(
+        argv=("talaria",),
+        exit_code=0,
+        timed_out=False,
+        duration_seconds=1.0,
+        capture_path=Path("capture.ansi"),
+        capture_sha256="a" * 64,
+        capture_bytes=1,
+        rows=36,
+        columns=144,
+        term="xterm-256color",
+        terminal_program="acceptance-test",
+        expected_literals=(),
+        missing_literals=(),
+    )
+
+    result = pty_result_document(
+        tester="talaria-t1", run=run, repo_root=_REPO_ROOT
+    )
+
+    assert result["harness_commit"] == repository_head(_REPO_ROOT)
 
 
 def test_receipt_schema_uses_the_gateway_route_identifiers() -> None:
@@ -699,6 +737,26 @@ def _primary_receipt() -> dict[str, Any]:
             "fallback_availability": "unavailable",
         }
     )
+
+
+@pytest.mark.parametrize("missing_label", ["capture", "screenshot"])
+def test_scratch_evidence_paths_name_each_missing_file(
+    tmp_path: Path, missing_label: str
+) -> None:
+    scratch = tmp_path / "scratch"
+    capture = scratch / "raw" / "item.ansi"
+    screenshot = scratch / "screenshots" / "item.png"
+    capture.parent.mkdir(parents=True)
+    screenshot.parent.mkdir(parents=True)
+    present = {"capture": screenshot, "screenshot": capture}[missing_label]
+    present.write_bytes(b"evidence")
+
+    with pytest.raises(HarnessError, match=rf"^{missing_label} does not exist:"):
+        validate_scratch_evidence_paths(
+            capture=capture,
+            screenshot=screenshot,
+            scratch_root=scratch,
+        )
 
 
 @pytest.mark.parametrize("label", ["capture", "screenshot"])
@@ -931,6 +989,22 @@ def _write_verify_run_fixture(
     include_receipt: bool = True,
     install_home_path: bool = False,
 ) -> tuple[Path, Path]:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "acceptance@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Acceptance Harness"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-qm", "test: harness anchor"],
+        cwd=tmp_path,
+        check=True,
+    )
     evidence_root = tmp_path / "docs" / "acceptance" / "v0.5.0" / "evidence"
     tester_root = evidence_root / "t1"
     receipt_path = tester_root / "receipts" / "item-02-talaria-t1.json"
@@ -943,6 +1017,7 @@ def _write_verify_run_fixture(
     capture.write_bytes(b"capture")
     screenshot.write_bytes(b"screenshot")
     receipt = _primary_receipt()
+    receipt["harness_commit"] = repository_head(tmp_path)
     receipt["artifact"]["commit"] = receipt_commit
     receipt["artifact"]["wheel_sha256"] = "b" * 64
     receipt["evidence"]["capture_path"] = capture.relative_to(tmp_path).as_posix()
@@ -1024,6 +1099,39 @@ def test_verify_run_rejects_receipt_from_another_candidate(tmp_path: Path) -> No
     )
 
 
+def test_verify_run_binds_receipts_to_compatible_harness_history(tmp_path: Path) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
+    )
+    harness_source = tmp_path / "scripts" / "acceptance" / "driver.py"
+    harness_source.parent.mkdir(parents=True)
+    harness_source.write_text("changed = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", str(harness_source)], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "test: change harness"], cwd=tmp_path, check=True
+    )
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any(
+        "incompatible harness_commit" in error
+        and "acceptance harness files differ" in error
+        for error in errors
+    )
+
+    harness_source.unlink()
+    subprocess.run(["git", "add", "-u"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "test: restore harness"], cwd=tmp_path, check=True
+    )
+
+    restored_errors = verify_run(
+        manifest_path, evidence_root=evidence_root, repo_root=tmp_path
+    )
+
+    assert not any("incompatible harness_commit" in error for error in restored_errors)
+
+
 def test_verify_run_rejects_receipt_absent_from_manifest(tmp_path: Path) -> None:
     manifest_path, evidence_root = _write_verify_run_fixture(
         tmp_path,
@@ -1050,20 +1158,64 @@ def test_verify_run_rejects_home_path_in_install_receipt(tmp_path: Path) -> None
     assert any("install receipt contains the current user's home path" in error for error in errors)
 
 
-def test_verify_run_rejects_superseded_origin_in_active_receipt(tmp_path: Path) -> None:
-    manifest_path, evidence_root = _write_verify_run_fixture(
-        tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
+def test_real_superseded_bundle_is_refused_when_restored_as_active(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    subprocess.run(
+        ["git", "clone", "-q", "--shared", "--no-checkout", str(_REPO_ROOT), str(repo)],
+        check=True,
     )
-    receipt_path = next(evidence_root.glob("*/receipts/*.json"))
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    receipt["evidence"]["pty_result_path"] = (
-        "docs/acceptance/v0.5.0/evidence/t1/superseded/old/pty-result.json"
+    acceptance = repo / "docs" / "acceptance" / "v0.5.0"
+    evidence_root = acceptance / "evidence"
+    for tester, bundle in (("t1", "0f5c8e3e"), ("t2", "0f5c8e3e-final2")):
+        source = (
+            _REPO_ROOT
+            / "docs"
+            / "acceptance"
+            / "v0.5.0"
+            / "evidence"
+            / tester
+            / "superseded"
+            / bundle
+        )
+        active = evidence_root / tester
+        shutil.copytree(source, active)
+        shutil.copytree(source, active / "superseded" / bundle)
+    acceptance.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        _REPO_ROOT / "docs" / "acceptance" / "v0.5.0" / "checklist-items.json",
+        acceptance / "checklist-items.json",
     )
-    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    results_path = repo / "docs" / "acceptance" / "results.md"
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        _REPO_ROOT
+        / "docs"
+        / "acceptance"
+        / "2026-08-30-talaria-v0-5-0-live-acceptance-results.md",
+        results_path,
+    )
+    manifest_path = acceptance / "artifact-manifest.json"
+    refresh_records(
+        current_candidate_commit="0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+        repo_root=repo,
+        evidence_root=evidence_root,
+        checklist_path=acceptance / "checklist-items.json",
+        manifest_path=manifest_path,
+        results_path=results_path,
+    )
 
-    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+    errors = verify_run(
+        manifest_path,
+        evidence_root=evidence_root,
+        repo_root=repo,
+    )
 
-    assert any("superseded evidence origin" in error for error in errors)
+    assert any(
+        "superseded evidence origin" in error and "superseded/0f5c8e3e" in error
+        for error in errors
+    )
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -1148,6 +1300,20 @@ def test_verify_run_scans_png_ancillary_text(tmp_path: Path) -> None:
     assert any("email address" in error and leaked.name in error for error in errors)
 
 
+def test_verify_run_privacy_scans_frame_logs_outside_evidence(tmp_path: Path) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
+    )
+    leaked = evidence_root.parent / "corpora" / "t1" / "leaked-frame.jsonl"
+    leaked.parent.mkdir(parents=True)
+    leaked.write_bytes(b'{"owner":"/Users/private-operator","email":"owner@example.com"}')
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any("operator home path" in error and leaked.name in error for error in errors)
+    assert any("email address" in error and leaked.name in error for error in errors)
+
+
 def test_verify_run_detects_an_encoded_operator_home_path(tmp_path: Path) -> None:
     manifest_path, evidence_root = _write_verify_run_fixture(
         tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
@@ -1210,11 +1376,22 @@ def test_acceptance_schemas_validate_current_manifest_and_active_receipts() -> N
         (acceptance_root / "artifact-manifest.json").read_text(encoding="utf-8")
     )
     Draft202012Validator(manifest_schema).validate(manifest)
-    receipt_paths = sorted((acceptance_root / "evidence").glob("*/receipts/*.json"))
-    assert receipt_paths
+    current_receipts = active_receipt_paths(acceptance_root / "evidence")
+    assert current_receipts
     receipt_validator = Draft202012Validator(receipt_schema)
-    for receipt_path in receipt_paths:
+    for receipt_path in current_receipts:
         receipt_validator.validate(json.loads(receipt_path.read_text(encoding="utf-8")))
+
+
+def test_receipt_enumerator_covers_active_and_quarantined_populations() -> None:
+    evidence_root = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0" / "evidence"
+    enumerated = receipt_paths(evidence_root)
+    expected = tuple(sorted(evidence_root.rglob("receipts/*.json")))
+    active = active_receipt_paths(evidence_root)
+
+    assert enumerated == expected
+    assert len(active) == 42
+    assert len(enumerated) > len(active)
 
 
 def test_manifest_schema_names_its_cross_field_validator() -> None:

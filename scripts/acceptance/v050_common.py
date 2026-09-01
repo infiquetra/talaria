@@ -13,8 +13,10 @@ RELEASE_VERSION = "0.5.0"
 PRIMARY_MODEL_ROUTE = "opencode-go / muse-spark-1.2-contributor"
 FALLBACK_MODEL_ROUTE = "ollama (ollama-cloud) / glm-5.3-flash"
 TESTERS = frozenset({"talaria-t1", "talaria-t2"})
-VERDICTS = frozenset({"pass", "fail", "blocked", "reserved"})
+ORDERED_VERDICTS = ("pass", "fail", "blocked", "reserved")
+VERDICTS = frozenset(ORDERED_VERDICTS)
 TERMINAL_VERDICTS = frozenset({"pass", "reserved"})
+RECEIPT_GLOB = "*/**/receipts/*.json"
 FALLBACK_REASON_CODES = frozenset(
     {
         "primary-unavailable",
@@ -104,6 +106,43 @@ def validate_config_dir(config_dir: Path, *, scratch_root: Path) -> Path:
     return resolved
 
 
+def receipt_paths(evidence_root: Path) -> tuple[Path, ...]:
+    """Enumerate active and quarantined item receipts from the evidence tree."""
+    return tuple(sorted(evidence_root.glob(RECEIPT_GLOB)))
+
+
+def is_quarantined_receipt(path: Path, *, evidence_root: Path) -> bool:
+    """Whether an enumerated receipt lives below a tester's superseded archive."""
+    return "superseded" in path.resolve().relative_to(evidence_root.resolve()).parts
+
+
+def active_receipt_paths(evidence_root: Path) -> tuple[Path, ...]:
+    """Return only receipts that contribute to the current acceptance projection."""
+    return tuple(
+        path
+        for path in receipt_paths(evidence_root)
+        if not is_quarantined_receipt(path, evidence_root=evidence_root)
+    )
+
+
+def repository_head(repo_root: Path) -> str:
+    """Return the full commit identifying the harness source used by a drive."""
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    commit = result.stdout.strip()
+    if result.returncode != 0 or len(commit) != 40 or any(
+        character not in "0123456789abcdef" for character in commit
+    ):
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown Git error"
+        raise HarnessError(f"cannot identify the acceptance harness commit: {detail}")
+    return commit
+
+
 def isolated_environment(
     *,
     config_dir: Path,
@@ -120,30 +159,10 @@ def isolated_environment(
     if rows < 1 or columns < 1:
         raise HarnessError("terminal rows and columns must both be positive")
 
-    environment = dict(os.environ)
-    for name in tuple(environment):
-        if name.startswith(("TALARIA_", "TEXTUAL_")):
-            environment.pop(name)
-    environment.pop("PYTHONHOME", None)
-    environment.pop("PYTHONPATH", None)
-    for name in (
-        "NO_COLOR",
-        "FORCE_COLOR",
-        "CLICOLOR",
-        "CLICOLOR_FORCE",
-        "COLORTERM",
-        "COLUMNS",
-        "ESCDELAY",
-        "LC_TERMINAL",
-        "LINES",
-        "ROWS",
-        "TERMINFO",
-        "TERM_PROGRAM",
-    ):
-        environment.pop(name, None)
-    # This legacy Hermes value must never become an accidental live credential
-    # source for an acceptance process.
-    environment.pop("HERMES_DASHBOARD_SESSION_TOKEN", None)
+    inherited_names = ("LANG", "LC_ALL", "LC_CTYPE", "PATH", "SSL_CERT_DIR", "SSL_CERT_FILE", "TZ")
+    environment = {
+        name: os.environ[name] for name in inherited_names if name in os.environ
+    }
     environment.update(
         TALARIA_CONFIG_DIR=str(config_dir),
         TERM=term,

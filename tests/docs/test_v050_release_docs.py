@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from talaria import __version__
 from talaria.themes.builtins import BUILTIN_THEMES
 
@@ -69,6 +71,43 @@ def test_documentation_index_reaches_every_tester_evidence_index() -> None:
     for evidence_index in evidence_indexes:
         target = evidence_index.relative_to(_REPO_ROOT / "docs").as_posix()
         assert target in linked_targets, evidence_index
+
+
+def _assert_evidence_indexes_agree_with_manifest(manifest_path: Path) -> None:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    counts = manifest["counts"]
+    expected = (
+        f"The generated manifest reports {counts['stale_receipts']} stale receipts, "
+        f"{counts['missing_current_receipts']} missing current receipts, and "
+        f"{counts['invalid_item_receipts']} invalid item receipts."
+    )
+    evidence_indexes = sorted((_ACCEPTANCE_ROOT / "evidence").glob("*/README.md"))
+    combined = re.sub(
+        r"\s+",
+        " ",
+        "\n".join(path.read_text(encoding="utf-8") for path in evidence_indexes),
+    )
+
+    assert expected in combined
+    if counts["stale_receipts"] == 0:
+        assert "still flags the T2 receipts currently on this branch as stale" not in combined
+    if counts["missing_current_receipts"] == 0:
+        assert "only after the parallel T2 half is merged" not in combined
+
+
+def test_evidence_indexes_agree_with_the_manifest() -> None:
+    _assert_evidence_indexes_agree_with_manifest(_MANIFEST_PATH)
+
+
+def test_evidence_index_guard_detects_manifest_count_drift(tmp_path: Path) -> None:
+    _assert_evidence_indexes_agree_with_manifest(_MANIFEST_PATH)
+    manifest = _manifest()
+    manifest["counts"]["stale_receipts"] += 1
+    drifted = tmp_path / "artifact-manifest.json"
+    drifted.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(AssertionError):
+        _assert_evidence_indexes_agree_with_manifest(drifted)
 
 
 def test_documentation_index_reaches_the_install_and_release_guides() -> None:

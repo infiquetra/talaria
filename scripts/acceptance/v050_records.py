@@ -18,10 +18,12 @@ from pathlib import Path
 from typing import Any
 
 from scripts.acceptance.v050_common import (
+    ORDERED_VERDICTS,
     RELEASE_VERSION,
     TESTERS,
     VERDICTS,
     HarnessError,
+    active_receipt_paths,
     read_json_object,
     require_object,
     require_string,
@@ -225,7 +227,7 @@ def build_manifest(
     item_entries: list[dict[str, Any]] = []
     seen_items: dict[tuple[int, str], Path] = {}
     candidate_item_counts: Counter[tuple[str, str, str, str]] = Counter()
-    for path in sorted(evidence_root.glob("*/receipts/*.json")):
+    for path in active_receipt_paths(evidence_root):
         receipt = read_json_object(path)
         tester = require_string(receipt.get("tester"), field=f"{path}: tester")
         if tester not in TESTERS:
@@ -410,8 +412,7 @@ def build_manifest(
             "missing_receipts_on_disk": len(missing_on_disk),
             "missing_current_receipts": len(missing_current),
             "item_verdicts": {
-                verdict: item_verdicts[verdict]
-                for verdict in ("pass", "fail", "blocked", "reserved")
+                verdict: item_verdicts[verdict] for verdict in ORDERED_VERDICTS
             },
         },
         "candidates": candidates,
@@ -545,11 +546,39 @@ def acceptance_summary(manifest: dict[str, Any]) -> str:
     counts = require_object(manifest["counts"], field="manifest.counts")
     verdicts = require_object(counts["item_verdicts"], field="counts.item_verdicts")
     covered = int(counts["expected_receipts"]) - int(counts["missing_current_receipts"])
+    item_keys = {
+        (int(entry["checklist_item"]), str(entry["tester"]))
+        for entry in manifest["receipts"]
+        if not entry["stale_candidate"]
+    }
+    install_keys = {
+        (1, str(entry["tester"]))
+        for entry in manifest["install_receipts"]
+        if not entry["stale_candidate"]
+    }
+    overlap = sorted(item_keys & install_keys)
+    if len(overlap) == 1:
+        number, tester = overlap[0]
+        overlap_summary = (
+            f"The one-receipt overlap is checklist item {number} for {tester}, which has "
+            "both an item receipt and an install receipt. "
+        )
+    elif overlap:
+        labels = ", ".join(
+            f"checklist item {number} for {tester}" for number, tester in overlap
+        )
+        overlap_summary = (
+            f"The {len(overlap)} receipt overlaps are {labels}; each has both an item "
+            "receipt and an install receipt. "
+        )
+    else:
+        overlap_summary = "There is no overlap between item and install receipts. "
     return (
         f"**{status}**: {covered} of {counts['expected_receipts']} expected "
         "checklist/tester slots are covered. "
         f"The evidence set separately contains {counts['current_receipts']} current receipts "
         f"({counts['item_receipts']} item and {counts['install_receipts']} install). "
+        f"{overlap_summary}"
         f"Item verdicts are {verdicts['pass']} pass, {verdicts['blocked']} blocked, and "
         f"{verdicts['fail']} fail."
     )

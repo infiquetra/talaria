@@ -15,7 +15,7 @@
     "current_receipts": 44,
     "expected_receipts": 43,
     "install_receipts": 2,
-    "invalid_item_receipts": 0,
+    "invalid_item_receipts": 42,
     "item_receipts": 42,
     "item_verdicts": {
       "blocked": 1,
@@ -67,8 +67,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-01-c2.ansi",
       "capture_sha256": "03236a6bb5b6c6201be303f38d206f5766029762ad1f1389a77f796a25048efb",
       "checklist_item": 1,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-01-talaria-t2.json",
       "receipt_sha256": "f715ea4a87b00b9a962c7356c0cd8eb7f0de01246e7b2a1fce07ccd403652391",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-01-c2.png",
@@ -85,8 +87,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-02-c2.ansi",
       "capture_sha256": "a6d81289c5b24900de21b7948e9221f957291c55b00f7ef088f4c179231528aa",
       "checklist_item": 2,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-02-talaria-t1.json",
       "receipt_sha256": "e70ac5ecb4b2130565e50aeb67fb45deceed20e2aa4f305c82b3de6930e2829c",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-02-c2.png",
@@ -103,8 +107,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-02-live-public-c2.ansi",
       "capture_sha256": "bb474cc60fbc8d5cce7b7c6b742902e30fd3bbcf68ec889f9e385f1434f5d61b",
       "checklist_item": 2,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-02-talaria-t2.json",
       "receipt_sha256": "16bce3582e62aea2a5d7d47f260f931a5f1fed1c95a68afb1deb109cbeff00ad",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-02-full-route-fresh-c2.png",
@@ -121,8 +127,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-03-c2.ansi",
       "capture_sha256": "467ed8b695f744f8566742a08875c525283010ec2f9b2d6af43eee31aa111e33",
       "checklist_item": 3,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-03-talaria-t2.json",
       "receipt_sha256": "6e48b8b450a4b8eafbf8a9b31299957492eec1ce86499a24ea81a9680fcd9e10",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-03-c2.png",
@@ -139,8 +147,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-04-c2a.ansi",
       "capture_sha256": "2468a9df90ba6ec291e58dd575e5d56ef45fa37bab1f7ad4a57e36f8a4d4ab2b",
       "checklist_item": 4,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-04-talaria-t1.json",
       "receipt_sha256": "0c766a809de0f0f8e352886eb295cbe6f7068ec6b4b80d3dda23f998ef871e7d",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-04-c2a.png",
@@ -157,8 +167,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-05-c2a.ansi",
       "capture_sha256": "f414620f3622abf593c66609eecc68fa0760112808d469bd25272d4755d73a3d",
       "checklist_item": 5,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-05-talaria-t1.json",
       "receipt_sha256": "f7829e04e839877929e69f78aa59d971e2f0cc97e4ec2a13e4448044058a875f",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-05-c2a.png",
@@ -175,8 +187,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-06-c2a.ansi",
       "capture_sha256": "c2b364bfa124c17142cb19fa53691df56f5ddfd35d50260b4320a3211b4e4f50",
       "checklist_item": 6,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-06-talaria-t1.json",
       "receipt_sha256": "701c59648f15dfa25d486664ccdf6eb05047b9eb32d99e61089d51e74dc72bb3",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-06-c2a.png",
@@ -193,8 +207,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-07-c2a.ansi",
       "capture_sha256": "905745799a221eb39fb595d9861426ff61568466876921664bc5b78def1a7639",
       "checklist_item": 7,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-07-talaria-t1.json",
       "receipt_sha256": "0094c2c43e5bdde32a6343f679178655eb2f5ff9204a7d95918a29936a298483",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-07-c2a.png",
@@ -211,8 +227,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-08-c2a.ansi",
       "capture_sha256": "de7153ea8c99fae69d12008198235202212a48f06a2ab49b49571ea6ba0da393",
       "checklist_item": 8,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-08-talaria-t1.json",
       "receipt_sha256": "2e12d663b03bf88f4177aeb3e500e099d8899e24a96340ed440c645e90a05aa9",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-08-c2a.png",
@@ -229,8 +247,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-09-session-c2a.ansi",
       "capture_sha256": "e6657300c101befcbaf873d2bfd52e651d233530f56d8511df6fd8ce1fe24822",
       "checklist_item": 9,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-09-talaria-t1.json",
       "receipt_sha256": "164ac6670fef3f7c00ffdeeca00b1b3ddf52ee1804f50ce1b7ddcc9f0f045c04",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-09-session-c2a.png",
@@ -247,8 +267,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-10-c2.ansi",
       "capture_sha256": "555606c0e3b16aecac0961bb249d5177d4eb583e23894c42622f21c41e6f102d",
       "checklist_item": 10,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-10-talaria-t1.json",
       "receipt_sha256": "14ffb62d4033dc048ab54150b0bd95602469bd0fe583258bad368bc85960eb76",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-10-c2.png",
@@ -265,8 +287,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-11-c2.ansi",
       "capture_sha256": "9f9d6c0368e8a90a117c6ba18038129e124b200d315fae514f9f947fe46ff40b",
       "checklist_item": 11,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-11-talaria-t1.json",
       "receipt_sha256": "2b1762c27583f7892be819523680a55e9279daa9ac9ca80fbcdb7045257b9a60",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-11-c2.png",
@@ -283,8 +307,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-12-c2.ansi",
       "capture_sha256": "5031391aae0ff81bfbdcb1fc359dd9b832468f94a86a050a13cb4fc092dbe8f4",
       "checklist_item": 12,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-12-talaria-t2.json",
       "receipt_sha256": "774759de03fdbf7e85963329a1a7ea999ab4e9219277d87cd2b6e45bd9aaacde",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-12-c2.png",
@@ -301,8 +327,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-13-c2.ansi",
       "capture_sha256": "037de0bb6de5d7d788b00a64c3a2cbe623489362979c398fc7cf5347b3ac3e8f",
       "checklist_item": 13,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-13-talaria-t2.json",
       "receipt_sha256": "92ebdcd65ea39e29d0b0fec6979c60538f3b551f41fa1f0100700347fd9c0683",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-13-c2.png",
@@ -319,8 +347,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-14-c2.ansi",
       "capture_sha256": "587820dd6bfa7f407987fafcec4773362dc990a0407099615b9cfa169103ae1f",
       "checklist_item": 14,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-14-talaria-t2.json",
       "receipt_sha256": "984ba883a7407194db2e0c15551d2f8e5d8921c89ad265eb618dd802da8c8348",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-c2.png",
@@ -337,8 +367,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-15-invalid-c2a.ansi",
       "capture_sha256": "fd83888139a630b5b328d6d44b8bd9bd330242a6a4ca7f1187e5c4f0782ea6c2",
       "checklist_item": 15,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-15-talaria-t1.json",
       "receipt_sha256": "d3a5212ca2ee72f3ab715bf8500fe4bcac3bb54e0c152b254f9e9197ddfda227",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-15-invalid-c2a.png",
@@ -355,8 +387,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-15-invalid-c2.ansi",
       "capture_sha256": "d66f2f237b14e57daa77d262741bf37078281727ff07e60d8bdeea474539f0cf",
       "checklist_item": 15,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-15-talaria-t2.json",
       "receipt_sha256": "0de264d7c45e702343cff5d033af218520490e8fc81264b9cda6f1759c0c3857",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-15-invalid-c2.png",
@@ -373,8 +407,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-16-c2.ansi",
       "capture_sha256": "5bf567338de1a632c8681c9351f4a7f8a661e613078e9ccd1c8849b8813c1c69",
       "checklist_item": 16,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-16-talaria-t2.json",
       "receipt_sha256": "c7bf13020f1c522e9fa645a0e9d9be73b767a689f239c22fe6362afb8bb3accc",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-16-c2.png",
@@ -391,8 +427,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-17-empty-c2.ansi",
       "capture_sha256": "20552b1878dea5d7dcb44131dc722988a4acff7ea493d6dbffe631c4bbea9916",
       "checklist_item": 17,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-17-talaria-t2.json",
       "receipt_sha256": "e5c15f4ad1eaa052fe0488b6b22ba10ec319255c71f9fb7f4005a410753405e2",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-17-empty-c2.png",
@@ -409,8 +447,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-18-c2.ansi",
       "capture_sha256": "dae46b6aaa2e77de8bf88713d0c009b1e80650406746a2b4596ecc820742aa90",
       "checklist_item": 18,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-18-talaria-t2.json",
       "receipt_sha256": "dd9ee5a76038203bf098ecc91f7a4a5dba4d03aca19b9fb8d51002e74dd9894b",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18-fresh-c2.png",
@@ -427,8 +467,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-19-c2.ansi",
       "capture_sha256": "f42e32b6dcaec5c02cd897246575f41be64281925493c5c67ff992aff6099b5a",
       "checklist_item": 19,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-19-talaria-t2.json",
       "receipt_sha256": "20cc4614e16b0a9fe155fe4dd92f980e2bfc6bfc4aa1cfa1e696eef3bf3139a3",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-19-screen-c2.png",
@@ -445,8 +487,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-20-c2.ansi",
       "capture_sha256": "fc4568a6b74cbef7bf113507cb7182a624a91c669debf75456943cf4c6092aba",
       "checklist_item": 20,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-20-talaria-t2.json",
       "receipt_sha256": "a00e2a3c8d45dcc933f3c53ed299d936bbd3b4a4e51b05e5cbc2aee173f80ca3",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-screen-c2.png",
@@ -463,8 +507,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-21-c2.ansi",
       "capture_sha256": "7252977ade680f39b682e5586fbc4ad78bf060de68cec10f930ec7ca0f9bf04a",
       "checklist_item": 21,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-21-talaria-t2.json",
       "receipt_sha256": "e38b43f949670f161a292e34104135c936a3f09bc66fee4395df9aff7af83dc8",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-21-screen-c2.png",
@@ -481,8 +527,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-22-c2a.ansi",
       "capture_sha256": "a457238fbfc2fba2ae21136e81f4d4ff6924644f943a6d61d605fed27be7ead2",
       "checklist_item": 22,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-22-talaria-t1.json",
       "receipt_sha256": "5b8294abf6a95dc7e1c7052809a0946b3b75f7fd7f541fe94efc50c6ad1fb682",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-22-c2a.png",
@@ -499,8 +547,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-23-c2b.ansi",
       "capture_sha256": "2532bb8f70b2e63ce1fc53ec8f2c42b72fbf53351917d5626c0ba2161242266e",
       "checklist_item": 23,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-23-talaria-t1.json",
       "receipt_sha256": "05f49267431ad256b6a94fe847696bb29e0634c5792a81505641996436bb137b",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-c2b.png",
@@ -517,8 +567,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-24-c2.ansi",
       "capture_sha256": "721dd2e52f969b6eaf419d6b5ab997a67089ba0e048ebad27c4e3fb5365e641e",
       "checklist_item": 24,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-24-talaria-t1.json",
       "receipt_sha256": "1513f47a8adbef9e4504e464949b6453bb55728612c7fe496aebabd1cc35c230",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-24-c2.png",
@@ -535,8 +587,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-25-c2a.ansi",
       "capture_sha256": "d66ceff8b5175494084e6c12c24abfb30cdbe5cf103e6c746cd5c6905946a9b3",
       "checklist_item": 25,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-25-talaria-t1.json",
       "receipt_sha256": "b3c3cb5db65e91802f2934911908b69478fd043da7601aecca1c2ffd43b1c25f",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-25-c2a.png",
@@ -553,8 +607,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-26-reduced-c2.ansi",
       "capture_sha256": "189702df856d2c9f50db7e8f2f4ff319038e90e4ed719537faa61c3f0374d210",
       "checklist_item": 26,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-26-talaria-t1.json",
       "receipt_sha256": "4f348cb1c616e77caee5a5223bb96ed8f5deaac68a6ab6f4642246c1a633f625",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-26-reduced-c2.png",
@@ -571,8 +627,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-27-c2a.ansi",
       "capture_sha256": "775578bae53aead6bae5eafb94c7b31397580fa7b442c070994dfee5904d216d",
       "checklist_item": 27,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-27-talaria-t1.json",
       "receipt_sha256": "9424fc97e53b7b363f02186034bdd586228e6ef377fd57939b62c20c8cd20bda",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-c2a.png",
@@ -589,8 +647,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-28-c2a.ansi",
       "capture_sha256": "5cba05a3891acc894351e7855bbe2cbcdbcd46857e8f2206ec1410e8eaee3a39",
       "checklist_item": 28,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-28-talaria-t1.json",
       "receipt_sha256": "8d6f103ee88f1afbfa042c6aea3703f35f1c446afae285ef6c0ccd4e85a312fa",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-28-c2a.png",
@@ -607,8 +667,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-29-c2.ansi",
       "capture_sha256": "98dfdc762b3bf8c6f860138c142b3693db19ca09a01020a3e8537754dd276050",
       "checklist_item": 29,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-29-talaria-t2.json",
       "receipt_sha256": "320377650848160f84502bd882cc8511fbc06d3f7038f2ea604198f8277bf05b",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29-c2.png",
@@ -625,8 +687,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-30-c2.ansi",
       "capture_sha256": "3268f276a9eb5f1eef8c36c11838f5a95a31148b6719e9df04598eb831fc79b6",
       "checklist_item": 30,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-30-talaria-t2.json",
       "receipt_sha256": "723e3c536e94e1814872e0197cf6963e7954b521454fe7697dc2ba781b13fa5e",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screen-c2.png",
@@ -643,8 +707,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-31-c2b.ansi",
       "capture_sha256": "fb519a242fd00328e7691714f07876a9598ff962721584d583d7641a504e3935",
       "checklist_item": 31,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-31-talaria-t1.json",
       "receipt_sha256": "b5b31f8b0e0673c6928aaf79c9aef23474d52743a9dc3f23fb04235a005d24ac",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-31-c2b.png",
@@ -661,8 +727,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-32-c2.ansi",
       "capture_sha256": "977d74427f56b36aae2aff55209b6fc992b5e0403c0f0ff66b6460b6b4ba400e",
       "checklist_item": 32,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-32-talaria-t2.json",
       "receipt_sha256": "154a99519e389c497dc0250a20f5870927e8d9ac69f0c8c1f2b16d41e726a8bb",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-32-restart-c2.png",
@@ -679,8 +747,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-33-c2.ansi",
       "capture_sha256": "0e0aa44b237fbe6c85efcbd9d936be3228a20a9b85247b3f6b734df8152fa3dd",
       "checklist_item": 33,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-33-talaria-t1.json",
       "receipt_sha256": "545401bd545d595f6dd8c409bead68f813c0cee01deb7feb70b145d189017440",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-33-c2.png",
@@ -697,8 +767,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-33-invalid-retry-c2.ansi",
       "capture_sha256": "56a229e04b377a5183beced876dc99a5e71b49e311428ffbcd0c8344cfdaaf3c",
       "checklist_item": 33,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-33-talaria-t2.json",
       "receipt_sha256": "31ec6b442e6390d0d8b26fedc0accfa214340e5b7b4930169e34d7cd44f6ea83",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-33-invalid-retry-c2.png",
@@ -715,8 +787,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-34-c2b.ansi",
       "capture_sha256": "f556251be556a0a4d9734f52c9a48cf08657951c5252a12dd25fbafc78b67736",
       "checklist_item": 34,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-34-talaria-t1.json",
       "receipt_sha256": "ce88b3116cc41d80f685091d4ea204bf28edf958f23bc918706b8a699c4a411e",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-34-c2b.png",
@@ -733,8 +807,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-34-live-public-c2.ansi",
       "capture_sha256": "5b108e9f38d8b02b42f046d195d194ff6b1a4601bfc49691675e5729e231e946",
       "checklist_item": 34,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-34-talaria-t2.json",
       "receipt_sha256": "a2b5a1de004e45f82e98dec132c45aef37b93437826ed4e3a32f8f869db768f5",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-34-live-public-c2.png",
@@ -751,8 +827,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-35-after-c2.ansi",
       "capture_sha256": "561b34aa72e490dca08f0fca572f0b98491f44a1efc22e86d35f2e4f74f5c2ad",
       "checklist_item": 35,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-35-talaria-t1.json",
       "receipt_sha256": "983e986aecded18323de91d56ce9b10e8e8b1b240048e3e8485ce8e8b7f2d4ed",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-35-after-c2.png",
@@ -769,8 +847,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-35-running-c2.ansi",
       "capture_sha256": "283c6233a3345ef46a7b0d864e54b25abee2e0f126eebb39f1de4b65926a4b54",
       "checklist_item": 35,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-35-talaria-t2.json",
       "receipt_sha256": "c86452c76e1e70ad07903cda87da8896d0fb523e60b46029d5eded23fb180a01",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-35-restart-c2.png",
@@ -787,8 +867,10 @@
       "capture_path": "talaria-t1 scratch/raw/item-36-c2.ansi",
       "capture_sha256": "e19952349f7f6a9d4647e9a43236095d5444e94273e2af41a7c486ff50698afd",
       "checklist_item": 36,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-36-talaria-t1.json",
       "receipt_sha256": "62cee03e5c6eb495296af9b8473c8f2cbcaa4b7e4f94282346abd5cfe7e39b25",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-36-c2.png",
@@ -805,8 +887,10 @@
       "capture_path": "talaria-t2 scratch/raw/item-36-c2.ansi",
       "capture_sha256": "03e11fa7913d7b89a83d5b23e6578103c656e3422b7abf002547df36f4b9036a",
       "checklist_item": 36,
-      "contract_errors": [],
-      "contract_status": "valid",
+      "contract_errors": [
+        "harness_commit must be a full lowercase 40-character Git commit"
+      ],
+      "contract_status": "invalid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-36-talaria-t2.json",
       "receipt_sha256": "2ec6f968415ef0d5a6f5457a927f1f6dc653e1868e869229de98cf7f47d3b52a",
       "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-36-c2.png",
