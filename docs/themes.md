@@ -93,8 +93,12 @@ slug.
 Import a strict Visual Studio Code color-theme JSON file with:
 
 ```text
-talaria theme import FILE [--name NAME]
+talaria theme import FILE [--name NAME] [--json]
 ```
+
+`--json` writes one versioned machine-readable report to standard output. Its success and error
+fields are defined in the
+[Visual Studio Code theme import format](formats/vscode-theme-import.md).
 
 The explicit name wins over a top-level theme name, which wins over the source filename. Talaria
 requires the resulting name to already be a lowercase hyphenated slug. A name containing spaces,

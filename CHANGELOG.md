@@ -26,10 +26,12 @@ unreachable because the gateway always assigns a request identifier.
   inspector, diff, and syntax classes. `/theme` previews without writing, `Escape` restores the
   prior theme, `Enter` selects for the process, and `/theme save [user|repository]` explicitly
   persists a selection by changing only `[theme]`.
-- **A bounded Visual Studio Code theme importer.** `talaria theme import FILE [--name NAME]` accepts
-  a documented allowlist of workbench colors and syntax scopes, reports unsupported input and
-  Refined Default fallbacks, atomically replaces a deterministic user-theme JSON file, and writes
-  nothing on malformed or empty input.
+- **A bounded Visual Studio Code theme importer.**
+  `talaria theme import FILE [--name NAME] [--json]` accepts a documented allowlist of workbench
+  colors and syntax scopes, reports unsupported input and Refined Default fallbacks, atomically
+  replaces a deterministic user-theme JSON file, and writes nothing on malformed or empty input.
+  `--json` writes one versioned machine-readable report to standard output; its fields are defined
+  in the [Visual Studio Code theme import format](docs/formats/vscode-theme-import.md).
 - **A configurable true-bottom status bar.** Seven reorderable/hideable segments show launch
   directory and branch, held agent/context/task state, connection, and version in one non-wrapping
   row. Fixed breakpoints shorten and drop lower-priority segments while retaining a literal

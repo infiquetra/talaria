@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from talaria.cli import build_parser
 from talaria.config import load_config
 from talaria.themes import THEME_TOKENS
-from talaria.themes.storage import load_user_theme_spec
+from talaria.themes.builtins import BUILTIN_THEMES
+from talaria.themes.storage import StoredThemeError, load_user_theme_spec
 from talaria.ui.theme import serialize_user_theme, theme_registry_for_config
 from talaria.ui.theme_import import (
     ALWAYS_FALLBACK_TOKENS,
@@ -27,6 +31,8 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "vscode-themes"
 SAMPLE = FIXTURES / "sample-dark.json"
 REPO_ROOT = Path(__file__).parents[2]
 FORMAT_DOCUMENT = REPO_ROOT / "docs/formats/vscode-theme-import.md"
+STORED_THEME_SCHEMA = REPO_ROOT / "docs/formats/stored-theme.schema.json"
+THEMES_GUIDE = REPO_ROOT / "docs/themes.md"
 VISUAL_SPECIFICATION = (
     REPO_ROOT / "docs/design/2026-08-30-talaria-v0-5-0-visual-spec.md"
 )
@@ -58,6 +64,23 @@ def _markdown_rows(table: str) -> tuple[tuple[str, ...], ...]:
         tuple(cell.strip() for cell in line.strip().strip("|").split("|"))
         for line in table.splitlines()[2:]
     )
+
+
+def _stored_theme_validator() -> Draft202012Validator:
+    schema = json.loads(STORED_THEME_SCHEMA.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema)
+
+
+def _subparser(
+    parser: argparse.ArgumentParser, name: str
+) -> argparse.ArgumentParser:
+    for action in parser._actions:  # noqa: SLF001 - argparse has no public accessor
+        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001
+            candidate = action.choices[name]
+            assert isinstance(candidate, argparse.ArgumentParser)
+            return candidate
+    raise AssertionError(f"{parser.prog} defines no subparser named {name!r}")
 
 
 def test_representative_dark_theme_maps_exact_values_and_alpha_before_writing(
@@ -229,10 +252,7 @@ def test_stored_theme_schema_and_loader_share_version_compatibility(
 ) -> None:
     report = import_vscode_theme(SAMPLE, config_dir=tmp_path)
     document = json.loads(report.target_path.read_text(encoding="utf-8"))
-    schema_path = Path(__file__).parents[2] / "docs/formats/stored-theme.schema.json"
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    Draft202012Validator.check_schema(schema)
-    validator = Draft202012Validator(schema)
+    validator = _stored_theme_validator()
 
     validator.validate(document)
 
@@ -249,6 +269,78 @@ def test_stored_theme_schema_and_loader_share_version_compatibility(
     wrong_version["schema_version"] = "talaria-theme-v999"
     with pytest.raises(ValidationError):
         validator.validate(wrong_version)
+
+    whitespace_name = dict(legacy)
+    whitespace_name["name"] = " \u00a0 "
+    with pytest.raises(ValidationError):
+        validator.validate(whitespace_name)
+
+
+@pytest.mark.parametrize(
+    "invalid_class",
+    ("whitespace-name", "built-in-slug", "filename-slug-mismatch"),
+)
+def test_published_stored_theme_contract_matches_loader_rejections(
+    tmp_path: Path, invalid_class: str
+) -> None:
+    report = import_vscode_theme(SAMPLE, name="contract-theme", config_dir=tmp_path)
+    document = json.loads(report.target_path.read_text(encoding="utf-8"))
+    path = report.target_path
+
+    if invalid_class == "whitespace-name":
+        document["name"] = " \u00a0 "
+    elif invalid_class == "built-in-slug":
+        document["slug"] = "refined-default"
+        path = path.with_name("refined-default.json")
+    else:
+        path = path.with_name("different-filename.json")
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    validator = _stored_theme_validator()
+    schema = validator.schema
+    assert isinstance(schema, dict)
+    description = schema.get("description", "")
+    assert isinstance(description, str)
+    assert "validity is necessary but not sufficient" in description
+    assert "talaria/themes/storage.py" in description
+    assert "filename stem" in description
+    assert "built-in theme" in description
+
+    built_in_slugs = frozenset(theme.slug for theme in BUILTIN_THEMES)
+    published_contract_accepts = (
+        validator.is_valid(document)
+        and path.stem == document["slug"]
+        and document["slug"] not in built_in_slugs
+    )
+    try:
+        load_user_theme_spec(path)
+    except StoredThemeError:
+        loader_accepts = False
+    else:
+        loader_accepts = True
+
+    assert published_contract_accepts is loader_accepts
+    assert not loader_accepts
+
+
+def test_theme_import_guide_synopsis_includes_every_parser_option() -> None:
+    import_parser = _subparser(_subparser(build_parser(), "theme"), "import")
+    expected_options = {
+        option
+        for action in import_parser._actions  # noqa: SLF001 - no public accessor
+        if action.dest != "help"
+        for option in action.option_strings
+    }
+    guide = THEMES_GUIDE.read_text(encoding="utf-8")
+    match = re.search(r"(?m)^talaria theme import FILE[^\n]*$", guide)
+
+    assert match is not None
+    synopsis = match.group(0)
+    assert expected_options
+    assert all(option in synopsis for option in expected_options), (
+        expected_options,
+        synopsis,
+    )
 
 
 def test_imported_theme_survives_restart_configuration_validation(
