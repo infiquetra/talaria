@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 
 from scripts.acceptance.v050_common import HarnessError
 from scripts.acceptance.v050_records import (
+    acceptance_summary,
     check_records,
     choose_current_candidate_after_drive,
     refresh_records,
@@ -77,10 +78,25 @@ def test_results_verdict_drift_is_detected(tmp_path: Path) -> None:
 
 def test_results_observation_drift_is_detected(tmp_path: Path) -> None:
     results = _RESULTS_PATH.read_text(encoding="utf-8")
+    receipt = json.loads(
+        (
+            _ACCEPTANCE_ROOT
+            / "evidence"
+            / "t1"
+            / "receipts"
+            / "item-24-talaria-t1.json"
+        ).read_text(encoding="utf-8")
+    )
+    observation = receipt["observations"][0]
+    _, marker, generated = results.partition(
+        "<!-- BEGIN GENERATED ACCEPTANCE VERDICTS -->"
+    )
+    assert marker
+    assert observation in generated
     drifted_results = tmp_path / "results.md"
     drifted_results.write_text(
         results.replace(
-            "A real Hermes-backed turn returned 1517",
+            observation,
             "This observation was not recorded by either tester.",
             1,
         ),
@@ -91,6 +107,16 @@ def test_results_observation_drift_is_detected(tmp_path: Path) -> None:
 
     assert len(errors) == 1
     assert "observations that disagree" in errors[0]
+
+
+def test_acceptance_summary_distinguishes_coverage_from_receipt_files() -> None:
+    manifest = _manifest()
+
+    assert acceptance_summary(manifest) == (
+        "**BLOCKED**: 43 of 43 expected checklist/tester slots are covered. "
+        "The evidence set separately contains 44 current receipts (42 item and 2 install). "
+        "Item verdicts are 41 pass, 1 blocked, and 0 fail."
+    )
 
 
 def test_results_status_drift_is_detected(tmp_path: Path) -> None:

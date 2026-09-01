@@ -545,7 +545,7 @@ def _scrub_public_paths(value: Any, *, home: str, scratch_root: str) -> Any:
 
 
 def write_public_install_receipt(receipt: dict[str, Any], destination: Path) -> Path:
-    """Write a public copy without a usable source-tree or operator-home path."""
+    """Write a public copy without usable source, candidate, or operator paths."""
     public = copy.deepcopy(receipt)
     candidate = public.get("candidate")
     if not isinstance(candidate, dict):
@@ -554,6 +554,15 @@ def write_public_install_receipt(receipt: dict[str, Any], destination: Path) -> 
     if not isinstance(scratch_root, str) or not scratch_root:
         raise HarnessError("install receipt scratch_root must be a non-empty string")
     candidate["integration_tree"] = "<integration-tree>"
+    wheel_filename = candidate.get("wheel_filename")
+    if not isinstance(wheel_filename, str) or not wheel_filename:
+        raise HarnessError("install receipt candidate wheel_filename must be a non-empty string")
+    candidate["wheel_path"] = f"<candidate-root>/{wheel_filename}"
+    artifact = public.get("artifact")
+    if isinstance(artifact, dict):
+        direct_url = artifact.get("direct_url")
+        if isinstance(direct_url, dict) and isinstance(direct_url.get("url"), str):
+            direct_url["url"] = f"file://<candidate-root>/{wheel_filename}"
     public = _scrub_public_paths(
         public,
         home=str(Path.home().resolve()),

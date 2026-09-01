@@ -8,7 +8,8 @@ not contribute to the generated verdict.
 <!-- BEGIN GENERATED ACCEPTANCE STATUS -->
 ## Status: **BLOCKED**
 
-This verdict is generated from `artifact-manifest.json`; it is not maintained by hand. The manifest records 44 current receipts, 0 stale receipts, and 0 invalid item receipts.
+This verdict is generated from `artifact-manifest.json`; it is not maintained by hand. **BLOCKED**: 43 of 43 expected checklist/tester slots are covered. The evidence set separately contains 44 current receipts (42 item and 2 install). Item verdicts are 41 pass, 1 blocked, and 0 fail.
+The manifest also records 0 stale receipts and 0 invalid item receipts.
 Regenerate it with `uv run python -m scripts.acceptance.v050_records refresh --current-candidate-commit 788fc791fadd701cb74b7db8686c0a8bb444b8f8`.
 
 ```gate
