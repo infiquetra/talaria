@@ -2,6 +2,93 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-01
+
+### A shared atomic writer needs a per-caller symlink policy
+
+**Evidence.** Commit `0916045` repaired a write-through escape in the Visual Studio Code theme
+importer. Before the repair, a symlink planted at `<config>/themes/<slug>.json` made the shared
+atomic-write helper resolve and overwrite its target, even outside the configuration directory. The
+repair made `follow_symlinks=False` the helper's default, kept the configuration saver's deliberate
+opt-in, and pinned both sides with
+`tests/ui/test_theme.py::test_import_replaces_a_planted_theme_symlink_without_writing_through_it`
+and `tests/test_config.py::test_save_theme_through_a_symlink_preserves_link_target_and_mode`.
+
+**Mechanism.** One helper served two different contracts. A symlinked `config.toml` is a supported
+dotfiles arrangement whose target should be updated; an imported theme path is an output boundary
+where following a pre-existing link lets an attacker choose the destination. Making link following
+implicit gave the more permissive contract to every caller.
+
+**Generalizable rule.** A shared filesystem writer defaults to not following links; each caller that
+needs link traversal opts in and carries a test for both the link and its target.
+
+### Operator-facing key descriptions need one code-owned authority
+
+**Evidence.** Commit `adc8af4` made the `/models` and `/profiles` descriptions in
+`talaria/domain/commands.py:419-445` canonical, then made the terminal guide mirror them.
+`tests/ui/test_slash_palette.py::test_picker_keys_match_command_rows_docs_and_launch_behavior` reads
+the rendered command rows and the guide and asserts the same F11/F12 every-focus routes, while
+`::test_focus_scoped_picker_alias_keeps_its_composer_selection_contract` proves that F6/F7 retain
+their TextArea selection behavior when the composer has focus.
+
+**Mechanism.** The in-app list and the documentation table were independent statements of one
+contract. Repairing either one left the other free to restore the claim that F6/F7 always opened the
+pickers, even though Textual's composer owns those keys while focused. The collision survived two
+cycles because each surface could be correct in isolation and wrong as a pair.
+
+**Generalizable rule.** Put an operator-facing contract in one code-owned value and test every prose
+mirror against that value; exercise behavior separately rather than treating matching text as proof.
+
+### A responsive band sets an initial form, not a permanent minimum
+
+**Evidence.** Commit `1bb6d9e` changed the 20-to-31-column status band to begin with compact
+`task_progress` and `connection` segments. The complete resize walk in
+`tests/ui/test_status_bar.py:176-202` now proves that both remain at 20 and 31 columns when they fit,
+while the rendering loop may still shorten or drop `task_progress` on actual overflow.
+
+**Mechanism.** The earlier implementation pinned `task_progress` to its minimum form throughout the
+band. That confused a breakpoint's starting policy with the later overflow policy and discarded
+useful information even when the terminal had enough cells for it.
+
+**Generalizable rule.** Responsive breakpoints choose the initial representation; measured overflow,
+not the band name, decides subsequent truncation and removal.
+
+### A guard's reach must be tested against the real corpus
+
+**Evidence.** Before commit `ad3ad26`, every acceptance receipt enumerator used
+`*/receipts/*.json`. It found 42 active receipts and none of the 133 receipts under
+`evidence/<tester>/superseded/<commit>/receipts/`, the only population the quarantine guard existed
+to police. `scripts/acceptance/test_v050_harness.py::test_receipt_enumerator_covers_active_and_quarantined_populations`
+now derives the expected set with a recursive corpus walk and asserts that the shared enumerator
+matches it. The same commit added
+`tests/docs/test_v050_release_docs.py::test_evidence_index_guard_detects_manifest_count_drift`, which
+changes a real manifest input and requires the guard itself to fail.
+
+**Mechanism.** Production, validation, and tests all derived from the same one-level pattern, so they
+agreed while stopping one directory short. A separate mutation check had also become inert when its
+mutation no longer changed the input the assertion consumed; it continued reporting success while
+testing no failure path.
+
+**Generalizable rule.** A guard's input must come from the corpus or the constant the system
+produces, never from a string typed beside the assertion; also observe the guard fail after every
+mutation change.
+
+### Acceptance evidence is bound by its schema as well as by product-tree identity
+
+**Evidence.** Commit `ad3ad26` made `harness_commit` required in
+`docs/acceptance/v0.5.0/receipt.schema.json:7-30` and added
+`tests/docs/test_v050_acceptance_records.py::test_receipt_schema_requires_the_drive_time_harness_commit`.
+That harness-only change left the shipped product tree unchanged but invalidated every earlier
+item receipt, because none of those 42 documents carried the newly required provenance field. The
+two install receipts use a different contract and were not invalidated by this schema change.
+
+**Mechanism.** Product-tree identity answers whether the tested wheel contains the same product
+bytes. It does not answer whether an evidence document still conforms to the validator and schema
+that give the document meaning. Either contract can change independently.
+
+**Generalizable rule.** Decide whether acceptance evidence survives a repair by validating both the
+tested product identity and every evidence document against the current evidence contract.
+
 ## 2026-08-18
 
 ### A determinism check can never assert correctness, and this unit shipped that mistake three times

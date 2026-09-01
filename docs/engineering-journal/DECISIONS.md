@@ -2,6 +2,44 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-09-01
+
+### Talaria's reduced-motion setting is the sole animation authority
+
+**Decision.** Talaria sets Textual's animation level from restart-scoped `ui.reduced_motion` alone:
+`none` when enabled and `full` otherwise. An inherited `TEXTUAL_ANIMATIONS` value does not override
+that choice. Commit `f46aa77` and
+`tests/ui/test_motion.py::test_talaria_motion_setting_is_the_sole_animation_authority` pin both
+directions in separate processes.
+
+**Rationale.** A single documented setting must produce the same motion policy in every launch
+environment. Honoring an inherited framework variable would create a second, undocumented authority
+that could silently contradict the value Talaria injects into its own widgets.
+
+**Rejected alternatives.** Honoring `TEXTUAL_ANIMATIONS` when `ui.reduced_motion` is false was
+rejected because ambient process state would then change an accessibility behavior that Talaria
+documents as restart-scoped configuration. Combining the two values was rejected because no public
+precedence or merge semantics exist.
+
+**Revisit when.** Talaria formally exposes a framework-level animation override, or its configuration
+contract defines how that override composes with `ui.reduced_motion`.
+
+### The 20-to-31-column status band starts compact and yields to measured overflow
+
+**Decision.** The narrow status band begins with compact `task_progress` and `connection` segments.
+The ordinary truncate-then-drop loop may demote or remove `task_progress` when their rendered values
+do not fit. Commit `1bb6d9e` and the transition table in `tests/ui/test_status_bar.py:176-202` pin the
+choice.
+
+**Rationale.** A width band can state which information receives a chance to render, but only the
+rendered values reveal whether both segments fit. Starting compact preserves useful task state at 20
+columns without weakening the invariant that `connection` is the last surviving segment.
+
+**Rejected alternatives.** Dropping `task_progress` at 20 columns wastes available space. Pinning it
+to its minimum form throughout the band suppresses useful detail before overflow requires it.
+
+**Revisit when.** The minimum legibility requirement or the status-bar breakpoint contract changes.
+
 ## 2026-08-18
 
 ### Every determinism check in the gate is paired with a correctness check, or it says why not

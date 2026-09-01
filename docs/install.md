@@ -68,7 +68,8 @@ starts connecting to the configured Hermes gateway.
 ## Prepare the gateway credential
 
 Hermes keeps the dashboard session token in memory and creates a new one when its dashboard starts.
-Write the current token to Talaria's credential file without printing it:
+Write the current token to Talaria's credential file without printing it **before the first
+launch**:
 
 ```bash
 talaria refresh-credential
@@ -97,10 +98,38 @@ uv run talaria --version
 "$(uv tool dir --bin)/talaria" --version
 ```
 
-If the last two commands print `talaria 0.5.0` but the bare command exits without output or reports a
-different version, remove the stale executable from the command search or put the directory reported
-by `uv tool dir --bin` earlier on `PATH`. Start a fresh shell and repeat `command -v talaria` before
-launching. Do not try to replace it with the unrelated Python Package Index package.
+First compare the directory containing the path from `command -v talaria` with the directory printed
+by `uv tool dir --bin`:
+
+- If they are different directories, another executable is shadowing the uv tool. Remove that stale
+  executable from the command search or put the uv tool directory earlier on `PATH`. Start a fresh
+  shell and repeat `command -v talaria` before launching.
+- If they are the same directory, the uv tool environment itself is stale. Replace it with the tagged
+  release:
+
+  ```bash
+  uv tool install --force git+https://github.com/infiquetra/talaria@v0.5.0
+  ```
+
+  Alternatively, remove the tool and install the tag again:
+
+  ```bash
+  uv tool uninstall talaria
+  uv tool install git+https://github.com/infiquetra/talaria@v0.5.0
+  ```
+
+In either case, repeat the version checks after the repair. Do not install the unrelated Python
+Package Index package.
+
+### First launch stops at the credential prompt
+
+Launching before preparing the credential can stop at the hidden prompt
+`Hermes gateway session token:`. Run `talaria refresh-credential` first to avoid this prompt. If it
+is already waiting and Ctrl+C does not clear it, send end-of-file with Ctrl+D or close the terminal,
+then refresh the credential and launch again.
+
+This wait is specific to an interactive launch. With no controlling terminal, Talaria refuses the
+prompt, exits cleanly, and prints an error that names `talaria refresh-credential` as the fix.
 
 ### Authentication fails after Hermes restarts
 

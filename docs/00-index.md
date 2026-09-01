@@ -25,6 +25,10 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 ## Releases
 
 - [Talaria v0.5.0](releases/v0.5.0.md)
+- [Talaria v0.4.0](releases/v0.4.0.md)
+- [Talaria v0.3.0](releases/v0.3.0.md)
+- [Talaria v0.2.0](releases/v0.2.0.md)
+- [Talaria v0.1.0](releases/v0.1.0.md)
 
 ## Release evidence
 
@@ -45,6 +49,7 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 - [Final language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis-final.md) — previous OpenTUI-first recommendation; superseded by the reconsideration below
 - [Reconsidered language and TUI framework analysis](analysis/2026-08-02-language-and-tui-framework-analysis-reconsideration.md) — selected Python/Textual; its language half is now ADR-0004, which also retires the Go/Bubble Tea fallback
 - [Frame log format](formats/frame-log.md)
+- [Status line format](formats/status-line.md)
 - [Public-safe project context](public-safe-summary.md)
 - [Engineering journal](engineering-journal/README.md)
 
