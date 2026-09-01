@@ -43,6 +43,17 @@ def _generated_acceptance_summary(status: str) -> str:
     return re.sub(r"\s+", " ", f"{marker}{matches[0]}").strip()
 
 
+def _markdown_targets(document: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"\[[^]]+\]\(([^)]+)\)", document))
+
+
+def _second_level_section(document: str, heading: str) -> str:
+    marker = f"## {heading}\n"
+    _, found, remainder = document.partition(marker)
+    assert found, heading
+    return remainder.partition("\n## ")[0]
+
+
 def test_release_documents_quote_the_current_manifest_outcome() -> None:
     """Reader-facing release claims cannot lag a regenerated manifest again."""
     manifest = _manifest()
@@ -110,15 +121,48 @@ def test_evidence_index_guard_detects_manifest_count_drift(tmp_path: Path) -> No
         _assert_evidence_indexes_agree_with_manifest(drifted)
 
 
-def test_documentation_index_reaches_the_install_and_release_guides() -> None:
-    """The two reader entry points must be present and discoverable."""
+def test_documentation_index_reaches_the_install_guide() -> None:
+    """The installation entry point must be present and discoverable."""
     index = _DOCUMENTATION_INDEX_PATH.read_text(encoding="utf-8")
-    linked_targets = set(re.findall(r"\[[^]]+\]\(([^)]+)\)", index))
+    linked_targets = set(_markdown_targets(index))
 
     assert _INSTALL_GUIDE_PATH.is_file()
-    assert _V050_RELEASE_NOTES_PATH.is_file()
     assert "install.md" in linked_targets
-    assert "releases/v0.5.0.md" in linked_targets
+
+
+def test_documentation_index_reaches_every_release_in_newest_first_order() -> None:
+    """The release-note corpus, rather than a hand-picked file, drives reachability."""
+    index = _DOCUMENTATION_INDEX_PATH.read_text(encoding="utf-8")
+    release_section = _second_level_section(index, "Releases")
+    linked_targets = _markdown_targets(release_section)
+    expected_targets = tuple(
+        path.relative_to(_REPO_ROOT / "docs").as_posix()
+        for path in sorted(
+            (_REPO_ROOT / "docs" / "releases").glob("*.md"), reverse=True
+        )
+    )
+
+    assert expected_targets
+    assert linked_targets == expected_targets
+
+
+def test_documentation_index_reaches_every_contract_format() -> None:
+    """A new contract-format document cannot land outside the documentation index."""
+    index = _DOCUMENTATION_INDEX_PATH.read_text(encoding="utf-8")
+    linked_targets = set(_markdown_targets(index))
+    contract_paths = tuple(
+        path
+        for path in sorted((_REPO_ROOT / "docs" / "formats").glob("*.md"))
+        if re.search(
+            r"(?m)^Authority:\s*`contract`\s*$",
+            path.read_text(encoding="utf-8"),
+        )
+    )
+
+    assert contract_paths
+    for path in contract_paths:
+        target = path.relative_to(_REPO_ROOT / "docs").as_posix()
+        assert target in linked_targets, path
 
 
 def test_install_guide_states_its_audience_prerequisites_and_supported_platform() -> None:
@@ -151,6 +195,41 @@ def test_install_guide_pins_the_real_install_verification_and_recovery_paths() -
     assert "Hermes restart" in document
     assert "authentication failed" in document
     assert "talaria refresh-credential" in document
+
+
+def test_install_guide_distinguishes_both_stale_executable_shapes() -> None:
+    """Recovery differs when PATH shadows uv and when uv itself holds the stale tool."""
+    document = _INSTALL_GUIDE_PATH.read_text(encoding="utf-8")
+    _, different_marker, after_different = document.partition(
+        "If they are different directories"
+    )
+    different_case, same_marker, same_case = after_different.partition(
+        "If they are the same directory"
+    )
+
+    assert different_marker
+    assert same_marker
+    assert "PATH" in different_case
+    assert (
+        "uv tool install --force "
+        "git+https://github.com/infiquetra/talaria@v0.5.0" in same_case
+    )
+    assert "uv tool uninstall talaria" in same_case
+
+
+def test_install_guide_names_the_first_run_prompt_exit_and_prevention() -> None:
+    """The hidden first-run credential prompt has an explicit escape and prevention path."""
+    document = _INSTALL_GUIDE_PATH.read_text(encoding="utf-8")
+
+    for required in (
+        "Hermes gateway session token:",
+        "Ctrl+C",
+        "Ctrl+D",
+        "close the terminal",
+        "no controlling terminal",
+        "talaria refresh-credential",
+    ):
+        assert required in document
 
 
 def test_v050_release_notes_describe_the_shipped_upgrade_surfaces() -> None:
