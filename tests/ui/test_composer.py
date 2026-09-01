@@ -11,11 +11,13 @@ close enough.
 from __future__ import annotations
 
 import pytest
+from textual.binding import Binding
 from textual.events import Paste
+from textual.widgets import TextArea
 
 from talaria.replay.controls import INERT_NOTICE
-from talaria.ui.app import PASTE_NOT_COLLAPSED
-from talaria.ui.composer import PLACEHOLDER, Composer
+from talaria.ui.app import PASTE_NOT_COLLAPSED, TalariaApp
+from talaria.ui.composer import PLACEHOLDER, ChatTextArea, Composer
 from tests.ui.conftest import event, paused_app, streaming_turn
 
 
@@ -71,6 +73,109 @@ async def test_f7_selects_the_full_focused_composer_document() -> None:
 
         assert text_area.selected_text == "first line\nsecond line"
         await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_f6_selects_the_current_focused_composer_line() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test() as pilot:
+        text_area = app.composer.text_area
+        app.composer.text = "first line\nsecond line"
+        text_area.focus()
+        text_area.move_cursor((1, 3))
+
+        await pilot.press("f6")
+        await pilot.pause()
+
+        assert text_area.selected_text == "second line"
+        await app.shutdown_sources()
+
+
+@pytest.mark.parametrize(("key", "picker"), [("f11", "models"), ("f12", "profiles")])
+@pytest.mark.asyncio
+async def test_picker_alias_opens_from_the_unchanged_launch_focus(
+    key: str,
+    picker: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    reached: list[str] = []
+
+    async def record_picker(mode: str) -> None:
+        reached.append(mode)
+
+    monkeypatch.setattr(app, "open_picker", record_picker)
+    async with app.run_test() as pilot:
+        assert app.focused is app.composer.text_area
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        assert reached == [picker]
+        await app.shutdown_sources()
+
+
+@pytest.mark.parametrize(("key", "picker"), [("f11", "models"), ("f12", "profiles")])
+@pytest.mark.asyncio
+async def test_picker_alias_preserves_the_focused_composer_selection(
+    key: str,
+    picker: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    reached: list[str] = []
+
+    async def record_picker(mode: str) -> None:
+        reached.append(mode)
+
+    monkeypatch.setattr(app, "open_picker", record_picker)
+    async with app.run_test() as pilot:
+        text_area = app.composer.text_area
+        app.composer.text = "keep this selection"
+        text_area.focus()
+        text_area.move_cursor((0, 5))
+        text_area.move_cursor((0, 9), select=True)
+        before = text_area.selection
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        assert reached == [picker]
+        assert text_area.selection == before
+        assert text_area.selected_text == "this"
+        await app.shutdown_sources()
+
+
+def test_function_key_space_keeps_picker_and_composer_actions_distinct() -> None:
+    def bindings(owner: type[TalariaApp] | type[TextArea]) -> dict[str, Binding]:
+        return {
+            binding.key: binding
+            for binding in owner.BINDINGS
+            if isinstance(binding, Binding) and binding.key.startswith("f")
+        }
+
+    app_bindings = bindings(TalariaApp)
+    composer_bindings = bindings(ChatTextArea)
+
+    assert {
+        key: (binding.action, binding.priority)
+        for key, binding in app_bindings.items()
+    } == {
+        "f2": ("toggle_agents", True),
+        "f3": ("toggle_palette", True),
+        "f4": ("interrupt", True),
+        "f5": ("follow_bottom", True),
+        "f6": ("toggle_picker", False),
+        "f7": ("toggle_profiles", False),
+        "f8": ("toggle_pause", True),
+        "f9": ("slow_down", True),
+        "f10": ("speed_up", True),
+        "f11": ("toggle_picker", True),
+        "f12": ("toggle_profiles", True),
+    }
+    assert {
+        key: binding.action for key, binding in composer_bindings.items()
+    } == {"f6": "select_line", "f7": "select_all"}
 
 
 @pytest.mark.asyncio
