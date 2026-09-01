@@ -265,9 +265,15 @@ def test_new_reader_guides_do_not_restate_acceptance_ledger_metadata() -> None:
             assert ledger_term not in document, (path, ledger_term)
 
 
-def test_v050_candidate_remains_under_unreleased_in_the_changelog() -> None:
-    """An untagged candidate must not be presented as a released changelog section."""
+def test_v050_is_a_dated_released_section_with_a_tag_reference() -> None:
+    """A tagged release is presented as its own dated section with a working link."""
     changelog = (_REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
     assert "## [Unreleased]" in changelog
-    assert re.search(r"(?m)^## \[0\.5\.0\]", changelog) is None
+    assert re.search(r"(?m)^## \[0\.5\.0\] — \d{4}-\d{2}-\d{2}$", changelog) is not None
+    assert (
+        "[0.5.0]: https://github.com/infiquetra/talaria/releases/tag/v0.5.0" in changelog
+    )
+    assert (
+        "[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.5.0...HEAD" in changelog
+    )
