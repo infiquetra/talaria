@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "1fe418119f50bf9d9f6160ba0258006d11822b59116be2850ae2da018a8898ff",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 1,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-01-c2.ansi",
+    "capture_sha256": "03236a6bb5b6c6201be303f38d206f5766029762ad1f1389a77f796a25048efb",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-01-c2-pty.json",
+    "pty_result_sha256": "bc98b26dd0283273d8e3a2b945786028dcf457cb87b3cf5c56e6749cc8acbafa",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-01-c2.png",
+    "screenshot_sha256": "169c2979e0a7a856eb8406f7f079710a78dc12608112c899a5ab557f89f8702f"
+  },
+  "observations": [
+    "Installed executable launched from the isolated wheel environment; hierarchy and /bar evidence were produced without a source or editable install."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T03:01:46+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "install-probe",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "installed-artifact"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Installed artifact",
+  "verdict": "pass"
+}

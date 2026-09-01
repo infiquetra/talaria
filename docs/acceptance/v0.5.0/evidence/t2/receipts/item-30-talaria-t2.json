@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
-    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "install_receipt_sha256": "1fe418119f50bf9d9f6160ba0258006d11822b59116be2850ae2da018a8898ff",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 30,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-30-screenshot-resize-fix.ansi",
-    "capture_sha256": "2166f82e845bbb77486078d415b546da3d444d50bcc7442501be1ecee0ad4c11",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-30-screenshot-resize-fix-pty.json",
-    "pty_result_sha256": "cee621d3570324d320fda5b85353969244ebf8b3e0abd2249898d831c7b8246a",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-30-c2.ansi",
+    "capture_sha256": "3268f276a9eb5f1eef8c36c11838f5a95a31148b6719e9df04598eb831fc79b6",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-30-c2-pty.json",
+    "pty_result_sha256": "b0294fa2da50e890dbcf069316d15815e0bec9a7990d70b7ed9b27875bc81b40",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screenshot-resize-fix.png",
-    "screenshot_sha256": "5afa8756a347ef606553d024842e4ded1929605b81e46a2544045f11e9044053"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screen-c2.png",
+    "screenshot_sha256": "3beb28396c15b75383dd5afbcce022a507627d401376007a39f7ed10d5ed0661"
   },
   "observations": [
-    "After a real 132-to-78-column resize, the narrow capture uses unified diff, has no docked inspector, and keeps a single compact footer row."
+    "The required 78-by-36 narrow evidence keeps the inspector out of the dock, preserves fixed footer rows, and shows the held diff in unified mode."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T21:53:05+00:00",
+  "recorded_at": "2026-09-01T03:01:47+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-replay"
+    "profile": "acceptance-replay"
   },
   "terminal": {
     "columns": 78,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },
