@@ -8,9 +8,9 @@
     "malformed-acceptance"
   ],
   "capture": {
-    "bytes": 247,
+    "bytes": 172,
     "path": "<scratch-root>/raw/item-31-c2b.ansi",
-    "sha256": "64592a62f756c87c6598d2ba56a2bcc928a79f9a40798d3c0d2824827f6de1f5"
+    "sha256": "fb519a242fd00328e7691714f07876a9598ff962721584d583d7641a504e3935"
   },
   "columns": 132,
   "duration_seconds": 0.195096,

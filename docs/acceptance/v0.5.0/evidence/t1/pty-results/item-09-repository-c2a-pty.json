@@ -5,9 +5,9 @@
     "docs/acceptance/v0.5.0/corpora/t1/visual-surfaces.jsonl"
   ],
   "capture": {
-    "bytes": 250343,
+    "bytes": 250282,
     "path": "<scratch-root>/raw/item-09-repository-c2a.ansi",
-    "sha256": "304c91105575b39d5ac04478d7366181683a93402d2427581b56d86b31ef0886"
+    "sha256": "66bc15bc0a856d75f0872e4a2272e9d3fa7189375ed3c160f8ef45e07f3c296a"
   },
   "columns": 132,
   "duration_seconds": 12.287753,
