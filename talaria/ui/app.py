@@ -6368,13 +6368,15 @@ class TalariaApp(App[None]):
     # ── B1: discarded-input notice replaces the caret row (R5', KTD1-KTD5) ─
 
     #: Which ancestor id maps to which region word for the discard notice.
-    #: Transcript and agents are always no-text; prompts is no-text only when
-    #: the focused widget is NOT inside a PromptCard (KTD3, KTD5). The ancestor
-    #: walk itself survives from U3, re-interpreted from naming to classifying.
+    #: Transcript, agents, and inspector are always no-text; prompts is no-text
+    #: only when the focused widget is NOT inside a PromptCard (KTD3, KTD5).
+    #: The ancestor walk itself survives from U3, re-interpreted from naming to
+    #: classifying.
     _NO_TEXT_REGION_IDS: Final[Mapping[str, str]] = {
         "transcript": "transcript",
         "agents": "agents",
         "prompts": "prompts",
+        "inspector": "inspector",
     }
 
     #: The composer notice shown when a printable key or paste would otherwise
@@ -6393,16 +6395,20 @@ class TalariaApp(App[None]):
             "press tab to return to the message box — "
             "typing is paused while the prompts region holds the focus"
         ),
+        "inspector": (
+            "press tab to return to the message box — "
+            "typing is paused while the inspector holds the focus"
+        ),
     }
 
     def _no_text_region(self) -> str | None:
         """Which no-text region currently holds the caret, or None.
 
-        Transcript and agents are always no-text. Prompts is answer-affordant
-        only when the focused widget is inside a PromptCard; the container
-        itself (PromptRegion#prompts) holds the caret and discards keys (KTD5).
-        A focused card control classifies as not-no-text, so no notice fires
-        there (KTD3).
+        Transcript, agents, and inspector are always no-text. Prompts is
+        answer-affordant only when the focused widget is inside a PromptCard;
+        the container itself (PromptRegion#prompts) holds the caret and
+        discards keys (KTD5). A focused card control classifies as not-no-text,
+        so no notice fires there (KTD3).
         """
         focused = self.focused
         if focused is None:
