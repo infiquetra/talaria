@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from scripts.acceptance.v050_common import HarnessError
 from scripts.acceptance.v050_records import (
     check_records,
     choose_current_candidate_after_drive,
+    refresh_records,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -73,6 +75,53 @@ def test_results_verdict_drift_is_detected(tmp_path: Path) -> None:
     assert "verdict cells that disagree" in errors[0]
 
 
+def test_results_observation_drift_is_detected(tmp_path: Path) -> None:
+    results = _RESULTS_PATH.read_text(encoding="utf-8")
+    drifted_results = tmp_path / "results.md"
+    drifted_results.write_text(
+        results.replace(
+            "A real Hermes-backed turn returned 1517",
+            "This observation was not recorded by either tester.",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = check_records(results_path=drifted_results)
+
+    assert len(errors) == 1
+    assert "observations that disagree" in errors[0]
+
+
+def test_results_status_drift_is_detected(tmp_path: Path) -> None:
+    results = _RESULTS_PATH.read_text(encoding="utf-8")
+    drifted_results = tmp_path / "results.md"
+    drifted_results.write_text(
+        results.replace("## Status: **BLOCKED**", "## Status: **MUTATED**", 1),
+        encoding="utf-8",
+    )
+
+    errors = check_records(results_path=drifted_results)
+
+    assert len(errors) == 1
+    assert "status that disagrees" in errors[0]
+
+
+def test_receipt_schema_requires_observations() -> None:
+    receipt_path = next(
+        iter(sorted((_ACCEPTANCE_ROOT / "evidence").glob("*/receipts/*.json")))
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    del receipt["observations"]
+    schema = json.loads(
+        (_ACCEPTANCE_ROOT / "receipt.schema.json").read_text(encoding="utf-8")
+    )
+
+    errors = list(Draft202012Validator(schema).iter_errors(receipt))
+
+    assert any(error.validator == "required" for error in errors)
+
+
 def test_every_old_candidate_receipt_is_flagged_stale() -> None:
     manifest = _manifest()
     current = manifest["current_candidate"]
@@ -109,3 +158,19 @@ def test_drive_refresh_advances_only_to_a_descendant_candidate() -> None:
         choose_current_candidate_after_drive(
             older, "c" * 40, is_ancestor=is_ancestor
         )
+
+
+def test_refresh_rejects_a_nonexistent_candidate_before_writing(tmp_path: Path) -> None:
+    manifest = tmp_path / "artifact-manifest.json"
+
+    with pytest.raises(HarnessError, match="does not exist in this repository"):
+        refresh_records(
+            current_candidate_commit="0" * 40,
+            repo_root=_REPO_ROOT,
+            evidence_root=tmp_path / "evidence",
+            checklist_path=_ACCEPTANCE_ROOT / "checklist-items.json",
+            manifest_path=manifest,
+            results_path=_RESULTS_PATH,
+        )
+
+    assert not manifest.exists()

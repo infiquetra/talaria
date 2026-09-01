@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
+    "<scratch-root>/venv/bin/talaria",
     "replay",
     "docs/acceptance/v0.5.0/corpora/t1/focus-surface.jsonl",
     "--speed",
@@ -8,7 +8,7 @@
   ],
   "capture": {
     "bytes": 255013,
-    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/raw/item-22.ansi",
+    "path": "<scratch-root>/raw/item-22.ansi",
     "sha256": "f7ed5b0f22c0e54dc8008250c3f5eed4508d63f6370e6299b31e074c67b3bc57"
   },
   "columns": 132,

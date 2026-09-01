@@ -427,6 +427,7 @@ def _main(argv: list[str] | None = None) -> int:
         columns=args.columns,
         venv_bin=venv / "bin",
         monochrome=args.monochrome,
+        terminal_program=args.terminal_program,
     )
     artifact = receipt.get("artifact")
     candidate = receipt.get("candidate")

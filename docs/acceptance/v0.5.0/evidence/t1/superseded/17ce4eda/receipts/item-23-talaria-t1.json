@@ -1,11 +1,11 @@
 {
   "artifact": {
     "commit": "17ce4eda8e82a18b5d47766c0c279aa9751dce9f",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/bin/talaria",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
     "executable_sha256": "e6aba3508aff5fd148f2ed99f08f7bd2db39b7532484943060944d0561e1606a",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "70fcb039c3adb1934a7e328a5e15807709cd4407f16ff3303c9599a3df59c06b",
+    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
     "installed_files_sha256": "6be60d3c7e4f23d856c4e3b9a3dd0f941dc596fd38f13a37f6dfd55473a5de41",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",

@@ -1,14 +1,14 @@
 {
   "argv": [
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "<scratch-root>/venv/bin/talaria",
     "replay",
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/corpora/visual-surfaces.jsonl",
+    "<scratch-root>/corpora/visual-surfaces.jsonl",
     "--speed",
     "0"
   ],
   "capture": {
     "bytes": 198084,
-    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/raw/item-05-final2.ansi",
+    "path": "<scratch-root>/raw/item-05-final2.ansi",
     "sha256": "3c119d96de0261d6a8939c85b43aee1adf61ace562b52ca34a0bf5b649cc030e"
   },
   "columns": 132,

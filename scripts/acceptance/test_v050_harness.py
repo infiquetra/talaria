@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import copy
 import json
+import re
+import struct
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,7 +30,13 @@ from scripts.acceptance.v050_install_probe import (
     write_public_install_receipt,
 )
 from scripts.acceptance.v050_pty_driver import DriveEvent, parse_events, run_pty
-from scripts.acceptance.v050_receipt import _portable_json, validate_receipt, verify_run
+from scripts.acceptance.v050_receipt import (
+    _portable_json,
+    _verify_evidence_file,
+    validate_receipt,
+    validate_scratch_evidence_paths,
+    verify_run,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -92,6 +101,30 @@ class ResizeProbe(App[None]):
 
 
 ResizeProbe().run()
+"""
+
+_TEXTUAL_ENVIRONMENT_PROGRAM = r"""
+import os
+
+from textual import constants
+from textual.app import App
+
+
+class EnvironmentProbe(App[None]):
+    def on_mount(self) -> None:
+        message = (
+            "TEXTUAL-ENV:"
+            f"level={self.animation_level} "
+            f"theme={self.theme} "
+            f"smooth={constants.SMOOTH_SCROLL} "
+            f"fps={constants.MAX_FPS} "
+            f"terminal={os.environ['TERM_PROGRAM']}"
+        )
+        os.write(1, f"\r\n{message}\r\n".encode())
+        self.exit()
+
+
+EnvironmentProbe().run()
 """
 
 
@@ -231,6 +264,56 @@ def test_real_textual_child_observes_pty_resize_and_renders_narrow_form(tmp_path
     assert "LINES" not in environment
     assert result.rows == 36
     assert result.columns == 19
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
+def test_real_textual_child_uses_clean_defaults_and_declared_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real Textual import must not observe framework controls from the parent."""
+    for name, value in {
+        "TEXTUAL_ANIMATIONS": "none",
+        "TEXTUAL_THEME": "nord",
+        "TEXTUAL_SMOOTH_SCROLL": "0",
+        "TEXTUAL_FPS": "3",
+        "TEXTUAL_DRIVER": "parent-driver",
+        "TERM_PROGRAM": "parent-terminal",
+    }.items():
+        monkeypatch.setenv(name, value)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    terminal_program = "declared acceptance terminal"
+    environment = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=24,
+        columns=80,
+        terminal_program=terminal_program,
+    )
+
+    result = run_pty(
+        executable=Path(sys.executable),
+        argv=[sys.executable, "-c", _TEXTUAL_ENVIRONMENT_PROGRAM],
+        cwd=_REPO_ROOT,
+        environment=environment,
+        capture_path=tmp_path / "raw" / "textual-environment.ansi",
+        events=[],
+        expected_literals=[
+            "TEXTUAL-ENV:level=full theme=textual-dark smooth=True fps=60 "
+            f"terminal={terminal_program}"
+        ],
+        rows=24,
+        columns=80,
+        term="xterm-256color",
+        terminal_program=terminal_program,
+        timeout=5.0,
+    )
+
+    assert result.exit_code == 0
+    assert not result.timed_out
+    assert result.missing_literals == ()
+    assert environment["TERM_PROGRAM"] == terminal_program
+    assert not any(name.startswith("TEXTUAL_") for name in environment)
 
 
 def test_isolated_environment_makes_colour_mode_explicit(
@@ -617,8 +700,27 @@ def _primary_receipt() -> dict[str, Any]:
     )
 
 
-def test_receipt_file_verification_accepts_bytes_then_rejects_missing_capture(
-    tmp_path: Path,
+@pytest.mark.parametrize("label", ["capture", "screenshot"])
+def test_evidence_file_verification_rejects_missing_and_changed_files(
+    tmp_path: Path, label: str
+) -> None:
+    path = tmp_path / label
+    expected = sha256_file(path) if path.exists() else "0" * 64
+    assert _verify_evidence_file(path, expected, label=label) == [
+        f"{label} file is missing: {path}"
+    ]
+    path.write_bytes(b"original")
+    expected = sha256_file(path)
+    assert _verify_evidence_file(path, expected, label=label) == []
+    path.write_bytes(b"changed")
+    assert _verify_evidence_file(path, expected, label=label) == [
+        f"{label} hash does not match its file: {path}"
+    ]
+
+
+@pytest.mark.parametrize("missing_label", ["capture", "screenshot"])
+def test_receipt_file_verification_accepts_bytes_then_rejects_missing_file(
+    tmp_path: Path, missing_label: str
 ) -> None:
     capture = tmp_path / "raw" / "item-02.ansi"
     screenshot = tmp_path / "screenshots" / "item-02.png"
@@ -634,13 +736,16 @@ def test_receipt_file_verification_accepts_bytes_then_rejects_missing_capture(
     evidence["screenshot_sha256"] = sha256_file(screenshot)
 
     assert validate_receipt(receipt, verify_files=True) == []
-    capture.unlink()
+    {"capture": capture, "screenshot": screenshot}[missing_label].unlink()
 
     errors = validate_receipt(receipt, verify_files=True)
-    assert any(error.startswith("capture file is missing:") for error in errors)
+    assert any(error.startswith(f"{missing_label} file is missing:") for error in errors)
 
 
-def test_receipt_file_verification_rejects_changed_capture(tmp_path: Path) -> None:
+@pytest.mark.parametrize("changed_label", ["capture", "screenshot"])
+def test_receipt_file_verification_rejects_changed_file(
+    tmp_path: Path, changed_label: str
+) -> None:
     capture = tmp_path / "raw" / "item-02.ansi"
     screenshot = tmp_path / "screenshots" / "item-02.png"
     capture.parent.mkdir()
@@ -654,10 +759,36 @@ def test_receipt_file_verification_rejects_changed_capture(tmp_path: Path) -> No
     evidence["screenshot_path"] = str(screenshot)
     evidence["screenshot_sha256"] = sha256_file(screenshot)
 
-    capture.write_bytes(capture.read_bytes() + b"changed")
+    changed = {"capture": capture, "screenshot": screenshot}[changed_label]
+    changed.write_bytes(changed.read_bytes() + b"changed")
 
     errors = validate_receipt(receipt, verify_files=True)
-    assert any(error.startswith("capture hash does not match its file:") for error in errors)
+    assert any(
+        error.startswith(f"{changed_label} hash does not match its file:")
+        for error in errors
+    )
+
+
+@pytest.mark.parametrize(
+    ("capture", "screenshot", "message"),
+    [
+        (Path("outside/capture.ansi"), Path("scratch/screenshots/item.png"), "raw capture escaped"),
+        (
+            Path("scratch/raw/item.ansi"),
+            Path("outside/item.png"),
+            "screenshot must remain",
+        ),
+    ],
+)
+def test_scratch_evidence_paths_reject_each_outside_source(
+    tmp_path: Path, capture: Path, screenshot: Path, message: str
+) -> None:
+    with pytest.raises(HarnessError, match=message):
+        validate_scratch_evidence_paths(
+            capture=tmp_path / capture,
+            screenshot=tmp_path / screenshot,
+            scratch_root=tmp_path / "scratch",
+        )
 
 
 def test_receipt_commit_must_match_the_release_candidate() -> None:
@@ -697,6 +828,7 @@ def test_public_install_receipt_scrubs_source_tree_and_operator_home(tmp_path: P
     public = json.loads(destination.read_text(encoding="utf-8"))
 
     assert public["candidate"]["integration_tree"] == "<integration-tree>"
+    assert public["scratch_root"] == "<scratch-root>"
     assert str(Path.home()) not in destination.read_text(encoding="utf-8")
 
 
@@ -827,6 +959,104 @@ def test_verify_run_rejects_home_path_in_install_receipt(tmp_path: Path) -> None
     assert any("install receipt contains the current user's home path" in error for error in errors)
 
 
+def test_verify_run_rejects_superseded_origin_in_active_receipt(tmp_path: Path) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
+    )
+    receipt_path = next(evidence_root.glob("*/receipts/*.json"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["evidence"]["pty_result_path"] = (
+        "docs/acceptance/v0.5.0/evidence/t1/superseded/old/pty-result.json"
+    )
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any("superseded evidence origin" in error for error in errors)
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+
+
+def test_verify_run_binds_manifest_candidate_to_released_commit(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "acceptance@example.invalid")
+    _git(tmp_path, "config", "user.name", "Acceptance")
+    (tmp_path / "talaria").mkdir()
+    (tmp_path / "talaria" / "module.py").write_text("value = 1\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "candidate")
+    candidate = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path, manifest_commit=candidate, receipt_commit=candidate
+    )
+    (tmp_path / "docs-note.txt").write_text("non-release change\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "documentation only")
+    equivalent = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    assert not any(
+        "released commit" in error
+        for error in verify_run(
+            manifest_path,
+            evidence_root=evidence_root,
+            repo_root=tmp_path,
+            expected_candidate_commit=equivalent,
+        )
+    )
+
+    (tmp_path / "talaria" / "module.py").write_text("value = 2\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "product change")
+    divergent = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    errors = verify_run(
+        manifest_path,
+        evidence_root=evidence_root,
+        repo_root=tmp_path,
+        expected_candidate_commit=divergent,
+    )
+    assert any("release-relevant files differ" in error for error in errors)
+
+
+@pytest.mark.parametrize("suffix", [".ansi", ".jsonl"])
+def test_verify_run_scans_superseded_raw_evidence_portably(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
+    )
+    monkeypatch.setenv("HOME", "/different/operator")
+    leaked = evidence_root / "t1" / "superseded" / f"leak{suffix}"
+    leaked.parent.mkdir()
+    leaked.write_bytes(b"private=/Users/other-operator/secret")
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any("operator home path" in error and leaked.name in error for error in errors)
+
+
+def test_verify_run_scans_png_ancillary_text(tmp_path: Path) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
+    )
+    payload = b"Comment\x00owner@example.com"
+    chunk = struct.pack(">I", len(payload)) + b"tEXt" + payload + b"\x00\x00\x00\x00"
+    leaked = evidence_root / "t1" / "superseded" / "leak.png"
+    leaked.parent.mkdir()
+    leaked.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk)
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any("email address" in error and leaked.name in error for error in errors)
+
+
 def test_portable_json_makes_repository_paths_relative_and_scrubs_home(
     tmp_path: Path,
 ) -> None:
@@ -842,6 +1072,19 @@ def test_portable_json_makes_repository_paths_relative_and_scrubs_home(
         "event_script": "docs/event.json",
         "external_home_path": "<home>/private/capture.json",
     }
+
+
+def test_portable_json_replaces_the_tester_scratch_root(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    scratch = tmp_path / "talaria-v050-talaria-t1-secret"
+
+    portable = _portable_json(
+        {"path": str(scratch / "raw" / "capture.ansi")},
+        repo_root=repository,
+        scratch_root=scratch,
+    )
+
+    assert portable == {"path": "<scratch-root>/raw/capture.ansi"}
 
 
 def test_acceptance_schemas_validate_current_manifest_and_active_receipts() -> None:
@@ -864,6 +1107,57 @@ def test_acceptance_schemas_validate_current_manifest_and_active_receipts() -> N
     receipt_validator = Draft202012Validator(receipt_schema)
     for receipt_path in receipt_paths:
         receipt_validator.validate(json.loads(receipt_path.read_text(encoding="utf-8")))
+
+
+def test_manifest_schema_names_its_cross_field_validator() -> None:
+    schema_path = (
+        _REPO_ROOT / "docs" / "acceptance" / "v0.5.0" / "artifact-manifest.schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert "scripts.acceptance.v050_records check" in schema["description"]
+
+
+def test_workflow_actions_are_commit_pinned_and_managed() -> None:
+    workflow_root = _REPO_ROOT / ".github" / "workflows"
+    action_lines = [
+        line.strip()
+        for path in sorted(workflow_root.glob("*.yml"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("uses:")
+    ]
+    assert action_lines
+    for line in action_lines:
+        reference = line.split("#", 1)[0].rsplit("@", 1)[-1].strip()
+        assert re.fullmatch(r"[0-9a-f]{40}", reference), line
+    dependabot = (_REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    assert "package-ecosystem: github-actions" in dependabot
+
+
+def test_workflows_keep_strict_product_bandit_and_covered_harness_bandit() -> None:
+    for name in ("release.yml", "validate.yml"):
+        workflow = (_REPO_ROOT / ".github" / "workflows" / name).read_text(
+            encoding="utf-8"
+        )
+        assert "uv run bandit -r talaria -q" in workflow
+        assert "uv run bandit -r scripts -q -ll" in workflow
+        assert "bandit -r talaria scripts" not in workflow
+
+
+def test_release_workflow_binds_acceptance_to_the_released_commit() -> None:
+    workflow = (_REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    assert '--expect-candidate "${{ github.sha }}"' in workflow
+
+
+def test_committed_acceptance_evidence_passes_portable_privacy_scan() -> None:
+    acceptance = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+    assert verify_run(
+        acceptance / "artifact-manifest.json",
+        evidence_root=acceptance / "evidence",
+        repo_root=_REPO_ROOT,
+    ) == []
 
 
 def test_manifest_schema_rejects_non_not_run_status_without_receipts() -> None:
