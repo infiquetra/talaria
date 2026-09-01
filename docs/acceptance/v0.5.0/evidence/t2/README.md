@@ -5,6 +5,10 @@ commit `4c2d8dbf0ddfb7f38ba1f228369ae2d929319758`, wheel SHA-256
 `d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88`. All twenty T2 receipts
 pass. The cycle-2 evidence is preserved under `superseded/788fc791-cycle2/`.
 
+<!-- BEGIN GENERATED ACCEPTANCE MANIFEST COUNTS -->
+The generated manifest reports 0 stale receipts, 0 missing current receipts, and 0 invalid item receipts.
+<!-- END GENERATED ACCEPTANCE MANIFEST COUNTS -->
+
 | Item | Verdict | Receipt | Raw pseudo-terminal capture | Screenshot |
 | ---: | --- | --- | --- | --- |
 | 1 | passed | [receipt](receipts/item-01-talaria-t2.json) | [installed artifact](raw/item-01-c3.ansi) | [screenshot](screenshots/item-01-c3.png) |

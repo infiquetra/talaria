@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 from jsonschema import Draft202012Validator
 
+from scripts.acceptance import v050_records
 from scripts.acceptance.v050_common import (
     ORDERED_VERDICTS,
     HarnessError,
@@ -19,7 +20,9 @@ from scripts.acceptance.v050_records import (
     acceptance_summary,
     check_records,
     choose_current_candidate_after_drive,
+    evidence_index_errors,
     refresh_records,
+    render_evidence_index,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -137,6 +140,111 @@ def test_results_status_drift_is_detected(tmp_path: Path) -> None:
 
     assert len(errors) == 1
     assert "status that disagrees" in errors[0]
+
+
+def test_evidence_index_renderer_changes_only_its_managed_count_region() -> None:
+    manifest = _manifest()
+    document = "# Evidence\n\nHand-written introduction.\n\n| Item | Verdict |\n| --- | --- |\n"
+
+    initialized = render_evidence_index(document, manifest=manifest, initialize=True)
+
+    assert initialized.startswith("# Evidence\n\nHand-written introduction.\n\n")
+    assert initialized.endswith("\n| Item | Verdict |\n| --- | --- |\n")
+    assert initialized.count("<!-- BEGIN GENERATED ACCEPTANCE MANIFEST COUNTS -->") == 1
+    assert initialized.count("<!-- END GENERATED ACCEPTANCE MANIFEST COUNTS -->") == 1
+    assert (
+        "The generated manifest reports 0 stale receipts, 0 missing current receipts, "
+        "and 0 invalid item receipts."
+    ) in initialized
+
+    mutated_manifest = json.loads(json.dumps(manifest))
+    mutated_manifest["counts"]["stale_receipts"] = 7
+    updated = render_evidence_index(initialized, manifest=mutated_manifest)
+    begin = "<!-- BEGIN GENERATED ACCEPTANCE MANIFEST COUNTS -->"
+    end = "<!-- END GENERATED ACCEPTANCE MANIFEST COUNTS -->"
+
+    assert updated.partition(begin)[0] == initialized.partition(begin)[0]
+    assert updated.partition(end)[2] == initialized.partition(end)[2]
+    assert "The generated manifest reports 7 stale receipts" in updated
+
+
+def test_refresh_records_writes_counts_to_each_tester_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _manifest()
+    evidence_root = tmp_path / "evidence"
+    for tester in ("t1", "t2"):
+        path = evidence_root / tester / "README.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            f"# {tester}\n\nTester narrative.\n\n| Item | Verdict |\n| --- | --- |\n",
+            encoding="utf-8",
+        )
+    results_path = tmp_path / "results.md"
+    results_path.write_text("hand-written results\n", encoding="utf-8")
+    monkeypatch.setattr(v050_records, "_git_commit_exists", lambda *_: True)
+    monkeypatch.setattr(v050_records, "build_manifest", lambda **_: manifest)
+    monkeypatch.setattr(v050_records, "_checklist", lambda _: [])
+    monkeypatch.setattr(
+        v050_records,
+        "render_results_document",
+        lambda document, **_: document,
+    )
+
+    refresh_records(
+        current_candidate_commit="4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+        repo_root=tmp_path,
+        evidence_root=evidence_root,
+        checklist_path=tmp_path / "checklist-items.json",
+        manifest_path=tmp_path / "artifact-manifest.json",
+        results_path=results_path,
+    )
+
+    for tester in ("t1", "t2"):
+        index = (evidence_root / tester / "README.md").read_text(encoding="utf-8")
+        assert "Tester narrative." in index
+        assert (
+            "The generated manifest reports 0 stale receipts, 0 missing current receipts, "
+            "and 0 invalid item receipts."
+        ) in index
+
+
+def test_evidence_index_drift_is_checked_for_each_tester(tmp_path: Path) -> None:
+    manifest = _manifest()
+    evidence_root = tmp_path / "evidence"
+    for tester in ("t1", "t2"):
+        path = evidence_root / tester / "README.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            render_evidence_index(
+                f"# {tester}\n\nTester narrative.\n\n| Item | Verdict |\n| --- | --- |\n",
+                manifest=manifest,
+                initialize=True,
+            ),
+            encoding="utf-8",
+        )
+
+    assert evidence_index_errors(
+        manifest, evidence_root=evidence_root, repo_root=tmp_path
+    ) == []
+    t2_index = evidence_root / "t2" / "README.md"
+    t2_index.write_text(
+        t2_index.read_text(encoding="utf-8").replace(
+            "The generated manifest reports 0 stale receipts",
+            "The generated manifest reports 9 stale receipts",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = evidence_index_errors(
+        manifest, evidence_root=evidence_root, repo_root=tmp_path
+    )
+
+    assert errors == [
+        "evidence/t2/README.md has manifest counts that disagree with the generated "
+        "manifest"
+    ]
 
 
 def test_receipt_schema_requires_observations() -> None:
