@@ -7,9 +7,10 @@ The name comes from the _talaria_, Hermes's winged sandals. The project is inten
 > **Status: v0.5.0 release candidate.** Talaria dials a fleet of configured Hermes gateways, tracks
 > their sessions and waiting work, records every frame, and replays a recording with no socket open.
 > The feature code is integrated. The [v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
-> was executed on 2026-08-31 and returned **NOT SATISFIED**. The installed artifact was proven, but
-> the approved live primary model route did not produce a passing receipt and `talaria-t1` item
-> receipts and screenshots do not exist. Read the limits under "Quick start" before relying on it.
+> was executed on 2026-08-31. Its manifest status is **BLOCKED**: 43 of 43 receipts are current; item
+> verdicts are 40 pass, 1 blocked, and 0 fail. Item 24 is the only blocker and is terminally
+> unreachable because the gateway always assigns a request identifier. Read the limits under
+> "Quick start" before relying on it.
 >
 > **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)) with **Textual** as its terminal framework, which passed its validation gate on 2026-08-03 — see the [gate results](docs/analysis/2026-08-03-textual-validation-gate-results.md) and accepted [ADR-0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md). A small TypeScript tree remains under `src/`, reduced to the reference recorder the Python one is tested against; it is not the product and is described at the end of this page.
 
@@ -58,12 +59,11 @@ recorded frame log with no socket open anywhere in the process.
 [v0.4.0 release note](docs/releases/v0.4.0.md): no person has driven Talaria on Linux; a credential
 exported by the parent shell remains in the inherited process environment; and the framework
 measurements used a bare pseudo-terminal rather than a real terminal emulator. That release also
-shipped without its reserved human drive of a real foreign approval. The v0.5.0 acceptance run is
-recorded as **[NOT SATISFIED](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)**:
-the installed artifact was proven, but the approved live primary model route failed to complete and
-`talaria-t1` item receipts and screenshots do not exist. This page therefore does not claim that any
-of the v0.4.0 limits has closed or that every new theme, status, inspector, diff, and polish surface
-has terminal evidence. The historical
+shipped without its reserved human drive of a real foreign approval. The
+[v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md) is
+**BLOCKED** on item 24 alone: the real gateway always assigns a request identifier, so the keyless
+approval state the item asks for is terminally unreachable without simulation. This page therefore
+does not claim that any of the v0.4.0 limits has closed. The historical
 [v0.1 daily-driver verdict](docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md) remains useful for
 the narrower evidence it recorded, but it is not the current release verdict.
 
@@ -122,7 +122,8 @@ unrelated content management system whose last upload was 2010-06-19, and instal
 project, not this one. Talaria is not published to PyPI and this is deliberate. The latest published
 release still records no human Linux drive and bare-pseudo-terminal framework measurements, and the
 [v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
-returned **NOT SATISFIED**. Install from a release tag.
+is **BLOCKED** on item 24 alone because the gateway always assigns a request identifier. Install from
+a release tag.
 
 ### Switching Hermes profile
 

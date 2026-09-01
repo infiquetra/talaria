@@ -97,11 +97,12 @@ documented fallback and adds a visible startup notice.
 
 The other tables reach their launch consumers without that normalization. A malformed `composer`
 threshold remains raw in the loaded configuration, then is silently replaced by its default when
-the paste threshold is built. Blank or non-string `profiles.endpoints` rows are silently dropped. A
-numeric or Boolean `environment.allowlist` raises `TypeError` when an enabled status command is
-built. A string does not raise or produce a notice; it is read character by character, so `"FOO"`
-becomes `('F', 'O', 'O')`, an effectively empty default-deny allowlist rather than the requested
-name. Syntactically invalid TOML is different: it is a launch error that names the offending file.
+the paste threshold is built. Blank or non-string `profiles.endpoints` rows are silently dropped.
+For an enabled status command, `42` and `true` are truthy non-iterables and raise `TypeError`.
+`false`, `0`, `0.0`, and an empty list are treated as no allowlist and produce no notice. A string is
+iterated character by character, so `"FOO"` becomes `('F', 'O', 'O')` with no notice and produces an
+effectively empty default-deny allowlist rather than the requested name. Syntactically invalid TOML
+is different: it is a launch error that names the offending file.
 
 ## What Talaria writes
 

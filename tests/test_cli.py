@@ -620,6 +620,57 @@ def test_a_replay_launch_still_gets_the_same_configured_thresholds(
     assert threshold.lines == 9
 
 
+@pytest.mark.parametrize(
+    ("toml_value", "expected_allowlist"),
+    [
+        ("false", ()),
+        ("0", ()),
+        ("0.0", ()),
+        ("[]", ()),
+        ('"FOO"', ("F", "O", "O")),
+    ],
+)
+def test_falsy_and_string_allowlists_reach_the_status_runner_without_notice(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    toml_value: str,
+    expected_allowlist: tuple[str, ...],
+) -> None:
+    """Pin the silent cases that the deferred allowlist debt must describe."""
+    (isolated_global_config_dir / "config.toml").write_text(
+        f'[status]\ncommand = "/usr/bin/true"\n'
+        f"[environment]\nallowlist = {toml_value}\n",
+        encoding="utf-8",
+    )
+    cfg = config_module.load_config(cwd=tmp_path)
+
+    runner = cli_module._build_status_runner(cfg)
+
+    assert runner is not None
+    assert runner._allowlist == expected_allowlist
+    assert cfg.notices == ()
+
+
+@pytest.mark.parametrize("toml_value", ["42", "true"])
+def test_truthy_non_iterable_allowlists_raise_at_status_runner_construction(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    toml_value: str,
+) -> None:
+    """Pin the raising cases without broadening this repair into validation."""
+    (isolated_global_config_dir / "config.toml").write_text(
+        f'[status]\ncommand = "/usr/bin/true"\n'
+        f"[environment]\nallowlist = {toml_value}\n",
+        encoding="utf-8",
+    )
+    cfg = config_module.load_config(cwd=tmp_path)
+
+    with pytest.raises(TypeError):
+        cli_module._build_status_runner(cfg)
+
+    assert cfg.notices == ()
+
+
 def test_the_configured_status_command_reaches_the_live_app(
     isolated_global_config_dir: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:

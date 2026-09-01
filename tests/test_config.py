@@ -685,3 +685,21 @@ def test_v050_user_guide_toml_examples_parse_and_match_runtime_defaults() -> Non
     assert example["environment"] == DEFAULTS["environment"]
     assert example["composer"] == DEFAULTS["composer"]
     assert example["profiles"] == DEFAULTS["profiles"]
+
+
+def test_configuration_guide_distinguishes_malformed_allowlist_behaviors() -> None:
+    """The deferred type bug has three outcomes, not one universal failure."""
+    guide = (
+        Path(__file__).resolve().parents[1] / "docs" / "configuration.md"
+    ).read_text(encoding="utf-8")
+    guide = re.sub(r"\s+", " ", guide)
+
+    assert "`42` and `true` are truthy non-iterables and raise `TypeError`" in guide
+    assert (
+        "`false`, `0`, `0.0`, and an empty list are treated as no allowlist "
+        "and produce no notice"
+    ) in guide
+    assert (
+        'A string is iterated character by character, so `"FOO"` becomes '
+        "`('F', 'O', 'O')` with no notice"
+    ) in guide
