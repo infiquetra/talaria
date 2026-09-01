@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "docs/acceptance/v0.5.0/corpora/t1/visual-surfaces.jsonl",
+    "--speed",
+    "0"
+  ],
+  "capture": {
+    "bytes": 75365,
+    "path": "<scratch-root>/raw/item-15-invalid-c2a.ansi",
+    "sha256": "fd83888139a630b5b328d6d44b8bd9bd330242a6a4ca7f1187e5c4f0782ea6c2"
+  },
+  "columns": 144,
+  "duration_seconds": 9.270811,
+  "exit_code": 0,
+  "expected_literals": [
+    "status.interval_seconds must be an integer from 1 through 3600; using 5",
+    "status.cwd_max_columns must be an integer from 8 through 48; using 24",
+    "status.git_branch_max_columns must be an integer from 8 through 40; using 18",
+    "status.agent_model_max_columns must be an integer from 10 through 48; using 24",
+    "status.command must not be empty; the status command is disabled"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

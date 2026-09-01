@@ -629,6 +629,14 @@ def publish_receipt(
         public_install_receipt, repo_root=repo_root
     )
     artifact["install_receipt_sha256"] = sha256_file(public_install_receipt)
+    portable_receipt = _portable_json(
+        receipt,
+        repo_root=repo_root,
+        scratch_root=scratch_root,
+    )
+    if not isinstance(portable_receipt, dict):
+        raise HarnessError("published receipt must remain a JSON object")
+    receipt = portable_receipt
 
     errors = validate_receipt(
         receipt,

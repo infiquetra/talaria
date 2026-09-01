@@ -1,32 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "6fb894f3007f70a59a66051ba750ea77d280dcf4ba5003e40db5075f43684a4f",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 9,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-09-session-final2.ansi",
-    "capture_sha256": "74468c24b71e2d7ff85c3442559fd3cba15927bec6b601ee01008e8a71fa1854",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-09-session-final2-pty.json",
-    "pty_result_sha256": "5d12b129417dd82ee2a3952eb368a8301c7e45404a7ccc708762d962bc35c1ee",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-09-session-c2a.ansi",
+    "capture_sha256": "e6657300c101befcbaf873d2bfd52e651d233530f56d8511df6fd8ce1fe24822",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-09-session-c2a-pty.json",
+    "pty_result_sha256": "5ee2b1ad27e7b17ce0d8ff330c581828bda209c51592ee99c257e7a40b7cf4d5",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-09-session-final2.png",
-    "screenshot_sha256": "6a99b0f414a9e9cff9b9ea738487912749ce3a3415e1fc54e06fa590ad53e759"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-09-session-c2a.png",
+    "screenshot_sha256": "eef9422b366902de2725180b5f33f08ed55cb33d40fcaa2619b8565a55d15595"
   },
   "observations": [
-    "Three installed-binary legs proved user save, repository override, and session-only preview precedence; the session leg left both user and repository files byte-identical.",
-    "The final user config hash was 126e3d59fce2646f70d5aa5748cefe909e66538d507aeef35d25a78918c7df7f and the repository config hash was fabff0bbd0902a86aac6e7c9e1b7a20f6f309b8f0eec8659e34b0f116a2aa101."
+    "User save persisted Dark Green Terminal, repository save overrode it with Neutral Dark, and an unsaved session preview of Accessible High Contrast left both configuration hashes unchanged."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "isolated-theme-precedence"
+    "profile": "isolated multi-restart theme precedence"
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS",
+    "program": "Python-pty.fork-on-macOS",
     "rows": 36,
     "term": "xterm-256color"
   },

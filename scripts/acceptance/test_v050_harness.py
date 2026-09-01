@@ -33,6 +33,7 @@ from scripts.acceptance.v050_pty_driver import DriveEvent, parse_events, run_pty
 from scripts.acceptance.v050_receipt import (
     _portable_json,
     _verify_evidence_file,
+    publish_receipt,
     validate_receipt,
     validate_scratch_evidence_paths,
     verify_run,
@@ -830,6 +831,66 @@ def test_public_install_receipt_scrubs_source_tree_and_operator_home(tmp_path: P
     assert public["candidate"]["integration_tree"] == "<integration-tree>"
     assert public["scratch_root"] == "<scratch-root>"
     assert str(Path.home()) not in destination.read_text(encoding="utf-8")
+
+
+def test_published_item_receipt_scrubs_the_tester_scratch_root(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    evidence_root = repo_root / "docs" / "acceptance" / "v0.5.0" / "evidence"
+    public_install = evidence_root / "t1" / "install-receipt.json"
+    public_install.parent.mkdir(parents=True)
+    public_install.write_text(
+        json.dumps(
+            {
+                "schema_version": "talaria-v0.5.0-install-v1",
+                "tester": "talaria-t1",
+                "candidate": {"commit": "a" * 40, "wheel_sha256": "b" * 64},
+            }
+        ),
+        encoding="utf-8",
+    )
+    scratch = tmp_path / "talaria-v050-talaria-t1-private"
+    capture = scratch / "raw" / "item-02.ansi"
+    screenshot = scratch / "screenshots" / "item-02.png"
+    pty_result = scratch / "receipts" / "item-02-pty.json"
+    source_receipt = scratch / "receipts" / "item-02-talaria-t1.json"
+    capture.parent.mkdir(parents=True)
+    screenshot.parent.mkdir(parents=True)
+    pty_result.parent.mkdir(parents=True)
+    capture.write_bytes(b"terminal bytes")
+    screenshot.write_bytes(b"png bytes")
+    pty_result.write_text(
+        json.dumps({"executable": str(scratch / "venv/bin/talaria")}),
+        encoding="utf-8",
+    )
+    receipt = _primary_receipt()
+    receipt["artifact"]["executable"] = str(scratch / "venv/bin/talaria")
+    receipt["artifact"]["distribution_root"] = str(scratch / "venv/lib/site-packages")
+    receipt["artifact"]["install_receipt_path"] = str(scratch / "install-receipt.json")
+    receipt["evidence"].update(
+        {
+            "capture_path": str(capture),
+            "capture_sha256": sha256_file(capture),
+            "screenshot_path": str(screenshot),
+            "screenshot_sha256": sha256_file(screenshot),
+            "pty_result_path": str(pty_result),
+            "pty_result_sha256": sha256_file(pty_result),
+        }
+    )
+    source_receipt.write_text(json.dumps(receipt), encoding="utf-8")
+
+    published_path = publish_receipt(
+        source_receipt,
+        public_install_receipt=public_install,
+        evidence_root=evidence_root,
+        repo_root=repo_root,
+    )
+    published = json.loads(published_path.read_text(encoding="utf-8"))
+
+    assert published["artifact"]["executable"] == "<scratch-root>/venv/bin/talaria"
+    assert published["artifact"]["distribution_root"] == (
+        "<scratch-root>/venv/lib/site-packages"
+    )
+    assert str(scratch) not in published_path.read_text(encoding="utf-8")
 
 
 def _write_verify_run_fixture(

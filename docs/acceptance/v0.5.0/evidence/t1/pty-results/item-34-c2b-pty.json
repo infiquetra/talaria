@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria"
+  ],
+  "capture": {
+    "bytes": 136987,
+    "path": "<scratch-root>/raw/item-34-c2b.ansi",
+    "sha256": "f556251be556a0a4d9734f52c9a48cf08657951c5252a12dd25fbafc78b67736"
+  },
+  "columns": 132,
+  "duration_seconds": 55.300776,
+  "exit_code": 0,
+  "expected_literals": [
+    "TALARIA-T1-C2-KILLED-SESSION-LIVE-OK",
+    "session not found"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Codex PTY harness (forkpty)",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

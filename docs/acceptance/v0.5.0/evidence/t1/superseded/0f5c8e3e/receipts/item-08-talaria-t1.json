@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+  },
+  "checklist_item": 8,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-08-final2b.ansi",
+    "capture_sha256": "12e06001ec9492d71a29aa806aed182199d9d74290e79034aea25a96cca83eb0",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-08-final2b-pty.json",
+    "pty_result_sha256": "229ef8bf70458ac33a4e6e074d6cebe8e5a0a12354d9b6c3186b13e58ea57c97",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-08-final2b.png",
+    "screenshot_sha256": "11eea6d32ecb297b3196f56e5e108c57a3f2bd0cb36c99dbab4733a664de6fd3"
+  },
+  "observations": [
+    "The picker preview changed twice, Escape restored Refined Default, and the prepared scratch config retained SHA-256 d52792f63d1007367c808ded991d822a3d3180f02cfbd0d4a5486486a100ef5 and mtime 1788206599."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated-preview-cancellation"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Preview cancellation",
+  "verdict": "pass"
+}

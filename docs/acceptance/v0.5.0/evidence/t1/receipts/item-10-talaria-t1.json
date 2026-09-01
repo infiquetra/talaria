@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "6fb894f3007f70a59a66051ba750ea77d280dcf4ba5003e40db5075f43684a4f",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 10,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-10-final2.ansi",
-    "capture_sha256": "48c7b78e0d9a0a4e821472d3a2a8da0abed29c6e6bd1a476f19b8921f6220ae9",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-10-final2-pty.json",
-    "pty_result_sha256": "b0cb5a64f2841c6d1a986d9cb8c403db9287c1d763088a329f836b019dc08b2c",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-10-c2.ansi",
+    "capture_sha256": "555606c0e3b16aecac0961bb249d5177d4eb583e23894c42622f21c41e6f102d",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-10-c2-pty.json",
+    "pty_result_sha256": "c6b544863377d07a0c660fdcd586b5dafecf481fb9de73729d1ec3031462385d",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-10-final2.png",
-    "screenshot_sha256": "17df4e8ed00a191922b3b5778177a16d816b44884e8e06adf68d4997dddb0b50"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-10-c2.png",
+    "screenshot_sha256": "939ef1ed11cdd8c4754c97cab1e52d244e7ad8a8c8a2399ccbc6e08193518217"
   },
   "observations": [
-    "An unknown configured theme produced the visible fallback notice and Refined Default; the installed partial import remained selectable, and its import capture recorded complete fallback accounting."
+    "Startup named unavailable theme not-installed, displayed the fallback notice, then listed and applied the imported partial-fallback theme."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "isolated-theme-fallback"
+    "profile": "isolated fallback-notice replay"
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS",
+    "program": "Python-pty.fork-on-macOS",
     "rows": 36,
     "term": "xterm-256color"
   },
