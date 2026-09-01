@@ -2,32 +2,32 @@
   "artifact": {
     "direct_url": {
       "archive_info": {
-        "hash": "sha256=720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b",
+        "hash": "sha256=bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be",
         "hashes": {
-          "sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+          "sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
         }
       },
-      "url": "file:///private/tmp/talaria-v050-candidate-final2/wheel/talaria-0.5.0-py3-none-any.whl"
+      "url": "file:///private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-talaria/f4a25058-3b4e-4f9a-a1e4-c568c3567834/scratchpad/candidate-c2/wheel/talaria-0.5.0-py3-none-any.whl"
     },
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
     "installed_file_count": 147,
-    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
     "package_file": "<scratch-root>/venv/lib/python3.12/site-packages/talaria/__init__.py",
     "version": "0.5.0"
   },
   "candidate": {
     "branch": "orch/talaria-v0-5-0",
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-    "commit_short": "0f5c8e3e4",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "commit_short": "788fc791f",
     "integration_tree": "<integration-tree>",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_path": "/private/tmp/talaria-v050-candidate-final2/wheel/talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-talaria/f4a25058-3b4e-4f9a-a1e4-c568c3567834/scratchpad/candidate-c2/wheel/talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "config_dir": "<scratch-root>/config",
-  "installed_at": "2026-08-31T20:01:16+00:00",
+  "installed_at": "2026-09-01T02:34:10+00:00",
   "probes": {
     "bare_launch": {
       "argv": [
@@ -36,10 +36,10 @@
       "capture": {
         "bytes": 255,
         "path": "<scratch-root>/raw/install-bare-launch.ansi",
-        "sha256": "1714a864c50ac3d5c38f17b4e5076f8d8f248237967ec97581f0abc10e563bac"
+        "sha256": "227782042e45bcd9bf44f545451dc5ea0b1586a6ca5e88e53dfc02877f55d87b"
       },
       "columns": 132,
-      "duration_seconds": 1.070035,
+      "duration_seconds": 1.037339,
       "exit_code": 2,
       "expected_literals": [],
       "missing_literals": [],
@@ -64,11 +64,11 @@
       ],
       "exit_code": 1,
       "json_path": "<scratch-root>/receipts/install-gate.json",
-      "json_sha256": "e97f52a750eabc976d846f864c391bbb44323adb479bcefc10ea6561ddb2fbd1",
+      "json_sha256": "83acc3dc03eaff9a8cbc7563b595cd9650a4a7af1fa95e4b3b4965608fca3831",
       "known_preexisting_exceedance": {
         "block_markdown_reference_ms": 44.0,
         "check": "workload_latency_growing-one-column-table",
-        "current_sample_ms": 58.411,
+        "current_sample_ms": 86.545,
         "excluded_from_decision": true,
         "reason": "known pre-existing exceedance excluded because its run-to-run variance on the unchanged v0.5 candidate exceeds the difference it would be used to detect",
         "threshold_ms": 50.0,
@@ -77,9 +77,9 @@
           54.45,
           60.229,
           68.861,
-          58.411
+          86.545
         ],
-        "v0.5_spread_ms": 14.411
+        "v0.5_spread_ms": 32.095
       },
       "report_verdict": "fail",
       "stderr_path": "<scratch-root>/receipts/install-gate.stderr.log",

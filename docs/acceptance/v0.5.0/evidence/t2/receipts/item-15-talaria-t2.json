@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
-    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "install_receipt_sha256": "1fe418119f50bf9d9f6160ba0258006d11822b59116be2850ae2da018a8898ff",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 15,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-15-invalid.ansi",
-    "capture_sha256": "76275b2417e45a9a287b53d4a3d187d66b2cd5503f1768b789818ef20eb5b5e6",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-15-invalid-pty.json",
-    "pty_result_sha256": "0b1b26e2b367091b58d37018f0d8b796aeed70a1e806b7d84980be48b89fd7df",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-15-invalid-c2.ansi",
+    "capture_sha256": "d66f2f237b14e57daa77d262741bf37078281727ff07e60d8bdeea474539f0cf",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-15-invalid-c2-pty.json",
+    "pty_result_sha256": "ea363d513100b863f193f2036e87bbaffd6fe00aa031d4799c5b078b02948d9e",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-15-invalid.png",
-    "screenshot_sha256": "4e310b688182029176dc017412650c0a813253cfc8009c7e7f7e2b8d2848c625"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-15-invalid-c2.png",
+    "screenshot_sha256": "b90aba510519abaed8129fe506f411c680f786faff5008e2eb496d5fe244e8bd"
   },
   "observations": [
-    "Malformed status values produce visible fallback notices, and the separate command leg renders literal bounded output."
+    "Malformed command, invalid interval, and three invalid width caps each render a visible fallback notice. Supplemental item-15-command-c2.ansi shows literal bounded acceptance-status output."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T20:28:39+00:00",
+  "recorded_at": "2026-09-01T03:01:46+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-replay"
+    "profile": "acceptance-replay"
   },
   "terminal": {
     "columns": 144,
-    "program": "POSIX pseudo-terminal capture",
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

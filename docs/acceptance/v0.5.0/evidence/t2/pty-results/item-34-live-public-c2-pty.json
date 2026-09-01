@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "--record",
+    "<scratch-root>/recordings/item-34-live-public-c2.jsonl"
+  ],
+  "capture": {
+    "bytes": 85216,
+    "path": "<scratch-root>/raw/item-34-live-public-c2.ansi",
+    "sha256": "5b108e9f38d8b02b42f046d195d194ff6b1a4601bfc49691675e5729e231e946"
+  },
+  "columns": 119,
+  "duration_seconds": 42.282985,
+  "exit_code": 0,
+  "expected_literals": [],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; terminal dimensions unpinned",
+  "tester": "talaria-t2",
+  "timed_out": false
+}
