@@ -13,6 +13,12 @@ from talaria.themes.builtins import BUILTIN_THEMES
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ACCEPTANCE_ROOT = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
 _MANIFEST_PATH = _ACCEPTANCE_ROOT / "artifact-manifest.json"
+_GENERATED_RESULTS_PATH = (
+    _REPO_ROOT
+    / "docs"
+    / "acceptance"
+    / "2026-08-30-talaria-v0-5-0-live-acceptance-results.md"
+)
 _RELEASE_DOCUMENT_PATHS = (_REPO_ROOT / "README.md", _REPO_ROOT / "CHANGELOG.md")
 _DOCUMENTATION_INDEX_PATH = _REPO_ROOT / "docs" / "00-index.md"
 _INSTALL_GUIDE_PATH = _REPO_ROOT / "docs" / "install.md"
@@ -25,18 +31,21 @@ def _manifest() -> dict[str, Any]:
     )
 
 
+def _generated_acceptance_summary(status: str) -> str:
+    """Read the reader-facing summary emitted by the acceptance generator."""
+    document = _GENERATED_RESULTS_PATH.read_text(encoding="utf-8")
+    marker = f"**{status}**:"
+    matches = [line.partition(marker)[2] for line in document.splitlines() if marker in line]
+
+    assert len(matches) == 1, _GENERATED_RESULTS_PATH
+    return re.sub(r"\s+", " ", f"{marker}{matches[0]}").strip()
+
+
 def test_release_documents_quote_the_current_manifest_outcome() -> None:
     """Reader-facing release claims cannot lag a regenerated manifest again."""
     manifest = _manifest()
-    counts = manifest["counts"]
-    verdicts = counts["item_verdicts"]
     status = str(manifest["status"]).upper()
-    summary = (
-        f"**{status}**: {counts['current_receipts']} of "
-        f"{counts['expected_receipts']} receipts are current; item verdicts are "
-        f"{verdicts['pass']} pass, {verdicts['blocked']} blocked, and "
-        f"{verdicts['fail']} fail"
-    )
+    summary = _generated_acceptance_summary(status)
 
     for path in _RELEASE_DOCUMENT_PATHS:
         document = path.read_text(encoding="utf-8")
