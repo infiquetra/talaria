@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+  },
+  "checklist_item": 34,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-34-shared-live-killed.ansi",
+    "capture_sha256": "2df68f32ce41ff015882fe3a215e1a6e575e95f425cc068c6b2e7fad429bbf00",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-34-shared-live-killed-pty.json",
+    "pty_result_sha256": "d5934fcf0887df971a2f56c8f0b4a135c87013d84e12d3b6604dcfba122245ec",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-34-shared-live-killed.png",
+    "screenshot_sha256": "b50aba18f6c618b039e13f445f63dfe16e1861c3a5450a450f95cedccdf5cd60"
+  },
+  "observations": [
+    "A completed live turn returned TALARIA-T1-LIVE-OK on muse-spark-1.2-contributor; closing only that recorded session returned closed=true, and the next prompt produced an explicit code 4001 session not found response while dashboard process 19785 remained listening."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-08-31T22:32:08+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "live",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": "opencode-go / muse-spark-1.2-contributor",
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "used"
+    },
+    "profile": "default-isolated-dashboard-8790"
+  },
+  "terminal": {
+    "columns": 144,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Killed session",
+  "verdict": "pass"
+}

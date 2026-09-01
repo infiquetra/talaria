@@ -1,0 +1,53 @@
+{
+  "artifact": {
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+  },
+  "checklist_item": 33,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-33-auth-final2b.ansi",
+    "capture_sha256": "cb5c8c1ea3053bef98c91b17f86180f79874e488fab2a84eef6116de95e73291",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-33-auth-final2b-pty.json",
+    "pty_result_sha256": "2ece3b43f7a87e2c0ce027e50b1716e9bc9fcd447a2673e8102e8269528971bd",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-33-auth-final2b.png",
+    "screenshot_sha256": "7e033ca49076f45f87879b7a75f9c10e08af7f25300b88206af6f8c56fb3fd9b"
+  },
+  "observations": [
+    "The authorized isolated dashboard restart changed the listener from PID 74947 to PID 19785 using the identical hermes -p default dashboard --host 127.0.0.1 --port 8790 --no-open command.",
+    "Talaria reached a visible authentication-failed HTTP 403 state with [!] auth instead of hanging or showing a blank interface; the selected capture contains no credential value, token query, or bearer header.",
+    "The replacement dashboard remains detached under parent PID 1, and the scratch credential was freshly re-minted after the failure leg."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-08-31T20:44:32+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "failure",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "not-reached"
+    },
+    "profile": "default on isolated dashboard 8790"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; NO_COLOR; isolated Hermes dashboard 8790",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Dead gateway credential",
+  "verdict": "pass"
+}

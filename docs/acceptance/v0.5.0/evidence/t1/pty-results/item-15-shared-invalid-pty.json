@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "replay",
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/corpora/visual-surfaces.jsonl",
+    "--speed",
+    "0"
+  ],
+  "capture": {
+    "bytes": 91688,
+    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/raw/item-15-shared-invalid.ansi",
+    "sha256": "2f05ddf71a414c07abd5f5715aba6ed9b18c1249bf1d61a3c9b226d390760616"
+  },
+  "columns": 144,
+  "duration_seconds": 9.259636,
+  "exit_code": 0,
+  "expected_literals": [
+    "status.interval_seconds must be an integer from 1 through 3600; using 5",
+    "status.cwd_max_columns must be an integer from 8 through 48; using 24",
+    "status.git_branch_max_columns must be an integer from 8 through 40; using 18",
+    "status.agent_model_max_columns must be an integer from 10 through 48; using 24",
+    "status.command must be a non-empty string; the status command is disabled"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

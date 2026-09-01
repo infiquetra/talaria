@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
-    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
-    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "install_receipt_sha256": "c96c75197ba8e8ecc353cebcae13f66f431ab5f8a510246d718dffa934883726",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 14,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-14.ansi",
-    "capture_sha256": "a65bdf5809873b5e260f6e5718acb670b14679819b2367eb2c778ac2edd85e04",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-14-pty.json",
-    "pty_result_sha256": "21ce607d9d6dbdaa476c9d4549afbbbef2e61b6f1627665681d17f8aa93820f2",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-14-resize-fix.ansi",
+    "capture_sha256": "e3d82cec0f935ac0a9463b8208eca3b95e6eb7c5c173c90e4522b8f9dc62d8b2",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-14-resize-fix-pty.json",
+    "pty_result_sha256": "1949e0d3a94e490250d71473b07a2e7b32f86d933119a1560efce16c79726086",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14.png",
-    "screenshot_sha256": "f6a075b3f2edd9d30bb5ff4f13884f591f72fa79f3f199c17986ec4d0389eae2"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-resize-fix.png",
+    "screenshot_sha256": "44f26f8259651f76f0a0a56716131f363fa3626852cce0e3a825e79606fa8f39"
   },
   "observations": [
-    "The raw drive records the specified 144-to-19 sequence; forms compact and segments drop in the specified bands while the bar stays one row, with compact connection retained at the narrowest width."
+    "With COLUMNS and LINES unpinned, the real child reflowed at every breakpoint from 144 through 19 columns; the final 19-column frame contains only the connection [ok] form and exactly fifteen background cells."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T14:40:21+00:00",
+  "recorded_at": "2026-08-31T21:53:04+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-replay"
   },
   "terminal": {
     "columns": 19,
-    "program": "Headless POSIX pseudo-terminal",
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

@@ -549,6 +549,15 @@ class EntryMarkdown(Markdown):
     #: exactly as the stock widget keys its own ``BLOCKS``.
     BLOCKS = _safe_block_classes()
 
+    #: Textual gives paragraphs and several other top-level Markdown blocks a
+    #: bottom margin. That margin separates blocks inside a document, but the
+    #: final one otherwise becomes a blank transcript row between entries.
+    DEFAULT_CSS = """
+    EntryMarkdown > .entry-markdown--last-block {
+        margin-bottom: 0;
+    }
+    """
+
     def __init__(
         self,
         markdown: str = "",
@@ -607,6 +616,7 @@ class EntryMarkdown(Markdown):
         async def _update_then_correct() -> None:
             await parent_update
             self._correct_last_parsed_line(clean)
+            self._trim_trailing_block_margin()
 
         return AwaitComplete(_update_then_correct())
 
@@ -635,6 +645,13 @@ class EntryMarkdown(Markdown):
                 self._last_parsed_line = token.map[0]
                 return
 
+    def _trim_trailing_block_margin(self) -> None:
+        """Keep inter-block spacing while removing the entry's trailing row."""
+        blocks = [child for child in self.children if isinstance(child, MarkdownBlock)]
+        last = blocks[-1] if blocks else None
+        for block in blocks:
+            block.set_class(block is last, "entry-markdown--last-block")
+
     def append(self, markdown: str) -> AwaitComplete:
         """Append a fragment, defanged before it is parsed.
 
@@ -644,4 +661,10 @@ class EntryMarkdown(Markdown):
         mirrors) — the defect lives only in how the checkpoint gets seeded
         by :meth:`update`, never in how ``append`` maintains it afterward.
         """
-        return super().append(defang(markdown))
+        parent_append = super().append(defang(markdown))
+
+        async def _append_then_trim() -> None:
+            await parent_append
+            self._trim_trailing_block_margin()
+
+        return AwaitComplete(_append_then_trim())
