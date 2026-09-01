@@ -53,25 +53,39 @@ useful information even when the terminal had enough cells for it.
 **Generalizable rule.** Responsive breakpoints choose the initial representation; measured overflow,
 not the band name, decides subsequent truncation and removal.
 
-### A guard's reach must be tested against the real corpus
+### A guard's reach must be tested against the real corpus, and a self-scan is not a gate
 
-**Evidence.** Before commit `ad3ad26`, every acceptance receipt enumerator used
-`*/receipts/*.json`. It found 42 active receipts and none of the 133 receipts under
-`evidence/<tester>/superseded/<commit>/receipts/`, the only population the quarantine guard existed
-to police. `scripts/acceptance/test_v050_harness.py::test_receipt_enumerator_covers_active_and_quarantined_populations`
-now derives the expected set with a recursive corpus walk and asserts that the shared enumerator
-matches it. The same commit added
-`tests/docs/test_v050_release_docs.py::test_evidence_index_guard_detects_manifest_count_drift`, which
-changes a real manifest input and requires the guard itself to fail.
+**Evidence.** This release produced the same reach defect three times. Before commit `ad3ad26`, every
+acceptance receipt enumerator used `*/receipts/*.json`; it found 42 active receipts and none of the
+133 receipts under `evidence/<tester>/superseded/<commit>/receipts/`, the only population the
+quarantine guard existed to police. Commit `4a23b28` replaced tester evidence-index prose that
+restated manifest counts by hand with generated regions derived from the manifest. Then the three
+code-review artifacts were prepared for publication with a purpose-built eight-pattern privacy scan
+that reported clean, while the scanner this repository enforces rejected the same draft with eight
+errors across four files. That result and the subsequent redaction are recorded at
+`docs/evidence/adhoc-orch-talaria-v0-5-0/REDACTION.md:10-14`.
 
-**Mechanism.** Production, validation, and tests all derived from the same one-level pattern, so they
-agreed while stopping one directory short. A separate mutation check had also become inert when its
-mutation no longer changed the input the assertion consumed; it continued reporting success while
-testing no failure path.
+Commit `96d9e2c4` closed the third reach defect. The old privacy sweep enumerated only the acceptance
+release root, so no file under `docs/evidence/` could reach the detector. `_PUBLIC_EVIDENCE_ROOTS` at
+`scripts/acceptance/v050_receipt.py:48-51` now names both publication roots; an absent root simply
+contributes no files. The regression
+`scripts/acceptance/test_v050_harness.py::test_verify_run_privacy_scans_published_review_evidence`
+plants an operator-home-shaped string below `docs/evidence/` and fails if that root is narrowed away.
+Measured at `da7ea10`, the shipped gate scanned 1,251 files, including all nine under
+`docs/evidence/`, and returned zero errors. The same detector against an isolated planted file below
+that root returned exactly one error naming the file; removing it restored zero.
 
-**Generalizable rule.** A guard's input must come from the corpus or the constant the system
-produces, never from a string typed beside the assertion; also observe the guard fail after every
-mutation change.
+**Mechanism.** In the receipt case, production, validation, and tests shared one shallow glob and
+therefore agreed while missing the guarded population. In the index case, the assertion consumed a
+sentence typed beside it rather than the manifest that produced the fact. In the privacy case, the
+detector was sound but its roots stopped before the directory the release publishes into. The
+controller's self-scan added a second failure mode: a check written alongside its artifact inherits
+the producer's assumptions and blind spots, so passing it establishes only internal agreement. The
+repository-owned scanner was independent of those assumptions and found what the self-scan could not.
+
+**Generalizable rule.** Derive a guard's input from the complete corpus the system publishes,
+mutation-test its reach there, and require the repository's independently enforced gate; a producer's
+self-scan is preflight, not proof.
 
 ### Acceptance evidence is bound by its schema as well as by product-tree identity
 
