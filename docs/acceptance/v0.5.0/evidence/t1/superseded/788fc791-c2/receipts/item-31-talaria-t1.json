@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 31,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-31-c2b.ansi",
+    "capture_sha256": "fb519a242fd00328e7691714f07876a9598ff962721584d583d7641a504e3935",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-31-c2b-pty.json",
+    "pty_result_sha256": "10c44dbb42bb4d4b9bc3877cd491057e1eeefd9fde6781749eb99e557942e531",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-31-c2b.png",
+    "screenshot_sha256": "2e83b486025c74fc078f1c3d86258df8d1a72c6dd810850c9f134e70d6daeb28"
+  },
+  "observations": [
+    "The installed theme importer rejected the committed malformed Visual Studio Code fixture as non-strict JSON with exit 3 and did not create malformed-acceptance.json."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T03:08:28+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated malformed-import command"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Codex PTY harness (forkpty)",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Malformed Visual Studio Code import",
+  "verdict": "pass"
+}

@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 35,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-35-after-c2.ansi",
+    "capture_sha256": "561b34aa72e490dca08f0fca572f0b98491f44a1efc22e86d35f2e4f74f5c2ad",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-35-after-c2-pty.json",
+    "pty_result_sha256": "7e58d9f18ef246f851516fda2fe528d03ea9a4b4fac1bd8a8f931c6b29c026c9",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-35-after-c2.png",
+    "screenshot_sha256": "cc7fc5985069dd0295c5d15a28d1d0bcf3e5afec5f7c9884c1430d5c085c9619"
+  },
+  "observations": [
+    "Changing the scratch theme from Accessible High Contrast to Neutral Dark did not affect the running process; only the clean restart applied Neutral Dark."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T03:08:28+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated restart-only configuration pair"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Restart-only configuration",
+  "verdict": "pass"
+}

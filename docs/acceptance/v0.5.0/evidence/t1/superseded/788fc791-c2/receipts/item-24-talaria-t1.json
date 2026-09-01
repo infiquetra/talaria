@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 24,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-24-c2.ansi",
+    "capture_sha256": "721dd2e52f969b6eaf419d6b5ab997a67089ba0e048ebad27c4e3fb5365e641e",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-24-c2-pty.json",
+    "pty_result_sha256": "24727362be40e2523038396d110e00cf2af264039cd7821f4006401fa9fca81b",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-24-c2.png",
+    "screenshot_sha256": "4c41656a277ad01466fd1c1c2a8e3ceba2c0a8406132dbe77c6572623d7d97b5"
+  },
+  "observations": [
+    "The current corpus rendered queued, running, completed, error, failed, interrupted and timeout agent forms plus blocked, approval and clarification rows in monochrome.",
+    "Blocked: Hermes v0.21.0 assigns request identifiers to live approvals, while the shipped replay format cannot encode the keyless admin-polled shape that alone becomes possibly duplicate; creating it would simulate acceptance."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T03:09:08+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated monochrome agent-queue-states replay"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; NO_COLOR",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Agent and queue non-color states",
+  "verdict": "blocked"
+}

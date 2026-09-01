@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 15,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-15-invalid-c2a.ansi",
+    "capture_sha256": "fd83888139a630b5b328d6d44b8bd9bd330242a6a4ca7f1187e5c4f0782ea6c2",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-15-invalid-c2a-pty.json",
+    "pty_result_sha256": "e44a5787a1d55de348754c57d8bc6ee0affe92b0a23072f230a72edba30b3137",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-15-invalid-c2a.png",
+    "screenshot_sha256": "c0cef56ffc576ac76ca67c8f61e8484e7b070cc57e330fdd76a3a7cc86ba9017"
+  },
+  "observations": [
+    "Invalid status configuration produced bounded visible notices for interval and width fallbacks and disabled the empty command; a second drive rendered the bounded acceptance-status-t1 command result."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated status-failure replay"
+  },
+  "terminal": {
+    "columns": 144,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Status failure visibility",
+  "verdict": "pass"
+}

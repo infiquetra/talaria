@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria"
+  ],
+  "capture": {
+    "bytes": 162623,
+    "path": "<scratch-root>/raw/item-23-c3.ansi",
+    "sha256": "b29685e7aab9d2975f7785381a982ef73aa4754f8d17a3eca549a23b2d2599d4"
+  },
+  "columns": 132,
+  "duration_seconds": 42.292089,
+  "exit_code": 0,
+  "expected_literals": [
+    "v0.5.0"
+  ],
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; NO_COLOR; isolated Hermes dashboard 8790",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

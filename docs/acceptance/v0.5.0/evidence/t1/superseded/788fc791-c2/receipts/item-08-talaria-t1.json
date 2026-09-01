@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 8,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-08-c2a.ansi",
+    "capture_sha256": "de7153ea8c99fae69d12008198235202212a48f06a2ab49b49571ea6ba0da393",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-08-c2a-pty.json",
+    "pty_result_sha256": "d892cd93a7d2833b6ebb353f182bc7a94d9c02f16cf0ec6029a445e474b65706",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-08-c2a.png",
+    "screenshot_sha256": "883876fc54d36bf4a5c6a61770842ed6540bf718d9427b40ec033947f34fca75"
+  },
+  "observations": [
+    "The picker previewed Neutral Dark, Escape cancelled it, and the final frame restored the Refined Default palette without saving the preview."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated visual-surfaces replay; preview cancellation"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Preview cancellation",
+  "verdict": "pass"
+}
