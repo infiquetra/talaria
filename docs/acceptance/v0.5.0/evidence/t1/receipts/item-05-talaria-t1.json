@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
-    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
-    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
-    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 5,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-05-color2.ansi",
-    "capture_sha256": "dbbf00fa5a489c7997d280f73cb3492a382247c9a4028742c358c56ec338204b",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-05-color2-pty.json",
-    "pty_result_sha256": "7ec6df212f6168c2389eb1634699f2786292e16f27ded0c108c5aaa0cd50fda5",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-05-final2.ansi",
+    "capture_sha256": "3c119d96de0261d6a8939c85b43aee1adf61ace562b52ca34a0bf5b649cc030e",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-05-final2-pty.json",
+    "pty_result_sha256": "8992ef91498280852ac895fe968a0b2cc060c453956762584d80cfc8aa366382",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-05.png",
-    "screenshot_sha256": "e9bc7b56925dfc406c0008756b5309623bb8938771303d4fd0b44210c0866828"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-05-final2.png",
+    "screenshot_sha256": "fda34bf09ac6889d553102c7f80551d89e5134827b2a647a4ac0d6b5004fe07b"
   },
   "observations": [
-    "The picker previewed and accepted Dark Green Terminal; the final wide frame retained readable transcript, Composer, status glyphs, inspector content, and diff marks."
+    "Dark Green Terminal settled on every visible surface; the terminal palette remained legible without collapsing semantic roles."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T12:13:38+00:00",
+  "recorded_at": "2026-08-31T20:43:49+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-visual-surfaces"
+    "profile": "isolated-dark-green-terminal"
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork acceptance driver; explicit truecolor",
+    "program": "Python pty.fork on macOS",
     "rows": 36,
     "term": "xterm-256color"
   },

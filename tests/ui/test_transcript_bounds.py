@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from textual import events
 from textual.widgets import Static
 
 from talaria.domain.projection import terminal_read, transcript_view
@@ -325,6 +326,48 @@ async def test_theme_preview_and_inspector_reflow_restore_the_reading_anchor(
         await pilot.pause()
         await pilot.pause()
         assert pane.capture_reading_anchor() == held
+
+        app.action_toggle_inspector()
+        await pilot.pause()
+        await pilot.pause()
+        assert app.inspector.is_effectively_collapsed is True
+        assert pane.capture_reading_anchor() == held
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_pointer_scroll_unpins_before_later_chrome_reflow(
+    stress_frames: list[dict[str, Any]],
+) -> None:
+    """A wheel event is consumed by the scroll pane before it can bubble to
+    the app. The pane must unpin there so later chrome changes restore the
+    reader's position rather than treating it as a follow-bottom position.
+    """
+    app, controls = paused_app(stress_frames, mount_cap=200)
+    async with app.run_test(size=(132, 36)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        assert pane.follow is True
+        for _ in range(5):
+            pane.post_message(
+                events.MouseScrollUp(
+                    pane,
+                    x=10,
+                    y=10,
+                    delta_x=0,
+                    delta_y=-1,
+                    button=0,
+                    shift=False,
+                    meta=False,
+                    ctrl=False,
+                    screen_x=10,
+                    screen_y=10,
+                )
+            )
+        await pilot.pause()
+        assert pane.follow is False
+        held = pane.capture_reading_anchor()
+        assert held is not None
 
         app.action_toggle_inspector()
         await pilot.pause()

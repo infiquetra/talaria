@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
+    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 15,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-15-invalid-rerun.ansi",
+    "capture_sha256": "891cb27f5ac2e0b30820fc8c6d2facc9676091d113fe38e9c5030d83fa560c5c",
+    "pty_result_path": "<scratch-root>/receipts/item-15-invalid-rerun-pty.json",
+    "pty_result_sha256": "95815f1603880ae07ec939d4f73dfb22cf422a69619c476c6670eaba70b5793e",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-15-invalid.png",
+    "screenshot_sha256": "8206a88bc51b8fdc997af8ea26b8c50fd961e3418bfa1c616dd49df7889c1ed1"
+  },
+  "observations": [
+    "The invalid-config capture visibly reports the malformed command, interval, cwd, git, and agent width values and names each documented default used.",
+    "A separate clean restart at raw/item-15-command.ansi renders the literal bounded output acceptance-status from the configured shell command."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-acceptance-corpus"
+  },
+  "terminal": {
+    "columns": 144,
+    "program": "Terminal.app 2.14",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Status failure visibility",
+  "verdict": "pass"
+}

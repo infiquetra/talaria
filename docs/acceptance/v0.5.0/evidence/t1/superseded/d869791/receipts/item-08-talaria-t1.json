@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
+    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 8,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-08-color2.ansi",
+    "capture_sha256": "9b1b9c1b1ae7d318f86508ae93173afdd6becd7c9761ee9a855d83adbb2c3e7d",
+    "pty_result_path": "<scratch-root>/receipts/item-08-color2-pty.json",
+    "pty_result_sha256": "6a1e534de3126af92753598336d5aaabeb8b8327579173d808fb6b73d539cb82",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-08.png",
+    "screenshot_sha256": "eb9ddaddd284d05ba2fd2d7488500c4b732e54c1427dc4c1728c23ed2cc382ed"
+  },
+  "observations": [
+    "Dark Green Terminal and Neutral Dark previewed immediately, Escape restored Refined Default, and the scratch config SHA-256 remained c0556af7ec91823950e3428c60c7cdd73dfc88e93c3fa436580699c3225547b6 with modification time 1788163146."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T12:13:38+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-visual-surfaces"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork acceptance driver; explicit truecolor",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Preview cancellation",
+  "verdict": "pass"
+}

@@ -8,6 +8,7 @@ terminal framework into a non-UI module.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -76,6 +77,24 @@ THEME_TOKENS: tuple[str, ...] = (
 _TOKEN_SET = frozenset(THEME_TOKENS)
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _OPAQUE_HEX_RE = re.compile(r"^#[0-9A-F]{6}$")
+_THEME_NAME_MAX_LENGTH = 128
+
+THEME_NAME_TYPE_FALLBACK_NOTICE = (
+    "theme.name must be a string; using Refined Default ({default_slug})"
+)
+THEME_UNAVAILABLE_FALLBACK_NOTICE = (
+    "theme {requested!r} is not available; using Refined Default ({default_slug})"
+)
+
+
+def theme_fallback_notice(requested: object, default_slug: str) -> str:
+    """Format the one operator notice shared by both theme resolution paths."""
+    template = (
+        THEME_UNAVAILABLE_FALLBACK_NOTICE
+        if isinstance(requested, str)
+        else THEME_NAME_TYPE_FALLBACK_NOTICE
+    )
+    return template.format(requested=requested, default_slug=default_slug)
 
 
 @dataclass(frozen=True)
@@ -98,6 +117,20 @@ class ThemeSpec:
             raise ValueError(f"invalid theme slug: {self.slug!r}")
         if not self.name.strip():
             raise ValueError("theme display name must not be empty")
+        if len(self.name) > _THEME_NAME_MAX_LENGTH:
+            raise ValueError(
+                "theme display name must be at most "
+                f"{_THEME_NAME_MAX_LENGTH} characters"
+            )
+        if any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or unicodedata.category(character) == "Cf"
+            for character in self.name
+        ):
+            raise ValueError(
+                "theme display name must not contain control or format characters"
+            )
 
         copied = dict(self.tokens)
         unknown = sorted(set(copied) - _TOKEN_SET)
@@ -114,4 +147,10 @@ class ThemeSpec:
         object.__setattr__(self, "tokens", MappingProxyType(copied))
 
 
-__all__ = ["THEME_TOKENS", "ThemeSpec"]
+__all__ = [
+    "THEME_NAME_TYPE_FALLBACK_NOTICE",
+    "THEME_TOKENS",
+    "THEME_UNAVAILABLE_FALLBACK_NOTICE",
+    "ThemeSpec",
+    "theme_fallback_notice",
+]

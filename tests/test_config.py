@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tomllib
 from pathlib import Path
 
@@ -21,7 +22,11 @@ from talaria.config import (
     credentials_path,
     load_config,
     recordings_dir,
+    save_theme,
 )
+from talaria.themes import ThemeSpec
+from talaria.themes.builtins import REFINED_DEFAULT
+from talaria.themes.storage import serialize_user_theme
 from tests.conftest import HERMES_DASHBOARD_TOKEN_VAR
 
 
@@ -98,6 +103,165 @@ def test_non_string_theme_falls_back_with_an_immutable_notice(
     assert cfg.get("theme", "name") == "refined-default"
     assert isinstance(cfg.notices, tuple)
     assert "must be a string" in cfg.notices[0]
+
+
+def test_scalar_theme_is_normalized_to_a_table_with_a_shape_notice(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        'theme = "refined-default"\n', encoding="utf-8"
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("theme", "name") == "refined-default"
+    assert isinstance(cfg.get("theme", "name"), str)
+    assert cfg.notices == (
+        "theme must be a table with a name key; using Refined Default "
+        "(refined-default)",
+    )
+
+
+def test_save_theme_rewrites_a_dotted_key_without_changing_neighbors(
+    isolated_global_config_dir: Path,
+) -> None:
+    path = isolated_global_config_dir / "config.toml"
+    before = (
+        b"# operator comment\n"
+        b'theme.name = "midnight-ink"  # keep this inline comment\n'
+        b"[status]\n"
+        b"interval_seconds = 7\n"
+    )
+    path.write_bytes(before)
+
+    saved = save_theme("aurora-slate", config_dir=isolated_global_config_dir)
+
+    expected = before.replace(b'"midnight-ink"', b'"aurora-slate"')
+    assert saved == path
+    assert path.read_bytes() == expected
+    assert tomllib.loads(path.read_text(encoding="utf-8")) == {
+        "theme": {"name": "aurora-slate"},
+        "status": {"interval_seconds": 7},
+    }
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        b'theme = { name = "midnight-ink", source = "operator" }',
+        b'"theme".name = "midnight-ink"',
+    ],
+    ids=("inline-table", "quoted-dotted-key"),
+)
+def test_save_theme_changes_only_the_name_for_every_top_level_toml_spelling(
+    isolated_global_config_dir: Path,
+    assignment: bytes,
+) -> None:
+    path = isolated_global_config_dir / "config.toml"
+    before = (
+        b"# operator comment\n"
+        + assignment
+        + b"  # keep this inline comment\n[status]\ninterval_seconds = 7\n"
+    )
+    path.write_bytes(before)
+
+    save_theme("aurora-slate", config_dir=isolated_global_config_dir)
+
+    after = path.read_bytes()
+    assert after == before.replace(b'"midnight-ink"', b'"aurora-slate"', 1)
+    expected = tomllib.loads(before.decode("utf-8"))
+    expected["theme"]["name"] = "aurora-slate"
+    assert tomllib.loads(after.decode("utf-8")) == expected
+
+
+def test_save_theme_through_a_symlink_preserves_link_target_and_mode(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    target = dotfiles / "talaria.toml"
+    target.write_text('[theme]\nname = "refined-default"\n', encoding="utf-8")
+    target.chmod(0o640)
+    original_mode = stat.S_IMODE(target.stat().st_mode)
+    link = isolated_global_config_dir / "config.toml"
+    link.symlink_to(target)
+
+    save_theme("neutral-dark", config_dir=isolated_global_config_dir)
+
+    assert link.is_symlink()
+    assert tomllib.loads(target.read_text(encoding="utf-8")) == {
+        "theme": {"name": "neutral-dark"}
+    }
+    assert stat.S_IMODE(target.stat().st_mode) == original_mode
+
+
+@pytest.mark.parametrize(
+    ("state", "content"),
+    [
+        (
+            "extra-field",
+            '{"dark":true,"extra":1,"name":"Broken","slug":"broken","tokens":{}}',
+        ),
+        ("unrelated-json", '{"bogus":1}'),
+        ("truncated-json", '{"dark":'),
+        ("empty-file", ""),
+        (
+            "missing-tokens",
+            '{"dark":true,"name":"Broken",'
+            '"slug":"broken-missing-tokens","tokens":{}}',
+        ),
+    ],
+)
+def test_broken_stored_themes_are_skipped_without_hiding_valid_themes(
+    isolated_global_config_dir: Path,
+    state: str,
+    content: str,
+) -> None:
+    themes = isolated_global_config_dir / "themes"
+    themes.mkdir()
+    broken = themes / f"broken-{state}.json"
+    broken.write_text(content, encoding="utf-8")
+    valid = ThemeSpec(
+        slug="valid-user",
+        name="Valid User",
+        dark=REFINED_DEFAULT.dark,
+        tokens=REFINED_DEFAULT.tokens,
+    )
+    (themes / "valid-user.json").write_bytes(serialize_user_theme(valid))
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "valid-user"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config()
+
+    assert cfg.get("theme", "name") == "valid-user"
+    assert len(cfg.notices) == 1
+    assert str(broken) in cfg.notices[0]
+    assert "skipped" in cfg.notices[0]
+
+
+def test_a_stored_imported_theme_slug_is_accepted_at_startup(
+    isolated_global_config_dir: Path,
+) -> None:
+    themes = isolated_global_config_dir / "themes"
+    themes.mkdir()
+    imported = ThemeSpec(
+        slug="stored-import",
+        name="Stored Import",
+        dark=REFINED_DEFAULT.dark,
+        tokens=REFINED_DEFAULT.tokens,
+    )
+    (themes / "stored-import.json").write_bytes(serialize_user_theme(imported))
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[theme]\nname = "stored-import"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config()
+
+    assert cfg.get("theme", "name") == "stored-import"
+    assert cfg.notices == ()
 
 
 def test_theme_has_no_command_line_override(tmp_path: Path) -> None:
@@ -551,3 +715,21 @@ def test_v050_user_guide_toml_examples_parse_and_match_runtime_defaults() -> Non
     assert example["environment"] == DEFAULTS["environment"]
     assert example["composer"] == DEFAULTS["composer"]
     assert example["profiles"] == DEFAULTS["profiles"]
+
+
+def test_configuration_guide_distinguishes_malformed_allowlist_behaviors() -> None:
+    """The deferred type bug has three outcomes, not one universal failure."""
+    guide = (
+        Path(__file__).resolve().parents[1] / "docs" / "configuration.md"
+    ).read_text(encoding="utf-8")
+    guide = re.sub(r"\s+", " ", guide)
+
+    assert "`42` and `true` are truthy non-iterables and raise `TypeError`" in guide
+    assert (
+        "`false`, `0`, `0.0`, and an empty list are treated as no allowlist "
+        "and produce no notice"
+    ) in guide
+    assert (
+        'A string is iterated character by character, so `"FOO"` becomes '
+        "`('F', 'O', 'O')` with no notice"
+    ) in guide

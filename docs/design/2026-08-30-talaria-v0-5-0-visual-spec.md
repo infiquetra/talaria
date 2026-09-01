@@ -494,8 +494,8 @@ All widths are terminal cell columns reported by Textual after the resize event.
 | 64–79 | Also drop git_branch | Auto-collapsed; overlay available | Forced unified |
 | 48–63 | Also drop context | Auto-collapsed; overlay available | Forced unified |
 | 32–47 | Also drop agent_model | Auto-collapsed; overlay available | Forced unified |
-| 20–31 | Also drop task_progress; connection remains | Auto-collapsed; overlay is terminal width minus two | Forced unified |
-| Fewer than 20 | Minimum connection form, hard-clipped only as a last resort | Full-terminal overlay only | Forced unified |
+| 20–31 | Keep task_progress and connection compact while they fit | Auto-collapsed; overlay is terminal width minus two | Forced unified |
+| Fewer than 20 | Drop task_progress; minimum connection form, hard-clipped only as a last resort | Full-terminal overlay only | Forced unified |
 
 ### Status-bar truncation and drop contract
 
@@ -521,6 +521,8 @@ Within a width band, the algorithm is deterministic:
 4. Use a middle ellipsis for paths, branches, and model names so both identity ends survive. Use a trailing ellipsis for other prose, but never remove the connection glyph, queue attention count, or context percentage.
 5. Only after every lower-priority segment is at minimum may the lowest-priority segment drop. Repeat until the row fits.
 6. Remove separators adjacent to a dropped segment. Render exactly one row with text-wrap disabled and ellipsis as the final terminal-capability safeguard.
+
+In the 20–31-column band, `task_progress` and `connection` start in compact form. The normal overflow loop shortens `task_progress` only when their actual content does not fit; below 20 columns the breakpoint drops it and keeps the minimum connection form.
 
 At default caps, seven full forms plus six one-cell separators fit in 144 columns. The optional status-bar integer keys are cwd_max_columns (default 24, valid 8–48), git_branch_max_columns (default 18, valid 8–40), and agent_model_max_columns (default 24, valid 10–48). Invalid values visibly fall back to their defaults. Layout thresholds remain fixed even when caps are customized.
 
@@ -665,12 +667,16 @@ $schema, name, and type are metadata and do not warn. type may set the imported 
 
 ### Tokens with no Visual Studio Code source
 
-These fourteen Talaria extension tokens have no entry in either supported mapping and therefore always come from Refined Default during import:
+These eighteen Talaria extension tokens have no entry in either supported mapping and therefore always come from Refined Default during import:
 
 | Fallback-only token | Reason |
 |---|---|
 | talaria.secondary | No bounded workbench key has the same semantic role |
 | talaria.status.muted | Visual Studio Code exposes status foreground but no secondary status text role |
+| talaria.status.success | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.warning | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.error | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.attention | Visual Studio Code has no bounded per-state status-bar colour role |
 | talaria.transcript.operator | Talaria-specific transcript channel |
 | talaria.transcript.operator.background | Talaria-specific transcript channel |
 | talaria.transcript.assistant | Talaria-specific transcript channel |
@@ -689,13 +695,13 @@ Any other token falls back only when its listed source is absent or invalid. The
 Example report shape:
 
 ~~~text
-Imported solar-example as user theme solar-example: 37 source tokens, 17 fallbacks.
+Imported solar-example as user theme solar-example: 40 source tokens, 18 fallbacks, 3 warnings.
 warning: root.include is unsupported; external theme files are not read
 warning: colors.editorCursor.foreground is unsupported
 warning: tokenColors[7].settings.fontStyle is unsupported
 fallback: talaria.secondary <- Refined Default #6F42C1
 fallback: talaria.transcript.operator <- Refined Default #0969DA
-… 15 more fallback tokens
+… 16 more fallback tokens
 ~~~
 
 ## Non-color signaling
@@ -740,7 +746,7 @@ AgentRows currently recognizes exactly these seven normalized states. A row may 
 | Status command failed | [x] status followed by exit/timeout/config reason |
 | Status output truncated | [!] status truncated followed by the existing row-limit marker |
 
-In the bottom bar's task_progress segment, the literal !N queue-attention marker uses talaria.status.attention; the glyph and count remain present when color is disabled. The task_progress segment replaces only NeedsYouBar's one-line summary. /needs continues to show the current queue's full, literal detail. A narrow breakpoint may drop task_progress, but opening /needs must still expose these non-color forms.
+In the bottom bar's task_progress segment, the literal !N queue-attention marker uses talaria.status.attention; the glyph and count remain present when color is disabled. The task_progress segment replaces only NeedsYouBar's one-line summary. /needs continues to show the current queue's full, literal detail. Below 20 columns or on real overflow task_progress may drop, but opening /needs must still expose these non-color forms.
 
 ### Selection and transcript identity
 

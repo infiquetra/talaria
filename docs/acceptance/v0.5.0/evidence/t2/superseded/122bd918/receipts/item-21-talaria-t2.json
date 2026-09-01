@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
+    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+  },
+  "checklist_item": 21,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-21-screenshot-width.ansi",
+    "capture_sha256": "0c3661ca5ee866bc01f7bf91d1af76715416ce39416508a276324f24ca3d4a9d",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-21-screenshot-width-pty.json",
+    "pty_result_sha256": "8a0f6768bec9635484aecb90b3ca1f98447bf984b21e00d962f27f67881d3120",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-21.png",
+    "screenshot_sha256": "f30406653e10160858cf3baf05d5332e2e78afb909f0982999d82247d4884639"
+  },
+  "observations": [
+    "Hunk and file navigation wrap deterministically across three files and five hunks, the overlong line clips with bounded horizontal movement, and unbound mutation keys do not change held data.",
+    "The committed raw/item-21-palette.ansi capture offers only the read-only diff command; the viewer hint offers navigation, mode, files, and close actions with no mutation action."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-08-31T14:40:22+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-acceptance-corpus"
+  },
+  "terminal": {
+    "columns": 112,
+    "program": "Headless POSIX pseudo-terminal",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Diff navigation and boundary",
+  "verdict": "pass"
+}

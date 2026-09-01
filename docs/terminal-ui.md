@@ -45,12 +45,15 @@ has handled the resize.
 | 64–79 | Also drop `git_branch` |
 | 48–63 | Also drop `context` |
 | 32–47 | Also drop `agent_model` |
-| 20–31 | Also drop `task_progress`; keep `connection` |
-| Fewer than 20 | Minimum `connection` form, clipped only as a final safeguard |
+| 20–31 | Keep `task_progress` and `connection` compact while they fit |
+| Fewer than 20 | Drop `task_progress`; minimum `connection` form, clipped only as a final safeguard |
 
 Within a band, overflowing values shorten and then drop by fixed priority: `version`, `cwd`,
 `git_branch`, `context`, `agent_model`, and `task_progress`. `connection` is never deliberately
 dropped. Separators next to a dropped segment disappear with it.
+
+At 20–31 columns, `task_progress` and `connection` start compact. Actual overflow may shorten or
+drop `task_progress`; below 20 columns the breakpoint drops it and keeps minimum `connection`.
 
 ## Right inspector
 
@@ -143,8 +146,9 @@ changing widget height. Transcript kinds retain both a literal label/gutter and 
 background, and connection, task, approval, and diff states retain glyphs or words when color is
 unavailable.
 
-With `ui.reduced_motion = true`, nonessential spinners use a static `[..]` form and routed scrolling
-jumps directly to the same destination. Protocol progress and elapsed-time text still update.
+With `ui.reduced_motion = true`, nonessential spinners use a static `[..]` form. All scrolling jumps
+directly to the same destination, including scrolling driven by arrow keys, Page Up, Page Down, Home,
+and End. Protocol progress and elapsed-time text still update.
 
 When the transcript is following the bottom, new content stays followed. When the operator has
 scrolled away, render updates preserve the held entry identifier and source-line offset as closely

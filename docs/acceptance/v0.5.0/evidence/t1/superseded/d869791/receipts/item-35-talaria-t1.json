@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
+    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 35,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-35-after-restart.ansi",
+    "capture_sha256": "4730b3054bafc1b9d794736b1d80f96df7b74a542e4bae250e269337b8112956",
+    "pty_result_path": "<scratch-root>/receipts/item-35-after-restart-pty.json",
+    "pty_result_sha256": "0f12193e658c72ce3240dd89804ba13905fc90188962126ec300998bf919f991",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-35-after-restart.png",
+    "screenshot_sha256": "5e2627ba973e361e9c3446c8971759da46bd3fa4067fcd2d3fba613f41124e09"
+  },
+  "observations": [
+    "Editing the scratch config while the first process ran left its Accessible High Contrast presentation unchanged; only the fresh process loaded Neutral Dark.",
+    "The before-restart capture and screenshot are raw/item-35-before-restart.ansi and screenshots/item-35-before-restart.png."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-08-31T12:13:39+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-restart-only-config"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Restart-only configuration",
+  "verdict": "pass"
+}

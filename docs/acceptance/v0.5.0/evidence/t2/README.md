@@ -1,91 +1,96 @@
-# Talaria v0.5.0 acceptance evidence — talaria-t2
+# Talaria v0.5.0 T2 confirming acceptance evidence
 
-This directory records issue #110 acceptance against frozen candidate commit
-`d86979127f871a479eb104fc10c886b5c5480a8c` and wheel SHA-256
-`a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb`. The wheel
-was installed by the acceptance harness at
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp`.
-Every committed receipt passed the receipt validator. Raw American National Standards Institute
-(ANSI) pseudo-terminal captures remain under that scratch root. The committed screenshots are
-deterministic Portable Network Graphics renderings of those reviewed raw pseudo-terminal captures;
-no Computer Use or graphical user interface automation was used.
+This active evidence set was produced from the installed wheel for final candidate commit
+`0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398`, wheel SHA-256
+`720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b`. All nineteen T2 receipts
+pass. The immediately preceding `d9c82443` candidate evidence is retained
+unchanged under `superseded/d9c82443/`; the still older evidence remains in its existing
+candidate-specific directories.
 
-## Verdicts
+| Item | Verdict | Receipt | Raw pseudo-terminal capture | Screenshot |
+| ---: | --- | --- | --- | --- |
+| 2 | passed | [receipt](receipts/item-02-talaria-t2.json) | [live primary route](raw/item-02-shared-live-rerun.ansi) | [screenshot](screenshots/item-02-shared-live-rerun.png) |
+| 3 | passed | [receipt](receipts/item-03-talaria-t2.json) | [raw](raw/item-03.ansi) | [screenshot](screenshots/item-03.png) |
+| 12 | passed | [receipt](receipts/item-12-talaria-t2.json) | [raw](raw/item-12.ansi) | [screenshot](screenshots/item-12.png) |
+| 13 | passed | [receipt](receipts/item-13-talaria-t2.json) | [configured process](raw/item-13-rerun.ansi), [fresh process](raw/item-13-restart.ansi) | [configured process](screenshots/item-13-rerun.png), [fresh process](screenshots/item-13-restart.png) |
+| 14 | passed | [receipt](receipts/item-14-talaria-t2.json) | [corrected full resize sequence](raw/item-14-resize-fix.ansi) | [19-column form](screenshots/item-14-resize-fix.png) |
+| 15 | passed | [receipt](receipts/item-15-talaria-t2.json) | [invalid configuration](raw/item-15-invalid.ansi), [bounded command](raw/item-15-command.ansi) | [invalid configuration](screenshots/item-15-invalid.png), [bounded command](screenshots/item-15-command.png) |
+| 16 | passed | [receipt](receipts/item-16-talaria-t2.json) | [raw](raw/item-16.ansi) | [screenshot](screenshots/item-16.png) |
+| 17 | passed | [receipt](receipts/item-17-talaria-t2.json) | [empty state](raw/item-17-empty-rerun.ansi), [populated state](raw/item-17-populated-rerun.ansi) | [empty state](screenshots/item-17-empty-rerun.png), [populated state](screenshots/item-17-populated-rerun.png) |
+| 18 | passed | [receipt](receipts/item-18-talaria-t2.json) | [corrected responsive drive](raw/item-18-resize-fix.ansi), [119-column overlay](raw/item-18-overlay-resize-fix.ansi) | [120-column restoration](screenshots/item-18-resize-fix.png), [119-column overlay](screenshots/item-18-overlay-resize-fix.png) |
+| 19 | passed | [receipt](receipts/item-19-talaria-t2.json) | [raw](raw/item-19-screenshot.ansi) | [screenshot](screenshots/item-19-screenshot.png) |
+| 20 | passed | [receipt](receipts/item-20-talaria-t2.json) | [corrected mode transitions](raw/item-20-resize-fix.ansi), [111-column refusal](raw/item-20-refusal-resize-fix.ansi) | [restored layout](screenshots/item-20-resize-fix.png), [refusal](screenshots/item-20-refusal-resize-fix.png) |
+| 21 | passed | [receipt](receipts/item-21-talaria-t2.json) | [navigation and unbound keys](raw/item-21-screenshot.ansi), [command palette](raw/item-21-palette.ansi) | [navigation](screenshots/item-21-screenshot.png), [palette](screenshots/item-21-palette.png) |
+| 29 | passed | [receipt](receipts/item-29-talaria-t2.json) | [corrected resize drive](raw/item-29-resize-fix.ansi) | [wide screenshot](screenshots/item-29-resize-fix.png) |
+| 30 | passed | [receipt](receipts/item-30-talaria-t2.json) | [unified diff](raw/item-30-screenshot-resize-fix.ansi), [narrow status](raw/item-30-resize-fix.ansi) | [unified diff](screenshots/item-30-screenshot-resize-fix.png), [narrow status](screenshots/item-30-resize-fix.png) |
+| 32 | passed | [receipt](receipts/item-32-talaria-t2.json) | [session toggle](raw/item-32.ansi), [fresh process](raw/item-32-restart.ansi) | [session toggle](screenshots/item-32.png), [fresh process](screenshots/item-32-restart.png) |
+| 33 | passed | [receipt](receipts/item-33-talaria-t2.json) | [invalid scratch credential](raw/item-33-invalid-credential.ansi) | [screenshot](screenshots/item-33-invalid-credential.png) |
+| 34 | passed | [receipt](receipts/item-34-talaria-t2.json) | [live killed session](raw/item-34-live-killed-final.ansi) | [screenshot](screenshots/item-34-final.png) |
+| 35 | passed | [receipt](receipts/item-35-talaria-t2.json) | [running process](raw/item-35-running.ansi), [fresh process](raw/item-35-restart.ansi) | [running process](screenshots/item-35-running.png), [fresh process](screenshots/item-35-restart.png) |
+| 36 | passed | [receipt](receipts/item-36-talaria-t2.json) | [T2 evidence half](raw/item-36-t2-half.ansi) | [screenshot](screenshots/item-36-t2-half.png) |
 
-| Item | Verdict | Judgment |
-| ---: | :--- | :--- |
-| 3 | passed | The 144-column hierarchy keeps transcript and StatusRegion in the flexible body, Composer below them, HelpBar above BottomStatusBar, and BottomStatusBar on the final row. |
-| 12 | passed | All seven status segments render in the required order with six separators and no wrap. |
-| 13 | passed | A config replacement followed by restart reorders five visible segments, omits `cwd` and `version`, and shows the unknown-segment notice. |
-| 14 | passed | The full 144-to-19 width sequence compacts and drops segments at the specified boundaries while retaining connection on one row. |
-| 15 | passed | Malformed command, interval, and width values each produce visible fallback notices; a clean restart renders literal `acceptance-status` command output. |
-| 16 | passed | The right dock changes four columns per action, clamps at 28 and 48, and retains its held data. |
-| 17 | failed | The header-only empty drive shows honest empties for Context, Changed Files, and Operation Details, but Tasks invents a `needs-you unavailable` row instead of showing `[none available from this session]`. |
-| 18 | passed | Open and manually closed preferences survive breakpoint round trips, a 119-column supplemental capture shows the non-reflowing overlay, and two fresh processes reset geometry to 36 before widening to 40. |
-| 19 | passed | The 132-column viewer shows aligned base/working panes, line numbers, hunks, syntax, intraline treatment, position, and read-only labels. |
-| 20 | passed | Unified fallback and side-by-side restoration retain selection and scroll position; the 111-column refusal remains in the one-row header. |
-| 21 | passed | File and hunk navigation cycle, the long line clips and scrolls horizontally, unbound keys do not mutate data, and the palette/hints expose no writing action. |
-| 29 | passed | The 132-by-36 wide screenshot has a 36-column inspector and one-row footer surfaces. |
-| 30 | passed | The 78-by-36 narrow screenshot has a unified diff, overlay-only inspector behavior, and one-row footer surfaces. |
-| 32 | passed | `/bar cwd` changes only the session; the config hash and modification time are identical before and after, and a fresh process restores `cwd`. |
-| 34 | blocked | Neither approved route reached a model-backed session, so no working throwaway session existed to kill and no result was inferred. |
+The shared driver previously exported `COLUMNS=144` and `LINES=36`, so Textual ignored later
+pseudo-terminal resizes even though the driver recorded the new kernel dimensions. The corrected
+item 14 drive leaves those variables unset and traverses every specified breakpoint from 144 through
+19 columns. The final frame contains only `[ok]` plus fifteen background cells, which is the required
+minimum form. Items 18, 20, 29, and 30 were rerun for the same reason and now prove their layout at
+the real child dimensions. The invalid pinned-dimension captures and receipts remain under
+`superseded/driver-pinned-dimensions/` and are not active evidence.
 
-## Failed and blocked evidence
+Items 12, 13, and 32 otherwise passed. At 144 columns item 12 showed all seven default segments in
+the required order on one row. Item 13 showed the configured five recognized segments in order,
+omitted `cwd` and `version`, displayed the unknown-segment notice, and retained the same config after
+restart. Its config remained SHA-256
+`de189cd94d976240a6ba2f1748e82334cbbeb0938a1ce0321cc87310e98c0c1c`, 186 bytes, modification
+time `1788193831`. Item 32 hid `cwd` immediately, then a fresh process restored it; its config
+remained SHA-256 `1123f0cdd03ffbf3dd793248a822d92cce59376a71d18b06b06c7a0297aff697`, 74 bytes,
+modification time `1788193831` before the toggle, after the toggle, and after restart.
 
-Item 17's failing raw capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-17-header-only.ansi`.
-Its screenshot is `screenshots/item-17-header-only.png`. A separate populated drive at
-`raw/item-17.ansi` under the scratch root correctly shows the held subagent, context, three files,
-and operation details; the defect is limited to the empty Tasks rendering.
+Item 17 used separate populated and header-only replay processes. All four inspector headings remain;
+the populated process shows held task, context, three changed files, and operation data. The empty
+process shows the honest none-available state and contains no synthetic `needs-you unavailable` row.
 
-Item 34 is blocked by live session initialization. The primary attempt requested OpenCode Muse
-Spark 1.2 Contributor Free (`opencode/muse-spark-1.2-contributor-free`). The gateway admin API
-accepted that default and Talaria initially displayed it, but `session.create` then changed the
-session to `openai-api/gpt-5.5` and reported that provider had no usable credentials. The capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/live-primary-confirm.ansi`.
+Item 21's user-visible mutation boundary remains structural. The command palette offers only
+`/diffs`; the modal labels itself `read only`; and the hints expose navigation and view-mode actions
+only. The held state contains three files, five hunks, intraline replacements, and long clipped
+lines. Edit-like unbound keys did not change the diff or expose edit, stage, revert, discard, or
+apply controls.
 
-The permitted fallback was attempted only because the primary bounded test could not complete.
-The fallback requested Ollama GLM 5.3 Flash (`glm-5.3-flash:cloud`). Its admin default was also
-accepted and initially displayed, but the created session again changed to `openai-api/gpt-5.5`
-and failed before the fallback model could run. The capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/live-fallback-confirm.ansi`.
-No third route was attempted. The original `xai-oauth/grok-4.6` default was restored after these
-bounded attempts.
+Item 2 used a newly minted mode-0600 credential against the isolated dashboard at
+`ws://127.0.0.1:8790/api/ws`. A real bounded turn returned `TALARIA-T2-PRIMARY-OK`; the final
+`agent_model` segment displayed `OpenCode Go · muse-spark-1.2-contributor`, the inspector named the
+same model, and the status bar remained connected. The observed route was
+`opencode-go / muse-spark-1.2-contributor`. No fallback was requested or used.
 
-## Supplemental execution evidence
+Item 33 replaced only the T2 scratch credential with a deliberate invalid value; it did not restart
+or modify the dashboard. Talaria reached a stable interface, displayed `authentication failed` in
+the composer surface and status bar, and identified an HTTP 403 WebSocket handshake rejection. It
+did not hang, render a silent blank, expose the credential, or prevent a clean exit. A second fresh
+credential was minted after this leg.
 
-- Item 13 used the default-status item 12 process as the baseline, then replaced the scratch config
-  and restarted before its own drive.
-- Item 14 was also observed in fresh 36-row processes at every required width. The final rows were:
-  full at 144; compact at 143; version absent at 119; `cwd` absent at 95; `git_branch` absent at 79;
-  context absent at 63; agent absent at 47; task progress absent at 31; full connection at 20; and
-  compact connection alone at 19.
-- Item 15's literal-command capture is `raw/item-15-command.ansi` under the scratch root.
-- Item 18's overlay capture is `raw/item-18-overlay.ansi` under the scratch root and its second full
-  fresh-process drive is `raw/item-18-fresh.ansi`.
-- Item 20's explicit below-threshold refusal capture is `raw/item-20-refusal.ansi` under the scratch
-  root.
-- Item 21's filtered command-palette capture is `raw/item-21-palette.ansi` under the scratch root.
-- Item 32's config SHA-256 remained
-  `0c639dc2495adcc566a32389763497b477574a30c2d0ad13cca002c6d177e126` and its modification time
-  remained `1788156286`; the restart capture is `raw/item-32-restart.ansi` under the scratch root.
+Item 34 used the isolated dashboard at `ws://127.0.0.1:8790/api/ws` with profile `default`. The
+observed primary route was `opencode-go / muse-spark-1.2-contributor`; no fallback was requested or
+used. A real turn completed with `TALARIA-T2-LIVE-OK`, then a separately authenticated connection
+closed exactly that newly recorded session and Hermes returned `closed: true` (session identifier
+SHA-256 `1b9402c67ab06f574e1d4dc60c6adf89f01a1359e3567cb68e68534ca8556788`). The next prompt
+visibly returned `prompt.submit was refused by the gateway (code 4001): session not found` while
+Talaria retained its transcript, inspector context, status, and clean exit path. The dashboard
+remained running.
 
-The required screenshot pair remains at:
+Item 35 began with `status.segments = ["connection", "version"]`. The running process reported those
+same two segments both before and after the file changed from SHA-256
+`43bc09486811aa3c6f6dd134e4400890dea3a9d6b0576e16c5d42c39d90e640a` to
+`3faca4f91f40cb7b41e0b1d5da1c252fb75d77d2f32a25d1f9c8935d51365acb`, which added `cwd`.
+A fresh process then reported and rendered `cwd, connection, version`. This proves the on-disk edit
+had no live effect and applied only after restart.
 
-- wide: `/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-29.png`
-- narrow: `/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-30.png`
+Item 36 records the T2 half of the cross-tester comparison. T2 now has one current-candidate receipt
+for every assigned-track item and for shared items 2, 15, 33, 34, 35, and 36. Its two live receipts,
+items 2 and 34, both name the approved primary route and no fallback. The generated manifest remains
+the authority for the combined two-tester state once T1's parallel item 36 receipt is present.
 
-## Validation and repository checks
-
-The receipt validator reported `valid` for all fifteen item receipts with capture and screenshot
-hash checks enabled. The raw captures and screenshots were searched for credential patterns, bearer
-values, token-bearing URLs, operator home paths, usernames, and private email/domain identifiers;
-none were found.
-
-- `uv run ruff check .`: passed.
-- `uv run mypy`: passed with no issues.
-- `/opt/homebrew/bin/uv run pytest`: passed, 2,329 tests passed and 7 skipped in 553.71 seconds. The
-  absolute executable bypassed a fleet hook that otherwise inserted the prohibited RTK wrapper.
-- `uv run bandit -r talaria -q`: passed; Bandit emitted only its existing comment-token warnings.
-- `git diff --check`: passed before this report was written and is rerun as the final pre-commit
-  whitespace check.
+All screenshots were rendered from the corresponding real raw American National Standards
+Institute terminal bytes with Pyte and Pillow. This preserves pseudo-terminal geometry and colours
+without graphical user interface automation or a simulated Talaria application. Before publication,
+45 selected and breakpoint captures were checked for the scratch credential, operator home paths,
+email addresses, authorization material, and unrelated private identifiers; none were present.

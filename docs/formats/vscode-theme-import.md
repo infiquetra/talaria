@@ -93,12 +93,16 @@ $schema, name, and type are metadata and do not warn. type may set the imported 
 
 ## Tokens with no Visual Studio Code source
 
-These fourteen Talaria extension tokens have no entry in either supported mapping and therefore always come from Refined Default during import:
+These eighteen Talaria extension tokens have no entry in either supported mapping and therefore always come from Refined Default during import:
 
 | Fallback-only token | Reason |
 |---|---|
 | talaria.secondary | No bounded workbench key has the same semantic role |
 | talaria.status.muted | Visual Studio Code exposes status foreground but no secondary status text role |
+| talaria.status.success | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.warning | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.error | Visual Studio Code has no bounded per-state status-bar colour role |
+| talaria.status.attention | Visual Studio Code has no bounded per-state status-bar colour role |
 | talaria.transcript.operator | Talaria-specific transcript channel |
 | talaria.transcript.operator.background | Talaria-specific transcript channel |
 | talaria.transcript.assistant | Talaria-specific transcript channel |
@@ -112,7 +116,35 @@ These fourteen Talaria extension tokens have no entry in either supported mappin
 | talaria.transcript.fault | Talaria-specific transcript channel |
 | talaria.transcript.fault.background | Talaria-specific transcript channel |
 
-Any other token falls back only when its listed source is absent or invalid. The successful import report states source-mapped count, fallback count, unsupported count, and every affected path/token. Successful imports with warnings exit successfully but visibly print the report; malformed imports write nothing and exit unsuccessfully.
+Any other token falls back only when its listed source is absent or invalid. The successful import report states source-mapped count, fallback count, unsupported count, and every affected path/token. Successful imports with warnings exit successfully but visibly print the report. A failed import never writes a stored theme; its command-line report is described below.
+
+## Command-line reports and exit status
+
+The default report remains prose: informational lines use standard output and
+warnings use standard error. `talaria theme import FILE --json` instead writes
+one JSON object to standard output and writes nothing to standard error.
+
+On success, `schema_version` is `talaria-theme-import-report-v1`. The object
+also carries `slug`, `target_path`, `source_token_count`, `fallback_count`,
+`warning_count`, and ordered `composites`, `fallbacks`, and `warnings` arrays.
+Each composite record carries `severity`, `path`, `token`, `source`,
+`background`, and the flattened `value`. Each fallback and warning record also
+has an explicit `severity`, so consumers never infer routing from English text.
+
+On failure, `schema_version` is `talaria-theme-import-error-v1`. The object
+carries the stable `kind` and a human-readable `message`; the exit status still
+uses the table below. The `kind` vocabulary is `unreadable`, `empty`,
+`malformed`, `wrong-root`, `reserved-slug`, `invalid-slug`, and `unwritable`.
+These seven values distinguish the documented causes even when several share
+one exit status.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | Import completed; warnings, if any, are present in the report |
+| 2 | Command-line usage error |
+| 3 | Source file unreadable, empty, malformed, or structurally unsupported |
+| 4 | Requested storage slug invalid or reserved |
+| 5 | Validated theme could not be written |
 
 ## Stored user-theme format
 
@@ -122,9 +154,17 @@ hyphenated slug with no separators or traversal. Built-in theme slugs are
 reserved.
 
 Talaria writes `<config>/themes/<slug>.json` only after parsing and reporting
-complete successfully. The stored object contains `dark`, `name`, `slug`, and
-the complete `tokens` mapping. Keys are sorted, values are opaque uppercase
-`#RRGGBB`, and the file has exactly one trailing newline. A later import of the
-same slug atomically replaces that file. Imported themes are read only when a
-new Talaria process constructs its theme registry; source-file changes are not
-watched.
+complete successfully. The stored object contains `schema_version` with the
+value `talaria-theme-v1`, `dark`, `name`, `slug`, and the complete `tokens`
+mapping. The normative schema is
+[`stored-theme.schema.json`](stored-theme.schema.json). Keys are sorted, values
+are opaque uppercase `#RRGGBB`, and the file has exactly one trailing newline.
+A later import of the same slug atomically replaces that path. If the path is a
+symlink, Talaria replaces the link itself and never writes through to its target.
+Imported themes are read only when a new Talaria process constructs its theme registry;
+source-file changes are not watched.
+
+During v0.5.0, the reader treats a stored theme without `schema_version` as
+version one. The field becomes required in v0.6.0. A file carrying any other
+version, or any other invalid stored document, is skipped with a visible
+notice; it cannot prevent valid themes or the application from loading.

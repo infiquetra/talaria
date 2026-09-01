@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tempfile
 import tomllib
 from collections.abc import Mapping
@@ -49,6 +50,7 @@ from talaria.status.contract import (
     normalize_status_settings,
     parse_command,
 )
+from talaria.themes import theme_fallback_notice
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
 from talaria.themes.storage import load_user_theme_specs
 
@@ -111,6 +113,19 @@ _THEME_HEADER_RE = re.compile(
 _TABLE_HEADER_RE = re.compile(rb"(?m)^[ \t]*\[\[?[^\r\n]+\]\]?[ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)")
 _THEME_NAME_RE = re.compile(
     rb"(?m)^[ \t]*(?:name|\"name\"|'name')[ \t]*=[^\r\n]*(?:\r?\n|$)"
+)
+_DOTTED_THEME_NAME_RE = re.compile(
+    rb"(?m)^[ \t]*(?:theme|\"theme\"|'theme')[ \t]*\.[ \t]*"
+    rb"(?:name|\"name\"|'name')[ \t]*=[ \t]*"
+    rb"(?P<value>\"(?:\\.|[^\"\\\r\n])*\"|'[^'\r\n]*')"
+)
+_INLINE_THEME_RE = re.compile(
+    rb"(?m)^[ \t]*(?:theme|\"theme\"|'theme')[ \t]*=[ \t]*"
+    rb"(?P<table>\{[^\r\n]*\})[ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)"
+)
+_INLINE_THEME_NAME_RE = re.compile(
+    rb"(?:\{|,)[ \t]*(?:name|\"name\"|'name')[ \t]*=[ \t]*"
+    rb"(?P<value>\"(?:\\.|[^\"\\\r\n])*\"|'[^'\r\n]*')"
 )
 
 
@@ -272,19 +287,20 @@ def _normalize_config(
     """Normalize winning configured values once, after every file layer merged."""
     notices: list[str] = []
     theme = merged.get("theme")
-    requested = theme.get("name") if isinstance(theme, Mapping) else theme
-    if not isinstance(requested, str):
+    if not isinstance(theme, Mapping):
         merged["theme"] = {"name": REFINED_DEFAULT.slug}
         notices.append(
-            "theme.name must be a string; using Refined Default "
+            "theme must be a table with a name key; using Refined Default "
             f"({REFINED_DEFAULT.slug})"
         )
+    elif not isinstance(requested := theme.get("name"), str):
+        merged["theme"] = {"name": REFINED_DEFAULT.slug}
+        notices.append(theme_fallback_notice(requested, REFINED_DEFAULT.slug))
     elif requested not in available_theme_slugs:
         merged["theme"] = {"name": REFINED_DEFAULT.slug}
-        notices.append(
-            f"theme {requested!r} is not available; using Refined Default "
-            f"({REFINED_DEFAULT.slug})"
-        )
+        notices.append(theme_fallback_notice(requested, REFINED_DEFAULT.slug))
+    else:
+        merged["theme"] = dict(theme)
 
     ui_source = merged.get("ui")
     reduced_motion = (
@@ -334,17 +350,35 @@ def theme_config_path(
     raise ConfigError(f"unknown theme save scope: {scope!r}")
 
 
-def atomic_replace_bytes(path: Path, content: bytes) -> None:
-    """Atomically replace ``path`` from a temporary file in the same directory."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, raw_temp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+def atomic_replace_bytes(
+    path: Path,
+    content: bytes,
+    *,
+    follow_symlinks: bool = False,
+) -> None:
+    """Atomically replace a path, optionally resolving its final symlink first.
+
+    The temporary file is created beside the path that will actually be
+    replaced. By default, a symlink at ``path`` is itself replaced; callers
+    must opt in when the intended contract is to update its target instead.
+    """
+    target = path.resolve() if follow_symlinks and path.is_symlink() else path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing_mode = (
+        stat.S_IMODE(target.stat().st_mode) if target.exists() else None
+    )
+    descriptor, raw_temp = tempfile.mkstemp(
+        prefix=f".{target.name}.", dir=target.parent
+    )
     temp_path = Path(raw_temp)
     try:
         with os.fdopen(descriptor, "wb") as handle:
+            if existing_mode is not None:
+                os.fchmod(handle.fileno(), existing_mode)
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_path, path)
+        os.replace(temp_path, target)
     except BaseException:
         try:
             temp_path.unlink()
@@ -414,6 +448,31 @@ def _rewrite_theme_name(content: bytes, name: str) -> bytes:
     return content[: header.end()] + assignment + newline + content[header.end() :]
 
 
+def _rewrite_dotted_theme_name(content: bytes, name: str) -> bytes | None:
+    """Rewrite a top-level dotted ``theme.name`` assignment when present."""
+    name_match = _DOTTED_THEME_NAME_RE.search(content)
+    if name_match is None:
+        return None
+    start, end = name_match.span("value")
+    return content[:start] + f'"{name}"'.encode() + content[end:]
+
+
+def _rewrite_inline_theme_name(content: bytes, name: str) -> bytes | None:
+    """Rewrite the name pair in a top-level inline ``theme`` table."""
+    table_match = _INLINE_THEME_RE.search(content)
+    if table_match is None:
+        return None
+    table = table_match.group("table")
+    name_match = _INLINE_THEME_NAME_RE.search(table)
+    if name_match is None:
+        return None
+    table_start = table_match.start("table")
+    value_start, value_end = name_match.span("value")
+    start = table_start + value_start
+    end = table_start + value_end
+    return content[:start] + f'"{name}"'.encode() + content[end:]
+
+
 def save_theme(
     name: str,
     scope: ThemeSaveScope = "user",
@@ -435,7 +494,17 @@ def save_theme(
     if current_theme is not None and not isinstance(current_theme, Mapping):
         raise ConfigError(f"{path} theme must be a table before it can be saved")
 
-    after_bytes = _rewrite_theme_name(before_bytes, name)
+    if current_theme is not None and _THEME_HEADER_RE.search(before_bytes) is None:
+        after_bytes = _rewrite_dotted_theme_name(before_bytes, name)
+        if after_bytes is None:
+            after_bytes = _rewrite_inline_theme_name(before_bytes, name)
+        if after_bytes is None:
+            raise ConfigError(
+                f"{path} theme.name cannot be rewritten without a [theme] table "
+                "or a supported dotted or inline theme.name assignment"
+            )
+    else:
+        after_bytes = _rewrite_theme_name(before_bytes, name)
     after = _parse_toml_bytes(path, after_bytes)
     expected = deepcopy(before)
     expected_theme = expected.setdefault("theme", {})
@@ -448,7 +517,7 @@ def save_theme(
         )
 
     try:
-        atomic_replace_bytes(path, after_bytes)
+        atomic_replace_bytes(path, after_bytes, follow_symlinks=True)
     except OSError as exc:
         raise ConfigError(f"{path} could not be written: {exc}") from exc
     return path
@@ -490,11 +559,16 @@ def load_config(
         allowed_cli_overrides.pop("ui", None)
         merged = _deep_merge(merged, allowed_cli_overrides)
 
-    user_theme_slugs = frozenset(
-        spec.slug for spec in load_user_theme_specs(config_dir=config_dir)
+    user_theme_specs, user_theme_notices = load_user_theme_specs(
+        config_dir=config_dir
     )
+    user_theme_slugs = frozenset(spec.slug for spec in user_theme_specs)
     merged, notices = _normalize_config(
         merged,
         available_theme_slugs=_BUILTIN_THEME_SLUGS | user_theme_slugs,
     )
-    return Config(values=_freeze(merged), config_dir=config_dir, notices=notices)
+    return Config(
+        values=_freeze(merged),
+        config_dir=config_dir,
+        notices=(*notices, *user_theme_notices),
+    )

@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
+from talaria.config import load_config
 from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
+from talaria.themes.storage import load_user_theme_specs
 from talaria.ui.theme import (
     BUILTIN_THEME_REGISTRY,
     ThemeRegistry,
     contrast_ratio,
     textual_variable_name,
 )
+from talaria.ui.theme_import import import_vscode_theme
 from tests.ui.conftest import event, paused_app, screen_text
 
 VISUAL_SPEC = (
@@ -22,6 +30,12 @@ VISUAL_SPEC = (
     / "docs"
     / "design"
     / "2026-08-30-talaria-v0-5-0-visual-spec.md"
+)
+STORED_THEME_SCHEMA = (
+    Path(__file__).parents[2] / "docs" / "formats" / "stored-theme.schema.json"
+)
+VSCODE_THEME_FIXTURE = (
+    Path(__file__).parents[1] / "fixtures" / "vscode-themes" / "sample-dark.json"
 )
 
 BUILTIN_NAMES = (
@@ -89,6 +103,105 @@ def test_the_registry_is_the_exact_58_token_visual_specification() -> None:
         assert dict(spec.tokens) == expected[spec.name]
 
 
+def test_import_replaces_a_planted_theme_symlink_without_writing_through_it(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    themes_dir = config_dir / "themes"
+    themes_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    original = b'outside bytes that are not a theme\n'
+    outside.write_bytes(original)
+    planted = themes_dir / "planted-theme.json"
+    planted.symlink_to(outside)
+
+    report = import_vscode_theme(
+        VSCODE_THEME_FIXTURE,
+        name="planted-theme",
+        config_dir=config_dir,
+    )
+
+    assert report.target_path == planted
+    assert outside.read_bytes() == original
+    assert not os.path.islink(planted)
+    assert json.loads(planted.read_text(encoding="utf-8"))["slug"] == "planted-theme"
+
+
+def _stored_theme_document(*, name: str, slug: str) -> dict[str, object]:
+    return {
+        "dark": REFINED_DEFAULT.dark,
+        "name": name,
+        "schema_version": "talaria-theme-v1",
+        "slug": slug,
+        "tokens": dict(REFINED_DEFAULT.tokens),
+    }
+
+
+def test_stored_theme_with_an_escape_in_its_display_name_is_rejected_at_load(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "themes" / "unsafe-name.json"
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(_stored_theme_document(name="\x1b[31m", slug="unsafe-name")),
+        encoding="utf-8",
+    )
+
+    specs, notices = load_user_theme_specs(config_dir=tmp_path)
+
+    assert specs == ()
+    assert len(notices) == 1
+    assert str(path) in notices[0]
+    assert "display name" in notices[0]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("bell\x07", "delete\x7f", "bidi\u202eoverride", "x" * 129),
+    ids=("c0-control", "del", "unicode-format", "over-limit"),
+)
+def test_theme_spec_rejects_unsafe_or_unbounded_display_names(name: str) -> None:
+    with pytest.raises(ValueError, match="display name"):
+        ThemeSpec(
+            slug="unsafe-name",
+            name=name,
+            dark=REFINED_DEFAULT.dark,
+            tokens=REFINED_DEFAULT.tokens,
+        )
+
+
+@pytest.mark.parametrize("name", ("\x1b[31m", "bidi\u202eoverride", "x" * 129))
+def test_published_schema_rejects_the_same_unsafe_display_names(name: str) -> None:
+    schema = json.loads(STORED_THEME_SCHEMA.read_text(encoding="utf-8"))
+    name_schema = schema["properties"]["name"]
+    assert "pattern" in name_schema
+    assert name_schema["maxLength"] == 128
+
+    errors = tuple(
+        Draft202012Validator(schema).iter_errors(
+            _stored_theme_document(name=name, slug="unsafe-name")
+        )
+    )
+
+    assert errors
+    assert any(tuple(error.path) == ("name",) for error in errors)
+
+
+def test_importing_framework_independent_themes_does_not_import_textual() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import talaria.themes, sys; assert 'textual' not in sys.modules",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_every_canonical_and_compatibility_variable_keeps_its_measured_value() -> None:
     for spec in BUILTIN_THEMES:
         resolved = BUILTIN_THEME_REGISTRY.resolve(spec.slug)
@@ -143,6 +256,20 @@ def test_partial_and_unknown_themes_fall_back_with_complete_visible_notes() -> N
     wrong_type = registry.resolve(7)
     assert wrong_type.slug == "refined-default"
     assert "must be a string" in wrong_type.notices[0]
+
+
+def test_config_and_registry_unknown_theme_notices_are_byte_identical(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    requested = "not-installed"
+    (isolated_global_config_dir / "config.toml").write_text(
+        f'[theme]\nname = "{requested}"\n', encoding="utf-8"
+    )
+
+    config_notice = load_config(cwd=tmp_path).notices
+    registry_notice = BUILTIN_THEME_REGISTRY.resolve(requested).notices
+
+    assert config_notice == registry_notice
 
 
 def test_all_sixteen_status_semantic_pairs_match_the_measured_ratios() -> None:

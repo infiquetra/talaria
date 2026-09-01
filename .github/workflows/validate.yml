@@ -13,9 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -44,7 +44,7 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # The KTD6/R28 equivalence harness runs the *real* TypeScript reference
       # recorder through a tsx subprocess. Without Node the whole harness
       # skipped, and a skip is invisible inside a green "353 passed" -- so the
@@ -52,14 +52,14 @@ jobs:
       # parity claim had never once run in CI. It is installed here, on the leg
       # that fails the run, rather than on the informational Linux leg.
       - name: Set up Node.js (TypeScript equivalence bridge)
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
       - name: Install the equivalence bridge
         run: npm ci
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -75,7 +75,11 @@ jobs:
           TALARIA_REQUIRE_TS_BRIDGE: "1"
         run: uv run pytest
       - name: bandit
-        run: uv run bandit -r talaria -q
+        run: |
+          # Application code retains the strict low-severity credential checks.
+          uv run bandit -r talaria -q
+          # Harness utilities keep script coverage while excluding known low-severity fixture noise.
+          uv run bandit -r scripts -q -ll
 
   # AE10 / R39: the client installs into a clean environment and runs there.
   #
@@ -98,9 +102,9 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install talaria as a tool, into a clean prefix
@@ -161,9 +165,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -175,7 +179,11 @@ jobs:
       - name: pytest
         run: uv run pytest
       - name: bandit
-        run: uv run bandit -r talaria -q
+        run: |
+          # Application code retains the strict low-severity credential checks.
+          uv run bandit -r talaria -q
+          # Harness utilities keep script coverage while excluding known low-severity fixture noise.
+          uv run bandit -r scripts -q -ll
       - name: Flag the informational failure
         if: failure()
         run: |

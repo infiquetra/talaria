@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infiquetra.github.io/talaria/formats/stored-theme.schema.json",
+  "title": "Talaria stored user theme",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dark", "name", "slug", "tokens"],
+  "properties": {
+    "schema_version": {
+      "$comment": "Optional for v0.5.0 migration compatibility; required starting in v0.6.0.",
+      "const": "talaria-theme-v1"
+    },
+    "dark": {"type": "boolean"},
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\u0000-\u001F\u007F\u00AD\u0600-\u0605\u061C\u06DD\u070F\u0890-\u0891\u08E2\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\uFFF9-\uFFFB\uD804\uDCBD\uD804\uDCCD\uD80D\uDC30-\uD80D\uDC3F\uD82F\uDCA0-\uD82F\uDCA3\uD834\uDD73-\uD834\uDD7A\uDB40\uDC01\uDB40\uDC20-\uDB40\uDC7F]*$"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "tokens": {
+      "type": "object",
+      "minProperties": 58,
+      "maxProperties": 58,
+      "propertyNames": {
+        "enum": [
+          "talaria.canvas",
+          "talaria.surface",
+          "talaria.panel",
+          "talaria.text",
+          "talaria.text.muted",
+          "talaria.primary",
+          "talaria.secondary",
+          "talaria.accent",
+          "talaria.success",
+          "talaria.warning",
+          "talaria.error",
+          "talaria.border",
+          "talaria.border.muted",
+          "talaria.focus",
+          "talaria.selection.background",
+          "talaria.selection.text",
+          "talaria.status.background",
+          "talaria.status.text",
+          "talaria.status.muted",
+          "talaria.status.separator",
+          "talaria.status.success",
+          "talaria.status.warning",
+          "talaria.status.error",
+          "talaria.status.attention",
+          "talaria.inspector.background",
+          "talaria.inspector.border",
+          "talaria.inspector.heading",
+          "talaria.transcript.operator",
+          "talaria.transcript.operator.background",
+          "talaria.transcript.assistant",
+          "talaria.transcript.assistant.background",
+          "talaria.transcript.reasoning",
+          "talaria.transcript.reasoning.background",
+          "talaria.transcript.activity",
+          "talaria.transcript.activity.background",
+          "talaria.transcript.session",
+          "talaria.transcript.session.background",
+          "talaria.transcript.fault",
+          "talaria.transcript.fault.background",
+          "talaria.diff.context",
+          "talaria.diff.line-number",
+          "talaria.diff.added",
+          "talaria.diff.added.background",
+          "talaria.diff.removed",
+          "talaria.diff.removed.background",
+          "talaria.diff.hunk",
+          "talaria.diff.hunk.background",
+          "talaria.diff.intraline-added.background",
+          "talaria.diff.intraline-removed.background",
+          "talaria.syntax.comment",
+          "talaria.syntax.keyword",
+          "talaria.syntax.string",
+          "talaria.syntax.number",
+          "talaria.syntax.function",
+          "talaria.syntax.type",
+          "talaria.syntax.variable",
+          "talaria.syntax.operator",
+          "talaria.syntax.constant"
+        ]
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^#[0-9A-F]{6}$"
+      }
+    }
+  }
+}

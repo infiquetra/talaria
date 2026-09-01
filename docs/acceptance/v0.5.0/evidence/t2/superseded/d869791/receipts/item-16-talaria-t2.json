@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
+    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 16,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-16-rerun.ansi",
+    "capture_sha256": "eb38e675cb53ae4961d242531bf8e62ac817f7e7c678be651756416f0607e38d",
+    "pty_result_path": "<scratch-root>/receipts/item-16-rerun-pty.json",
+    "pty_result_sha256": "c935a9cd7df6334cb93819eb839a3467adb2d28fb729277644b80f23c121ac7f",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-16-rerun.png",
+    "screenshot_sha256": "4252c2d225a779d1aaab6a811bdb21e3eb447821a391dced1b294f8a2ece7896"
+  },
+  "observations": [
+    "The right dock reports widths 36, 40, 44, 48 with the extra widen clamped, then 44, 40, 36, 32, 28 with the extra shrink clamped; held task, context, file, and operation data stay unchanged."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-acceptance-corpus"
+  },
+  "terminal": {
+    "columns": 120,
+    "program": "Terminal.app 2.14",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Inspector dock and resize",
+  "verdict": "pass"
+}

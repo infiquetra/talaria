@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import REFINED_DEFAULT
@@ -19,9 +19,23 @@ from talaria.ui.theme import (
     write_user_theme,
 )
 
+ThemeImportErrorKind = Literal[
+    "unreadable",
+    "empty",
+    "malformed",
+    "wrong-root",
+    "reserved-slug",
+    "invalid-slug",
+    "unwritable",
+]
+
 
 class ThemeImportError(ValueError):
     """The source cannot produce a valid bounded Talaria theme."""
+
+    def __init__(self, message: str, *, kind: ThemeImportErrorKind) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 @dataclass(frozen=True)
@@ -167,6 +181,14 @@ class AlphaComposite:
 
 
 @dataclass(frozen=True)
+class ReportLine:
+    """One prose report record with routing independent of its text."""
+
+    severity: Literal["info", "warning"]
+    text: str
+
+
+@dataclass(frozen=True)
 class ImportReport:
     """The complete deterministic result prepared before the user-theme write."""
 
@@ -195,25 +217,73 @@ class ImportReport:
     def unsupported_count(self) -> int:
         return len(self.unsupported_entries)
 
-    def lines(self) -> tuple[str, ...]:
-        """Return the stable command-line report lines for later CLI wiring."""
+    def records(self) -> tuple[ReportLine, ...]:
+        """Return report records whose severity is independent of prose."""
         summary = (
             f"Imported {self.target_name} as user theme {self.theme.slug}: "
             f"{self.mapped_count} source tokens, {self.fallback_count} fallbacks, "
             f"{self.unsupported_count} warnings."
         )
-        warnings = tuple(f"warning: {entry}" for entry in self.unsupported_entries)
+        warnings = tuple(
+            ReportLine("warning", f"warning: {entry}")
+            for entry in self.unsupported_entries
+        )
         composites = tuple(
-            "composite: "
-            f"{item.path} -> {item.token}: {item.source} over "
-            f"{item.background} = {item.value}"
+            ReportLine(
+                "info",
+                "composite: "
+                f"{item.path} -> {item.token}: {item.source} over "
+                f"{item.background} = {item.value}",
+            )
             for item in self.composites
         )
         fallbacks = tuple(
-            f"fallback: {token} <- Refined Default {self.theme.tokens[token]}"
+            ReportLine(
+                "info",
+                f"fallback: {token} <- Refined Default {self.theme.tokens[token]}",
+            )
             for token in self.fallback_tokens
         )
-        return (summary, *warnings, *composites, *fallbacks)
+        return (ReportLine("info", summary), *warnings, *composites, *fallbacks)
+
+    def lines(self) -> tuple[str, ...]:
+        """Return the stable prose report used by existing interactive callers."""
+        return tuple(record.text for record in self.records())
+
+    def to_json_dict(self) -> dict[str, object]:
+        """Return the versioned machine-readable import report."""
+        return {
+            "schema_version": "talaria-theme-import-report-v1",
+            "slug": self.theme.slug,
+            "target_path": str(self.target_path),
+            "source_token_count": self.mapped_count,
+            "fallback_count": self.fallback_count,
+            "warning_count": self.unsupported_count,
+            "composites": [
+                {
+                    "severity": "info",
+                    "path": item.path,
+                    "token": item.token,
+                    "source": item.source,
+                    "background": item.background,
+                    "value": item.value,
+                }
+                for item in self.composites
+            ],
+            "fallbacks": [
+                {
+                    "severity": "info",
+                    "source": "refined-default",
+                    "token": token,
+                    "value": self.theme.tokens[token],
+                }
+                for token in self.fallback_tokens
+            ],
+            "warnings": [
+                {"severity": "warning", "message": message}
+                for message in self.unsupported_entries
+            ],
+        }
 
 
 @dataclass(frozen=True)
@@ -283,19 +353,37 @@ def _reject_json_constant(value: str) -> Any:
     raise ValueError(f"non-JSON numeric constant {value}")
 
 
+def _display_key(key: object) -> str:
+    """Render a source-controlled object key without live control characters."""
+    rendered = repr(key)
+    if len(rendered) >= 2 and rendered[0] == rendered[-1] and rendered[0] in "'\"":
+        return rendered[1:-1]
+    return rendered
+
+
 def _parse_source(path: Path) -> Mapping[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise ThemeImportError(f"{path} could not be read as UTF-8 JSON: {exc}") from exc
+        raise ThemeImportError(
+            f"{path} could not be read as UTF-8 JSON: {exc}",
+            kind="unreadable",
+        ) from exc
     if not text.strip():
-        raise ThemeImportError(f"{path} is empty; expected a Visual Studio Code theme object")
+        raise ThemeImportError(
+            f"{path} is empty; expected a Visual Studio Code theme object",
+            kind="empty",
+        )
     try:
         payload = json.loads(text, parse_constant=_reject_json_constant)
     except (json.JSONDecodeError, ValueError) as exc:
-        raise ThemeImportError(f"{path} is not strict JSON: {exc}") from exc
+        raise ThemeImportError(
+            f"{path} is not strict JSON: {exc}", kind="malformed"
+        ) from exc
     if not isinstance(payload, dict):
-        raise ThemeImportError(f"{path} root must be a JSON object")
+        raise ThemeImportError(
+            f"{path} root must be a JSON object", kind="wrong-root"
+        )
     return payload
 
 
@@ -351,7 +439,7 @@ def _root_warnings(payload: Mapping[str, Any]) -> list[str]:
     for key in payload:
         if key in _ROOT_KEYS:
             continue
-        path = f"root.{key}"
+        path = f"root.{_display_key(key)}"
         if key == "include":
             warnings.append(
                 f"{path} is unsupported; external theme files are not read"
@@ -388,13 +476,19 @@ def _target_slug(path: Path, payload: Mapping[str, Any], name: str | None) -> st
     else:
         selected = path.stem
     if not isinstance(selected, str):
-        raise ThemeImportError("theme name must be a lowercase hyphenated string")
+        raise ThemeImportError(
+            "theme name must be a lowercase hyphenated string",
+            kind="invalid-slug",
+        )
     try:
         ThemeSpec(slug=selected, name=selected, dark=False, tokens={})
     except ValueError as exc:
-        raise ThemeImportError(str(exc)) from exc
+        raise ThemeImportError(str(exc), kind="invalid-slug") from exc
     if selected in BUILTIN_THEME_REGISTRY.slugs:
-        raise ThemeImportError(f"theme name {selected!r} is reserved by a built-in theme")
+        raise ThemeImportError(
+            f"theme name {selected!r} is reserved by a built-in theme",
+            kind="reserved-slug",
+        )
     return selected
 
 
@@ -406,10 +500,12 @@ def _workbench_colors(
         return {}, False
     colors = payload["colors"]
     if not isinstance(colors, dict):
-        raise ThemeImportError("root.colors must be an object when present")
+        raise ThemeImportError(
+            "root.colors must be an object when present", kind="wrong-root"
+        )
     parsed: dict[str, _SourceColor] = {}
     for key, value in colors.items():
-        path = f"colors.{key}"
+        path = f"colors.{_display_key(key)}"
         if key not in _WORKBENCH_KEYS:
             warnings.append(f"{path} is unsupported")
             continue
@@ -435,7 +531,9 @@ def _token_rules(
         )
         return (), True
     if not isinstance(rules, list):
-        raise ThemeImportError("root.tokenColors must be an array when present")
+        raise ThemeImportError(
+            "root.tokenColors must be an array when present", kind="wrong-root"
+        )
     return rules, True
 
 
@@ -517,14 +615,14 @@ def _syntax_candidates(
             continue
         for key in raw_rule:
             if key not in {"scope", "settings"}:
-                warnings.append(f"{base}.{key} is unsupported")
+                warnings.append(f"{base}.{_display_key(key)} is unsupported")
 
         settings = raw_rule.get("settings")
         if not isinstance(settings, dict):
             warnings.append(f"{base}.settings is invalid; expected an object")
         else:
             for key, value in settings.items():
-                path = f"{base}.settings.{key}"
+                path = f"{base}.settings.{_display_key(key)}"
                 if key == "foreground":
                     continue
                 if key == "fontStyle" and not value:
@@ -621,14 +719,16 @@ def prepare_vscode_theme_import(
     rules, had_rules = _token_rules(payload, warnings)
     if not had_colors and not had_rules:
         raise ThemeImportError(
-            f"{source} has neither a colors object nor a tokenColors array"
+            f"{source} has neither a colors object nor a tokenColors array",
+            kind="wrong-root",
         )
 
     mapped, composites = _map_workbench(colors)
     composites.extend(_map_syntax(rules, mapped, warnings))
     if not mapped:
         raise ThemeImportError(
-            f"{source} contains no usable supported workbench color or TextMate scope"
+            f"{source} contains no usable supported workbench color or TextMate scope",
+            kind="wrong-root",
         )
 
     partial = ThemeSpec(slug=slug, name=slug, dark=dark, tokens=mapped)
@@ -668,9 +768,15 @@ def import_vscode_theme(
     try:
         written = write_user_theme(report.theme, config_dir=config_dir)
     except OSError as exc:
-        raise ThemeImportError(f"{report.target_path} could not be written: {exc}") from exc
+        raise ThemeImportError(
+            f"{report.target_path} could not be written: {exc}",
+            kind="unwritable",
+        ) from exc
     if written != report.target_path:  # pragma: no cover - one shared path helper
-        raise ThemeImportError("the prepared and written user-theme targets differed")
+        raise ThemeImportError(
+            "the prepared and written user-theme targets differed",
+            kind="unwritable",
+        )
     return report
 
 
@@ -678,8 +784,10 @@ __all__ = [
     "ALWAYS_FALLBACK_TOKENS",
     "AlphaComposite",
     "ImportReport",
+    "ReportLine",
     "SYNTAX_MAPPINGS",
     "ThemeImportError",
+    "ThemeImportErrorKind",
     "WORKBENCH_MAPPINGS",
     "import_vscode_theme",
     "prepare_vscode_theme_import",

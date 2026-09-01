@@ -1,25 +1,23 @@
 {
   "argv": [
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
+    "<scratch-root>/venv/bin/talaria",
     "replay",
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/fixtures/acceptance-populated.jsonl"
+    "<scratch-root>/fixtures/acceptance-populated.jsonl"
   ],
   "capture": {
-    "bytes": 163631,
-    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-15-command.ansi",
-    "sha256": "3ef00f0481dd20468184c14ba30cc7504888659830b886949b1e08cfcd94b005"
+    "bytes": 165956,
+    "path": "<scratch-root>/raw/item-15-command.ansi",
+    "sha256": "69ec4368fd8bf7cb70e8c4a53b2a278a81b9c7997f80af415ff17073f6f55197"
   },
   "columns": 144,
-  "duration_seconds": 9.278227,
+  "duration_seconds": 9.260427,
   "exit_code": 0,
-  "expected_literals": [
-    "acceptance-status"
-  ],
+  "expected_literals": [],
   "missing_literals": [],
   "rows": 36,
   "schema_version": "talaria-v0.5.0-pty-v1",
   "term": "xterm-256color",
-  "terminal_program": "Terminal.app 2.14",
+  "terminal_program": "POSIX pseudo-terminal capture",
   "tester": "talaria-t2",
   "timed_out": false
 }

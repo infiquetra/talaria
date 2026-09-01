@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria"
+  ],
+  "capture": {
+    "bytes": 45934,
+    "path": "<scratch-root>/raw/item-33-auth-final2b.ansi",
+    "sha256": "cb5c8c1ea3053bef98c91b17f86180f79874e488fab2a84eef6116de95e73291"
+  },
+  "columns": 132,
+  "duration_seconds": 14.278269,
+  "exit_code": 0,
+  "expected_literals": [
+    "HTTP 403"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; NO_COLOR; isolated Hermes dashboard 8790",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

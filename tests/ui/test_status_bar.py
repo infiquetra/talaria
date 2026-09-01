@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
@@ -12,17 +13,20 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Static
 
+from talaria.domain.models_catalog import ModelProvider, ProviderCatalog
 from talaria.domain.projection import StatusPayload
 from talaria.domain.queue import NeedsYouQueue
+from talaria.domain.session_list import decode_active_list
+from talaria.domain.state import apply_active_list
 from talaria.status.contract import StatusBarSettings, normalize_status_segments
+from talaria.status.local import LocalStatus
 from talaria.ui.status_bar import (
     BottomStatusBar,
     BottomStatusBarView,
-    LocalStatus,
     build_status_bar_view,
     render_status_bar,
 )
-from tests.ui.conftest import event, paused_app
+from tests.ui.conftest import RecordingDispatcher, event, live_app, paused_app
 
 
 def _screen_text(app: App[None]) -> str:
@@ -134,6 +138,26 @@ def test_unknown_and_duplicate_config_rows_are_reported_without_hiding_known_row
     assert "default order" in default_notices[0]
 
 
+def test_each_unknown_configured_segment_is_named_in_its_own_notice() -> None:
+    segments, notices = normalize_status_segments(
+        ["first_unknown", "connection", "second_unknown"]
+    )
+
+    assert segments == ("connection",)
+    assert len(notices) == 2
+    assert notices[0] != notices[1]
+    assert "first_unknown" in notices[0]
+    assert "second_unknown" in notices[1]
+
+
+def test_unknown_configured_segment_escape_is_rendered_not_obeyed() -> None:
+    _segments, notices = normalize_status_segments(["unsafe\x1b[2Jsegment", "connection"])
+
+    assert len(notices) == 1
+    assert "unsafe␛[2Jsegment" in notices[0]
+    assert "\x1b" not in notices[0]
+
+
 _ALL_SEGMENTS = (
     "cwd",
     "git_branch",
@@ -144,6 +168,8 @@ _ALL_SEGMENTS = (
     "version",
 )
 _WITHOUT_VERSION = _ALL_SEGMENTS[:-1]
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _TRANSITIONS = (
     (144, _ALL_SEGMENTS, "full"),
@@ -161,8 +187,8 @@ _TRANSITIONS = (
     (48, ("agent_model", "task_progress", "connection"), "compact"),
     (47, ("task_progress", "connection"), "compact"),
     (32, ("task_progress", "connection"), "compact"),
-    (31, ("connection",), "compact"),
-    (20, ("connection",), "compact"),
+    (31, ("task_progress", "connection"), "compact"),
+    (20, ("task_progress", "connection"), "compact"),
     (19, ("connection",), "minimum"),
 )
 
@@ -178,7 +204,10 @@ async def test_complete_breakpoint_walk_reflows_in_place_and_never_grows_a_secon
             rendered = app.bar.last_render
 
             assert tuple(segment.name for segment in rendered.segments) == expected_names
-            assert all(segment.form == expected_form for segment in rendered.segments)
+            if isinstance(expected_form, tuple):
+                assert tuple(segment.form for segment in rendered.segments) == expected_form
+            else:
+                assert all(segment.form == expected_form for segment in rendered.segments)
             assert rendered.width <= width
             assert cell_len(rendered.plain) <= width
             assert app.bar.region.height == 1
@@ -205,6 +234,61 @@ def test_overflow_shortens_then_drops_each_lower_priority_segment_before_the_nex
     assert "cwd" not in names, "the next-lowest row was not handled before higher-priority rows"
     assert "connection" in names
     assert rendered.width <= 144
+
+
+def test_attention_marker_survives_at_thirty_one_columns_when_queue_is_nonempty() -> None:
+    rendered = render_status_bar(_view(attention_count=2), 31)
+
+    assert tuple(segment.name for segment in rendered.segments) == (
+        "task_progress",
+        "connection",
+    )
+    assert "3/7" in rendered.plain
+    assert "!2" in rendered.plain
+    assert any(run.text == "!2" and run.token == "attention" for run in rendered.runs)
+
+
+def test_twenty_through_thirty_two_columns_keep_all_required_compact_content() -> None:
+    required = "task 3/7 !1│[ok] up"
+
+    for width in range(20, 33):
+        rendered = render_status_bar(_view(), width)
+
+        assert abs(rendered.width - cell_len(required)) <= 1, width
+        assert rendered.plain == required
+
+
+@pytest.mark.parametrize(
+    ("width", "expected_names"),
+    [
+        (144, _ALL_SEGMENTS),
+        (132, _ALL_SEGMENTS),
+        (112, _WITHOUT_VERSION),
+        (96, _WITHOUT_VERSION),
+        (80, ("git_branch", "agent_model", "context", "task_progress", "connection")),
+        (64, ("agent_model", "context", "task_progress", "connection")),
+        (48, ("agent_model", "task_progress", "connection")),
+        (32, ("task_progress", "connection")),
+        (20, ("task_progress", "connection")),
+        (19, ("connection",)),
+    ],
+)
+def test_documented_default_breakpoint_bands_match_rendered_segments(
+    width: int, expected_names: tuple[str, ...]
+) -> None:
+    rendered = render_status_bar(_view(), width)
+
+    assert tuple(segment.name for segment in rendered.segments) == expected_names
+
+
+def test_terminal_ui_documents_the_twenty_column_compact_contract() -> None:
+    guide = (_REPO_ROOT / "docs" / "terminal-ui.md").read_text(encoding="utf-8")
+
+    assert (
+        "| 20–31 | Keep `task_progress` and `connection` compact while they fit"
+        in guide
+    )
+    assert "| Fewer than 20 | Drop `task_progress`; minimum `connection` form" in guide
 
 
 @pytest.mark.parametrize(
@@ -237,6 +321,30 @@ def test_every_connection_state_keeps_its_ascii_form_and_bar_semantic_token(
     assert full_render.runs[0].token == token
     assert compact_render.runs[0].token == token
     assert minimum_render.runs[0].token == token
+
+
+@pytest.mark.asyncio
+async def test_live_reconnecting_transition_repaints_the_status_form_immediately() -> None:
+    """The transport callback must paint a transient reconnect before a
+    following dial state can replace it; the coalescing timer is too late.
+    """
+    app = live_app(RecordingDispatcher())
+
+    async with app.run_test(size=(180, 24)) as pilot:
+        app.note_connection_state("connected")
+        await app._render_tick()
+        await pilot.pause()
+        assert "[ok] connected" in app.bottom_status_bar.last_render.plain
+
+        app.note_connection_state("reconnecting")
+        await pilot.pause()
+
+        assert app.state.connection == "reconnecting"
+        assert "connection lost — reconnecting" in app.composer.notice
+        assert app.bottom_status_bar.view.connection == "reconnecting"
+        assert "[~] reconnecting" in app.bottom_status_bar.last_render.plain
+        assert "[~] reconnecting" in _screen_text(app)
+        await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
@@ -312,22 +420,101 @@ async def test_session_toggle_changes_only_the_held_segment_set() -> None:
         assert app.bar.settings == before
 
 
-def test_missing_context_and_model_facts_render_unknown_instead_of_triggering_a_fetch() -> None:
-    view = replace(
-        _view(),
-        agent_provider="",
-        agent_model="",
-        input_tokens=None,
-        output_tokens=None,
-        context_window=None,
-    )
-    rendered = render_status_bar(
-        view,
-        180,
-        StatusBarSettings(segments=("agent_model", "context", "connection")),
+@pytest.mark.asyncio
+async def test_missing_context_and_model_facts_render_unknown_without_dispatching() -> None:
+    dispatcher = RecordingDispatcher()
+    app, _controls = paused_app(
+        [],
+        dispatcher=dispatcher,
+        status_bar_settings=StatusBarSettings(
+            segments=("agent_model", "context", "connection")
+        ),
     )
 
-    assert rendered.plain == "agent: ?│context: ?/? ?%│[ok] connected"
+    async with app.run_test(size=(180, 24)) as pilot:
+        await pilot.pause()
+
+        assert app.bottom_status_bar.last_render.plain == (
+            "agent: ?│context: ?/? ?%│[x] disconnected"
+        )
+        assert dispatcher.operator_calls == []
+
+
+@pytest.mark.asyncio
+async def test_live_registry_model_replaces_unknown_after_the_first_render() -> None:
+    app, _controls = paused_app(
+        [],
+        status_bar_settings=StatusBarSettings(segments=("agent_model", "connection")),
+    )
+    app.state = replace(app.state, focused_session_id="live-primary")
+
+    async with app.run_test(size=(160, 36)) as pilot:
+        await pilot.pause()
+        assert app.bottom_status_bar.view.agent_model == ""
+        assert "agent: ?" in app.bottom_status_bar.last_render.plain
+
+        app.fleet = apply_active_list(
+            app.fleet,
+            decode_active_list(
+                {
+                    "sessions": [
+                        {
+                            "id": "live-primary",
+                            "status": "idle",
+                            "model": "muse-spark-1.2-contributor",
+                        }
+                    ]
+                }
+            ),
+            profile=app.fleet_profile,
+            at=1_785_000_001.0,
+            poll_epoch=1,
+        )
+        app._dirty = True
+        await app._render_tick()
+        await pilot.pause()
+
+        assert app.bottom_status_bar.view.agent_model == "muse-spark-1.2-contributor"
+        assert "agent: muse-spa…tributor" in app.bottom_status_bar.last_render.plain
+        assert "agent: ?" not in app.bottom_status_bar.last_render.plain
+
+
+def test_roster_provider_prefix_is_status_only() -> None:
+    app, _controls = paused_app([])
+    model = "muse-spark-1.2-contributor"
+    app.state = replace(app.state, focused_session_id="live-primary")
+    app.model_catalog = ProviderCatalog(
+        providers=(
+            ModelProvider(
+                slug="opencode-go",
+                name="OpenCode Go",
+                models=(model,),
+                authenticated=True,
+            ),
+        ),
+        current_provider="opencode-go",
+        current_model=model,
+    )
+    app.fleet = apply_active_list(
+        app.fleet,
+        decode_active_list(
+            {
+                "sessions": [
+                    {
+                        "id": "live-primary",
+                        "status": "idle",
+                        "model": model,
+                    }
+                ]
+            }
+        ),
+        profile=app.fleet_profile,
+        at=1_785_000_001.0,
+        poll_epoch=1,
+    )
+
+    assert app._status_agent() == ("OpenCode Go", model)
+    assert app._inspector_model() == model
 
 
 def test_runtime_view_reuses_held_status_and_queue_facts() -> None:
