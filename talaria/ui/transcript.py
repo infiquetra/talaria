@@ -1986,8 +1986,10 @@ class TranscriptPane(VerticalScroll):
         self.hold_anchor()
 
     def on_key(self, event: events.Key) -> None:
-        """Unpin every vertical reading key consumed by the focused pane."""
-        if event.key in ("up", "down", "pageup", "pagedown", "home"):
+        """Unpin upward keys and downward keys pressed above the bottom."""
+        moves_up = event.key in ("up", "pageup", "home")
+        moves_down = event.key in ("down", "pagedown")
+        if moves_up or (moves_down and not self.is_vertical_scroll_end):
             self.hold_anchor()
 
     def follow_bottom(self) -> None:

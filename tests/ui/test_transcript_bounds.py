@@ -29,6 +29,7 @@ from tests.ui.conftest import (
     live_app,
     paused_app,
     records,
+    screen_text,
     settle,
     streaming_turn,
 )
@@ -190,7 +191,7 @@ async def test_focused_keyboard_scroll_unpins_and_preserves_the_reading_position
     stress_frames: list[dict[str, Any]],
     scroll_key: str,
 ) -> None:
-    """Every vertical key consumed by the focused pane must stop following."""
+    """Every vertical key that moves the focused pane must stop following."""
     app, controls = paused_app(
         stress_frames,
         mount_cap=500,
@@ -220,11 +221,57 @@ async def test_focused_keyboard_scroll_unpins_and_preserves_the_reading_position
         assert float(pane.scroll_y) != before, f"{scroll_key} did not move the focused pane"
         assert pane.follow is False
         held = float(pane.scroll_y)
+        held_screen = screen_text(app)
+        visible_line = next(
+            line
+            for turn in range(40)
+            for step in range(6)
+            if (line := f"line {turn}.{step}") in held_screen
+        )
 
         for seq, frame in enumerate(streaming_turn(["later update\n"]), start=20_000):
             feed(app, frame, seq=seq)
         await settle(app, pilot)
         assert float(pane.scroll_y) == held
+        assert visible_line in screen_text(app)
+        await app.shutdown_sources()
+
+
+@pytest.mark.parametrize("scroll_key", ("down", "pagedown"))
+@pytest.mark.asyncio
+async def test_focused_down_at_the_bottom_keeps_following_visible_updates(
+    stress_frames: list[dict[str, Any]],
+    scroll_key: str,
+) -> None:
+    """A key that cannot move farther down must not silently stop follow mode."""
+    app, controls = paused_app(
+        stress_frames,
+        mount_cap=500,
+        reduced_motion=True,
+    )
+    async with app.run_test(size=(100, 20)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        pane.focus()
+        pane.follow_bottom()
+        await pilot.pause()
+        assert app.focused is pane
+        assert pane.scroll_y == pane.max_scroll_y
+        bottom = float(pane.scroll_y)
+
+        await pilot.press(scroll_key)
+        await pilot.pause()
+        followed_after_key = pane.follow
+        assert float(pane.scroll_y) == bottom
+
+        newest_line = "newest line after bottom-boundary key"
+        for seq, frame in enumerate(streaming_turn([f"{newest_line}\n"]), start=21_000):
+            feed(app, frame, seq=seq)
+        await settle(app, pilot)
+
+        assert (followed_after_key, newest_line in screen_text(app)) == (True, True)
+        assert pane.follow is True
+        assert pane.scroll_y == pane.max_scroll_y
         await app.shutdown_sources()
 
 
