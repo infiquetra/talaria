@@ -88,7 +88,10 @@ def load_user_theme_spec(path: Path) -> ThemeSpec:
         raise StoredThemeError(
             f"{path} is not a valid stored user theme: {exc}"
         ) from exc
-    serialize_user_theme(spec)
+    try:
+        serialize_user_theme(spec)
+    except StoredThemeError as exc:
+        raise StoredThemeError(f"{path} {exc}") from exc
     builtins = frozenset(theme.slug for theme in BUILTIN_THEMES)
     if spec.slug in builtins:
         raise StoredThemeError(

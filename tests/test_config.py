@@ -145,6 +145,35 @@ def test_save_theme_rewrites_a_dotted_key_without_changing_neighbors(
     }
 
 
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        b'theme = { name = "midnight-ink", source = "operator" }',
+        b'"theme".name = "midnight-ink"',
+    ],
+    ids=("inline-table", "quoted-dotted-key"),
+)
+def test_save_theme_changes_only_the_name_for_every_top_level_toml_spelling(
+    isolated_global_config_dir: Path,
+    assignment: bytes,
+) -> None:
+    path = isolated_global_config_dir / "config.toml"
+    before = (
+        b"# operator comment\n"
+        + assignment
+        + b"  # keep this inline comment\n[status]\ninterval_seconds = 7\n"
+    )
+    path.write_bytes(before)
+
+    save_theme("aurora-slate", config_dir=isolated_global_config_dir)
+
+    after = path.read_bytes()
+    assert after == before.replace(b'"midnight-ink"', b'"aurora-slate"', 1)
+    expected = tomllib.loads(before.decode("utf-8"))
+    expected["theme"]["name"] = "aurora-slate"
+    assert tomllib.loads(after.decode("utf-8")) == expected
+
+
 def test_save_theme_through_a_symlink_preserves_link_target_and_mode(
     isolated_global_config_dir: Path, tmp_path: Path
 ) -> None:
@@ -178,7 +207,8 @@ def test_save_theme_through_a_symlink_preserves_link_target_and_mode(
         ("empty-file", ""),
         (
             "missing-tokens",
-            '{"dark":true,"name":"Broken","slug":"broken","tokens":{}}',
+            '{"dark":true,"name":"Broken",'
+            '"slug":"broken-missing-tokens","tokens":{}}',
         ),
     ],
 )

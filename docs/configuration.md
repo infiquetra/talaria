@@ -106,10 +106,11 @@ is different: it is a launch error that names the offending file.
 
 ## What Talaria writes
 
-Talaria writes only the top-level `[theme]` table, and only after `/theme save`, `/theme save user`,
-or `/theme save repository`. The narrow writer changes `theme.name`, leaves every other key and
-comment untouched, verifies the parsed document changed in exactly that way, and replaces the file
-atomically. It is not a general configuration serializer.
+Talaria writes only the top-level `theme.name` setting, and only after `/theme save`, `/theme save
+user`, or `/theme save repository`. The narrow writer supports an existing `[theme]` table, dotted
+key, or inline table; it leaves every other key and comment untouched, verifies the parsed document
+changed in exactly that way, and replaces the file atomically. It is not a general configuration
+serializer.
 
 No command writes the status, user-interface, environment, composer, or profile tables. `/bar`
 toggles a known segment in memory for the running process and never writes. Inspector width and open
