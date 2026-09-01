@@ -218,6 +218,7 @@ def test_theme_import_json_report_is_one_versioned_stdout_object(
     assert printed.err == ""
     report = json.loads(printed.out)
     assert report == {
+        "composites": [],
         "fallback_count": 56,
         "fallbacks": report["fallbacks"],
         "schema_version": "talaria-theme-import-report-v1",
@@ -241,6 +242,60 @@ def test_theme_import_json_report_is_one_versioned_stdout_object(
         "message": "root.include is unsupported; external theme files are not read",
         "severity": "warning",
     }
+
+
+def test_theme_import_json_reports_every_prose_alpha_composite(
+    isolated_global_config_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = VSCODE_THEME_FIXTURES / "sample-dark.json"
+    argv = ["theme", "import", str(source), "--name", "json-composite"]
+
+    assert main(argv) == 0
+    prose = capsys.readouterr()
+    prose_composites = tuple(
+        line for line in prose.out.splitlines() if line.startswith("composite: ")
+    )
+
+    assert main([*argv, "--json"]) == 0
+    printed = capsys.readouterr()
+    report = json.loads(printed.out)
+
+    assert printed.err == ""
+    assert len(report["composites"]) == len(prose_composites) == 1
+    assert report["composites"] == [
+        {
+            "background": "#102030",
+            "path": "colors.editor.selectionBackground",
+            "severity": "info",
+            "source": "#FF000080",
+            "token": "talaria.selection.background",
+            "value": "#881018",
+        }
+    ]
+
+
+def test_theme_import_json_failures_preserve_distinct_error_kinds(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failures: list[dict[str, object]] = []
+
+    for fixture, expected_kind in (
+        ("malformed.json", "malformed"),
+        ("wrong-root.json", "wrong-root"),
+    ):
+        source = VSCODE_THEME_FIXTURES / fixture
+        assert main(["theme", "import", str(source), "--json"]) == 3
+        printed = capsys.readouterr()
+        error = json.loads(printed.out)
+
+        assert printed.err == ""
+        assert error["schema_version"] == "talaria-theme-import-error-v1"
+        assert error["kind"] == expected_kind
+        assert isinstance(error["message"], str) and error["message"]
+        failures.append(error)
+
+    assert failures[0]["kind"] != failures[1]["kind"]
 
 
 @pytest.mark.parametrize(

@@ -259,6 +259,17 @@ class ImportReport:
             "source_token_count": self.mapped_count,
             "fallback_count": self.fallback_count,
             "warning_count": self.unsupported_count,
+            "composites": [
+                {
+                    "severity": "info",
+                    "path": item.path,
+                    "token": item.token,
+                    "source": item.source,
+                    "background": item.background,
+                    "value": item.value,
+                }
+                for item in self.composites
+            ],
             "fallbacks": [
                 {
                     "severity": "info",

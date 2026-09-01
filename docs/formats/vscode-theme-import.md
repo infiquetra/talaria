@@ -116,17 +116,27 @@ These eighteen Talaria extension tokens have no entry in either supported mappin
 | talaria.transcript.fault | Talaria-specific transcript channel |
 | talaria.transcript.fault.background | Talaria-specific transcript channel |
 
-Any other token falls back only when its listed source is absent or invalid. The successful import report states source-mapped count, fallback count, unsupported count, and every affected path/token. Successful imports with warnings exit successfully but visibly print the report; malformed imports write nothing and exit unsuccessfully.
+Any other token falls back only when its listed source is absent or invalid. The successful import report states source-mapped count, fallback count, unsupported count, and every affected path/token. Successful imports with warnings exit successfully but visibly print the report. A failed import never writes a stored theme; its command-line report is described below.
 
 ## Command-line reports and exit status
 
 The default report remains prose: informational lines use standard output and
 warnings use standard error. `talaria theme import FILE --json` instead writes
-one JSON object and nothing else to standard output. Its
-`schema_version` is `talaria-theme-import-report-v1`; the object also carries
-`slug`, `target_path`, `source_token_count`, `fallback_count`, `warning_count`,
-and ordered `fallbacks` and `warnings` arrays. Every array record has an
-explicit `severity`, so consumers never infer routing from English text.
+one JSON object to standard output and writes nothing to standard error.
+
+On success, `schema_version` is `talaria-theme-import-report-v1`. The object
+also carries `slug`, `target_path`, `source_token_count`, `fallback_count`,
+`warning_count`, and ordered `composites`, `fallbacks`, and `warnings` arrays.
+Each composite record carries `severity`, `path`, `token`, `source`,
+`background`, and the flattened `value`. Each fallback and warning record also
+has an explicit `severity`, so consumers never infer routing from English text.
+
+On failure, `schema_version` is `talaria-theme-import-error-v1`. The object
+carries the stable `kind` and a human-readable `message`; the exit status still
+uses the table below. The `kind` vocabulary is `unreadable`, `empty`,
+`malformed`, `wrong-root`, `reserved-slug`, `invalid-slug`, and `unwritable`.
+These seven values distinguish the documented causes even when several share
+one exit status.
 
 | Exit status | Meaning |
 |---|---|
@@ -154,7 +164,7 @@ symlink, Talaria replaces the link itself and never writes through to its target
 Imported themes are read only when a new Talaria process constructs its theme registry;
 source-file changes are not watched.
 
-For one release, the reader treats a stored theme without `schema_version` as
-version one. A file carrying any other version, or any other invalid stored
-document, is skipped with a visible notice; it cannot prevent valid themes or
-the application from loading.
+During v0.5.0, the reader treats a stored theme without `schema_version` as
+version one. The field becomes required in v0.6.0. A file carrying any other
+version, or any other invalid stored document, is skipped with a visible
+notice; it cannot prevent valid themes or the application from loading.
