@@ -10,7 +10,9 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
-The v0.5.0 candidate makes the terminal interface themeable and adds persistent bottom-of-screen
+## [0.5.0] — 2026-09-01
+
+Talaria v0.5.0 makes the terminal interface themeable and adds persistent bottom-of-screen
 context, an inspector, and a bounded read-only view of session-reported changes. The
 [v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md) was
 executed on 2026-08-31. **BLOCKED**: 43 of 43 expected checklist/tester slots are covered. The
@@ -416,7 +418,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/infiquetra/talaria/releases/tag/v0.5.0
 [0.4.0]: https://github.com/infiquetra/talaria/releases/tag/v0.4.0
 [0.3.0]: https://github.com/infiquetra/talaria/releases/tag/v0.3.0
 [0.2.0]: https://github.com/infiquetra/talaria/releases/tag/v0.2.0
