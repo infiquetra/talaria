@@ -14,7 +14,7 @@
 
 ## Item 14 — Status responsive sequence
 
-`14-status-responsive-sequence.json` waits four seconds and then applies every required width—144, 143, 120, 119, 112, 111, 96, 95, 80, 79, 64, 63, 48, 47, 32, 31, 20, and 19 columns—with one second between resizes for a complete synchronous layout and capture repaint, followed by a two-second final hold. Judge each recorded repaint against the breakpoint table: forms compact first, segments drop in the specified order, connection remains, adjacent separators disappear with their segment, and BottomStatusBar stays one row without wrapping.
+`14-status-responsive-sequence.json` waits four seconds and then applies every required width—144, 143, 120, 119, 112, 111, 96, 95, 80, 79, 64, 63, 48, 47, 32, 31, 20, and 19 columns—with one second between resizes for a complete synchronous layout and capture repaint, followed by a two-second final hold. Judge each recorded repaint against `_breakpoint`: forms compact first, segments drop in the specified order, 32 and 31 remain inside the same 20–47 band, connection remains, adjacent separators disappear with their segment, and BottomStatusBar stays one row without wrapping.
 
 ## Item 16 — Inspector dock and resize
 
@@ -26,7 +26,7 @@
 
 ## Item 18 — Inspector responsive state
 
-`18-inspector-responsive-state.json` waits four seconds, sets 120 by 36, reopens and widens the focused dock to 40 columns, then gives each breakpoint change at least one second to settle while driving open 120→119→120, manually closed 120→119→120, and a 119-column overlay opened with `ctrl+b` and closed with Escape before returning to 120. Judge that auto-collapse restores only the open preference, manual close survives its round trip, the overlay title is present without transcript reflow, and the final dock returns at 40 columns; rerun the script in a new process and use its pre-action frame to prove process geometry reset to the 36-column expanded default.
+`18-inspector-responsive-state.json` waits four seconds, sets 120 by 36, reopens and widens the focused dock to 40 columns, then gives each breakpoint change at least one second to settle while driving open 120→119→120, manually closed 120→119→120, and a 119-column overlay opened with `ctrl+b` and closed with Escape before returning to 120. Judge that auto-collapse restores only the open preference, manual close survives its round trip, the overlay title is present without transcript reflow, and the final 120-column frame remains closed because the manual-close preference is preserved; rerun the script in a new process and use its pre-action frame to prove process geometry reset to the 36-column expanded default.
 
 ## Item 19 — Side-by-side diff
 

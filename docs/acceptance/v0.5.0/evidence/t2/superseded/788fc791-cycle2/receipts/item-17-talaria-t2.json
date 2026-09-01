@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 17,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-17-empty-c2.ansi",
+    "capture_sha256": "20552b1878dea5d7dcb44131dc722988a4acff7ea493d6dbffe631c4bbea9916",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-17-empty-c2-pty.json",
+    "pty_result_sha256": "82b4e4344c86660b0de08e19019044d94b76285b85f229c8a2d57948f5600983",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-17-empty-c2.png",
+    "screenshot_sha256": "4f4e821bc8864e1fa2d2bab350b9ab1dfca9096faa9a85ced92dcfdf40b932f6"
+  },
+  "observations": [
+    "All four empty headings remain and each shows the complete none-available sentence with cycle-2 wrapping across the exercised widths. Supplemental item-17-populated-c2.ansi proves accurate populated state."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-09-01T03:01:46+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "acceptance-replay"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Inspector content and empty states",
+  "verdict": "pass"
+}
