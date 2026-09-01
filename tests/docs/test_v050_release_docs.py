@@ -93,17 +93,17 @@ def _assert_evidence_indexes_agree_with_manifest(manifest_path: Path) -> None:
         f"{counts['invalid_item_receipts']} invalid item receipts."
     )
     evidence_indexes = sorted((_ACCEPTANCE_ROOT / "evidence").glob("*/README.md"))
-    combined = re.sub(
-        r"\s+",
-        " ",
-        "\n".join(path.read_text(encoding="utf-8") for path in evidence_indexes),
-    )
-
-    assert expected in combined
-    if counts["stale_receipts"] == 0:
-        assert "still flags the T2 receipts currently on this branch as stale" not in combined
-    if counts["missing_current_receipts"] == 0:
-        assert "only after the parallel T2 half is merged" not in combined
+    assert evidence_indexes
+    for path in evidence_indexes:
+        document = path.read_text(encoding="utf-8")
+        normalized = re.sub(r"\s+", " ", document)
+        assert document.count("<!-- BEGIN GENERATED ACCEPTANCE MANIFEST COUNTS -->") == 1
+        assert document.count("<!-- END GENERATED ACCEPTANCE MANIFEST COUNTS -->") == 1
+        assert expected in normalized, path
+        if counts["stale_receipts"] == 0:
+            assert "still flags the T2 receipts currently on this branch as stale" not in document
+        if counts["missing_current_receipts"] == 0:
+            assert "only after the parallel T2 half is merged" not in document
 
 
 def test_evidence_indexes_agree_with_the_manifest() -> None:

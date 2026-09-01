@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate and check the Talaria v0.5.0 acceptance records.
 
-Receipts are the authority.  The artifact manifest and the verdict cells in the
-results document are projections of the committed install and item receipts.
+Receipts are the authority.  The artifact manifest, results document, and
+evidence-index count summaries are projections of the committed install and
+item receipts.
 """
 
 from __future__ import annotations
@@ -49,6 +50,8 @@ _MATRIX_BEGIN = "<!-- BEGIN GENERATED ACCEPTANCE VERDICTS -->"
 _MATRIX_END = "<!-- END GENERATED ACCEPTANCE VERDICTS -->"
 _STATUS_BEGIN = "<!-- BEGIN GENERATED ACCEPTANCE STATUS -->"
 _STATUS_END = "<!-- END GENERATED ACCEPTANCE STATUS -->"
+_INDEX_COUNTS_BEGIN = "<!-- BEGIN GENERATED ACCEPTANCE MANIFEST COUNTS -->"
+_INDEX_COUNTS_END = "<!-- END GENERATED ACCEPTANCE MANIFEST COUNTS -->"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -433,7 +436,7 @@ def _generated_region(document: str, begin: str, end: str) -> tuple[int, int, st
     start = document.find(begin)
     finish = document.find(end)
     if start < 0 or finish < 0 or finish < start:
-        raise HarnessError(f"results document is missing generated markers {begin!r}/{end!r}")
+        raise HarnessError(f"document is missing generated markers {begin!r}/{end!r}")
     content_start = start + len(begin)
     return content_start, finish, document[content_start:finish]
 
@@ -693,6 +696,102 @@ def _json_text(value: dict[str, Any]) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
 
 
+def _evidence_index_count_sentence(manifest: dict[str, Any]) -> str:
+    counts = require_object(manifest["counts"], field="manifest.counts")
+    return (
+        f"The generated manifest reports {counts['stale_receipts']} stale receipts, "
+        f"{counts['missing_current_receipts']} missing current receipts, and "
+        f"{counts['invalid_item_receipts']} invalid item receipts."
+    )
+
+
+def render_evidence_index(
+    document: str,
+    *,
+    manifest: dict[str, Any],
+    initialize: bool = False,
+) -> str:
+    """Replace only the generated manifest-count sentence in an evidence index."""
+    sentence = _evidence_index_count_sentence(manifest)
+    begin_count = document.count(_INDEX_COUNTS_BEGIN)
+    end_count = document.count(_INDEX_COUNTS_END)
+    if begin_count != 1 or end_count != 1:
+        if not initialize or begin_count or end_count:
+            raise HarnessError(
+                "evidence index must contain exactly one generated manifest-count region"
+            )
+        table_start = document.find("\n| ")
+        if table_start < 0:
+            raise HarnessError(
+                "evidence index has no generated count markers or Markdown table anchor"
+            )
+        block = "\n".join([_INDEX_COUNTS_BEGIN, sentence, _INDEX_COUNTS_END])
+        return (
+            document[:table_start].rstrip()
+            + "\n\n"
+            + block
+            + "\n"
+            + document[table_start:]
+        )
+    start, finish, _ = _generated_region(
+        document, _INDEX_COUNTS_BEGIN, _INDEX_COUNTS_END
+    )
+    return document[:start] + "\n" + sentence + "\n" + document[finish:]
+
+
+def _render_evidence_indexes(
+    *,
+    manifest: dict[str, Any],
+    evidence_root: Path,
+    initialize: bool,
+) -> list[tuple[Path, str]]:
+    rendered: list[tuple[Path, str]] = []
+    for path in sorted(evidence_root.glob("*/README.md")):
+        try:
+            document = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HarnessError(f"cannot read evidence index {path}: {exc}") from exc
+        rendered.append(
+            (
+                path,
+                render_evidence_index(
+                    document, manifest=manifest, initialize=initialize
+                ),
+            )
+        )
+    if not rendered:
+        raise HarnessError(f"no tester evidence indexes found under {evidence_root}")
+    return rendered
+
+
+def evidence_index_errors(
+    manifest: dict[str, Any],
+    *,
+    evidence_root: Path = _EVIDENCE_ROOT,
+    repo_root: Path = _REPO_ROOT,
+) -> list[str]:
+    """Return drift errors for tester-index manifest-count projections."""
+    errors: list[str] = []
+    paths = sorted(evidence_root.glob("*/README.md"))
+    for path in paths:
+        try:
+            document = path.read_text(encoding="utf-8")
+            expected = render_evidence_index(document, manifest=manifest)
+        except (HarnessError, OSError) as exc:
+            errors.append(f"{_display_path(path, repo_root)}: {exc}")
+            continue
+        if document != expected:
+            errors.append(
+                f"{_display_path(path, repo_root)} has manifest counts that disagree "
+                "with the generated manifest"
+            )
+    if not paths:
+        errors.append(
+            f"{_display_path(evidence_root, repo_root)} has no tester evidence indexes"
+        )
+    return errors
+
+
 def refresh_records(
     *,
     current_candidate_commit: str,
@@ -702,7 +801,7 @@ def refresh_records(
     manifest_path: Path = _MANIFEST_PATH,
     results_path: Path = _RESULTS_PATH,
 ) -> dict[str, Any]:
-    """Regenerate both repository records from the receipt set."""
+    """Regenerate repository records and tester-index counts from the receipt set."""
     if not _git_commit_exists(repo_root, current_candidate_commit):
         raise HarnessError(
             f"current candidate commit does not exist in this repository: "
@@ -722,8 +821,15 @@ def refresh_records(
     rendered_results = render_results_document(
         current_results, manifest=manifest, checklist=checklist, repo_root=repo_root
     )
+    rendered_indexes = _render_evidence_indexes(
+        manifest=manifest,
+        evidence_root=evidence_root,
+        initialize=True,
+    )
     write_json_object(manifest_path, manifest, replace=True)
     results_path.write_text(rendered_results, encoding="utf-8")
+    for path, document in rendered_indexes:
+        path.write_text(document, encoding="utf-8")
     return manifest
 
 
@@ -735,7 +841,7 @@ def check_records(
     manifest_path: Path = _MANIFEST_PATH,
     results_path: Path = _RESULTS_PATH,
 ) -> list[str]:
-    """Return drift errors for the generated manifest and results verdicts."""
+    """Return drift errors for every generated acceptance record."""
     current_manifest = read_json_object(manifest_path)
     current_candidate = require_object(
         current_manifest.get("current_candidate"), field="manifest.current_candidate"
@@ -790,6 +896,13 @@ def check_records(
                 for number, cells in expected_rows.items()
             ):
                 errors.append(f"{prefix} has verdict cells that disagree with the receipts")
+    errors.extend(
+        evidence_index_errors(
+            expected_manifest,
+            evidence_root=evidence_root,
+            repo_root=repo_root,
+        )
+    )
     return errors
 
 

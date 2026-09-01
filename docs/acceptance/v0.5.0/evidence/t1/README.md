@@ -6,6 +6,10 @@ This directory records the T1 half of acceptance against candidate
 not the source checkout, produced every capture below. Every item receipt records harness commit
 `4c2d8dbf0ddfb7f38ba1f228369ae2d929319758`.
 
+<!-- BEGIN GENERATED ACCEPTANCE MANIFEST COUNTS -->
+The generated manifest reports 0 stale receipts, 0 missing current receipts, and 0 invalid item receipts.
+<!-- END GENERATED ACCEPTANCE MANIFEST COUNTS -->
+
 | Item | Verdict | Receipt | Raw terminal evidence | Screenshot |
 | ---: | --- | --- | --- | --- |
 | 1 | passed | [install receipt](install-receipt.json) | install probe, version, bare launch, and replay gate are embedded in the receipt | not applicable |
