@@ -4,7 +4,7 @@ This directory records issue #110 acceptance against frozen candidate commit
 `d86979127f871a479eb104fc10c886b5c5480a8c` and wheel Secure Hash Algorithm 256-bit
 (SHA-256) digest `a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb`.
 The acceptance harness installed that wheel at
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2`.
+`<scratch-root>`.
 Its exact install receipt is committed as `install-receipt.json`; raw American National Standards
 Institute (ANSI) pseudo-terminal captures remain under the scratch root.
 
@@ -45,13 +45,13 @@ control seam and was deliberately not retried here.
 ## Failed and blocked evidence
 
 Item 25's raw capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-25-monochrome.ansi`.
+`<scratch-root>/raw/item-25-monochrome.ansi`.
 Its screenshot is `screenshots/item-25.png`. The monochrome frame shows `> You`, `. Reasoning`, `A
 Talaria`, `$ Tool/Subagent`, `- Session`, and `! Error`, but visible blank rows follow the Reasoning
 and assistant entries.
 
 Item 27's raw capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-27-wheels.ansi`.
+`<scratch-root>/raw/item-27-wheels.ansi`.
 Its screenshot is `screenshots/item-27.png`. Forty-five real terminal wheel-up inputs reached the
 middle anchors around 66–89; later transcript appends, theme and inspector operations, and resizes
 returned the viewport to anchors 98–120 at the bottom.

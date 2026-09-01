@@ -13,9 +13,9 @@ with the usual caveat that a `0.x` line may break anything between releases.
 The v0.5.0 candidate makes the terminal interface themeable and adds persistent bottom-of-screen
 context, an inspector, and a bounded read-only view of session-reported changes. The
 [v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md) was
-executed on 2026-08-31 and returned **NOT SATISFIED**. The installed artifact was proven, but the
-approved live primary model route did not produce a passing receipt and `talaria-t1` item receipts
-and screenshots do not exist.
+executed on 2026-08-31. Its manifest status is **BLOCKED**: 43 of 43 receipts are current; item
+verdicts are 40 pass, 1 blocked, and 0 fail. Item 24 is the only blocker and is terminally
+unreachable because the gateway always assigns a request identifier.
 
 ### Added
 
@@ -67,9 +67,8 @@ and screenshots do not exist.
 ### Known limitations
 
 - The [v0.5.0 acceptance verdict](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
-  is **NOT SATISFIED**. The installed artifact and 14 assigned `talaria-t2` items are proven, but no
-  approved live primary model receipt exists and `talaria-t1` has no current item receipts or
-  screenshots.
+  is **BLOCKED** on item 24 alone. The gateway always assigns a request identifier, so the keyless
+  approval state required by that item is terminally unreachable without simulation.
 - The `growing-one-column-table` steady-state p99 `TranscriptPane.apply` latency exceeds its 50 ms
   ceiling. Its run-to-run spread makes it unsuitable as a release gate; the measured debt and revisit
   condition are recorded in [QUEUED.md](docs/engineering-journal/QUEUED.md#the-shipped-block-markdown-gate-misses-its-steady-state-table-apply-ceiling).

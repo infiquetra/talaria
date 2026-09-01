@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -13,6 +15,7 @@ from textual.containers import Horizontal
 from textual.theme import Theme
 from textual.widgets import Static
 
+import talaria.ui.app as app_module
 from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.models import QueueItem, SubagentRow, Usage
 from talaria.domain.projection import SubagentView, entry_scoped_view
@@ -30,6 +33,24 @@ from tests.ui.conftest import RecordingDispatcher, live_app, paused_app
 
 class FocusTarget(Static):
     can_focus = True
+
+
+def test_inspector_resolves_the_focused_roster_model_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, _controls = paused_app([])
+    app.state = replace(app.state, focused_session_id="live-primary")
+    observations = 0
+
+    def observed_row(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        nonlocal observations
+        observations += 1
+        return SimpleNamespace(model=f"observed-{observations}")
+
+    monkeypatch.setattr(app_module, "fleet_row", observed_row)
+
+    assert app._inspector_model() == "observed-1"
+    assert observations == 1
 
 
 class InspectorHarness(App[None]):

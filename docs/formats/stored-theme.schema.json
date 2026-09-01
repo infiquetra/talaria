@@ -4,11 +4,19 @@
   "title": "Talaria stored user theme",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "dark", "name", "slug", "tokens"],
+  "required": ["dark", "name", "slug", "tokens"],
   "properties": {
-    "schema_version": {"const": "talaria-theme-v1"},
+    "schema_version": {
+      "$comment": "Optional for v0.5.0 migration compatibility; required starting in v0.6.0.",
+      "const": "talaria-theme-v1"
+    },
     "dark": {"type": "boolean"},
-    "name": {"type": "string", "minLength": 1},
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\u0000-\u001F\u007F\u00AD\u0600-\u0605\u061C\u06DD\u070F\u0890-\u0891\u08E2\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\uFFF9-\uFFFB\uD804\uDCBD\uD804\uDCCD\uD80D\uDC30-\uD80D\uDC3F\uD82F\uDCA0-\uD82F\uDCA3\uD834\uDD73-\uD834\uDD7A\uDB40\uDC01\uDB40\uDC20-\uDB40\uDC7F]*$"
+    },
     "slug": {
       "type": "string",
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"

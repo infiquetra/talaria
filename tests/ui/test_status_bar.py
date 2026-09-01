@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
@@ -12,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Static
 
+from talaria.domain.models_catalog import ModelProvider, ProviderCatalog
 from talaria.domain.projection import StatusPayload
 from talaria.domain.queue import NeedsYouQueue
 from talaria.domain.session_list import decode_active_list
@@ -136,6 +138,26 @@ def test_unknown_and_duplicate_config_rows_are_reported_without_hiding_known_row
     assert "default order" in default_notices[0]
 
 
+def test_each_unknown_configured_segment_is_named_in_its_own_notice() -> None:
+    segments, notices = normalize_status_segments(
+        ["first_unknown", "connection", "second_unknown"]
+    )
+
+    assert segments == ("connection",)
+    assert len(notices) == 2
+    assert notices[0] != notices[1]
+    assert "first_unknown" in notices[0]
+    assert "second_unknown" in notices[1]
+
+
+def test_unknown_configured_segment_escape_is_rendered_not_obeyed() -> None:
+    _segments, notices = normalize_status_segments(["unsafe\x1b[2Jsegment", "connection"])
+
+    assert len(notices) == 1
+    assert "unsafe␛[2Jsegment" in notices[0]
+    assert "\x1b" not in notices[0]
+
+
 _ALL_SEGMENTS = (
     "cwd",
     "git_branch",
@@ -146,6 +168,8 @@ _ALL_SEGMENTS = (
     "version",
 )
 _WITHOUT_VERSION = _ALL_SEGMENTS[:-1]
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _TRANSITIONS = (
     (144, _ALL_SEGMENTS, "full"),
@@ -163,8 +187,8 @@ _TRANSITIONS = (
     (48, ("agent_model", "task_progress", "connection"), "compact"),
     (47, ("task_progress", "connection"), "compact"),
     (32, ("task_progress", "connection"), "compact"),
-    (31, ("task_progress", "connection"), ("minimum", "compact")),
-    (20, ("task_progress", "connection"), ("minimum", "compact")),
+    (31, ("task_progress", "connection"), "compact"),
+    (20, ("task_progress", "connection"), "compact"),
     (19, ("connection",), "minimum"),
 )
 
@@ -219,8 +243,52 @@ def test_attention_marker_survives_at_thirty_one_columns_when_queue_is_nonempty(
         "task_progress",
         "connection",
     )
+    assert "3/7" in rendered.plain
     assert "!2" in rendered.plain
     assert any(run.text == "!2" and run.token == "attention" for run in rendered.runs)
+
+
+def test_twenty_through_thirty_two_columns_keep_all_required_compact_content() -> None:
+    required = "task 3/7 !1│[ok] up"
+
+    for width in range(20, 33):
+        rendered = render_status_bar(_view(), width)
+
+        assert abs(rendered.width - cell_len(required)) <= 1, width
+        assert rendered.plain == required
+
+
+@pytest.mark.parametrize(
+    ("width", "expected_names"),
+    [
+        (144, _ALL_SEGMENTS),
+        (132, _ALL_SEGMENTS),
+        (112, _WITHOUT_VERSION),
+        (96, _WITHOUT_VERSION),
+        (80, ("git_branch", "agent_model", "context", "task_progress", "connection")),
+        (64, ("agent_model", "context", "task_progress", "connection")),
+        (48, ("agent_model", "task_progress", "connection")),
+        (32, ("task_progress", "connection")),
+        (20, ("task_progress", "connection")),
+        (19, ("connection",)),
+    ],
+)
+def test_documented_default_breakpoint_bands_match_rendered_segments(
+    width: int, expected_names: tuple[str, ...]
+) -> None:
+    rendered = render_status_bar(_view(), width)
+
+    assert tuple(segment.name for segment in rendered.segments) == expected_names
+
+
+def test_terminal_ui_documents_the_twenty_column_compact_contract() -> None:
+    guide = (_REPO_ROOT / "docs" / "terminal-ui.md").read_text(encoding="utf-8")
+
+    assert (
+        "| 20–31 | Keep `task_progress` and `connection` compact while they fit"
+        in guide
+    )
+    assert "| Fewer than 20 | Drop `task_progress`; minimum `connection` form" in guide
 
 
 @pytest.mark.parametrize(
@@ -409,6 +477,44 @@ async def test_live_registry_model_replaces_unknown_after_the_first_render() -> 
         assert app.bottom_status_bar.view.agent_model == "muse-spark-1.2-contributor"
         assert "agent: muse-spa…tributor" in app.bottom_status_bar.last_render.plain
         assert "agent: ?" not in app.bottom_status_bar.last_render.plain
+
+
+def test_roster_provider_prefix_is_status_only() -> None:
+    app, _controls = paused_app([])
+    model = "muse-spark-1.2-contributor"
+    app.state = replace(app.state, focused_session_id="live-primary")
+    app.model_catalog = ProviderCatalog(
+        providers=(
+            ModelProvider(
+                slug="opencode-go",
+                name="OpenCode Go",
+                models=(model,),
+                authenticated=True,
+            ),
+        ),
+        current_provider="opencode-go",
+        current_model=model,
+    )
+    app.fleet = apply_active_list(
+        app.fleet,
+        decode_active_list(
+            {
+                "sessions": [
+                    {
+                        "id": "live-primary",
+                        "status": "idle",
+                        "model": model,
+                    }
+                ]
+            }
+        ),
+        profile=app.fleet_profile,
+        at=1_785_000_001.0,
+        poll_epoch=1,
+    )
+
+    assert app._status_agent() == ("OpenCode Go", model)
+    assert app._inspector_model() == model
 
 
 def test_runtime_view_reuses_held_status_and_queue_facts() -> None:

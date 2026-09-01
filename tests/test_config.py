@@ -145,6 +145,35 @@ def test_save_theme_rewrites_a_dotted_key_without_changing_neighbors(
     }
 
 
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        b'theme = { name = "midnight-ink", source = "operator" }',
+        b'"theme".name = "midnight-ink"',
+    ],
+    ids=("inline-table", "quoted-dotted-key"),
+)
+def test_save_theme_changes_only_the_name_for_every_top_level_toml_spelling(
+    isolated_global_config_dir: Path,
+    assignment: bytes,
+) -> None:
+    path = isolated_global_config_dir / "config.toml"
+    before = (
+        b"# operator comment\n"
+        + assignment
+        + b"  # keep this inline comment\n[status]\ninterval_seconds = 7\n"
+    )
+    path.write_bytes(before)
+
+    save_theme("aurora-slate", config_dir=isolated_global_config_dir)
+
+    after = path.read_bytes()
+    assert after == before.replace(b'"midnight-ink"', b'"aurora-slate"', 1)
+    expected = tomllib.loads(before.decode("utf-8"))
+    expected["theme"]["name"] = "aurora-slate"
+    assert tomllib.loads(after.decode("utf-8")) == expected
+
+
 def test_save_theme_through_a_symlink_preserves_link_target_and_mode(
     isolated_global_config_dir: Path, tmp_path: Path
 ) -> None:
@@ -178,7 +207,8 @@ def test_save_theme_through_a_symlink_preserves_link_target_and_mode(
         ("empty-file", ""),
         (
             "missing-tokens",
-            '{"dark":true,"name":"Broken","slug":"broken","tokens":{}}',
+            '{"dark":true,"name":"Broken",'
+            '"slug":"broken-missing-tokens","tokens":{}}',
         ),
     ],
 )
@@ -685,3 +715,21 @@ def test_v050_user_guide_toml_examples_parse_and_match_runtime_defaults() -> Non
     assert example["environment"] == DEFAULTS["environment"]
     assert example["composer"] == DEFAULTS["composer"]
     assert example["profiles"] == DEFAULTS["profiles"]
+
+
+def test_configuration_guide_distinguishes_malformed_allowlist_behaviors() -> None:
+    """The deferred type bug has three outcomes, not one universal failure."""
+    guide = (
+        Path(__file__).resolve().parents[1] / "docs" / "configuration.md"
+    ).read_text(encoding="utf-8")
+    guide = re.sub(r"\s+", " ", guide)
+
+    assert "`42` and `true` are truthy non-iterables and raise `TypeError`" in guide
+    assert (
+        "`false`, `0`, `0.0`, and an empty list are treated as no allowlist "
+        "and produce no notice"
+    ) in guide
+    assert (
+        'A string is iterated character by character, so `"FOO"` becomes '
+        "`('F', 'O', 'O')` with no notice"
+    ) in guide

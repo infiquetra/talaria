@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "<scratch-root>/fixtures/acceptance-populated.jsonl"
+  ],
+  "capture": {
+    "bytes": 96474,
+    "path": "<scratch-root>/raw/item-14-width-80.ansi",
+    "sha256": "6b837bc08478f6241158330b052794d2421211b8ef6fc06616b4b48832a4bbec"
+  },
+  "columns": 80,
+  "duration_seconds": 5.291357,
+  "exit_code": 0,
+  "expected_literals": [],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "POSIX pseudo-terminal capture",
+  "tester": "talaria-t2",
+  "timed_out": false
+}

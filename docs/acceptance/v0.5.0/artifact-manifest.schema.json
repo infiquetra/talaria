@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://infiquetra.github.io/talaria/acceptance/v0.5.0/artifact-manifest.schema.json",
   "title": "Talaria v0.5.0 generated acceptance artifact manifest",
+  "description": "JSON Schema validates document shape only; cross-field receipt counts, candidate binding, hashes, and verdict invariants are enforced by `uv run python -m scripts.acceptance.v050_records check`.",
   "type": "object",
   "additionalProperties": false,
   "required": [

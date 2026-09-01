@@ -411,10 +411,6 @@ def _breakpoint(width: int) -> tuple[SegmentForm, frozenset[StatusSegmentName]]:
         return "compact", frozenset({"version", "cwd", "git_branch"})
     if width >= 48:
         return "compact", frozenset({"version", "cwd", "git_branch", "context"})
-    if width >= 32:
-        return "compact", frozenset(
-            {"version", "cwd", "git_branch", "context", "agent_model"}
-        )
     if width >= 20:
         return "compact", frozenset(
             {"version", "cwd", "git_branch", "context", "agent_model"}
@@ -480,12 +476,7 @@ def render_status_bar(
     resolved = settings if settings is not None else StatusBarSettings()
     initial_form, breakpoint_drops = _breakpoint(width)
     segments = [
-        _render_segment(
-            SPEC_BY_NAME[name],
-            "minimum" if 20 <= width < 32 and name == "task_progress" else initial_form,
-            view,
-            resolved,
-        )
+        _render_segment(SPEC_BY_NAME[name], initial_form, view, resolved)
         for name in resolved.segments
         if name not in breakpoint_drops
     ]

@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
-    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
-    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 3,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-03.ansi",
-    "capture_sha256": "4361d9849db7a0d4dbbc4a36269f9d3bf22c2c375ec863edd34c0a796c5a514d",
+    "capture_sha256": "9d3a076b14997ddd7d6b93577598ebe436bfa9627fe44fccf069f3bef80f75be",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-03-pty.json",
-    "pty_result_sha256": "23670e1db07d5b680d733df5f6744391a7ce14086fa877f04924b301b3b9c2f6",
+    "pty_result_sha256": "799ecef373febe289f71cf48b43e6fb0d14f6d6841f5871e3c50e08b24751963",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-03.png",
-    "screenshot_sha256": "7bc982ea1d22930c620894ea56caa2fc7653e6279ad190fb2332cde24220d953"
+    "screenshot_sha256": "41b9bfbfc1cb5d0722b618a5e12a5f61998baf196d5c4d3894deb507d798e3f2"
   },
   "observations": [
-    "The final row is BottomStatusBar, HelpBar is directly above it, and StatusRegion remains inside the flexible body."
+    "Main body, composer, help bar, and bottom status bar preserve the specified hierarchy."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T16:57:39+00:00",
+  "recorded_at": "2026-08-31T20:28:38+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-frame-log"
+    "profile": "deterministic-replay"
   },
   "terminal": {
     "columns": 144,

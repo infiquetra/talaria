@@ -494,8 +494,8 @@ All widths are terminal cell columns reported by Textual after the resize event.
 | 64–79 | Also drop git_branch | Auto-collapsed; overlay available | Forced unified |
 | 48–63 | Also drop context | Auto-collapsed; overlay available | Forced unified |
 | 32–47 | Also drop agent_model | Auto-collapsed; overlay available | Forced unified |
-| 20–31 | Keep task_progress at minimum; connection remains compact | Auto-collapsed; overlay is terminal width minus two | Forced unified |
-| Fewer than 20 | Minimum connection form, hard-clipped only as a last resort | Full-terminal overlay only | Forced unified |
+| 20–31 | Keep task_progress and connection compact while they fit | Auto-collapsed; overlay is terminal width minus two | Forced unified |
+| Fewer than 20 | Drop task_progress; minimum connection form, hard-clipped only as a last resort | Full-terminal overlay only | Forced unified |
 
 ### Status-bar truncation and drop contract
 
@@ -521,6 +521,8 @@ Within a width band, the algorithm is deterministic:
 4. Use a middle ellipsis for paths, branches, and model names so both identity ends survive. Use a trailing ellipsis for other prose, but never remove the connection glyph, queue attention count, or context percentage.
 5. Only after every lower-priority segment is at minimum may the lowest-priority segment drop. Repeat until the row fits.
 6. Remove separators adjacent to a dropped segment. Render exactly one row with text-wrap disabled and ellipsis as the final terminal-capability safeguard.
+
+In the 20–31-column band, `task_progress` and `connection` start in compact form. The normal overflow loop shortens `task_progress` only when their actual content does not fit; below 20 columns the breakpoint drops it and keeps the minimum connection form.
 
 At default caps, seven full forms plus six one-cell separators fit in 144 columns. The optional status-bar integer keys are cwd_max_columns (default 24, valid 8–48), git_branch_max_columns (default 18, valid 8–40), and agent_model_max_columns (default 24, valid 10–48). Invalid values visibly fall back to their defaults. Layout thresholds remain fixed even when caps are customized.
 

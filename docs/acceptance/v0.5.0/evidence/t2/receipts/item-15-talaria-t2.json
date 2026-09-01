@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
-    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
-    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 15,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-15-invalid.ansi",
-    "capture_sha256": "12bd118760451f025d7e3f14b702d59c72cd91a0ad7667851125672c90c9362d",
+    "capture_sha256": "76275b2417e45a9a287b53d4a3d187d66b2cd5503f1768b789818ef20eb5b5e6",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-15-invalid-pty.json",
-    "pty_result_sha256": "177d8d2678d6eac4af60c4d9475133068a754449ae0556f45ede4f2e45b94555",
+    "pty_result_sha256": "0b1b26e2b367091b58d37018f0d8b796aeed70a1e806b7d84980be48b89fd7df",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-15-invalid.png",
-    "screenshot_sha256": "63410da730de00cf9ccb738466c61c72878953cd94907614d7a227001bc4a1cd"
+    "screenshot_sha256": "4e310b688182029176dc017412650c0a813253cfc8009c7e7f7e2b8d2848c625"
   },
   "observations": [
-    "Malformed command, interval, and width values each produced visible fallback notices; a separate fresh bounded-command capture rendered literal acceptance-status."
+    "Malformed status values produce visible fallback notices, and the separate command leg renders literal bounded output."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T16:57:39+00:00",
+  "recorded_at": "2026-08-31T20:28:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-frame-log"
+    "profile": "deterministic-replay"
   },
   "terminal": {
     "columns": 144,

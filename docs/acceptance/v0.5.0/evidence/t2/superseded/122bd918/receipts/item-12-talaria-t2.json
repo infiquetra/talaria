@@ -1,11 +1,11 @@
 {
   "artifact": {
     "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
     "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
     "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
@@ -14,12 +14,12 @@
   "checklist_item": 12,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-12.ansi",
-    "capture_sha256": "7741177f4e32cd53ddaa5c44cb90c4c3d392fd04d356b1b0dd2cc6804250f724",
+    "capture_sha256": "178de7f217f631b9195d8994a53fc63afdf3356719f0121958a0058384ae6e4d",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-12-pty.json",
-    "pty_result_sha256": "9837f8800828fc3c6ff329b207b048deb0890b6468273d2ce92de19ffe872d4f",
+    "pty_result_sha256": "2fe92f8b09b845121c416ddc905695eb90bc70bf423d7b1eb439ebc60184498c",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-12.png",
-    "screenshot_sha256": "4a8f71747ea12f9ad9504737e2f79e4fb90992790784bb03327b5126fafb75ac"
+    "screenshot_sha256": "4b96152a266e38216cbe6f8804b0721f0bf747293ef6db193901105f0ff54ad7"
   },
   "observations": [
     "The final row shows cwd, git_branch, agent_model, context, task_progress, connection, and version in order with six separators and no wrap."

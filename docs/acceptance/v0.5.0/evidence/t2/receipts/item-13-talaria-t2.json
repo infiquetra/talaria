@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
-    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
-    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 13,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-13-rerun.ansi",
-    "capture_sha256": "f51e3491c38a8aee71baea31833f5efe546ae10386e5374ac92d6d8cd54af9ad",
+    "capture_sha256": "8d0c56a5d44499d539c23da75ace47ce7d41396f445f0561c05b7d4efeddb2f5",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-13-rerun-pty.json",
-    "pty_result_sha256": "f67532ea78db2f119cd515071c9e4f1f20ea6747a1fd7e0702ed984838df508a",
+    "pty_result_sha256": "27a560d806aebfa2ac2507fc9353e4b6d90d0b31343a8f00bc34c8800648048b",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-13.png",
-    "screenshot_sha256": "9399337e13b5b39819c195749861feeb981fb668398e2ae7955e03b5b422ae17"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-13-rerun.png",
+    "screenshot_sha256": "73d54ac8f5022830893b474bbd236633d5856f2a176c7daf5445a7ae758666ec"
   },
   "observations": [
-    "After restart the configured recognized segments render in connection, task, context, agent, git order; cwd and version are absent; the unknown segment notice is visible. Config SHA-256, size, and mtime were identical before and after."
+    "Configured order is honored, hidden segments stay absent after restart, and the unknown segment produces a visible notice."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T16:57:39+00:00",
+  "recorded_at": "2026-08-31T20:28:38+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-frame-log"
+    "profile": "deterministic-replay"
   },
   "terminal": {
     "columns": 144,

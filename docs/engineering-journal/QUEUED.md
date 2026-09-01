@@ -913,7 +913,7 @@ default-deny allowlist; they do not widen the status child's environment.
 
 **What.** The configuration normalization pass at `talaria/config.py:267-317` covers only the
 `theme`, `ui`, and `status` tables. Values under `environment`, `composer`, and `profiles` therefore
-reach their launch consumers unvalidated. At the reviewed revision, `talaria/cli.py:270-274` reads
+reach their launch consumers unvalidated. At the reviewed revision, `talaria/cli.py:291-295` reads
 `environment.allowlist` and iterates it while constructing the status runner. The measured results
 with a valid `status.command` are:
 

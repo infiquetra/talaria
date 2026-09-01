@@ -2,44 +2,44 @@
   "artifact": {
     "direct_url": {
       "archive_info": {
-        "hash": "sha256=839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda",
+        "hash": "sha256=720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b",
         "hashes": {
-          "sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+          "sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
         }
       },
-      "url": "file:///private/tmp/talaria-v050-candidate-r2/wheel/talaria-0.5.0-py3-none-any.whl"
+      "url": "file:///private/tmp/talaria-v050-candidate-final2/wheel/talaria-0.5.0-py3-none-any.whl"
     },
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
-    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "installed_file_count": 147,
-    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
-    "package_file": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages/talaria/__init__.py",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "package_file": "<scratch-root>/venv/lib/python3.12/site-packages/talaria/__init__.py",
     "version": "0.5.0"
   },
   "candidate": {
     "branch": "orch/talaria-v0-5-0",
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "commit_short": "d9c82443f",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit_short": "0f5c8e3e4",
     "integration_tree": "<integration-tree>",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_path": "/private/tmp/talaria-v050-candidate-r2/wheel/talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_path": "/private/tmp/talaria-v050-candidate-final2/wheel/talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
-  "config_dir": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/config",
-  "installed_at": "2026-08-31T16:28:11+00:00",
+  "config_dir": "<scratch-root>/config",
+  "installed_at": "2026-08-31T20:01:16+00:00",
   "probes": {
     "bare_launch": {
       "argv": [
-        "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria"
+        "<scratch-root>/venv/bin/talaria"
       ],
       "capture": {
         "bytes": 255,
-        "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/raw/install-bare-launch.ansi",
-        "sha256": "e03e2b17e18d99fc1de329998032167795e24ed81e83edd7f568bde88b9b0d2e"
+        "path": "<scratch-root>/raw/install-bare-launch.ansi",
+        "sha256": "1714a864c50ac3d5c38f17b4e5076f8d8f248237967ec97581f0abc10e563bac"
       },
       "columns": 132,
-      "duration_seconds": 1.057673,
+      "duration_seconds": 1.070035,
       "exit_code": 2,
       "expected_literals": [],
       "missing_literals": [],
@@ -51,24 +51,24 @@
     },
     "gate": {
       "argv": [
-        "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+        "<scratch-root>/venv/bin/talaria",
         "gate",
         "--deltas",
         "50000",
         "--json",
-        "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/receipts/install-gate.json"
+        "<scratch-root>/receipts/install-gate.json"
       ],
       "decision_verdict": "pass",
       "excluded_failed_checks": [
         "workload_latency_growing-one-column-table"
       ],
       "exit_code": 1,
-      "json_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/receipts/install-gate.json",
-      "json_sha256": "c487acf31e1895bd77700e74ddafe3dda748d240d419668ebc4ee242ef9ffc31",
+      "json_path": "<scratch-root>/receipts/install-gate.json",
+      "json_sha256": "e97f52a750eabc976d846f864c391bbb44323adb479bcefc10ea6561ddb2fbd1",
       "known_preexisting_exceedance": {
         "block_markdown_reference_ms": 44.0,
         "check": "workload_latency_growing-one-column-table",
-        "current_sample_ms": 67.666,
+        "current_sample_ms": 58.411,
         "excluded_from_decision": true,
         "reason": "known pre-existing exceedance excluded because its run-to-run variance on the unchanged v0.5 candidate exceeds the difference it would be used to detect",
         "threshold_ms": 50.0,
@@ -77,17 +77,17 @@
           54.45,
           60.229,
           68.861,
-          67.666
+          58.411
         ],
         "v0.5_spread_ms": 14.411
       },
       "report_verdict": "fail",
-      "stderr_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/receipts/install-gate.stderr.log",
-      "stdout_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/receipts/install-gate.stdout.log"
+      "stderr_path": "<scratch-root>/receipts/install-gate.stderr.log",
+      "stdout_path": "<scratch-root>/receipts/install-gate.stdout.log"
     },
     "version": {
       "argv": [
-        "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
+        "<scratch-root>/venv/bin/talaria",
         "--version"
       ],
       "exit_code": 0,
@@ -95,7 +95,7 @@
     }
   },
   "schema_version": "talaria-v0.5.0-install-v1",
-  "scratch_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c",
+  "scratch_root": "<scratch-root>",
   "terminal": {
     "columns": 132,
     "program": "POSIX pseudo-terminal",
@@ -103,5 +103,5 @@
     "term": "xterm-256color"
   },
   "tester": "talaria-t2",
-  "venv": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv"
+  "venv": "<scratch-root>/venv"
 }

@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-povh6o4c/venv/bin/talaria",
-    "executable_sha256": "033b1e6e1f5a0e77851a509ee775f02fa983121d8c5ec2d1916697735e23decc",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "55a7e74884558a6ac7fe6b61f456931076c2dba75ed31915cbc7532c9ceb5edd",
-    "installed_files_sha256": "31229b2024e9d742fec4918f8fb4b7bca10399ad58e4afa9eb3f6116b90cb806",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 16,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-16.ansi",
-    "capture_sha256": "319284deded0563ad4574db233cbe6e0bb0b3739b7cfab21efd7c1da68426baf",
+    "capture_sha256": "c7493698a83a1a27d9946a3314136eb7200472d1268da22212ce7bf406ac1934",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-16-pty.json",
-    "pty_result_sha256": "62017fd25499a521e5a1ab4d197eaac2f8ea7b5a29d2a7f83dd69d8f050dcd8a",
+    "pty_result_sha256": "16a274ce4de8e234d91f8b5d40f64ce34b6e40496b04580a58a492f2d55025d0",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-16.png",
-    "screenshot_sha256": "dde81180d276bea317e00df868029bd315e3f377314aff5b688476db0ed7b341"
+    "screenshot_sha256": "4c6868dd2612ef61b4f3a092cb2a9c90703c130ba4fbabeaafecee6d80fbc128"
   },
   "observations": [
-    "The docked inspector traversed 36, 40, 44, and 48 columns, clamped above 48, traversed back through 44, 40, 36, 32, and 28, and clamped below 28 without changing content."
+    "The inspector docks right, resizes in four-column steps, clamps at 28 and 48 columns, and retains its data."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T16:57:40+00:00",
+  "recorded_at": "2026-08-31T20:28:39+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-frame-log"
+    "profile": "deterministic-replay"
   },
   "terminal": {
     "columns": 120,
