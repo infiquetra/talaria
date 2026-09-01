@@ -43,6 +43,7 @@ from scripts.acceptance.v050_pty_driver import (
 from scripts.acceptance.v050_receipt import (
     _portable_json,
     _verify_evidence_file,
+    public_evidence_privacy_errors,
     publish_receipt,
     validate_receipt,
     validate_scratch_evidence_paths,
@@ -1314,6 +1315,23 @@ def test_verify_run_privacy_scans_frame_logs_outside_evidence(tmp_path: Path) ->
     assert any("email address" in error and leaked.name in error for error in errors)
 
 
+def test_verify_run_privacy_scans_published_review_evidence(tmp_path: Path) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
+    )
+    leaked = tmp_path / "docs" / "evidence" / "review" / "private-path.txt"
+    leaked.parent.mkdir(parents=True)
+    leaked.write_bytes(b"operator=/Users/private-operator/release-evidence")
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any(
+        error
+        == "docs/evidence/review/private-path.txt: contains a private operator home path"
+        for error in errors
+    )
+
+
 def test_verify_run_detects_an_encoded_operator_home_path(tmp_path: Path) -> None:
     manifest_path, evidence_root = _write_verify_run_fixture(
         tmp_path, manifest_commit="a" * 40, receipt_commit="a" * 40
@@ -1437,12 +1455,7 @@ def test_release_workflow_binds_acceptance_to_the_released_commit() -> None:
 
 
 def test_committed_acceptance_evidence_passes_portable_privacy_scan() -> None:
-    acceptance = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
-    assert verify_run(
-        acceptance / "artifact-manifest.json",
-        evidence_root=acceptance / "evidence",
-        repo_root=_REPO_ROOT,
-    ) == []
+    assert public_evidence_privacy_errors(_REPO_ROOT) == []
 
 
 def test_manifest_schema_rejects_non_not_run_status_without_receipts() -> None:

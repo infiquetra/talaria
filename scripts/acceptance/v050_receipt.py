@@ -45,6 +45,10 @@ _ACCEPTANCE_ROOT = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
 _CHECKLIST_PATH = _ACCEPTANCE_ROOT / "checklist-items.json"
 _MANIFEST_PATH = _ACCEPTANCE_ROOT / "artifact-manifest.json"
 _EVIDENCE_ROOT = _ACCEPTANCE_ROOT / "evidence"
+_PUBLIC_EVIDENCE_ROOTS = (
+    Path("docs/acceptance/v0.5.0"),
+    Path("docs/evidence"),
+)
 _ROUTE_ALIASES: dict[str, str | None] = {
     "primary": PRIMARY_MODEL_ROUTE,
     "fallback": FALLBACK_MODEL_ROUTE,
@@ -533,6 +537,30 @@ def _privacy_errors(path: Path) -> list[str]:
     return errors
 
 
+def _public_evidence_files(repo_root: Path) -> tuple[Path, ...]:
+    """Return files below every release publication root that currently exists."""
+    files: set[Path] = set()
+    for relative_root in _PUBLIC_EVIDENCE_ROOTS:
+        root = repo_root / relative_root
+        if root.is_file():
+            files.add(root)
+        elif root.is_dir():
+            files.update(path for path in root.rglob("*") if path.is_file())
+    return tuple(sorted(files))
+
+
+def public_evidence_privacy_errors(repo_root: Path = _REPO_ROOT) -> list[str]:
+    """Return portable privacy defects from every public release-evidence root."""
+    repo_root = repo_root.expanduser().resolve()
+    errors: list[str] = []
+    for path in _public_evidence_files(repo_root):
+        for error in _privacy_errors(path):
+            errors.append(
+                error.replace(str(path), _repo_relative(path, repo_root=repo_root), 1)
+            )
+    return errors
+
+
 def _release_candidate_matches(
     evidence_commit: str, expected_commit: str, *, repo_root: Path
 ) -> tuple[bool, str]:
@@ -888,15 +916,7 @@ def verify_run(
         errors.append(f"manifest names an absent install receipt: {relative}")
     if manifest.get("status") == "not-run" and (current_receipt_paths or install_paths):
         errors.append("manifest status is not-run while receipts exist")
-    acceptance_root = evidence_root.parents[1]
-    evidence_paths = sorted(
-        candidate_path
-        for candidate_path in acceptance_root.rglob("*")
-        if candidate_path.is_file()
-    )
-    for path in evidence_paths:
-        for error in _privacy_errors(path):
-            errors.append(error.replace(str(path), _repo_relative(path, repo_root=repo_root), 1))
+    errors.extend(public_evidence_privacy_errors(repo_root))
     return errors
 
 
