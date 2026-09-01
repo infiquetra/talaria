@@ -3,28 +3,19 @@
   "candidates": [
     {
       "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
-      "install_receipt_count": 1,
-      "item_receipt_count": 22,
+      "install_receipt_count": 2,
+      "item_receipt_count": 42,
       "matches_current_candidate": true,
       "version": "0.5.0",
       "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
-    },
-    {
-      "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "install_receipt_count": 1,
-      "item_receipt_count": 20,
-      "matches_current_candidate": false,
-      "version": "0.5.0",
-      "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
     }
   ],
   "counts": {
-    "current_receipts": 23,
+    "current_receipts": 44,
     "expected_receipts": 43,
     "install_receipts": 2,
-    "invalid_item_receipts": 20,
+    "invalid_item_receipts": 0,
     "item_receipts": 42,
     "item_verdicts": {
       "blocked": 1,
@@ -32,9 +23,9 @@
       "pass": 41,
       "reserved": 0
     },
-    "missing_current_receipts": 20,
+    "missing_current_receipts": 0,
     "missing_receipts_on_disk": 0,
-    "stale_receipts": 21
+    "stale_receipts": 0
   },
   "current_candidate": {
     "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -57,120 +48,37 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-      "receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "receipt_sha256": "9f725d66a6488b29bf87a0077b5fab6c6c60dff37c2bd162f141701f33b8542a",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "version": "0.5.0",
       "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     }
   ],
-  "missing_current_receipts": [
-    {
-      "checklist_item": 1,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 2,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 3,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 12,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 13,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 14,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 15,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 16,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 17,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 18,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 19,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 20,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 21,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 29,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 30,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 32,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 33,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 34,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 35,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 36,
-      "tester": "talaria-t2"
-    }
-  ],
+  "missing_current_receipts": [],
   "missing_receipts_on_disk": [],
   "receipts": [
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-01-c2.ansi",
-      "capture_sha256": "03236a6bb5b6c6201be303f38d206f5766029762ad1f1389a77f796a25048efb",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-01-c3.ansi",
+      "capture_sha256": "2aeffde28499c4d3deae29a2dde410c57b95bfcc351c70e03c339021a851a305",
       "checklist_item": 1,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-01-talaria-t2.json",
-      "receipt_sha256": "f715ea4a87b00b9a962c7356c0cd8eb7f0de01246e7b2a1fce07ccd403652391",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-01-c2.png",
+      "receipt_sha256": "c2f648da6cba0c09c8b69b4368b4223928a136414fa763f823321b1dbce74288",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-01-c3.png",
       "screenshot_sha256": "169c2979e0a7a856eb8406f7f079710a78dc12608112c899a5ab557f89f8702f",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Installed artifact",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -191,44 +99,40 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-02-live-public-c2.ansi",
-      "capture_sha256": "bb474cc60fbc8d5cce7b7c6b742902e30fd3bbcf68ec889f9e385f1434f5d61b",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-02-live-public-c3.ansi",
+      "capture_sha256": "b96660238cde0a73b7ccefa003cb25919a9cc44e4ac4d829459e3664afb5375a",
       "checklist_item": 2,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-02-talaria-t2.json",
-      "receipt_sha256": "16bce3582e62aea2a5d7d47f260f931a5f1fed1c95a68afb1deb109cbeff00ad",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-02-full-route-fresh-c2.png",
-      "screenshot_sha256": "d33427cda675a391f61ee73ec652bd57ddcd55356142699b4871e3cd875815a0",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "receipt_sha256": "65dd1a27e6df76a8462492a8020e4514eb2895e712da34732c87bc95171c0a00",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-02-full-route-fresh-c3.png",
+      "screenshot_sha256": "f84f6b5c7c78f97fc8708a70ce3324bcd4ba492daa4c056066374f51d7783b2e",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Live primary route",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-03-c2.ansi",
-      "capture_sha256": "467ed8b695f744f8566742a08875c525283010ec2f9b2d6af43eee31aa111e33",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-03-c3.ansi",
+      "capture_sha256": "992cee778b9e1fb20af87bc4410f8ec2a781d56cc15f9eaebb3c8339788dc4f0",
       "checklist_item": 3,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-03-talaria-t2.json",
-      "receipt_sha256": "6e48b8b450a4b8eafbf8a9b31299957492eec1ce86499a24ea81a9680fcd9e10",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-03-c2.png",
-      "screenshot_sha256": "f910860a04afd712ce9a12ee6f76927b1d7712895bfa18fca54238c94de4e9b0",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "receipt_sha256": "115a6f5918bac990842a2151360818387f4c6dbf3c2943b7b5cebf7a53748f80",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-03-c3.png",
+      "screenshot_sha256": "3b654ceb46fdbac6657a15a86f49589ecd617c6c75bbe8f903f167a61ce86d4e",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Main hierarchy",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -375,64 +279,58 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-12-c2.ansi",
-      "capture_sha256": "5031391aae0ff81bfbdcb1fc359dd9b832468f94a86a050a13cb4fc092dbe8f4",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-12-c3.ansi",
+      "capture_sha256": "4c2b9b0f04a0cbebf1beb58b82de5f348e91bdd062bcf69ef3b3784263011dff",
       "checklist_item": 12,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-12-talaria-t2.json",
-      "receipt_sha256": "774759de03fdbf7e85963329a1a7ea999ab4e9219277d87cd2b6e45bd9aaacde",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-12-c2.png",
-      "screenshot_sha256": "c3a5d6ce0c3f14bf414c91c4270c10bbb9f1cbf2268e5ac2168f82043c5e43ef",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "receipt_sha256": "76a4dce0835caa67e7cd7c038ad03ab3bf88957277274aef25c7c859729a0c1c",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-12-c3.png",
+      "screenshot_sha256": "244d604e746c5a5709fc98c3abfcc088e95bb1ce9a9f21e62355d1749d93e3c7",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "All status segments",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-13-c2.ansi",
-      "capture_sha256": "037de0bb6de5d7d788b00a64c3a2cbe623489362979c398fc7cf5347b3ac3e8f",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-13-c3.ansi",
+      "capture_sha256": "3658e415067177dbc0df616d002298f07e7dfb37409b468e962a1be40c194234",
       "checklist_item": 13,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-13-talaria-t2.json",
-      "receipt_sha256": "92ebdcd65ea39e29d0b0fec6979c60538f3b551f41fa1f0100700347fd9c0683",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-13-c2.png",
+      "receipt_sha256": "0b1f4ccb504dc9e73fa2c6e746ecdc8b04fabb7560619f727f4b0121b695b05e",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-13-c3.png",
       "screenshot_sha256": "c7c61b01868c5d82bf6751d4c2a4fb408b32c2322c86e908e03f2fec8e31df8f",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Status configuration",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-14-c2.ansi",
-      "capture_sha256": "587820dd6bfa7f407987fafcec4773362dc990a0407099615b9cfa169103ae1f",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-14-c3.ansi",
+      "capture_sha256": "5686f034787beb8e84cc71561ccaf7b843b9a10d5e98b6a9670a2253aa1cdd95",
       "checklist_item": 14,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-14-talaria-t2.json",
-      "receipt_sha256": "984ba883a7407194db2e0c15551d2f8e5d8921c89ad265eb618dd802da8c8348",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-c2.png",
+      "receipt_sha256": "a78e40a8d38f8b909767163ca6e02cca64f1c281bf8b2f71090c97b2db8a43b3",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-c3.png",
       "screenshot_sha256": "4ece90cb1253bfda1278a3b28c94da1502c98950e72f55cb7b427a31edfce0df",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Status responsive sequence",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -453,144 +351,130 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-15-invalid-c2.ansi",
-      "capture_sha256": "d66f2f237b14e57daa77d262741bf37078281727ff07e60d8bdeea474539f0cf",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-15-invalid-c3.ansi",
+      "capture_sha256": "abb579a1de5097642309819d1a1a20fd615ffeb65b529e1135fd52c44858f9c1",
       "checklist_item": 15,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-15-talaria-t2.json",
-      "receipt_sha256": "0de264d7c45e702343cff5d033af218520490e8fc81264b9cda6f1759c0c3857",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-15-invalid-c2.png",
-      "screenshot_sha256": "b90aba510519abaed8129fe506f411c680f786faff5008e2eb496d5fe244e8bd",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "receipt_sha256": "781e7d53d49072cb64315e19556d873d24f7a8266a74ff073c710592289e0f96",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-15-invalid-c3.png",
+      "screenshot_sha256": "4141ba49535e633500f5443bb8e25d3d15de9f72d2d1919d173edb0699abba7b",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Status failure visibility",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-16-c2.ansi",
-      "capture_sha256": "5bf567338de1a632c8681c9351f4a7f8a661e613078e9ccd1c8849b8813c1c69",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-16-c3.ansi",
+      "capture_sha256": "80057545475bfbabd292cfff832baf33fbb3e758bf031c256f5ec4e7a17218ad",
       "checklist_item": 16,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-16-talaria-t2.json",
-      "receipt_sha256": "c7bf13020f1c522e9fa645a0e9d9be73b767a689f239c22fe6362afb8bb3accc",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-16-c2.png",
+      "receipt_sha256": "bcc2d1f54ebaa30eaf38a8a8ec77a7068d0d390092a13962ea92473f1521b3a8",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-16-c3.png",
       "screenshot_sha256": "4c6868dd2612ef61b4f3a092cb2a9c90703c130ba4fbabeaafecee6d80fbc128",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Inspector dock and resize",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-17-empty-c2.ansi",
-      "capture_sha256": "20552b1878dea5d7dcb44131dc722988a4acff7ea493d6dbffe631c4bbea9916",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-17-empty-c3.ansi",
+      "capture_sha256": "b398abc1d7f8e673906414c2b34a77b3420698fa6ad514c01a3987a8709c50e8",
       "checklist_item": 17,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-17-talaria-t2.json",
-      "receipt_sha256": "e5c15f4ad1eaa052fe0488b6b22ba10ec319255c71f9fb7f4005a410753405e2",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-17-empty-c2.png",
+      "receipt_sha256": "26be7a1589dfa296cee99c44fd75441dd47d2b1e1c8db9caf5c0d4f504a84259",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-17-empty-c3.png",
       "screenshot_sha256": "4f4e821bc8864e1fa2d2bab350b9ab1dfca9096faa9a85ced92dcfdf40b932f6",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Inspector content and empty states",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-18-c2.ansi",
-      "capture_sha256": "dae46b6aaa2e77de8bf88713d0c009b1e80650406746a2b4596ecc820742aa90",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-18-c3.ansi",
+      "capture_sha256": "612a096a283e6bc8acc40efb59d795b21be2e75ab8da52aab24b306aae5618d1",
       "checklist_item": 18,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-18-talaria-t2.json",
-      "receipt_sha256": "dd9ee5a76038203bf098ecc91f7a4a5dba4d03aca19b9fb8d51002e74dd9894b",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18-fresh-c2.png",
+      "receipt_sha256": "3b6ecc20167d0266dcf837300efe070f2f16301c1f531bc376d9265775f41358",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18-fresh-c3.png",
       "screenshot_sha256": "696fa97adbb4f167f97fce984ca2180721e148ff1b5564c521fcc3e972524d02",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Inspector responsive state",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-19-c2.ansi",
-      "capture_sha256": "f42e32b6dcaec5c02cd897246575f41be64281925493c5c67ff992aff6099b5a",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-19-c3.ansi",
+      "capture_sha256": "33302542264762c758a4f428486e0b00af1fc3d544b05053dc0f46362040bb68",
       "checklist_item": 19,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-19-talaria-t2.json",
-      "receipt_sha256": "20cc4614e16b0a9fe155fe4dd92f980e2bfc6bfc4aa1cfa1e696eef3bf3139a3",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-19-screen-c2.png",
+      "receipt_sha256": "a0e5e45d83f33e9414b76a4feb7db33d2eaa6fb52214d9a52df56d558eadbabc",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-19-screen-c3.png",
       "screenshot_sha256": "2649c2a61892823473d0de543691a383dbce6e3f5decff5cd5902830c0347b6e",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Side-by-side diff",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-20-c2.ansi",
-      "capture_sha256": "fc4568a6b74cbef7bf113507cb7182a624a91c669debf75456943cf4c6092aba",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-20-c3.ansi",
+      "capture_sha256": "f5d3e4b2627a1d4c0744c2d91b82bc90cc44f4d616f347c748215f8cc99f304b",
       "checklist_item": 20,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-20-talaria-t2.json",
-      "receipt_sha256": "a00e2a3c8d45dcc933f3c53ed299d936bbd3b4a4e51b05e5cbc2aee173f80ca3",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-screen-c2.png",
+      "receipt_sha256": "23c9d0b8daa25c7801d707c13a55e1d23a87a44f3561e8ff3456c742ada39805",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-screen-c3.png",
       "screenshot_sha256": "65cd2e6ea9322b7f103912f34d297627317f409554b4223214ef21a639f0c31a",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Unified fallback",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-21-c2.ansi",
-      "capture_sha256": "7252977ade680f39b682e5586fbc4ad78bf060de68cec10f930ec7ca0f9bf04a",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-21-c3.ansi",
+      "capture_sha256": "3d9a948e8d8771df792725592a2fe419467415cf394b19d390adf218151a0be9",
       "checklist_item": 21,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-21-talaria-t2.json",
-      "receipt_sha256": "e38b43f949670f161a292e34104135c936a3f09bc66fee4395df9aff7af83dc8",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-21-screen-c2.png",
+      "receipt_sha256": "3c9ac808688175b17b1a78fa626c8b0d9ff95fa24816d316736a9c8c0bac8391",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-21-screen-c3.png",
       "screenshot_sha256": "521d8959cdc3c011c31711723d4eba91e14c3b4cf16a1257bc97c4ccd7dd2a82",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Diff navigation and boundary",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -719,44 +603,40 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-29-c2.ansi",
-      "capture_sha256": "98dfdc762b3bf8c6f860138c142b3693db19ca09a01020a3e8537754dd276050",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-29-c3.ansi",
+      "capture_sha256": "8fa574b20e6439ea99d4798e34307fc4fef133c0c65f765cf5f247555faf3c8d",
       "checklist_item": 29,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-29-talaria-t2.json",
-      "receipt_sha256": "320377650848160f84502bd882cc8511fbc06d3f7038f2ea604198f8277bf05b",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29-c2.png",
+      "receipt_sha256": "32edc00e47adfdaf95403537e263614b416576d7bf40358d9d2fd66cf4f0ad53",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29-c3.png",
       "screenshot_sha256": "da6d6203cae9c127ad5ffdecae18cdf6f2afa3e8948a24d671d3049ba372af44",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Wide screenshot",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-30-c2.ansi",
-      "capture_sha256": "3268f276a9eb5f1eef8c36c11838f5a95a31148b6719e9df04598eb831fc79b6",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-30-c3.ansi",
+      "capture_sha256": "fe5f82965a6ebdbd1d1b0f9749e19d01f5c2cd0556f642c2b6e28ad7f4a3a217",
       "checklist_item": 30,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-30-talaria-t2.json",
-      "receipt_sha256": "723e3c536e94e1814872e0197cf6963e7954b521454fe7697dc2ba781b13fa5e",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screen-c2.png",
+      "receipt_sha256": "75f91f2f1d81cb3bd020f0b118d2f51941c7a9641486f11e7513584ceb2fba8c",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screen-c3.png",
       "screenshot_sha256": "3beb28396c15b75383dd5afbcce022a507627d401376007a39f7ed10d5ed0661",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Narrow screenshot",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -777,24 +657,22 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-32-c2.ansi",
-      "capture_sha256": "977d74427f56b36aae2aff55209b6fc992b5e0403c0f0ff66b6460b6b4ba400e",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-32-c3.ansi",
+      "capture_sha256": "436c45c9acfdb32618aae9a678a5974e9dbc3405e604429404efebd52863c83b",
       "checklist_item": 32,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-32-talaria-t2.json",
-      "receipt_sha256": "154a99519e389c497dc0250a20f5870927e8d9ac69f0c8c1f2b16d41e726a8bb",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-32-restart-c2.png",
-      "screenshot_sha256": "c3a5d6ce0c3f14bf414c91c4270c10bbb9f1cbf2268e5ac2168f82043c5e43ef",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "receipt_sha256": "5c82c5d22d4e5c3236442ef18bf2ab8f89fa11b63e97a2fad0c3c97742bd7a5a",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-32-restart-c3.png",
+      "screenshot_sha256": "244d604e746c5a5709fc98c3abfcc088e95bb1ce9a9f21e62355d1749d93e3c7",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Session-only status toggle",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -815,24 +693,22 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-33-invalid-retry-c2.ansi",
-      "capture_sha256": "56a229e04b377a5183beced876dc99a5e71b49e311428ffbcd0c8344cfdaaf3c",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-33-invalid-c3.ansi",
+      "capture_sha256": "d9ad4346381f03c8a2199d473c63e0fd3b97d2f064edd7c3468b51303281aceb",
       "checklist_item": 33,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-33-talaria-t2.json",
-      "receipt_sha256": "31ec6b442e6390d0d8b26fedc0accfa214340e5b7b4930169e34d7cd44f6ea83",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-33-invalid-retry-c2.png",
+      "receipt_sha256": "e5b1409b09333f745350ee66b751058b3c6c0ff1f397ec8bd5a0263b986f8ce3",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-33-invalid-c3.png",
       "screenshot_sha256": "c1994dad7bc5478eb436454cc4547e2411528f85aa59fffeab3d600b841c84de",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Dead gateway credential",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -853,24 +729,22 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-34-live-public-c2.ansi",
-      "capture_sha256": "5b108e9f38d8b02b42f046d195d194ff6b1a4601bfc49691675e5729e231e946",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-34-live-public-c3.ansi",
+      "capture_sha256": "7c24b8a8565492ddceee2657745bb654a807839c95bf18244f7a1e9b8ff502f6",
       "checklist_item": 34,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-34-talaria-t2.json",
-      "receipt_sha256": "a2b5a1de004e45f82e98dec132c45aef37b93437826ed4e3a32f8f869db768f5",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-34-live-public-c2.png",
-      "screenshot_sha256": "477cb9621d0fc083a1f616455f0b07f7f828bed8c1eab270b90a131b76513b41",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "receipt_sha256": "b74af0d3ea30b8b3503ac6de7da0090ee41dc5b801ab67dd818bab288a271bb2",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-34-live-public-c3.png",
+      "screenshot_sha256": "22a799bed14234559d5de2fe7610aeb6154a6ab9d621353428f67ad2f75f5461",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Killed session",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -891,24 +765,22 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-35-running-c2.ansi",
-      "capture_sha256": "283c6233a3345ef46a7b0d864e54b25abee2e0f126eebb39f1de4b65926a4b54",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-35-running-c3.ansi",
+      "capture_sha256": "7405781ee3e90caf6f76675c5009901f85770139850108764cb7af36acad5684",
       "checklist_item": 35,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-35-talaria-t2.json",
-      "receipt_sha256": "c86452c76e1e70ad07903cda87da8896d0fb523e60b46029d5eded23fb180a01",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-35-restart-c2.png",
-      "screenshot_sha256": "3118d3d2823c7dc7337607d0f80af713e67363710c5f5df7b24993ee2fff61c6",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "receipt_sha256": "b86a1ee5228a709d69572ee79b9890034a8601dbea7d1876d39ea0bcd2716012",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-35-restart-c3.png",
+      "screenshot_sha256": "e40cdeefc7c24b1cfec5e9fb9003ae8e421d1d2c28d405cee713bfcdc29174aa",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Restart-only configuration",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
       "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
@@ -929,26 +801,24 @@
       "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     },
     {
-      "candidate_commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-      "capture_path": "talaria-t2 scratch/raw/item-36-c2.ansi",
-      "capture_sha256": "03e11fa7913d7b89a83d5b23e6578103c656e3422b7abf002547df36f4b9036a",
+      "candidate_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "capture_path": "talaria-t2 scratch/raw/item-36-c3.ansi",
+      "capture_sha256": "0835ac0cfbf43ae977ff23922605f92328890a013a1cfb5a588a7d7c2eab275c",
       "checklist_item": 36,
-      "contract_errors": [
-        "harness_commit must be a full lowercase 40-character Git commit"
-      ],
-      "contract_status": "invalid",
+      "contract_errors": [],
+      "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-36-talaria-t2.json",
-      "receipt_sha256": "2ec6f968415ef0d5a6f5457a927f1f6dc653e1868e869229de98cf7f47d3b52a",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-36-c2.png",
+      "receipt_sha256": "69df0e41886ce6ae8bdc0cc06cfbf0ec19fec7ca290cdcfca8efffc3237efad5",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-36-c3.png",
       "screenshot_sha256": "169c2979e0a7a856eb8406f7f079710a78dc12608112c899a5ab557f89f8702f",
-      "stale_candidate": true,
-      "stale_reason": "receipt candidate 788fc791fadd701cb74b7db8686c0a8bb444b8f8 does not match current candidate 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+      "stale_candidate": false,
+      "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Cross-tester evidence",
       "verdict": "pass",
-      "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+      "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
     }
   ],
   "schema_version": "talaria-v0.5.0-artifact-manifest-v2",
-  "status": "stale"
+  "status": "blocked"
 }
