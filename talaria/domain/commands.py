@@ -416,10 +416,16 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     # as the connected profile's default model instead of switching the
     # running session (U5, KTD7) — still no new command name, per the plan's
     # "U5 adds no command" design note.
+    # These descriptions are the canonical operator-facing picker-key contract.
+    # The terminal guide mirrors them, and the UI test reads both rendered
+    # surfaces so either side drifting fails the same check.
     LocalCommand(
         "/models",
         "models",
-        "Open the model picker, select a row, or set a row as the profile's default (F6)",
+        (
+            "Open the model picker, select a row, or set a row as the profile's "
+            "default (F11 from every focus; F6 only outside composer focus)"
+        ),
         argument_hint="[index [default [confirm]]]",
     ),
     # Plural for the same reason and with the same hazard (U4). The gateway
@@ -434,7 +440,10 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand(
         "/profiles",
         "profiles",
-        "Open the profile picker, or switch to a listed profile by its number (F7)",
+        (
+            "Open the profile picker, or switch to a listed profile by its number "
+            "(F12 from every focus; F7 only outside composer focus)"
+        ),
         argument_hint="[index]",
     ),
     # v0.2's U7 (2026-08-08 answerability-and-session-story plan), and this one
