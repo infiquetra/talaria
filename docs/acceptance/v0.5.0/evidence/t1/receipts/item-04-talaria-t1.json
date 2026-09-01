@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 4,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-04-final2b.ansi",
-    "capture_sha256": "7ffd22ffb46f9ca2533a3046ba960222d789e568203dab03dec4d8f990ba7e84",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-04-final2b-pty.json",
-    "pty_result_sha256": "d8616467d3f26f08726dc2773dd7a7bf106b3d341be99cd57c1bdb23f773405a",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-04-c2a.ansi",
+    "capture_sha256": "2468a9df90ba6ec291e58dd575e5d56ef45fa37bab1f7ad4a57e36f8a4d4ab2b",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-04-c2a-pty.json",
+    "pty_result_sha256": "8e19e0cff2fc88d2ab0d17fcb4dece509d377c902b998f13fe31d666a2f4dbf7",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-04-final2b.png",
-    "screenshot_sha256": "11eea6d32ecb297b3196f56e5e108c57a3f2bd0cb36c99dbab4733a664de6fd3"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-04-c2a.png",
+    "screenshot_sha256": "883876fc54d36bf4a5c6a61770842ed6540bf718d9427b40ec033947f34fca75"
   },
   "observations": [
-    "Refined Default settled across transcript, composer, inspector, status region, help bar and bottom status bar with distinct user, assistant, reasoning, tool, divider, code and diff roles."
+    "Refined Default rendered the populated transcript, composer, agent row, status surfaces, inspector and diff with the specified cool-neutral hierarchy."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "isolated-refined-default"
+    "profile": "isolated visual-surfaces replay; Refined Default"
   },
   "terminal": {
     "columns": 132,

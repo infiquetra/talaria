@@ -48,10 +48,18 @@ _ROUTE_ALIASES: dict[str, str | None] = {
 _RELEASE_RELEVANT_PATHS = ("talaria", "pyproject.toml", "uv.lock", "src")
 _PRIVATE_PATTERNS = (
     (re.compile(rb"/(?:Users|home)/[A-Za-z0-9._-]+"), "operator home path"),
+    (
+        re.compile(rb"/-(?:Users|home)-[A-Za-z0-9._-]+-"),
+        "encoded operator home path",
+    ),
     (re.compile(rb"/private/var/folders/"), "operator temporary-directory identifier"),
     (re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "email address"),
     (re.compile(rb"Authorization:\s*Bearer\s+\S+", re.IGNORECASE), "bearer credential"),
     (re.compile(rb"(?:token|credential)=[^&\s]+", re.IGNORECASE), "credential query value"),
+)
+_MACOS_ACCEPTANCE_SCRATCH_PATH = re.compile(
+    rb"/private/var/folders/[A-Za-z0-9._/-]+/T/"
+    rb"talaria-v050-[A-Za-z0-9._-]+(?:\xe2\x80\xa6)?"
 )
 
 
@@ -431,6 +439,23 @@ def _copy_new(source: Path, destination: Path) -> None:
     shutil.copyfile(source, destination)
 
 
+def _copy_public_capture(
+    source: Path, destination: Path, *, scratch_root: Path
+) -> None:
+    """Copy terminal bytes while replacing only private scratch-root identifiers."""
+    if not source.is_file():
+        raise HarnessError(f"evidence source does not exist: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        raise HarnessError(f"refusing to replace published evidence: {destination}")
+    data = source.read_bytes().replace(
+        str(scratch_root.resolve()).encode(), b"<scratch-root>"
+    )
+    destination.write_bytes(
+        _MACOS_ACCEPTANCE_SCRATCH_PATH.sub(b"<scratch-root>", data)
+    )
+
+
 def _portable_json(
     value: Any, *, repo_root: Path, scratch_root: Path | None = None
 ) -> Any:
@@ -563,6 +588,17 @@ def _write_portable_json(
     )
 
 
+def _bind_pty_result_to_capture(pty_result: Path, capture: Path) -> None:
+    """Update copied pseudo-terminal metadata for a sanitized public capture."""
+    document = read_json_object(pty_result)
+    capture_metadata = document.get("capture")
+    if not isinstance(capture_metadata, dict):
+        return
+    capture_metadata["bytes"] = capture.stat().st_size
+    capture_metadata["sha256"] = sha256_file(capture)
+    write_json_object(pty_result, document, replace=True)
+
+
 def publish_receipt(
     source_path: Path,
     *,
@@ -613,7 +649,11 @@ def publish_receipt(
     pty_destination = tester_root / "pty-results" / pty_source.name
     output = tester_root / "receipts" / f"item-{number:02d}-{tester}.json"
 
-    _copy_new(capture_source, capture_destination)
+    _copy_public_capture(
+        capture_source,
+        capture_destination,
+        scratch_root=scratch_root,
+    )
     _copy_new(screenshot_source, screenshot_destination)
     _write_portable_json(
         pty_source,
@@ -621,7 +661,9 @@ def publish_receipt(
         repo_root=repo_root,
         scratch_root=scratch_root,
     )
+    _bind_pty_result_to_capture(pty_destination, capture_destination)
     evidence["capture_path"] = _repo_relative(capture_destination, repo_root=repo_root)
+    evidence["capture_sha256"] = sha256_file(capture_destination)
     evidence["screenshot_path"] = _repo_relative(screenshot_destination, repo_root=repo_root)
     evidence["pty_result_path"] = _repo_relative(pty_destination, repo_root=repo_root)
     evidence["pty_result_sha256"] = sha256_file(pty_destination)
@@ -629,6 +671,14 @@ def publish_receipt(
         public_install_receipt, repo_root=repo_root
     )
     artifact["install_receipt_sha256"] = sha256_file(public_install_receipt)
+    portable_receipt = _portable_json(
+        receipt,
+        repo_root=repo_root,
+        scratch_root=scratch_root,
+    )
+    if not isinstance(portable_receipt, dict):
+        raise HarnessError("published receipt must remain a JSON object")
+    receipt = portable_receipt
 
     errors = validate_receipt(
         receipt,

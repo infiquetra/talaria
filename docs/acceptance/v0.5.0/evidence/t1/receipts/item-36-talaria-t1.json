@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 36,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-36-t1-half.ansi",
-    "capture_sha256": "b2abe0aafa62a3de099ca3b6f8654f6e6979581862c8d98878d7f7d7fb64e0b2",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-36-t1-half-pty.json",
-    "pty_result_sha256": "8543335a0f0f31fe9297a1d2ba6e0cda9f3d32303d851ecd9b34bc97448c645b",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-36-c2.ansi",
+    "capture_sha256": "e19952349f7f6a9d4647e9a43236095d5444e94273e2af41a7c486ff50698afd",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-36-c2-pty.json",
+    "pty_result_sha256": "29430f9ac068358b49071e4eb672f52adaf59b9a757a25b5dfbbda37f80ff258",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-36-t1-half.png",
-    "screenshot_sha256": "d47fa6af840a33e768df11600030d60eeb6b083b26156fdfa7c1b6d86505ed7c"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-36-c2.png",
+    "screenshot_sha256": "98d883083248382f3ad5b1356e5b3e8077887dd36d07d513794124ebd9449251"
   },
   "observations": [
     "Talaria-t1 independently supplies current-candidate receipts for shared items 2, 15, 33, 34, 35, and this cross-tester half, plus every assigned-track item; each receipt names a real capture and screenshot.",
     "The T1 live receipts for items 2 and 34 both observed opencode-go / muse-spark-1.2-contributor with no fallback; full cross-tester completion is a generated-manifest property once the parallel T2 item 36 receipt is combined."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T22:37:16+00:00",
+  "recorded_at": "2026-09-01T03:24:52+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,11 +38,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "talaria-t1 final-candidate evidence half"
+    "profile": "talaria-t1 cycle-two cross-tester evidence half"
   },
   "terminal": {
     "columns": 160,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; talaria-t1 cross-tester evidence half",
+    "program": "Codex PTY harness (forkpty); talaria-t1 cross-tester evidence half",
     "rows": 36,
     "term": "xterm-256color"
   },

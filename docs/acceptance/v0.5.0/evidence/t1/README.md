@@ -1,64 +1,60 @@
-# Talaria v0.5.0 T1 confirming acceptance evidence
+# Talaria v0.5.0 cycle-two acceptance evidence — talaria-t1
 
-This active evidence set records all twenty T1 assignments against the installed final candidate,
-commit `0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398` and wheel SHA-256
-`720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b`. Nineteen items passed and
-item 24 remains blocked by the accepted protocol limitation described below. Earlier T1 evidence is
-preserved under `superseded/` and is excluded from the active generated manifest because it binds to
-older candidates.
+This directory records the T1 half of acceptance against candidate
+`788fc791fadd701cb74b7db8686c0a8bb444b8f8`, installed from the shared wheel whose SHA-256 digest is
+`bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be`. The installed artifact,
+not the source checkout, produced every capture below.
 
-| Item | Verdict | Receipt | Raw pseudo-terminal capture | Screenshot |
+| Item | Verdict | Receipt | Raw terminal evidence | Screenshot |
 | ---: | --- | --- | --- | --- |
-| 1 | passed | [install receipt](install-receipt.json) | recorded inside the install receipt | not applicable |
-| 2 | passed | [receipt](receipts/item-02-talaria-t1.json) | [raw](raw/item-02-final2d.ansi) | [screenshot](screenshots/item-02-final2d.png) |
-| 4 | passed | [receipt](receipts/item-04-talaria-t1.json) | [raw](raw/item-04-final2b.ansi) | [screenshot](screenshots/item-04-final2b.png) |
-| 5 | passed | [receipt](receipts/item-05-talaria-t1.json) | [raw](raw/item-05-final2.ansi) | [screenshot](screenshots/item-05-final2.png) |
-| 6 | passed | [receipt](receipts/item-06-talaria-t1.json) | [raw](raw/item-06-final2.ansi) | [screenshot](screenshots/item-06-final2.png) |
-| 7 | passed | [receipt](receipts/item-07-talaria-t1.json) | [raw](raw/item-07-final2.ansi) | [screenshot](screenshots/item-07-final2.png) |
-| 8 | passed | [receipt](receipts/item-08-talaria-t1.json) | [raw](raw/item-08-final2b.ansi) | [screenshot](screenshots/item-08-final2b.png) |
-| 9 | passed | [receipt](receipts/item-09-talaria-t1.json) | [user](raw/item-09-user-final2.ansi), [repository](raw/item-09-repository-final2.ansi), [session](raw/item-09-session-final2.ansi) | [user](screenshots/item-09-user-final2.png), [repository](screenshots/item-09-repository-final2.png), [session](screenshots/item-09-session-final2.png) |
-| 10 | passed | [receipt](receipts/item-10-talaria-t1.json) | [import](raw/item-10-import-final2.ansi), [interface](raw/item-10-final2.ansi) | [import](screenshots/item-10-import-final2.png), [interface](screenshots/item-10-final2.png) |
-| 11 | passed | [receipt](receipts/item-11-talaria-t1.json) | [first import](raw/item-11-import-1-final2.ansi), [second import](raw/item-11-import-2-final2.ansi), [restart](raw/item-11-final2.ansi) | [first import](screenshots/item-11-import-1-final2.png), [second import](screenshots/item-11-import-2-final2.png), [restart](screenshots/item-11-final2.png) |
-| 22 | passed | [receipt](receipts/item-22-talaria-t1.json) | [raw](raw/item-22-final2.ansi) | [screenshot](screenshots/item-22-final2.png) |
-| 23 | passed | [receipt](receipts/item-23-talaria-t1.json) | [reconnect](raw/item-23-reconnect-final2.ansi), [disconnected](raw/item-23-down-final2.ansi), [authentication](raw/item-33-auth-final2b.ansi) | [recovered](screenshots/item-23-reconnect-final2.png), [disconnected](screenshots/item-23-down-final2.png), [authentication](screenshots/item-33-auth-final2b.png) |
-| 24 | blocked | [receipt](receipts/item-24-talaria-t1.json) | [raw](raw/item-24-final2.ansi) | [screenshot](screenshots/item-24-final2.png) |
-| 25 | passed | [receipt](receipts/item-25-talaria-t1.json) | [raw](raw/item-25-final2.ansi) | [screenshot](screenshots/item-25-final2.png) |
-| 26 | passed | [receipt](receipts/item-26-talaria-t1.json) | [standard](raw/item-26-standard-final2.ansi), [reduced](raw/item-26-reduced-final2.ansi) | [standard](screenshots/item-26-standard-final2.png), [reduced](screenshots/item-26-reduced-final2.png) |
-| 27 | passed | [receipt](receipts/item-27-talaria-t1.json) | [corrected resize drive](raw/item-27-resize-fix.ansi) | [screenshot](screenshots/item-27-resize-fix.png) |
-| 28 | passed | [receipt](receipts/item-28-talaria-t1.json) | [corrected resize drive](raw/item-28-resize-fix.ansi) | [screenshot](screenshots/item-28-resize-fix.png) |
-| 31 | passed | [receipt](receipts/item-31-talaria-t1.json) | [raw](raw/item-31-final2.ansi) | [screenshot](screenshots/item-31-error-visible-final2.png) |
-| 33 | passed | [receipt](receipts/item-33-talaria-t1.json) | [raw](raw/item-33-auth-final2b.ansi) | [screenshot](screenshots/item-33-auth-final2b.png) |
-| 35 | passed | [receipt](receipts/item-35-talaria-t1.json) | [before restart](raw/item-35-before-final2.ansi), [after restart](raw/item-35-after-final2.ansi) | [before restart](screenshots/item-35-before-final2.png), [after restart](screenshots/item-35-after-final2.png) |
+| 1 | passed | [install receipt](install-receipt.json) | install probe, version, bare launch and replay gate are embedded in the receipt | not applicable |
+| 2 | passed | [receipt](receipts/item-02-talaria-t1.json) | [live primary turn](raw/item-02-c2.ansi) | [screenshot](screenshots/item-02-c2.png) |
+| 4 | passed | [receipt](receipts/item-04-talaria-t1.json) | [Refined Default](raw/item-04-c2a.ansi) | [screenshot](screenshots/item-04-c2a.png) |
+| 5 | passed | [receipt](receipts/item-05-talaria-t1.json) | [Dark Green Terminal](raw/item-05-c2a.ansi) | [screenshot](screenshots/item-05-c2a.png) |
+| 6 | passed | [receipt](receipts/item-06-talaria-t1.json) | [Neutral Dark](raw/item-06-c2a.ansi) | [screenshot](screenshots/item-06-c2a.png) |
+| 7 | passed | [receipt](receipts/item-07-talaria-t1.json) | [Accessible High Contrast](raw/item-07-c2a.ansi) | [screenshot](screenshots/item-07-c2a.png) |
+| 8 | passed | [receipt](receipts/item-08-talaria-t1.json) | [preview cancellation](raw/item-08-c2a.ansi) | [screenshot](screenshots/item-08-c2a.png) |
+| 9 | passed | [receipt](receipts/item-09-talaria-t1.json) | [user save](raw/item-09-user-c2a.ansi), [repository save](raw/item-09-repository-c2a.ansi), [unsaved session preview](raw/item-09-session-c2a.ansi) | [user](screenshots/item-09-user-c2a.png), [repository](screenshots/item-09-repository-c2a.png), [session](screenshots/item-09-session-c2a.png) |
+| 10 | passed | [receipt](receipts/item-10-talaria-t1.json) | [fixture import](raw/item-10-import-c2a.ansi), [fallback notice and selection](raw/item-10-c2.ansi) | [import](screenshots/item-10-import-c2a.png), [interface](screenshots/item-10-c2.png) |
+| 11 | passed | [receipt](receipts/item-11-talaria-t1.json) | [first import](raw/item-11-import-1-c2a.ansi), [second import](raw/item-11-import-2-c2a.ansi), [restart into imported theme](raw/item-11-c2.ansi) | [first import](screenshots/item-11-import-1-c2a.png), [second import](screenshots/item-11-import-2-c2a.png), [interface](screenshots/item-11-c2.png) |
+| 15 | passed | [receipt](receipts/item-15-talaria-t1.json) | [invalid settings](raw/item-15-invalid-c2a.ansi), [bounded command](raw/item-15-command-c2.ansi) | [invalid settings](screenshots/item-15-invalid-c2a.png), [command](screenshots/item-15-command-c2.png) |
+| 22 | passed | [receipt](receipts/item-22-talaria-t1.json) | [focus and caret](raw/item-22-c2a.ansi) | [screenshot](screenshots/item-22-c2a.png) |
+| 23 | passed | [receipt](receipts/item-23-talaria-t1.json) | [healthy, reconnecting and disconnected cycle](raw/item-23-c2b.ansi); item 33 supplies the separate authentication state | [screenshot](screenshots/item-23-c2b.png) |
+| 24 | blocked | [receipt](receipts/item-24-talaria-t1.json) | [all reachable monochrome agent and queue states](raw/item-24-c2.ansi) | [screenshot](screenshots/item-24-c2.png) |
+| 25 | passed | [receipt](receipts/item-25-talaria-t1.json) | [monochrome transcript identities](raw/item-25-c2a.ansi) | [screenshot](screenshots/item-25-c2a.png) |
+| 26 | passed | [receipt](receipts/item-26-talaria-t1.json) | [standard motion](raw/item-26-standard-c2.ansi), [reduced motion after restart](raw/item-26-reduced-c2.ansi) | [standard](screenshots/item-26-standard-c2.png), [reduced](screenshots/item-26-reduced-c2.png) |
+| 27 | passed | [receipt](receipts/item-27-talaria-t1.json) | [unpinned resize and new output](raw/item-27-c2a.ansi) | [screenshot](screenshots/item-27-c2a.png) |
+| 28 | passed | [receipt](receipts/item-28-talaria-t1.json) | [pinned resize and new output](raw/item-28-c2a.ansi) | [screenshot](screenshots/item-28-c2a.png) |
+| 31 | passed | [receipt](receipts/item-31-talaria-t1.json) | [malformed import rejection](raw/item-31-c2b.ansi) | [screenshot](screenshots/item-31-c2b.png) |
+| 33 | passed | [receipt](receipts/item-33-talaria-t1.json) | [stale credential](raw/item-33-c2.ansi) | [screenshot](screenshots/item-33-c2.png) |
+| 34 | passed | [receipt](receipts/item-34-talaria-t1.json) | [completed turn followed by killed session](raw/item-34-c2b.ansi), [hashed close audit](audits/item-34-session-close-c2b.json) | [screenshot](screenshots/item-34-c2b.png) |
+| 35 | passed | [receipt](receipts/item-35-talaria-t1.json) | [running process](raw/item-35-before-c2.ansi), [clean restart](raw/item-35-after-c2.ansi) | [before](screenshots/item-35-before-c2.png), [after](screenshots/item-35-after-c2.png) |
+| 36 | passed | [receipt](receipts/item-36-talaria-t1.json) | [T1 evidence half](raw/item-36-c2.ansi) | [screenshot](screenshots/item-36-c2.png) |
 
-Item 2 completed a real Hermes-backed turn on the approved primary route,
-`opencode-go / muse-spark-1.2-contributor`. The answer was `1517`; both the inspector and the final
-status-bar model segment named `muse-spark-1.2-contributor`. No fallback was attempted.
+The theme drives exercised the current slash-command surface. None of the committed T1 event JSON
+files used the superseded function keys, so no event sequence changed for cycle two. The event-script
+README was corrected to expect exit code 3 from the current malformed-import command. Item 11's two
+imports of the committed `unsupported-dark.json` fixture produced identical stored bytes with digest
+`2ab65e1fb8b3489d49fd25b5e59e70db56cb2dc549fc7b302c4daf496b46820d`; the installed application then
+loaded the imported theme without a fallback notice.
 
-Item 23 used separate live drives so the deliberate authentication failure for item 33 could not
-hide a healthy connect or reconnect transition. The selected captures contain all five required
-non-colour forms: `[..] wait`, `[ok] up`, `[~] retry`, `[x] down`, and `[!] auth`. The reconnect
-capture also contains `connection lost — reconnecting`, followed by recovery on the same dashboard
-process.
+The live legs used profile `default` on the isolated dashboard at port 8790 and requested and
+observed `opencode-go / muse-spark-1.2-contributor`, except item 33, where authentication failed before
+a route could be observed. No fallback was requested. Item 23 separately captured the healthy,
+connecting, reconnecting and disconnected forms; item 33 supplies the authentication form. Item 34
+completed a real turn, closed only the acceptance-created session through `session.close`, and then
+showed the next prompt fail visibly with gateway code 4001 while the dashboard remained running.
 
-Item 24 remains blocked. The live gateway assigns a request identifier, so its approval rows are
-anchored and cannot become `possibly duplicate`. The replay format cannot encode the keyless
-admin-polled approval shape. Constructing such a frame would simulate acceptance, which this run
-forbids. The capture records every honestly reachable agent and queue form instead.
+Item 24 remains blocked on current evidence. Hermes v0.21.0 assigns request identifiers to live
+approval rows, so they are anchored and never enter the possibly-duplicate state. The shipped replay
+format cannot encode the keyless admin-polled row that triggers that state without simulating the
+acceptance condition. Item 36 records the independently complete T1 half: all assigned and shared T1
+receipts bind to candidate `788fc791f`, and both T1 live-session receipts name the approved primary
+route with no fallback. The generated manifest still flags the T2 receipts currently on this branch
+as stale; combined cross-tester completion becomes true only after the parallel T2 half is merged.
 
-Items 27 and 28 were rerun after the shared driver stopped exporting `COLUMNS` and `LINES` to the
-child. Their replacement captures therefore exercise real 132-to-119-to-132-column terminal
-changes. Item 27 retains its unpinned reading anchor while newer frames arrive; item 28 retains
-`NEWEST-BOTTOM-ENTRY` after returning to follow mode. The invalid pinned-dimension captures and
-receipts remain under `superseded/driver-pinned-dimensions/` and are not active evidence.
-
-Item 33 used the one authorized restart of the isolated dashboard on port 8790. The listener changed
-from process identifier 74947 to 19785 with the identical
-`hermes -p default dashboard --host 127.0.0.1 --port 8790 --no-open` command. Talaria displayed an
-explicit HTTP 403 authentication failure and `[!] auth`; the capture contains no credential. The
-replacement dashboard remains detached under parent process identifier 1, and the scratch
-credential was freshly minted after the failure leg.
-
-The screenshots were rendered from the corresponding raw ANSI pseudo-terminal bytes with Pyte and
-Pillow. This preserves terminal colour and layout without Computer Use or graphical user-interface
-automation. Before publication, the selected evidence was checked for the scratch credential,
-token-query parameters, bearer headers, email addresses, and operator home paths; none were present.
+All screenshots were rendered from the corresponding real raw American National Standards
+Institute terminal bytes with Pyte and Pillow. This preserves pseudo-terminal geometry and colours
+without graphical user interface automation or a simulated Talaria application. Before publication,
+60 selected raw captures and screenshots were checked for the scratch credential, token queries,
+authorization headers, bearer values, operator home paths and email addresses; none were present.

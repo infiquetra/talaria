@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 26,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-26-reduced-final2.ansi",
-    "capture_sha256": "84cea4d25093d31640c4f96df33561f91efcb74ae356ab16e8ea260bb8f76bc9",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-26-reduced-final2-pty.json",
-    "pty_result_sha256": "32a21fcd42155e288a7bbb7b954687a53aa84a45534757cacc5d30b39733e60a",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-26-reduced-c2.ansi",
+    "capture_sha256": "189702df856d2c9f50db7e8f2f4ff319038e90e4ed719537faa61c3f0374d210",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-26-reduced-c2-pty.json",
+    "pty_result_sha256": "54eea603ef0b4887965f48298964c6e6675a3e16a4e6ef58fb9979af86ee6e6c",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-26-reduced-final2.png",
-    "screenshot_sha256": "7163f2fbb06b23cc396615bf154b1745225072f82cafa5a06f1056d1a77728f4"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-26-reduced-c2.png",
+    "screenshot_sha256": "e40f82141914461930bdea7bf71fcbe7ce22ae78ee3400d032a5b931fa54f975"
   },
   "observations": [
-    "Separate restart legs exercised ui.reduced_motion=false and true with the same motion-producing corpus; the reduced leg removed focus animation while elapsed updates, transcript anchoring and replay progress continued."
+    "A standard-motion drive showed the working ellipsis while ui.reduced_motion=true restarted into the static [..] working form before the same completion."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:44:32+00:00",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "isolated-reduced-motion"
+    "profile": "isolated reduced-motion restart pair"
   },
   "terminal": {
     "columns": 132,

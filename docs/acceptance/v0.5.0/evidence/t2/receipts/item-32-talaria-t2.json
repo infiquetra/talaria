@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
-    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 32,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-32.ansi",
-    "capture_sha256": "1c8188bd44d74ddb90596579c24f2c027f68bfb2fe6b48a9a7f820013d711515",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-32-pty.json",
-    "pty_result_sha256": "dbd43ba385bac17e88a2b8a67f762266fe8486feefd63b4657b1cfb0fa39cc50",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-32-c2.ansi",
+    "capture_sha256": "977d74427f56b36aae2aff55209b6fc992b5e0403c0f0ff66b6460b6b4ba400e",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-32-c2-pty.json",
+    "pty_result_sha256": "a678330ba3f68f158b99fed5351efda813ec6076022848c2775e0c4980328c77",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-32.png",
-    "screenshot_sha256": "b632d0e393fdc979269085664746adeee214b7926144680ae959fe33f95e287a"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-32-restart-c2.png",
+    "screenshot_sha256": "c3a5d6ce0c3f14bf414c91c4270c10bbb9f1cbf2268e5ac2168f82043c5e43ef"
   },
   "observations": [
-    "The configured segment toggles immediately, the config file remains byte- and timestamp-identical, and restart restores it."
+    "The session command immediately hides cwd without changing config bytes or modification time; the fresh-process screenshot restores cwd."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T20:28:39+00:00",
+  "recorded_at": "2026-09-01T03:01:47+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-replay"
+    "profile": "acceptance-replay"
   },
   "terminal": {
     "columns": 144,
-    "program": "POSIX pseudo-terminal capture",
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

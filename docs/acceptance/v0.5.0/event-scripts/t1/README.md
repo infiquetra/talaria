@@ -175,7 +175,7 @@ updates in both states, and a clean exit after the final bottom frame settles.
 
 ## 31. Malformed Visual Studio Code import
 
-Run `31-malformed-visual-studio-code-import.json` with `--accept-exit 2 --expect "talaria: theme
+Run `31-malformed-visual-studio-code-import.json` with `--accept-exit 3 --expect "talaria: theme
 import failed:" -- theme import <worktree>/tests/fixtures/vscode-themes/malformed.json --name
 malformed-acceptance` against a clean scratch themes directory. This command is non-interactive, so
 the event array is intentionally empty and the installed command exits on its own; judge the raw

@@ -76,8 +76,10 @@ The four sections are always present:
 
 They are derived from the current session's held transcript, queue, model/context, connection,
 session, and tool-change state. A section with no state says `[none available from this session]`
-instead of disappearing or inventing data. `Up` and `Down` move among task and changed-file rows.
-`Enter` on a changed file opens its held diff.
+instead of disappearing or inventing data. The empty-state row wraps to two rows at inspector widths
+28 and 36 and fits on one row at width 48, keeping the complete sentence visible at every supported
+width. `Up` and `Down` move among task and changed-file rows. `Enter` on a changed file opens its held
+diff.
 
 Width, requested open/collapsed state, automatic narrow state, overlay state, current row, and file
 selection live only in the running process. Restart restores the default geometry. A full-screen
@@ -131,8 +133,8 @@ aliases where the desktop delivers them.
 | `Ctrl+G` or `F2`, `/agents` | Toggle subagent rows | live and replay |
 | `Ctrl+C` or `F4` | Interrupt the in-flight turn | live; visibly refused in replay |
 | `End` or `F5` | Follow the newest transcript line | live and replay |
-| `/models` or `F6` | Open models | live; gateway-changing actions are refused in replay |
-| `/profiles` or `F7` | Open profiles | live; gateway-changing actions are refused in replay |
+| `/models` or `F11`; `F6` only outside composer focus | Open models | live; gateway-changing actions are refused in replay |
+| `/profiles` or `F12`; `F7` only outside composer focus | Open profiles | live; gateway-changing actions are refused in replay |
 | `F8` | Pause/resume playback | replay only |
 | `F9` / `F10` | Slower / faster playback | replay only |
 

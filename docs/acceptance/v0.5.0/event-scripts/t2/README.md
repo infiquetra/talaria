@@ -22,7 +22,7 @@
 
 ## Item 17 — Inspector content and empty states
 
-`17-inspector-content-and-empty-states.json` waits four seconds, sets 132 by 36, closes and reopens the dock to focus it, and walks three focusable task/file rows at half-second intervals before a two-second reading hold. Run the same script once with held session state containing tasks, context, at least one changed file, and operation details, then once in a fresh session containing none of them; judge that all four headings remain, populated values match the held session, every empty section says `[none available from this session]`, and opening the inspector causes no new gateway request or filesystem scan.
+`17-inspector-content-and-empty-states.json` waits four seconds, sets 132 by 36, closes and reopens the 36-column dock to focus it, widens through 40 and 44 to 48 columns, shrinks through every four-column step to 28, restores 36, and then walks three focusable task/file rows. The 0.75-second resize spacing and two-second holds at both bounds expose the cycle-2 auto-height wrapping at each required width. Run the same script once with held session state containing tasks, context, at least one changed file, and operation details, then once in a fresh session containing none of them; judge that all four headings remain, populated values match the held session, the complete `[none available from this session]` sentence wraps honestly at widths 28, 36, and 48, and opening or resizing the inspector causes no new gateway request or filesystem scan.
 
 ## Item 18 — Inspector responsive state
 

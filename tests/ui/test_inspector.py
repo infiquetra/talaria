@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
 
@@ -332,6 +333,65 @@ async def test_narrow_overlay_keeps_main_width_and_escape_restores_focus() -> No
 
 
 @pytest.mark.asyncio
+async def test_widening_an_open_overlay_restores_the_exact_prior_focus() -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        main = app.query_one("#main", FocusTarget)
+        main.focus()
+        await pilot.pause()
+
+        await pilot.resize_terminal(78, 30)
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.inspector.is_overlay
+        assert app.focused is not main
+
+        await pilot.resize_terminal(132, 30)
+        await pilot.pause()
+
+        assert app.focused is not None
+        assert app.focused is main
+
+
+@pytest.mark.asyncio
+async def test_composer_receives_typing_after_overlay_closes_on_widen() -> None:
+    app = live_app(RecordingDispatcher())
+    async with app.run_test(size=(132, 30)) as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+
+        await pilot.resize_terminal(78, 30)
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.inspector.is_overlay
+
+        await pilot.resize_terminal(132, 30)
+        await pilot.pause()
+        await pilot.press("a", "b", "c")
+
+        assert app.focused is app.composer.text_area
+        assert app.composer.text == "abc"
+
+
+@pytest.mark.asyncio
+async def test_narrow_to_narrow_resize_keeps_an_open_overlay() -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(78, 30)) as pilot:
+        main = app.query_one("#main", FocusTarget)
+        main.focus()
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert app.inspector.is_overlay
+
+        await pilot.resize_terminal(64, 30)
+        await pilot.pause()
+
+        assert app.inspector.is_overlay
+        assert app.inspector.region.width == 36
+        assert app.focused is not main
+
+
+@pytest.mark.asyncio
 async def test_all_seeded_sections_render_and_file_selection_is_a_message_only() -> None:
     app = InspectorHarness(_seeded_view())
     async with app.run_test(size=(132, 30)) as pilot:
@@ -378,6 +438,47 @@ async def test_a_notice_only_queue_renders_the_tasks_empty_state() -> None:
 
         assert app.inspector.task_texts == ()
         assert str(task_empty.content) == f"  {EMPTY_SECTION}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("panel_width", [MIN_INSPECTOR_WIDTH, 36, MAX_INSPECTOR_WIDTH])
+async def test_empty_rows_paint_the_complete_sentence_at_every_panel_width(
+    panel_width: int,
+) -> None:
+    empty = inspector_view(entry_scoped_view(replay([])))
+    app = InspectorHarness(empty)
+
+    async with app.run_test(size=(132, 30)) as pilot:
+        app.inspector.focus()
+        resize_key = "shift+left" if panel_width < 36 else "shift+right"
+        for _ in range(abs(panel_width - 36) // 4):
+            await pilot.press(resize_key)
+        await pilot.pause()
+
+        assert app.inspector.region.width == panel_width
+        empty_rows = [
+            *app.inspector.query(".inspector--empty").nodes,
+            app.inspector.query_one(".inspector--context", Static),
+            app.inspector.query_one(".inspector--operation", Static),
+        ]
+        assert len(empty_rows) == 4
+        for row in empty_rows:
+            painted = " ".join(
+                row.render_line(y).text.strip() for y in range(row.size.height)
+            )
+            assert EMPTY_SECTION in " ".join(painted.split())
+            assert row.size.height == (2 if panel_width in (28, 36) else 1)
+
+
+def test_empty_sentence_matches_both_inspector_documents() -> None:
+    repository = Path(__file__).resolve().parents[2]
+    documents = (
+        repository / "docs" / "design" / "2026-08-30-talaria-v0-5-0-visual-spec.md",
+        repository / "docs" / "terminal-ui.md",
+    )
+
+    for document in documents:
+        assert EMPTY_SECTION in document.read_text(encoding="utf-8"), document
 
 
 @pytest.mark.asyncio

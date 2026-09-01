@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
-    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 14,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-14-resize-fix.ansi",
-    "capture_sha256": "e3d82cec0f935ac0a9463b8208eca3b95e6eb7c5c173c90e4522b8f9dc62d8b2",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-14-resize-fix-pty.json",
-    "pty_result_sha256": "e35527665ce334b15b7d4e56f0673ecafbc76b725a0eea18fa4d4a0d6d625d50",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-14-c2.ansi",
+    "capture_sha256": "587820dd6bfa7f407987fafcec4773362dc990a0407099615b9cfa169103ae1f",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-14-c2-pty.json",
+    "pty_result_sha256": "91e54accbd2748c659e0de27a13d23ed399a05fcbfed7c99c04c35aa70b10e01",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-resize-fix.png",
-    "screenshot_sha256": "44f26f8259651f76f0a0a56716131f363fa3626852cce0e3a825e79606fa8f39"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-c2.png",
+    "screenshot_sha256": "4ece90cb1253bfda1278a3b28c94da1502c98950e72f55cb7b427a31edfce0df"
   },
   "observations": [
-    "With COLUMNS and LINES unpinned, the real child reflowed at every breakpoint from 144 through 19 columns; the final 19-column frame contains only the connection [ok] form and exactly fifteen background cells."
+    "The raw capture records all eighteen required widths with real unpinned terminal geometry; forms compact and segments drop by breakpoint while connection remains on one row."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T21:53:04+00:00",
+  "recorded_at": "2026-09-01T03:01:46+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-replay"
+    "profile": "acceptance-replay"
   },
   "terminal": {
     "columns": 19,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

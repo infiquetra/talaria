@@ -539,6 +539,22 @@ def _blocking_rows(manifest: dict[str, Any]) -> list[tuple[int, str]]:
     return sorted(blocked.items())
 
 
+def acceptance_summary(manifest: dict[str, Any]) -> str:
+    """Describe checklist coverage separately from physical receipt-file counts."""
+    status = str(manifest["status"]).upper()
+    counts = require_object(manifest["counts"], field="manifest.counts")
+    verdicts = require_object(counts["item_verdicts"], field="counts.item_verdicts")
+    covered = int(counts["expected_receipts"]) - int(counts["missing_current_receipts"])
+    return (
+        f"**{status}**: {covered} of {counts['expected_receipts']} expected "
+        "checklist/tester slots are covered. "
+        f"The evidence set separately contains {counts['current_receipts']} current receipts "
+        f"({counts['item_receipts']} item and {counts['install_receipts']} install). "
+        f"Item verdicts are {verdicts['pass']} pass, {verdicts['blocked']} blocked, and "
+        f"{verdicts['fail']} fail."
+    )
+
+
 def _status_block(manifest: dict[str, Any]) -> str:
     status = str(manifest["status"]).upper()
     counts = require_object(manifest["counts"], field="manifest.counts")
@@ -547,8 +563,8 @@ def _status_block(manifest: dict[str, Any]) -> str:
         f"## Status: **{status}**",
         "",
         "This verdict is generated from `artifact-manifest.json`; it is not maintained by hand. "
-        f"The manifest records {counts['current_receipts']} current receipts, "
-        f"{counts['stale_receipts']} stale receipts, and "
+        + acceptance_summary(manifest),
+        f"The manifest also records {counts['stale_receipts']} stale receipts and "
         f"{counts['invalid_item_receipts']} invalid item receipts.",
         "Regenerate it with "
         f"`{manifest['generated_command']}`.",

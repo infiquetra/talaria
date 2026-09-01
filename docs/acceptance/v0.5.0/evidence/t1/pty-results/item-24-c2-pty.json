@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "docs/acceptance/v0.5.0/corpora/t1/agent-queue-states.jsonl",
+    "--speed",
+    "0.25"
+  ],
+  "capture": {
+    "bytes": 582226,
+    "path": "<scratch-root>/raw/item-24-c2.ansi",
+    "sha256": "721dd2e52f969b6eaf419d6b5ab997a67089ba0e048ebad27c4e3fb5365e641e"
+  },
+  "columns": 132,
+  "duration_seconds": 25.817911,
+  "exit_code": 0,
+  "expected_literals": [
+    "queued acceptance work",
+    "possibly duplicate"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; NO_COLOR",
+  "tester": "talaria-t1",
+  "timed_out": false
+}
