@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "a99c86d648f59d2b7f0f9f2bc58da1f91e2ed45eb4dd8dc205bd21f161940066",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "9f725d66a6488b29bf87a0077b5fab6c6c60dff37c2bd162f141701f33b8542a",
+    "installed_files_sha256": "a0a0e1900055b8c422a31b1a22ab196f165910ea0c3ba32c3daaf6ab856a1368",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+  },
+  "checklist_item": 34,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-34-live-public-c3.ansi",
+    "capture_sha256": "7c24b8a8565492ddceee2657745bb654a807839c95bf18244f7a1e9b8ff502f6",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-34-live-public-c3-pty.json",
+    "pty_result_sha256": "1e5a878083d3103cf89a76e12920acbe7d1dca43b93c037265659d42f9745c59",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-34-live-public-c3.png",
+    "screenshot_sha256": "22a799bed14234559d5de2fe7610aeb6154a6ab9d621353428f67ad2f75f5461"
+  },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "observations": [
+    "The approved primary route completed TALARIA-T2-LIVE-OK; closing exactly that recorded session returned closed true, and the next prompt was visibly refused with code 4001 session not found while Talaria remained responsive and exited cleanly. No fallback was requested or used."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T15:26:37+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "live",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": "opencode-go / muse-spark-1.2-contributor",
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "used"
+    },
+    "profile": "default"
+  },
+  "terminal": {
+    "columns": 119,
+    "program": "Terminal.app 2.14",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Killed session",
+  "verdict": "pass"
+}

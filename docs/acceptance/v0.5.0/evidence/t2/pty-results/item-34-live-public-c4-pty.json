@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "--record",
+    "<scratch-root>/recordings/item-34-live-public-c4.jsonl"
+  ],
+  "capture": {
+    "bytes": 81352,
+    "path": "<scratch-root>/raw/item-34-live-public-c4.ansi",
+    "sha256": "da747fdff344ea8f387c002e119d7fa5d4aa385c7ea359ef4d12310525b47eb7"
+  },
+  "columns": 119,
+  "duration_seconds": 42.250555,
+  "exit_code": 0,
+  "expected_literals": [
+    "TALARIA-T2-LIVE-OK",
+    "session not found"
+  ],
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Terminal.app 2.14",
+  "tester": "talaria-t2",
+  "timed_out": false
+}
