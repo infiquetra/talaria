@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
-    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
   },
   "checklist_item": 27,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27-c3.ansi",
-    "capture_sha256": "9fe229ce5487451193e30a16969ba6157a88c38cf085c67e60a3c8ced18d88b1",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-c3-pty.json",
-    "pty_result_sha256": "338b55de7ab24453e9d025d91644a5c0e146f8a2d62bbb7e7b25b870da1c023c",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27-c4b.ansi",
+    "capture_sha256": "80c89f4032093654e0bfa1c40ff2a4920f8aad4cb10f1aab6a6b3798fb0539b8",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-c4b-pty.json",
+    "pty_result_sha256": "610958b19646aeba732aab979471b7cb2d1fd97e53fad4af317d0acb870ef61d",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-c3.png",
-    "screenshot_sha256": "2f7b2785556386a9fcb2b317470d55a0209e0c6d5bcd4540538e25b207b2b2e8"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-c4b.png",
+    "screenshot_sha256": "93e8d2da78898a7d1d5a85813b067369dbe9d9c23a582e7608e6adb6935c43c8"
   },
-  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
   "observations": [
     "Upward wheel input unpinned follow mode; appends, status and agent updates, theme preview cancellation, inspector toggles, and the real 132-to-119-to-132 resize preserved the reading anchor."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-09-01T15:32:09+00:00",
+  "recorded_at": "2026-09-01T18:20:20+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

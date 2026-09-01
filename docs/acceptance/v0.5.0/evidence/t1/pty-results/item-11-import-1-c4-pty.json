@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "theme",
+    "import",
+    "<scratch-root>/work/item11/unsupported-dark.json",
+    "--name",
+    "vscode-import-evidence"
+  ],
+  "capture": {
+    "bytes": 4883,
+    "path": "<scratch-root>/raw/item-11-import-1-c4.ansi",
+    "sha256": "91bce396cca657dfe081ed5c7dd4c76c1d18f428ea2d8670154baf7bf0140aa5"
+  },
+  "columns": 132,
+  "duration_seconds": 0.148886,
+  "exit_code": 0,
+  "expected_literals": [
+    "56 fallbacks",
+    "19 warnings"
+  ],
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

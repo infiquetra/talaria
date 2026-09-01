@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
-    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
   },
   "checklist_item": 26,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-26-reduced-c3.ansi",
-    "capture_sha256": "1f13226deaf3aed7ff7f8145af238d1f1c71f5ba728902a2068d17f60667ae9d",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-26-reduced-c3-pty.json",
-    "pty_result_sha256": "5c2fef9cbe077d12d0e11f5a72539dc479b0a6084a9399039d208064e6adcdab",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-26-reduced-c4.ansi",
+    "capture_sha256": "142673fe51b383e53de6fae4e0fb6bb95d9d0042d5ccfb0b89ec2ee88b43d4d6",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-26-reduced-c4-pty.json",
+    "pty_result_sha256": "ffadad5cacee7d4a5411d3ba73b5b0e0af5b5ce979c4d05188933e11379cbf1e",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-26-reduced-c3.png",
-    "screenshot_sha256": "38b0c153e5385360e0dbfcacbc4500489611f8421e0db37eb8f8b9b46aa631d1"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-26-reduced-c4.png",
+    "screenshot_sha256": "edd270d847cb11ed6c53b2798d849c15ac42c09f759a3d20e6f556ea11a492fb"
   },
-  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
   "observations": [
     "A standard-motion drive showed working ellipsis while ui.reduced_motion=true restarted into static [..] working; completion and state updates remained live in both drives."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-09-01T15:32:09+00:00",
+  "recorded_at": "2026-09-01T18:20:20+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

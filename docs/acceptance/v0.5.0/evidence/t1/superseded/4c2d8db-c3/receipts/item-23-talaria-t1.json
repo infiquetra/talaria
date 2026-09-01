@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
+    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+  },
+  "checklist_item": 23,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-c3.ansi",
+    "capture_sha256": "b29685e7aab9d2975f7785381a982ef73aa4754f8d17a3eca549a23b2d2599d4",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-c3-pty.json",
+    "pty_result_sha256": "f25bddefdfa3c000ef61458786c7d1c40e72fb66652fbc4a79fc262c2d850757",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-c3.png",
+    "screenshot_sha256": "171a2d30dcaeb9c3258cfaba0ba82e1523c95ad8c225ca6ff9e6185a504dc0d6"
+  },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "observations": [
+    "A healthy primary-route connection painted [..] wait and [ok] up; the controlled isolated-dashboard restart painted [~] retry and [x] down, while the separate item 33 capture proves [!] auth. All five remain literal in monochrome evidence."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T15:32:37+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "live",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": "opencode-go / muse-spark-1.2-contributor",
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "used"
+    },
+    "profile": "default on isolated dashboard 8790; NO_COLOR controlled reconnect"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; NO_COLOR; isolated Hermes dashboard 8790",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Connection non-color states",
+  "verdict": "pass"
+}

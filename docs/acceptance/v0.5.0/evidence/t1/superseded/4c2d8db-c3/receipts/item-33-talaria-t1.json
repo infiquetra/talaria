@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
+    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+  },
+  "checklist_item": 33,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-33-c3b.ansi",
+    "capture_sha256": "3a3752b90a1e78497453bf99c25fbcec6d6a6e611c76950c2c129163c57d2554",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-33-c3b-pty.json",
+    "pty_result_sha256": "eca7a8778447d0b9bc7a7ea247c512b1aefcaad9cbd9666bd7dd3cb28c1d165a",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-33-c3b.png",
+    "screenshot_sha256": "0e172e47587e1455d7be498fdc0aedbe06ed0c62678bc6e615043df14f47402e"
+  },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "observations": [
+    "Restarting only isolated dashboard 8790 changed its listener from PID 48271 to PID 48915; the now-stale scratch credential produced visible HTTP 403 authentication failure and [!] auth without a hang, blank screen, or credential disclosure."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T15:32:37+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "failure",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "not-reached"
+    },
+    "profile": "default on isolated dashboard 8790"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; isolated Hermes dashboard 8790",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Dead gateway credential",
+  "verdict": "pass"
+}
