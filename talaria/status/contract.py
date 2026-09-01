@@ -24,19 +24,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from talaria.domain.projection import StatusPayload
 from talaria.recorder.redact import is_suspicious_key
-
-_NOTICE_CONTROL_PICTURES: dict[int, str] = {
-    0x00: "␀",
-    0x07: "␇",
-    0x08: "␈",
-    0x09: "␉",
-    0x0A: "␊",
-    0x0B: "␋",
-    0x0C: "␌",
-    0x0D: "␍",
-    0x1B: "␛",
-    0x7F: "␡",
-}
+from talaria.text import defang
 
 # ── KTD5's frozen limits ────────────────────────────────────────────────
 
@@ -300,21 +288,6 @@ def normalize_bounded_integer(
     )
 
 
-def _defang_status_segment(value: str) -> str:
-    """Make control bytes visible in a framework-free configuration notice."""
-    visible: list[str] = []
-    for character in value:
-        codepoint = ord(character)
-        replacement = _NOTICE_CONTROL_PICTURES.get(codepoint)
-        if replacement is not None:
-            visible.append(replacement)
-        elif codepoint < 0x20:
-            visible.append("␦")
-        else:
-            visible.append(character)
-    return "".join(visible)
-
-
 def normalize_status_segments(
     value: object,
 ) -> tuple[tuple[StatusSegmentName, ...], tuple[str, ...]]:
@@ -336,9 +309,7 @@ def normalize_status_segments(
     seen: set[str] = set()
     for entry in value:
         if not isinstance(entry, str) or entry not in KNOWN_STATUS_SEGMENTS:
-            display = (
-                repr(_defang_status_segment(entry)) if isinstance(entry, str) else repr(entry)
-            )
+            display = repr(defang(entry)) if isinstance(entry, str) else repr(entry)
             notices.append(f"status.segments contains unknown segment {display}; ignoring it")
             continue
         if entry in seen:

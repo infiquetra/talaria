@@ -766,7 +766,9 @@ _EXPECTED_IMPORTS = {
             "textual.widgets",
         }
     ),
-    "talaria.ui.literal": frozenset({"__future__", "rich.text", "typing"}),
+    "talaria.ui.literal": frozenset(
+        {"__future__", "rich.text", "talaria.text"}
+    ),
     "talaria.ui.motion": frozenset({"__future__", "dataclasses", "typing"}),
 }
 
@@ -916,9 +918,7 @@ _EXPECTED_CALLS = {
             "window",
         }
     ),
-    "talaria.ui.literal": frozenset(
-        {"Text", "defang", "items", "range", "setdefault", "translate"}
-    ),
+    "talaria.ui.literal": frozenset({"Text", "defang"}),
     "talaria.ui.motion": frozenset(
         {"MotionPolicy", "ScrollMotion", "dataclass", "len"}
     ),

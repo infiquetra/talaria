@@ -20,9 +20,11 @@ from talaria.domain.session_list import decode_active_list
 from talaria.domain.state import apply_active_list
 from talaria.status.contract import StatusBarSettings, normalize_status_segments
 from talaria.status.local import LocalStatus
+from talaria.ui.literal import INVISIBLE_MARK, defang
 from talaria.ui.status_bar import (
     BottomStatusBar,
     BottomStatusBarView,
+    _breakpoint,
     build_status_bar_view,
     render_status_bar,
 )
@@ -150,12 +152,28 @@ def test_each_unknown_configured_segment_is_named_in_its_own_notice() -> None:
     assert "second_unknown" in notices[1]
 
 
-def test_unknown_configured_segment_escape_is_rendered_not_obeyed() -> None:
-    _segments, notices = normalize_status_segments(["unsafe\x1b[2Jsegment", "connection"])
+@pytest.mark.parametrize(
+    ("hazard", "marker"),
+    [
+        pytest.param("\x00", "␀", id="null"),
+        pytest.param("\x1b", "␛", id="escape"),
+        pytest.param("\u202e", INVISIBLE_MARK, id="right-to-left-override"),
+        pytest.param("\u200d", INVISIBLE_MARK, id="zero-width-joiner"),
+        pytest.param("\ufeff", INVISIBLE_MARK, id="byte-order-mark"),
+        pytest.param("\u00ad", INVISIBLE_MARK, id="soft-hyphen"),
+        pytest.param("\U000e0072", INVISIBLE_MARK, id="unicode-tag-letter"),
+        pytest.param("\u2066", INVISIBLE_MARK, id="left-to-right-isolate"),
+    ],
+)
+def test_unknown_status_segments_use_the_canonical_defang_rule(
+    hazard: str, marker: str
+) -> None:
+    unsafe = f"unsafe{hazard}segment"
+    _segments, notices = normalize_status_segments([unsafe, "connection"])
 
     assert len(notices) == 1
-    assert "unsafe␛[2Jsegment" in notices[0]
-    assert "\x1b" not in notices[0]
+    assert repr(defang(unsafe)) in notices[0]
+    assert marker in notices[0]
 
 
 _ALL_SEGMENTS = (
@@ -281,14 +299,53 @@ def test_documented_default_breakpoint_bands_match_rendered_segments(
     assert tuple(segment.name for segment in rendered.segments) == expected_names
 
 
-def test_terminal_ui_documents_the_twenty_column_compact_contract() -> None:
-    guide = (_REPO_ROOT / "docs" / "terminal-ui.md").read_text(encoding="utf-8")
+def _derived_breakpoint_rows() -> tuple[tuple[str, tuple[object, object]], ...]:
+    bands: list[tuple[int, int | None, tuple[object, object]]] = []
+    band_start = 0
+    prior = _breakpoint(0)
+    for width in range(1, 4097):
+        current = _breakpoint(width)
+        if current == prior:
+            continue
+        bands.append((band_start, width - 1, prior))
+        band_start = width
+        prior = current
+    bands.append((band_start, None, prior))
 
-    assert (
-        "| 20–31 | Keep `task_progress` and `connection` compact while they fit"
-        in guide
-    )
-    assert "| Fewer than 20 | Drop `task_progress`; minimum `connection` form" in guide
+    rows: list[tuple[str, tuple[object, object]]] = []
+    for start, end, result in reversed(bands):
+        if end is None:
+            label = f"{start} and wider"
+        elif start == 0:
+            label = f"Fewer than {end + 1}"
+        else:
+            label = f"{start}–{end}"
+        rows.append((label, result))
+    return tuple(rows)
+
+
+def _documented_breakpoint_rows() -> tuple[tuple[str, tuple[object, object]], ...]:
+    guide = (_REPO_ROOT / "docs" / "terminal-ui.md").read_text(encoding="utf-8")
+    lines = guide.splitlines()
+    header = lines.index("| Width | Default result |")
+    dropped: set[str] = set()
+    rows: list[tuple[str, tuple[object, object]]] = []
+    for line in lines[header + 2 :]:
+        if not line.startswith("|"):
+            break
+        label, description = (cell.strip() for cell in line.strip("|").split("|", 1))
+        dropped_match = re.search(r"[Dd]rop `([^`]+)`", description)
+        if dropped_match is not None:
+            dropped.add(dropped_match.group(1))
+        form = "minimum" if "minimum `connection` form" in description else "compact"
+        if description == "All seven segments in full form":
+            form = "full"
+        rows.append((label, (form, frozenset(dropped))))
+    return tuple(rows)
+
+
+def test_documented_default_breakpoint_bands_are_derived_from_renderer() -> None:
+    assert _documented_breakpoint_rows() == _derived_breakpoint_rows()
 
 
 @pytest.mark.parametrize(
@@ -479,22 +536,30 @@ async def test_live_registry_model_replaces_unknown_after_the_first_render() -> 
         assert "agent: ?" not in app.bottom_status_bar.last_render.plain
 
 
-def test_roster_provider_prefix_is_status_only() -> None:
-    app, _controls = paused_app([])
-    model = "muse-spark-1.2-contributor"
+@pytest.mark.asyncio
+async def test_roster_provider_prefix_is_status_only() -> None:
+    model = "claude-opus-4"
+    app, _controls = paused_app(
+        [],
+        status_bar_settings=StatusBarSettings(
+            segments=("agent_model",),
+            agent_model_max_columns=48,
+        ),
+    )
     app.state = replace(app.state, focused_session_id="live-primary")
-    app.model_catalog = ProviderCatalog(
+    mismatched_catalog = ProviderCatalog(
         providers=(
             ModelProvider(
-                slug="opencode-go",
-                name="OpenCode Go",
-                models=(model,),
+                slug="anthropic",
+                name="Anthropic",
+                models=(model, "different-model"),
                 authenticated=True,
             ),
         ),
-        current_provider="opencode-go",
-        current_model=model,
+        current_provider="anthropic",
+        current_model="different-model",
     )
+    app.model_catalog = mismatched_catalog
     app.fleet = apply_active_list(
         app.fleet,
         decode_active_list(
@@ -513,8 +578,19 @@ def test_roster_provider_prefix_is_status_only() -> None:
         poll_epoch=1,
     )
 
-    assert app._status_agent() == ("OpenCode Go", model)
-    assert app._inspector_model() == model
+    assert app._focused_agent_identity() == ("", model, False)
+
+    app.model_catalog = replace(mismatched_catalog, current_model=model)
+    async with app.run_test(size=(180, 30)) as pilot:
+        await app.render_snapshot()
+        await pilot.pause()
+
+        assert app.bottom_status_bar.last_render.plain == (
+            "agent: Anthropic · claude-opus-4"
+        )
+        assert "model    claude-opus-4" in app.inspector.context_text
+        assert "model    Anthropic/claude-opus-4" not in app.inspector.context_text
+        await app.shutdown_sources()
 
 
 def test_runtime_view_reuses_held_status_and_queue_facts() -> None:
