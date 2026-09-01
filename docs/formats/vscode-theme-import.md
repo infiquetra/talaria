@@ -149,8 +149,9 @@ value `talaria-theme-v1`, `dark`, `name`, `slug`, and the complete `tokens`
 mapping. The normative schema is
 [`stored-theme.schema.json`](stored-theme.schema.json). Keys are sorted, values
 are opaque uppercase `#RRGGBB`, and the file has exactly one trailing newline.
-A later import of the same slug atomically replaces that file. Imported themes
-are read only when a new Talaria process constructs its theme registry;
+A later import of the same slug atomically replaces that path. If the path is a
+symlink, Talaria replaces the link itself and never writes through to its target.
+Imported themes are read only when a new Talaria process constructs its theme registry;
 source-file changes are not watched.
 
 For one release, the reader treats a stored theme without `schema_version` as

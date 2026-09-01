@@ -8,6 +8,7 @@ terminal framework into a non-UI module.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -76,6 +77,7 @@ THEME_TOKENS: tuple[str, ...] = (
 _TOKEN_SET = frozenset(THEME_TOKENS)
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _OPAQUE_HEX_RE = re.compile(r"^#[0-9A-F]{6}$")
+_THEME_NAME_MAX_LENGTH = 128
 
 THEME_NAME_TYPE_FALLBACK_NOTICE = (
     "theme.name must be a string; using Refined Default ({default_slug})"
@@ -115,6 +117,20 @@ class ThemeSpec:
             raise ValueError(f"invalid theme slug: {self.slug!r}")
         if not self.name.strip():
             raise ValueError("theme display name must not be empty")
+        if len(self.name) > _THEME_NAME_MAX_LENGTH:
+            raise ValueError(
+                "theme display name must be at most "
+                f"{_THEME_NAME_MAX_LENGTH} characters"
+            )
+        if any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or unicodedata.category(character) == "Cf"
+            for character in self.name
+        ):
+            raise ValueError(
+                "theme display name must not contain control or format characters"
+            )
 
         copied = dict(self.tokens)
         unknown = sorted(set(copied) - _TOKEN_SET)
