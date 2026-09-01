@@ -1570,10 +1570,16 @@ class TalariaApp(App[None]):
 
     # ── layout ───────────────────────────────────────────────────────────
 
-    def _status_agent(self) -> tuple[str, str]:
-        """Return the model facts already held for the focused session."""
+    def _focused_agent_identity(self) -> tuple[str, str, bool]:
+        """Resolve the focused provider and model from one held observation.
+
+        The boolean distinguishes a model observed only in the session roster.
+        That row does not carry a provider, so any provider paired with it is a
+        catalogue inference rather than part of the same observation.
+        """
         session = self.session_model_in_focus
         catalog = self.model_catalog
+        roster_only = False
         if session is not None:
             provider_slug = session.provider_slug
             model = session.model
@@ -1589,6 +1595,7 @@ class TalariaApp(App[None]):
                 else None
             )
             if row is not None and row.model:
+                roster_only = True
                 # The roster row is an observation of this session's actual
                 # model; the catalogue describes configured defaults instead.
                 provider_slug = (
@@ -1601,7 +1608,7 @@ class TalariaApp(App[None]):
                 provider_slug = catalog.current_provider
                 model = catalog.current_model
             else:
-                return "", ""
+                return "", "", False
 
         provider = provider_slug
         if catalog is not None:
@@ -1613,6 +1620,11 @@ class TalariaApp(App[None]):
                 ),
                 provider_slug,
             )
+        return provider, model, roster_only
+
+    def _status_agent(self) -> tuple[str, str]:
+        """Return the provider and model already held for the focused session."""
+        provider, model, _roster_only = self._focused_agent_identity()
         return provider, model
 
     def _bottom_status_view(self) -> BottomStatusBarView:
@@ -1629,20 +1641,10 @@ class TalariaApp(App[None]):
         )
 
     def _inspector_model(self) -> str:
-        """Return the most specific focused-session model Talaria already holds."""
-        provider, model = self._status_agent()
-        if self.session_model_in_focus is not None:
-            return "/".join(part for part in (provider, model) if part)
-
-        session_id = self.state.session_key or self.state.focused_session_id or ""
-        if session_id:
-            row = fleet_row(
-                self.fleet,
-                profile=self.fleet_profile,
-                session_id=session_id,
-            )
-            if row is not None and row.model:
-                return row.model
+        """Return the inspector model, omitting an inferred roster provider."""
+        provider, model, roster_only = self._focused_agent_identity()
+        if roster_only:
+            return model
         return "/".join(part for part in (provider, model) if part)
 
     def compose(self) -> ComposeResult:
