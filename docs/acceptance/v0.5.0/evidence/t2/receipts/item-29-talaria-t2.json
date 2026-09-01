@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
-    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "install_receipt_sha256": "1fe418119f50bf9d9f6160ba0258006d11822b59116be2850ae2da018a8898ff",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 29,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-29-resize-fix.ansi",
-    "capture_sha256": "1c6859226f03e00b333276fd6f548c2fc08a951bdc59379979b9c80115a48be3",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-29-resize-fix-pty.json",
-    "pty_result_sha256": "a6ce9e3e8cf30d80c75332dc8b2ae165b67a506a28f11b9c7707aabe469c35d5",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-29-c2.ansi",
+    "capture_sha256": "98dfdc762b3bf8c6f860138c142b3693db19ca09a01020a3e8537754dd276050",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-29-c2-pty.json",
+    "pty_result_sha256": "f9f2e76cd552187e58d892f850460aaada2969c354676e3cb9a0111359a37b3a",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29-resize-fix.png",
-    "screenshot_sha256": "22f7a68f26940e19d392fd3bf23951f2a66c149534ed00851f499cedf6b50db5"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29-c2.png",
+    "screenshot_sha256": "da6d6203cae9c127ad5ffdecae18cdf6f2afa3e8948a24d671d3049ba372af44"
   },
   "observations": [
-    "After a real 144-to-132-column resize, the wide capture retains the compact one-row footer and the 36-column docked inspector without clipping."
+    "The required 132-by-36 wide frame has the 36-column inspector dock, stable main hierarchy, and fixed one-row help and status bars."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T21:53:04+00:00",
+  "recorded_at": "2026-09-01T03:01:47+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-replay"
+    "profile": "acceptance-replay"
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

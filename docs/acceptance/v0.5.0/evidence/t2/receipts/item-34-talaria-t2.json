@@ -1,37 +1,37 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
-    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "install_receipt_sha256": "1fe418119f50bf9d9f6160ba0258006d11822b59116be2850ae2da018a8898ff",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 34,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-34-live-killed-final.ansi",
-    "capture_sha256": "02748aed0067ab76cd1ae6e161ef90676f2b3143b2efdfc9f8dd1ada287257c1",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-34-live-killed-final-pty.json",
-    "pty_result_sha256": "8ef719cac8361164bfff70bd50e02a070d3dc734a4bc47b4dcf4f30821461d06",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-34-live-public-c2.ansi",
+    "capture_sha256": "5b108e9f38d8b02b42f046d195d194ff6b1a4601bfc49691675e5729e231e946",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-34-live-public-c2-pty.json",
+    "pty_result_sha256": "c87a26da0fef958683ec3edf9c3051f23f1dac990d2f3737355d8b91c188adee",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-34-final.png",
-    "screenshot_sha256": "d6465177d2b42b01d33cd8b075bd4a66c134952f374410387ac241bc2637d5d1"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-34-live-public-c2.png",
+    "screenshot_sha256": "477cb9621d0fc083a1f616455f0b07f7f828bed8c1eab270b90a131b76513b41"
   },
   "observations": [
-    "A real primary-route turn completed, the exact tester-created session was closed, and the next prompt visibly returned gateway code 4001 session not found without a hang or blank."
+    "A primary-route session completed TALARIA-T2-LIVE-OK, exact recorded-session close returned true, and the next prompt was visibly refused with code 4001 session not found. No fallback was requested or used."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T20:28:39+00:00",
+  "recorded_at": "2026-09-01T03:01:47+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
     "mode": "live",
     "model_route": {
-      "fallback_availability": "unavailable",
+      "fallback_availability": "not-checked",
       "fallback_reason": null,
       "observed": "opencode-go / muse-spark-1.2-contributor",
       "requested": "opencode-go / muse-spark-1.2-contributor",
@@ -40,8 +40,8 @@
     "profile": "default"
   },
   "terminal": {
-    "columns": 144,
-    "program": "POSIX pseudo-terminal capture",
+    "columns": 119,
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

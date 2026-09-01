@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
-    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "install_receipt_sha256": "1fe418119f50bf9d9f6160ba0258006d11822b59116be2850ae2da018a8898ff",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 19,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-19-screenshot.ansi",
-    "capture_sha256": "ff99a6a1e811fb5fb3f1fbfc4ba9bf712f6e4946a8cce1b13734d6c581b5b042",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-19-screenshot-pty.json",
-    "pty_result_sha256": "46ee3b830a83b94c44794c236deed2debcd64f2efbabddc2547f994fb2a7d897",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-19-c2.ansi",
+    "capture_sha256": "f42e32b6dcaec5c02cd897246575f41be64281925493c5c67ff992aff6099b5a",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-19-c2-pty.json",
+    "pty_result_sha256": "fafe7a249310a4533fd154173d81b1ff45dbadfa37f1c4f85c2ed8ecb5190f3e",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-19-screenshot.png",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-19-screen-c2.png",
     "screenshot_sha256": "2649c2a61892823473d0de543691a383dbce6e3f5decff5cd5902830c0347b6e"
   },
   "observations": [
-    "The three-file, five-hunk diff renders aligned side-by-side panes, line numbers, marks, intraline changes, and read-only status."
+    "The held three-file, five-hunk diff renders aligned side-by-side panes, line numbers, hunk markers, syntax and intraline changes, read-only labels, and temporary inspector collapse."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T20:28:39+00:00",
+  "recorded_at": "2026-09-01T03:01:47+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-replay"
+    "profile": "acceptance-replay"
   },
   "terminal": {
     "columns": 132,
-    "program": "POSIX pseudo-terminal capture",
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },
