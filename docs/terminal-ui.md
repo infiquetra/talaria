@@ -76,8 +76,10 @@ The four sections are always present:
 
 They are derived from the current session's held transcript, queue, model/context, connection,
 session, and tool-change state. A section with no state says `[none available from this session]`
-instead of disappearing or inventing data. `Up` and `Down` move among task and changed-file rows.
-`Enter` on a changed file opens its held diff.
+instead of disappearing or inventing data. The empty-state row wraps to two rows at inspector widths
+28 and 36 and fits on one row at width 48, keeping the complete sentence visible at every supported
+width. `Up` and `Down` move among task and changed-file rows. `Enter` on a changed file opens its held
+diff.
 
 Width, requested open/collapsed state, automatic narrow state, overlay state, current row, and file
 selection live only in the running process. Restart restores the default geometry. A full-screen

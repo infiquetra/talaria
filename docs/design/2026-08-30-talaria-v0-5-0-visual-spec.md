@@ -432,7 +432,7 @@ Docked inspector at 132 columns with its 36-column default width:
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ~~~
 
-The inspector boundary uses talaria.inspector.border; its fill uses talaria.inspector.background. Headings and the selected file use talaria.inspector.heading plus the fixed > focus gutter. Empty sections render a literal [none] sentence rather than disappearing.
+The inspector boundary uses talaria.inspector.border; its fill uses talaria.inspector.background. Headings and the selected file use talaria.inspector.heading plus the fixed > focus gutter. Empty sections render the literal [none available from this session] sentence rather than disappearing, wrapping as needed so the complete sentence remains visible at every inspector width.
 
 ### Diff viewer, side-by-side
 
@@ -537,7 +537,7 @@ An unknown segment name is omitted and reported in a startup notice. A non-list 
 - Below 120, toggling opens a right overlay and does not reflow or resize the transcript. At 32–119 columns the overlay width is min(saved width, terminal width minus 2). Below 32 it occupies the terminal width. Escape closes it and restores focus to the previously focused widget.
 - An overlay carries [overlay] in its existing border title. It does not add a notice row.
 - Opening a diff collapses a docked inspector for the lifetime of the diff screen and restores it on close. The inspector overlay may still be invoked from the diff's file-list command.
-- Tasks, Context, Changed files, and Operation details always keep their heading. Missing data reads [none available from this session]. No section makes a gateway request, scans the filesystem, or starts a poll.
+- Tasks, Context, Changed files, and Operation details always keep their heading. Missing data reads [none available from this session]. The empty-state row wraps to two rows at widths 28 and 36 and fits on one row at width 48, so the complete sentence is always reachable. No section makes a gateway request, scans the filesystem, or starts a poll.
 
 ### Diff behavior
 
@@ -838,7 +838,7 @@ Each owning tester records terminal program, TERM value, terminal dimensions, in
 14. [ ] **[talaria-t2] Status responsive sequence.** Resize through 144, 143, 120, 119, 112, 111, 96, 95, 80, 79, 64, 63, 48, 47, 32, 31, 20, and 19 columns. Pass: forms compact, then segments drop in the specified bands/order; connection remains; the bar never wraps or changes height.
 15. [ ] **[shared] Status failure visibility.** Start with malformed status.command, then invalid interval and bar-width integers. Pass: each problem produces a visible startup/StatusRegion notice and the documented default is used; the shell-command status contract still renders literal bounded output.
 16. [ ] **[talaria-t2] Inspector dock and resize.** At 120 columns or wider toggle the inspector, focus it, and resize beyond each bound. Pass: it docks right, changes four columns per action, clamps at 28 and 48, and never changes data by resizing.
-17. [ ] **[talaria-t2] Inspector content and empty states.** Exercise tasks, context, changed files, and operation details with seeded/live state, then a session lacking each value. Pass: all four headings remain, existing state renders accurately, and [none available from this session] appears honestly without a new request or filesystem scan.
+17. [ ] **[talaria-t2] Inspector content and empty states.** Exercise tasks, context, changed files, and operation details with seeded/live state, then a session lacking each value. Pass: all four headings remain, existing state renders accurately, and the complete [none available from this session] sentence appears at inspector widths 28, 36, and 48 without a new request or filesystem scan.
 18. [ ] **[talaria-t2] Inspector responsive state.** With inspector open, resize 120→119→120; also manually close and repeat. Pass: auto-collapse/restore follows the saved manual preference, the narrow toggle opens an overlay without transcript reflow, and geometry resets after process restart.
 19. [ ] **[talaria-t2] Side-by-side diff.** Open a changed file at 112 columns or wider. Pass: two aligned panes show base/working line numbers, syntax colors, +/-, hunk headers, intraline spans, file/hunk position, read only, and the inspector is temporarily collapsed.
 20. [ ] **[talaria-t2] Unified fallback.** Resize the same diff 112→111→112 and press u/s. Pass: it becomes unified at 111 with selection and scroll anchor preserved, returns to side-by-side at 112 when preferred, and the below-threshold refusal reuses the header row.
