@@ -1,0 +1,885 @@
+{
+  "schema": "talaria_v0_5_0_repair_dispatch.v1",
+  "generated": "2026-09-01",
+  "cycle": 3,
+  "reviewed_revision": "3016f177a8b07949eb1e59a9b64f000b01a892b3",
+  "diff_base": "5efa19ccba31f84d8e732591b18767bf736d00c2",
+  "previous_cycles": [
+    {
+      "cycle": 1,
+      "revision": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+      "outcome": "repairs_requested",
+      "fix_requests": 27,
+      "manifest": "docs/code-reviews/2026-08-31-v0-5-0-repairs/dispatch-manifest.json"
+    },
+    {
+      "cycle": 2,
+      "revision": "83ffd27addc6df4cbdb73bc996baa7d11a2610f3",
+      "outcome": "repairs_requested",
+      "fix_requests": 21,
+      "manifest": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/dispatch-manifest.json"
+    }
+  ],
+  "review": {
+    "outcome": "cycle_cap_best_available",
+    "next_action": "continue_with_best_available",
+    "engine": "saga code-review 0.149.0",
+    "artifact": "docs/evidence/adhoc-orch-talaria-v0-5-0/artifacts/d6f674a2cf79cd35a9f74bb3ed9884ca8d1fc88b9bbd80251b79c4180cebcb5b.md",
+    "criteria": "docs/evidence/adhoc-orch-talaria-v0-5-0/criteria-code-review-3016f177a8b07949eb1e59a9b64f000b01a892b3.json",
+    "lenses": [
+      "architecture-maintainability",
+      "correctness",
+      "security",
+      "testing",
+      "api-contract",
+      "accessibility-human-usability",
+      "documentation-clarity"
+    ],
+    "acceptance_rule": "derived_overall >= 9.0 AND every applicable dimension >= 7.0",
+    "floor_rule_satisfied": true,
+    "numeric_rule_satisfied": false,
+    "cycle_cap_reached": "MAX_REVIEW_CYCLES = 3; no further scored cycle will run",
+    "independent_gates": "all five pass at this revision"
+  },
+  "operator_decision": {
+    "date": "2026-09-01",
+    "decision": "repair all sixteen fix requests before release, in one unscored round",
+    "scope": "the full set, P2 and P3 alike; not a subset",
+    "unscored": "no cycle 4 will be scored — the engine has emitted cycle_cap_best_available and the cycle budget is spent",
+    "excluded_by_the_same_decision": "the seven dimensions below 9.0 that carry no finding; see unreachable_dimensions_excluded"
+  },
+  "totals": {
+    "findings": 29,
+    "fix_requests_in_typed_result": 16,
+    "approved_requests_routed": 16,
+    "carried_not_in_the_round": 6,
+    "children": 8,
+    "severity": {
+      "P1": 0,
+      "P2": 9,
+      "P3": 20
+    },
+    "repair_induced_regressions": 2
+  },
+  "repair_induced_regressions": {
+    "note": "Read these first. Each is a defect this review's own repair round introduced while fixing another defect. A lane taking one of them is undoing its own prior repair, not making a fresh change, and must aim at the underlying contract rather than swap the mechanism a third time.",
+    "entries": [
+      {
+        "fix_id": "fix-70e7c4a5b4cc",
+        "child": "#109",
+        "findings": [
+          "F-101"
+        ],
+        "regression_of": "F-61 (cycle 2)",
+        "what_the_earlier_repair_fixed": "A keyboard-only operator scrolling up with the arrow keys kept follow true, so the next update scrolled back to the end and discarded the line they were reading.",
+        "what_it_broke": "Pressing down or pagedown at the exact bottom now sets follow false, moves nothing on screen, prints no notice, and leaves every later token off-screen. The mouse path is deliberately asymmetric, so the gesture is safe with a pointer and unsafe without one — the exact inversion of the complaint F-61 was raised on.",
+        "aim_at": "the unpin contract, not the key list: unpin only when the reading position actually moves away from the bottom. Both directions must hold simultaneously, and the accessibility lens's mutation probe — deleting TranscriptPane.on_key and watching the old behaviour return — is the proof the repair works."
+      },
+      {
+        "fix_id": "fix-5fb6e79d5a8f",
+        "child": "#108",
+        "findings": [
+          "F-86"
+        ],
+        "regression_of": "F-49 (cycle 2), itself a regression of finding 33 (cycle 1)",
+        "what_the_earlier_repair_fixed": "F6 and F7 were dead from the composer focus the application launches in, because Textual's TextArea binds them to select-line and select-all.",
+        "what_it_broke": "The repair did not make F6 and F7 work from launch focus; it added F11 and F12 as new collision-free keys and left F6 and F7 dead there. docs/terminal-ui.md was corrected; the running application's own command list was not, so it still tells the operator to press a key that does nothing.",
+        "aim_at": "the key space and the focus contract, not a third key swap. This is the third cycle on one collision. Decide which keys reach the pickers from every focus, then make every statement of that contract agree — the in-app command list, the documentation table, and the code comment — and pin the agreement with a test that reads both surfaces."
+      }
+    ]
+  },
+  "acceptance_impact": {
+    "why_it_matters": "Acceptance is complete and binding at this revision because the reviewed tree is release-relevant-identical to the tested wheel: candidate 788fc791 and revision 3016f177 have byte-identical talaria, pyproject.toml, uv.lock and src trees, verified by tree hash. A repair confined to documentation, tests and the harness preserves that. A repair touching talaria/ changes the shipped wheel and invalidates all 43 receipts under KTD10, forcing a full re-drive by both testers.",
+    "requests_touching_product_code": 6,
+    "requests_preserving_the_receipts": 10,
+    "product_code_requests": [
+      {
+        "fix_id": "fix-232e7fb01551",
+        "child": "#104",
+        "findings": [
+          "F-88"
+        ],
+        "product_paths": [
+          "talaria/config.py"
+        ]
+      },
+      {
+        "fix_id": "fix-751dcb874bb2",
+        "child": "#104",
+        "findings": [
+          "F-91"
+        ],
+        "product_paths": [
+          "talaria/config.py"
+        ]
+      },
+      {
+        "fix_id": "fix-c5fa2bba78b8",
+        "child": "#106",
+        "findings": [
+          "F-81",
+          "F-84"
+        ],
+        "product_paths": [
+          "talaria/status/contract.py",
+          "talaria/ui/app.py",
+          "talaria/ui/literal.py"
+        ]
+      },
+      {
+        "fix_id": "fix-eaa556eca29a",
+        "child": "#107",
+        "findings": [
+          "F-102"
+        ],
+        "product_paths": [
+          "talaria/ui/app.py"
+        ]
+      },
+      {
+        "fix_id": "fix-5fb6e79d5a8f",
+        "child": "#108",
+        "findings": [
+          "F-86"
+        ],
+        "product_paths": [
+          "talaria/domain/commands.py"
+        ]
+      },
+      {
+        "fix_id": "fix-70e7c4a5b4cc",
+        "child": "#109",
+        "findings": [
+          "F-101"
+        ],
+        "product_paths": [
+          "talaria/ui/transcript.py"
+        ]
+      }
+    ],
+    "one_exception_worth_naming": "fix-6303809f1f55 touches no file under talaria/ and therefore does not invalidate the wheel, but its F-94 half asks for a REQUIRED harness_commit field in docs/acceptance/v0.5.0/receipt.schema.json, written by the driver at drive time. Every existing receipt lacks that field and would fail validation against the new schema. So this request forces a re-drive on its own, independently of the product-code split. Sequence it with the product repairs, not with the documentation ones.",
+    "sequencing_recommendation": "One re-drive, not two. Land all six product-code requests and the receipt-schema half of fix-6303809f1f55 first; then cut one new candidate; then re-drive both testers; then regenerate the records. The ten receipt-preserving requests can land in parallel at any point, except that fix-6303809f1f55's summary half (F-107) must precede any edit to README.md or CHANGELOG.md, which quote its generated sentence verbatim."
+  },
+  "unreachable_dimensions_excluded": {
+    "note": "EXCLUDED FROM THIS ROUND BY THE OPERATOR'S DECISION. These seven dimensions score below 9.0 and carry no finding, so no repair this review can name will move them. They are not work and no lane should invent work against them. They are the residual the operator has accepted in choosing to release at cycle_cap_best_available. Recorded here so the exclusion is deliberate and visible rather than an omission.",
+    "count": 7,
+    "dimensions": [
+      {
+        "lens": "accessibility-human-usability",
+        "dimension": "labels-forms-loading-empty-error-states",
+        "score": 8.5
+      },
+      {
+        "lens": "accessibility-human-usability",
+        "dimension": "semantics-assistive-technology",
+        "score": 8.5
+      },
+      {
+        "lens": "api-contract",
+        "dimension": "interface-contract-compatibility",
+        "score": 8.5
+      },
+      {
+        "lens": "api-contract",
+        "dimension": "serialization-errors",
+        "score": 8.5
+      },
+      {
+        "lens": "api-contract",
+        "dimension": "versioning-deprecation",
+        "score": 8.5
+      },
+      {
+        "lens": "documentation-clarity",
+        "dimension": "runnable-examples-actionability",
+        "score": 8.5
+      },
+      {
+        "lens": "testing",
+        "dimension": "negative-edge-state-concurrency-time",
+        "score": 8.0
+      }
+    ],
+    "arithmetic": "Even closing every one of the sixteen requests perfectly leaves the numeric bar unreachable: testing would still need +5.5 points across five dimensions and documentation +7.0 across six. The mean shortfall to 9.0 across the seven lenses is 0.61."
+  },
+  "dependencies": [
+    {
+      "child": "110",
+      "strength": "hard",
+      "after": "fix-6303809f1f55",
+      "before": "fix-c241b40f2213",
+      "reason": "Both rewrite scripts/acceptance/v050_common.py, v050_records.py and v050_receipt.py. The quarantine and environment repairs restructure the modules the verdict-vocabulary extraction then edits."
+    },
+    {
+      "child": "105",
+      "strength": "hard",
+      "after": "fix-6303809f1f55",
+      "before": "fix-ff4bb42eaf9e",
+      "cross_child": "110 -> 105",
+      "reason": "fix-ff4bb42eaf9e edits CHANGELOG.md, which quotes the acceptance summary sentence fix-6303809f1f55 regenerates. Editing the changelog first reintroduces the drift cycle 2 raised as F-46 and cycle 3 as F-107."
+    },
+    {
+      "child": "104",
+      "strength": "soft",
+      "after": "fix-751dcb874bb2",
+      "before": "fix-232e7fb01551",
+      "reason": "Both edit talaria/config.py, at line 368 and line 451. Conflict avoidance, not a correctness ordering."
+    },
+    {
+      "child": "106",
+      "strength": "hard",
+      "after": "fix-5fb6e79d5a8f",
+      "before": "fix-019217aad2ef",
+      "cross_child": "108 -> 106",
+      "reason": "Both edit docs/terminal-ui.md. fix-5fb6e79d5a8f may change which keys reach the pickers, which rewrites the keybinding table; fix-019217aad2ef rewrites the width-band table in the same file. Sequence them or resolve one conflict."
+    }
+  ],
+  "shared_surfaces": [
+    {
+      "path": "talaria/ui/app.py",
+      "written_by": [
+        "#106 fix-c5fa2bba78b8 (F-84, the model-identity helper)",
+        "#107 fix-eaa556eca29a (F-102, the no-text region map)"
+      ],
+      "note": "Two lanes edit this file in different regions — the helper at :1573 and the region map at :6374. Coordinate rather than both writing it; this is the same file two lanes shared in the cycle-2 round."
+    },
+    {
+      "path": "docs/terminal-ui.md",
+      "written_by": [
+        "#106 fix-019217aad2ef (the width-band table)",
+        "#108 fix-5fb6e79d5a8f (the keybinding table)"
+      ],
+      "note": "Different tables in one file; see the hard ordering above."
+    },
+    {
+      "path": "tests/test_framework_boundaries.py",
+      "written_by": [
+        "#106 fix-c5fa2bba78b8 (F-81 adds the new framework-free module)"
+      ],
+      "owned_by": "#109",
+      "note": "F-81's repair moves defang out of talaria/ui/literal.py into a framework-free home and must add that module to the sweep #109 owns. #109 has no request touching this file in this round, so the edit is unopposed — but say so in the commit message."
+    }
+  ],
+  "session_assignments_note": "session is populated only where the coordinator named one. A null session means the coordinator assigns it; it is not a guess withheld.",
+  "children": [
+    {
+      "child": "#104",
+      "title": "theme token foundation",
+      "brief": "docs/code-reviews/2026-09-01-v0-5-0-cycle3-repairs/repair-104.md",
+      "request_count": 2,
+      "carried_count": 1,
+      "requests": [
+        {
+          "fix_id": "fix-232e7fb01551",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-88"
+          ],
+          "severity": "P3",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/config.py",
+            "tests/test_config.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/config.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": [
+            "fix-751dcb874bb2"
+          ]
+        },
+        {
+          "fix_id": "fix-751dcb874bb2",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-91"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/config.py",
+            "tests/test_config_write.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/config.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-92 (carried — not in the sixteen)",
+          "kind": "carried_pre_existing",
+          "in_operator_approved_round": false,
+          "findings": [
+            "F-92"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            ".github/workflows/validate.yml",
+            "talaria/transport/admin.py",
+            "talaria/transport/refresh.py",
+            "talaria/ui/blocks.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/transport/admin.py",
+            "talaria/transport/refresh.py",
+            "talaria/ui/blocks.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#105",
+      "title": "Visual Studio Code theme import",
+      "brief": "docs/code-reviews/2026-09-01-v0-5-0-cycle3-repairs/repair-105.md",
+      "request_count": 2,
+      "carried_count": 1,
+      "requests": [
+        {
+          "fix_id": "fix-d16bb32e4d26",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-98"
+          ],
+          "severity": "P3",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/formats/stored-theme.schema.json",
+            "tests/ui/test_theme_import.py"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-ff4bb42eaf9e",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-100"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "CHANGELOG.md",
+            "docs/releases/v0.5.0.md",
+            "docs/themes.md"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": [
+            "fix-6303809f1f55"
+          ]
+        },
+        {
+          "fix_id": "F-90 (carried — not in the sixteen)",
+          "kind": "carried_pre_existing",
+          "in_operator_approved_round": false,
+          "findings": [
+            "F-90"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "src/record/redact.ts",
+            "talaria/domain/redaction.py",
+            "tests/recorder/test_equivalence.py",
+            "tests/status/"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "src/record/redact.ts",
+            "talaria/domain/redaction.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#106",
+      "title": "true-bottom status bar",
+      "brief": "docs/code-reviews/2026-09-01-v0-5-0-cycle3-repairs/repair-106.md",
+      "request_count": 2,
+      "carried_count": 0,
+      "requests": [
+        {
+          "fix_id": "fix-019217aad2ef",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-106"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/terminal-ui.md"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": [
+            "fix-5fb6e79d5a8f"
+          ]
+        },
+        {
+          "fix_id": "fix-c5fa2bba78b8",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-81",
+            "F-84"
+          ],
+          "severity": "P3",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/status/contract.py",
+            "talaria/ui/app.py",
+            "talaria/ui/literal.py",
+            "tests/test_framework_boundaries.py",
+            "tests/ui/test_inspector.py",
+            "tests/ui/test_status_bar.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/status/contract.py",
+            "talaria/ui/app.py",
+            "talaria/ui/literal.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#107",
+      "title": "right inspector",
+      "brief": "docs/code-reviews/2026-09-01-v0-5-0-cycle3-repairs/repair-107.md",
+      "request_count": 1,
+      "carried_count": 1,
+      "requests": [
+        {
+          "fix_id": "fix-eaa556eca29a",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-102"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/app.py",
+            "tests/ui/test_b1_discard_notice.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/ui/app.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-85 (carried — not in the sixteen)",
+          "kind": "carried_pre_existing",
+          "in_operator_approved_round": false,
+          "findings": [
+            "F-85"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/inspector.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/ui/inspector.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#108",
+      "title": "read-only diff viewer",
+      "brief": "docs/code-reviews/2026-09-01-v0-5-0-cycle3-repairs/repair-108.md",
+      "request_count": 1,
+      "carried_count": 1,
+      "requests": [
+        {
+          "fix_id": "fix-5fb6e79d5a8f",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-86"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/terminal-ui.md",
+            "talaria/domain/commands.py",
+            "tests/ui/test_slash_palette.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/domain/commands.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": true,
+          "regression_of": [
+            "F-49 (cycle 2) — the repair changed which keys reach the pickers and updated only one of the two places that state that contract"
+          ],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-87 (carried — not in the sixteen)",
+          "kind": "carried_pre_existing",
+          "in_operator_approved_round": false,
+          "findings": [
+            "F-87"
+          ],
+          "severity": "P3",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/app.py",
+            "tests/ui/test_picker.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/ui/app.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#109",
+      "title": "interaction and readability polish",
+      "brief": "docs/code-reviews/2026-09-01-v0-5-0-cycle3-repairs/repair-109.md",
+      "request_count": 1,
+      "carried_count": 0,
+      "requests": [
+        {
+          "fix_id": "fix-70e7c4a5b4cc",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-101"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/transcript.py",
+            "tests/ui/test_transcript_bounds.py"
+          ],
+          "touches_product_code": true,
+          "product_paths": [
+            "talaria/ui/transcript.py"
+          ],
+          "acceptance_impact": "INVALIDATES the 43 receipts — changes the shipped wheel, so a full re-drive is required",
+          "repair_induced_regression": true,
+          "regression_of": [
+            "F-61"
+          ],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#110",
+      "title": "acceptance harness",
+      "brief": "docs/code-reviews/2026-09-01-v0-5-0-cycle3-repairs/repair-110.md",
+      "request_count": 4,
+      "carried_count": 2,
+      "requests": [
+        {
+          "fix_id": "fix-2cf72800a064",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-89",
+            "F-99"
+          ],
+          "severity": "P2, P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/v0.5.0/artifact-manifest.schema.json",
+            "scripts/acceptance/test_v050_harness.py",
+            "scripts/acceptance/v050_receipt.py"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-6303809f1f55",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-80",
+            "F-94",
+            "F-95",
+            "F-96",
+            "F-107"
+          ],
+          "severity": "P2, P3",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "CHANGELOG.md",
+            "README.md",
+            "docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md",
+            "docs/acceptance/v0.5.0/receipt.schema.json",
+            "scripts/acceptance/test_v050_harness.py",
+            "scripts/acceptance/v050_common.py",
+            "scripts/acceptance/v050_pty_driver.py",
+            "scripts/acceptance/v050_receipt.py",
+            "scripts/acceptance/v050_records.py",
+            "tests/docs/test_v050_acceptance_records.py"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-7571eedc5ed2",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-104"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/v0.5.0/evidence/t1/README.md",
+            "tests/docs/test_v050_release_docs.py"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-c241b40f2213",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-82"
+          ],
+          "severity": "P3",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "scripts/acceptance/test_v050_harness.py",
+            "scripts/acceptance/v050_common.py",
+            "scripts/acceptance/v050_receipt.py",
+            "scripts/acceptance/v050_records.py"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": [
+            "fix-6303809f1f55"
+          ]
+        },
+        {
+          "fix_id": "F-93 (carried — not in the sixteen)",
+          "kind": "carried_pre_existing",
+          "in_operator_approved_round": false,
+          "findings": [
+            "F-93"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            ".github/dependabot.yml",
+            ".github/workflows/validate.yml",
+            "scripts/acceptance/test_v050_harness.py"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "F-97 (carried — not in the sixteen)",
+          "kind": "carried_advisory",
+          "in_operator_approved_round": false,
+          "findings": [
+            "F-97"
+          ],
+          "severity": "P3",
+          "autofix_class": "advisory",
+          "owner": "downstream-resolver",
+          "session": null,
+          "touched_paths": [
+            "pyproject.toml",
+            "tests/ui/test_blocks.py"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        }
+      ]
+    },
+    {
+      "child": "#111",
+      "title": "documentation and version",
+      "brief": "docs/code-reviews/2026-09-01-v0-5-0-cycle3-repairs/repair-111.md",
+      "request_count": 3,
+      "carried_count": 0,
+      "requests": [
+        {
+          "fix_id": "fix-1104964b879f",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-108"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/00-index.md",
+            "tests/docs/test_v050_release_docs.py"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-566116938dc4",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-103",
+            "F-105"
+          ],
+          "severity": "P2, P3",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/install.md"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        },
+        {
+          "fix_id": "fix-58827a218378",
+          "kind": "fix_request",
+          "in_operator_approved_round": true,
+          "findings": [
+            "F-83"
+          ],
+          "severity": "P3",
+          "autofix_class": "manual",
+          "owner": "human",
+          "session": null,
+          "touched_paths": [
+            "docs/engineering-journal/DECISIONS.md",
+            "docs/engineering-journal/LEARNINGS.md"
+          ],
+          "touches_product_code": false,
+          "product_paths": [],
+          "acceptance_impact": "preserves the receipts — no file under talaria/ changes",
+          "repair_induced_regression": false,
+          "regression_of": [],
+          "depends_on": []
+        }
+      ]
+    }
+  ]
+}
