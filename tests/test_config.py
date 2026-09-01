@@ -122,56 +122,116 @@ def test_scalar_theme_is_normalized_to_a_table_with_a_shape_notice(
     )
 
 
-def test_save_theme_rewrites_a_dotted_key_without_changing_neighbors(
+@pytest.mark.parametrize(
+    ("before", "expected"),
+    [
+        (
+            b'theme.name = "midnight-ink"\n',
+            b'theme.name = "aurora-slate"\n',
+        ),
+        (
+            b'theme.name = "midnight-ink"  # keep\n',
+            b'theme.name = "aurora-slate"  # keep\n',
+        ),
+        (
+            b"theme.name = 'midnight-ink'\n",
+            b'theme.name = "aurora-slate"\n',
+        ),
+        (
+            b'"theme".name = "midnight-ink"\n',
+            b'"theme".name = "aurora-slate"\n',
+        ),
+        (
+            b'theme."name" = "midnight-ink"\n',
+            b'theme."name" = "aurora-slate"\n',
+        ),
+        (
+            b'theme = { name = "midnight-ink" }\n',
+            b'theme = { name = "aurora-slate" }\n',
+        ),
+        (
+            b'theme={name="midnight-ink"}\n',
+            b'theme={name="aurora-slate"}\n',
+        ),
+        (
+            b'theme = { name = "midnight-ink" } # keep\n',
+            b'theme = { name = "aurora-slate" } # keep\n',
+        ),
+        (
+            b'theme = { source = "operator", name = "midnight-ink" }\n',
+            b'theme = { source = "operator", name = "aurora-slate" }\n',
+        ),
+        (
+            b'# keep\r\ntheme.name = "midnight-ink"\r\n',
+            b'# keep\r\ntheme.name = "aurora-slate"\r\n',
+        ),
+        (
+            b'[theme] # keep\nname = "midnight-ink"\n',
+            b'[theme] # keep\nname = "aurora-slate"\n',
+        ),
+        (b"", b'[theme]\nname = "aurora-slate"\n'),
+        (
+            b"[status]\ninterval_seconds = 7\n",
+            b'[status]\ninterval_seconds = 7\n\n[theme]\nname = "aurora-slate"\n',
+        ),
+    ],
+    ids=(
+        "dotted",
+        "dotted-comment",
+        "single-quoted",
+        "quoted-theme-key",
+        "quoted-name-key",
+        "inline-spaced",
+        "inline-tight",
+        "inline-comment",
+        "inline-second-key",
+        "windows-crlf",
+        "theme-header",
+        "empty-file",
+        "no-theme-table",
+    ),
+)
+def test_save_theme_preserves_every_supported_toml_shape(
     isolated_global_config_dir: Path,
+    before: bytes,
+    expected: bytes,
 ) -> None:
     path = isolated_global_config_dir / "config.toml"
-    before = (
-        b"# operator comment\n"
-        b'theme.name = "midnight-ink"  # keep this inline comment\n'
-        b"[status]\n"
-        b"interval_seconds = 7\n"
-    )
     path.write_bytes(before)
 
     saved = save_theme("aurora-slate", config_dir=isolated_global_config_dir)
 
-    expected = before.replace(b'"midnight-ink"', b'"aurora-slate"')
+    after = path.read_bytes()
     assert saved == path
-    assert path.read_bytes() == expected
-    assert tomllib.loads(path.read_text(encoding="utf-8")) == {
-        "theme": {"name": "aurora-slate"},
-        "status": {"interval_seconds": 7},
-    }
+    assert after == expected
+    expected_document = tomllib.loads(before.decode("utf-8"))
+    expected_document.setdefault("theme", {})["name"] = "aurora-slate"
+    assert tomllib.loads(after.decode("utf-8")) == expected_document
 
 
 @pytest.mark.parametrize(
-    "assignment",
+    "original",
     [
-        b'theme = { name = "midnight-ink", source = "operator" }',
-        b'"theme".name = "midnight-ink"',
+        b'theme.name = """midnight"""\n',
+        b"theme.name = '''midnight'''\n",
     ],
-    ids=("inline-table", "quoted-dotted-key"),
+    ids=("multiline-basic", "multiline-literal"),
 )
-def test_save_theme_changes_only_the_name_for_every_top_level_toml_spelling(
+def test_save_theme_names_its_limit_for_multiline_string_values(
     isolated_global_config_dir: Path,
-    assignment: bytes,
+    original: bytes,
 ) -> None:
     path = isolated_global_config_dir / "config.toml"
-    before = (
-        b"# operator comment\n"
-        + assignment
-        + b"  # keep this inline comment\n[status]\ninterval_seconds = 7\n"
-    )
-    path.write_bytes(before)
+    path.write_bytes(original)
 
-    save_theme("aurora-slate", config_dir=isolated_global_config_dir)
+    with pytest.raises(
+        ConfigError,
+        match=r"Talaria cannot safely rewrite theme\.name in this form",
+    ) as caught:
+        save_theme("solar-flare", config_dir=isolated_global_config_dir)
 
-    after = path.read_bytes()
-    assert after == before.replace(b'"midnight-ink"', b'"aurora-slate"', 1)
-    expected = tomllib.loads(before.decode("utf-8"))
-    expected["theme"]["name"] = "aurora-slate"
-    assert tomllib.loads(after.decode("utf-8")) == expected
+    assert "not valid TOML" not in str(caught.value)
+    assert path.read_bytes() == original
 
 
 def test_save_theme_through_a_symlink_preserves_link_target_and_mode(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import tomllib
 from pathlib import Path
 
@@ -10,6 +11,28 @@ import pytest
 
 from talaria import config as config_module
 from talaria.config import ConfigError, save_theme
+
+
+def test_atomic_replace_of_symlink_uses_default_mode_and_leaves_target_untouched(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-theme.json"
+    outside_bytes = b'{"name":"outside"}\n'
+    outside.write_bytes(outside_bytes)
+    outside.chmod(0o666)
+    link = tmp_path / "stored-theme.json"
+    link.symlink_to(outside)
+
+    previous_umask = os.umask(0o022)
+    try:
+        config_module.atomic_replace_bytes(link, b'{"name":"replacement"}\n')
+    finally:
+        os.umask(previous_umask)
+
+    assert not link.is_symlink()
+    assert link.read_bytes() == b'{"name":"replacement"}\n'
+    assert stat.S_IMODE(link.stat().st_mode) == 0o644
+    assert outside.read_bytes() == outside_bytes
 
 
 def test_user_save_creates_only_the_theme_table(tmp_path: Path) -> None:
