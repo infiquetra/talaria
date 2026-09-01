@@ -4,7 +4,7 @@
     {
       "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
       "install_receipt_count": 2,
-      "item_receipt_count": 34,
+      "item_receipt_count": 41,
       "matches_current_candidate": true,
       "version": "0.5.0",
       "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
@@ -12,19 +12,19 @@
     }
   ],
   "counts": {
-    "current_receipts": 36,
+    "current_receipts": 43,
     "expected_receipts": 43,
     "install_receipts": 2,
     "invalid_item_receipts": 0,
-    "item_receipts": 34,
+    "item_receipts": 41,
     "item_verdicts": {
       "blocked": 1,
-      "fail": 1,
-      "pass": 32,
+      "fail": 0,
+      "pass": 40,
       "reserved": 0
     },
-    "missing_current_receipts": 7,
-    "missing_receipts_on_disk": 7,
+    "missing_current_receipts": 0,
+    "missing_receipts_on_disk": 0,
     "stale_receipts": 0
   },
   "current_candidate": {
@@ -59,66 +59,8 @@
       "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
     }
   ],
-  "missing_current_receipts": [
-    {
-      "checklist_item": 2,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 15,
-      "tester": "talaria-t1"
-    },
-    {
-      "checklist_item": 33,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 34,
-      "tester": "talaria-t1"
-    },
-    {
-      "checklist_item": 35,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 36,
-      "tester": "talaria-t1"
-    },
-    {
-      "checklist_item": 36,
-      "tester": "talaria-t2"
-    }
-  ],
-  "missing_receipts_on_disk": [
-    {
-      "checklist_item": 2,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 15,
-      "tester": "talaria-t1"
-    },
-    {
-      "checklist_item": 33,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 34,
-      "tester": "talaria-t1"
-    },
-    {
-      "checklist_item": 35,
-      "tester": "talaria-t2"
-    },
-    {
-      "checklist_item": 36,
-      "tester": "talaria-t1"
-    },
-    {
-      "checklist_item": 36,
-      "tester": "talaria-t2"
-    }
-  ],
+  "missing_current_receipts": [],
+  "missing_receipts_on_disk": [],
   "receipts": [
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
@@ -134,6 +76,24 @@
       "stale_candidate": false,
       "stale_reason": null,
       "tester": "talaria-t1",
+      "title": "Live primary route",
+      "verdict": "pass",
+      "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    },
+    {
+      "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+      "capture_path": "talaria-t2 scratch/raw/item-02-shared-live-rerun.ansi",
+      "capture_sha256": "91f4f07c33c90bac9b44acf7cb7354838e327199dd21d436abf2b1d4400e0bdd",
+      "checklist_item": 2,
+      "contract_errors": [],
+      "contract_status": "valid",
+      "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-02-talaria-t2.json",
+      "receipt_sha256": "6def2b71560e8d50e1abf12f4e1f49eebe77c7d416056a29e443db278dbbaa30",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-02-shared-live-rerun.png",
+      "screenshot_sha256": "5c8785eb643933b2322f87a95f1d03601d0a643906070d2351e450816a827844",
+      "stale_candidate": false,
+      "stale_reason": null,
+      "tester": "talaria-t2",
       "title": "Live primary route",
       "verdict": "pass",
       "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
@@ -338,20 +298,38 @@
     },
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-      "capture_path": "talaria-t2 scratch/raw/item-14.ansi",
-      "capture_sha256": "0a8eb1c3a019e89eca80278ca611c34a8399fd3db1c8e7e2cffc63fe65fe25a3",
+      "capture_path": "talaria-t2 scratch/raw/item-14-resize-fix.ansi",
+      "capture_sha256": "e3d82cec0f935ac0a9463b8208eca3b95e6eb7c5c173c90e4522b8f9dc62d8b2",
       "checklist_item": 14,
       "contract_errors": [],
       "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-14-talaria-t2.json",
-      "receipt_sha256": "6bd50dcdb3b29a37d2cc2050163121c056aad3231ba8ce85fa57cc4974dcfb49",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14.png",
-      "screenshot_sha256": "c0baeb4f3df85971fb36a9772bf2360b73cb3f409233baf85eabfcb9c710ae4f",
+      "receipt_sha256": "b3a95d5547c305d171f76f1dc8e30cf4ff4a6ae71b0bc44092ae3e881a57f060",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-resize-fix.png",
+      "screenshot_sha256": "44f26f8259651f76f0a0a56716131f363fa3626852cce0e3a825e79606fa8f39",
       "stale_candidate": false,
       "stale_reason": null,
       "tester": "talaria-t2",
       "title": "Status responsive sequence",
-      "verdict": "fail",
+      "verdict": "pass",
+      "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    },
+    {
+      "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+      "capture_path": "talaria-t1 scratch/raw/item-15-shared-invalid.ansi",
+      "capture_sha256": "2f05ddf71a414c07abd5f5715aba6ed9b18c1249bf1d61a3c9b226d390760616",
+      "checklist_item": 15,
+      "contract_errors": [],
+      "contract_status": "valid",
+      "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-15-talaria-t1.json",
+      "receipt_sha256": "2f2abcc1bf335483f5fa015bd6dd002b0b43609d15a700844049dcdaecc9927e",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-15-shared-invalid.png",
+      "screenshot_sha256": "10ced49affae495eceaf0bfc29ce1906d518f049251bee0e6cdf112ac4e69300",
+      "stale_candidate": false,
+      "stale_reason": null,
+      "tester": "talaria-t1",
+      "title": "Status failure visibility",
+      "verdict": "pass",
       "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
     },
     {
@@ -410,15 +388,15 @@
     },
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-      "capture_path": "talaria-t2 scratch/raw/item-18.ansi",
-      "capture_sha256": "c886c9d0726fa04463b4046bf3b514071bfee98de88b273b8b99ed4c43525536",
+      "capture_path": "talaria-t2 scratch/raw/item-18-resize-fix.ansi",
+      "capture_sha256": "741128e922d5c9c9d5f0dd2d7e8a26c5b47cd0e3232886b7c5a056daf13d1575",
       "checklist_item": 18,
       "contract_errors": [],
       "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-18-talaria-t2.json",
-      "receipt_sha256": "a43f23fa94876ff257bd855b8cf8dae8c8683fda9431669b2a5ac044ad58d7cc",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18.png",
-      "screenshot_sha256": "166336cae95a30cf9fb17c1869a0298c4f556ff31270316639cac17312139062",
+      "receipt_sha256": "8900befa8c0aeac233f8c7c8141486bd87bc1c29b9fc1d2cbf45b55c7dedf3a0",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18-resize-fix.png",
+      "screenshot_sha256": "9a3f7a01d2fb6d4fb185161ef59bed8453ce1220a7dd6c473557f74dd940e46d",
       "stale_candidate": false,
       "stale_reason": null,
       "tester": "talaria-t2",
@@ -446,15 +424,15 @@
     },
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-      "capture_path": "talaria-t2 scratch/raw/item-20-screenshot.ansi",
-      "capture_sha256": "5de8091b4a268c83a1fcb0bb439f351399a2655244deba18a4955ebf4dad93e9",
+      "capture_path": "talaria-t2 scratch/raw/item-20-refusal-resize-fix.ansi",
+      "capture_sha256": "fa3e4236ae45eaad5fd624dc1a3bb17c2c54b0cddad920c8ab29e1330d3c9eba",
       "checklist_item": 20,
       "contract_errors": [],
       "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-20-talaria-t2.json",
-      "receipt_sha256": "b1801f8e9b9e1f5fb2c701e08a885ce219ff9dfbd774a4cc650c66bf59fc5977",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-screenshot.png",
-      "screenshot_sha256": "f1404bb420456e33fad6709631663916601122d32ef40498a110d948fefb6175",
+      "receipt_sha256": "c72cd0fc94ffde397586f1944df0b18c7ca5dbe4542f8cc75dc7dee2be33d607",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-refusal-resize-fix.png",
+      "screenshot_sha256": "5162b8239b3fecc0696347a88d495f57bf11643457bb7bd20e4cc279bb167451",
       "stale_candidate": false,
       "stale_reason": null,
       "tester": "talaria-t2",
@@ -572,15 +550,15 @@
     },
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-      "capture_path": "talaria-t1 scratch/raw/item-27-final2.ansi",
-      "capture_sha256": "9105959faf64ff5ee495e6e1933330277420885cd921f8a2d2c15d09338b6d07",
+      "capture_path": "talaria-t1 scratch/raw/item-27-resize-fix.ansi",
+      "capture_sha256": "61ae0c124b4361028b1cfcfe2c230c2302fbcb87df86344e144c9bff439d07c4",
       "checklist_item": 27,
       "contract_errors": [],
       "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-27-talaria-t1.json",
-      "receipt_sha256": "fce869c66d4bac175efc2a7ca87892f46efa5a7fb4f1f079113b70d1e33888e2",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-final2.png",
-      "screenshot_sha256": "9f84e09b1a48983fecee3dd546f11f36fdf89ded8752987ab3b6b31e94ecf818",
+      "receipt_sha256": "74d908b4f74933b4db303773044a3ac546f2e898071c9508bdac2680b70beb3a",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-resize-fix.png",
+      "screenshot_sha256": "641c271ff0758112f685477648b313ac54c91cb1051fa0a4a946c16428000edd",
       "stale_candidate": false,
       "stale_reason": null,
       "tester": "talaria-t1",
@@ -590,15 +568,15 @@
     },
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-      "capture_path": "talaria-t1 scratch/raw/item-28-final2.ansi",
-      "capture_sha256": "d28fd24eac455b42ade02b2292c91be292c4111b6215a8857b85709fd636eb48",
+      "capture_path": "talaria-t1 scratch/raw/item-28-resize-fix.ansi",
+      "capture_sha256": "7dce599c3e72da7c6163901d8f9ba3012f4bb061ae55a3c0272fcabd565952f2",
       "checklist_item": 28,
       "contract_errors": [],
       "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-28-talaria-t1.json",
-      "receipt_sha256": "76db30e2ac57c6e829f7f45a339a8df20cefa3cddae7754d0417b0c1d0a3b7d5",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-28-final2.png",
-      "screenshot_sha256": "c4e29a48b044609c82702a2b0a2ddd71849b71744933c74c23701594ae74e577",
+      "receipt_sha256": "e4d5390e4322a9f1e4190e0d001cec7b16f4c03bf6c605a1e0aba11acd169853",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-28-resize-fix.png",
+      "screenshot_sha256": "ed9569bdd2276a8b1e7d0c56faaf6f2ca42611fd51d32c2d3de146209e410955",
       "stale_candidate": false,
       "stale_reason": null,
       "tester": "talaria-t1",
@@ -608,15 +586,15 @@
     },
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-      "capture_path": "talaria-t2 scratch/raw/item-29.ansi",
-      "capture_sha256": "4c69bd3f3969563104e7cc187da7685aedf97189f0536ea658f3ed80823fa819",
+      "capture_path": "talaria-t2 scratch/raw/item-29-resize-fix.ansi",
+      "capture_sha256": "1c6859226f03e00b333276fd6f548c2fc08a951bdc59379979b9c80115a48be3",
       "checklist_item": 29,
       "contract_errors": [],
       "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-29-talaria-t2.json",
-      "receipt_sha256": "cb0046c00c7babae28da96b2db379d7a84a6e73d49362c5bc81809a8b1a2b638",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29.png",
-      "screenshot_sha256": "da6d6203cae9c127ad5ffdecae18cdf6f2afa3e8948a24d671d3049ba372af44",
+      "receipt_sha256": "8f03e90ff43164bb5985bfb375f30e8191007a122719a3cd4cad9fcd57c0d26c",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29-resize-fix.png",
+      "screenshot_sha256": "22f7a68f26940e19d392fd3bf23951f2a66c149534ed00851f499cedf6b50db5",
       "stale_candidate": false,
       "stale_reason": null,
       "tester": "talaria-t2",
@@ -626,15 +604,15 @@
     },
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-      "capture_path": "talaria-t2 scratch/raw/item-30-screenshot.ansi",
-      "capture_sha256": "d50221f9c9db6746f90e8fc22446eabfb4ca0019b7cec72faa38aeab143d4d8f",
+      "capture_path": "talaria-t2 scratch/raw/item-30-screenshot-resize-fix.ansi",
+      "capture_sha256": "2166f82e845bbb77486078d415b546da3d444d50bcc7442501be1ecee0ad4c11",
       "checklist_item": 30,
       "contract_errors": [],
       "contract_status": "valid",
       "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-30-talaria-t2.json",
-      "receipt_sha256": "09d2d819e6ec64aff80862c36371028bb07762c718f4095abcc5dcc8ce61755d",
-      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screenshot.png",
-      "screenshot_sha256": "3beb28396c15b75383dd5afbcce022a507627d401376007a39f7ed10d5ed0661",
+      "receipt_sha256": "438db41f7e2b2ea1056ca80280a59029c4bb1c3da835101fc560007db8673a63",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-30-screenshot-resize-fix.png",
+      "screenshot_sha256": "5afa8756a347ef606553d024842e4ded1929605b81e46a2544045f11e9044053",
       "stale_candidate": false,
       "stale_reason": null,
       "tester": "talaria-t2",
@@ -698,6 +676,42 @@
     },
     {
       "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+      "capture_path": "talaria-t2 scratch/raw/item-33-invalid-credential.ansi",
+      "capture_sha256": "7beab079fe9e896d0ed4aa54cb1ebdd3a016bf3b9ddb2ea69dc1c0b59f4c46f9",
+      "checklist_item": 33,
+      "contract_errors": [],
+      "contract_status": "valid",
+      "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-33-talaria-t2.json",
+      "receipt_sha256": "69856767b09403af661bae86b05c731dd255e7c5b40c5358085b33402c5acbea",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-33-invalid-credential.png",
+      "screenshot_sha256": "f33c5e864e3be1e149fd31dc1390091baaeea40277bd98b624bce4180055e463",
+      "stale_candidate": false,
+      "stale_reason": null,
+      "tester": "talaria-t2",
+      "title": "Dead gateway credential",
+      "verdict": "pass",
+      "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    },
+    {
+      "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+      "capture_path": "talaria-t1 scratch/raw/item-34-shared-live-killed.ansi",
+      "capture_sha256": "2df68f32ce41ff015882fe3a215e1a6e575e95f425cc068c6b2e7fad429bbf00",
+      "checklist_item": 34,
+      "contract_errors": [],
+      "contract_status": "valid",
+      "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-34-talaria-t1.json",
+      "receipt_sha256": "ec34929291ab2cc826b168a78363097c07c8ad40b375c2bd93041878e13e6c2c",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-34-shared-live-killed.png",
+      "screenshot_sha256": "b50aba18f6c618b039e13f445f63dfe16e1861c3a5450a450f95cedccdf5cd60",
+      "stale_candidate": false,
+      "stale_reason": null,
+      "tester": "talaria-t1",
+      "title": "Killed session",
+      "verdict": "pass",
+      "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    },
+    {
+      "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
       "capture_path": "talaria-t2 scratch/raw/item-34-live-killed-final.ansi",
       "capture_sha256": "02748aed0067ab76cd1ae6e161ef90676f2b3143b2efdfc9f8dd1ada287257c1",
       "checklist_item": 34,
@@ -729,6 +743,60 @@
       "stale_reason": null,
       "tester": "talaria-t1",
       "title": "Restart-only configuration",
+      "verdict": "pass",
+      "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    },
+    {
+      "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+      "capture_path": "talaria-t2 scratch/raw/item-35-running.ansi",
+      "capture_sha256": "d894b7172d0942e2105548511acfbc1d2ea25b360efdf5ad03cf6a22ea73a314",
+      "checklist_item": 35,
+      "contract_errors": [],
+      "contract_status": "valid",
+      "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-35-talaria-t2.json",
+      "receipt_sha256": "15bfcec61dd96c7879a25dee23bcf3e2523a9d6672158107caff8b68ddc15563",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-35-running.png",
+      "screenshot_sha256": "1ca9a14040306926fd6e45cd7155e9721e1ded60147001e075cf147807999eec",
+      "stale_candidate": false,
+      "stale_reason": null,
+      "tester": "talaria-t2",
+      "title": "Restart-only configuration",
+      "verdict": "pass",
+      "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    },
+    {
+      "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+      "capture_path": "talaria-t1 scratch/raw/item-36-t1-half.ansi",
+      "capture_sha256": "b2abe0aafa62a3de099ca3b6f8654f6e6979581862c8d98878d7f7d7fb64e0b2",
+      "checklist_item": 36,
+      "contract_errors": [],
+      "contract_status": "valid",
+      "receipt_path": "docs/acceptance/v0.5.0/evidence/t1/receipts/item-36-talaria-t1.json",
+      "receipt_sha256": "bff62e60108af25393d2d32f27ac08c64a16fa1c572695950245ac4f61b3b527",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-36-t1-half.png",
+      "screenshot_sha256": "d47fa6af840a33e768df11600030d60eeb6b083b26156fdfa7c1b6d86505ed7c",
+      "stale_candidate": false,
+      "stale_reason": null,
+      "tester": "talaria-t1",
+      "title": "Cross-tester evidence",
+      "verdict": "pass",
+      "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    },
+    {
+      "candidate_commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+      "capture_path": "talaria-t2 scratch/raw/item-36-t2-half.ansi",
+      "capture_sha256": "04c05e6f200f7d9458de52d581b4b3581e17efa33824d80bfffdfea9e0fd6fd7",
+      "checklist_item": 36,
+      "contract_errors": [],
+      "contract_status": "valid",
+      "receipt_path": "docs/acceptance/v0.5.0/evidence/t2/receipts/item-36-talaria-t2.json",
+      "receipt_sha256": "f95a7b3844aa65792ec24f984ca2e003e2668edd88e74087f38e7df905d2a77a",
+      "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-36-t2-half.png",
+      "screenshot_sha256": "e6d78644da9cebf134d05911ddfb35fb00560a101cbbdb06325a8ed1e2e5c59a",
+      "stale_candidate": false,
+      "stale_reason": null,
+      "tester": "talaria-t2",
+      "title": "Cross-tester evidence",
       "verdict": "pass",
       "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
     }

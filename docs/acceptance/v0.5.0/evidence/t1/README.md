@@ -24,8 +24,8 @@ older candidates.
 | 24 | blocked | [receipt](receipts/item-24-talaria-t1.json) | [raw](raw/item-24-final2.ansi) | [screenshot](screenshots/item-24-final2.png) |
 | 25 | passed | [receipt](receipts/item-25-talaria-t1.json) | [raw](raw/item-25-final2.ansi) | [screenshot](screenshots/item-25-final2.png) |
 | 26 | passed | [receipt](receipts/item-26-talaria-t1.json) | [standard](raw/item-26-standard-final2.ansi), [reduced](raw/item-26-reduced-final2.ansi) | [standard](screenshots/item-26-standard-final2.png), [reduced](screenshots/item-26-reduced-final2.png) |
-| 27 | passed | [receipt](receipts/item-27-talaria-t1.json) | [raw](raw/item-27-final2.ansi) | [screenshot](screenshots/item-27-final2.png) |
-| 28 | passed | [receipt](receipts/item-28-talaria-t1.json) | [raw](raw/item-28-final2.ansi) | [screenshot](screenshots/item-28-final2.png) |
+| 27 | passed | [receipt](receipts/item-27-talaria-t1.json) | [corrected resize drive](raw/item-27-resize-fix.ansi) | [screenshot](screenshots/item-27-resize-fix.png) |
+| 28 | passed | [receipt](receipts/item-28-talaria-t1.json) | [corrected resize drive](raw/item-28-resize-fix.ansi) | [screenshot](screenshots/item-28-resize-fix.png) |
 | 31 | passed | [receipt](receipts/item-31-talaria-t1.json) | [raw](raw/item-31-final2.ansi) | [screenshot](screenshots/item-31-error-visible-final2.png) |
 | 33 | passed | [receipt](receipts/item-33-talaria-t1.json) | [raw](raw/item-33-auth-final2b.ansi) | [screenshot](screenshots/item-33-auth-final2b.png) |
 | 35 | passed | [receipt](receipts/item-35-talaria-t1.json) | [before restart](raw/item-35-before-final2.ansi), [after restart](raw/item-35-after-final2.ansi) | [before restart](screenshots/item-35-before-final2.png), [after restart](screenshots/item-35-after-final2.png) |
@@ -44,6 +44,12 @@ Item 24 remains blocked. The live gateway assigns a request identifier, so its a
 anchored and cannot become `possibly duplicate`. The replay format cannot encode the keyless
 admin-polled approval shape. Constructing such a frame would simulate acceptance, which this run
 forbids. The capture records every honestly reachable agent and queue form instead.
+
+Items 27 and 28 were rerun after the shared driver stopped exporting `COLUMNS` and `LINES` to the
+child. Their replacement captures therefore exercise real 132-to-119-to-132-column terminal
+changes. Item 27 retains its unpinned reading anchor while newer frames arrive; item 28 retains
+`NEWEST-BOTTOM-ENTRY` after returning to follow mode. The invalid pinned-dimension captures and
+receipts remain under `superseded/driver-pinned-dimensions/` and are not active evidence.
 
 Item 33 used the one authorized restart of the isolated dashboard on port 8790. The listener changed
 from process identifier 74947 to 19785 with the identical

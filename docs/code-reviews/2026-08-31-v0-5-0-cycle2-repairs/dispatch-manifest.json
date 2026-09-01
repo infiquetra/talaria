@@ -1,0 +1,1056 @@
+{
+  "schema": "talaria_v0_5_0_repair_dispatch.v1",
+  "generated": "2026-08-31",
+  "cycle": 2,
+  "reviewed_revision": "83ffd27addc6df4cbdb73bc996baa7d11a2610f3",
+  "diff_base": "5efa19ccba31f84d8e732591b18767bf736d00c2",
+  "previous_cycle": {
+    "revision": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+    "manifest": "docs/code-reviews/2026-08-31-v0-5-0-repairs/dispatch-manifest.json",
+    "outcome": "repairs_requested",
+    "fix_requests": 27
+  },
+  "review": {
+    "outcome": "repairs_requested",
+    "engine": "saga code-review 0.149.0",
+    "artifact": "docs/evidence/adhoc-orch-talaria-v0-5-0/artifacts/657c776e2ec70ded65e838487eabf9439f4326bfc7e857a8ab999328fedcd7b3.md",
+    "criteria": "docs/evidence/adhoc-orch-talaria-v0-5-0/criteria-code-review-83ffd27addc6df4cbdb73bc996baa7d11a2610f3.json",
+    "lenses": [
+      "architecture-maintainability",
+      "correctness",
+      "security",
+      "testing",
+      "api-contract",
+      "accessibility-human-usability",
+      "documentation-clarity"
+    ],
+    "acceptance_rule": "derived_overall >= 9.0 AND every applicable dimension >= 7.0",
+    "independent_gates": "all five pass at this revision",
+    "cycles_remaining_before_cap": 1
+  },
+  "totals": {
+    "findings": 36,
+    "fix_requests_in_typed_result": 21,
+    "dispatch_entries": 30,
+    "children": 8,
+    "priority_tier_1_sub_floor": 5,
+    "priority_tier_2_remaining_p1": 2,
+    "priority_tier_3": 23
+  },
+  "priority_rule": "Tier 1 is the named lever on a dimension scoring below the 7.0 floor. Tier 2 is a remaining P1 whose dimension already clears the floor. Tier 3 is everything else. The tier is the coordinator's ordering and is not a severity restatement.",
+  "sub_floor_dimensions": [
+    {
+      "lens": "documentation-clarity",
+      "dimension": "terminology-cross-document-consistency",
+      "score": 3.5,
+      "levers": [
+        "fix-d1bddcdb324b",
+        "fix-7dba9d4183ec"
+      ]
+    },
+    {
+      "lens": "documentation-clarity",
+      "dimension": "completeness-audience-prerequisites",
+      "score": 5.0,
+      "levers": [],
+      "note": "No cycle-2 finding is attached. The score reflects docs/install.md, docs/releases/v0.5.0.md and a CHANGELOG [0.5.0] section, all absent and all recorded NOT-DONE by design in the built-versus-planned audit. Scoping them in or out is an operator decision, not a repair."
+    },
+    {
+      "lens": "documentation-clarity",
+      "dimension": "runbook-safety-rollback-links-generated-drift",
+      "score": 5.5,
+      "levers": [
+        "fix-0d833481e8ee"
+      ]
+    },
+    {
+      "lens": "accessibility-human-usability",
+      "dimension": "keyboard-focus",
+      "score": 6.0,
+      "levers": [
+        "fix-a9fd1a13c2a5 (part D)"
+      ]
+    },
+    {
+      "lens": "api-contract",
+      "dimension": "specification-documentation-parity",
+      "score": 6.5,
+      "levers": [
+        "fix-ed280fc4431e"
+      ]
+    }
+  ],
+  "session_assignments_note": "session is populated only where the coordinator named one. A null session means the coordinator assigns it; it is not a guess withheld.",
+  "children": [
+    {
+      "child": "#104",
+      "title": "theme token foundation",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-104.md",
+      "request_count": 3,
+      "requests": [
+        {
+          "fix_id": "fix-a3e140bc463a",
+          "kind": "fix_request",
+          "tier": 2,
+          "findings": [
+            "F-44",
+            "F-70"
+          ],
+          "severity": "P1, P3",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/configuration.md",
+            "docs/formats/vscode-theme-import.md",
+            "docs/themes.md",
+            "talaria/config.py",
+            "talaria/ui/theme.py",
+            "tests/test_config.py",
+            "tests/ui/test_theme.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 17: atomic_replace_bytes replaced a symlinked config.toml instead of its target",
+            "cycle-1 finding 18: the dotted theme.name key. The repair added one spelling and not the third."
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "F-69 (no fix request — pre-existing)",
+          "kind": "uncovered_pre_existing",
+          "tier": 3,
+          "findings": [
+            "F-69"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/formats/stored-theme.schema.json",
+            "talaria/themes/__init__.py",
+            "tests/ui/test_theme.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-a3273b13bd5d",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-74"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/themes/storage.py",
+            "tests/test_config.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": null
+        }
+      ]
+    },
+    {
+      "child": "#105",
+      "title": "Visual Studio Code theme import",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-105.md",
+      "request_count": 2,
+      "requests": [
+        {
+          "fix_id": "fix-ed280fc4431e",
+          "kind": "fix_request",
+          "tier": 1,
+          "findings": [
+            "F-55"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/formats/stored-theme.schema.json",
+            "docs/formats/vscode-theme-import.md",
+            "tests/ui/test_theme_import.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [
+            "specification-documentation-parity"
+          ],
+          "regression_of": [
+            "cycle-1 finding 25: the stored theme document had no version field and no schema. The schema now contradicts the compatibility window it was written to express."
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-80c6f0f8d6e0",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-56"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/formats/vscode-theme-import.md",
+            "talaria/cli.py",
+            "talaria/ui/theme_import.py",
+            "tests/test_cli.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 27: the import report was prose split by a string prefix. The --json route is not a superset of what it replaces."
+          ],
+          "part_of_fix_request": null
+        }
+      ]
+    },
+    {
+      "child": "#106",
+      "title": "true-bottom status bar",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-106.md",
+      "request_count": 5,
+      "requests": [
+        {
+          "fix_id": "fix-08650f6d3036",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-77"
+          ],
+          "severity": "P3",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/design/2026-08-30-talaria-v0-5-0-visual-spec.md",
+            "talaria/ui/status_bar.py",
+            "tests/ui/test_status_bar.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 41: the attention counter dropped below 32 columns"
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-6de71f3e85b6",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-58"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/status_bar.py",
+            "tests/ui/test_status_bar.py"
+          ],
+          "depends_on": [
+            "fix-08650f6d3036"
+          ],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 41: the attention counter dropped below 32 columns"
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-a9fd1a13c2a5 (part A)",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-64"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/terminal-ui.md"
+          ],
+          "depends_on": [
+            "fix-6de71f3e85b6"
+          ],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": "fix-a9fd1a13c2a5"
+        },
+        {
+          "fix_id": "fix-a9fd1a13c2a5 (part B)",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-59"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/app.py",
+            "tests/ui/test_inspector.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "the acceptance defect where the status bar rendered agent: ? during a live turn"
+          ],
+          "part_of_fix_request": "fix-a9fd1a13c2a5"
+        },
+        {
+          "fix_id": "fix-f3049112f842 (part A)",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-73"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/configuration.md",
+            "talaria/status/contract.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": "fix-f3049112f842"
+        }
+      ]
+    },
+    {
+      "child": "#107",
+      "title": "right inspector",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-107.md",
+      "request_count": 2,
+      "requests": [
+        {
+          "fix_id": "fix-8d8697f15041",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-50"
+          ],
+          "severity": "P2",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/inspector.py",
+            "tests/ui/test_inspector.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 4: the narrow overlay overwrote the wide-dock request. The repair changed the shape of a focus gap next door."
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-a9fd1a13c2a5 (part C)",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-62"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/design/2026-08-30-talaria-v0-5-0-visual-spec.md",
+            "docs/terminal-ui.md",
+            "talaria/ui/inspector.py",
+            "tests/ui/test_inspector.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": "fix-a9fd1a13c2a5"
+        }
+      ]
+    },
+    {
+      "child": "#108",
+      "title": "read-only diff viewer",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-108.md",
+      "request_count": 2,
+      "requests": [
+        {
+          "fix_id": "fix-c7c45983a917",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-49"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/terminal-ui.md",
+            "talaria/ui/app.py",
+            "tests/ui/test_composer.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 33: f6 and f7 shadowed composer select-all. The repair inverted the collision."
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-f75fd3033bef",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-52"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "tests/ui/test_diff_viewer.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 11: the read-only diff proof was a name blocklist. The static half is now strong; the runtime half is not."
+          ],
+          "part_of_fix_request": null
+        }
+      ]
+    },
+    {
+      "child": "#109",
+      "title": "interaction and readability polish",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-109.md",
+      "request_count": 3,
+      "requests": [
+        {
+          "fix_id": "fix-a9fd1a13c2a5 (part D)",
+          "kind": "fix_request",
+          "tier": 1,
+          "findings": [
+            "F-61"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "talaria/ui/app.py",
+            "talaria/ui/transcript.py",
+            "tests/ui/test_transcript_bounds.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [
+            "keyboard-focus"
+          ],
+          "regression_of": [
+            "the acceptance defect where the unpinned transcript jumped after later updates; repaired for the pointer path only"
+          ],
+          "part_of_fix_request": "fix-a9fd1a13c2a5"
+        },
+        {
+          "fix_id": "F-78 (advisory — no fix request)",
+          "kind": "advisory",
+          "tier": 3,
+          "findings": [
+            "F-78"
+          ],
+          "severity": "P3",
+          "autofix_class": "advisory",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/configuration.md",
+            "docs/terminal-ui.md",
+            "talaria/ui/app.py",
+            "tests/ui/test_motion.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-5f5e651ea6c1",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-76"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "tests/test_framework_boundaries.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 20: the ADR-0002 sweep saw only the domain package"
+          ],
+          "part_of_fix_request": null
+        }
+      ]
+    },
+    {
+      "child": "#110",
+      "title": "acceptance harness",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-110.md",
+      "request_count": 10,
+      "requests": [
+        {
+          "fix_id": "fix-0d833481e8ee",
+          "kind": "fix_request",
+          "tier": 1,
+          "findings": [
+            "F-47",
+            "F-63"
+          ],
+          "severity": "P1, P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md",
+            "docs/acceptance/v0.5.0/receipt.schema.json",
+            "scripts/acceptance/v050_records.py",
+            "tests/docs/test_v050_acceptance_records.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [
+            "runbook-safety-rollback-links-generated-drift"
+          ],
+          "regression_of": [
+            "cycle-1 finding 10: no check bound receipts, manifest and results document together"
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-7dba9d4183ec",
+          "kind": "fix_request",
+          "tier": 1,
+          "findings": [
+            "F-48"
+          ],
+          "severity": "P1",
+          "autofix_class": "manual",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md",
+            "scripts/acceptance/v050_records.py",
+            "tests/docs/test_v050_acceptance_records.py"
+          ],
+          "depends_on": [
+            "fix-0d833481e8ee"
+          ],
+          "sub_floor_dimensions": [
+            "terminology-cross-document-consistency"
+          ],
+          "regression_of": [
+            "cycle-1 finding 7: the results document marked executed rows PENDING"
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-e88e3801ea3e",
+          "kind": "fix_request",
+          "tier": 2,
+          "findings": [
+            "F-45",
+            "F-71"
+          ],
+          "severity": "P1, P3",
+          "autofix_class": "gated_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/v0.5.0/receipt.schema.json",
+            "scripts/acceptance/test_v050_harness.py",
+            "scripts/acceptance/v050_common.py",
+            "scripts/acceptance/v050_pty_driver.py",
+            "scripts/acceptance/v050_receipt.py"
+          ],
+          "depends_on": [
+            "F-78 (advisory — no fix request)"
+          ],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "the COLUMNS and LINES driver defect, the same class through a different channel"
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "F-67 (no fix request — pre-existing)",
+          "kind": "uncovered_pre_existing",
+          "tier": 3,
+          "findings": [
+            "F-67"
+          ],
+          "severity": "P3",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "scripts/acceptance/test_v050_harness.py",
+            "scripts/acceptance/v050_receipt.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "F-68 (no fix request — pre-existing)",
+          "kind": "uncovered_pre_existing",
+          "tier": 3,
+          "findings": [
+            "F-68"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "human",
+          "session": null,
+          "touched_paths": [
+            ".github/workflows/release.yml",
+            ".github/workflows/validate.yml"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "F-75 (advisory — no fix request)",
+          "kind": "advisory",
+          "tier": 3,
+          "findings": [
+            "F-75"
+          ],
+          "severity": "P3",
+          "autofix_class": "advisory",
+          "owner": "downstream-resolver",
+          "session": null,
+          "touched_paths": [
+            "docs/acceptance/v0.5.0/artifact-manifest.schema.json",
+            "scripts/acceptance/test_v050_harness.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 28: the manifest schema could not express its own consistency invariant. The named case is now rejected; the class is not."
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-04efdfe28cd1",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-54"
+          ],
+          "severity": "P2",
+          "autofix_class": "manual",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "scripts/acceptance/test_v050_harness.py",
+            "scripts/acceptance/v050_receipt.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-6032fde41c6f",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-57",
+            "F-60",
+            "F-72"
+          ],
+          "severity": "P2, P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "scripts/acceptance/test_v050_harness.py",
+            "scripts/acceptance/v050_common.py",
+            "scripts/acceptance/v050_receipt.py",
+            "scripts/acceptance/v050_records.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-beaf4a6e3917",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-51",
+            "F-66"
+          ],
+          "severity": "P2, P3",
+          "autofix_class": "gated_auto",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            ".github/workflows/release.yml",
+            "docs/acceptance/v0.5.0/artifact-manifest.json",
+            "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+            "scripts/acceptance/test_v050_harness.py",
+            "scripts/acceptance/v050_receipt.py"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 13: receipts bound to a superseded candidate. The inner loop is closed; the outer anchor is still missing."
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-db4b03d8b310",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-53"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            ".github/workflows/release.yml",
+            ".github/workflows/validate.yml",
+            "pyproject.toml"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 9: harness tests and scripts sat outside the gates. Coverage widened and strictness dropped in the same edit."
+          ],
+          "part_of_fix_request": null
+        }
+      ]
+    },
+    {
+      "child": "#111",
+      "title": "documentation and version",
+      "brief": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-111.md",
+      "request_count": 3,
+      "requests": [
+        {
+          "fix_id": "fix-d1bddcdb324b",
+          "kind": "fix_request",
+          "tier": 1,
+          "findings": [
+            "F-46"
+          ],
+          "severity": "P1",
+          "autofix_class": "manual",
+          "owner": "release",
+          "session": null,
+          "touched_paths": [
+            "CHANGELOG.md",
+            "README.md"
+          ],
+          "depends_on": [
+            "fix-0d833481e8ee",
+            "fix-7dba9d4183ec"
+          ],
+          "sub_floor_dimensions": [
+            "terminology-cross-document-consistency"
+          ],
+          "regression_of": [
+            "cycle-1 finding 8: README and changelog called a NOT SATISFIED run still outstanding. The verb was fixed; the supporting facts are now false in the other direction."
+          ],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-670523bf0af0",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-65"
+          ],
+          "severity": "P2",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/00-index.md"
+          ],
+          "depends_on": [
+            "fix-d1bddcdb324b"
+          ],
+          "sub_floor_dimensions": [],
+          "regression_of": [],
+          "part_of_fix_request": null
+        },
+        {
+          "fix_id": "fix-f3049112f842 (part B)",
+          "kind": "fix_request",
+          "tier": 3,
+          "findings": [
+            "F-79"
+          ],
+          "severity": "P3",
+          "autofix_class": "safe_auto",
+          "owner": "review-fixer",
+          "session": null,
+          "touched_paths": [
+            "docs/configuration.md",
+            "docs/engineering-journal/QUEUED.md"
+          ],
+          "depends_on": [],
+          "sub_floor_dimensions": [],
+          "regression_of": [
+            "cycle-1 finding 6: the configuration guide promised notices that never fire. The replacement sentence generalised beyond its own debt entry."
+          ],
+          "part_of_fix_request": "fix-f3049112f842"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "child": "106",
+      "strength": "hard",
+      "after": "fix-08650f6d3036",
+      "before": "fix-6de71f3e85b6",
+      "reason": "F-77 decides whether the 20-to-31 column band pins task_progress to its minimum form at all; F-58 decides where that decision lives. Taken in the other order, F-58 relocates a special case F-77 may delete."
+    },
+    {
+      "child": "106",
+      "strength": "hard",
+      "after": "fix-6de71f3e85b6",
+      "before": "fix-a9fd1a13c2a5 (part A)",
+      "reason": "F-64 states the settled band contract in docs/terminal-ui.md. Writing it before the contract is settled documents a rule that is about to change."
+    },
+    {
+      "child": "110",
+      "strength": "hard",
+      "after": "fix-0d833481e8ee",
+      "before": "fix-7dba9d4183ec",
+      "reason": "fix-0d833481e8ee deletes _observations, the function that reads the acceptance results document back in as generator input. fix-7dba9d4183ec restructures that same document by moving prose inside generated markers. Restructuring while a parser still reads it is how a generator eats its own output."
+    },
+    {
+      "child": "111",
+      "strength": "hard",
+      "after": "fix-7dba9d4183ec",
+      "before": "fix-d1bddcdb324b",
+      "cross_child": "110 -> 111",
+      "reason": "The README and changelog rewrite quotes the acceptance verdict, so the acceptance record must already state the corrected verdict or the rewrite propagates a second stale claim. Same dependency, same direction, as cycle 1."
+    },
+    {
+      "child": "111",
+      "strength": "soft",
+      "after": "fix-d1bddcdb324b",
+      "before": "fix-670523bf0af0",
+      "reason": "F-65 creates the same false impression from a third document; repairing the README while the index still hides the t1 evidence leaves half the defect standing. Best taken in one commit."
+    },
+    {
+      "child": "110",
+      "strength": "soft",
+      "after": "F-78 (advisory — no fix request)",
+      "before": "fix-e88e3801ea3e",
+      "cross_child": "109 -> 110",
+      "reason": "F-78 decides whether Talaria honours TEXTUAL_ANIMATIONS or overrides it. fix-e88e3801ea3e's regression test asserts the framework default the child reports; deciding after the test is written wastes it."
+    },
+    {
+      "child": "104",
+      "strength": "soft",
+      "after": "F-44",
+      "before": "F-70",
+      "reason": "Both halves of fix-a3e140bc463a edit talaria/config.py within forty lines of each other, and F-44 changes the signature of the helper F-70's path calls. Prevents a conflict, not a wrong result."
+    }
+  ],
+  "shared_surfaces": [
+    {
+      "path": "talaria/ui/app.py",
+      "method": "_inspector_model",
+      "written_by": "#106 fix-a9fd1a13c2a5 (part B)",
+      "owned_by": "#107",
+      "note": "The roster-lookup duplication was introduced on the status bar's side this round (commit e3c39fc), so #106 performs the extraction and edits #107's method. #107's brief has been told not to write that method concurrently."
+    },
+    {
+      "path": "docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md",
+      "written_by": "#110 fix-0d833481e8ee and fix-7dba9d4183ec",
+      "owned_by": "#110",
+      "note": "Documentation-lens findings on this file route to #110 rather than #111 because the file is generated by scripts/acceptance/v050_records.py. Repairing the prose without the generator produces a document correct until the next regeneration."
+    },
+    {
+      "term_ledger": "docs/code-reviews/2026-08-31-v0-5-0-cycle2-repairs/repair-111.md",
+      "shared_by": [
+        "#110 fix-7dba9d4183ec",
+        "#111 fix-d1bddcdb324b"
+      ],
+      "note": "Four terms carry more than one meaning across the release documents — the outcome word, 'candidate commit', 'receipt'/'evidence', and 'superseded'. The ledger in #111's brief names which meaning is authoritative. Both requests are scored on the same dimension and a divergent resolution fixes neither."
+    }
+  ],
+  "score_regressions": [
+    {
+      "lens": "security",
+      "previous_overall": 8.375,
+      "current_overall": 8.2,
+      "traded_away": "Commit 31c46f6 widened the Bandit gate to cover scripts/ — which cycle-1 finding 9 asked for — and added -ll in the same edit to silence the noise that widening produced. Coverage rose and strictness fell together. The hardcoded-credential checks all declare LOW, so they now sit below the reporting floor.",
+      "do_not": "Do not repair F-53 by reverting to `bandit -r talaria -q`; that throws away the scripts/ coverage and reopens cycle-1 finding 9. Split the invocation.",
+      "second_cause": "F-44: the symlink resolution at talaria/config.py:346 was added deliberately so save_theme could follow a symlinked config.toml. Do not revert line 346; gate it per caller.",
+      "requests": [
+        "fix-db4b03d8b310",
+        "fix-a3e140bc463a"
+      ]
+    },
+    {
+      "lens": "documentation-clarity",
+      "previous_overall": 6.4167,
+      "current_overall": 6.25,
+      "traded_away": "Cycle-1 finding 8 said the README and changelog described a NOT SATISFIED run as still outstanding. Commit da15a0b fixed the verb. The supporting facts then went stale in the other direction, because the t1 sweeps landed through 0e8c334 later the same day and nothing regenerated the two files. Separately, cycle-1 finding 6's replacement sentence in docs/configuration.md generalised past its own debt entry into a universal that is false for three values.",
+      "do_not": "Do not repair F-46 by restoring the cycle-1 wording, and do not repair F-79 by restoring the original sentence. Both reopen the finding they replaced. Derive F-46's sentence from the manifest and write F-79's distinction from the measurement.",
+      "requests": [
+        "fix-d1bddcdb324b",
+        "fix-f3049112f842 (part B)"
+      ]
+    }
+  ],
+  "score_ceiling_analysis": {
+    "question": "Which lenses can reach derived_overall 9.0 through the fix requests in this manifest, and which cannot without work outside this release's scope?",
+    "method": "derived_overall is the arithmetic mean of the applicable dimension scores. A dimension can only rise if a routed finding names a defect in it. Two ceilings are computed: every dimension carrying a finding repaired to a clean 9.0, and the same repaired to an exceptional 9.5. Dimensions carrying no cycle-2 finding are held at their current score, because no request in this manifest can move them.",
+    "caveat": "These are arithmetic ceilings, not forecasts. A lens may decline to raise a dimension even after a clean repair, and a 9.5 is an exceptional grade rather than the expected result of closing a P2. Treat the 9.0-cap column as the realistic case and the 9.5-cap column as the optimistic bound.",
+    "per_lens": [
+      {
+        "lens": "architecture-maintainability",
+        "current": 8.429,
+        "ceiling_every_attached_dimension_at_9_0": 8.857,
+        "ceiling_every_attached_dimension_at_9_5": 9.071,
+        "reaches_9_0_at_9_0_cap": false,
+        "reaches_9_0_at_9_5_cap": true,
+        "unattached_dimensions_below_9": {
+          "significant-decision-documentation": 8.0
+        }
+      },
+      {
+        "lens": "correctness",
+        "current": 8.6,
+        "ceiling_every_attached_dimension_at_9_0": 9.0,
+        "ceiling_every_attached_dimension_at_9_5": 9.3,
+        "reaches_9_0_at_9_0_cap": true,
+        "reaches_9_0_at_9_5_cap": true,
+        "unattached_dimensions_below_9": {}
+      },
+      {
+        "lens": "security",
+        "current": 8.2,
+        "ceiling_every_attached_dimension_at_9_0": 9.0,
+        "ceiling_every_attached_dimension_at_9_5": 9.4,
+        "reaches_9_0_at_9_0_cap": true,
+        "reaches_9_0_at_9_5_cap": true,
+        "unattached_dimensions_below_9": {}
+      },
+      {
+        "lens": "testing",
+        "current": 7.7,
+        "ceiling_every_attached_dimension_at_9_0": 8.5,
+        "ceiling_every_attached_dimension_at_9_5": 8.8,
+        "reaches_9_0_at_9_0_cap": false,
+        "reaches_9_0_at_9_5_cap": false,
+        "unattached_dimensions_below_9": {
+          "determinism-isolation-diagnostics-maintainability": 7.5,
+          "requirements-regression-coverage": 8.0
+        }
+      },
+      {
+        "lens": "api-contract",
+        "current": 7.833,
+        "ceiling_every_attached_dimension_at_9_0": 8.833,
+        "ceiling_every_attached_dimension_at_9_5": 9.083,
+        "reaches_9_0_at_9_0_cap": false,
+        "reaches_9_0_at_9_5_cap": true,
+        "unattached_dimensions_below_9": {
+          "versioning-deprecation": 8.0
+        }
+      },
+      {
+        "lens": "accessibility-human-usability",
+        "current": 7.917,
+        "ceiling_every_attached_dimension_at_9_0": 8.833,
+        "ceiling_every_attached_dimension_at_9_5": 9.167,
+        "reaches_9_0_at_9_0_cap": false,
+        "reaches_9_0_at_9_5_cap": true,
+        "unattached_dimensions_below_9": {
+          "semantics-assistive-technology": 8.0
+        }
+      },
+      {
+        "lens": "documentation-clarity",
+        "current": 6.25,
+        "ceiling_every_attached_dimension_at_9_0": 8.167,
+        "ceiling_every_attached_dimension_at_9_5": 8.5,
+        "reaches_9_0_at_9_0_cap": false,
+        "reaches_9_0_at_9_5_cap": false,
+        "unattached_dimensions_below_9": {
+          "completeness-audience-prerequisites": 5.0,
+          "runnable-examples-actionability": 8.0
+        }
+      }
+    ],
+    "summary": {
+      "reachable_realistically": [
+        "correctness",
+        "security"
+      ],
+      "reachable_only_at_the_optimistic_bound": [
+        "architecture-maintainability",
+        "api-contract",
+        "accessibility-human-usability"
+      ],
+      "not_reachable_through_these_requests": [
+        "testing",
+        "documentation-clarity"
+      ]
+    }
+  },
+  "debt_deferrals_carried_from_cycle_1": [
+    {
+      "id": "debt-environment-allowlist",
+      "child": "111",
+      "cycle_2_position": "deferral re-confirmed",
+      "evidence": "The QUEUED.md entry is present and accurate against the code at this revision, including the corrected string case. Cycle 2 raised F-79 against the documentation half only, which the entry does not cover and which is independently repairable.",
+      "blocks_no_p1": true
+    },
+    {
+      "id": "debt-talariaapp-size",
+      "child": "111",
+      "cycle_2_position": "deferral re-confirmed",
+      "evidence": "The QUEUED.md entry is present and accurate. No cycle-2 finding depends on the extraction, and the architecture lens's simplicity dimension rose this round despite the class size being unaddressed.",
+      "blocks_no_p1": true
+    }
+  ]
+}

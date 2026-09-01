@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "c96c75197ba8e8ecc353cebcae13f66f431ab5f8a510246d718dffa934883726",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+  },
+  "checklist_item": 2,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-02-shared-live-rerun.ansi",
+    "capture_sha256": "91f4f07c33c90bac9b44acf7cb7354838e327199dd21d436abf2b1d4400e0bdd",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-02-shared-live-rerun-pty.json",
+    "pty_result_sha256": "877c54a821f679c5a148d3b2683c00606b6d81206def22d32f261b9f57a1cbc6",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-02-shared-live-rerun.png",
+    "screenshot_sha256": "5c8785eb643933b2322f87a95f1d03601d0a643906070d2351e450816a827844"
+  },
+  "observations": [
+    "A real Hermes-backed turn returned TALARIA-T2-PRIMARY-OK; the final agent_model segment displayed OpenCode Go / muse-spark-1.2-contributor and the inspector named muse-spark-1.2-contributor.",
+    "The final status bar showed [ok] connected; the primary route completed and no fallback was requested or used."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-08-31T22:32:09+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "live",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": "opencode-go / muse-spark-1.2-contributor",
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "used"
+    },
+    "profile": "default on isolated dashboard 8790"
+  },
+  "terminal": {
+    "columns": 160,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; isolated Hermes dashboard 8790",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Live primary route",
+  "verdict": "pass"
+}

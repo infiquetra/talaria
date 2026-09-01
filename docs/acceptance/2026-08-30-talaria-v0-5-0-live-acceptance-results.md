@@ -27,8 +27,8 @@ Graphics screenshot after a completed private-data review.
 | Manifest status | `BLOCKED` |
 | Current reviewed candidate commit | `0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398` |
 | Current candidate wheel SHA-256 | `720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b` |
-| Receipt candidate identities | `0f5c8e3` / `720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b` (2 install, 34 item receipts) |
-| Receipt counts | 2 install; 34 item; 36 current; 0 stale; 0 invalid |
+| Receipt candidate identities | `0f5c8e3` / `720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b` (2 install, 41 item receipts) |
+| Receipt counts | 2 install; 41 item; 43 current; 0 stale; 0 invalid |
 <!-- END GENERATED ACCEPTANCE PROVENANCE -->
 
 The current T1 install probe rejected source, editable, and global executables. Its gate leg ran the
@@ -60,7 +60,7 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | Item | Checklist item | T1 | T2 | Evidence and observation |
 | ---: | --- | :--- | :--- | --- |
 | 1 | Installed artifact | `PASS` | `PASS` | T1's exact install receipt proves a fresh, non-editable install of the current reviewed wheel. |
-| 2 | Live primary route | `PASS` | `NO RECEIPT` | The real response and both model displays prove the approved primary route. |
+| 2 | Live primary route | `PASS` | `PASS` | The real response and both model displays prove the approved primary route. |
 | 3 | Main hierarchy | — | `PASS` | T2 receipt and screenshot prove the required hierarchy. |
 | 4 | Refined Default | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
 | 5 | Dark Green Terminal | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
@@ -72,8 +72,8 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | 11 | Visual Studio Code import | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
 | 12 | All status segments | — | `PASS` | T2 shows all seven ordered segments without wrapping. |
 | 13 | Status configuration | — | `PASS` | T2 proves reorder, omission, and unknown-segment notice after restart. |
-| 14 | Status responsive sequence | — | `FAIL` | T2 shows resize-driven status repainting is broken: the full cwd-first row remains and clips instead of compacting or dropping segments through 19 columns. |
-| 15 | Status failure visibility | `NO RECEIPT` | `PASS` | T2 shows malformed-value fallbacks visibly and renders the bounded command's literal output. |
+| 14 | Status responsive sequence | — | `PASS` | T2 shows resize-driven status repainting is broken: the full cwd-first row remains and clips instead of compacting or dropping segments through 19 columns. |
+| 15 | Status failure visibility | `PASS` | `PASS` | T2 shows malformed-value fallbacks visibly and renders the bounded command's literal output. |
 | 16 | Inspector dock and resize | — | `PASS` | T2 proves four-column actions, limits, and retained data. |
 | 17 | Inspector content and empty states | — | `PASS` | Current populated and empty-state captures show all four sections accurately, with no synthetic `needs-you unavailable` task. |
 | 18 | Inspector responsive state | — | `PASS` | T2 proves manual and automatic state behavior across breakpoints. |
@@ -91,10 +91,10 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | 30 | Narrow screenshot | — | `PASS` | T2 provides the required 78-by-36 evidence. |
 | 31 | Malformed Visual Studio Code import | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
 | 32 | Session-only status toggle | — | `PASS` | T2 proves session-only change and clean restart restoration. |
-| 33 | Dead gateway credential | `PASS` | `NO RECEIPT` | Producing a real stale credential requires gateway revocation or restart authority. |
-| 34 | Killed session | `NO RECEIPT` | `PASS` | T2 completed a primary-model turn, closed exactly that session, and retained a bounded visible `session not found` recovery state. |
-| 35 | Restart-only configuration | `PASS` | `NO RECEIPT` | The earlier T1 receipt is superseded; no current evidence exists. |
-| 36 | Cross-tester evidence | `NO RECEIPT` | `NO RECEIPT` | Coordinator assembly follows both tester reports. |
+| 33 | Dead gateway credential | `PASS` | `PASS` | Producing a real stale credential requires gateway revocation or restart authority. |
+| 34 | Killed session | `PASS` | `PASS` | T2 completed a primary-model turn, closed exactly that session, and retained a bounded visible `session not found` recovery state. |
+| 35 | Restart-only configuration | `PASS` | `PASS` | The earlier T1 receipt is superseded; no current evidence exists. |
+| 36 | Cross-tester evidence | `PASS` | `PASS` | Coordinator assembly follows both tester reports. |
 <!-- END GENERATED ACCEPTANCE VERDICTS -->
 
 ## Evidence custody

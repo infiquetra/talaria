@@ -109,7 +109,15 @@ def isolated_environment(
             environment.pop(name)
     environment.pop("PYTHONHOME", None)
     environment.pop("PYTHONPATH", None)
-    for name in ("NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "COLORTERM"):
+    for name in (
+        "NO_COLOR",
+        "FORCE_COLOR",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+        "COLORTERM",
+        "COLUMNS",
+        "LINES",
+    ):
         environment.pop(name, None)
     # This legacy Hermes value must never become an accidental live credential
     # source for an acceptance process.
@@ -117,8 +125,6 @@ def isolated_environment(
     environment.update(
         TALARIA_CONFIG_DIR=str(config_dir),
         TERM=term,
-        LINES=str(rows),
-        COLUMNS=str(columns),
     )
     if monochrome:
         environment["NO_COLOR"] = "1"

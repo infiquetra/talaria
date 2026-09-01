@@ -13,19 +13,19 @@
   },
   "checklist_item": 28,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-28-final2.ansi",
-    "capture_sha256": "d28fd24eac455b42ade02b2292c91be292c4111b6215a8857b85709fd636eb48",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-28-final2-pty.json",
-    "pty_result_sha256": "27516d62a81dd1ef84b878d790cfba920b0e2fa4ee4cbf114b5d71fa1e3ace49",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-28-resize-fix.ansi",
+    "capture_sha256": "7dce599c3e72da7c6163901d8f9ba3012f4bb061ae55a3c0272fcabd565952f2",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-28-resize-fix-pty.json",
+    "pty_result_sha256": "833c2156783de5ba236b26a4d5258f61c4cb267b632624f168c2bd07a7ee9a89",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-28-final2.png",
-    "screenshot_sha256": "c4e29a48b044609c82702a2b0a2ddd71849b71744933c74c23701594ae74e577"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-28-resize-fix.png",
+    "screenshot_sha256": "ed9569bdd2276a8b1e7d0c56faaf6f2ca42611fd51d32c2d3de146209e410955"
   },
   "observations": [
-    "After returning to follow mode, the long transcript stayed pinned to NEWEST-BOTTOM-ENTRY across later output and the mid-drive resize."
+    "After returning to follow mode, the long transcript stayed pinned to NEWEST-BOTTOM-ENTRY across later output and actual 132-to-119-to-132-column resizes."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:44:32+00:00",
+  "recorded_at": "2026-08-31T21:53:05+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +41,7 @@
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS",
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },
