@@ -4,9 +4,12 @@
   "title": "Talaria stored user theme",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "dark", "name", "slug", "tokens"],
+  "required": ["dark", "name", "slug", "tokens"],
   "properties": {
-    "schema_version": {"const": "talaria-theme-v1"},
+    "schema_version": {
+      "$comment": "Optional for v0.5.0 migration compatibility; required starting in v0.6.0.",
+      "const": "talaria-theme-v1"
+    },
     "dark": {"type": "boolean"},
     "name": {"type": "string", "minLength": 1},
     "slug": {
