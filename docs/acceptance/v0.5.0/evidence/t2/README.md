@@ -1,9 +1,9 @@
-# Talaria v0.5.0 T2 cycle-3 acceptance evidence
+# Talaria v0.5.0 T2 cycle-4 acceptance evidence
 
 This active evidence set was produced from the isolated installed wheel for candidate and harness
-commit `4c2d8dbf0ddfb7f38ba1f228369ae2d929319758`, wheel SHA-256
-`d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88`. All twenty T2 receipts
-pass. The cycle-2 evidence is preserved under `superseded/788fc791-cycle2/`.
+commit `d16357900f6f3b472ff6e0309e7bf7fe70ad9b06`, wheel SHA-256
+`7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625`. All twenty T2 receipts
+pass. The cycle-3 evidence is preserved under `superseded/4c2d8db-cycle3/`.
 
 <!-- BEGIN GENERATED ACCEPTANCE MANIFEST COUNTS -->
 The generated manifest reports 0 stale receipts, 0 missing current receipts, and 0 invalid item receipts.
@@ -11,31 +11,31 @@ The generated manifest reports 0 stale receipts, 0 missing current receipts, and
 
 | Item | Verdict | Receipt | Raw pseudo-terminal capture | Screenshot |
 | ---: | --- | --- | --- | --- |
-| 1 | passed | [receipt](receipts/item-01-talaria-t2.json) | [installed artifact](raw/item-01-c3.ansi) | [screenshot](screenshots/item-01-c3.png) |
-| 2 | passed | [receipt](receipts/item-02-talaria-t2.json) | [live primary route](raw/item-02-live-public-c3.ansi) | [full route screenshot](screenshots/item-02-full-route-fresh-c3.png) |
-| 3 | passed | [receipt](receipts/item-03-talaria-t2.json) | [main hierarchy](raw/item-03-c3.ansi) | [screenshot](screenshots/item-03-c3.png) |
-| 12 | passed | [receipt](receipts/item-12-talaria-t2.json) | [all segments](raw/item-12-c3.ansi) | [screenshot](screenshots/item-12-c3.png) |
-| 13 | passed | [receipt](receipts/item-13-talaria-t2.json) | [configured process](raw/item-13-c3.ansi), [fresh process](raw/item-13-restart-c3.ansi) | [configured](screenshots/item-13-c3.png), [fresh](screenshots/item-13-restart-c3.png) |
-| 14 | passed | [receipt](receipts/item-14-talaria-t2.json) | [full resize sequence](raw/item-14-c3.ansi) | [19-column frame](screenshots/item-14-c3.png) |
-| 15 | passed | [receipt](receipts/item-15-talaria-t2.json) | [invalid configuration](raw/item-15-invalid-c3.ansi), [bounded command](raw/item-15-command-c3.ansi) | [invalid configuration](screenshots/item-15-invalid-c3.png), [bounded command](screenshots/item-15-command-c3.png) |
-| 16 | passed | [receipt](receipts/item-16-talaria-t2.json) | [dock and resize](raw/item-16-c3.ansi) | [28-column clamp](screenshots/item-16-c3.png) |
-| 17 | passed | [receipt](receipts/item-17-talaria-t2.json) | [empty state](raw/item-17-empty-c3.ansi), [populated state](raw/item-17-populated-c3.ansi) | [empty](screenshots/item-17-empty-c3.png), [populated](screenshots/item-17-populated-c3.png) |
-| 18 | passed | [receipt](receipts/item-18-talaria-t2.json) | [responsive state](raw/item-18-c3.ansi), [fresh process](raw/item-18-fresh-c3.ansi) | [responsive](screenshots/item-18-c3.png), [fresh reset](screenshots/item-18-fresh-c3.png) |
-| 19 | passed | [receipt](receipts/item-19-talaria-t2.json) | [behavior](raw/item-19-c3.ansi), [open diff](raw/item-19-screen-c3.ansi) | [restored app](screenshots/item-19-c3.png), [side-by-side diff](screenshots/item-19-screen-c3.png) |
-| 20 | passed | [receipt](receipts/item-20-talaria-t2.json) | [mode transitions](raw/item-20-c3.ansi), [111-column refusal](raw/item-20-screen-c3.ansi) | [restored layout](screenshots/item-20-c3.png), [unified refusal](screenshots/item-20-screen-c3.png) |
-| 21 | passed | [receipt](receipts/item-21-talaria-t2.json) | [navigation and boundary](raw/item-21-c3.ansi), [open diff](raw/item-21-screen-c3.ansi) | [restored app](screenshots/item-21-c3.png), [navigated diff](screenshots/item-21-screen-c3.png) |
-| 29 | passed | [receipt](receipts/item-29-talaria-t2.json) | [wide frame](raw/item-29-c3.ansi) | [wide screenshot](screenshots/item-29-c3.png) |
-| 30 | passed | [receipt](receipts/item-30-talaria-t2.json) | [narrow behavior](raw/item-30-c3.ansi), [open diff](raw/item-30-screen-c3.ansi) | [restored app](screenshots/item-30-c3.png), [narrow screenshot](screenshots/item-30-screen-c3.png) |
-| 32 | passed | [receipt](receipts/item-32-talaria-t2.json) | [session toggle](raw/item-32-c3.ansi), [fresh process](raw/item-32-restart-c3.ansi) | [toggle](screenshots/item-32-c3.png), [restored segment](screenshots/item-32-restart-c3.png) |
-| 33 | passed | [receipt](receipts/item-33-talaria-t2.json) | [invalid scratch credential](raw/item-33-invalid-c3.ansi) | [authentication error](screenshots/item-33-invalid-c3.png) |
-| 34 | passed | [receipt](receipts/item-34-talaria-t2.json) | [live killed session](raw/item-34-live-public-c3.ansi) | [visible recovery](screenshots/item-34-live-public-c3.png) |
-| 35 | passed | [receipt](receipts/item-35-talaria-t2.json) | [running process](raw/item-35-running-c3.ansi), [fresh process](raw/item-35-restart-c3.ansi) | [running](screenshots/item-35-running-c3.png), [restarted](screenshots/item-35-restart-c3.png) |
-| 36 | passed | [receipt](receipts/item-36-talaria-t2.json) | [T2 evidence half](raw/item-36-c3.ansi) | [screenshot](screenshots/item-36-c3.png) |
+| 1 | passed | [receipt](receipts/item-01-talaria-t2.json) | [installed artifact](raw/item-01-c4.ansi) | [screenshot](screenshots/item-01-c4.png) |
+| 2 | passed | [receipt](receipts/item-02-talaria-t2.json) | [live primary route](raw/item-02-live-public-c4.ansi) | [full route screenshot](screenshots/item-02-full-route-fresh-c4.png) |
+| 3 | passed | [receipt](receipts/item-03-talaria-t2.json) | [main hierarchy](raw/item-03-c4.ansi) | [screenshot](screenshots/item-03-c4.png) |
+| 12 | passed | [receipt](receipts/item-12-talaria-t2.json) | [all segments](raw/item-12-c4.ansi) | [screenshot](screenshots/item-12-c4.png) |
+| 13 | passed | [receipt](receipts/item-13-talaria-t2.json) | [configured process](raw/item-13-c4.ansi), [fresh process](raw/item-13-restart-c4.ansi) | [configured](screenshots/item-13-c4.png), [fresh](screenshots/item-13-restart-c4.png) |
+| 14 | passed | [receipt](receipts/item-14-talaria-t2.json) | [full resize sequence](raw/item-14-c4.ansi) | [19-column frame](screenshots/item-14-c4.png) |
+| 15 | passed | [receipt](receipts/item-15-talaria-t2.json) | [invalid configuration](raw/item-15-invalid-c4.ansi), [bounded command](raw/item-15-command-c4.ansi) | [invalid configuration](screenshots/item-15-invalid-c4.png), [bounded command](screenshots/item-15-command-c4.png) |
+| 16 | passed | [receipt](receipts/item-16-talaria-t2.json) | [dock and resize](raw/item-16-c4.ansi) | [28-column clamp](screenshots/item-16-c4.png) |
+| 17 | passed | [receipt](receipts/item-17-talaria-t2.json) | [empty state](raw/item-17-empty-c4.ansi), [populated state](raw/item-17-populated-c4.ansi) | [empty](screenshots/item-17-empty-c4.png), [populated](screenshots/item-17-populated-c4.png) |
+| 18 | passed | [receipt](receipts/item-18-talaria-t2.json) | [responsive state](raw/item-18-c4.ansi), [fresh process](raw/item-18-fresh-c4.ansi) | [responsive](screenshots/item-18-c4.png), [fresh reset](screenshots/item-18-fresh-c4.png) |
+| 19 | passed | [receipt](receipts/item-19-talaria-t2.json) | [behavior](raw/item-19-c4.ansi), [open diff](raw/item-19-screen-c4.ansi) | [restored app](screenshots/item-19-c4.png), [side-by-side diff](screenshots/item-19-screen-c4.png) |
+| 20 | passed | [receipt](receipts/item-20-talaria-t2.json) | [mode transitions](raw/item-20-c4.ansi), [111-column refusal](raw/item-20-screen-c4.ansi) | [restored layout](screenshots/item-20-c4.png), [unified refusal](screenshots/item-20-screen-c4.png) |
+| 21 | passed | [receipt](receipts/item-21-talaria-t2.json) | [navigation and boundary](raw/item-21-c4.ansi), [open diff](raw/item-21-screen-c4.ansi) | [restored app](screenshots/item-21-c4.png), [navigated diff](screenshots/item-21-screen-c4.png) |
+| 29 | passed | [receipt](receipts/item-29-talaria-t2.json) | [wide frame](raw/item-29-c4.ansi) | [wide screenshot](screenshots/item-29-c4.png) |
+| 30 | passed | [receipt](receipts/item-30-talaria-t2.json) | [narrow behavior](raw/item-30-c4.ansi), [open diff](raw/item-30-screen-c4.ansi) | [restored app](screenshots/item-30-c4.png), [narrow screenshot](screenshots/item-30-screen-c4.png) |
+| 32 | passed | [receipt](receipts/item-32-talaria-t2.json) | [session toggle](raw/item-32-c4.ansi), [fresh process](raw/item-32-restart-c4.ansi) | [toggle](screenshots/item-32-c4.png), [restored segment](screenshots/item-32-restart-c4.png) |
+| 33 | passed | [receipt](receipts/item-33-talaria-t2.json) | [invalid scratch credential](raw/item-33-invalid-c4.ansi) | [authentication error](screenshots/item-33-invalid-c4.png) |
+| 34 | passed | [receipt](receipts/item-34-talaria-t2.json) | [live killed session](raw/item-34-live-public-c4.ansi) | [visible recovery](screenshots/item-34-live-public-c4.png) |
+| 35 | passed | [receipt](receipts/item-35-talaria-t2.json) | [running process](raw/item-35-running-c4.ansi), [fresh process](raw/item-35-restart-c4.ansi) | [running](screenshots/item-35-running-c4.png), [restarted](screenshots/item-35-restart-c4.png) |
+| 36 | passed | [receipt](receipts/item-36-talaria-t2.json) | [T2 evidence half](raw/item-36-c4.ansi) | [screenshot](screenshots/item-36-c4.png) |
 
 Items 1 and 3 prove the installed-artifact launch and main hierarchy. Items 12 through 15 exercise
 the current status implementation: all segments, configured order and omissions, the full resize
 sequence, every visible configuration fallback, and literal bounded command output. Item 14 records
-the current single 20–47-column band and keeps connection visible below 20 without growing the bar.
+the current single 20-47-column band and keeps connection visible below 20 without growing the bar.
 
 Items 16 through 18 cover the inspector. Width changes proceed in four-column steps and clamp at 28
 and 48 without changing held data. Item 17 uses separate populated and header-only processes; all

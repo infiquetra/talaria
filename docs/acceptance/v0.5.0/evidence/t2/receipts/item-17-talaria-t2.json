@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "a99c86d648f59d2b7f0f9f2bc58da1f91e2ed45eb4dd8dc205bd21f161940066",
+    "executable_sha256": "e310531587e3b829617b0a6543df0774053c3f48b773ae164e995302e48436ae",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "9f725d66a6488b29bf87a0077b5fab6c6c60dff37c2bd162f141701f33b8542a",
-    "installed_files_sha256": "a0a0e1900055b8c422a31b1a22ab196f165910ea0c3ba32c3daaf6ab856a1368",
+    "install_receipt_sha256": "e0e89a48df21155999640756040e2ead3f930a5a15dd82a191618b08dddd50a8",
+    "installed_files_sha256": "71afe3b1b74ec7cd2d92b43a8ad4dcce731be5bb8ca4ca4514427a3b4d66b19f",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
   },
   "checklist_item": 17,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-17-empty-c3.ansi",
-    "capture_sha256": "b398abc1d7f8e673906414c2b34a77b3420698fa6ad514c01a3987a8709c50e8",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-17-empty-c3-pty.json",
-    "pty_result_sha256": "f42b75f94aa2c563cb237f337a9843ea9291ffb3c9cf39390fb0db4ecb240308",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-17-empty-c4.ansi",
+    "capture_sha256": "51f9b18fd7f188aa2290ca70f497cf69b6952de9b957d6f5e3d5c0a367891426",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-17-empty-c4-pty.json",
+    "pty_result_sha256": "750868d845457a87b4117e966c74666b5c9ba1b6864cc3485c61b57b0f951a82",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-17-empty-c3.png",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-17-empty-c4.png",
     "screenshot_sha256": "4f4e821bc8864e1fa2d2bab350b9ab1dfca9096faa9a85ced92dcfdf40b932f6"
   },
-  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
   "observations": [
-    "All four empty headings remain and each shows the full none-available sentence with current two-row wrapping at width 36; item-17-populated-c3.ansi proves accurate populated held state across widths 28, 36, and 48."
+    "Separate populated and header-only drives show all four inspector headings; every empty section renders the complete none-available-from-this-session sentence with wrapping and no synthetic row."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-09-01T15:26:22+00:00",
+  "recorded_at": "2026-09-01T18:12:23+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

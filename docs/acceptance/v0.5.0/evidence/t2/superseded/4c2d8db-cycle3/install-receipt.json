@@ -1,0 +1,107 @@
+{
+  "artifact": {
+    "direct_url": {
+      "archive_info": {
+        "hash": "sha256=d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88",
+        "hashes": {
+          "sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+        }
+      },
+      "url": "file://<candidate-root>/talaria-0.5.0-py3-none-any.whl"
+    },
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "a99c86d648f59d2b7f0f9f2bc58da1f91e2ed45eb4dd8dc205bd21f161940066",
+    "installed_file_count": 149,
+    "installed_files_sha256": "a0a0e1900055b8c422a31b1a22ab196f165910ea0c3ba32c3daaf6ab856a1368",
+    "package_file": "<scratch-root>/venv/lib/python3.12/site-packages/talaria/__init__.py",
+    "version": "0.5.0"
+  },
+  "candidate": {
+    "branch": "orch/talaria-v0-5-0",
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit_short": "4c2d8dbf0",
+    "integration_tree": "<integration-tree>",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_path": "<candidate-root>/talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+  },
+  "config_dir": "<scratch-root>/config",
+  "installed_at": "2026-09-01T15:08:04+00:00",
+  "probes": {
+    "bare_launch": {
+      "argv": [
+        "<scratch-root>/venv/bin/talaria"
+      ],
+      "capture": {
+        "bytes": 255,
+        "path": "<scratch-root>/raw/install-bare-launch.ansi",
+        "sha256": "8dfe187eb55a39e9c8aca56a4f8e821605c8a0a7343994c672ef139ee5b7d44b"
+      },
+      "columns": 132,
+      "duration_seconds": 1.073318,
+      "exit_code": 2,
+      "expected_literals": [],
+      "missing_literals": [],
+      "probe_note": "Fresh isolated config: reaching either the credential prompt or the interface is valid; the scripted ctrl+d/ctrl+q exits the reached surface.",
+      "rows": 36,
+      "term": "xterm-256color",
+      "terminal_program": "Python pty.fork install probe",
+      "timed_out": false
+    },
+    "gate": {
+      "argv": [
+        "<scratch-root>/venv/bin/talaria",
+        "gate",
+        "--deltas",
+        "50000",
+        "--json",
+        "<scratch-root>/receipts/install-gate.json"
+      ],
+      "decision_verdict": "pass",
+      "excluded_failed_checks": [
+        "workload_latency_growing-one-column-table"
+      ],
+      "exit_code": 1,
+      "json_path": "<scratch-root>/receipts/install-gate.json",
+      "json_sha256": "01b6229e06f9c8870a9b478e75d7766a69fe577d991fa3d67bbd54057823ff0d",
+      "known_preexisting_exceedance": {
+        "block_markdown_reference_ms": 44.0,
+        "check": "workload_latency_growing-one-column-table",
+        "current_sample_ms": 54.614,
+        "excluded_from_decision": true,
+        "reason": "known pre-existing exceedance excluded because its run-to-run variance on the unchanged v0.5 candidate exceeds the difference it would be used to detect",
+        "threshold_ms": 50.0,
+        "v0.4_sample_ms": 61.988,
+        "v0.5_samples_ms": [
+          54.45,
+          60.229,
+          68.861,
+          54.614
+        ],
+        "v0.5_spread_ms": 14.411
+      },
+      "report_verdict": "fail",
+      "stderr_path": "<scratch-root>/receipts/install-gate.stderr.log",
+      "stdout_path": "<scratch-root>/receipts/install-gate.stdout.log"
+    },
+    "version": {
+      "argv": [
+        "<scratch-root>/venv/bin/talaria",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "talaria 0.5.0"
+    }
+  },
+  "schema_version": "talaria-v0.5.0-install-v1",
+  "scratch_root": "<scratch-root>",
+  "terminal": {
+    "columns": 132,
+    "program": "POSIX pseudo-terminal",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "venv": "<scratch-root>/venv"
+}

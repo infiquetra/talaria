@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "a99c86d648f59d2b7f0f9f2bc58da1f91e2ed45eb4dd8dc205bd21f161940066",
+    "executable_sha256": "e310531587e3b829617b0a6543df0774053c3f48b773ae164e995302e48436ae",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "9f725d66a6488b29bf87a0077b5fab6c6c60dff37c2bd162f141701f33b8542a",
-    "installed_files_sha256": "a0a0e1900055b8c422a31b1a22ab196f165910ea0c3ba32c3daaf6ab856a1368",
+    "install_receipt_sha256": "e0e89a48df21155999640756040e2ead3f930a5a15dd82a191618b08dddd50a8",
+    "installed_files_sha256": "71afe3b1b74ec7cd2d92b43a8ad4dcce731be5bb8ca4ca4514427a3b4d66b19f",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
   },
   "checklist_item": 21,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-21-c3.ansi",
-    "capture_sha256": "3d9a948e8d8771df792725592a2fe419467415cf394b19d390adf218151a0be9",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-21-c3-pty.json",
-    "pty_result_sha256": "fa1eaeabdd182ac27e7d056513d4b36ddd00778ba4c604086b3c881fb59c0e55",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-21-c4.ansi",
+    "capture_sha256": "8efa3a527e847a01dce01fefd97a0529305dc2d0ee953efd2a7c2f204fc98376",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-21-c4-pty.json",
+    "pty_result_sha256": "6a372b6d4981677410a83391e7d5503078a7d6cbc32084c0b66dcfd88019518c",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-21-screen-c3.png",
-    "screenshot_sha256": "521d8959cdc3c011c31711723d4eba91e14c3b4cf16a1257bc97c4ccd7dd2a82"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-21-c4.png",
+    "screenshot_sha256": "1f5bba130eb2fa8cfc7321d0094aa3d42a190185c3767b33706b4309c177a794"
   },
-  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
   "observations": [
-    "Hunk and file navigation cycle deterministically, long-line horizontal movement remains clipped, and hints plus unbound mutation-like keys expose no edit, stage, revert, discard, apply, or other write surface."
+    "Navigation crosses files and hunks and reaches boundaries; the modal and hints expose only read-only navigation and view commands, and edit-like keys reveal no mutation surface."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-09-01T15:26:22+00:00",
+  "recorded_at": "2026-09-01T18:12:23+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
