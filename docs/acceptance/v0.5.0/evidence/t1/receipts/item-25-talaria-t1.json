@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "6fb894f3007f70a59a66051ba750ea77d280dcf4ba5003e40db5075f43684a4f",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 25,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-25-final2.ansi",
-    "capture_sha256": "d15dc8ce20a9799cf3c9a98312e469b3fcc59c44141173ecff2e4130eeb43800",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-25-final2-pty.json",
-    "pty_result_sha256": "d9952e93bef092152a4fd29c7449c3672f8227c9144fa347c02877a19b9e3a2b",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-25-c2a.ansi",
+    "capture_sha256": "d66ceff8b5175494084e6c12c24abfb30cdbe5cf103e6c746cd5c6905946a9b3",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-25-c2a-pty.json",
+    "pty_result_sha256": "c471fe8f7e9a573bd29f31eb7d8a72d35425dd5cded8f0e16da50dea2c50132b",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-25-final2.png",
-    "screenshot_sha256": "a396e3565e3075b9d1235c4da5cde40cd84549478a3a7b530d2aeaa757f39a47"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-25-c2a.png",
+    "screenshot_sha256": "98d32462bac7666243ba00fdb021f84568def820bf9a3a1f6d4175b46ca9b2c9"
   },
   "observations": [
-    "User, assistant, reasoning, tool/subagent, session and error identities remained distinguishable without colour on consecutive rows, with no trailing Markdown spacer rows after assistant or reasoning entries."
+    "Operator, reasoning, assistant, tool, session, and error entries remained distinguishable by fixed glyph and label identity with NO_COLOR enabled."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:44:32+00:00",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "isolated-transcript-identities"
+    "profile": "isolated monochrome transcript-identities replay"
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS; NO_COLOR",
+    "program": "Python pty.fork on macOS",
     "rows": 36,
     "term": "xterm-256color"
   },

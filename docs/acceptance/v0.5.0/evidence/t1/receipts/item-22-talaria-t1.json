@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "6fb894f3007f70a59a66051ba750ea77d280dcf4ba5003e40db5075f43684a4f",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 22,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-22-final2.ansi",
-    "capture_sha256": "baaf021fa98726f701aee2aea5ae72bce0024dae0cb82187738176a81108ba2c",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-22-final2-pty.json",
-    "pty_result_sha256": "67d8b739a127fe2eb3a69f3a6ed0de5290232f78e44ef548a0899e8ddcacb3f7",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-22-c2a.ansi",
+    "capture_sha256": "a457238fbfc2fba2ae21136e81f4d4ff6924644f943a6d61d605fed27be7ead2",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-22-c2a-pty.json",
+    "pty_result_sha256": "de88175eca1991101f79cb70598e2a61c9b6cbd16f194e7e7b0e8621b8610866",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-22-final2.png",
-    "screenshot_sha256": "3ba9701fea34f7d7bf595c56543b34bd06b481e021bd748efc9042bfcac5e874"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-22-c2a.png",
+    "screenshot_sha256": "6a2ebec0494fdf8db5e4fb388f0bd7aa1bf19d040177a6cefc926f16832d53ed"
   },
   "observations": [
-    "The composer caret and focus cues stayed in the composer row while transcript, status and inspector remained stable through focus movement and resize."
+    "Focus moved among transcript, inspector, and composer; the caret label and visible insertion point followed the focused surface and returned to composer."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "isolated-composer-caret"
+    "profile": "isolated focus-surface replay"
   },
   "terminal": {
     "columns": 132,

@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "theme",
+    "import",
+    "<scratch-root>/work/fixtures/unsupported-dark.json",
+    "--name",
+    "partial-fallback"
+  ],
+  "capture": {
+    "bytes": 4871,
+    "path": "<scratch-root>/raw/item-10-import-c2a.ansi",
+    "sha256": "985c58129ed6031e4a411f3caeb61bdbbfd125805a21fc17b0d6b63525040180"
+  },
+  "columns": 132,
+  "duration_seconds": 0.172566,
+  "exit_code": 0,
+  "expected_literals": [
+    "2 source tokens, 56 fallbacks, 19 warnings"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Codex PTY harness (forkpty)",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

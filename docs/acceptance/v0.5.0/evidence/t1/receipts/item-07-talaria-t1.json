@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "6fb894f3007f70a59a66051ba750ea77d280dcf4ba5003e40db5075f43684a4f",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 7,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-07-final2.ansi",
-    "capture_sha256": "361c9db06997bad735bad17d4ce5c91e1b96899a6d81289287d91496f5c12e50",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-07-final2-pty.json",
-    "pty_result_sha256": "ae13b9c5162b7f92bea2012964811c58a25dc1f909442beb2544f4d292b2d770",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-07-c2a.ansi",
+    "capture_sha256": "905745799a221eb39fb595d9861426ff61568466876921664bc5b78def1a7639",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-07-c2a-pty.json",
+    "pty_result_sha256": "5fb24d2e6fa7b28f644ebeff6381b4e963597a35ecd08f35e45c27ac02cdb948",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-07-final2.png",
-    "screenshot_sha256": "6ca6899625a0df2fdbb34c10a5e18e8bb8454282ce3f2297a2fb210d76f12b4c"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-07-c2a.png",
+    "screenshot_sha256": "1175fef267cbc6fabfab676ace5ff3bb22d43f9b9b9f610c760757be5ca7f518"
   },
   "observations": [
-    "Accessible High Contrast settled on all required surfaces with the visual specification's high-contrast token relationships visible in the capture."
+    "Accessible High Contrast rendered the populated application with high-contrast borders, text, semantic markers and focus treatment."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "isolated-accessible-high-contrast"
+    "profile": "isolated visual-surfaces replay; Accessible High Contrast"
   },
   "terminal": {
     "columns": 132,

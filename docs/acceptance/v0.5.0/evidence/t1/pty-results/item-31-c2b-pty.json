@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "theme",
+    "import",
+    "<scratch-root>/work/fixtures/malformed.json",
+    "--name",
+    "malformed-acceptance"
+  ],
+  "capture": {
+    "bytes": 247,
+    "path": "<scratch-root>/raw/item-31-c2b.ansi",
+    "sha256": "64592a62f756c87c6598d2ba56a2bcc928a79f9a40798d3c0d2824827f6de1f5"
+  },
+  "columns": 132,
+  "duration_seconds": 0.195096,
+  "exit_code": 3,
+  "expected_literals": [
+    "talaria: theme import failed:",
+    "is not strict JSON"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Codex PTY harness (forkpty)",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

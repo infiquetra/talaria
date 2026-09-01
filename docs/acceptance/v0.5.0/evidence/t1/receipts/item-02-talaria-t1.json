@@ -1,32 +1,31 @@
 {
   "artifact": {
-    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
-    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
+    "install_receipt_sha256": "6fb894f3007f70a59a66051ba750ea77d280dcf4ba5003e40db5075f43684a4f",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
   },
   "checklist_item": 2,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-02-final2d.ansi",
-    "capture_sha256": "406a3a4864c590d6334cf2fb87cab911a9562eacc3ab816b35a8248731b1049f",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-02-final2d-pty.json",
-    "pty_result_sha256": "fb6abd6ce4bb2dbe75e707935c46ac5608d82781054d66f63a6735bc04bf67d5",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-02-c2.ansi",
+    "capture_sha256": "a6d81289c5b24900de21b7948e9221f957291c55b00f7ef088f4c179231528aa",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-02-c2-pty.json",
+    "pty_result_sha256": "ca46500eef969e8efcabe4796b34d958afcbdc0f73824ee86d1e545c1aba5c93",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-02-final2d.png",
-    "screenshot_sha256": "32133a7681cb9467b147024456d1cf4457eb94ee272d1352bedd0656dbb7c82e"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-02-c2.png",
+    "screenshot_sha256": "7f857af8296e808a031bc61f37e1d2c915bcd709930f0f14edd040610aa2ae75"
   },
   "observations": [
-    "A real Hermes-backed turn returned 1517; the inspector and final status-bar agent_model segment both named muse-spark-1.2-contributor.",
-    "The status bar showed the healthy [ok] connection form; no fallback route was attempted."
+    "A real prompt completed with TALARIA-T1-C2-PRIMARY-OK; the inspector and status bar named muse-spark-1.2-contributor on the isolated dashboard."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T20:43:49+00:00",
+  "recorded_at": "2026-09-01T03:08:54+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +40,7 @@
     "profile": "default on isolated dashboard 8790"
   },
   "terminal": {
-    "columns": 160,
+    "columns": 132,
     "program": "Python pty.fork on macOS; isolated Hermes dashboard 8790",
     "rows": 36,
     "term": "xterm-256color"

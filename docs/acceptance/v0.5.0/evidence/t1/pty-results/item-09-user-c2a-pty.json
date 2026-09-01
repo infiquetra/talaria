@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "docs/acceptance/v0.5.0/corpora/t1/visual-surfaces.jsonl"
+  ],
+  "capture": {
+    "bytes": 280100,
+    "path": "<scratch-root>/raw/item-09-user-c2a.ansi",
+    "sha256": "a5531eb14a7def1962404ae376ad7905c4a254ccfa2baed982495d2b761f21b2"
+  },
+  "columns": 132,
+  "duration_seconds": 12.283644,
+  "exit_code": 0,
+  "expected_literals": [
+    "saved theme 'dark-green-terminal' to the user config"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python-pty.fork-on-macOS",
+  "tester": "talaria-t1",
+  "timed_out": false
+}
