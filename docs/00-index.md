@@ -16,10 +16,15 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 
 ## User guides
 
+- [Install Talaria](install.md)
 - [Themes](themes.md)
 - [Configuration](configuration.md)
 - [Terminal UI](terminal-ui.md)
 - [Visual Studio Code theme import format](formats/vscode-theme-import.md)
+
+## Releases
+
+- [Talaria v0.5.0](releases/v0.5.0.md)
 
 ## Release evidence
 
