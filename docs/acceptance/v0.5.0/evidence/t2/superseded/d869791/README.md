@@ -4,7 +4,7 @@ This directory records issue #110 acceptance against frozen candidate commit
 `d86979127f871a479eb104fc10c886b5c5480a8c` and wheel SHA-256
 `a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb`. The wheel
 was installed by the acceptance harness at
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp`.
+`<scratch-root>`.
 Every committed receipt passed the receipt validator. Raw American National Standards Institute
 (ANSI) pseudo-terminal captures remain under that scratch root. The committed screenshots are
 deterministic Portable Network Graphics renderings of those reviewed raw pseudo-terminal captures;
@@ -33,7 +33,7 @@ no Computer Use or graphical user interface automation was used.
 ## Failed and blocked evidence
 
 Item 17's failing raw capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-17-header-only.ansi`.
+`<scratch-root>/raw/item-17-header-only.ansi`.
 Its screenshot is `screenshots/item-17-header-only.png`. A separate populated drive at
 `raw/item-17.ansi` under the scratch root correctly shows the held subagent, context, three files,
 and operation details; the defect is limited to the empty Tasks rendering.
@@ -42,13 +42,13 @@ Item 34 is blocked by live session initialization. The primary attempt requested
 Spark 1.2 Contributor Free (`opencode/muse-spark-1.2-contributor-free`). The gateway admin API
 accepted that default and Talaria initially displayed it, but `session.create` then changed the
 session to `openai-api/gpt-5.5` and reported that provider had no usable credentials. The capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/live-primary-confirm.ansi`.
+`<scratch-root>/raw/live-primary-confirm.ansi`.
 
 The permitted fallback was attempted only because the primary bounded test could not complete.
 The fallback requested Ollama GLM 5.3 Flash (`glm-5.3-flash:cloud`). Its admin default was also
 accepted and initially displayed, but the created session again changed to `openai-api/gpt-5.5`
 and failed before the fallback model could run. The capture is
-`/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/live-fallback-confirm.ansi`.
+`<scratch-root>/raw/live-fallback-confirm.ansi`.
 No third route was attempted. The original `xai-oauth/grok-4.6` default was restored after these
 bounded attempts.
 
@@ -72,8 +72,8 @@ bounded attempts.
 
 The required screenshot pair remains at:
 
-- wide: `/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-29.png`
-- narrow: `/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-30.png`
+- wide: `<scratch-root>/screenshots/item-29.png`
+- narrow: `<scratch-root>/screenshots/item-30.png`
 
 ## Validation and repository checks
 

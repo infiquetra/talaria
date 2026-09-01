@@ -1,10 +1,10 @@
 {
   "artifact": {
     "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
     "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
     "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
     "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
     "version": "0.5.0",
@@ -13,12 +13,12 @@
   },
   "checklist_item": 10,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-10-ui.ansi",
+    "capture_path": "<scratch-root>/raw/item-10-ui.ansi",
     "capture_sha256": "49129906b0eed6e893dde65a0209ac29e150df82f6228435faef80dc8b6fb043",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-10-ui-pty.json",
+    "pty_result_path": "<scratch-root>/receipts/item-10-ui-pty.json",
     "pty_result_sha256": "1875fc890647bb74c3d1a5938ed07b4e7bac0e93381e2ca8e604cbc7911d6138",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-10.png",
+    "screenshot_path": "<scratch-root>/screenshots/item-10.png",
     "screenshot_sha256": "2079f060f3a44473c1799eececde02ec1fc27683f34c397695ba2ab62bc55e40"
   },
   "observations": [

@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
+    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+  },
+  "checklist_item": 11,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-11.ansi",
+    "capture_sha256": "fc21634b581942959224d79021633737c395a06e5d8e920de2946aaa87ef4347",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-11-pty.json",
+    "pty_result_sha256": "de1f6776ffba215eb2cc4b64ca931959be0004b97f8030377113e5d01c8b028a",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-11.png",
+    "screenshot_sha256": "cb3cfb6eb639ab06dd287ccf5e66c970c84ef7fe85119cef8ec2f0f2254e416a"
+  },
+  "observations": [
+    "Two imports of the shipped importer fixture produced identical saved bytes with SHA-256 2ab65e1fb8b3489d49fd25b5e59e70db56cb2dc549fc7b302c4daf496b46820d.",
+    "The installed imported theme loaded on restart without a fallback notice and visibly styled transcript comments and diff content."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T17:30:33+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-vscode-import"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Visual Studio Code import",
+  "verdict": "pass"
+}

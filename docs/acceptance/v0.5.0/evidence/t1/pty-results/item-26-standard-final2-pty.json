@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "<scratch-root>/corpora/motion-and-scroll.jsonl",
+    "--speed",
+    "0.25"
+  ],
+  "capture": {
+    "bytes": 420677,
+    "path": "<scratch-root>/raw/item-26-standard-final2.ansi",
+    "sha256": "683e054a088f8efb093505c513fe3b6c021609f59a34f3f2516343cf1271c9fa"
+  },
+  "columns": 132,
+  "duration_seconds": 26.272536,
+  "exit_code": 0,
+  "expected_literals": [],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

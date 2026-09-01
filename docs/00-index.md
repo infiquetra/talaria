@@ -16,10 +16,23 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 
 ## User guides
 
+- [Install Talaria](install.md)
 - [Themes](themes.md)
 - [Configuration](configuration.md)
 - [Terminal UI](terminal-ui.md)
 - [Visual Studio Code theme import format](formats/vscode-theme-import.md)
+
+## Releases
+
+- [Talaria v0.5.0](releases/v0.5.0.md)
+
+## Release evidence
+
+- [v0.5.0 live acceptance results](acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
+- [v0.5.0 T1 evidence index](acceptance/v0.5.0/evidence/t1/README.md)
+- [v0.5.0 T2 evidence index](acceptance/v0.5.0/evidence/t2/README.md)
+- [v0.5.0 visual specification](design/2026-08-30-talaria-v0-5-0-visual-spec.md)
+- [v0.5.0 run plan](plans/2026-08-30-talaria-v0-5-0-run-plan.md)
 
 ## Analysis and evidence
 

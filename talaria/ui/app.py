@@ -179,6 +179,7 @@ from talaria.domain.state import (
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.replay.source import REPLAY_EPOCH
 from talaria.status.contract import StatusBarSettings
+from talaria.status.local import capture_local_status
 from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
@@ -246,7 +247,6 @@ from talaria.ui.status_bar import (
     BottomStatusBar,
     BottomStatusBarView,
     build_status_bar_view,
-    capture_local_status,
 )
 from talaria.ui.status_region import StatusRegion
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY, DEFAULT_THEME_SLUG, ThemeRegistry
@@ -1206,7 +1206,7 @@ class TalariaApp(App[None]):
         # One restart-scoped value is injected into every motion-aware widget.
         # It never changes in response to a file edit or session command.
         self.motion = MotionPolicy(reduced=reduced_motion)
-        self.animation_level = "none" if reduced_motion else self.animation_level
+        self.animation_level = "none" if reduced_motion else "full"
         self._theme_preview_anchor: TranscriptAnchor | None = None
         self._startup_notices = (*startup_notices, *resolved_theme.notices)
         self._status_notices = tuple(
@@ -1570,18 +1570,45 @@ class TalariaApp(App[None]):
 
     # ── layout ───────────────────────────────────────────────────────────
 
-    def _status_agent(self) -> tuple[str, str]:
-        """Return the model facts already held for the focused session."""
+    def _focused_agent_identity(self) -> tuple[str, str, bool]:
+        """Resolve the focused provider and model from one held observation.
+
+        The boolean distinguishes a model observed only in the session roster.
+        That row does not carry a provider, so any provider paired with it is a
+        catalogue inference rather than part of the same observation.
+        """
         session = self.session_model_in_focus
         catalog = self.model_catalog
+        roster_only = False
         if session is not None:
             provider_slug = session.provider_slug
             model = session.model
-        elif catalog is not None:
-            provider_slug = catalog.current_provider
-            model = catalog.current_model
         else:
-            return "", ""
+            session_id = self.state.session_key or self.state.focused_session_id or ""
+            row = (
+                fleet_row(
+                    self.fleet,
+                    profile=self.fleet_profile,
+                    session_id=session_id,
+                )
+                if session_id
+                else None
+            )
+            if row is not None and row.model:
+                roster_only = True
+                # The roster row is an observation of this session's actual
+                # model; the catalogue describes configured defaults instead.
+                provider_slug = (
+                    catalog.current_provider
+                    if catalog is not None and catalog.current_model == row.model
+                    else ""
+                )
+                model = row.model
+            elif catalog is not None:
+                provider_slug = catalog.current_provider
+                model = catalog.current_model
+            else:
+                return "", "", False
 
         provider = provider_slug
         if catalog is not None:
@@ -1593,6 +1620,11 @@ class TalariaApp(App[None]):
                 ),
                 provider_slug,
             )
+        return provider, model, roster_only
+
+    def _status_agent(self) -> tuple[str, str]:
+        """Return the provider and model already held for the focused session."""
+        provider, model, _roster_only = self._focused_agent_identity()
         return provider, model
 
     def _bottom_status_view(self) -> BottomStatusBarView:
@@ -1609,20 +1641,10 @@ class TalariaApp(App[None]):
         )
 
     def _inspector_model(self) -> str:
-        """Return the most specific focused-session model Talaria already holds."""
-        provider, model = self._status_agent()
-        if self.session_model_in_focus is not None:
-            return "/".join(part for part in (provider, model) if part)
-
-        session_id = self.state.session_key or self.state.focused_session_id or ""
-        if session_id:
-            row = fleet_row(
-                self.fleet,
-                profile=self.fleet_profile,
-                session_id=session_id,
-            )
-            if row is not None and row.model:
-                return row.model
+        """Return the inspector model, omitting an inferred roster provider."""
+        provider, model, roster_only = self._focused_agent_identity()
+        if roster_only:
+            return model
         return "/".join(part for part in (provider, model) if part)
 
     def compose(self) -> ComposeResult:
@@ -2555,6 +2577,12 @@ class TalariaApp(App[None]):
                     else "attach"
                 )
                 self._sweep_connection_soon(named, trigger)
+
+        if focused:
+            # A reconnect can advance to the next dial state before the 50ms
+            # coalescing tick. Hand this observed state to the existing bar now
+            # so its non-colour form is not skipped between timer frames.
+            self._refresh_bottom_status_bar()
 
     def note_reconnect(self, epoch: int) -> None:
         """Mark a successful reconnect in the transcript, once (F6).
@@ -6589,9 +6617,6 @@ class TalariaApp(App[None]):
             self._notice("")
 
     # ── scroll anchoring ─────────────────────────────────────────────────
-
-    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self.transcript.hold_anchor()
 
     def on_paste(self, event: events.Paste) -> None:
         """Paste is typing's bigger sibling (KTD2, R5').

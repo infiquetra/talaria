@@ -10,6 +10,7 @@ from types import ModuleType
 
 import pytest
 
+import talaria.config
 import talaria.status
 import talaria.themes
 import talaria.transport
@@ -19,32 +20,52 @@ from tests.domain.test_boundary import (
     _package_module_names,
 )
 
-_FRAMEWORK_FREE_PACKAGES: tuple[tuple[ModuleType, tuple[str, ...]], ...] = (
-    (talaria.themes, ("talaria.themes",)),
+
+def _package_modules(package: ModuleType) -> tuple[str, ...]:
+    package_file = package.__file__
+    assert package_file is not None, f"{package.__name__} has no filesystem package root"
+    return tuple(_package_module_names(package.__name__, Path(package_file).parent))
+
+
+_FRAMEWORK_FREE_IMPORTS: tuple[
+    tuple[str, tuple[str, ...], tuple[str, ...]], ...
+] = (
+    ("themes", _package_modules(talaria.themes), ("talaria.themes",)),
     (
-        talaria.status,
+        "status",
+        _package_modules(talaria.status),
         ("talaria.status", "talaria.domain", "talaria.recorder"),
     ),
     (
-        talaria.transport,
+        "transport",
+        _package_modules(talaria.transport),
         ("talaria.transport", "talaria.domain", "talaria.recorder"),
+    ),
+    (
+        "config",
+        ("talaria.config",),
+        (
+            "talaria.config",
+            "talaria.status",
+            "talaria.themes",
+            "talaria.domain",
+            "talaria.recorder",
+        ),
     ),
 )
 
 
 @pytest.mark.parametrize(
-    ("package", "allowed_trees"),
-    _FRAMEWORK_FREE_PACKAGES,
-    ids=("themes", "status", "transport"),
+    ("scope", "module_names", "allowed_trees"),
+    _FRAMEWORK_FREE_IMPORTS,
+    ids=tuple(scope for scope, _, _ in _FRAMEWORK_FREE_IMPORTS),
 )
-def test_framework_free_package_imports_only_its_allowed_dependencies(
-    package: ModuleType,
+def test_framework_free_modules_import_only_their_allowed_dependencies(
+    scope: str,
+    module_names: tuple[str, ...],
     allowed_trees: tuple[str, ...],
 ) -> None:
-    package_file = package.__file__
-    assert package_file is not None, f"{package.__name__} has no filesystem package root"
-    module_names = _package_module_names(package.__name__, Path(package_file).parent)
-    assert module_names, f"the import sweep found no modules under {package.__name__}"
+    assert module_names, f"the import sweep found no modules under {scope}"
 
     payload = json.dumps(
         [module_names, list(_ALLOWED_INTERNAL_EXACT), list(allowed_trees)]
@@ -56,16 +77,16 @@ def test_framework_free_package_imports_only_its_allowed_dependencies(
         check=False,
     )
     assert completed.returncode == 0, (
-        f"importing {package.__name__} failed outright:\n"
+        f"importing {scope} failed outright:\n"
         f"{completed.stdout}\n{completed.stderr}"
     )
 
     observed = json.loads(completed.stdout)
     assert not observed["third_party"], (
-        f"{package.__name__} pulled in a third-party framework package: "
+        f"{scope} pulled in a third-party framework package: "
         f"{observed['third_party']}"
     )
     assert not observed["internal"], (
-        f"{package.__name__} pulled in a Talaria package outside "
+        f"{scope} pulled in a Talaria package outside "
         f"{list(allowed_trees)}: {observed['internal']}"
     )

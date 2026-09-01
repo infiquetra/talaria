@@ -1981,6 +1981,15 @@ class TranscriptPane(VerticalScroll):
         self._stable_anchor = self.capture_reading_anchor()
         self.call_after_refresh(self.capture_reading_anchor)
 
+    def on_mouse_scroll_up(self, _event: events.MouseScrollUp) -> None:
+        """Unpin where Textual consumes the wheel event: on this scroll pane."""
+        self.hold_anchor()
+
+    def on_key(self, event: events.Key) -> None:
+        """Unpin every vertical reading key consumed by the focused pane."""
+        if event.key in ("up", "down", "pageup", "pagedown", "home"):
+            self.hold_anchor()
+
     def follow_bottom(self) -> None:
         self.follow = True
         self._stable_anchor = None

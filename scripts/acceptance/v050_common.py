@@ -13,6 +13,8 @@ RELEASE_VERSION = "0.5.0"
 PRIMARY_MODEL_ROUTE = "opencode-go / muse-spark-1.2-contributor"
 FALLBACK_MODEL_ROUTE = "ollama (ollama-cloud) / glm-5.3-flash"
 TESTERS = frozenset({"talaria-t1", "talaria-t2"})
+VERDICTS = frozenset({"pass", "fail", "blocked", "reserved"})
+TERMINAL_VERDICTS = frozenset({"pass", "reserved"})
 FALLBACK_REASON_CODES = frozenset(
     {
         "primary-unavailable",
@@ -25,6 +27,20 @@ FALLBACK_REASON_CODES = frozenset(
 
 class HarnessError(RuntimeError):
     """A contract violation that makes acceptance evidence untrustworthy."""
+
+
+def require_object(value: Any, *, field: str) -> dict[str, Any]:
+    """Return an object or raise one consistent harness contract error."""
+    if not isinstance(value, dict):
+        raise HarnessError(f"{field} must be an object")
+    return value
+
+
+def require_string(value: Any, *, field: str) -> str:
+    """Return a non-empty string or raise one consistent contract error."""
+    if not isinstance(value, str) or not value.strip():
+        raise HarnessError(f"{field} must be a non-empty string")
+    return value
 
 
 def sha256_file(path: Path) -> str:
@@ -96,6 +112,7 @@ def isolated_environment(
     columns: int,
     venv_bin: Path | None = None,
     monochrome: bool = False,
+    terminal_program: str = "v050-pty-driver",
 ) -> dict[str, str]:
     """Build the child environment without source or operator Talaria overrides."""
     if not term.strip():
@@ -105,11 +122,24 @@ def isolated_environment(
 
     environment = dict(os.environ)
     for name in tuple(environment):
-        if name.startswith("TALARIA_"):
+        if name.startswith(("TALARIA_", "TEXTUAL_")):
             environment.pop(name)
     environment.pop("PYTHONHOME", None)
     environment.pop("PYTHONPATH", None)
-    for name in ("NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "COLORTERM"):
+    for name in (
+        "NO_COLOR",
+        "FORCE_COLOR",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+        "COLORTERM",
+        "COLUMNS",
+        "ESCDELAY",
+        "LC_TERMINAL",
+        "LINES",
+        "ROWS",
+        "TERMINFO",
+        "TERM_PROGRAM",
+    ):
         environment.pop(name, None)
     # This legacy Hermes value must never become an accidental live credential
     # source for an acceptance process.
@@ -117,8 +147,7 @@ def isolated_environment(
     environment.update(
         TALARIA_CONFIG_DIR=str(config_dir),
         TERM=term,
-        LINES=str(rows),
-        COLUMNS=str(columns),
+        TERM_PROGRAM=terminal_program,
     )
     if monochrome:
         environment["NO_COLOR"] = "1"

@@ -903,6 +903,65 @@ So the operator types a password into a focused control that draws nothing, with
 
 ## P2
 
+### Validate `environment.allowlist` before constructing the status runner
+
+**Author.** Talaria v0.5.0 code review finding F-6, measured at reviewed revision `122bd918`,
+2026-08-31.
+**Priority.** P2 — the malformed cases either stop launch or silently produce an ineffective
+default-deny allowlist; they do not widen the status child's environment.
+**Effort.** Small.
+
+**What.** The configuration normalization pass at `talaria/config.py:267-317` covers only the
+`theme`, `ui`, and `status` tables. Values under `environment`, `composer`, and `profiles` therefore
+reach their launch consumers unvalidated. At the reviewed revision, `talaria/cli.py:291-295` reads
+`environment.allowlist` and iterates it while constructing the status runner. The measured results
+with a valid `status.command` are:
+
+- `environment.allowlist = 42` raises `TypeError: 'int' object is not iterable` at launch;
+- `environment.allowlist = true` raises `TypeError: 'bool' object is not iterable` at launch; and
+- `environment.allowlist = "FOO"` does not raise or produce a notice. It is iterated character by
+  character and the runner receives `('F', 'O', 'O')`.
+
+The string result is garbage rather than an expansion: those single-character names match no
+ordinary environment variable, so the status command receives an effectively empty allowlist. In
+this release, [configuration.md](../configuration.md) was narrowed to describe these outcomes rather
+than promising that every optional value receives a visible normalized fallback.
+
+**Why it is not being fixed here.** `environment.allowlist` predates v0.5.0 and no approved child in
+issues #104 through #111 owns its validation. Changing the launch consumer during the documentation
+repair would expand the release scope. The code and its default-deny direction are unchanged.
+
+**Revisit when.** Whichever comes first: the next release that changes configuration reads in
+`talaria/cli.py`, or a second unvalidated table causes an operator-visible launch failure. That work
+must cover the integer, Boolean, and non-raising string cases together.
+
+### Extract slash-command dispatch from `TalariaApp` before the next parallel UI release
+
+**Author.** Talaria v0.5.0 code review finding F-24, measured at reviewed revision `122bd918`,
+2026-08-31.
+**Priority.** P2 — the current class is a coordination bottleneck, not a newly observed behavior or
+safety defect.
+**Effort.** Medium.
+
+**What.** At the reviewed revision, `TalariaApp` begins at `talaria/ui/app.py:1117` and the file ends
+at line 6651: roughly 5,534 lines and 181 methods in one class. All six feature children edited this
+shared file, so the run could not parallelize those edits structurally.
+
+**What this release changed.** Against the 6,350-line v0.4.0 base, the file grew by 367 lines and
+lost 66, or about 4.7 per cent net. That did not materially worsen the underlying concentration: the
+substance of the six features lives in new `inspector.py`, `diff_viewer.py`, `status_bar.py`,
+`themes/`, and `domain/changes.py` modules, and those seams held.
+
+**Mitigation, not repair.** The shared-surface lease serialized each child's `app.py` edit and was
+the mitigation chosen for v0.5.0. The class size itself remains unaddressed; the lease works only
+while a coordinator enforces it. The candidate extraction is the slash-command dispatch table,
+which should move into its own module because issues #106 through #109 each added a verb and the
+last two releases both grew that axis.
+
+**Revisit when.** Before the next release that plans three or more parallel lanes against
+`talaria/ui/app.py`. Make the extraction a separately reviewed refactor before feature lanes need
+the shared surface again.
+
 ### The shipped block-markdown gate misses its steady-state table-apply ceiling
 
 **Author.** Talaria v0.5.0 candidate gate comparison, 2026-08-31.

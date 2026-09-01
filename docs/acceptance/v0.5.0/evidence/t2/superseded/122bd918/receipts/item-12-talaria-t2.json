@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
+    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+  },
+  "checklist_item": 12,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-12.ansi",
+    "capture_sha256": "178de7f217f631b9195d8994a53fc63afdf3356719f0121958a0058384ae6e4d",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-12-pty.json",
+    "pty_result_sha256": "2fe92f8b09b845121c416ddc905695eb90bc70bf423d7b1eb439ebc60184498c",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-12.png",
+    "screenshot_sha256": "4b96152a266e38216cbe6f8804b0721f0bf747293ef6db193901105f0ff54ad7"
+  },
+  "observations": [
+    "The final row shows cwd, git_branch, agent_model, context, task_progress, connection, and version in order with six separators and no wrap."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-08-31T14:40:21+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-acceptance-corpus"
+  },
+  "terminal": {
+    "columns": 144,
+    "program": "Headless POSIX pseudo-terminal",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "All status segments",
+  "verdict": "pass"
+}

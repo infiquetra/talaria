@@ -432,7 +432,7 @@ Docked inspector at 132 columns with its 36-column default width:
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ~~~
 
-The inspector boundary uses talaria.inspector.border; its fill uses talaria.inspector.background. Headings and the selected file use talaria.inspector.heading plus the fixed > focus gutter. Empty sections render a literal [none] sentence rather than disappearing.
+The inspector boundary uses talaria.inspector.border; its fill uses talaria.inspector.background. Headings and the selected file use talaria.inspector.heading plus the fixed > focus gutter. Empty sections render the literal [none available from this session] sentence rather than disappearing, wrapping as needed so the complete sentence remains visible at every inspector width.
 
 ### Diff viewer, side-by-side
 
@@ -494,8 +494,8 @@ All widths are terminal cell columns reported by Textual after the resize event.
 | 64–79 | Also drop git_branch | Auto-collapsed; overlay available | Forced unified |
 | 48–63 | Also drop context | Auto-collapsed; overlay available | Forced unified |
 | 32–47 | Also drop agent_model | Auto-collapsed; overlay available | Forced unified |
-| 20–31 | Also drop task_progress; connection remains | Auto-collapsed; overlay is terminal width minus two | Forced unified |
-| Fewer than 20 | Minimum connection form, hard-clipped only as a last resort | Full-terminal overlay only | Forced unified |
+| 20–31 | Keep task_progress and connection compact while they fit | Auto-collapsed; overlay is terminal width minus two | Forced unified |
+| Fewer than 20 | Drop task_progress; minimum connection form, hard-clipped only as a last resort | Full-terminal overlay only | Forced unified |
 
 ### Status-bar truncation and drop contract
 
@@ -522,6 +522,8 @@ Within a width band, the algorithm is deterministic:
 5. Only after every lower-priority segment is at minimum may the lowest-priority segment drop. Repeat until the row fits.
 6. Remove separators adjacent to a dropped segment. Render exactly one row with text-wrap disabled and ellipsis as the final terminal-capability safeguard.
 
+In the 20–31-column band, `task_progress` and `connection` start in compact form. The normal overflow loop shortens `task_progress` only when their actual content does not fit; below 20 columns the breakpoint drops it and keeps the minimum connection form.
+
 At default caps, seven full forms plus six one-cell separators fit in 144 columns. The optional status-bar integer keys are cwd_max_columns (default 24, valid 8–48), git_branch_max_columns (default 18, valid 8–40), and agent_model_max_columns (default 24, valid 10–48). Invalid values visibly fall back to their defaults. Layout thresholds remain fixed even when caps are customized.
 
 An unknown segment name is omitted and reported in a startup notice. A non-list segments value falls back to the complete default list with a notice. If no configured name is valid, connection is rendered alone and the notice names the fallback. Existing status.interval_seconds accepts 1–3600 seconds; an invalid value visibly falls back to 5 seconds. A malformed status.command visibly reports the configuration problem in StatusRegion instead of silently disabling it.
@@ -535,7 +537,7 @@ An unknown segment name is omitted and reported in a startup notice. A non-list 
 - Below 120, toggling opens a right overlay and does not reflow or resize the transcript. At 32–119 columns the overlay width is min(saved width, terminal width minus 2). Below 32 it occupies the terminal width. Escape closes it and restores focus to the previously focused widget.
 - An overlay carries [overlay] in its existing border title. It does not add a notice row.
 - Opening a diff collapses a docked inspector for the lifetime of the diff screen and restores it on close. The inspector overlay may still be invoked from the diff's file-list command.
-- Tasks, Context, Changed files, and Operation details always keep their heading. Missing data reads [none available from this session]. No section makes a gateway request, scans the filesystem, or starts a poll.
+- Tasks, Context, Changed files, and Operation details always keep their heading. Missing data reads [none available from this session]. The empty-state row wraps to two rows at widths 28 and 36 and fits on one row at width 48, so the complete sentence is always reachable. No section makes a gateway request, scans the filesystem, or starts a poll.
 
 ### Diff behavior
 
@@ -744,7 +746,7 @@ AgentRows currently recognizes exactly these seven normalized states. A row may 
 | Status command failed | [x] status followed by exit/timeout/config reason |
 | Status output truncated | [!] status truncated followed by the existing row-limit marker |
 
-In the bottom bar's task_progress segment, the literal !N queue-attention marker uses talaria.status.attention; the glyph and count remain present when color is disabled. The task_progress segment replaces only NeedsYouBar's one-line summary. /needs continues to show the current queue's full, literal detail. A narrow breakpoint may drop task_progress, but opening /needs must still expose these non-color forms.
+In the bottom bar's task_progress segment, the literal !N queue-attention marker uses talaria.status.attention; the glyph and count remain present when color is disabled. The task_progress segment replaces only NeedsYouBar's one-line summary. /needs continues to show the current queue's full, literal detail. Below 20 columns or on real overflow task_progress may drop, but opening /needs must still expose these non-color forms.
 
 ### Selection and transcript identity
 
@@ -836,7 +838,7 @@ Each owning tester records terminal program, TERM value, terminal dimensions, in
 14. [ ] **[talaria-t2] Status responsive sequence.** Resize through 144, 143, 120, 119, 112, 111, 96, 95, 80, 79, 64, 63, 48, 47, 32, 31, 20, and 19 columns. Pass: forms compact, then segments drop in the specified bands/order; connection remains; the bar never wraps or changes height.
 15. [ ] **[shared] Status failure visibility.** Start with malformed status.command, then invalid interval and bar-width integers. Pass: each problem produces a visible startup/StatusRegion notice and the documented default is used; the shell-command status contract still renders literal bounded output.
 16. [ ] **[talaria-t2] Inspector dock and resize.** At 120 columns or wider toggle the inspector, focus it, and resize beyond each bound. Pass: it docks right, changes four columns per action, clamps at 28 and 48, and never changes data by resizing.
-17. [ ] **[talaria-t2] Inspector content and empty states.** Exercise tasks, context, changed files, and operation details with seeded/live state, then a session lacking each value. Pass: all four headings remain, existing state renders accurately, and [none available from this session] appears honestly without a new request or filesystem scan.
+17. [ ] **[talaria-t2] Inspector content and empty states.** Exercise tasks, context, changed files, and operation details with seeded/live state, then a session lacking each value. Pass: all four headings remain, existing state renders accurately, and the complete [none available from this session] sentence appears at inspector widths 28, 36, and 48 without a new request or filesystem scan.
 18. [ ] **[talaria-t2] Inspector responsive state.** With inspector open, resize 120→119→120; also manually close and repeat. Pass: auto-collapse/restore follows the saved manual preference, the narrow toggle opens an overlay without transcript reflow, and geometry resets after process restart.
 19. [ ] **[talaria-t2] Side-by-side diff.** Open a changed file at 112 columns or wider. Pass: two aligned panes show base/working line numbers, syntax colors, +/-, hunk headers, intraline spans, file/hunk position, read only, and the inspector is temporarily collapsed.
 20. [ ] **[talaria-t2] Unified fallback.** Resize the same diff 112→111→112 and press u/s. Pass: it becomes unified at 111 with selection and scroll anchor preserved, returns to side-by-side at 112 when preferred, and the below-threshold refusal reuses the header row.

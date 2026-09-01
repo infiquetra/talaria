@@ -1,0 +1,53 @@
+{
+  "artifact": {
+    "commit": "17ce4eda8e82a18b5d47766c0c279aa9751dce9f",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "e6aba3508aff5fd148f2ed99f08f7bd2db39b7532484943060944d0561e1606a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
+    "installed_files_sha256": "6be60d3c7e4f23d856c4e3b9a3dd0f941dc596fd38f13a37f6dfd55473a5de41",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "0ed001392dabbc52071e8b795b31a68adb988c9d1639146da0a958764f2c31eb"
+  },
+  "checklist_item": 24,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-24-live-r3.ansi",
+    "capture_sha256": "6da31f6649f052b0b4f32a1066a7e5c9354c6797c8af00c0517c1c9e32e8ab69",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-24-live-r3-pty.json",
+    "pty_result_sha256": "dee2ca82a0b45afb8fb4664f3f6326ec449e65d46a1b027198982fd46794bcd4",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-24-live-r3.png",
+    "screenshot_sha256": "f386f78508a0d74c2c73458603279fffb31f834b9cac72f2dee7a5bf94ec16d7"
+  },
+  "observations": [
+    "A real primary-model turn created an actual Hermes approval row, shown as [!] approval waiting, without a possibly-duplicate marker; the harmless command was not approved.",
+    "A clean relaunch found no lingering approval row, while deterministic replay covered queued, running, completed, error, failed, interrupted, timeout, waiting, and blocked states but cannot supply the admin-polled keyless shape.",
+    "Blocked: this Hermes gateway assigns every approval a request_id, so the unanchored or keyless condition that sets possibly_duplicate is unreachable through the available live protocol; authoring that frame would be simulated acceptance."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T19:07:33+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "live",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": "opencode-go / muse-spark-1.2-contributor",
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "used"
+    },
+    "profile": "default on isolated dashboard 8790; approval reachability probe"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "acceptance-pty (pyte-rendered)",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Agent and queue non-color states",
+  "verdict": "blocked"
+}

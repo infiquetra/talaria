@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 
 from talaria.config import load_config
 from talaria.themes import THEME_TOKENS
+from talaria.themes.storage import load_user_theme_spec
 from talaria.ui.theme import serialize_user_theme, theme_registry_for_config
 from talaria.ui.theme_import import (
     ALWAYS_FALLBACK_TOKENS,
@@ -222,31 +224,31 @@ def test_unknown_stored_theme_version_is_skipped_with_a_notice(tmp_path: Path) -
     assert "skipped" in notices[0]
 
 
-def test_stored_theme_schema_accepts_the_importers_canonical_output(
+def test_stored_theme_schema_and_loader_share_version_compatibility(
     tmp_path: Path,
 ) -> None:
     report = import_vscode_theme(SAMPLE, config_dir=tmp_path)
     document = json.loads(report.target_path.read_text(encoding="utf-8"))
     schema_path = Path(__file__).parents[2] / "docs/formats/stored-theme.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
 
-    assert schema["type"] == "object"
-    assert schema["additionalProperties"] is False
-    assert set(document) == set(schema["required"])
-    assert document["schema_version"] == schema["properties"]["schema_version"][
-        "const"
-    ]
-    assert isinstance(document["dark"], bool)
-    assert isinstance(document["name"], str) and document["name"]
-    assert re.fullmatch(schema["properties"]["slug"]["pattern"], document["slug"])
-    token_schema = schema["properties"]["tokens"]
-    assert set(document["tokens"]) == set(token_schema["propertyNames"]["enum"])
-    assert len(document["tokens"]) == token_schema["minProperties"]
-    assert len(document["tokens"]) == token_schema["maxProperties"]
-    assert all(
-        re.fullmatch(token_schema["additionalProperties"]["pattern"], value)
-        for value in document["tokens"].values()
+    validator.validate(document)
+
+    legacy = dict(document)
+    legacy.pop("schema_version")
+    validator.validate(legacy)
+    report.target_path.write_text(
+        json.dumps(legacy, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
+    assert load_user_theme_spec(report.target_path).slug == report.theme.slug
+
+    wrong_version = dict(legacy)
+    wrong_version["schema_version"] = "talaria-theme-v999"
+    with pytest.raises(ValidationError):
+        validator.validate(wrong_version)
 
 
 def test_imported_theme_survives_restart_configuration_validation(
