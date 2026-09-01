@@ -4,6 +4,27 @@
 
 ## 2026-09-01
 
+### Receipts that bind to a harness commit forbid squash-merging the release branch
+
+**Evidence.** Every v0.5.0 acceptance receipt records a `harness_commit`, and
+`_harness_commit_matches` at `scripts/acceptance/v050_receipt.py:601` accepts it only when it is the
+current head or an ancestor of it whose `scripts/acceptance` bytes are identical.
+`scripts/acceptance/test_v050_harness.py::test_committed_acceptance_receipts_match_current_harness`
+runs that check against the real committed manifest. Both landing shapes were simulated against
+`origin/main` before choosing one: `git merge --squash` produced **42 errors**, all reading `receipt
+harness is not an ancestor of the current harness`; a true merge commit produced **0**.
+
+**Mechanism.** A squash merge writes a new commit whose only parent is the previous `main`, so every
+commit on the release branch — including the one the receipts name as their harness — leaves the
+first-parent history entirely. The receipts are then unverifiable on `main` even though not one byte
+of evidence, product code or harness changed. Nothing on the branch can detect this, because the
+branch is the one place where the ancestry still holds; the failure appears only after the merge, on
+the branch that matters.
+
+**Generalizable rule.** When committed evidence names a commit as its provenance, the merge must
+preserve that commit's ancestry — merge or rebase, never squash — and the landing shape is verified
+by simulating it against the target branch before merging, not inferred from repository convention.
+
 ### A shared atomic writer needs a per-caller symlink policy
 
 **Evidence.** Commit `0916045` repaired a write-through escape in the Visual Studio Code theme
