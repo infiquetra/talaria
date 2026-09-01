@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "replay",
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/fixtures/acceptance-populated.jsonl"
+  ],
+  "capture": {
+    "bytes": 140082,
+    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/raw/item-18-overlay.ansi",
+    "sha256": "f7fbf93dfaa6a283f26e7ac3d5024287052f6a19150239bec2cfbfa2942cc7bd"
+  },
+  "columns": 119,
+  "duration_seconds": 8.310749,
+  "exit_code": 0,
+  "expected_literals": [],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "POSIX pseudo-terminal capture",
+  "tester": "talaria-t2",
+  "timed_out": false
+}

@@ -1,0 +1,76 @@
+Imported partial-fallback as user theme partial-fallback: 2 source tokens, 56 fallbacks, 19 warnings.
+warning: root.include is unsupported; external theme files are not read
+warning: root.semanticHighlighting is unsupported; semantic-token theming is not imported
+warning: root.semanticTokenColors is unsupported; semantic-token theming is not imported
+warning: root.productIconTheme is unsupported
+warning: root.unknownRoot is unsupported
+warning: root.type is invalid; expected light, dark, or hc and used Refined Default
+warning: colors.input.background is invalid; expected #RGB, #RGBA, #RRGGBB, or #RRGGBBAA
+warning: colors.editorCursor.foreground is unsupported
+warning: colors.terminal.ansiBlack is unsupported
+warning: tokenColors[0] is an unsupported unscoped default
+warning: tokenColors[1].scope selector 'source.python keyword' is unsupported
+warning: tokenColors[2].settings.background is unsupported and was ignored
+warning: tokenColors[2].settings.fontStyle is unsupported and was ignored
+warning: tokenColors[2].settings.strikethrough is unsupported
+warning: tokenColors[2].scope selector 'markup.bold' is unsupported
+warning: tokenColors[3].scope[1] is invalid
+warning: tokenColors[4].name is unsupported
+warning: tokenColors[4].scope selector 'keyword*' is unsupported
+warning: tokenColors[5] is invalid; expected an object
+fallback: talaria.surface <- Refined Default #FFFFFF
+fallback: talaria.panel <- Refined Default #EAEFF4
+fallback: talaria.text <- Refined Default #1F2328
+fallback: talaria.text.muted <- Refined Default #57606A
+fallback: talaria.primary <- Refined Default #0969DA
+fallback: talaria.secondary <- Refined Default #6F42C1
+fallback: talaria.accent <- Refined Default #087F5B
+fallback: talaria.success <- Refined Default #1A7F37
+fallback: talaria.warning <- Refined Default #8A5A00
+fallback: talaria.error <- Refined Default #CF222E
+fallback: talaria.border <- Refined Default #6E7781
+fallback: talaria.border.muted <- Refined Default #7D8590
+fallback: talaria.focus <- Refined Default #0969DA
+fallback: talaria.selection.background <- Refined Default #0969DA
+fallback: talaria.selection.text <- Refined Default #FFFFFF
+fallback: talaria.status.background <- Refined Default #24292F
+fallback: talaria.status.text <- Refined Default #F6F8FA
+fallback: talaria.status.muted <- Refined Default #C6CDD5
+fallback: talaria.status.separator <- Refined Default #8C959F
+fallback: talaria.status.success <- Refined Default #3FB950
+fallback: talaria.status.warning <- Refined Default #D29922
+fallback: talaria.status.error <- Refined Default #FF7B72
+fallback: talaria.status.attention <- Refined Default #58A6FF
+fallback: talaria.inspector.background <- Refined Default #FFFFFF
+fallback: talaria.inspector.border <- Refined Default #6E7781
+fallback: talaria.inspector.heading <- Refined Default #0969DA
+fallback: talaria.transcript.operator <- Refined Default #0969DA
+fallback: talaria.transcript.operator.background <- Refined Default #EAF2FC
+fallback: talaria.transcript.assistant <- Refined Default #1A7F37
+fallback: talaria.transcript.assistant.background <- Refined Default #EAF7ED
+fallback: talaria.transcript.reasoning <- Refined Default #6F42C1
+fallback: talaria.transcript.reasoning.background <- Refined Default #F1EBFC
+fallback: talaria.transcript.activity <- Refined Default #0B7285
+fallback: talaria.transcript.activity.background <- Refined Default #E7F5F7
+fallback: talaria.transcript.session <- Refined Default #57606A
+fallback: talaria.transcript.session.background <- Refined Default #EEF1F4
+fallback: talaria.transcript.fault <- Refined Default #CF222E
+fallback: talaria.transcript.fault.background <- Refined Default #FDEDEF
+fallback: talaria.diff.context <- Refined Default #1F2328
+fallback: talaria.diff.line-number <- Refined Default #57606A
+fallback: talaria.diff.added <- Refined Default #116329
+fallback: talaria.diff.added.background <- Refined Default #E6F4EA
+fallback: talaria.diff.removed <- Refined Default #A40E26
+fallback: talaria.diff.removed.background <- Refined Default #FCE8E6
+fallback: talaria.diff.hunk <- Refined Default #0550AE
+fallback: talaria.diff.hunk.background <- Refined Default #EAF2FC
+fallback: talaria.diff.intraline-added.background <- Refined Default #BFE3C8
+fallback: talaria.diff.intraline-removed.background <- Refined Default #F4C7C3
+fallback: talaria.syntax.keyword <- Refined Default #6F42C1
+fallback: talaria.syntax.string <- Refined Default #116329
+fallback: talaria.syntax.number <- Refined Default #953800
+fallback: talaria.syntax.function <- Refined Default #0550AE
+fallback: talaria.syntax.type <- Refined Default #0B7285
+fallback: talaria.syntax.variable <- Refined Default #1F2328
+fallback: talaria.syntax.operator <- Refined Default #6F42C1
+fallback: talaria.syntax.constant <- Refined Default #A40E4C

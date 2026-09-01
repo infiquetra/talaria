@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "17ce4eda8e82a18b5d47766c0c279aa9751dce9f",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/bin/talaria",
+    "executable_sha256": "e6aba3508aff5fd148f2ed99f08f7bd2db39b7532484943060944d0561e1606a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "70fcb039c3adb1934a7e328a5e15807709cd4407f16ff3303c9599a3df59c06b",
+    "installed_files_sha256": "6be60d3c7e4f23d856c4e3b9a3dd0f941dc596fd38f13a37f6dfd55473a5de41",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "0ed001392dabbc52071e8b795b31a68adb988c9d1639146da0a958764f2c31eb"
+  },
+  "checklist_item": 23,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-reconnect-r3.ansi",
+    "capture_sha256": "380cb0ac33cab4eb64977b8c0ed122f4443ef2b22e230eab78a6a383bc7307d7",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-reconnect-r3-pty.json",
+    "pty_result_sha256": "09fb28541ef9b0270dfdbf1b76f9184ac57adccb92a77480ec96a59119bf84e8",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-reconnect-r3.png",
+    "screenshot_sha256": "bdeb3e83c4609b5f6e85927727cd1c4fed1c5e957112fbd5f9336e13675193f6"
+  },
+  "observations": [
+    "Separate real drives captured [..] wait during initial connection, [ok] up on a healthy approved-primary session, [x] down after the isolated dashboard stopped, and [!] auth with a stale scratch credential.",
+    "Failure: after a healthy connection was deliberately lost and Talaria displayed 'connection lost \u2014 reconnecting\u2026', the status-bar [~] reconnecting form never appeared; it stayed [x] down through the genuine reconnect cycle."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T19:07:32+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "live",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": "opencode-go / muse-spark-1.2-contributor",
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "used"
+    },
+    "profile": "default on isolated dashboard 8790; controlled reconnect"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; NO_COLOR; isolated Hermes dashboard 8790",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Connection non-color states",
+  "verdict": "fail"
+}
