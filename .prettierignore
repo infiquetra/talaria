@@ -15,3 +15,6 @@ docs/
 # Python tooling artifacts. ruff owns formatting for the Python tree.
 .venv
 __pycache__
+
+# This fixture must remain invalid JSON so the importer rejection stays real.
+tests/fixtures/vscode-themes/malformed.json

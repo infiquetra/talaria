@@ -277,14 +277,14 @@ parity proof had stopped running.
 
 ### Settled decisions
 
-| ADR                                                                                          | Decision                                                                    |
-| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)           | Talaria is a standalone process, not a TUI bundle Hermes launches           |
-| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | The domain core is framework-independent; the terminal UI is a projection   |
-| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)   | Talaria re-encodes the Hermes terminal UI's behavior rather than porting it |
-| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)               | Talaria is a Python client; the terminal framework is decided by a gate     |
-| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)   | Textual is the accepted presentation layer                                 |
-| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) | Block rendering is bounded by work and rendered height                 |
+| ADR                                                                                               | Decision                                                                    |
+| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)                | Talaria is a standalone process, not a TUI bundle Hermes launches           |
+| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)      | The domain core is framework-independent; the terminal UI is a projection   |
+| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)        | Talaria re-encodes the Hermes terminal UI's behavior rather than porting it |
+| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)                    | Talaria is a Python client; the terminal framework is decided by a gate     |
+| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)        | Textual is the accepted presentation layer                                  |
+| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) | Block rendering is bounded by work and rendered height                      |
 
 ## Contributing
 

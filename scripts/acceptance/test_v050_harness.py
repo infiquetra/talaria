@@ -1458,6 +1458,17 @@ def test_committed_acceptance_evidence_passes_portable_privacy_scan() -> None:
     assert public_evidence_privacy_errors(_REPO_ROOT) == []
 
 
+def test_committed_acceptance_receipts_match_current_harness() -> None:
+    acceptance = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+    errors = verify_run(
+        acceptance / "artifact-manifest.json",
+        evidence_root=acceptance / "evidence",
+        repo_root=_REPO_ROOT,
+    )
+
+    assert errors == []
+
+
 def test_manifest_schema_rejects_non_not_run_status_without_receipts() -> None:
     acceptance_root = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
     schema = json.loads(
