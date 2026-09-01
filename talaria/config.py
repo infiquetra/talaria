@@ -364,17 +364,26 @@ def atomic_replace_bytes(
     """
     target = path.resolve() if follow_symlinks and path.is_symlink() else path
     target.parent.mkdir(parents=True, exist_ok=True)
+    target_stat = os.lstat(target) if os.path.lexists(target) else None
+    replacing_symlink = target_stat is not None and stat.S_ISLNK(target_stat.st_mode)
     existing_mode = (
-        stat.S_IMODE(target.stat().st_mode) if target.exists() else None
+        stat.S_IMODE(target_stat.st_mode)
+        if target_stat is not None and not replacing_symlink
+        else None
     )
+    replacement_mode = existing_mode
+    if replacing_symlink:
+        previous_umask = os.umask(0o777)
+        os.umask(previous_umask)
+        replacement_mode = 0o666 & ~previous_umask
     descriptor, raw_temp = tempfile.mkstemp(
         prefix=f".{target.name}.", dir=target.parent
     )
     temp_path = Path(raw_temp)
     try:
         with os.fdopen(descriptor, "wb") as handle:
-            if existing_mode is not None:
-                os.fchmod(handle.fileno(), existing_mode)
+            if replacement_mode is not None:
+                os.fchmod(handle.fileno(), replacement_mode)
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
@@ -505,7 +514,13 @@ def save_theme(
             )
     else:
         after_bytes = _rewrite_theme_name(before_bytes, name)
-    after = _parse_toml_bytes(path, after_bytes)
+    try:
+        after = _parse_toml_bytes(path, after_bytes)
+    except ConfigError as exc:
+        raise ConfigError(
+            f"Talaria cannot safely rewrite theme.name in this form: {path}; "
+            "no changes were written"
+        ) from exc
     expected = deepcopy(before)
     expected_theme = expected.setdefault("theme", {})
     if not isinstance(expected_theme, dict):  # guarded above; keeps the proof local
