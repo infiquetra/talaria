@@ -252,7 +252,19 @@ def run_theme_import_command(args: argparse.Namespace) -> int:
             config_dir=config_module.global_config_dir(),
         )
     except ThemeImportError as exc:
-        print(defang(f"talaria: theme import failed: {exc}"), file=sys.stderr)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "schema_version": "talaria-theme-import-error-v1",
+                        "kind": exc.kind,
+                        "message": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(defang(f"talaria: theme import failed: {exc}"), file=sys.stderr)
         if exc.kind in {"unreadable", "empty", "malformed", "wrong-root"}:
             return 3
         if exc.kind in {"reserved-slug", "invalid-slug"}:

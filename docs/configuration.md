@@ -76,7 +76,7 @@ defaults.
 | `ui.reduced_motion` | boolean, `false` | Makes nonessential progress frames static and routed scrolling immediate. A non-boolean value visibly falls back to `false`. There is no environment or command-line alias. |
 | `status.command` | optional string, omitted/disabled | Runs as a fixed argument vector without a shell in the existing multi-row `StatusRegion`. An empty, non-string, or unparseable value disables only that region and produces a startup notice. `TALARIA_STATUS_COMMAND` is its environment alias. |
 | `status.interval_seconds` | integer, `5` | Status-command cadence, inclusive range 1–3600. An invalid value visibly falls back to 5. `TALARIA_STATUS_INTERVAL_SECONDS` is its environment alias. |
-| `status.segments` | array of strings, `['cwd', 'git_branch', 'agent_model', 'context', 'task_progress', 'connection', 'version']` | Sets display order and visibility for the true-bottom bar. Known names keep their first occurrence; unknown and duplicate names are skipped with notices. If none remain, only `connection` renders. No environment alias. |
+| `status.segments` | array of strings, `['cwd', 'git_branch', 'agent_model', 'context', 'task_progress', 'connection', 'version']` | Sets display order and visibility for the true-bottom bar. Known names keep their first occurrence; unknown names are identified after controls are rendered visibly, and duplicate names are skipped with notices. If none remain, only `connection` renders. No environment alias. |
 | `status.cwd_max_columns` | integer, `24` | Inclusive range 8–48. Invalid values visibly use 24. No environment alias. |
 | `status.git_branch_max_columns` | integer, `18` | Inclusive range 8–40. Invalid values visibly use 18. No environment alias. |
 | `status.agent_model_max_columns` | integer, `24` | Inclusive range 10–48. Invalid values visibly use 24. No environment alias. |
@@ -97,18 +97,20 @@ documented fallback and adds a visible startup notice.
 
 The other tables reach their launch consumers without that normalization. A malformed `composer`
 threshold remains raw in the loaded configuration, then is silently replaced by its default when
-the paste threshold is built. Blank or non-string `profiles.endpoints` rows are silently dropped. A
-numeric or Boolean `environment.allowlist` raises `TypeError` when an enabled status command is
-built. A string does not raise or produce a notice; it is read character by character, so `"FOO"`
-becomes `('F', 'O', 'O')`, an effectively empty default-deny allowlist rather than the requested
-name. Syntactically invalid TOML is different: it is a launch error that names the offending file.
+the paste threshold is built. Blank or non-string `profiles.endpoints` rows are silently dropped.
+For an enabled status command, `42` and `true` are truthy non-iterables and raise `TypeError`.
+`false`, `0`, `0.0`, and an empty list are treated as no allowlist and produce no notice. A string is
+iterated character by character, so `"FOO"` becomes `('F', 'O', 'O')` with no notice and produces an
+effectively empty default-deny allowlist rather than the requested name. Syntactically invalid TOML
+is different: it is a launch error that names the offending file.
 
 ## What Talaria writes
 
-Talaria writes only the top-level `[theme]` table, and only after `/theme save`, `/theme save user`,
-or `/theme save repository`. The narrow writer changes `theme.name`, leaves every other key and
-comment untouched, verifies the parsed document changed in exactly that way, and replaces the file
-atomically. It is not a general configuration serializer.
+Talaria writes only the top-level `theme.name` setting, and only after `/theme save`, `/theme save
+user`, or `/theme save repository`. The narrow writer supports an existing `[theme]` table, dotted
+key, or inline table; it leaves every other key and comment untouched, verifies the parsed document
+changed in exactly that way, and replaces the file atomically. It is not a general configuration
+serializer.
 
 No command writes the status, user-interface, environment, composer, or profile tables. `/bar`
 toggles a known segment in memory for the running process and never writes. Inspector width and open

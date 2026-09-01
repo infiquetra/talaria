@@ -29,9 +29,9 @@ Persistence is separate:
   explicit form of the same command.
 - `/theme save repository` saves it in `./.talaria/config.toml` for the current repository.
 
-Both commands change only `theme.name` in the top-level `[theme]` table. They preserve every other
-configuration key and comment. See [Configuration](configuration.md) for paths, precedence, and the
-restart contract.
+Both commands change only the top-level `theme.name` setting, whether the existing TOML uses a
+`[theme]` table, a dotted key, or an inline table. They preserve every other configuration key and
+comment. See [Configuration](configuration.md) for paths, precedence, and the restart contract.
 
 The four theme scopes resolve in this order, from lowest to highest precedence:
 

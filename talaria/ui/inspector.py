@@ -162,12 +162,16 @@ class Inspector(VerticalScroll):
         height: auto;
     }
     Inspector .inspector--task,
-    Inspector .inspector--file,
-    Inspector .inspector--empty {
+    Inspector .inspector--file {
         width: 1fr;
         height: 1;
         text-wrap: nowrap;
         text-overflow: ellipsis;
+    }
+    Inspector .inspector--empty {
+        width: 1fr;
+        height: auto;
+        text-wrap: wrap;
     }
     Inspector .inspector--task:focus,
     Inspector .inspector--file:focus,
@@ -317,9 +321,11 @@ class Inspector(VerticalScroll):
         self._terminal_width = width
         self.auto_collapsed = width < INSPECTOR_DOCK_BREAKPOINT
         if self.auto_collapsed and not was_auto_collapsed:
-            self.overlay_open = False
+            if self.overlay_open:
+                self._close_overlay(restore_focus=True)
         elif not self.auto_collapsed:
-            self.overlay_open = False
+            if self.overlay_open:
+                self._close_overlay(restore_focus=True)
         self._sync_geometry()
 
     def toggle(self) -> None:
