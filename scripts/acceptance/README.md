@@ -84,11 +84,11 @@ each event has exactly one action:
 ```json
 {
   "events": [
-    {"at_seconds": 1.0, "text": "/theme"},
-    {"at_seconds": 1.1, "key": "ENTER"},
-    {"at_seconds": 2.0, "resize": {"rows": 36, "columns": 119}},
-    {"at_seconds": 3.0, "key": "ESCAPE"},
-    {"at_seconds": 4.0, "key": "CTRL_Q"}
+    { "at_seconds": 1.0, "text": "/theme" },
+    { "at_seconds": 1.1, "key": "ENTER" },
+    { "at_seconds": 2.0, "resize": { "rows": 36, "columns": 119 } },
+    { "at_seconds": 3.0, "key": "ESCAPE" },
+    { "at_seconds": 4.0, "key": "CTRL_Q" }
   ]
 }
 ```
