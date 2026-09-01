@@ -6,8 +6,10 @@ import ast
 import builtins
 import html
 import inspect
+import io
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -52,7 +54,16 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "diffs"
 def _forbid_mutation_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make any runtime write, subprocess, or operator dispatch fail loudly."""
     real_open = builtins.open
+    real_io_open = io.open
     real_os_open = os.open
+    real_remove = os.remove
+    real_unlink = os.unlink
+    real_rename = os.rename
+    real_replace = os.replace
+    real_mkdir = os.mkdir
+    real_makedirs = os.makedirs
+    real_rmdir = os.rmdir
+    real_rmtree = shutil.rmtree
     real_popen = subprocess.Popen
     real_dispatch = RecordingDispatcher.call
 
@@ -68,6 +79,12 @@ def _forbid_mutation_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
             raise AssertionError("the read-only diff viewer attempted a filesystem write")
         return real_open(*args, **kwargs)
 
+    def guarded_io_open(*args: Any, **kwargs: Any) -> Any:
+        mode = kwargs.get("mode", args[1] if len(args) > 1 else "r")
+        if viewer_is_calling() and any(marker in str(mode) for marker in "wax+"):
+            raise AssertionError("the read-only diff viewer attempted a filesystem write")
+        return real_io_open(*args, **kwargs)
+
     write_flags = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 
     def guarded_os_open(*args: Any, **kwargs: Any) -> int:
@@ -75,6 +92,16 @@ def _forbid_mutation_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
         if viewer_is_calling() and int(flags) & write_flags:
             raise AssertionError("the read-only diff viewer attempted os.open for writing")
         return real_os_open(*args, **kwargs)
+
+    def guarded_mutation(operation: str, real_operation: Any) -> Any:
+        def guard(*args: Any, **kwargs: Any) -> Any:
+            if viewer_is_calling():
+                raise AssertionError(
+                    f"the read-only diff viewer attempted {operation}"
+                )
+            return real_operation(*args, **kwargs)
+
+        return guard
 
     def guarded_popen(*args: Any, **kwargs: Any) -> Any:
         if viewer_is_calling():
@@ -93,7 +120,20 @@ def _forbid_mutation_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
         return await real_dispatch(dispatcher, method, params, timeout=timeout)
 
     monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(io, "open", guarded_io_open)
     monkeypatch.setattr(os, "open", guarded_os_open)
+    monkeypatch.setattr(os, "remove", guarded_mutation("os.remove", real_remove))
+    monkeypatch.setattr(os, "unlink", guarded_mutation("os.unlink", real_unlink))
+    monkeypatch.setattr(os, "rename", guarded_mutation("os.rename", real_rename))
+    monkeypatch.setattr(os, "replace", guarded_mutation("os.replace", real_replace))
+    monkeypatch.setattr(os, "mkdir", guarded_mutation("os.mkdir", real_mkdir))
+    monkeypatch.setattr(
+        os, "makedirs", guarded_mutation("os.makedirs", real_makedirs)
+    )
+    monkeypatch.setattr(os, "rmdir", guarded_mutation("os.rmdir", real_rmdir))
+    monkeypatch.setattr(
+        shutil, "rmtree", guarded_mutation("shutil.rmtree", real_rmtree)
+    )
     monkeypatch.setattr(subprocess, "Popen", guarded_popen)
     monkeypatch.setattr(RecordingDispatcher, "call", guarded_dispatch)
 
@@ -245,6 +285,54 @@ def segment_colors(segments: list[Segment], text: str) -> set[str | None]:
         for segment in segments
         if text in segment.text
     }
+
+
+@pytest.mark.parametrize("mutation", ["path-write", "remove", "rmtree"])
+@pytest.mark.asyncio
+async def test_rendering_refuses_runtime_filesystem_mutation_capabilities(
+    mutation: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "mutation-target"
+    if mutation == "remove":
+        target.write_text("held", encoding="utf-8")
+    elif mutation == "rmtree":
+        target.mkdir()
+
+    attempted = False
+
+    def attempt_mutation() -> None:
+        nonlocal attempted
+        if attempted:
+            return
+        attempted = True
+        if mutation == "path-write":
+            target.write_text("changed", encoding="utf-8")
+        elif mutation == "remove":
+            os.remove(target)
+        else:
+            shutil.rmtree(target)
+
+    original_format_row = DiffCanvas._format_row
+
+    def mutate_then_format(
+        canvas: DiffCanvas,
+        row_index: int,
+        spans: dict[int, diff_viewer_module._IntralineSpans],
+    ) -> Any:
+        attempt_mutation()
+        return original_format_row(canvas, row_index, spans)
+
+    app = Host(sample_document())
+    async with app.run_test(size=(112, 28)) as pilot:
+        await pilot.pause()
+        diff = viewer(app)
+        monkeypatch.setattr(DiffCanvas, "_format_row", mutate_then_format)
+        diff.canvas._invalidate()
+
+        with pytest.raises(AssertionError, match="read-only diff viewer"):
+            diff.canvas.render_line(0)
 
 
 @pytest.mark.asyncio
