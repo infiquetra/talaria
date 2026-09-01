@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -43,6 +46,34 @@ def test_motion_policy_is_one_immutable_restart_scoped_value() -> None:
     with pytest.raises(AttributeError):
         STANDARD_MOTION.reduced = True  # type: ignore[misc]
     assert MotionPolicy(reduced=True) == REDUCED_MOTION
+
+
+@pytest.mark.parametrize(
+    ("reduced_motion", "framework_level", "expected_level"),
+    ((False, "none", "full"), (True, "full", "none")),
+)
+def test_talaria_motion_setting_is_the_sole_animation_authority(
+    reduced_motion: bool,
+    framework_level: str,
+    expected_level: str,
+) -> None:
+    script = (
+        "from tests.ui.conftest import event, paused_app; "
+        f"app, _ = paused_app([event('gateway.ready', {{}})], reduced_motion={reduced_motion!r}); "
+        "print(app.animation_level)"
+    )
+    env = dict(os.environ)
+    env["TEXTUAL_ANIMATIONS"] = framework_level
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == expected_level
 
 
 @pytest.mark.asyncio
