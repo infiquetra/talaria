@@ -257,6 +257,28 @@ def test_v050_release_notes_describe_the_shipped_upgrade_surfaces() -> None:
         assert required in document
 
 
+def test_v050_release_notes_lead_with_the_limits_a_reader_must_weigh() -> None:
+    """The release body carries its own limits, and carries them before its features."""
+    document = _V050_RELEASE_NOTES_PATH.read_text(encoding="utf-8")
+
+    assert document.index("## Read this part first") < document.index("## Reasons to upgrade")
+    for required in (
+        "No person has driven the interface on Linux",
+        "Checklist item 24",
+        "does not describe this tag",
+        "carried rather than fixed",
+        "steady-state latency check",
+    ):
+        assert required in document
+
+
+def test_v050_release_notes_link_out_absolutely_for_the_published_body() -> None:
+    """This file is published verbatim as the release body, where relative links break."""
+    document = _V050_RELEASE_NOTES_PATH.read_text(encoding="utf-8")
+
+    assert re.search(r"\]\(\.\.?/", document) is None
+
+
 def test_new_reader_guides_do_not_restate_acceptance_ledger_metadata() -> None:
     """Reader guides cannot create another stale acceptance-status narrative."""
     for path in (_INSTALL_GUIDE_PATH, _V050_RELEASE_NOTES_PATH):
