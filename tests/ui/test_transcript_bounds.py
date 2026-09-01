@@ -184,6 +184,50 @@ async def test_end_and_pageup_toggle_the_anchor(stress_frames: list[dict[str, An
         await app.shutdown_sources()
 
 
+@pytest.mark.parametrize("scroll_key", ("up", "down", "pageup", "pagedown", "home"))
+@pytest.mark.asyncio
+async def test_focused_keyboard_scroll_unpins_and_preserves_the_reading_position(
+    stress_frames: list[dict[str, Any]],
+    scroll_key: str,
+) -> None:
+    """Every vertical key consumed by the focused pane must stop following."""
+    app, controls = paused_app(
+        stress_frames,
+        mount_cap=500,
+        reduced_motion=True,
+    )
+    async with app.run_test(size=(100, 20)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        pane.focus()
+        await pilot.pause()
+        assert app.focused is pane
+
+        if scroll_key in ("down", "pagedown"):
+            pane.scroll_to(
+                y=max(1, pane.max_scroll_y // 2),
+                animate=False,
+                immediate=True,
+            )
+        else:
+            pane.follow_bottom()
+        await pilot.pause()
+        assert pane.follow is True
+        before = float(pane.scroll_y)
+
+        await pilot.press(scroll_key)
+        await pilot.pause()
+        assert float(pane.scroll_y) != before, f"{scroll_key} did not move the focused pane"
+        assert pane.follow is False
+        held = float(pane.scroll_y)
+
+        for seq, frame in enumerate(streaming_turn(["later update\n"]), start=20_000):
+            feed(app, frame, seq=seq)
+        await settle(app, pilot)
+        assert float(pane.scroll_y) == held
+        await app.shutdown_sources()
+
+
 @pytest.mark.asyncio
 async def test_f5_and_end_confirm_a_repeat_follow_without_losing_the_anchor() -> None:
     """B3 (AE3): re-following the newest line at the bottom of a paused

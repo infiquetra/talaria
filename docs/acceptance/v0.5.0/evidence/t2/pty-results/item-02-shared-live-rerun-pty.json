@@ -1,12 +1,12 @@
 {
   "argv": [
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "<scratch-root>/venv/bin/talaria",
     "--record",
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/recordings/item-02-shared-live-rerun.jsonl"
+    "<scratch-root>/recordings/item-02-shared-live-rerun.jsonl"
   ],
   "capture": {
     "bytes": 120840,
-    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/raw/item-02-shared-live-rerun.ansi",
+    "path": "<scratch-root>/raw/item-02-shared-live-rerun.ansi",
     "sha256": "91f4f07c33c90bac9b44acf7cb7354838e327199dd21d436abf2b1d4400e0bdd"
   },
   "columns": 160,

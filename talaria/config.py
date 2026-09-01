@@ -115,8 +115,17 @@ _THEME_NAME_RE = re.compile(
     rb"(?m)^[ \t]*(?:name|\"name\"|'name')[ \t]*=[^\r\n]*(?:\r?\n|$)"
 )
 _DOTTED_THEME_NAME_RE = re.compile(
-    rb"(?m)^[ \t]*theme[ \t]*\.[ \t]*(?:name|\"name\"|'name')"
-    rb"[ \t]*=[^\r\n]*(?:\r?\n|$)"
+    rb"(?m)^[ \t]*(?:theme|\"theme\"|'theme')[ \t]*\.[ \t]*"
+    rb"(?:name|\"name\"|'name')[ \t]*=[ \t]*"
+    rb"(?P<value>\"(?:\\.|[^\"\\\r\n])*\"|'[^'\r\n]*')"
+)
+_INLINE_THEME_RE = re.compile(
+    rb"(?m)^[ \t]*(?:theme|\"theme\"|'theme')[ \t]*=[ \t]*"
+    rb"(?P<table>\{[^\r\n]*\})[ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)"
+)
+_INLINE_THEME_NAME_RE = re.compile(
+    rb"(?:\{|,)[ \t]*(?:name|\"name\"|'name')[ \t]*=[ \t]*"
+    rb"(?P<value>\"(?:\\.|[^\"\\\r\n])*\"|'[^'\r\n]*')"
 )
 
 
@@ -341,9 +350,19 @@ def theme_config_path(
     raise ConfigError(f"unknown theme save scope: {scope!r}")
 
 
-def atomic_replace_bytes(path: Path, content: bytes) -> None:
-    """Atomically replace ``path`` from a temporary file in the same directory."""
-    target = path.resolve() if path.is_symlink() else path
+def atomic_replace_bytes(
+    path: Path,
+    content: bytes,
+    *,
+    follow_symlinks: bool = False,
+) -> None:
+    """Atomically replace a path, optionally resolving its final symlink first.
+
+    The temporary file is created beside the path that will actually be
+    replaced. By default, a symlink at ``path`` is itself replaced; callers
+    must opt in when the intended contract is to update its target instead.
+    """
+    target = path.resolve() if follow_symlinks and path.is_symlink() else path
     target.parent.mkdir(parents=True, exist_ok=True)
     existing_mode = (
         stat.S_IMODE(target.stat().st_mode) if target.exists() else None
@@ -434,16 +453,24 @@ def _rewrite_dotted_theme_name(content: bytes, name: str) -> bytes | None:
     name_match = _DOTTED_THEME_NAME_RE.search(content)
     if name_match is None:
         return None
-    assignment = f'theme.name = "{name}"'.encode()
-    matched = name_match.group()
-    newline = (
-        b"\r\n"
-        if matched.endswith(b"\r\n")
-        else b"\n" if matched.endswith(b"\n") else b""
-    )
-    body = matched[: -len(newline)] if newline else matched
-    replacement = assignment + _inline_comment_suffix(body) + newline
-    return content[: name_match.start()] + replacement + content[name_match.end() :]
+    start, end = name_match.span("value")
+    return content[:start] + f'"{name}"'.encode() + content[end:]
+
+
+def _rewrite_inline_theme_name(content: bytes, name: str) -> bytes | None:
+    """Rewrite the name pair in a top-level inline ``theme`` table."""
+    table_match = _INLINE_THEME_RE.search(content)
+    if table_match is None:
+        return None
+    table = table_match.group("table")
+    name_match = _INLINE_THEME_NAME_RE.search(table)
+    if name_match is None:
+        return None
+    table_start = table_match.start("table")
+    value_start, value_end = name_match.span("value")
+    start = table_start + value_start
+    end = table_start + value_end
+    return content[:start] + f'"{name}"'.encode() + content[end:]
 
 
 def save_theme(
@@ -468,13 +495,14 @@ def save_theme(
         raise ConfigError(f"{path} theme must be a table before it can be saved")
 
     if current_theme is not None and _THEME_HEADER_RE.search(before_bytes) is None:
-        dotted_rewrite = _rewrite_dotted_theme_name(before_bytes, name)
-        if dotted_rewrite is None:
+        after_bytes = _rewrite_dotted_theme_name(before_bytes, name)
+        if after_bytes is None:
+            after_bytes = _rewrite_inline_theme_name(before_bytes, name)
+        if after_bytes is None:
             raise ConfigError(
                 f"{path} theme.name cannot be rewritten without a [theme] table "
-                "or dotted theme.name assignment"
+                "or a supported dotted or inline theme.name assignment"
             )
-        after_bytes = dotted_rewrite
     else:
         after_bytes = _rewrite_theme_name(before_bytes, name)
     after = _parse_toml_bytes(path, after_bytes)
@@ -489,7 +517,7 @@ def save_theme(
         )
 
     try:
-        atomic_replace_bytes(path, after_bytes)
+        atomic_replace_bytes(path, after_bytes, follow_symlinks=True)
     except OSError as exc:
         raise ConfigError(f"{path} could not be written: {exc}") from exc
     return path

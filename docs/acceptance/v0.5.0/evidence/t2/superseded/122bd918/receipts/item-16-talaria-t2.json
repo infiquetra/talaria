@@ -1,11 +1,11 @@
 {
   "artifact": {
     "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-hga6u_g8/venv/bin/talaria",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
     "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "1d9544f9ea181538f9881a20130dc5ca2fbefb03815806201731c6baca5e5ce0",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
     "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
@@ -14,12 +14,12 @@
   "checklist_item": 16,
   "evidence": {
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-16.ansi",
-    "capture_sha256": "1323e1688d4e7cfcf259222879a9357091383cc6241b28b3bd0f54f454059a29",
+    "capture_sha256": "c7493698a83a1a27d9946a3314136eb7200472d1268da22212ce7bf406ac1934",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-16-pty.json",
-    "pty_result_sha256": "9ee37b90f5f910303f407f6ccd8d73c4cc4bad72dc2a108af5e6d404afebcc2f",
+    "pty_result_sha256": "16a274ce4de8e234d91f8b5d40f64ce34b6e40496b04580a58a492f2d55025d0",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-16.png",
-    "screenshot_sha256": "1b2fda88364b109dadce65d062f625421c215ecc79ddb1488508ecbc361ae73f"
+    "screenshot_sha256": "4c6868dd2612ef61b4f3a092cb2a9c90703c130ba4fbabeaafecee6d80fbc128"
   },
   "observations": [
     "The right dock records widths 36, 40, 44, 48 with the extra widen clamped, then 44, 40, 36, 32, 28 with the extra shrink clamped; held inspector data does not change."

@@ -1148,23 +1148,23 @@ class TalariaApp(App[None]):
         Binding("f8", "toggle_pause", "pause/resume", priority=True),
         Binding("f9", "slow_down", "slower", priority=True),
         Binding("f10", "speed_up", "faster", priority=True),
-        # F3/F5/F6/F7 stay as secondary aliases; slash / and /models etc are
-        # the primaries (KTD2). show=False so help footer is the listing, not
-        # the auto-footer.
+        # Function keys stay secondary aliases; slash commands are the
+        # primaries (KTD2). show=False so help footer is the listing, not the
+        # auto-footer.
         Binding("f3", "toggle_palette", "commands", priority=True, show=False),
         Binding("f5", "follow_bottom", "follow", priority=True, show=False),
-        # ``/models`` is the way in (U2); this is only for symmetry with
-        # ``f3``/``toggle_palette`` — the two foldable regions are wired the
-        # same way, so an operator's habit of reaching for a function key
-        # works for either. Unlike the palette, this key never fetches: the
-        # model catalogue is read once per connection epoch (KTD4), tied to
-        # ``connected`` rather than to being asked for.
-        Binding("f6", "toggle_picker", "models", show=False),
-        # ``/profiles`` is the way in (U4); f7 is the same symmetry argument as
-        # f6 one line up. Neither key fetches: both listings are read once per
-        # connection epoch (KTD4), tied to ``connected`` rather than to being
+        # TextArea owns F6/F7 for select-line/select-all. These non-priority
+        # compatibility aliases therefore work only when the composer does not
+        # have focus; F11/F12 are the collision-free aliases in every focus
+        # context. None of these keys fetch: both listings are read once per
+        # connection epoch (KTD4), tied to ``connected`` rather than being
         # asked for.
+        Binding("f6", "toggle_picker", "models", show=False),
         Binding("f7", "toggle_profiles", "profiles", show=False),
+        Binding("f11", "toggle_picker", "models", priority=True, show=False),
+        Binding(
+            "f12", "toggle_profiles", "profiles", priority=True, show=False
+        ),
     ]
 
     def __init__(
@@ -1206,7 +1206,7 @@ class TalariaApp(App[None]):
         # One restart-scoped value is injected into every motion-aware widget.
         # It never changes in response to a file edit or session command.
         self.motion = MotionPolicy(reduced=reduced_motion)
-        self.animation_level = "none" if reduced_motion else self.animation_level
+        self.animation_level = "none" if reduced_motion else "full"
         self._theme_preview_anchor: TranscriptAnchor | None = None
         self._startup_notices = (*startup_notices, *resolved_theme.notices)
         self._status_notices = tuple(
@@ -1570,10 +1570,16 @@ class TalariaApp(App[None]):
 
     # ── layout ───────────────────────────────────────────────────────────
 
-    def _status_agent(self) -> tuple[str, str]:
-        """Return the model facts already held for the focused session."""
+    def _focused_agent_identity(self) -> tuple[str, str, bool]:
+        """Resolve the focused provider and model from one held observation.
+
+        The boolean distinguishes a model observed only in the session roster.
+        That row does not carry a provider, so any provider paired with it is a
+        catalogue inference rather than part of the same observation.
+        """
         session = self.session_model_in_focus
         catalog = self.model_catalog
+        roster_only = False
         if session is not None:
             provider_slug = session.provider_slug
             model = session.model
@@ -1589,6 +1595,7 @@ class TalariaApp(App[None]):
                 else None
             )
             if row is not None and row.model:
+                roster_only = True
                 # The roster row is an observation of this session's actual
                 # model; the catalogue describes configured defaults instead.
                 provider_slug = (
@@ -1601,7 +1608,7 @@ class TalariaApp(App[None]):
                 provider_slug = catalog.current_provider
                 model = catalog.current_model
             else:
-                return "", ""
+                return "", "", False
 
         provider = provider_slug
         if catalog is not None:
@@ -1613,6 +1620,11 @@ class TalariaApp(App[None]):
                 ),
                 provider_slug,
             )
+        return provider, model, roster_only
+
+    def _status_agent(self) -> tuple[str, str]:
+        """Return the provider and model already held for the focused session."""
+        provider, model, _roster_only = self._focused_agent_identity()
         return provider, model
 
     def _bottom_status_view(self) -> BottomStatusBarView:
@@ -1629,20 +1641,10 @@ class TalariaApp(App[None]):
         )
 
     def _inspector_model(self) -> str:
-        """Return the most specific focused-session model Talaria already holds."""
-        provider, model = self._status_agent()
-        if self.session_model_in_focus is not None:
-            return "/".join(part for part in (provider, model) if part)
-
-        session_id = self.state.session_key or self.state.focused_session_id or ""
-        if session_id:
-            row = fleet_row(
-                self.fleet,
-                profile=self.fleet_profile,
-                session_id=session_id,
-            )
-            if row is not None and row.model:
-                return row.model
+        """Return the inspector model, omitting an inferred roster provider."""
+        provider, model, roster_only = self._focused_agent_identity()
+        if roster_only:
+            return model
         return "/".join(part for part in (provider, model) if part)
 
     def compose(self) -> ComposeResult:
