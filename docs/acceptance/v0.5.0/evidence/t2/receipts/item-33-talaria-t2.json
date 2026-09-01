@@ -1,31 +1,32 @@
 {
   "artifact": {
-    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "executable_sha256": "a99c86d648f59d2b7f0f9f2bc58da1f91e2ed45eb4dd8dc205bd21f161940066",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
-    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "install_receipt_sha256": "9f725d66a6488b29bf87a0077b5fab6c6c60dff37c2bd162f141701f33b8542a",
+    "installed_files_sha256": "a0a0e1900055b8c422a31b1a22ab196f165910ea0c3ba32c3daaf6ab856a1368",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
   },
   "checklist_item": 33,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-33-invalid-retry-c2.ansi",
-    "capture_sha256": "56a229e04b377a5183beced876dc99a5e71b49e311428ffbcd0c8344cfdaaf3c",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-33-invalid-retry-c2-pty.json",
-    "pty_result_sha256": "47ed29afcd7d69aad12d0703bc9928d5f4da23a70a88010b52cb8a3d2756e7ba",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-33-invalid-c3.ansi",
+    "capture_sha256": "d9ad4346381f03c8a2199d473c63e0fd3b97d2f064edd7c3468b51303281aceb",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-33-invalid-c3-pty.json",
+    "pty_result_sha256": "9a9bc7689ecb9b50d4e9ba5c9b54bf04552d7b05cca5b3bab0bc2a5695b4b75f",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-33-invalid-retry-c2.png",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-33-invalid-c3.png",
     "screenshot_sha256": "c1994dad7bc5478eb436454cc4547e2411528f85aa59fffeab3d600b841c84de"
   },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
   "observations": [
-    "A deliberately invalid scratch credential produces visible HTTP 403 authentication failure with no hang, blank, or credential text. The approved model route was requested but authentication prevented model reach; no fallback was used."
+    "A deliberately invalid scratch credential produced a visible HTTP 403 authentication failure and [!] status with no hang, blank, or credential text. Authentication prevented model reach; no fallback was used."
   ],
   "owner": "shared",
-  "recorded_at": "2026-09-01T03:01:47+00:00",
+  "recorded_at": "2026-09-01T15:26:37+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +42,7 @@
   },
   "terminal": {
     "columns": 144,
-    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "program": "Terminal.app 2.14",
     "rows": 36,
     "term": "xterm-256color"
   },

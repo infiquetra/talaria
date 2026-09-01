@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 15,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-15-invalid-c2.ansi",
+    "capture_sha256": "d66f2f237b14e57daa77d262741bf37078281727ff07e60d8bdeea474539f0cf",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-15-invalid-c2-pty.json",
+    "pty_result_sha256": "ea363d513100b863f193f2036e87bbaffd6fe00aa031d4799c5b078b02948d9e",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-15-invalid-c2.png",
+    "screenshot_sha256": "b90aba510519abaed8129fe506f411c680f786faff5008e2eb496d5fe244e8bd"
+  },
+  "observations": [
+    "Malformed command, invalid interval, and three invalid width caps each render a visible fallback notice. Supplemental item-15-command-c2.ansi shows literal bounded acceptance-status output."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T03:01:46+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "acceptance-replay"
+  },
+  "terminal": {
+    "columns": 144,
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Status failure visibility",
+  "verdict": "pass"
+}

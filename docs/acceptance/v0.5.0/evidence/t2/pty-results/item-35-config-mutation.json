@@ -1,1 +1,9 @@
-{"before_sha256":"6961dc3fdd138130b3c7891661114385f37b97f605aedd806915cf72d07560f0","after_sha256":"e21f5e01d1c57fcd5bbaba83b58bece8d870a878a794058b4c44d29308430a17","before_mtime_epoch":1788230881,"after_mtime_epoch":1788230896}
+{
+  "after_mtime_ns": 1788275993648796316,
+  "after_sha256": "e21f5e01d1c57fcd5bbaba83b58bece8d870a878a794058b4c44d29308430a17",
+  "before_mtime_ns": 1788275977040338907,
+  "before_sha256": "6961dc3fdd138130b3c7891661114385f37b97f605aedd806915cf72d07560f0",
+  "content_changed": true,
+  "mtime_changed": true,
+  "schema_version": "talaria-v0.5.0-item35-config-mutation-v1"
+}

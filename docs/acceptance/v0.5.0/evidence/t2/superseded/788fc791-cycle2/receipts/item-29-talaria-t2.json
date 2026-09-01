@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 29,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-29-c2.ansi",
+    "capture_sha256": "98dfdc762b3bf8c6f860138c142b3693db19ca09a01020a3e8537754dd276050",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-29-c2-pty.json",
+    "pty_result_sha256": "f9f2e76cd552187e58d892f850460aaada2969c354676e3cb9a0111359a37b3a",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29-c2.png",
+    "screenshot_sha256": "da6d6203cae9c127ad5ffdecae18cdf6f2afa3e8948a24d671d3049ba372af44"
+  },
+  "observations": [
+    "The required 132-by-36 wide frame has the 36-column inspector dock, stable main hierarchy, and fixed one-row help and status bars."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-09-01T03:01:47+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "acceptance-replay"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Wide screenshot",
+  "verdict": "pass"
+}

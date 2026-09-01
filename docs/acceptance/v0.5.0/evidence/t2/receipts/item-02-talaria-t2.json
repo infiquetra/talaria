@@ -1,31 +1,32 @@
 {
   "artifact": {
-    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "executable_sha256": "a99c86d648f59d2b7f0f9f2bc58da1f91e2ed45eb4dd8dc205bd21f161940066",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
-    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "install_receipt_sha256": "9f725d66a6488b29bf87a0077b5fab6c6c60dff37c2bd162f141701f33b8542a",
+    "installed_files_sha256": "a0a0e1900055b8c422a31b1a22ab196f165910ea0c3ba32c3daaf6ab856a1368",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
   },
   "checklist_item": 2,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-02-live-public-c2.ansi",
-    "capture_sha256": "bb474cc60fbc8d5cce7b7c6b742902e30fd3bbcf68ec889f9e385f1434f5d61b",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-02-live-public-c2-pty.json",
-    "pty_result_sha256": "b3c021b15b9ca774f3bb1294b6fa081d0a71da9f309be1be33bf6fcbbe1b2c02",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-02-live-public-c3.ansi",
+    "capture_sha256": "b96660238cde0a73b7ccefa003cb25919a9cc44e4ac4d829459e3664afb5375a",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-02-live-public-c3-pty.json",
+    "pty_result_sha256": "8506b74cf9791447c897dbaf01584640ab1606ddc319045d5336ab380fe02809",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-02-full-route-fresh-c2.png",
-    "screenshot_sha256": "d33427cda675a391f61ee73ec652bd57ddcd55356142699b4871e3cd875815a0"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-02-full-route-fresh-c3.png",
+    "screenshot_sha256": "f84f6b5c7c78f97fc8708a70ce3324bcd4ba492daa4c056066374f51d7783b2e"
   },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
   "observations": [
-    "Primary route opencode-go / muse-spark-1.2-contributor is exact in the full-width agent_model segment and recording; the bounded live reply completed. The bound raw capture starts at privacy-safe width 119, while the bound final screenshot comes from a fresh successful turn expanded to 144 with the inspector closed. No fallback was requested or used."
+    "The approved primary route completed a bounded real turn twice; the 144-column screenshot names muse-spark-1.2-contributor and the primary capture records the live answer. No fallback was requested or used. Hermes 0.21.0 also produced Talaria's visible commands.catalog compatibility warning without preventing completion."
   ],
   "owner": "shared",
-  "recorded_at": "2026-09-01T03:23:21+00:00",
+  "recorded_at": "2026-09-01T15:26:37+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +42,7 @@
   },
   "terminal": {
     "columns": 119,
-    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "program": "Terminal.app 2.14",
     "rows": 36,
     "term": "xterm-256color"
   },

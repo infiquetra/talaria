@@ -1,31 +1,32 @@
 {
   "artifact": {
-    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "executable_sha256": "a99c86d648f59d2b7f0f9f2bc58da1f91e2ed45eb4dd8dc205bd21f161940066",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
-    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "install_receipt_sha256": "9f725d66a6488b29bf87a0077b5fab6c6c60dff37c2bd162f141701f33b8542a",
+    "installed_files_sha256": "a0a0e1900055b8c422a31b1a22ab196f165910ea0c3ba32c3daaf6ab856a1368",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
   },
   "checklist_item": 18,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-18-c2.ansi",
-    "capture_sha256": "dae46b6aaa2e77de8bf88713d0c009b1e80650406746a2b4596ecc820742aa90",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-18-c2-pty.json",
-    "pty_result_sha256": "54764297ad6415e1301551a543159d6051291e12770f19800f755c6e08857bde",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-18-c3.ansi",
+    "capture_sha256": "612a096a283e6bc8acc40efb59d795b21be2e75ab8da52aab24b306aae5618d1",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-18-c3-pty.json",
+    "pty_result_sha256": "971fd6d390493d3971c54fe21666092c0ca230c37fd5195cc4172de3ecd4fc61",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18-fresh-c2.png",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-18-fresh-c3.png",
     "screenshot_sha256": "696fa97adbb4f167f97fce984ca2180721e148ff1b5564c521fcc3e972524d02"
   },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
   "observations": [
-    "The primary raw capture proves open auto-restore, manual-close persistence, and narrow overlay behavior; the fresh-process screenshot restores the expanded 36-column dock."
+    "The primary drive proves open auto-restore, manual-close persistence, and narrow overlay behavior; the fresh-process screenshot restores the expanded 36-column dock."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-09-01T03:01:47+00:00",
+  "recorded_at": "2026-09-01T15:26:22+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +42,7 @@
   },
   "terminal": {
     "columns": 120,
-    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "program": "Terminal.app 2.14",
     "rows": 36,
     "term": "xterm-256color"
   },
