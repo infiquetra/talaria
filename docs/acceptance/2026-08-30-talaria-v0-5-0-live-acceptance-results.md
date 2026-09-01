@@ -6,63 +6,23 @@ directories. Earlier runs remain preserved under explicitly named `superseded/` 
 not contribute to the generated verdict.
 
 <!-- BEGIN GENERATED ACCEPTANCE STATUS -->
-## Status: **STALE**
+## Status: **BLOCKED**
 
-This verdict is generated from `artifact-manifest.json`; it is not maintained by hand. The manifest records 23 current receipts, 20 stale receipts, and 0 invalid item receipts.
+This verdict is generated from `artifact-manifest.json`; it is not maintained by hand. The manifest records 44 current receipts, 0 stale receipts, and 0 invalid item receipts.
 Regenerate it with `uv run python -m scripts.acceptance.v050_records refresh --current-candidate-commit 788fc791fadd701cb74b7db8686c0a8bb444b8f8`.
 
 ```gate
 id: talaria-v0-5-0-live-acceptance
-verdict: STALE
+verdict: BLOCKED
 review-by: 2026-09-30
-blocks-on: row-1 missing
-blocks-on: row-2 missing
-blocks-on: row-3 missing
-blocks-on: row-12 missing
-blocks-on: row-13 missing
-blocks-on: row-14 missing
-blocks-on: row-15 missing
-blocks-on: row-16 missing
-blocks-on: row-17 missing
-blocks-on: row-18 missing
-blocks-on: row-19 missing
-blocks-on: row-20 missing
-blocks-on: row-21 missing
 blocks-on: row-24 blocked
-blocks-on: row-29 missing
-blocks-on: row-30 missing
-blocks-on: row-32 missing
-blocks-on: row-33 missing
-blocks-on: row-34 missing
-blocks-on: row-35 missing
-blocks-on: row-36 missing
 ```
 
 ## Evidence table
 
 | Item | Condition | Status |
 | ---: | --- | --- |
-| 1 | Missing checklist receipt | **missing** |
-| 2 | Live primary route | **missing** |
-| 3 | Main hierarchy | **missing** |
-| 12 | All status segments | **missing** |
-| 13 | Status configuration | **missing** |
-| 14 | Status responsive sequence | **missing** |
-| 15 | Status failure visibility | **missing** |
-| 16 | Inspector dock and resize | **missing** |
-| 17 | Inspector content and empty states | **missing** |
-| 18 | Inspector responsive state | **missing** |
-| 19 | Side-by-side diff | **missing** |
-| 20 | Unified fallback | **missing** |
-| 21 | Diff navigation and boundary | **missing** |
 | 24 | Agent and queue non-color states | **blocked** |
-| 29 | Wide screenshot | **missing** |
-| 30 | Narrow screenshot | **missing** |
-| 32 | Session-only status toggle | **missing** |
-| 33 | Dead gateway credential | **missing** |
-| 34 | Killed session | **missing** |
-| 35 | Restart-only configuration | **missing** |
-| 36 | Cross-tester evidence | **missing** |
 <!-- END GENERATED ACCEPTANCE STATUS -->
 
 The source checklist is the **Visual acceptance checklist** in
@@ -76,11 +36,11 @@ Graphics screenshot after a completed private-data review.
 <!-- BEGIN GENERATED ACCEPTANCE PROVENANCE -->
 | Field | Generated value |
 | --- | --- |
-| Manifest status | `STALE` |
+| Manifest status | `BLOCKED` |
 | Current reviewed candidate commit | `788fc791fadd701cb74b7db8686c0a8bb444b8f8` |
 | Current candidate wheel SHA-256 | `bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be` |
-| Receipt candidate identities | `0f5c8e3` / `720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b` (1 install, 19 item receipts)<br>`788fc79` / `bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be` (1 install, 22 item receipts) |
-| Receipt counts | 2 install; 41 item; 23 current; 20 stale; 0 invalid |
+| Receipt candidate identities | `788fc79` / `bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be` (2 install, 42 item receipts) |
+| Receipt counts | 2 install; 42 item; 44 current; 0 stale; 0 invalid |
 <!-- END GENERATED ACCEPTANCE PROVENANCE -->
 
 The current T1 install probe rejected source, editable, and global executables. Its gate leg ran the
@@ -111,9 +71,9 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 <!-- BEGIN GENERATED ACCEPTANCE VERDICTS -->
 | Item | Checklist item | T1 | T2 | Evidence and observation |
 | ---: | --- | :--- | :--- | --- |
-| 1 | Installed artifact | `PASS` | `STALE — prior PASS @ 0f5c8e3` | The install receipts prove fresh, non-editable installations of the current reviewed wheel. |
-| 2 | Live primary route | `PASS` | `STALE — prior PASS @ 0f5c8e3` | A real prompt completed with TALARIA-T1-C2-PRIMARY-OK; the inspector and status bar named muse-spark-1.2-contributor on the isolated dashboard. A real Hermes-backed turn returned TALARIA-T2-PRIMARY-OK; the final agent_model segment displayed OpenCode Go / muse-spark-1.2-contributor and the inspector named muse-spark-1.2-contributor. The final status bar showed [ok] connected; the primary route completed and no fallback was requested or used. |
-| 3 | Main hierarchy | — | `STALE — prior PASS @ 0f5c8e3` | Main body, composer, help bar, and bottom status bar preserve the specified hierarchy. |
+| 1 | Installed artifact | `PASS` | `PASS` | Installed executable launched from the isolated wheel environment; hierarchy and /bar evidence were produced without a source or editable install. |
+| 2 | Live primary route | `PASS` | `PASS` | A real prompt completed with TALARIA-T1-C2-PRIMARY-OK; the inspector and status bar named muse-spark-1.2-contributor on the isolated dashboard. Primary route opencode-go / muse-spark-1.2-contributor is exact in the full-width agent_model segment and recording; the bounded live reply completed. The bound raw capture starts at privacy-safe width 119, while the bound final screenshot comes from a fresh successful turn expanded to 144 with the inspector closed. No fallback was requested or used. |
+| 3 | Main hierarchy | — | `PASS` | Transcript, StatusRegion, Composer, HelpBar, and the one-row BottomStatusBar retain the specified vertical hierarchy. |
 | 4 | Refined Default | `PASS` | — | Refined Default rendered the populated transcript, composer, agent row, status surfaces, inspector and diff with the specified cool-neutral hierarchy. |
 | 5 | Dark Green Terminal | `PASS` | — | Dark Green Terminal rendered every populated surface with its terminal-green palette while retaining readable hierarchy and state markers. |
 | 6 | Neutral Dark | `PASS` | — | Neutral Dark rendered every populated surface with neutral dark surfaces and legible semantic contrast. |
@@ -122,16 +82,16 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | 9 | Explicit save and precedence | `PASS` | — | User save persisted Dark Green Terminal, repository save overrode it with Neutral Dark, and an unsaved session preview of Accessible High Contrast left both configuration hashes unchanged. |
 | 10 | Theme fallback notice | `PASS` | — | Startup named unavailable theme not-installed, displayed the fallback notice, then listed and applied the imported partial-fallback theme. |
 | 11 | Visual Studio Code import | `PASS` | — | Two imports from the committed Visual Studio Code fixture produced identical stored bytes, and the installed binary restarted into vscode-import-evidence without a fallback notice. |
-| 12 | All status segments | — | `STALE — prior PASS @ 0f5c8e3` | At 144 columns all seven default status segments render in order on one row with six separators. |
-| 13 | Status configuration | — | `STALE — prior PASS @ 0f5c8e3` | Configured order is honored, hidden segments stay absent after restart, and the unknown segment produces a visible notice. |
-| 14 | Status responsive sequence | — | `STALE — prior PASS @ 0f5c8e3` | With COLUMNS and LINES unpinned, the real child reflowed at every breakpoint from 144 through 19 columns; the final 19-column frame contains only the connection [ok] form and exactly fifteen background cells. |
-| 15 | Status failure visibility | `PASS` | `STALE — prior PASS @ 0f5c8e3` | Invalid status configuration produced bounded visible notices for interval and width fallbacks and disabled the empty command; a second drive rendered the bounded acceptance-status-t1 command result. Malformed status values produce visible fallback notices, and the separate command leg renders literal bounded output. |
-| 16 | Inspector dock and resize | — | `STALE — prior PASS @ 0f5c8e3` | The inspector docks right, resizes in four-column steps, clamps at 28 and 48 columns, and retains its data. |
-| 17 | Inspector content and empty states | — | `STALE — prior PASS @ 0f5c8e3` | Separate populated and header-only sessions show accurate inspector data and honest none-available states without a needs-you row. |
-| 18 | Inspector responsive state | — | `STALE — prior PASS @ 0f5c8e3` | The corrected drive emitted both Inspector [docked 36] and Inspector [overlay] across real 120-to-119-column transitions, restored the manual preference at 120, and a supplemental 119-column capture visibly confirms overlay without transcript reflow. |
-| 19 | Side-by-side diff | — | `STALE — prior PASS @ 0f5c8e3` | The three-file, five-hunk diff renders aligned side-by-side panes, line numbers, marks, intraline changes, and read-only status. |
-| 20 | Unified fallback | — | `STALE — prior PASS @ 0f5c8e3` | At a real 111-column terminal width the viewer remained unified and visibly reported side-by-side needs 112 columns; the full drive also crossed 112 and 111 repeatedly without losing diff context. |
-| 21 | Diff navigation and boundary | — | `STALE — prior PASS @ 0f5c8e3` | File, hunk, and horizontal navigation work; palette and viewer expose only read-only navigation and view controls. |
+| 12 | All status segments | — | `PASS` | At 144 columns all seven default segments appear in order with six separators on exactly one row. |
+| 13 | Status configuration | — | `PASS` | The configured five recognized segments render in order, omitted segments stay absent, and the unknown segment produces a visible notice. Supplemental restart capture item-13-restart-c2.ansi proves the same configuration after a fresh process. |
+| 14 | Status responsive sequence | — | `PASS` | The raw capture records all eighteen required widths with real unpinned terminal geometry; forms compact and segments drop by breakpoint while connection remains on one row. |
+| 15 | Status failure visibility | `PASS` | `PASS` | Invalid status configuration produced bounded visible notices for interval and width fallbacks and disabled the empty command; a second drive rendered the bounded acceptance-status-t1 command result. Malformed command, invalid interval, and three invalid width caps each render a visible fallback notice. Supplemental item-15-command-c2.ansi shows literal bounded acceptance-status output. |
+| 16 | Inspector dock and resize | — | `PASS` | Focused inspector width changes in four-column steps, clamps at 48 and 28, remains right-docked, and preserves held data. |
+| 17 | Inspector content and empty states | — | `PASS` | All four empty headings remain and each shows the complete none-available sentence with cycle-2 wrapping across the exercised widths. Supplemental item-17-populated-c2.ansi proves accurate populated state. |
+| 18 | Inspector responsive state | — | `PASS` | The primary raw capture proves open auto-restore, manual-close persistence, and narrow overlay behavior; the fresh-process screenshot restores the expanded 36-column dock. |
+| 19 | Side-by-side diff | — | `PASS` | The held three-file, five-hunk diff renders aligned side-by-side panes, line numbers, hunk markers, syntax and intraline changes, read-only labels, and temporary inspector collapse. |
+| 20 | Unified fallback | — | `PASS` | The raw drive preserves file, hunk, and anchor across 112-to-111-to-112 transitions and u/s preferences; the 111-column screenshot shows forced unified mode and the header-row refusal. |
+| 21 | Diff navigation and boundary | — | `PASS` | Hunk and file navigation cycle deterministically, long-line horizontal movement remains clipped, and neither hints nor unbound mutation-like keys expose an edit, stage, revert, discard, or apply surface. |
 | 22 | Composer caret location | `PASS` | — | Focus moved among transcript, inspector, and composer; the caret label and visible insertion point followed the focused surface and returned to composer. |
 | 23 | Connection non-color states | `PASS` | — | A healthy connection painted [..] wait then [ok] up; stopping only the isolated dashboard produced [~] retry and then [x] down, while the separate item 33 capture proves [!] auth. |
 | 24 | Agent and queue non-color states | `BLOCKED` | — | The current corpus rendered queued, running, completed, error, failed, interrupted and timeout agent forms plus blocked, approval and clarification rows in monochrome. Blocked: Hermes v0.21.0 assigns request identifiers to live approvals, while the shipped replay format cannot encode the keyless admin-polled shape that alone becomes possibly duplicate; creating it would simulate acceptance. |
@@ -139,14 +99,14 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 | 26 | Reduced motion | `PASS` | — | A standard-motion drive showed the working ellipsis while ui.reduced_motion=true restarted into the static [..] working form before the same completion. |
 | 27 | Stable unpinned scroll | `PASS` | — | Keyboard scrolling unpinned follow mode, a real 132-to-119-to-132 resize preserved the reading anchor, and new transcript output did not jump to the bottom. |
 | 28 | Stable pinned scroll | `PASS` | — | With follow mode pinned, the same real resize cycle and new output kept the newest bottom entry visible. |
-| 29 | Wide screenshot | — | `STALE — prior PASS @ 0f5c8e3` | After a real 144-to-132-column resize, the wide capture retains the compact one-row footer and the 36-column docked inspector without clipping. |
-| 30 | Narrow screenshot | — | `STALE — prior PASS @ 0f5c8e3` | After a real 132-to-78-column resize, the narrow capture uses unified diff, has no docked inspector, and keeps a single compact footer row. |
+| 29 | Wide screenshot | — | `PASS` | The required 132-by-36 wide frame has the 36-column inspector dock, stable main hierarchy, and fixed one-row help and status bars. |
+| 30 | Narrow screenshot | — | `PASS` | The required 78-by-36 narrow evidence keeps the inspector out of the dock, preserves fixed footer rows, and shows the held diff in unified mode. |
 | 31 | Malformed Visual Studio Code import | `PASS` | — | The installed theme importer rejected the committed malformed Visual Studio Code fixture as non-strict JSON with exit 3 and did not create malformed-acceptance.json. |
-| 32 | Session-only status toggle | — | `STALE — prior PASS @ 0f5c8e3` | The configured segment toggles immediately, the config file remains byte- and timestamp-identical, and restart restores it. |
-| 33 | Dead gateway credential | `PASS` | `STALE — prior PASS @ 0f5c8e3` | The authorized isolated dashboard restart changed the listener from PID 95480 to PID 19596 with the identical hermes -p default dashboard --host 127.0.0.1 --port 8790 --no-open command. The stale scratch credential produced a visible authentication failed HTTP 403 state and [!] auth without a hang, blank interface, token query, bearer header, or credential value in the reviewed capture. A deliberately invalid scratch credential produced a visible authentication failed status and an HTTP 403 handshake rejection without a hang or silent blank; Talaria exited cleanly. The raw capture and rendered screenshot contain neither the invalid credential nor operator private identifiers; the dashboard was not restarted or modified. |
-| 34 | Killed session | `PASS` | `STALE — prior PASS @ 0f5c8e3` | A real primary-route turn completed with TALARIA-T1-C2-KILLED-SESSION-LIVE-OK; session.active_list identified exactly that acceptance-created session and session.close returned closed true. The next prompt was visibly refused with gateway code 4001 session not found, while Talaria remained responsive and exited cleanly; the dashboard was not stopped. A real primary-route turn completed, the exact tester-created session was closed, and the next prompt visibly returned gateway code 4001 session not found without a hang or blank. |
-| 35 | Restart-only configuration | `PASS` | `STALE — prior PASS @ 0f5c8e3` | Changing the scratch theme from Accessible High Contrast to Neutral Dark did not affect the running process; only the clean restart applied Neutral Dark. The running process reported connection, version both before and after config.toml changed from SHA-256 43bc09486811aa3c6f6dd134e4400890dea3a9d6b0576e16c5d42c39d90e640a to 3faca4f91f40cb7b41e0b1d5da1c252fb75d77d2f32a25d1f9c8935d51365acb. A separate fresh process loaded the changed file and reported cwd, connection, version; the supplemental restart capture is item-35-restart.ansi and its screenshot is item-35-restart.png. |
-| 36 | Cross-tester evidence | `PASS` | `STALE — prior PASS @ 0f5c8e3` | Talaria-t1 independently supplies current-candidate receipts for shared items 2, 15, 33, 34, 35, and this cross-tester half, plus every assigned-track item; each receipt names a real capture and screenshot. The T1 live receipts for items 2 and 34 both observed opencode-go / muse-spark-1.2-contributor with no fallback; full cross-tester completion is a generated-manifest property once the parallel T2 item 36 receipt is combined. Talaria-t2 independently supplies current-candidate receipts for shared items 2, 15, 33, 34, 35, and this cross-tester half, plus every assigned-track item; each receipt names a real capture and screenshot. The T2 live receipts for items 2 and 34 both observed opencode-go / muse-spark-1.2-contributor with no fallback; full cross-tester completion remains a manifest property once the parallel T1 item 36 receipt is combined. |
+| 32 | Session-only status toggle | — | `PASS` | The session command immediately hides cwd without changing config bytes or modification time; the fresh-process screenshot restores cwd. |
+| 33 | Dead gateway credential | `PASS` | `PASS` | The authorized isolated dashboard restart changed the listener from PID 95480 to PID 19596 with the identical hermes -p default dashboard --host 127.0.0.1 --port 8790 --no-open command. The stale scratch credential produced a visible authentication failed HTTP 403 state and [!] auth without a hang, blank interface, token query, bearer header, or credential value in the reviewed capture. A deliberately invalid scratch credential produces visible HTTP 403 authentication failure with no hang, blank, or credential text. The approved model route was requested but authentication prevented model reach; no fallback was used. |
+| 34 | Killed session | `PASS` | `PASS` | A real primary-route turn completed with TALARIA-T1-C2-KILLED-SESSION-LIVE-OK; session.active_list identified exactly that acceptance-created session and session.close returned closed true. The next prompt was visibly refused with gateway code 4001 session not found, while Talaria remained responsive and exited cleanly; the dashboard was not stopped. A primary-route session completed TALARIA-T2-LIVE-OK, exact recorded-session close returned true, and the next prompt was visibly refused with code 4001 session not found. No fallback was requested or used. |
+| 35 | Restart-only configuration | `PASS` | `PASS` | Changing the scratch theme from Accessible High Contrast to Neutral Dark did not affect the running process; only the clean restart applied Neutral Dark. The running process kept connection,version after the scratch file changed; the restarted screenshot applies cwd,connection,version. |
+| 36 | Cross-tester evidence | `PASS` | `PASS` | Talaria-t1 independently supplies current-candidate receipts for shared items 2, 15, 33, 34, 35, and this cross-tester half, plus every assigned-track item; each receipt names a real capture and screenshot. The T1 live receipts for items 2 and 34 both observed opencode-go / muse-spark-1.2-contributor with no fallback; full cross-tester completion is a generated-manifest property once the parallel T2 item 36 receipt is combined. Talaria-t2 independently produced current-candidate receipts for its thirteen owned and all seven shared items, including primary-route live evidence. |
 <!-- END GENERATED ACCEPTANCE VERDICTS -->
 
 ## Evidence custody
