@@ -6,22 +6,64 @@ directories. Earlier runs remain preserved under explicitly named `superseded/` 
 not contribute to the generated verdict.
 
 <!-- BEGIN GENERATED ACCEPTANCE STATUS -->
-## Status: **BLOCKED**
+## Status: **STALE**
 
-This verdict is generated from `artifact-manifest.json`; it is not maintained by hand. **BLOCKED**: 43 of 43 expected checklist/tester slots are covered. The evidence set separately contains 44 current receipts (42 item and 2 install). The one-receipt overlap is checklist item 1 for talaria-t2, which has both an item receipt and an install receipt. Item verdicts are 41 pass, 1 blocked, and 0 fail.
-The manifest also records 0 stale receipts and 42 invalid item receipts.
-Regenerate it with `uv run python -m scripts.acceptance.v050_records refresh --current-candidate-commit 788fc791fadd701cb74b7db8686c0a8bb444b8f8`.
+This verdict is generated from `artifact-manifest.json`; it is not maintained by hand. **STALE**: 23 of 43 expected checklist/tester slots are covered. The evidence set separately contains 23 current receipts (42 item and 2 install). There is no overlap between item and install receipts. Item verdicts are 41 pass, 1 blocked, and 0 fail.
+The manifest also records 21 stale receipts and 20 invalid item receipts.
+Regenerate it with `uv run python -m scripts.acceptance.v050_records refresh --current-candidate-commit 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758`.
 
 ```gate
 id: talaria-v0-5-0-live-acceptance
-verdict: BLOCKED
+verdict: STALE
 review-by: 2026-09-30
+blocks-on: row-1 missing
+blocks-on: row-2 missing
+blocks-on: row-3 missing
+blocks-on: row-12 missing
+blocks-on: row-13 missing
+blocks-on: row-14 missing
+blocks-on: row-15 missing
+blocks-on: row-16 missing
+blocks-on: row-17 missing
+blocks-on: row-18 missing
+blocks-on: row-19 missing
+blocks-on: row-20 missing
+blocks-on: row-21 missing
+blocks-on: row-24 blocked
+blocks-on: row-29 missing
+blocks-on: row-30 missing
+blocks-on: row-32 missing
+blocks-on: row-33 missing
+blocks-on: row-34 missing
+blocks-on: row-35 missing
+blocks-on: row-36 missing
 ```
 
 ## Evidence table
 
 | Item | Condition | Status |
 | ---: | --- | --- |
+| 1 | Installed artifact | **missing** |
+| 2 | Live primary route | **missing** |
+| 3 | Main hierarchy | **missing** |
+| 12 | All status segments | **missing** |
+| 13 | Status configuration | **missing** |
+| 14 | Status responsive sequence | **missing** |
+| 15 | Status failure visibility | **missing** |
+| 16 | Inspector dock and resize | **missing** |
+| 17 | Inspector content and empty states | **missing** |
+| 18 | Inspector responsive state | **missing** |
+| 19 | Side-by-side diff | **missing** |
+| 20 | Unified fallback | **missing** |
+| 21 | Diff navigation and boundary | **missing** |
+| 24 | Agent and queue non-color states | **blocked** |
+| 29 | Wide screenshot | **missing** |
+| 30 | Narrow screenshot | **missing** |
+| 32 | Session-only status toggle | **missing** |
+| 33 | Dead gateway credential | **missing** |
+| 34 | Killed session | **missing** |
+| 35 | Restart-only configuration | **missing** |
+| 36 | Cross-tester evidence | **missing** |
 <!-- END GENERATED ACCEPTANCE STATUS -->
 
 The source checklist is the **Visual acceptance checklist** in
@@ -35,11 +77,11 @@ Graphics screenshot after a completed private-data review.
 <!-- BEGIN GENERATED ACCEPTANCE PROVENANCE -->
 | Field | Generated value |
 | --- | --- |
-| Manifest status | `BLOCKED` |
-| Current reviewed candidate commit | `788fc791fadd701cb74b7db8686c0a8bb444b8f8` |
-| Current candidate wheel SHA-256 | `bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be` |
-| Receipt candidate identities | `788fc79` / `bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be` (2 install, 42 item receipts) |
-| Receipt counts | 2 install; 42 item; 44 current; 0 stale; 42 invalid |
+| Manifest status | `STALE` |
+| Current reviewed candidate commit | `4c2d8dbf0ddfb7f38ba1f228369ae2d929319758` |
+| Current candidate wheel SHA-256 | `d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88` |
+| Receipt candidate identities | `4c2d8db` / `d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88` (1 install, 22 item receipts)<br>`788fc79` / `bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be` (1 install, 20 item receipts) |
+| Receipt counts | 2 install; 42 item; 23 current; 21 stale; 20 invalid |
 <!-- END GENERATED ACCEPTANCE PROVENANCE -->
 
 The current T1 install probe rejected source, editable, and global executables. Its gate leg ran the
@@ -70,42 +112,42 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 <!-- BEGIN GENERATED ACCEPTANCE VERDICTS -->
 | Item | Checklist item | T1 | T2 | Evidence and observation |
 | ---: | --- | :--- | :--- | --- |
-| 1 | Installed artifact | `PASS` | `INVALID — claimed PASS` | Installed executable launched from the isolated wheel environment; hierarchy and /bar evidence were produced without a source or editable install. |
-| 2 | Live primary route | `INVALID — claimed PASS` | `INVALID — claimed PASS` | A real prompt completed with TALARIA-T1-C2-PRIMARY-OK; the inspector and status bar named muse-spark-1.2-contributor on the isolated dashboard. Primary route opencode-go / muse-spark-1.2-contributor is exact in the full-width agent_model segment and recording; the bounded live reply completed. The bound raw capture starts at privacy-safe width 119, while the bound final screenshot comes from a fresh successful turn expanded to 144 with the inspector closed. No fallback was requested or used. |
-| 3 | Main hierarchy | — | `INVALID — claimed PASS` | Transcript, StatusRegion, Composer, HelpBar, and the one-row BottomStatusBar retain the specified vertical hierarchy. |
-| 4 | Refined Default | `INVALID — claimed PASS` | — | Refined Default rendered the populated transcript, composer, agent row, status surfaces, inspector and diff with the specified cool-neutral hierarchy. |
-| 5 | Dark Green Terminal | `INVALID — claimed PASS` | — | Dark Green Terminal rendered every populated surface with its terminal-green palette while retaining readable hierarchy and state markers. |
-| 6 | Neutral Dark | `INVALID — claimed PASS` | — | Neutral Dark rendered every populated surface with neutral dark surfaces and legible semantic contrast. |
-| 7 | Accessible High Contrast | `INVALID — claimed PASS` | — | Accessible High Contrast rendered the populated application with high-contrast borders, text, semantic markers and focus treatment. |
-| 8 | Preview cancellation | `INVALID — claimed PASS` | — | The picker previewed Neutral Dark, Escape cancelled it, and the final frame restored the Refined Default palette without saving the preview. |
-| 9 | Explicit save and precedence | `INVALID — claimed PASS` | — | User save persisted Dark Green Terminal, repository save overrode it with Neutral Dark, and an unsaved session preview of Accessible High Contrast left both configuration hashes unchanged. |
-| 10 | Theme fallback notice | `INVALID — claimed PASS` | — | Startup named unavailable theme not-installed, displayed the fallback notice, then listed and applied the imported partial-fallback theme. |
-| 11 | Visual Studio Code import | `INVALID — claimed PASS` | — | Two imports from the committed Visual Studio Code fixture produced identical stored bytes, and the installed binary restarted into vscode-import-evidence without a fallback notice. |
-| 12 | All status segments | — | `INVALID — claimed PASS` | At 144 columns all seven default segments appear in order with six separators on exactly one row. |
-| 13 | Status configuration | — | `INVALID — claimed PASS` | The configured five recognized segments render in order, omitted segments stay absent, and the unknown segment produces a visible notice. Supplemental restart capture item-13-restart-c2.ansi proves the same configuration after a fresh process. |
-| 14 | Status responsive sequence | — | `INVALID — claimed PASS` | The raw capture records all eighteen required widths with real unpinned terminal geometry; forms compact and segments drop by breakpoint while connection remains on one row. |
-| 15 | Status failure visibility | `INVALID — claimed PASS` | `INVALID — claimed PASS` | Invalid status configuration produced bounded visible notices for interval and width fallbacks and disabled the empty command; a second drive rendered the bounded acceptance-status-t1 command result. Malformed command, invalid interval, and three invalid width caps each render a visible fallback notice. Supplemental item-15-command-c2.ansi shows literal bounded acceptance-status output. |
-| 16 | Inspector dock and resize | — | `INVALID — claimed PASS` | Focused inspector width changes in four-column steps, clamps at 48 and 28, remains right-docked, and preserves held data. |
-| 17 | Inspector content and empty states | — | `INVALID — claimed PASS` | All four empty headings remain and each shows the complete none-available sentence with cycle-2 wrapping across the exercised widths. Supplemental item-17-populated-c2.ansi proves accurate populated state. |
-| 18 | Inspector responsive state | — | `INVALID — claimed PASS` | The primary raw capture proves open auto-restore, manual-close persistence, and narrow overlay behavior; the fresh-process screenshot restores the expanded 36-column dock. |
-| 19 | Side-by-side diff | — | `INVALID — claimed PASS` | The held three-file, five-hunk diff renders aligned side-by-side panes, line numbers, hunk markers, syntax and intraline changes, read-only labels, and temporary inspector collapse. |
-| 20 | Unified fallback | — | `INVALID — claimed PASS` | The raw drive preserves file, hunk, and anchor across 112-to-111-to-112 transitions and u/s preferences; the 111-column screenshot shows forced unified mode and the header-row refusal. |
-| 21 | Diff navigation and boundary | — | `INVALID — claimed PASS` | Hunk and file navigation cycle deterministically, long-line horizontal movement remains clipped, and neither hints nor unbound mutation-like keys expose an edit, stage, revert, discard, or apply surface. |
-| 22 | Composer caret location | `INVALID — claimed PASS` | — | Focus moved among transcript, inspector, and composer; the caret label and visible insertion point followed the focused surface and returned to composer. |
-| 23 | Connection non-color states | `INVALID — claimed PASS` | — | A healthy connection painted [..] wait then [ok] up; stopping only the isolated dashboard produced [~] retry and then [x] down, while the separate item 33 capture proves [!] auth. |
-| 24 | Agent and queue non-color states | `INVALID — claimed BLOCKED` | — | The current corpus rendered queued, running, completed, error, failed, interrupted and timeout agent forms plus blocked, approval and clarification rows in monochrome. Blocked: Hermes v0.21.0 assigns request identifiers to live approvals, while the shipped replay format cannot encode the keyless admin-polled shape that alone becomes possibly duplicate; creating it would simulate acceptance. |
-| 25 | Transcript identity without color | `INVALID — claimed PASS` | — | Operator, reasoning, assistant, tool, session, and error entries remained distinguishable by fixed glyph and label identity with NO_COLOR enabled. |
-| 26 | Reduced motion | `INVALID — claimed PASS` | — | A standard-motion drive showed the working ellipsis while ui.reduced_motion=true restarted into the static [..] working form before the same completion. |
-| 27 | Stable unpinned scroll | `INVALID — claimed PASS` | — | Keyboard scrolling unpinned follow mode, a real 132-to-119-to-132 resize preserved the reading anchor, and new transcript output did not jump to the bottom. |
-| 28 | Stable pinned scroll | `INVALID — claimed PASS` | — | With follow mode pinned, the same real resize cycle and new output kept the newest bottom entry visible. |
-| 29 | Wide screenshot | — | `INVALID — claimed PASS` | The required 132-by-36 wide frame has the 36-column inspector dock, stable main hierarchy, and fixed one-row help and status bars. |
-| 30 | Narrow screenshot | — | `INVALID — claimed PASS` | The required 78-by-36 narrow evidence keeps the inspector out of the dock, preserves fixed footer rows, and shows the held diff in unified mode. |
-| 31 | Malformed Visual Studio Code import | `INVALID — claimed PASS` | — | The installed theme importer rejected the committed malformed Visual Studio Code fixture as non-strict JSON with exit 3 and did not create malformed-acceptance.json. |
-| 32 | Session-only status toggle | — | `INVALID — claimed PASS` | The session command immediately hides cwd without changing config bytes or modification time; the fresh-process screenshot restores cwd. |
-| 33 | Dead gateway credential | `INVALID — claimed PASS` | `INVALID — claimed PASS` | The authorized isolated dashboard restart changed the listener from PID 95480 to PID 19596 with the identical hermes -p default dashboard --host 127.0.0.1 --port 8790 --no-open command. The stale scratch credential produced a visible authentication failed HTTP 403 state and [!] auth without a hang, blank interface, token query, bearer header, or credential value in the reviewed capture. A deliberately invalid scratch credential produces visible HTTP 403 authentication failure with no hang, blank, or credential text. The approved model route was requested but authentication prevented model reach; no fallback was used. |
-| 34 | Killed session | `INVALID — claimed PASS` | `INVALID — claimed PASS` | A real primary-route turn completed with TALARIA-T1-C2-KILLED-SESSION-LIVE-OK; session.active_list identified exactly that acceptance-created session and session.close returned closed true. The next prompt was visibly refused with gateway code 4001 session not found, while Talaria remained responsive and exited cleanly; the dashboard was not stopped. A primary-route session completed TALARIA-T2-LIVE-OK, exact recorded-session close returned true, and the next prompt was visibly refused with code 4001 session not found. No fallback was requested or used. |
-| 35 | Restart-only configuration | `INVALID — claimed PASS` | `INVALID — claimed PASS` | Changing the scratch theme from Accessible High Contrast to Neutral Dark did not affect the running process; only the clean restart applied Neutral Dark. The running process kept connection,version after the scratch file changed; the restarted screenshot applies cwd,connection,version. |
-| 36 | Cross-tester evidence | `INVALID — claimed PASS` | `INVALID — claimed PASS` | Talaria-t1 independently supplies current-candidate receipts for shared items 2, 15, 33, 34, 35, and this cross-tester half, plus every assigned-track item; each receipt names a real capture and screenshot. The T1 live receipts for items 2 and 34 both observed opencode-go / muse-spark-1.2-contributor with no fallback; full cross-tester completion is a generated-manifest property once the parallel T2 item 36 receipt is combined. Talaria-t2 independently produced current-candidate receipts for its thirteen owned and all seven shared items, including primary-route live evidence. |
+| 1 | Installed artifact | `PASS` | `STALE/INVALID — prior PASS @ 788fc79` | Installed executable launched from the isolated wheel environment; hierarchy and /bar evidence were produced without a source or editable install. |
+| 2 | Live primary route | `PASS` | `STALE/INVALID — prior PASS @ 788fc79` | A real prompt completed with TALARIA-T1-C3-PRIMARY-OK; the recorded session.info frame named provider opencode-go and model muse-spark-1.2-contributor, and the status bar showed the same model identity. Primary route opencode-go / muse-spark-1.2-contributor is exact in the full-width agent_model segment and recording; the bounded live reply completed. The bound raw capture starts at privacy-safe width 119, while the bound final screenshot comes from a fresh successful turn expanded to 144 with the inspector closed. No fallback was requested or used. |
+| 3 | Main hierarchy | — | `STALE/INVALID — prior PASS @ 788fc79` | Transcript, StatusRegion, Composer, HelpBar, and the one-row BottomStatusBar retain the specified vertical hierarchy. |
+| 4 | Refined Default | `PASS` | — | Refined Default rendered the populated transcript, composer, agent row, status surfaces, inspector and diff with the specified cool-neutral hierarchy. |
+| 5 | Dark Green Terminal | `PASS` | — | Dark Green Terminal rendered every populated surface with its terminal-green palette while retaining readable hierarchy and state markers. |
+| 6 | Neutral Dark | `PASS` | — | Neutral Dark rendered every populated surface with neutral dark surfaces and legible semantic contrast. |
+| 7 | Accessible High Contrast | `PASS` | — | Accessible High Contrast rendered the populated application with high-contrast borders, text, semantic markers and focus treatment. |
+| 8 | Preview cancellation | `PASS` | — | The picker previewed Dark Green Terminal and Neutral Dark, Escape restored Refined Default, and the scratch configuration hash and modification time remained unchanged. |
+| 9 | Explicit save and precedence | `PASS` | — | User save persisted Dark Green Terminal, repository save overrode it with Neutral Dark, and an unsaved session preview of Accessible High Contrast left both configuration hashes unchanged. |
+| 10 | Theme fallback notice | `PASS` | — | The importer reported 56 Refined Default fallbacks and 19 warnings; startup named unavailable theme not-installed, displayed the fallback notice, then listed and applied partial-fallback. |
+| 11 | Visual Studio Code import | `PASS` | — | Two imports from the committed Visual Studio Code fixture produced identical stored bytes with SHA-256 2ab65e1fb8b3489d49fd25b5e59e70db56cb2dc549fc7b302c4daf496b46820d, and the installed binary restarted into vscode-import-evidence without a fallback notice. |
+| 12 | All status segments | — | `STALE/INVALID — prior PASS @ 788fc79` | At 144 columns all seven default segments appear in order with six separators on exactly one row. |
+| 13 | Status configuration | — | `STALE/INVALID — prior PASS @ 788fc79` | The configured five recognized segments render in order, omitted segments stay absent, and the unknown segment produces a visible notice. Supplemental restart capture item-13-restart-c2.ansi proves the same configuration after a fresh process. |
+| 14 | Status responsive sequence | — | `STALE/INVALID — prior PASS @ 788fc79` | The raw capture records all eighteen required widths with real unpinned terminal geometry; forms compact and segments drop by breakpoint while connection remains on one row. |
+| 15 | Status failure visibility | `PASS` | `STALE/INVALID — prior PASS @ 788fc79` | Invalid command, interval, and three width caps each produced bounded visible fallback notices; a second drive rendered literal bounded acceptance-status-t1 output. Malformed command, invalid interval, and three invalid width caps each render a visible fallback notice. Supplemental item-15-command-c2.ansi shows literal bounded acceptance-status output. |
+| 16 | Inspector dock and resize | — | `STALE/INVALID — prior PASS @ 788fc79` | Focused inspector width changes in four-column steps, clamps at 48 and 28, remains right-docked, and preserves held data. |
+| 17 | Inspector content and empty states | — | `STALE/INVALID — prior PASS @ 788fc79` | All four empty headings remain and each shows the complete none-available sentence with cycle-2 wrapping across the exercised widths. Supplemental item-17-populated-c2.ansi proves accurate populated state. |
+| 18 | Inspector responsive state | — | `STALE/INVALID — prior PASS @ 788fc79` | The primary raw capture proves open auto-restore, manual-close persistence, and narrow overlay behavior; the fresh-process screenshot restores the expanded 36-column dock. |
+| 19 | Side-by-side diff | — | `STALE/INVALID — prior PASS @ 788fc79` | The held three-file, five-hunk diff renders aligned side-by-side panes, line numbers, hunk markers, syntax and intraline changes, read-only labels, and temporary inspector collapse. |
+| 20 | Unified fallback | — | `STALE/INVALID — prior PASS @ 788fc79` | The raw drive preserves file, hunk, and anchor across 112-to-111-to-112 transitions and u/s preferences; the 111-column screenshot shows forced unified mode and the header-row refusal. |
+| 21 | Diff navigation and boundary | — | `STALE/INVALID — prior PASS @ 788fc79` | Hunk and file navigation cycle deterministically, long-line horizontal movement remains clipped, and neither hints nor unbound mutation-like keys expose an edit, stage, revert, discard, or apply surface. |
+| 22 | Composer caret location | `PASS` | — | Focus moved among composer, transcript, agent, prompt, and inspector surfaces; caret text and reserved focus cues changed while the composer and footer geometry remained stable. |
+| 23 | Connection non-color states | `PASS` | — | A healthy primary-route connection painted [..] wait and [ok] up; the controlled isolated-dashboard restart painted [~] retry and [x] down, while the separate item 33 capture proves [!] auth. All five remain literal in monochrome evidence. |
+| 24 | Agent and queue non-color states | `BLOCKED` | — | The current candidate rendered all seven agent states plus empty, waiting, blocked, approval, and clarification queue forms in monochrome. Blocked on current evidence: Hermes 0.21.0 assigns request identifiers to live approvals, while shipped replay cannot encode the keyless admin-polled shape that alone becomes possibly duplicate; creating that shape would simulate acceptance. |
+| 25 | Transcript identity without color | `PASS` | — | Operator, assistant, reasoning, tool activity, session, and fault entries remained distinct by fixed glyph and label in monochrome, with no trailing spacer rows. |
+| 26 | Reduced motion | `PASS` | — | A standard-motion drive showed working ellipsis while ui.reduced_motion=true restarted into static [..] working; completion and state updates remained live in both drives. |
+| 27 | Stable unpinned scroll | `PASS` | — | Upward wheel input unpinned follow mode; appends, status and agent updates, theme preview cancellation, inspector toggles, and the real 132-to-119-to-132 resize preserved the reading anchor. |
+| 28 | Stable pinned scroll | `PASS` | — | F5 pinned follow mode through appends, status updates and a real 132-to-119-to-132 resize; manual wheel input then unpinned before F5 restored bottom following. |
+| 29 | Wide screenshot | — | `STALE/INVALID — prior PASS @ 788fc79` | The required 132-by-36 wide frame has the 36-column inspector dock, stable main hierarchy, and fixed one-row help and status bars. |
+| 30 | Narrow screenshot | — | `STALE/INVALID — prior PASS @ 788fc79` | The required 78-by-36 narrow evidence keeps the inspector out of the dock, preserves fixed footer rows, and shows the held diff in unified mode. |
+| 31 | Malformed Visual Studio Code import | `PASS` | — | The installed importer rejected the committed malformed Visual Studio Code fixture with exit 3, reported the strict JSON error, and created no malformed-acceptance theme. |
+| 32 | Session-only status toggle | — | `STALE/INVALID — prior PASS @ 788fc79` | The session command immediately hides cwd without changing config bytes or modification time; the fresh-process screenshot restores cwd. |
+| 33 | Dead gateway credential | `PASS` | `STALE/INVALID — prior PASS @ 788fc79` | Restarting only isolated dashboard 8790 changed its listener from PID 48271 to PID 48915; the now-stale scratch credential produced visible HTTP 403 authentication failure and [!] auth without a hang, blank screen, or credential disclosure. A deliberately invalid scratch credential produces visible HTTP 403 authentication failure with no hang, blank, or credential text. The approved model route was requested but authentication prevented model reach; no fallback was used. |
+| 34 | Killed session | `PASS` | `STALE/INVALID — prior PASS @ 788fc79` | A real primary-route turn completed with TALARIA-T1-C3-KILLED-SESSION-LIVE-OK; session.close returned closed true for only that acceptance-created session, and the next prompt visibly failed with gateway code 4001 session not found while Talaria remained responsive. A primary-route session completed TALARIA-T2-LIVE-OK, exact recorded-session close returned true, and the next prompt was visibly refused with code 4001 session not found. No fallback was requested or used. |
+| 35 | Restart-only configuration | `PASS` | `STALE/INVALID — prior PASS @ 788fc79` | Changing the scratch theme from Accessible High Contrast to Neutral Dark while Talaria ran had no live effect; only a clean restart applied Neutral Dark. The running process kept connection,version after the scratch file changed; the restarted screenshot applies cwd,connection,version. |
+| 36 | Cross-tester evidence | `PASS` | `STALE/INVALID — prior PASS @ 788fc79` | Talaria-t1 supplies current-candidate evidence for every assigned and shared item; all item results carry harness commit 4c2d8dbf0ddfb7f38ba1f228369ae2d929319758 and the live receipts name the approved route without fallback. Talaria-t2 independently produced current-candidate receipts for its thirteen owned and all seven shared items, including primary-route live evidence. |
 <!-- END GENERATED ACCEPTANCE VERDICTS -->
 
 ## Evidence custody

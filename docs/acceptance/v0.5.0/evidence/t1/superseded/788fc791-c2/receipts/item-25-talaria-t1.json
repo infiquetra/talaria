@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 25,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-25-c2a.ansi",
+    "capture_sha256": "d66ceff8b5175494084e6c12c24abfb30cdbe5cf103e6c746cd5c6905946a9b3",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-25-c2a-pty.json",
+    "pty_result_sha256": "c471fe8f7e9a573bd29f31eb7d8a72d35425dd5cded8f0e16da50dea2c50132b",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-25-c2a.png",
+    "screenshot_sha256": "98d32462bac7666243ba00fdb021f84568def820bf9a3a1f6d4175b46ca9b2c9"
+  },
+  "observations": [
+    "Operator, reasoning, assistant, tool, session, and error entries remained distinguishable by fixed glyph and label identity with NO_COLOR enabled."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated monochrome transcript-identities replay"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Transcript identity without color",
+  "verdict": "pass"
+}

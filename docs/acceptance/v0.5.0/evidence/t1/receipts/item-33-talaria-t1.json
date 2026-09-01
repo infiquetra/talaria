@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
-    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
+    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
   },
   "checklist_item": 33,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-33-c2.ansi",
-    "capture_sha256": "0e0aa44b237fbe6c85efcbd9d936be3228a20a9b85247b3f6b734df8152fa3dd",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-33-c2-pty.json",
-    "pty_result_sha256": "72143dbab6b23dc3da40673c8f8c6f701fa538ce32f42bb8d8a6aaf7f7871f69",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-33-c3b.ansi",
+    "capture_sha256": "3a3752b90a1e78497453bf99c25fbcec6d6a6e611c76950c2c129163c57d2554",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-33-c3b-pty.json",
+    "pty_result_sha256": "eca7a8778447d0b9bc7a7ea247c512b1aefcaad9cbd9666bd7dd3cb28c1d165a",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-33-c2.png",
-    "screenshot_sha256": "1cf402c95308585d72659e2ec8a703a948395142f07f8989d52ea072908d5a71"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-33-c3b.png",
+    "screenshot_sha256": "0e172e47587e1455d7be498fdc0aedbe06ed0c62678bc6e615043df14f47402e"
   },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
   "observations": [
-    "The authorized isolated dashboard restart changed the listener from PID 95480 to PID 19596 with the identical hermes -p default dashboard --host 127.0.0.1 --port 8790 --no-open command.",
-    "The stale scratch credential produced a visible authentication failed HTTP 403 state and [!] auth without a hang, blank interface, token query, bearer header, or credential value in the reviewed capture."
+    "Restarting only isolated dashboard 8790 changed its listener from PID 48271 to PID 48915; the now-stale scratch credential produced visible HTTP 403 authentication failure and [!] auth without a hang, blank screen, or credential disclosure."
   ],
   "owner": "shared",
-  "recorded_at": "2026-09-01T03:08:54+00:00",
+  "recorded_at": "2026-09-01T15:32:37+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -42,7 +42,7 @@
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS; isolated Hermes dashboard 8790",
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; isolated Hermes dashboard 8790",
     "rows": 36,
     "term": "xterm-256color"
   },

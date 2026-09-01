@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "theme",
+    "import",
+    "<scratch-root>/work/malformed.json",
+    "--name",
+    "malformed-acceptance"
+  ],
+  "capture": {
+    "bytes": 163,
+    "path": "<scratch-root>/raw/item-31-c3.ansi",
+    "sha256": "07e8b76878667a1250b557bbe7d50277025f0b713e0acf98c81252b12c9703bb"
+  },
+  "columns": 132,
+  "duration_seconds": 0.15059,
+  "exit_code": 3,
+  "expected_literals": [
+    "talaria: theme import failed:"
+  ],
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

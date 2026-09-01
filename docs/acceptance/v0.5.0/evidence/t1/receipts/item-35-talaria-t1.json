@@ -1,31 +1,32 @@
 {
   "artifact": {
-    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
-    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
+    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
   },
   "checklist_item": 35,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-35-after-c2.ansi",
-    "capture_sha256": "561b34aa72e490dca08f0fca572f0b98491f44a1efc22e86d35f2e4f74f5c2ad",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-35-after-c2-pty.json",
-    "pty_result_sha256": "7e58d9f18ef246f851516fda2fe528d03ea9a4b4fac1bd8a8f931c6b29c026c9",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-35-after-c3.ansi",
+    "capture_sha256": "99f9f1719f843413e8156ef7e3d33896ac69826087d7868e1c99ee1ddb39f94d",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-35-after-c3-pty.json",
+    "pty_result_sha256": "9ad53e7bf5587fe35164df04febab0a86ee10b3940a93c20f520cb71e5b6d292",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-35-after-c2.png",
-    "screenshot_sha256": "cc7fc5985069dd0295c5d15a28d1d0bcf3e5afec5f7c9884c1430d5c085c9619"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-35-after-c3.png",
+    "screenshot_sha256": "45965c66d8b9cc1c90a6c6204ffdec22c2d5344e20dbaab07c8b4d118786e483"
   },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
   "observations": [
-    "Changing the scratch theme from Accessible High Contrast to Neutral Dark did not affect the running process; only the clean restart applied Neutral Dark."
+    "Changing the scratch theme from Accessible High Contrast to Neutral Dark while Talaria ran had no live effect; only a clean restart applied Neutral Dark."
   ],
   "owner": "shared",
-  "recorded_at": "2026-09-01T03:08:28+00:00",
+  "recorded_at": "2026-09-01T15:32:09+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -41,7 +42,7 @@
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS",
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

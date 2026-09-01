@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 36,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-36-c2.ansi",
+    "capture_sha256": "e19952349f7f6a9d4647e9a43236095d5444e94273e2af41a7c486ff50698afd",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-36-c2-pty.json",
+    "pty_result_sha256": "29430f9ac068358b49071e4eb672f52adaf59b9a757a25b5dfbbda37f80ff258",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-36-c2.png",
+    "screenshot_sha256": "98d883083248382f3ad5b1356e5b3e8077887dd36d07d513794124ebd9449251"
+  },
+  "observations": [
+    "Talaria-t1 independently supplies current-candidate receipts for shared items 2, 15, 33, 34, 35, and this cross-tester half, plus every assigned-track item; each receipt names a real capture and screenshot.",
+    "The T1 live receipts for items 2 and 34 both observed opencode-go / muse-spark-1.2-contributor with no fallback; full cross-tester completion is a generated-manifest property once the parallel T2 item 36 receipt is combined."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T03:24:52+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "talaria-t1 cycle-two cross-tester evidence half"
+  },
+  "terminal": {
+    "columns": 160,
+    "program": "Codex PTY harness (forkpty); talaria-t1 cross-tester evidence half",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Cross-tester evidence",
+  "verdict": "pass"
+}

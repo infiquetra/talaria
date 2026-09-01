@@ -2,32 +2,32 @@
   "artifact": {
     "direct_url": {
       "archive_info": {
-        "hash": "sha256=bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be",
+        "hash": "sha256=d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88",
         "hashes": {
-          "sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+          "sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
         }
       },
       "url": "file://<candidate-root>/talaria-0.5.0-py3-none-any.whl"
     },
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
-    "installed_file_count": 147,
-    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "installed_file_count": 149,
+    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
     "package_file": "<scratch-root>/venv/lib/python3.12/site-packages/talaria/__init__.py",
     "version": "0.5.0"
   },
   "candidate": {
     "branch": "orch/talaria-v0-5-0",
-    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
-    "commit_short": "788fc791f",
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit_short": "4c2d8dbf0",
     "integration_tree": "<integration-tree>",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
     "wheel_path": "<candidate-root>/talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
   },
   "config_dir": "<scratch-root>/config",
-  "installed_at": "2026-09-01T02:33:00+00:00",
+  "installed_at": "2026-09-01T15:08:43+00:00",
   "probes": {
     "bare_launch": {
       "argv": [
@@ -36,10 +36,10 @@
       "capture": {
         "bytes": 255,
         "path": "<scratch-root>/raw/install-bare-launch.ansi",
-        "sha256": "b1bbc1cb95bde03bf76f78f4c0abbe48e249e819d2603a5ef08c51ae2c92aee9"
+        "sha256": "7f63866c46284b165bb051080077286ac76036fb73e85239c60856dfb79709d4"
       },
       "columns": 132,
-      "duration_seconds": 1.070427,
+      "duration_seconds": 1.062414,
       "exit_code": 2,
       "expected_literals": [],
       "missing_literals": [],
@@ -64,11 +64,11 @@
       ],
       "exit_code": 1,
       "json_path": "<scratch-root>/receipts/install-gate.json",
-      "json_sha256": "b76963bc16a432fc104059d764fcc203fa54bca22d39b2a4a59cf38a43115c19",
+      "json_sha256": "0085a75f9528975d0f710aa023c3fccfc992ad1babeb83e6241744f55644984c",
       "known_preexisting_exceedance": {
         "block_markdown_reference_ms": 44.0,
         "check": "workload_latency_growing-one-column-table",
-        "current_sample_ms": 68.883,
+        "current_sample_ms": 63.233,
         "excluded_from_decision": true,
         "reason": "known pre-existing exceedance excluded because its run-to-run variance on the unchanged v0.5 candidate exceeds the difference it would be used to detect",
         "threshold_ms": 50.0,
@@ -77,9 +77,9 @@
           54.45,
           60.229,
           68.861,
-          68.883
+          63.233
         ],
-        "v0.5_spread_ms": 14.433
+        "v0.5_spread_ms": 14.411
       },
       "report_verdict": "fail",
       "stderr_path": "<scratch-root>/receipts/install-gate.stderr.log",
