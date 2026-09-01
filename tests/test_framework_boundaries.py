@@ -30,11 +30,12 @@ def _package_modules(package: ModuleType) -> tuple[str, ...]:
 _FRAMEWORK_FREE_IMPORTS: tuple[
     tuple[str, tuple[str, ...], tuple[str, ...]], ...
 ] = (
+    ("text", ("talaria.text",), ("talaria.text",)),
     ("themes", _package_modules(talaria.themes), ("talaria.themes",)),
     (
         "status",
         _package_modules(talaria.status),
-        ("talaria.status", "talaria.domain", "talaria.recorder"),
+        ("talaria.status", "talaria.domain", "talaria.recorder", "talaria.text"),
     ),
     (
         "transport",
@@ -50,6 +51,7 @@ _FRAMEWORK_FREE_IMPORTS: tuple[
             "talaria.themes",
             "talaria.domain",
             "talaria.recorder",
+            "talaria.text",
         ),
     ),
 )

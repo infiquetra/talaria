@@ -1573,13 +1573,14 @@ class TalariaApp(App[None]):
     def _focused_agent_identity(self) -> tuple[str, str, bool]:
         """Resolve the focused provider and model from one held observation.
 
-        The boolean distinguishes a model observed only in the session roster.
-        That row does not carry a provider, so any provider paired with it is a
-        catalogue inference rather than part of the same observation.
+        The boolean is true when a model observed in the session roster matches
+        the catalogue's current model, allowing the status bar to pair the
+        catalogue provider with it. The inspector deliberately keeps the bare
+        roster model because that row did not observe a provider itself.
         """
         session = self.session_model_in_focus
         catalog = self.model_catalog
-        roster_only = False
+        provider_from_catalogue_match = False
         if session is not None:
             provider_slug = session.provider_slug
             model = session.model
@@ -1595,14 +1596,13 @@ class TalariaApp(App[None]):
                 else None
             )
             if row is not None and row.model:
-                roster_only = True
                 # The roster row is an observation of this session's actual
                 # model; the catalogue describes configured defaults instead.
-                provider_slug = (
-                    catalog.current_provider
-                    if catalog is not None and catalog.current_model == row.model
-                    else ""
-                )
+                if catalog is not None and catalog.current_model == row.model:
+                    provider_from_catalogue_match = True
+                    provider_slug = catalog.current_provider
+                else:
+                    provider_slug = ""
                 model = row.model
             elif catalog is not None:
                 provider_slug = catalog.current_provider
@@ -1620,11 +1620,11 @@ class TalariaApp(App[None]):
                 ),
                 provider_slug,
             )
-        return provider, model, roster_only
+        return provider, model, provider_from_catalogue_match
 
     def _status_agent(self) -> tuple[str, str]:
         """Return the provider and model already held for the focused session."""
-        provider, model, _roster_only = self._focused_agent_identity()
+        provider, model, _provider_from_catalogue_match = self._focused_agent_identity()
         return provider, model
 
     def _bottom_status_view(self) -> BottomStatusBarView:
@@ -1641,9 +1641,9 @@ class TalariaApp(App[None]):
         )
 
     def _inspector_model(self) -> str:
-        """Return the inspector model, omitting an inferred roster provider."""
-        provider, model, roster_only = self._focused_agent_identity()
-        if roster_only:
+        """Return the roster model without its separately matched provider."""
+        provider, model, provider_from_catalogue_match = self._focused_agent_identity()
+        if provider_from_catalogue_match:
             return model
         return "/".join(part for part in (provider, model) if part)
 

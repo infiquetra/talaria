@@ -44,15 +44,14 @@ has handled the resize.
 | 80–95 | Also drop `cwd` |
 | 64–79 | Also drop `git_branch` |
 | 48–63 | Also drop `context` |
-| 32–47 | Also drop `agent_model` |
-| 20–31 | Keep `task_progress` and `connection` compact while they fit |
+| 20–47 | Also drop `agent_model` |
 | Fewer than 20 | Drop `task_progress`; minimum `connection` form, clipped only as a final safeguard |
 
 Within a band, overflowing values shorten and then drop by fixed priority: `version`, `cwd`,
 `git_branch`, `context`, `agent_model`, and `task_progress`. `connection` is never deliberately
 dropped. Separators next to a dropped segment disappear with it.
 
-At 20–31 columns, `task_progress` and `connection` start compact. Actual overflow may shorten or
+At 20–47 columns, `task_progress` and `connection` start compact. Actual overflow may shorten or
 drop `task_progress`; below 20 columns the breakpoint drops it and keeps minimum `connection`.
 
 ## Right inspector
