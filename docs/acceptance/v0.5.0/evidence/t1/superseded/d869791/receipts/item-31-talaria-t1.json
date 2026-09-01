@@ -1,10 +1,10 @@
 {
   "artifact": {
     "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
     "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
     "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
     "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
     "version": "0.5.0",
@@ -13,12 +13,12 @@
   },
   "checklist_item": 31,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-31-safe.ansi",
+    "capture_path": "<scratch-root>/raw/item-31-safe.ansi",
     "capture_sha256": "130c3ac0250d7e512400d84a2c62105e0a145c62bde3919b3783c1d3a222bb93",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-31-safe-pty.json",
+    "pty_result_path": "<scratch-root>/receipts/item-31-safe-pty.json",
     "pty_result_sha256": "fa52945c79c3eda87658e255e08a9e4984532490b3df648c3e81753e901e93d0",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-31.png",
+    "screenshot_path": "<scratch-root>/screenshots/item-31.png",
     "screenshot_sha256": "fe24de62abeb5cd1a74843f576ec0d76a7abe72ed420b4d2bf0b17d92feb1afa"
   },
   "observations": [

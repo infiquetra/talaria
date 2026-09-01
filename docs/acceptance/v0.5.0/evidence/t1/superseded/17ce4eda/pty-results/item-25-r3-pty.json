@@ -1,6 +1,6 @@
 {
   "argv": [
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/bin/talaria",
+    "<scratch-root>/venv/bin/talaria",
     "replay",
     "docs/acceptance/v0.5.0/corpora/t1/transcript-identities.jsonl",
     "--speed",
@@ -8,7 +8,7 @@
   ],
   "capture": {
     "bytes": 49436,
-    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/raw/item-25-r3.ansi",
+    "path": "<scratch-root>/raw/item-25-r3.ansi",
     "sha256": "d15dc8ce20a9799cf3c9a98312e469b3fcc59c44141173ecff2e4130eeb43800"
   },
   "columns": 132,

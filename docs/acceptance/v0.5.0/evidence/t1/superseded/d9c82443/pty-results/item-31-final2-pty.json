@@ -1,15 +1,15 @@
 {
   "argv": [
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
+    "<scratch-root>/venv/bin/talaria",
     "theme",
     "import",
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/fixtures/malformed.json",
+    "<scratch-root>/fixtures/malformed.json",
     "--name",
     "malformed-acceptance"
   ],
   "capture": {
     "bytes": 242,
-    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/raw/item-31-final2.ansi",
+    "path": "<scratch-root>/raw/item-31-final2.ansi",
     "sha256": "1f58db69695be37fa30aad29d7e40b0b4104c40f3fcf6d69e64c7dade61716e4"
   },
   "columns": 132,

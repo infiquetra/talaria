@@ -1,10 +1,10 @@
 {
   "argv": [
-    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/venv/bin/talaria"
+    "<scratch-root>/venv/bin/talaria"
   ],
   "capture": {
     "bytes": 155299,
-    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-yfck7p29/raw/item-24-live-r3.ansi",
+    "path": "<scratch-root>/raw/item-24-live-r3.ansi",
     "sha256": "6da31f6649f052b0b4f32a1066a7e5c9354c6797c8af00c0517c1c9e32e8ab69"
   },
   "columns": 132,

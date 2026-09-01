@@ -82,7 +82,7 @@ jobs:
           fi
 
       - name: Check out the tagged tree
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ steps.resolve.outputs.tag }}
 
@@ -108,7 +108,7 @@ jobs:
           echo "Tag $TAG matches package version $expected."
 
       - name: Set up Node.js (TypeScript equivalence bridge)
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -117,7 +117,7 @@ jobs:
         run: npm ci
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: "3.12"
 
@@ -139,12 +139,17 @@ jobs:
         run: uv run pytest
 
       - name: bandit
-        run: uv run bandit -r talaria scripts -q -ll
+        run: |
+          # Application code retains the strict low-severity credential checks.
+          uv run bandit -r talaria -q
+          # Harness utilities keep script coverage while excluding known low-severity fixture noise.
+          uv run bandit -r scripts -q -ll
 
       - name: Verify the v0.5.0 acceptance run
         run: >-
           uv run python -m scripts.acceptance.v050_receipt verify-run
           --manifest docs/acceptance/v0.5.0/artifact-manifest.json
+          --expect-candidate "${{ github.sha }}"
 
       - name: The gate must read READY
         shell: bash

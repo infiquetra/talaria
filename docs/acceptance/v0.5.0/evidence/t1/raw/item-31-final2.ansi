@@ -1,1 +1,1 @@
-talaria: theme import failed: /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/fixtures/malformed.json is not strict JSON: Expecting property name enclosed in double quotes: line 2 column 1 (char 34)
+talaria: theme import failed: <scratch-root>/fixtures/malformed.json is not strict JSON: Expecting property name enclosed in double quotes: line 2 column 1 (char 34)

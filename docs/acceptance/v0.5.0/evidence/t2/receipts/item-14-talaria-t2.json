@@ -1,11 +1,11 @@
 {
   "artifact": {
     "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
     "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
-    "install_receipt_sha256": "c96c75197ba8e8ecc353cebcae13f66f431ab5f8a510246d718dffa934883726",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
     "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
@@ -16,7 +16,7 @@
     "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-14-resize-fix.ansi",
     "capture_sha256": "e3d82cec0f935ac0a9463b8208eca3b95e6eb7c5c173c90e4522b8f9dc62d8b2",
     "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-14-resize-fix-pty.json",
-    "pty_result_sha256": "1949e0d3a94e490250d71473b07a2e7b32f86d933119a1560efce16c79726086",
+    "pty_result_sha256": "e35527665ce334b15b7d4e56f0673ecafbc76b725a0eea18fa4d4a0d6d625d50",
     "redaction_review": "passed",
     "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-14-resize-fix.png",
     "screenshot_sha256": "44f26f8259651f76f0a0a56716131f363fa3626852cce0e3a825e79606fa8f39"
