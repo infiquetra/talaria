@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "<scratch-root>/fixtures/acceptance-populated.jsonl"
+  ],
+  "capture": {
+    "bytes": 166850,
+    "path": "<scratch-root>/raw/item-20-refusal.ansi",
+    "sha256": "471865d2a371cf8e7839c1ed05b8c40ee6f064f21a00498f05fef912cfc3cb39"
+  },
+  "columns": 111,
+  "duration_seconds": 9.782923,
+  "exit_code": 0,
+  "expected_literals": [
+    "side-by-side needs 112 columns; unified active"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Terminal.app 2.14",
+  "tester": "talaria-t2",
+  "timed_out": false
+}

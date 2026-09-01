@@ -9,7 +9,9 @@ programmatic writes must not open the palette.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,8 +22,27 @@ from talaria.domain.commands import (
     CommandEntry,
 )
 from talaria.domain.composer_history import ComposerHistory
+from talaria.themes.builtins import BUILTIN_THEMES
 from talaria.transport.rpc import RpcOutcome
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from tests.ui.conftest import event, live_app, paused_app
+
+_REPOSITORY_ROOT = Path(__file__).parents[2]
+_PICKER_COMMANDS = ("/models", "/profiles")
+
+
+def _picker_key_contract(text: str) -> tuple[str, str | None]:
+    """Return the every-focus key and optional outside-composer alias."""
+    text = text.replace("`", "")
+    keys = tuple(dict.fromkeys(re.findall(r"\bF\d+\b", text)))
+    outside_match = re.search(
+        r"\b(F\d+) only outside composer focus\b",
+        text,
+    )
+    outside = None if outside_match is None else outside_match.group(1)
+    every_focus = tuple(key for key in keys if key != outside)
+    assert len(every_focus) == 1, text
+    return every_focus[0], outside
 
 
 class RecordingDispatcher:
@@ -48,6 +69,121 @@ def _catalog_with(entries: list[tuple[str, str, str, str]]) -> CommandCatalog:
         canon={},
         available=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_picker_keys_match_command_rows_docs_and_launch_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listing_app, _ = paused_app([event("gateway.ready", {})])
+    async with listing_app.run_test() as pilot:
+        await pilot.press("slash")
+        await pilot.pause()
+        rendered_rows = {
+            command: next(
+                row
+                for row in listing_app.palette.row_texts
+                if row.startswith(command)
+            )
+            for command in _PICKER_COMMANDS
+        }
+        await listing_app.shutdown_sources()
+
+    guide = (_REPOSITORY_ROOT / "docs" / "terminal-ui.md").read_text(
+        encoding="utf-8"
+    )
+    documentation_rows = {
+        command: next(
+            line for line in guide.splitlines() if line.startswith(f"| `{command}`")
+        )
+        for command in _PICKER_COMMANDS
+    }
+    rendered_contract = {
+        command: _picker_key_contract(row)
+        for command, row in rendered_rows.items()
+    }
+    documented_contract = {
+        command: _picker_key_contract(row)
+        for command, row in documentation_rows.items()
+    }
+    assert rendered_contract == documented_contract
+
+    launch_app, _ = paused_app([event("gateway.ready", {})])
+    reached: list[str] = []
+
+    async def record_picker(mode: str) -> None:
+        reached.append(mode)
+
+    monkeypatch.setattr(launch_app, "open_picker", record_picker)
+    async with launch_app.run_test() as pilot:
+        assert launch_app.focused is launch_app.composer.text_area
+        for command in _PICKER_COMMANDS:
+            every_focus_key, _ = rendered_contract[command]
+            await pilot.press(every_focus_key.casefold())
+            await pilot.pause()
+
+        assert reached == ["models", "profiles"]
+        await launch_app.shutdown_sources()
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_selection"),
+    [
+        ("/models", "second line"),
+        ("/profiles", "first line\nsecond line"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_focus_scoped_picker_alias_keeps_its_composer_selection_contract(
+    command: str,
+    expected_selection: str,
+) -> None:
+    local_command = next(
+        item for item in TALARIA_LOCAL_COMMANDS if item.name == command
+    )
+    _, outside_composer_key = _picker_key_contract(local_command.description)
+    assert outside_composer_key is not None
+
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test() as pilot:
+        text_area = app.composer.text_area
+        assert app.focused is text_area
+        app.composer.text = "first line\nsecond line"
+        text_area.move_cursor((1, 3))
+
+        await pilot.press(outside_composer_key.casefold())
+        await pilot.pause()
+
+        assert text_area.selected_text == expected_selection
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_mode_restores_browse_and_leaves_slash_filtering_unchanged() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test() as pilot:
+        BUILTIN_THEME_REGISTRY.register(app)
+        app.theme = "refined-default"
+        await app.palette.toggle()
+        assert app.palette.showing
+
+        await app.palette.open_theme_picker(
+            BUILTIN_THEMES,
+            current_slug="refined-default",
+            session_slug=None,
+        )
+        await pilot.press("down", "escape")
+        await pilot.pause()
+        assert app.palette.showing, "cancel did not restore the open browse listing"
+
+        await app.palette.toggle()
+        app.composer.text_area.focus()
+        for character in "/mod":
+            await pilot.press(character)
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert all(entry.name.startswith("/mod") for entry in app.palette.filtered_entries)
+        await app.shutdown_sources()
 
 
 @pytest.mark.asyncio

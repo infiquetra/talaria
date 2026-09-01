@@ -2,6 +2,128 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-01
+
+### Receipts that bind to a harness commit forbid squash-merging the release branch
+
+**Evidence.** Every v0.5.0 acceptance receipt records a `harness_commit`, and
+`_harness_commit_matches` at `scripts/acceptance/v050_receipt.py:601` accepts it only when it is the
+current head or an ancestor of it whose `scripts/acceptance` bytes are identical.
+`scripts/acceptance/test_v050_harness.py::test_committed_acceptance_receipts_match_current_harness`
+runs that check against the real committed manifest. Both landing shapes were simulated against
+`origin/main` before choosing one: `git merge --squash` produced **42 errors**, all reading `receipt
+harness is not an ancestor of the current harness`; a true merge commit produced **0**.
+
+**Mechanism.** A squash merge writes a new commit whose only parent is the previous `main`, so every
+commit on the release branch — including the one the receipts name as their harness — leaves the
+first-parent history entirely. The receipts are then unverifiable on `main` even though not one byte
+of evidence, product code or harness changed. Nothing on the branch can detect this, because the
+branch is the one place where the ancestry still holds; the failure appears only after the merge, on
+the branch that matters.
+
+**Generalizable rule.** When committed evidence names a commit as its provenance, the merge must
+preserve that commit's ancestry — merge or rebase, never squash — and the landing shape is verified
+by simulating it against the target branch before merging, not inferred from repository convention.
+
+### A shared atomic writer needs a per-caller symlink policy
+
+**Evidence.** Commit `0916045` repaired a write-through escape in the Visual Studio Code theme
+importer. Before the repair, a symlink planted at `<config>/themes/<slug>.json` made the shared
+atomic-write helper resolve and overwrite its target, even outside the configuration directory. The
+repair made `follow_symlinks=False` the helper's default, kept the configuration saver's deliberate
+opt-in, and pinned both sides with
+`tests/ui/test_theme.py::test_import_replaces_a_planted_theme_symlink_without_writing_through_it`
+and `tests/test_config.py::test_save_theme_through_a_symlink_preserves_link_target_and_mode`.
+
+**Mechanism.** One helper served two different contracts. A symlinked `config.toml` is a supported
+dotfiles arrangement whose target should be updated; an imported theme path is an output boundary
+where following a pre-existing link lets an attacker choose the destination. Making link following
+implicit gave the more permissive contract to every caller.
+
+**Generalizable rule.** A shared filesystem writer defaults to not following links; each caller that
+needs link traversal opts in and carries a test for both the link and its target.
+
+### Operator-facing key descriptions need one code-owned authority
+
+**Evidence.** Commit `adc8af4` made the `/models` and `/profiles` descriptions in
+`talaria/domain/commands.py:419-445` canonical, then made the terminal guide mirror them.
+`tests/ui/test_slash_palette.py::test_picker_keys_match_command_rows_docs_and_launch_behavior` reads
+the rendered command rows and the guide and asserts the same F11/F12 every-focus routes, while
+`::test_focus_scoped_picker_alias_keeps_its_composer_selection_contract` proves that F6/F7 retain
+their TextArea selection behavior when the composer has focus.
+
+**Mechanism.** The in-app list and the documentation table were independent statements of one
+contract. Repairing either one left the other free to restore the claim that F6/F7 always opened the
+pickers, even though Textual's composer owns those keys while focused. The collision survived two
+cycles because each surface could be correct in isolation and wrong as a pair.
+
+**Generalizable rule.** Put an operator-facing contract in one code-owned value and test every prose
+mirror against that value; exercise behavior separately rather than treating matching text as proof.
+
+### A responsive band sets an initial form, not a permanent minimum
+
+**Evidence.** Commit `1bb6d9e` changed the 20-to-31-column status band to begin with compact
+`task_progress` and `connection` segments. The complete resize walk in
+`tests/ui/test_status_bar.py:176-202` now proves that both remain at 20 and 31 columns when they fit,
+while the rendering loop may still shorten or drop `task_progress` on actual overflow.
+
+**Mechanism.** The earlier implementation pinned `task_progress` to its minimum form throughout the
+band. That confused a breakpoint's starting policy with the later overflow policy and discarded
+useful information even when the terminal had enough cells for it.
+
+**Generalizable rule.** Responsive breakpoints choose the initial representation; measured overflow,
+not the band name, decides subsequent truncation and removal.
+
+### A guard's reach must be tested against the real corpus, and a self-scan is not a gate
+
+**Evidence.** This release produced the same reach defect three times. Before commit `ad3ad26`, every
+acceptance receipt enumerator used `*/receipts/*.json`; it found 42 active receipts and none of the
+133 receipts under `evidence/<tester>/superseded/<commit>/receipts/`, the only population the
+quarantine guard existed to police. Commit `4a23b28` replaced tester evidence-index prose that
+restated manifest counts by hand with generated regions derived from the manifest. Then the three
+code-review artifacts were prepared for publication with a purpose-built eight-pattern privacy scan
+that reported clean, while the scanner this repository enforces rejected the same draft with eight
+errors across four files. That result and the subsequent redaction are recorded at
+`docs/evidence/adhoc-orch-talaria-v0-5-0/REDACTION.md:10-14`.
+
+Commit `96d9e2c4` closed the third reach defect. The old privacy sweep enumerated only the acceptance
+release root, so no file under `docs/evidence/` could reach the detector. `_PUBLIC_EVIDENCE_ROOTS` at
+`scripts/acceptance/v050_receipt.py:48-51` now names both publication roots; an absent root simply
+contributes no files. The regression
+`scripts/acceptance/test_v050_harness.py::test_verify_run_privacy_scans_published_review_evidence`
+plants an operator-home-shaped string below `docs/evidence/` and fails if that root is narrowed away.
+Measured at `da7ea10`, the shipped gate scanned 1,251 files, including all nine under
+`docs/evidence/`, and returned zero errors. The same detector against an isolated planted file below
+that root returned exactly one error naming the file; removing it restored zero.
+
+**Mechanism.** In the receipt case, production, validation, and tests shared one shallow glob and
+therefore agreed while missing the guarded population. In the index case, the assertion consumed a
+sentence typed beside it rather than the manifest that produced the fact. In the privacy case, the
+detector was sound but its roots stopped before the directory the release publishes into. The
+controller's self-scan added a second failure mode: a check written alongside its artifact inherits
+the producer's assumptions and blind spots, so passing it establishes only internal agreement. The
+repository-owned scanner was independent of those assumptions and found what the self-scan could not.
+
+**Generalizable rule.** Derive a guard's input from the complete corpus the system publishes,
+mutation-test its reach there, and require the repository's independently enforced gate; a producer's
+self-scan is preflight, not proof.
+
+### Acceptance evidence is bound by its schema as well as by product-tree identity
+
+**Evidence.** Commit `ad3ad26` made `harness_commit` required in
+`docs/acceptance/v0.5.0/receipt.schema.json:7-30` and added
+`tests/docs/test_v050_acceptance_records.py::test_receipt_schema_requires_the_drive_time_harness_commit`.
+That harness-only change left the shipped product tree unchanged but invalidated every earlier
+item receipt, because none of those 42 documents carried the newly required provenance field. The
+two install receipts use a different contract and were not invalidated by this schema change.
+
+**Mechanism.** Product-tree identity answers whether the tested wheel contains the same product
+bytes. It does not answer whether an evidence document still conforms to the validator and schema
+that give the document meaning. Either contract can change independently.
+
+**Generalizable rule.** Decide whether acceptance evidence survives a repair by validating both the
+tested product identity and every evidence document against the current evidence contract.
+
 ## 2026-08-18
 
 ### A determinism check can never assert correctness, and this unit shipped that mistake three times

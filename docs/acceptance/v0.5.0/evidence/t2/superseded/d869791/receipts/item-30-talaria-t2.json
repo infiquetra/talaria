@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
+    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 30,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-30.ansi",
+    "capture_sha256": "f92d2ec388e2d8d7cb7d4cbf85d9024b27d9879cbd6ecc3a5010d261d0c2429c",
+    "pty_result_path": "<scratch-root>/receipts/item-30-pty.json",
+    "pty_result_sha256": "b28e7da753205afeec62edbececba165f657d2486219eff54ce74744159619c4",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-30.png",
+    "screenshot_sha256": "cf12c6c8c551dd77b5bde1f09d6f4ecd3a741c7897b1ac5e9a203a2e47577504"
+  },
+  "observations": [
+    "The 78-by-36 screenshot shows the held diff in unified mode, with the inspector overlay-only and the footer surfaces remaining one row."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-acceptance-corpus"
+  },
+  "terminal": {
+    "columns": 78,
+    "program": "Terminal.app 2.14",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Narrow screenshot",
+  "verdict": "pass"
+}

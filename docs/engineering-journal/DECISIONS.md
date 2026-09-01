@@ -2,6 +2,44 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-09-01
+
+### Talaria's reduced-motion setting is the sole animation authority
+
+**Decision.** Talaria sets Textual's animation level from restart-scoped `ui.reduced_motion` alone:
+`none` when enabled and `full` otherwise. An inherited `TEXTUAL_ANIMATIONS` value does not override
+that choice. Commit `f46aa77` and
+`tests/ui/test_motion.py::test_talaria_motion_setting_is_the_sole_animation_authority` pin both
+directions in separate processes.
+
+**Rationale.** A single documented setting must produce the same motion policy in every launch
+environment. Honoring an inherited framework variable would create a second, undocumented authority
+that could silently contradict the value Talaria injects into its own widgets.
+
+**Rejected alternatives.** Honoring `TEXTUAL_ANIMATIONS` when `ui.reduced_motion` is false was
+rejected because ambient process state would then change an accessibility behavior that Talaria
+documents as restart-scoped configuration. Combining the two values was rejected because no public
+precedence or merge semantics exist.
+
+**Revisit when.** Talaria formally exposes a framework-level animation override, or its configuration
+contract defines how that override composes with `ui.reduced_motion`.
+
+### The 20-to-31-column status band starts compact and yields to measured overflow
+
+**Decision.** The narrow status band begins with compact `task_progress` and `connection` segments.
+The ordinary truncate-then-drop loop may demote or remove `task_progress` when their rendered values
+do not fit. Commit `1bb6d9e` and the transition table in `tests/ui/test_status_bar.py:176-202` pin the
+choice.
+
+**Rationale.** A width band can state which information receives a chance to render, but only the
+rendered values reveal whether both segments fit. Starting compact preserves useful task state at 20
+columns without weakening the invariant that `connection` is the last surviving segment.
+
+**Rejected alternatives.** Dropping `task_progress` at 20 columns wastes available space. Pinning it
+to its minimum form throughout the band suppresses useful detail before overflow requires it.
+
+**Revisit when.** The minimum legibility requirement or the status-bar breakpoint contract changes.
+
 ## 2026-08-18
 
 ### Every determinism check in the gate is paired with a correctness check, or it says why not
@@ -2706,3 +2744,113 @@ Two things generalize past the incident. First, **an agent's model of "who else 
 **Rejected alternatives.** *Commit-time-only block rendering* — rejected by operator choice in the brainstorm; streaming is fully progressive with accepted fence flicker. *Pinning the internal `MarkdownStream`* — buys backpressure Talaria's 50 ms coalescing already provides, at the price of a private-API dependency. *Restating the flattened line buffer* — would break `terminal_read` (v0.1 KTD10) and the projection pin `test_every_transcript_entry_survives_into_the_line_buffer`; instead the projection grows a second, entry-scoped surface and the line buffer moves zero bytes.
 
 **Revisit when.** U6's gate re-run measures the widget family's cost against the ceilings — a red run with numbers attached is the only trigger for the fallback; or Textual is upgraded past 8.2.8, which trips the U3 pin test.
+
+## 2026-08-30
+
+### Talaria v0.5.0 has one shared-surface contract and one evidence-bound candidate
+
+**Author.** Talaria v0.5.0 integrated run planning for issues #103–#111; full rationale, file map,
+tests, and acceptance mapping are in
+[`docs/plans/2026-08-30-talaria-v0-5-0-run-plan.md`](../plans/2026-08-30-talaria-v0-5-0-run-plan.md).
+
+**Decisions.** The plan records eleven Key Technical Decisions (KTDs), mirrored here so later work
+does not have to infer them from concurrent child branches:
+
+1. **KTD1:** inspector, diff, and status projections are framework-free and consume only state the
+   app already holds; no new transport, polling, repository scan, or per-render subprocess exists.
+2. **KTD2:** theme browsing previews immediately, Escape restores the pre-open theme, and Enter
+   leads to an explicit session/user/repository scope choice; browsing never writes.
+3. **KTD3:** built-in themes are Python constants under `talaria/themes/`; imported themes are
+   strict, canonical user-scope JSON documents with deterministic names and replacement.
+4. **KTD4:** config normalization returns resolved values plus immutable visible startup notes.
+   Invalid optional settings fall back; syntactically invalid TOML remains a clear launch error.
+5. **KTD5:** `task_progress` replaces the needs-you summary row but computes its own
+   completed-of-total form from held status facts and appends the queue-attention count; it does not
+   reuse `talaria.domain.queue.summary_line`. HelpBar remains the documented adjacent key-hint row,
+   StatusRegion retains shell output, and one StatusBar is last.
+6. **KTD6:** slash-palette commands are primary, modal keys stay local, and F11 is only a secondary
+   inspector alias whose real desktop delivery is measured during acceptance.
+7. **KTD7:** inspector and diff share immutable changed-file and diff-selection view models; neither
+   widget owns or mutates session state.
+8. **KTD8:** a diff is indexed once, while every render is bounded to the viewport plus fixed
+   overscan; intraline comparison is limited to visible pairs and capped long lines.
+9. **KTD9:** requested inspector collapse and preferred diff mode remain separate from narrow-screen
+   effective state, so widening restores session intent without persistence.
+10. **KTD10:** every acceptance receipt names one run-branch commit and wheel digest. A repair makes
+    a new candidate and invalidates evidence from the old one; installed environments are not patched.
+11. **KTD11:** documentation and release consume the acceptance verdict exactly as observed and
+    cannot improve it; version, tag, and release follow accepted integration through normal authority.
+
+**Concurrency decision.** Four primary lanes develop new modules in exclusive linked worktrees. The
+run owner serializes final edits to `talaria/ui/app.py`, `talaria/domain/commands.py`, and
+`talaria/config.py` through a child-scoped lease against one canonical compose tree, command table,
+and schema ledger. #109 uses its own worktree and begins its independent focus/scroll tests while its
+theme-dependent half waits for #104.
+
+**Candidate decision.** The unmerged run branch integrates #104, #105, #106, #107, #108, then #109;
+only that checked and hashed tree produces the wheel tested by `talaria-t1` and `talaria-t2`. #110
+records pseudo-terminal and live-session evidence, and #111 runs last.
+
+**Revisit when.** An approved child issue changes, an accepted architecture decision is superseded,
+or observed implementation evidence falsifies one of the fixed seams. A textual merge conflict or a
+preference for another key name is not by itself a reason to reopen the decisions.
+
+## 2026-08-31
+
+### Talaria v0.5.0's visual surfaces are projections of one startup snapshot and already-held runtime state
+
+**Author.** Talaria v0.5.0 implementation for issues #104–#109, recorded by issue #111 after all six
+feature children were integrated.
+
+**Decision.** The release candidate has one 58-token semantic theme vocabulary and four complete built-in
+themes. `/theme` previews immediately, `Escape` restores, and `Enter` accepts only for the running
+process; persistence is a separate `/theme save [user|repository]` action. The selection scopes are
+built-in default, user file, repository file, and process session in increasing precedence. The
+theme writer is deliberately narrow: it changes only `[theme].name`, verifies the semantic edit,
+preserves all other bytes, and atomically replaces the file.
+
+The true-bottom bar is exactly one row after the help bar. It receives the held projection once per
+serialized render boundary, and captures the launch directory and Git branch once when the app is
+built. Its seven segment names, order, caps, fallback notices, and breakpoints are configuration;
+`/bar` is a process-only toggle. `StatusRegion` remains a separate body surface for bounded command
+output and startup notices. `task_progress` computes completed-of-total from held status facts and
+appends the queue-attention count rather than reusing `talaria.domain.queue.summary_line`; `/needs`
+retains the full queue.
+
+The inspector and diff viewer are views over immutable domain projections derived from the current
+session's retained state. Neither opens a gateway method, scans the working tree, nor starts a poll.
+The inspector separates requested open state from its automatic below-120-column collapse. The diff
+viewer separates preferred mode from its forced below-112-column unified mode. Both restore intent
+when the terminal widens and persist no geometry, selection, or mode across process restart. Empty
+state is literal. Diff behavior is read-only in data source, labels, commands, keymap, and helpers.
+
+Focus cues, transcript identity, connection state, and queue attention retain words or glyphs rather
+than depending on color. Focus changes repaint existing cells without changing height. One immutable
+`ui.reduced_motion` startup value controls static decorative frames and immediate routed scroll, and
+one entry/source-offset anchor rule carries unpinned transcript reading across streaming, status,
+theme, inspector, and resize changes.
+
+**Implementation corrections to the planning record.** The global inspector binding is `Ctrl+B`,
+not the F11 alias described in the 2026-08-30 Key Technical Decision summary. Theme `Enter` accepts
+the current process selection directly; user and repository persistence are explicit commands, not
+a scope chooser shown by `Enter`. These are the merged bindings documented for v0.5.0.
+
+**Configuration decision.** Files are additive startup inputs. Missing new keys take defaults, and
+old files remain valid. Optional invalid values produce visible bounded fallbacks; malformed TOML
+remains a named launch error. There is no external-file watcher or live reload. The only live
+configuration-like actions are the process-local theme and bar controls, with explicit theme save
+still taking effect from the next startup file read.
+
+**Superseded implementation note (2026-08-31).** This record previously said configuration
+normalization accepted only built-in theme slugs. That reading was wrong: `load_config` includes the
+canonical stored user-theme slugs when it validates `theme.name`. Once an imported theme document
+exists under the user theme directory, saving its slug survives restart. The library is still read
+only once per process, consistent with the release's restart-to-apply decision.
+
+**Evidence boundary.** These decisions record merged code and its tests. They do not claim the
+candidate wheel has passed issue #110's real-terminal acceptance run; installation and release notes
+remain evidence-bound until that run produces receipts.
+
+**Revisit when.** A new visual surface needs data the process does not hold, a setting genuinely
+needs live external reload, or a writable diff action is separately approved. None is implied by
+this release.

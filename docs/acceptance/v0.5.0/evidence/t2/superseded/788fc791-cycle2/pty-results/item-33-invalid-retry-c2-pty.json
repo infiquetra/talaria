@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria"
+  ],
+  "capture": {
+    "bytes": 56480,
+    "path": "<scratch-root>/raw/item-33-invalid-retry-c2.ansi",
+    "sha256": "56a229e04b377a5183beced876dc99a5e71b49e311428ffbcd0c8344cfdaaf3c"
+  },
+  "columns": 144,
+  "duration_seconds": 12.278283,
+  "exit_code": 0,
+  "expected_literals": [],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; terminal dimensions unpinned",
+  "tester": "talaria-t2",
+  "timed_out": false
+}

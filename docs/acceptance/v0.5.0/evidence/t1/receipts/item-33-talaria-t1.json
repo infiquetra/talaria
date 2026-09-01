@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
+  },
+  "checklist_item": 33,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-33-c4b.ansi",
+    "capture_sha256": "027e7dddd63b105e8b66d12e6296295190516714d29932aa9f5180f0a7ddc4f6",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-33-c4b-pty.json",
+    "pty_result_sha256": "9fe5a4208f5d754c176678046986f60022788f4a1193e825a170f1a79157bcf6",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-33-c4b.png",
+    "screenshot_sha256": "bfbc197b0986295b97bfb1ed5074e89b0d255f9379fec46c12d06e457f54deac"
+  },
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "observations": [
+    "After only isolated dashboard 8790 restarted, the stale scratch credential produced visible HTTP 403 authentication failure and [!] auth without a hang, blank screen, or credential disclosure."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T18:20:20+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "failure",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "not-reached"
+    },
+    "profile": "default on isolated dashboard 8790"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Dead gateway credential",
+  "verdict": "pass"
+}

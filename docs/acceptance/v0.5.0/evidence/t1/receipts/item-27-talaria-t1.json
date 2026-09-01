@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
+  },
+  "checklist_item": 27,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-27-c4b.ansi",
+    "capture_sha256": "80c89f4032093654e0bfa1c40ff2a4920f8aad4cb10f1aab6a6b3798fb0539b8",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-27-c4b-pty.json",
+    "pty_result_sha256": "610958b19646aeba732aab979471b7cb2d1fd97e53fad4af317d0acb870ef61d",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-27-c4b.png",
+    "screenshot_sha256": "93e8d2da78898a7d1d5a85813b067369dbe9d9c23a582e7608e6adb6935c43c8"
+  },
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "observations": [
+    "Upward wheel input unpinned follow mode; appends, status and agent updates, theme preview cancellation, inspector toggles, and the real 132-to-119-to-132 resize preserved the reading anchor."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T18:20:20+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated long-scroll replay; unpinned"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Stable unpinned scroll",
+  "verdict": "pass"
+}

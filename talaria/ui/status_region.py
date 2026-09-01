@@ -37,22 +37,41 @@ class StatusRegion(Vertical):
     DEFAULT_CSS = """
     StatusRegion {
         height: auto;
-        max-height: 10;
+        max-height: 11;
         color: $text-muted;
     }
     StatusRegion > .status--marker {
         color: $warning;
     }
+    StatusRegion > .status--focus {
+        height: 1;
+        color: $talaria-focus;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, *, initial_marker: str = "", **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._rows: list[Static] = []
         self._seam_rows: list[Static] = []
         self._marker: Static | None = None
+        self._focus_marker: Static | None = None
+        self._initial_marker = initial_marker
+        self._focus_region = "composer"
 
     def compose(self) -> ComposeResult:
-        self._marker = Static(literal_text(""), markup=False, classes="status--marker")
+        self._focus_marker = Static(
+            literal_text(f"caret: {self._focus_region}"),
+            markup=False,
+            classes="status--focus",
+        )
+        yield self._focus_marker
+        self._marker = Static(
+            literal_text(_status_failure_marker(self._initial_marker)),
+            markup=False,
+            classes="status--marker",
+        )
         yield self._marker
 
     @property
@@ -66,6 +85,23 @@ class StatusRegion(Vertical):
     @property
     def marker_text(self) -> str:
         return "" if self._marker is None else str(self._marker.content)
+
+    @property
+    def focus_text(self) -> str:
+        return "" if self._focus_marker is None else str(self._focus_marker.content)
+
+    def set_caret(self, region: str) -> None:
+        """Repaint the always-mounted caret row with no layout mutation."""
+        normalized = region.strip() or "none"
+        self._focus_region = normalized
+        if self._focus_marker is not None:
+            self._focus_marker.update(literal_text(f"caret: {normalized}"))
+
+    def show_configuration_notice(self, message: str) -> None:
+        """Keep a malformed optional status command visible without a runner."""
+        self._initial_marker = message
+        if self._marker is not None:
+            self._marker.update(literal_text(_status_failure_marker(message)))
 
     async def apply_seams(self, lines: Sequence[str]) -> None:
         """Render one connection's seam board (v0.4 U5: R9, R10, R12, R24).
@@ -103,7 +139,7 @@ class StatusRegion(Vertical):
     async def apply(self, result: StatusTickResult) -> None:
         rows = list(result.rows)
         if result.truncated:
-            rows.append(TRUNCATION_MARKER)
+            rows.append(f"[!] status truncated — {TRUNCATION_MARKER}")
 
         while len(self._rows) > len(rows):
             await self._rows.pop().remove()
@@ -122,4 +158,16 @@ class StatusRegion(Vertical):
                 await self.mount(widget, before=anchor)
 
         if self._marker is not None:
-            self._marker.update(literal_text(result.marker or ""))
+            marker = result.marker or ""
+            if result.is_failure:
+                marker = _status_failure_marker(marker)
+            self._marker.update(literal_text(marker))
+
+
+def _status_failure_marker(message: str) -> str:
+    """Give a status-command failure its required non-colour form once."""
+    if not message or message.startswith("[x] status"):
+        return message
+    if message.startswith("status"):
+        return f"[x] {message}"
+    return message

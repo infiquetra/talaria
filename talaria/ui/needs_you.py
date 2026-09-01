@@ -1,4 +1,4 @@
-"""The needs-you surface: one reserved row, and the drill-down behind ``/needs`` (v0.4 U7).
+"""The needs-you drill-down behind ``/needs`` (v0.4 U7).
 
 U6 built the queue and this module renders it. Nothing here decides *what* needs
 a person — :func:`~talaria.domain.state.fleet_queue` does, purely, from the
@@ -10,11 +10,8 @@ is derived rather than stored.
 never what it has not asked. Two rules follow, and both are copy rules rather
 than mechanism:
 
-* The empty state is ``needs-you: none``, which is a statement about the queue.
-  It is never "nothing needs you", "all clear", or anything else that would make
-  a claim about the gateways. When a connection could not be asked,
-  :func:`~talaria.domain.queue.summary_line` says so in the same row and the
-  drill-down lists the reason per connection.
+* A connection that could not be asked remains a visible, non-selectable row in
+  the drill-down. Its absence must not be mistaken for an empty queue.
 * An item whose connection dropped renders its age as it stood at the break,
   with the blind span named separately — see
   :func:`~talaria.domain.queue.wait_line`. Until U7 that field had no reader at
@@ -35,12 +32,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from textual.widgets import Static
-
 from talaria.domain.models import QueueItem
-from talaria.domain.queue import ItemKey, NeedsYouQueue, summary_line, wait_line
+from talaria.domain.queue import ItemKey, NeedsYouQueue, wait_line
 from talaria.domain.selection import Choice, Selection, Stage
-from talaria.ui.literal import literal_text
 from talaria.ui.prompts import NO_CHOICES_FALLBACK, decline_value
 
 #: The drill-down's title. A question rather than a label, because the surface
@@ -197,70 +191,15 @@ def format_item_label(item: QueueItem, clock: float) -> str:
     if item.possibly_duplicate:
         # Never silently merged: U6 shows both sightings and says the doubt out
         # loud, so the row has to carry it or the doubt dies at the boundary.
-        parts.append("possibly the same as another row")
+        parts.append("[?] possibly duplicate")
     return " · ".join(part for part in parts if part)
 
 
 def format_item_detail(item: QueueItem) -> str:
     """The row's second line: the prompt itself, or why it cannot be answered."""
     if not item.answerable and item.blocked_reason:
-        return item.blocked_reason
+        return f"[x] blocked — {item.blocked_reason}"
     return item.command or item.summary
-
-
-class NeedsYouBar(Static):
-    """One reserved row for the queue's summary (KTD7, R16).
-
-    Composed at first mount and never unmounted, which is the whole of its
-    geometry contract: a bar that appears when the queue fills and vanishes when
-    it empties would move every region above it twice per approval, and the
-    transcript would reflow underneath a reader. It renders ``needs-you: none``
-    into the same row instead.
-
-    Clipped rather than wrapped, like :class:`~talaria.ui.app.HelpBar`: a second
-    line is a moved region by another name — and ``height: 1`` is what enforces
-    that rather than the summary happening never to be long, which was measured
-    rather than assumed. Pinned by
-    ``test_the_needs_you_bar_holds_one_row_from_empty_to_many_and_back`` for the
-    fill-and-empty transition and by
-    ``test_the_row_is_reserved_by_the_stylesheet_not_by_the_summary_never_being_empty``
-    for the declaration itself; only the second distinguishes ``height: 1`` from
-    ``height: auto``.
-    """
-
-    DEFAULT_CSS = """
-    NeedsYouBar {
-        height: 1;
-        color: $text-muted;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-    """
-
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
-        self._line = ""
-
-    def update_queue(self, queue: NeedsYouQueue, clock: float) -> None:
-        """Render this queue, repainting only when the text actually moved.
-
-        The no-move guard is not an optimisation here so much as a rendering
-        contract: the render tick calls this at its own cadence and a repaint per
-        tick would fight the transcript for the terminal.
-        """
-        line = summary_line(queue, clock)
-        if line == self._line:
-            return
-        self._line = line
-        # ``literal_text`` for the same reason every other gateway-sourced string
-        # gets it (R23): the oldest item's session title is the gateway's text,
-        # and it arrives in a row that is otherwise Talaria's own words.
-        self.update(literal_text(line))
-
-    @property
-    def line(self) -> str:
-        """What the bar currently says, for assertions and for the palette."""
-        return self._line
 
 
 class NeedsYouPickerSource:
@@ -378,7 +317,6 @@ __all__ = [
     "NEEDS_YOU_TITLE",
     "NOTICE_NOT_AN_ITEM",
     "NeedsSelection",
-    "NeedsYouBar",
     "NeedsYouPickerSource",
     "answer_choices",
     "decode_identity",

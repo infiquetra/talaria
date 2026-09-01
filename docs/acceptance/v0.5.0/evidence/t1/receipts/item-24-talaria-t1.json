@@ -1,0 +1,53 @@
+{
+  "artifact": {
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
+  },
+  "checklist_item": 24,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-24-c4.ansi",
+    "capture_sha256": "7269fc9aa41eddd64035ab49815391aed1b0203686f7a1a9633418cba723f796",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-24-c4-pty.json",
+    "pty_result_sha256": "aa0d1ef31dfa8f1ea32dd44c23409fedfced6ebd5533942d3fd21121a11d1ee9",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-24-c4.png",
+    "screenshot_sha256": "e7d10c0db1c7062896e902ac27b00bba089b9d0f391afc47aa7354f063c5f870"
+  },
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "observations": [
+    "The current candidate rendered all seven agent states plus empty, waiting, blocked, approval, and clarification queue forms in monochrome.",
+    "Blocked on current evidence: Hermes 0.21.0 assigns request identifiers to live approvals, while shipped replay cannot encode the keyless admin-polled shape that alone becomes possibly duplicate; creating that shape would simulate acceptance."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T18:20:33+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated monochrome agent-queue-states replay; current Hermes 0.21.0 reachability adjudication"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Agent and queue non-color states",
+  "verdict": "blocked"
+}

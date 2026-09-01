@@ -41,6 +41,12 @@ DELIBERATE_OVERRIDES: frozenset[str] = frozenset(
         "on_mount",
         "on_unmount",
         "on_key",
+        # Textual's documented Reactive theme selector. Issue #104 assigns it
+        # deliberately after registering Talaria's four stable theme names.
+        "theme",
+        # Textual's documented per-application animation gate. Issue #109
+        # deliberately disables it for the restart-scoped reduced-motion mode.
+        "animation_level",
         "__init__",
         "__module__",
         "__qualname__",

@@ -107,8 +107,8 @@ print(json.dumps({"third_party": third_party, "internal": internal}))
 """
 
 
-def _domain_module_names() -> list[str]:
-    """Every importable module under ``talaria/domain``, found on disk.
+def _package_module_names(package_name: str, package_root: Path) -> list[str]:
+    """Every importable module under ``package_root``, found on disk.
 
     Derived from the filesystem rather than ``pkgutil`` so that a module in a
     directory lacking ``__init__.py`` cannot hide from the sweep.
@@ -134,7 +134,7 @@ def _domain_module_names() -> list[str]:
     """
     names: list[str] = []
     suffixes = tuple(all_suffixes())
-    for dirpath, dirnames, filenames in os.walk(_DOMAIN_ROOT, followlinks=True):
+    for dirpath, dirnames, filenames in os.walk(package_root, followlinks=True):
         dirnames[:] = [name for name in dirnames if name != "__pycache__"]
         for filename in filenames:
             if not filename.endswith(suffixes):
@@ -144,11 +144,15 @@ def _domain_module_names() -> list[str]:
             # mangle a name like ``fswatcher.cpython-312-darwin.so``.
             matched = next(s for s in suffixes if filename.endswith(s))
             stem = filename[: -len(matched)]
-            parts = list(path.parent.relative_to(_DOMAIN_ROOT).parts)
+            parts = list(path.parent.relative_to(package_root).parts)
             if stem != "__init__":
                 parts.append(stem)
-            names.append(".".join([talaria.domain.__name__, *parts]))
+            names.append(".".join([package_name, *parts]))
     return sorted(set(names))
+
+
+def _domain_module_names() -> list[str]:
+    return _package_module_names(talaria.domain.__name__, _DOMAIN_ROOT)
 
 
 def test_every_domain_directory_is_an_importable_package() -> None:
@@ -172,6 +176,9 @@ def test_every_domain_directory_is_an_importable_package() -> None:
 def test_domain_package_imports_only_stdlib_and_its_own_package() -> None:
     module_names = _domain_module_names()
     assert module_names, "the ADR-0002 sweep found no domain modules to import"
+    assert "talaria.domain.changes" in module_names, (
+        "the issue #107 inspector domain module fell outside the ADR-0002 import sweep"
+    )
 
     payload = json.dumps(
         [module_names, list(_ALLOWED_INTERNAL_EXACT), list(_ALLOWED_INTERNAL_TREES)]

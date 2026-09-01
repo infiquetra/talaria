@@ -1,6 +1,7 @@
 """talaria/config.py — KTD15's configuration precedence chain.
 
-The only module in this repository that reads settings from the filesystem.
+The only module in this repository that reads settings from the filesystem,
+and the owner of Talaria's narrow explicit theme-setting write.
 Contents live under ``~/.talaria/`` (relocatable for tests via
 ``TALARIA_CONFIG_DIR``): ``config.toml`` for settings, ``credentials`` for the
 attach credential, and ``recordings/`` for frame logs.
@@ -9,11 +10,13 @@ This module only *computes* the credential path. Creating that file, enforcing
 its mode 0600, and reading it belong to U7's credential provider (KTD11) — no
 code here opens it, so nothing here can leak its contents.
 
-Precedence, highest first: an explicit command-line override, a ``TALARIA_*``
+General precedence, highest first: an explicit command-line override, a ``TALARIA_*``
 environment variable, a repo-local ``./.talaria/config.toml``, the global
 ``~/.talaria/config.toml`` (or its ``TALARIA_CONFIG_DIR`` redirection), and the
 built-in default. Consumers (U5's status runner, U6, U7's credential provider)
 call :func:`load_config` rather than touching the filesystem themselves.
+``theme.name`` deliberately has no environment or command-line override; its
+later session scope is in memory and only :func:`save_theme` persists it.
 
 **Consumer contract.** The resolved snapshot is deeply immutable, which changes
 the types a caller gets back: every mapping is a ``MappingProxyType`` and every
@@ -28,17 +31,32 @@ nested sections as proxies.
 from __future__ import annotations
 
 import os
+import re
+import stat
+import tempfile
 import tomllib
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
+
+from talaria.status.contract import (
+    DEFAULT_AGENT_MODEL_MAX_COLUMNS,
+    DEFAULT_CWD_MAX_COLUMNS,
+    DEFAULT_GIT_BRANCH_MAX_COLUMNS,
+    DEFAULT_STATUS_SEGMENTS,
+    normalize_status_settings,
+    parse_command,
+)
+from talaria.themes import theme_fallback_notice
+from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
+from talaria.themes.storage import load_user_theme_specs
 
 
 class ConfigError(Exception):
-    """A configuration source is unreadable or holds a value of the wrong type.
+    """A configuration source or surgical configuration write is invalid.
 
     Carries the offending file or environment variable in its message so the
     operator is pointed at the cause rather than at a traceback inside this
@@ -51,7 +69,16 @@ class ConfigError(Exception):
 #: value recorded here is also what environment-variable overrides are coerced
 #: to, so a default of ``None`` means "string-valued, no default".
 DEFAULTS: dict[str, Any] = {
-    "status": {"command": None, "interval_seconds": 5},
+    "theme": {"name": REFINED_DEFAULT.slug},
+    "ui": {"reduced_motion": False},
+    "status": {
+        "command": None,
+        "interval_seconds": 5,
+        "segments": list(DEFAULT_STATUS_SEGMENTS),
+        "cwd_max_columns": DEFAULT_CWD_MAX_COLUMNS,
+        "git_branch_max_columns": DEFAULT_GIT_BRANCH_MAX_COLUMNS,
+        "agent_model_max_columns": DEFAULT_AGENT_MODEL_MAX_COLUMNS,
+    },
     "environment": {"allowlist": []},
     "composer": {"paste_collapse_lines": 6, "paste_collapse_bytes": 512},
     # U4's profile endpoints: a name-to-gateway-URL map the operator writes.
@@ -75,6 +102,31 @@ _ENV_KEY_MAP: dict[str, tuple[str, str]] = {
 
 _TRUE_LITERALS = frozenset({"1", "true", "yes", "on"})
 _FALSE_LITERALS = frozenset({"0", "false", "no", "off"})
+
+ThemeSaveScope = Literal["user", "repository"]
+
+_BUILTIN_THEME_SLUGS = frozenset(theme.slug for theme in BUILTIN_THEMES)
+_THEME_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_THEME_HEADER_RE = re.compile(
+    rb"(?m)^[ \t]*\[theme\][ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)"
+)
+_TABLE_HEADER_RE = re.compile(rb"(?m)^[ \t]*\[\[?[^\r\n]+\]\]?[ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)")
+_THEME_NAME_RE = re.compile(
+    rb"(?m)^[ \t]*(?:name|\"name\"|'name')[ \t]*=[^\r\n]*(?:\r?\n|$)"
+)
+_DOTTED_THEME_NAME_RE = re.compile(
+    rb"(?m)^[ \t]*(?:theme|\"theme\"|'theme')[ \t]*\.[ \t]*"
+    rb"(?:name|\"name\"|'name')[ \t]*=[ \t]*"
+    rb"(?P<value>\"(?:\\.|[^\"\\\r\n])*\"|'[^'\r\n]*')"
+)
+_INLINE_THEME_RE = re.compile(
+    rb"(?m)^[ \t]*(?:theme|\"theme\"|'theme')[ \t]*=[ \t]*"
+    rb"(?P<table>\{[^\r\n]*\})[ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)"
+)
+_INLINE_THEME_NAME_RE = re.compile(
+    rb"(?:\{|,)[ \t]*(?:name|\"name\"|'name')[ \t]*=[ \t]*"
+    rb"(?P<value>\"(?:\\.|[^\"\\\r\n])*\"|'[^'\r\n]*')"
+)
 
 
 def global_config_dir() -> Path:
@@ -158,7 +210,16 @@ def _env_overrides() -> dict[str, Any]:
         if raw is None:
             continue
         default = DEFAULTS.get(section, {}).get(key)
-        overrides.setdefault(section, {})[key] = _coerce_env_value(env_name, raw, default)
+        try:
+            value = _coerce_env_value(env_name, raw, default)
+        except ConfigError:
+            if (section, key) != ("status", "interval_seconds"):
+                raise
+            # This setting has a visible fallback contract. Preserve the
+            # winning malformed value until the one post-precedence status
+            # normalization pass can name the key and apply that fallback.
+            value = raw
+        overrides.setdefault(section, {})[key] = value
     return overrides
 
 
@@ -183,6 +244,7 @@ class Config:
 
     values: Mapping[str, Any]
     config_dir: Path
+    notices: tuple[str, ...] = ()
 
     def get(self, *path: str, default: Any = None) -> Any:
         """Look up a dotted path, e.g. ``config.get("status", "command")``."""
@@ -217,6 +279,265 @@ def profile_endpoints(cfg: Config) -> Mapping[str, str]:
     }
 
 
+def _normalize_config(
+    merged: dict[str, Any],
+    *,
+    available_theme_slugs: frozenset[str],
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Normalize winning configured values once, after every file layer merged."""
+    notices: list[str] = []
+    theme = merged.get("theme")
+    if not isinstance(theme, Mapping):
+        merged["theme"] = {"name": REFINED_DEFAULT.slug}
+        notices.append(
+            "theme must be a table with a name key; using Refined Default "
+            f"({REFINED_DEFAULT.slug})"
+        )
+    elif not isinstance(requested := theme.get("name"), str):
+        merged["theme"] = {"name": REFINED_DEFAULT.slug}
+        notices.append(theme_fallback_notice(requested, REFINED_DEFAULT.slug))
+    elif requested not in available_theme_slugs:
+        merged["theme"] = {"name": REFINED_DEFAULT.slug}
+        notices.append(theme_fallback_notice(requested, REFINED_DEFAULT.slug))
+    else:
+        merged["theme"] = dict(theme)
+
+    ui_source = merged.get("ui")
+    reduced_motion = (
+        ui_source.get("reduced_motion") if isinstance(ui_source, Mapping) else None
+    )
+    if not isinstance(reduced_motion, bool):
+        ui = dict(ui_source) if isinstance(ui_source, Mapping) else {}
+        ui["reduced_motion"] = False
+        merged["ui"] = ui
+        notices.append("ui.reduced_motion must be a boolean; using false")
+
+    status_source = merged.get("status")
+    normalized_status = normalize_status_settings(status_source)
+    status = dict(status_source) if isinstance(status_source, Mapping) else {}
+    command = status.get("command")
+    _argv, command_notice = parse_command(command)
+    status.update(
+        {
+            "command": None if command_notice is not None else command,
+            "interval_seconds": normalized_status.interval_seconds,
+            "segments": list(normalized_status.bar.segments),
+            "cwd_max_columns": normalized_status.bar.cwd_max_columns,
+            "git_branch_max_columns": normalized_status.bar.git_branch_max_columns,
+            "agent_model_max_columns": normalized_status.bar.agent_model_max_columns,
+        }
+    )
+    merged["status"] = status
+    notices.extend(normalized_status.notices)
+    if command_notice is not None:
+        notices.append(command_notice)
+    return merged, tuple(notices)
+
+
+def theme_config_path(
+    scope: ThemeSaveScope,
+    *,
+    config_dir: Path | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    """Return the explicit-save target for one supported theme scope."""
+    if scope == "user":
+        root = config_dir if config_dir is not None else global_config_dir()
+        return root / "config.toml"
+    if scope == "repository":
+        root = cwd if cwd is not None else Path.cwd()
+        return root / ".talaria" / "config.toml"
+    raise ConfigError(f"unknown theme save scope: {scope!r}")
+
+
+def atomic_replace_bytes(
+    path: Path,
+    content: bytes,
+    *,
+    follow_symlinks: bool = False,
+) -> None:
+    """Atomically replace a path, optionally resolving its final symlink first.
+
+    The temporary file is created beside the path that will actually be
+    replaced. By default, a symlink at ``path`` is itself replaced; callers
+    must opt in when the intended contract is to update its target instead.
+    """
+    target = path.resolve() if follow_symlinks and path.is_symlink() else path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target_stat = os.lstat(target) if os.path.lexists(target) else None
+    replacing_symlink = target_stat is not None and stat.S_ISLNK(target_stat.st_mode)
+    existing_mode = (
+        stat.S_IMODE(target_stat.st_mode)
+        if target_stat is not None and not replacing_symlink
+        else None
+    )
+    replacement_mode = existing_mode
+    if replacing_symlink:
+        previous_umask = os.umask(0o777)
+        os.umask(previous_umask)
+        replacement_mode = 0o666 & ~previous_umask
+    descriptor, raw_temp = tempfile.mkstemp(
+        prefix=f".{target.name}.", dir=target.parent
+    )
+    temp_path = Path(raw_temp)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            if replacement_mode is not None:
+                os.fchmod(handle.fileno(), replacement_mode)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, target)
+    except BaseException:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _parse_toml_bytes(path: Path, content: bytes) -> dict[str, Any]:
+    try:
+        return tomllib.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"{path} is not valid TOML: {exc}") from exc
+
+
+def _inline_comment_suffix(line: bytes) -> bytes:
+    """Return an unquoted TOML comment with its preceding spacing intact."""
+    quote: int | None = None
+    escaped = False
+    for index, byte in enumerate(line):
+        if quote == ord('"'):
+            if escaped:
+                escaped = False
+            elif byte == ord("\\"):
+                escaped = True
+            elif byte == quote:
+                quote = None
+            continue
+        if quote == ord("'"):
+            if byte == quote:
+                quote = None
+            continue
+        if byte in (ord('"'), ord("'")):
+            quote = byte
+        elif byte == ord("#"):
+            start = index
+            while start and line[start - 1] in (ord(" "), ord("\t")):
+                start -= 1
+            return line[start:]
+    return b""
+
+
+def _rewrite_theme_name(content: bytes, name: str) -> bytes:
+    """Change only ``theme.name`` while retaining every neighboring byte."""
+    assignment = f'name = "{name}"'.encode()
+    header = _THEME_HEADER_RE.search(content)
+    if header is None:
+        separator = b"" if not content or content.endswith((b"\n", b"\r")) else b"\n"
+        blank = b"" if not content or content.endswith((b"\n\n", b"\r\n\r\n")) else b"\n"
+        return content + separator + blank + b"[theme]\n" + assignment + b"\n"
+
+    next_header = _TABLE_HEADER_RE.search(content, header.end())
+    table_end = next_header.start() if next_header is not None else len(content)
+    name_match = _THEME_NAME_RE.search(content, header.end(), table_end)
+    if name_match is not None:
+        matched = name_match.group()
+        newline = (
+            b"\r\n"
+            if matched.endswith(b"\r\n")
+            else b"\n" if matched.endswith(b"\n") else b""
+        )
+        body = matched[: -len(newline)] if newline else matched
+        replacement = assignment + _inline_comment_suffix(body) + newline
+        return content[: name_match.start()] + replacement + content[name_match.end() :]
+
+    newline = b"\r\n" if header.group().endswith(b"\r\n") else b"\n"
+    return content[: header.end()] + assignment + newline + content[header.end() :]
+
+
+def _rewrite_dotted_theme_name(content: bytes, name: str) -> bytes | None:
+    """Rewrite a top-level dotted ``theme.name`` assignment when present."""
+    name_match = _DOTTED_THEME_NAME_RE.search(content)
+    if name_match is None:
+        return None
+    start, end = name_match.span("value")
+    return content[:start] + f'"{name}"'.encode() + content[end:]
+
+
+def _rewrite_inline_theme_name(content: bytes, name: str) -> bytes | None:
+    """Rewrite the name pair in a top-level inline ``theme`` table."""
+    table_match = _INLINE_THEME_RE.search(content)
+    if table_match is None:
+        return None
+    table = table_match.group("table")
+    name_match = _INLINE_THEME_NAME_RE.search(table)
+    if name_match is None:
+        return None
+    table_start = table_match.start("table")
+    value_start, value_end = name_match.span("value")
+    start = table_start + value_start
+    end = table_start + value_end
+    return content[:start] + f'"{name}"'.encode() + content[end:]
+
+
+def save_theme(
+    name: str,
+    scope: ThemeSaveScope = "user",
+    *,
+    config_dir: Path | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    """Persist only ``theme.name`` to the selected configuration scope."""
+    if not _THEME_SLUG_RE.fullmatch(name):
+        raise ConfigError(f"invalid theme name: {name!r}")
+
+    path = theme_config_path(scope, config_dir=config_dir, cwd=cwd)
+    try:
+        before_bytes = path.read_bytes() if path.is_file() else b""
+    except OSError as exc:
+        raise ConfigError(f"{path} could not be read: {exc}") from exc
+    before = _parse_toml_bytes(path, before_bytes)
+    current_theme = before.get("theme")
+    if current_theme is not None and not isinstance(current_theme, Mapping):
+        raise ConfigError(f"{path} theme must be a table before it can be saved")
+
+    if current_theme is not None and _THEME_HEADER_RE.search(before_bytes) is None:
+        after_bytes = _rewrite_dotted_theme_name(before_bytes, name)
+        if after_bytes is None:
+            after_bytes = _rewrite_inline_theme_name(before_bytes, name)
+        if after_bytes is None:
+            raise ConfigError(
+                f"{path} theme.name cannot be rewritten without a [theme] table "
+                "or a supported dotted or inline theme.name assignment"
+            )
+    else:
+        after_bytes = _rewrite_theme_name(before_bytes, name)
+    try:
+        after = _parse_toml_bytes(path, after_bytes)
+    except ConfigError as exc:
+        raise ConfigError(
+            f"Talaria cannot safely rewrite theme.name in this form: {path}; "
+            "no changes were written"
+        ) from exc
+    expected = deepcopy(before)
+    expected_theme = expected.setdefault("theme", {})
+    if not isinstance(expected_theme, dict):  # guarded above; keeps the proof local
+        raise ConfigError(f"{path} theme must be a table before it can be saved")
+    expected_theme["name"] = name
+    if after != expected:
+        raise ConfigError(
+            f"refusing to write {path}: the edit changed more than theme.name"
+        )
+
+    try:
+        atomic_replace_bytes(path, after_bytes, follow_symlinks=True)
+    except OSError as exc:
+        raise ConfigError(f"{path} could not be written: {exc}") from exc
+    return path
+
+
 def load_config(
     cli_overrides: Mapping[str, Any] | None = None,
     cwd: Path | None = None,
@@ -242,6 +563,27 @@ def load_config(
     merged = _deep_merge(merged, _read_toml(cwd / ".talaria" / "config.toml"))
     merged = _deep_merge(merged, _env_overrides())
     if cli_overrides:
-        merged = _deep_merge(merged, cli_overrides)
+        # ``theme.name`` deliberately has no command-line override. Session
+        # selection belongs to the running application and persists only when
+        # the operator explicitly invokes ``/theme save``.
+        allowed_cli_overrides = dict(cli_overrides)
+        allowed_cli_overrides.pop("theme", None)
+        # Reduced motion is restart-to-apply configuration with no environment
+        # or command-line alias. A caller's unrelated launch overrides must not
+        # create a second, undocumented live-control path.
+        allowed_cli_overrides.pop("ui", None)
+        merged = _deep_merge(merged, allowed_cli_overrides)
 
-    return Config(values=_freeze(merged), config_dir=config_dir)
+    user_theme_specs, user_theme_notices = load_user_theme_specs(
+        config_dir=config_dir
+    )
+    user_theme_slugs = frozenset(spec.slug for spec in user_theme_specs)
+    merged, notices = _normalize_config(
+        merged,
+        available_theme_slugs=_BUILTIN_THEME_SLUGS | user_theme_slugs,
+    )
+    return Config(
+        values=_freeze(merged),
+        config_dir=config_dir,
+        notices=(*notices, *user_theme_notices),
+    )

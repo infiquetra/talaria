@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
+    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 26,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-26-reduced-final.ansi",
+    "capture_sha256": "2db3c9e8ba56df42981fe87c6b1817a65766358cb3e4dbdf173cd3bf13ed4bec",
+    "pty_result_path": "<scratch-root>/receipts/item-26-reduced-final-pty.json",
+    "pty_result_sha256": "f07446ce646f6b4f4db5d937991e640acf04f962fd65419599b53a7a0f1931ed",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-26-reduced.png",
+    "screenshot_sha256": "a0d81da22e8e663d342ff33df08313a5af2574af351f6e1679707e07a922bdbb"
+  },
+  "observations": [
+    "Restarting with ui.reduced_motion=false produced animated working\u2026; restarting with true produced the static [..] working form while transcript appends, agent updates, scrolling, theme cancellation, elapsed state, and layout updates continued.",
+    "Supplemental dead-endpoint installed drives showed connection state updates under both values without invoking a model: raw/item-26-standard-dead-endpoint.ansi and raw/item-26-reduced-dead-endpoint.ansi."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T12:13:39+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-motion-and-scroll"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork acceptance driver",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Reduced motion",
+  "verdict": "pass"
+}

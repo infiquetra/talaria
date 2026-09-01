@@ -1,0 +1,53 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
+    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 9,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-09-session-color.ansi",
+    "capture_sha256": "ee6eadcff84f9f113e5c57ef84688028126179801fc30be6f3e439f22256ece6",
+    "pty_result_path": "<scratch-root>/receipts/item-09-session-color-pty.json",
+    "pty_result_sha256": "98172ba9cc85eb23f7df14469cba91cd6078cf21ecd80f17edb9d6b70ea1ea3c",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-09-session.png",
+    "screenshot_sha256": "ca92eb0c036788bcee0dd3769e4a68e7c5490a6c40caf9e4e2250ad04f8b089b"
+  },
+  "observations": [
+    "Three fresh launches proved user Dark Green Terminal, repository Neutral Dark, then session-only Accessible High Contrast precedence.",
+    "The user config changed only in the user leg from c0556af7ec91823950e3428c60c7cdd73dfc88e93c3fa436580699c3225547b6 to ee71172786c771bb5b47199be11901fbf2805f690091aea5911d316e432a9ce2; the repository config became bc74886467ba259b3a2f4e2966a4d2ebb153ec2c5395e91cdfe79f40ef044bb3; the session leg changed neither.",
+    "Supplemental captures are raw/item-09-user-color.ansi and raw/item-09-repository-color.ansi with screenshots item-09-user.png and item-09-repository.png."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T12:13:38+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-theme-precedence"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork acceptance driver; explicit truecolor",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Explicit save and precedence",
+  "verdict": "pass"
+}

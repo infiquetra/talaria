@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
+  },
+  "checklist_item": 9,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-09-session-c4.ansi",
+    "capture_sha256": "4d8a555c00b4625311815a40c3cd24436ee3ea52d1fac635b4bc9551c80b6847",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-09-session-c4-pty.json",
+    "pty_result_sha256": "2a80f297299c32a074d782b624ea5664b81ec47ac6357b3cbf215ca9f4969002",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-09-session-c4.png",
+    "screenshot_sha256": "6eb1e3e07ea647a908ff6b822c3d9001bfe79271ff4078937999ad0c7d86bd10"
+  },
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "observations": [
+    "User save persisted Dark Green Terminal, repository save overrode it with Neutral Dark, and an unsaved Accessible High Contrast session selection left both configuration hashes unchanged."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T18:19:50+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated multi-restart theme precedence"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Explicit save and precedence",
+  "verdict": "pass"
+}

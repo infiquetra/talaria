@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 22,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-22-c2a.ansi",
+    "capture_sha256": "a457238fbfc2fba2ae21136e81f4d4ff6924644f943a6d61d605fed27be7ead2",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-22-c2a-pty.json",
+    "pty_result_sha256": "de88175eca1991101f79cb70598e2a61c9b6cbd16f194e7e7b0e8621b8610866",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-22-c2a.png",
+    "screenshot_sha256": "6a2ebec0494fdf8db5e4fb388f0bd7aa1bf19d040177a6cefc926f16832d53ed"
+  },
+  "observations": [
+    "Focus moved among transcript, inspector, and composer; the caret label and visible insertion point followed the focused surface and returned to composer."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated focus-surface replay"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Composer caret location",
+  "verdict": "pass"
+}

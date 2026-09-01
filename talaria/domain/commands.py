@@ -288,8 +288,24 @@ def decode_catalog(result: Any) -> CommandCatalog:
         return unavailable_catalog(f"{CATALOG_UNAVAILABLE}: it carried no command list")
 
     categories = _category_index(result.get("categories"))
-    entries: list[CommandEntry] = list(_local_entries())
-    seen = {entry.name.lower() for entry in entries}
+    local_entries = _local_entries()
+    # Preserve the existing browse order and its first-screen unsupported
+    # evidence as local controls are added. ``/theme``, ``/bar``, and
+    # ``/inspector``, and ``/diffs`` remain in the catalogue and in slash
+    # filtering, but follow the gateway rows in the unfiltered browse list
+    # rather than displacing ``/density`` and its
+    # dispatchable neighbour below the established 14-row viewport.
+    deferred_local = tuple(
+        entry
+        for entry in local_entries
+        if entry.name in {"/theme", "/bar", "/inspector", "/diffs"}
+    )
+    entries: list[CommandEntry] = [
+        entry
+        for entry in local_entries
+        if entry.name not in {"/theme", "/bar", "/inspector", "/diffs"}
+    ]
+    seen = {entry.name.lower() for entry in local_entries}
 
     for row in rows:
         pair = _pair(row)
@@ -315,6 +331,8 @@ def decode_catalog(result: Any) -> CommandCatalog:
                 ),
             )
         )
+
+    entries.extend(deferred_local)
 
     canon = result.get("canon")
     warning = result.get("warning")
@@ -344,7 +362,19 @@ def _is_client_local(name: str, category: str) -> bool:
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
 LocalAction = Literal[
-    "quit", "pause", "resume", "speed", "models", "profiles", "sessions", "agents", "needs"
+    "quit",
+    "pause",
+    "resume",
+    "speed",
+    "models",
+    "profiles",
+    "sessions",
+    "agents",
+    "needs",
+    "theme",
+    "bar",
+    "inspector",
+    "diffs",
 ]
 
 
@@ -386,10 +416,16 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     # as the connected profile's default model instead of switching the
     # running session (U5, KTD7) — still no new command name, per the plan's
     # "U5 adds no command" design note.
+    # These descriptions are the canonical operator-facing picker-key contract.
+    # The terminal guide mirrors them, and the UI test reads both rendered
+    # surfaces so either side drifting fails the same check.
     LocalCommand(
         "/models",
         "models",
-        "Open the model picker, select a row, or set a row as the profile's default (F6)",
+        (
+            "Open the model picker, select a row, or set a row as the profile's "
+            "default (F11 from every focus; F6 only outside composer focus)"
+        ),
         argument_hint="[index [default [confirm]]]",
     ),
     # Plural for the same reason and with the same hazard (U4). The gateway
@@ -404,7 +440,10 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand(
         "/profiles",
         "profiles",
-        "Open the profile picker, or switch to a listed profile by its number (F7)",
+        (
+            "Open the profile picker, or switch to a listed profile by its number "
+            "(F12 from every focus; F7 only outside composer focus)"
+        ),
         argument_hint="[index]",
     ),
     # v0.2's U7 (2026-08-08 answerability-and-session-story plan), and this one
@@ -449,6 +488,28 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "/agents",
         "agents",
         "Toggle sub-agent rows (F2 / ctrl+g)",
+    ),
+    LocalCommand(
+        "/theme",
+        "theme",
+        "Preview or save the session theme",
+        argument_hint="[save [user|repository]]",
+    ),
+    LocalCommand(
+        "/bar",
+        "bar",
+        "Show the status-bar segments or toggle one for this session",
+        argument_hint="[segment]",
+    ),
+    LocalCommand(
+        "/inspector",
+        "inspector",
+        "Toggle the session inspector (ctrl+b)",
+    ),
+    LocalCommand(
+        "/diffs",
+        "diffs",
+        "Open the session's read-only diff viewer",
     ),
 )
 

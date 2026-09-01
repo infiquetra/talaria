@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "122bd918e0056404e576ae5623ce9e97bfe1ad93",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "ac1e95e6685307d96f97e3bce4e7d1beae1c38e34a3ea8f369eadabbb19d60df",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "769e4d2bd9ce7a164d2cff5880f7f7d10b1d4cc0e617275b24c9fd49024db032",
+    "installed_files_sha256": "3a4f2f3b67dab18424b997a6caab8091895b6de917f30e10be1586a87596fe42",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a15b991fd16069a7a935548f949b5e287db86ba386799bbbebfc802f60f76126"
+  },
+  "checklist_item": 16,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-16.ansi",
+    "capture_sha256": "c7493698a83a1a27d9946a3314136eb7200472d1268da22212ce7bf406ac1934",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-16-pty.json",
+    "pty_result_sha256": "16a274ce4de8e234d91f8b5d40f64ce34b6e40496b04580a58a492f2d55025d0",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-16.png",
+    "screenshot_sha256": "4c6868dd2612ef61b4f3a092cb2a9c90703c130ba4fbabeaafecee6d80fbc128"
+  },
+  "observations": [
+    "The right dock records widths 36, 40, 44, 48 with the extra widen clamped, then 44, 40, 36, 32, 28 with the extra shrink clamped; held inspector data does not change."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-08-31T14:40:21+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-acceptance-corpus"
+  },
+  "terminal": {
+    "columns": 120,
+    "program": "Headless POSIX pseudo-terminal",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Inspector dock and resize",
+  "verdict": "pass"
+}

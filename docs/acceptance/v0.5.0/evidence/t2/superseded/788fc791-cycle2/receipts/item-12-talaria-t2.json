@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 12,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-12-c2.ansi",
+    "capture_sha256": "5031391aae0ff81bfbdcb1fc359dd9b832468f94a86a050a13cb4fc092dbe8f4",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-12-c2-pty.json",
+    "pty_result_sha256": "326bd7a23c2305064e60662d54ab83195242ae821929d2f4140f20cd7c2439bc",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-12-c2.png",
+    "screenshot_sha256": "c3a5d6ce0c3f14bf414c91c4270c10bbb9f1cbf2268e5ac2168f82043c5e43ef"
+  },
+  "observations": [
+    "At 144 columns all seven default segments appear in order with six separators on exactly one row."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-09-01T03:01:46+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "acceptance-replay"
+  },
+  "terminal": {
+    "columns": 144,
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "All status segments",
+  "verdict": "pass"
+}

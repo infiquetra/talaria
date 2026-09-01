@@ -10,6 +10,77 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+The v0.5.0 candidate makes the terminal interface themeable and adds persistent bottom-of-screen
+context, an inspector, and a bounded read-only view of session-reported changes. The
+[v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md) was
+executed on 2026-08-31. **BLOCKED**: 43 of 43 expected checklist/tester slots are covered. The
+evidence set separately contains 44 current receipts (42 item and 2 install). The one-receipt overlap
+is checklist item 1 for talaria-t2, which has both an item receipt and an install receipt. Item
+verdicts are 41 pass, 1 blocked, and 0 fail. Item 24 is the only blocker and is terminally
+unreachable because the gateway always assigns a request identifier.
+
+### Added
+
+- **Four built-in themes and 58 semantic tokens.** Refined Default, Dark Green Terminal, Neutral
+  Dark, and Accessible High Contrast cover the application, transcript identities, status bar,
+  inspector, diff, and syntax classes. `/theme` previews without writing, `Escape` restores the
+  prior theme, `Enter` selects for the process, and `/theme save [user|repository]` explicitly
+  persists a selection by changing only `[theme]`.
+- **A bounded Visual Studio Code theme importer.**
+  `talaria theme import FILE [--name NAME] [--json]` accepts a documented allowlist of workbench
+  colors and syntax scopes, reports unsupported input and Refined Default fallbacks, atomically
+  replaces a deterministic user-theme JSON file, and writes nothing on malformed or empty input.
+  `--json` writes one versioned machine-readable report to standard output; its fields are defined
+  in the [Visual Studio Code theme import format](docs/formats/vscode-theme-import.md).
+- **A configurable true-bottom status bar.** Seven reorderable/hideable segments show launch
+  directory and branch, held agent/context/task state, connection, and version in one non-wrapping
+  row. Fixed breakpoints shorten and drop lower-priority segments while retaining a literal
+  connection glyph. `/bar` toggles segments for the process without writing configuration.
+- **A right inspector from held session state.** `Ctrl+B` and `/inspector` expose Tasks, Context,
+  Changed files, and Operation details. It docks from 120 columns, becomes a non-reflowing overlay
+  below that width, preserves the requested state across resize, and renders honest empty sections.
+- **A full-terminal, read-only diff viewer.** `/diffs` or `Enter` on an inspector file opens
+  session-reported unified diff text. Side-by-side mode requires 112 columns and falls back to
+  unified without losing the preference; file/hunk navigation, syntax treatment, intraline spans,
+  long lines, and rendered work are bounded. No working-tree mutation path exists.
+- **Configuration for the new surfaces.** `theme.name`, status-bar segment/cap rows, and
+  `ui.reduced_motion` join the additive startup snapshot with visible fallback notices and no
+  external-file live reload.
+
+### Changed
+
+- **The interface uses semantic theme colors throughout.** Six transcript groups retain literal
+  labels and fixed gutters as well as their own fills, so identity does not depend on color.
+  Connection, queue, approval, agent, selection, and diff states likewise keep words or glyphs.
+- **Focus no longer changes screen height.** The composer changes its existing border title and
+  color, and other controls use reserved gutters or fixed borders. Moving focus cannot add a row or
+  move the transcript viewport.
+- **The needs-you summary now feeds `task_progress`.** The queue count remains visible in the
+  default bottom bar while `/needs` continues to provide the full detail.
+- **Reduced motion and stable scroll are explicit policies.** `ui.reduced_motion = true` freezes
+  decorative frames and makes routed scrolling immediate. Layout, status, theme, inspector, and
+  streaming updates preserve an unpinned reader's held transcript anchor; `End` or `F5` follows the
+  bottom again.
+
+### Fixed
+
+- Invalid status intervals, width caps, segment lists, and commands now produce visible startup
+  notices and bounded fallbacks instead of handing bad values to the runner or silently removing
+  the status-command region.
+
+### Known limitations
+
+- The [v0.5.0 acceptance verdict](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
+  is **BLOCKED** on item 24 alone. The gateway always assigns a request identifier, so the keyless
+  approval state required by that item is terminally unreachable without simulation.
+- The `growing-one-column-table` steady-state p99 `TranscriptPane.apply` latency exceeds its 50 ms
+  ceiling. Its run-to-run spread makes it unsuitable as a release gate; the measured debt and revisit
+  condition are recorded in [QUEUED.md](docs/engineering-journal/QUEUED.md#the-shipped-block-markdown-gate-misses-its-steady-state-table-apply-ceiling).
+- The v0.4.0 limitations remain unchanged: no person has driven Talaria on Linux; no run has used a
+  real terminal emulator; gateway compatibility checks only top-level response shapes;
+  `terminal.read.respond` has no runtime evidence; and the intermittent full-suite failure remains
+  under investigation.
+
 ## [0.4.0] — 2026-08-19
 
 Talaria becomes a fleet client. One running instance now dials every
@@ -345,6 +416,7 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/infiquetra/talaria/releases/tag/v0.4.0
 [0.3.0]: https://github.com/infiquetra/talaria/releases/tag/v0.3.0
 [0.2.0]: https://github.com/infiquetra/talaria/releases/tag/v0.2.0

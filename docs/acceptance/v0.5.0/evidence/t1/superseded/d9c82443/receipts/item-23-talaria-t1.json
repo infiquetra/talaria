@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d9c82443f51932483ecb37c653d5c0cd8c342dac",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "aa888322ec0ee9f21b9ba247a5311d7fdc4053dfb08937d1f25de638ab8cb73a",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "a6f1824391af79fef0c4161ad69634a34800c4654ac8bc4fd1ea393bb345c1bc",
+    "installed_files_sha256": "d1e837582142efc2a98e3b96a7911c9143371aca079872381ef74cb1fbbc29f2",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
+  },
+  "checklist_item": 23,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-live-states-final.ansi",
+    "capture_sha256": "f1fa0e24a6c091db1e0b6ce91c867675eeb7ceb835a414109c73d23071739c77",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-live-states-final-pty.json",
+    "pty_result_sha256": "17d6855db5800b641769c9e410032d20abd3e5fe12bac3c14d076cc03a193b37",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-live-states-final.png",
+    "screenshot_sha256": "7e033ca49076f45f87879b7a75f9c10e08af7f25300b88206af6f8c56fb3fd9b"
+  },
+  "observations": [
+    "The monochrome controlled restart produced visible connecting-to-gateway, [x] down, and [!] auth states and completed cleanly.",
+    "Failure: the capture did not retain the required [ok] connected, [..] connecting, and [~] reconnecting token-plus-text forms, so the five-state condition is not proven."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T17:32:20+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "live",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "not-reached"
+    },
+    "profile": "default on isolated dashboard 8790"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; NO_COLOR; isolated Hermes dashboard 8790",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Connection non-color states",
+  "verdict": "fail"
+}

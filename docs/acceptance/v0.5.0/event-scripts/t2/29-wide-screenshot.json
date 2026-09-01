@@ -1,0 +1,8 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "resize": {"rows": 36, "columns": 132}},
+    {"at_seconds": 5.5, "key": "CTRL_B"},
+    {"at_seconds": 6.5, "key": "CTRL_B"},
+    {"at_seconds": 9.5, "key": "CTRL_Q"}
+  ]
+}

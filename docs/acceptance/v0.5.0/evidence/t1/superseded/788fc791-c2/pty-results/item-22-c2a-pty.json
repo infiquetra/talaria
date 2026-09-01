@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "docs/acceptance/v0.5.0/corpora/t1/focus-surface.jsonl"
+  ],
+  "capture": {
+    "bytes": 291864,
+    "path": "<scratch-root>/raw/item-22-c2a.ansi",
+    "sha256": "a457238fbfc2fba2ae21136e81f4d4ff6924644f943a6d61d605fed27be7ead2"
+  },
+  "columns": 132,
+  "duration_seconds": 15.771461,
+  "exit_code": 0,
+  "expected_literals": [
+    "caret here"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

@@ -903,6 +903,112 @@ So the operator types a password into a focused control that draws nothing, with
 
 ## P2
 
+### Validate `environment.allowlist` before constructing the status runner
+
+**Author.** Talaria v0.5.0 code review finding F-6, measured at reviewed revision `122bd918`,
+2026-08-31.
+**Priority.** P2 — the malformed cases either stop launch or silently produce an ineffective
+default-deny allowlist; they do not widen the status child's environment.
+**Effort.** Small.
+
+**What.** The configuration normalization pass at `talaria/config.py:267-317` covers only the
+`theme`, `ui`, and `status` tables. Values under `environment`, `composer`, and `profiles` therefore
+reach their launch consumers unvalidated. At the reviewed revision, `talaria/cli.py:291-295` reads
+`environment.allowlist` and iterates it while constructing the status runner. The measured results
+with a valid `status.command` are:
+
+- `environment.allowlist = 42` raises `TypeError: 'int' object is not iterable` at launch;
+- `environment.allowlist = true` raises `TypeError: 'bool' object is not iterable` at launch; and
+- `environment.allowlist = "FOO"` does not raise or produce a notice. It is iterated character by
+  character and the runner receives `('F', 'O', 'O')`.
+
+The string result is garbage rather than an expansion: those single-character names match no
+ordinary environment variable, so the status command receives an effectively empty allowlist. In
+this release, [configuration.md](../configuration.md) was narrowed to describe these outcomes rather
+than promising that every optional value receives a visible normalized fallback.
+
+**Why it is not being fixed here.** `environment.allowlist` predates v0.5.0 and no approved child in
+issues #104 through #111 owns its validation. Changing the launch consumer during the documentation
+repair would expand the release scope. The code and its default-deny direction are unchanged.
+
+**Revisit when.** Whichever comes first: the next release that changes configuration reads in
+`talaria/cli.py`, or a second unvalidated table causes an operator-visible launch failure. That work
+must cover the integer, Boolean, and non-raising string cases together.
+
+### Extract slash-command dispatch from `TalariaApp` before the next parallel UI release
+
+**Author.** Talaria v0.5.0 code review finding F-24, measured at reviewed revision `122bd918`,
+2026-08-31.
+**Priority.** P2 — the current class is a coordination bottleneck, not a newly observed behavior or
+safety defect.
+**Effort.** Medium.
+
+**What.** At the reviewed revision, `TalariaApp` begins at `talaria/ui/app.py:1117` and the file ends
+at line 6651: roughly 5,534 lines and 181 methods in one class. All six feature children edited this
+shared file, so the run could not parallelize those edits structurally.
+
+**What this release changed.** Against the 6,350-line v0.4.0 base, the file grew by 367 lines and
+lost 66, or about 4.7 per cent net. That did not materially worsen the underlying concentration: the
+substance of the six features lives in new `inspector.py`, `diff_viewer.py`, `status_bar.py`,
+`themes/`, and `domain/changes.py` modules, and those seams held.
+
+**Mitigation, not repair.** The shared-surface lease serialized each child's `app.py` edit and was
+the mitigation chosen for v0.5.0. The class size itself remains unaddressed; the lease works only
+while a coordinator enforces it. The candidate extraction is the slash-command dispatch table,
+which should move into its own module because issues #106 through #109 each added a verb and the
+last two releases both grew that axis.
+
+**Revisit when.** Before the next release that plans three or more parallel lanes against
+`talaria/ui/app.py`. Make the extraction a separately reviewed refactor before feature lanes need
+the shared surface again.
+
+### The shipped block-markdown gate misses its steady-state table-apply ceiling
+
+**Author.** Talaria v0.5.0 candidate gate comparison, 2026-08-31.
+**Priority.** P2 — the exceedance is real and predates v0.5.0, but run-to-run variance makes this
+metric unsuitable as a release gate or a cross-release comparison.
+**Effort.** Small to reproduce and profile; repair size depends on where that profile places the
+remaining cost.
+
+**What.** At the gate's designed corpus size, `uv run talaria gate --deltas 50000`, the
+`growing-one-column-table` steady-state p99 `TranscriptPane.apply` latency exceeds its 50 ms ceiling,
+so `talaria gate` returns `fail`. The exceedance is real: every sample from either tree is above the
+ceiling. Every other check in the 32-check gate passes.
+
+| Tree | Measurement | Measured by |
+| --- | ---: | --- |
+| v0.4.0 baseline, `origin/main` at `5efa19c` | 61.988 ms | Coordinator |
+| v0.5.0 candidate | 54.45 ms | Coordinator |
+| Same v0.5.0 candidate | 60.229 ms | `talaria-t1` |
+| Same v0.5.0 candidate | 68.861 ms | `talaria-t1` |
+
+**Since when.** The exceedance predates v0.5.0. Line 35 of the
+[block-markdown gate results](../analysis/2026-08-09-block-markdown-gate-results.md) records the same
+metric at 44.0 ms against the same 50 ms ceiling, so it passed on
+2026-08-09. The exceedance appeared between that run and v0.4.0, then shipped in v0.4.0 unnoticed
+because v0.4 acceptance did not run the gate.
+
+**No comparison between v0.4.0 and v0.5.0 is supportable.** The unchanged v0.5.0 candidate spans
+54.45–68.861 ms: a 14.411 ms, roughly 26 per cent run-to-run spread. The lone v0.4.0 sample of
+61.988 ms lies inside that range. Same-tree variance therefore exceeds the apparent difference
+between the trees, so the evidence supports neither an improvement nor a regression. This is
+distinct from the block-phase hitch below: this entry records the steady-state p99.
+
+**This metric cannot be used as a gate in its current form.** A threshold or non-regression check
+will flake when the metric's spread approaches its margin over the ceiling. It already blocked a
+20-item acceptance run. The acceptance harness now records the result instead of gating on it.
+
+**Why it is not being fixed here.** No approved v0.5.0 child covers `TranscriptPane.apply` latency.
+Repairing it in the documentation unit would expand scope into the block-markdown implementation.
+The instrument stays honest instead: the 50 ms threshold is not being lowered to make the observed
+number pass.
+
+**Revisit when.** Whichever comes first: the next approved release that touches
+`TranscriptPane.apply` or the block-markdown path, or an upgrade from Textual 8.2.8. Each condition
+changes the measured path and therefore requires rerunning the 50,000-delta measurement before the
+work can be called complete. The investigation must collect enough repeated samples from each
+unchanged tree to separate signal from run-to-run variance before comparing trees.
+
 ### A streaming table's block phase hitches past ~340 rows — demote open tables early, or append rows incrementally
 
 **Author.** RA5, 2026-08-09 — the one red check the v0.2 gate loop recorded instead of fixed
@@ -1149,9 +1255,15 @@ Talaria also keeps sub-agent rows past the end of their turn, where Hermes drops
 Neither is a leak today at prototype scale, and eviction interacts with replay determinism (AE2) and scrollback in ways that need the projection to exist first — which is exactly why the plan deferred it. The input to the decision is the growth *slope* the U5 gate records, not the endpoint.
 **Refs.** [Hermes reconciliation-rule catalogue](../analysis/2026-08-02-hermes-reconciliation-rules.md) rules RR-21 and RR-32, [v0.1 plan KTD14](../plans/2026-08-02-talaria-v0-1-prototype-plan.md)
 
-### Range-validate the integer configuration settings
+### ~~Range-validate the integer configuration settings~~ — CLOSED 2026-08-31
 
 **Author.** v0.1 scaffold code review (delta re-review), 2026-08-03
+**Closed by.** Talaria v0.5.0 validates the remaining status interval and the three new status-bar
+width caps after precedence resolution. `status.interval_seconds` accepts 1–3600; the caps accept
+their documented inclusive ranges. Every invalid winner uses a bounded default and contributes a
+visible startup notice. The paste half was already resolved deliberately: a non-positive line or
+byte threshold disables that half rather than becoming an invalid interval-like value. The runtime
+defaults and fallback paths are pinned in `tests/test_config.py`.
 **Priority.** P2
 **Effort.** Small
 **Worth it when.** U6 builds the status runner and U5 the composer — those units know what a valid bound is, and this module does not.
@@ -1290,9 +1402,13 @@ No individual line grows — that was round 3's defect. But the buffer accumulat
 
 **Recommendation on file.** Do the diagnosis half whenever the connection path is next touched; open the launch half as its own ADR conversation. The incident is an argument for better error reporting, and only weakly an argument for changing who owns the gateway's lifetime.
 
-### Nothing on screen says where the caret is when it is not in the composer
+### ~~Nothing on screen says where the caret is when it is not in the composer~~ — CLOSED 2026-08-31
 
 **Author.** First operator-supervised live run, 2026-08-04.
+**Closed by.** Talaria v0.5.0 changes only cells that already exist. The composer's fixed border
+switches between `compose [*] caret here` and `compose [ ] caret elsewhere`, and focused rows use
+their reserved `>` gutter. `tests/ui/test_focus_indication.py::test_focus_cues_change_text_and_colour_without_any_geometry_delta`
+asserts the composer, transcript viewport, and footer geometry do not move while the cue changes.
 **Priority.** P2
 **Effort.** Small, but it reopens a settled layout decision.
 **Worth it when.** The next time the composer's border or the focus styling is touched, or the first time an operator reports typing into a dead interface after the `CaretReleased` fix has shipped.
@@ -1305,9 +1421,16 @@ So the requirement is narrow and real: **an indication of where the caret is tha
 
 **Why it is still worth doing with the bug fixed.** The `CaretReleased` rule covers the three transitions known today, and its own `DECISIONS.md` entry names the condition under which a fourth appears. A focus indicator is the thing that would let an operator *see* the fourth one in the second it happens, rather than reporting it as "the app stopped responding" a session later.
 
-### Block-level markdown: headings, fenced code, lists, tables, block quotes
+### ~~Block-level markdown: headings, fenced code, lists, tables, block quotes~~ — CLOSED 2026-08-31 (shipped in v0.2)
 
 **Author.** First operator-supervised live run, 2026-08-04.
+**Closed by.** This queue entry was stale. Talaria v0.2 shipped committed and progressively
+streaming block markdown behind accepted
+[ADR-0006](../../platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md).
+The 24-of-24 gate and its explicit bounds are recorded in the
+[block-markdown gate results](../analysis/2026-08-09-block-markdown-gate-results.md). The remaining
+streaming-table hitch and transient-mount cases are separate, still-open entries below; closing this
+feature request does not close them.
 **Priority.** P2 — **operator has asked for this explicitly**, to be taken up once the defects found in the core build are cleared.
 **Effort.** Large, and it reopens U5's measured gate results.
 **Worth it when.** The core-build defect list is empty. That is the operator's stated sequencing, recorded here so the next session does not have to re-derive it.
@@ -1352,9 +1475,14 @@ observations 2, 3 and 5. All three are cosmetic or documentation-sized; none blo
    path, doing its job loudly on every occurrence. Worth teaching (or deliberately ignoring)
    both kinds once their payloads are understood.
 
-### A malformed `status.command` turns the status line off without saying so
+### ~~A malformed `status.command` turns the status line off without saying so~~ — CLOSED 2026-08-31
 
 **Author.** v0.1 milestone-2, unit U10 (daily-driver closure), adversarial verification
+**Closed by.** Talaria v0.5.0 normalizes the winning value once, disables only the optional command,
+and passes the resulting notice into the already-mounted `StatusRegion`. The same visible fallback
+path covers empty, non-string, and shell-split failures in live and replay. It is pinned by
+`tests/ui/test_status_region.py::test_a_malformed_command_notice_is_visible_without_a_status_runner`
+and the configuration normalization tests.
 **Priority.** P3
 **Effort.** Small for a stderr line; medium for an in-interface notice, which is the version worth having.
 **Worth it when.** A second configuration setting acquires the same silent-fallback behaviour, or an operator reports that their status line "just stopped working".

@@ -41,7 +41,7 @@ below that walks entries reads that id, never a line offset, and the one
 place a widget survives unchanged across a state transition — a stream
 handing its document to the entry it just became — is keyed on it too.
 
-**Kind differentiation (U5, KTD5, R7/R8).** Every mounted unit — a
+**Kind differentiation (U5/U6, KTD5, R7/R8).** Every mounted unit — a
 :class:`TranscriptLine` or an :class:`~talaria.ui.blocks.EntryMarkdown`
 document — carries exactly one ``transcript--group-*`` CSS class, chosen by
 :func:`kind_group` from :data:`_KIND_GROUPS`, R7's verbatim twelve-to-group
@@ -49,43 +49,19 @@ table. The channel is background tint plus a left-edge border (the "gutter
 marker"), never a change to the body text's own foreground colour — a fence's
 own syntax highlighting inside a reasoning or assistant document paints
 foreground spans, and a channel carried by foreground colour would be exactly
-what that highlighting could erase (R8). Every colour named in
-:data:`_GROUP_VARIABLES` is a variable the installed theme already defines
-(``$primary``, ``$success``, ``$secondary``, ``$accent``, ``$panel``,
-``$error``) — no new theme variable is introduced, pinned by a test that
-reads ``App.get_css_variables()`` and asserts every ``$name`` this module's
-``DEFAULT_CSS`` uses is a member of that live set, not a hand-maintained list
-of what this module *thinks* the theme defines. ``$text-muted`` was tried
-first for the "session-record" group and rejected: it resolves to
-``"auto 60%"``, an auto-contrast scalar, not a colour, and Textual's CSS
-parser rejects it outright as a ``background``/``border`` value — caught by
-actually mounting a pane with it before writing the pin test, not by reading
-the theme dict and assuming every name in it is colour-shaped. The
-one-column border consumes one column of wrap width, so both mounted unit
-types reserve that column unconditionally rather than only when a group
-class happens to be present — the reservation, not the border, is what
-keeps wrap width constant. :class:`EntryMarkdown` — whose stock
-``padding: 0 2 0 2`` has a spare column to give up — loses ``padding-left``
-down to ``1`` in the same rule that adds the border, keeping its total left
-inset at 2 columns either way. :class:`TranscriptLine` has no stock padding
-to trade, so this module gives it one unconditionally instead: every
-:class:`TranscriptLine`, classed or not, carries ``padding-left: 1``, and
-the per-group rule that adds the border zeroes that padding back to ``0`` in
-the same breath — the reserved column moves from padding to border rather
-than being consumed in addition to it. An *unclassed* line therefore has the
-same content width as a classed one at every wrap boundary, not just the
-short, single-projected-line fixtures ``tests/ui/test_kind_styles.py`` also
-uses for the distinguishability tests. (CR5: before this reservation
-existed, an unclassed line kept the full pane width while a classed line
-lost one column to the border alone, so a line whose content exactly filled
-the wrap width rendered one row taller styled than unstyled — the border was
-taking a column nothing had set aside for it.)
+what that highlighting could erase (R8). U6 routes each group through its
+dedicated ``talaria.transcript.*`` marker/background token pair and puts the
+group's fixed non-colour label in its existing first painted row. The domain
+source and block factory remain unchanged. The one-column border consumes a
+column, so both mounted unit types reserve that column unconditionally; moving
+the reserved column from padding to border keeps wrapping and height stable.
 """
 
 from __future__ import annotations
 
 import gc
 import math
+import weakref
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -94,9 +70,13 @@ from typing import Final, Literal
 
 from rich.cells import cell_len
 from rich.text import Text
+from textual import events
 from textual.containers import VerticalScroll
+from textual.content import Content, Span
+from textual.style import Style
 from textual.widget import Widget
 from textual.widgets import Static
+from textual.widgets.markdown import MarkdownBlock
 
 from talaria.domain.models import TranscriptKind
 from talaria.domain.projection import (
@@ -108,6 +88,7 @@ from talaria.domain.projection import (
 from talaria.ui.blocks import EntryMarkdown, parser_factory
 from talaria.ui.literal import defang, literal_text
 from talaria.ui.markdown import inline_markdown
+from talaria.ui.motion import STANDARD_MOTION, MotionPolicy
 
 #: KTD1(a)'s tier-two line cap and the wrapped-rows trigger threshold. The
 #: name and the number are unchanged from v0.1 (ADR-0005 decision 3, amended
@@ -186,7 +167,6 @@ _ENTRY_PREFIX: Final[dict[str, str]] = {
     "unknown-event": "! ",
 }
 
-
 # ── kind differentiation (U5, KTD5, R7/R8) ──────────────────────────────────
 
 #: R7's own enumeration names **six** labelled buckets, not five, counting
@@ -226,19 +206,37 @@ _KIND_GROUPS: Final[dict[TranscriptKind, KindGroup]] = {
     "unknown-event": "fault",
 }
 
-#: The existing theme's vocabulary this module borrows from, one variable
-#: name per group — no new ``$name`` is invented, and the pin test in
-#: ``tests/ui/test_kind_styles.py`` asserts every name here (and every
-#: ``$name`` :class:`TranscriptPane`'s ``DEFAULT_CSS`` actually uses) is a
-#: member of the *live* ``App.get_css_variables()`` set rather than trusting
-#: this comment to stay accurate.
-_GROUP_VARIABLES: Final[dict[KindGroup, str]] = {
-    "operator": "primary",
-    "assistant": "success",
-    "reasoning": "secondary",
-    "activity": "accent",
-    "session-record": "panel",
-    "fault": "error",
+#: U6's dedicated theme-token pair for each transcript group. The pin test in
+#: ``tests/ui/test_kind_styles.py`` resolves the variables through a mounted
+#: built-in theme rather than trusting this table alone.
+_GROUP_VARIABLES: Final[dict[KindGroup, tuple[str, str]]] = {
+    "operator": ("talaria-transcript-operator", "talaria-transcript-operator-background"),
+    "assistant": (
+        "talaria-transcript-assistant",
+        "talaria-transcript-assistant-background",
+    ),
+    "reasoning": (
+        "talaria-transcript-reasoning",
+        "talaria-transcript-reasoning-background",
+    ),
+    "activity": ("talaria-transcript-activity", "talaria-transcript-activity-background"),
+    "session-record": (
+        "talaria-transcript-session",
+        "talaria-transcript-session-background",
+    ),
+    "fault": ("talaria-transcript-fault", "talaria-transcript-fault-background"),
+}
+
+#: Redundant first-row identity required by the visual specification.  These
+#: labels are presentation only: :attr:`TranscriptLine.source` and every
+#: :class:`_MountedUnit` keep the domain's original, unwelded content.
+_GROUP_LABELS: Final[dict[KindGroup, str]] = {
+    "operator": "> You",
+    "assistant": "A Talaria",
+    "reasoning": ". Reasoning",
+    "activity": "$ Tool/Subagent",
+    "session-record": "- Session",
+    "fault": "! Error",
 }
 
 #: The kind-group CSS rules, generated from :data:`_GROUP_VARIABLES` rather
@@ -290,8 +288,9 @@ _GROUP_VARIABLES: Final[dict[KindGroup, str]] = {
 _GROUP_CSS_RULES: Final[str] = "\n".join(
     f"""
     TranscriptPane .transcript--group-{group} {{
-        background: ${variable} 10%;
-        border-left: thick ${variable};
+        color: $talaria-text;
+        background: ${background};
+        border-left: thick ${marker};
     }}
     TranscriptPane EntryMarkdown.transcript--group-{group} {{
         padding: 0 2 0 1;
@@ -299,7 +298,7 @@ _GROUP_CSS_RULES: Final[str] = "\n".join(
     TranscriptPane TranscriptLine.transcript--group-{group} {{
         padding-left: 0;
     }}"""
-    for group, variable in _GROUP_VARIABLES.items()
+    for group, (marker, background) in _GROUP_VARIABLES.items()
 )
 
 
@@ -451,17 +450,37 @@ def trips_fallback_trigger(markdown_text: str, *, content_width: int) -> bool:
 
 
 def _line_renderable(
-    source: str, *, kind: TranscriptKind | None, no_wrap: bool
+    source: str,
+    *,
+    kind: TranscriptKind | None,
+    no_wrap: bool,
+    first_in_entry: bool,
 ) -> Text:
     """The one way a :class:`TranscriptLine`'s text becomes a renderable —
     shared by construction and by :meth:`TranscriptLine.update_source` so an
     in-place update can never render differently than a rebuild would.
     """
+    body = source
+    if first_in_entry and kind is not None:
+        prefix = _ENTRY_PREFIX.get(kind, "")
+        if prefix and body.startswith(prefix):
+            body = body[len(prefix) :]
+
     if no_wrap:
-        return Text(defang(source), no_wrap=True, end="")
-    if kind in MARKDOWN_KINDS:
-        return inline_markdown(source)
-    return literal_text(source)
+        rendered = Text(defang(body), no_wrap=True, end="")
+    elif kind in MARKDOWN_KINDS:
+        rendered = inline_markdown(body)
+    else:
+        rendered = literal_text(body)
+
+    if not first_in_entry or kind is None:
+        return rendered
+    label = _GROUP_LABELS[kind_group(kind)]
+    labelled = Text(label, style="bold", no_wrap=no_wrap, end="")
+    if body:
+        labelled.append("  ")
+        labelled.append_text(rendered)
+    return labelled
 
 
 class TranscriptLine(Static):
@@ -471,9 +490,19 @@ class TranscriptLine(Static):
     """
 
     def __init__(
-        self, source: str, *, kind: TranscriptKind | None = None, no_wrap: bool = False
+        self,
+        source: str,
+        *,
+        kind: TranscriptKind | None = None,
+        no_wrap: bool = False,
+        first_in_entry: bool = True,
     ) -> None:
-        renderable = _line_renderable(source, kind=kind, no_wrap=no_wrap)
+        renderable = _line_renderable(
+            source,
+            kind=kind,
+            no_wrap=no_wrap,
+            first_in_entry=first_in_entry,
+        )
         # R7/KTD5 (U5): every line-rendered kind carries its group class
         # alongside the nowrap class -- ``kind`` is only ``None`` for a
         # direct construction outside this module's own call sites (none
@@ -487,6 +516,7 @@ class TranscriptLine(Static):
         self.source = source
         self._kind = kind
         self._no_wrap = no_wrap
+        self._first_in_entry = first_in_entry
 
     def update_source(self, source: str) -> None:
         """Replace this line's projection text in place.
@@ -496,12 +526,36 @@ class TranscriptLine(Static):
         whole unit (KTD1(d)'s per-delta bound).
         """
         self.source = source
-        self.update(_line_renderable(source, kind=self._kind, no_wrap=self._no_wrap))
+        self.update(
+            _line_renderable(
+                source,
+                kind=self._kind,
+                no_wrap=self._no_wrap,
+                first_in_entry=self._first_in_entry,
+            )
+        )
+
+    def set_first_in_entry(self, first: bool) -> None:
+        """Move the fixed label when condensation recycles the first row."""
+        if first == self._first_in_entry:
+            return
+        self._first_in_entry = first
+        self.update_source(self.source)
 
 
 # ── mounted-unit bookkeeping ────────────────────────────────────────────
 
 UnitKind = Literal["block", "line"]
+
+
+@dataclass(frozen=True)
+class TranscriptAnchor:
+    """One mounted entry and cell offset held at the viewport's top edge."""
+
+    entry_id: int | TranscriptKind
+    source_line_offset: int
+    cell_offset: int
+    widget: weakref.ReferenceType[Widget] = field(compare=False, repr=False)
 
 
 @dataclass
@@ -662,9 +716,16 @@ class TranscriptPane(VerticalScroll):
     {_GROUP_CSS_RULES}
     """
 
-    def __init__(self, *, mount_cap: int = DEFAULT_MOUNT_CAP, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        mount_cap: int = DEFAULT_MOUNT_CAP,
+        motion: MotionPolicy = STANDARD_MOTION,
+        **kwargs: object,
+    ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.mount_cap = max(1, mount_cap)
+        self.motion = motion
         self.follow = True
         self._applies_in_flight = 0
         #: Rows the tail ring-recycle folded this apply — consumed by
@@ -712,6 +773,8 @@ class TranscriptPane(VerticalScroll):
         #: top-level ``mounted_count`` entry, so a peak over the top-level
         #: count alone cannot see that spike.
         self.peak_descendants = 0
+        self._labelled_blocks: weakref.WeakSet[EntryMarkdown] = weakref.WeakSet()
+        self._stable_anchor: TranscriptAnchor | None = None
 
     # ── measurement surface ──────────────────────────────────────────────
 
@@ -842,6 +905,7 @@ class TranscriptPane(VerticalScroll):
         # blocks do not yet cover its own text. That torn state is
         # scheduling, not corruption; ``apply_in_flight`` is how a reader
         # distinguishes the two.
+        anchor = None if self.follow else self.capture_reading_anchor()
         self._applies_in_flight += 1
         try:
             await self._reset_if_history_changed(entries.entries)
@@ -850,12 +914,13 @@ class TranscriptPane(VerticalScroll):
             await self._reconcile_tail("assistant", entries.assistant_tail)
             await self._condense(entries.entries, total_lines=len(view.lines))
             await self._render_condensed()
+            self._apply_block_labels()
 
             self._lines = view.lines
             self.last_applied_entries = entries
             self.peak_mounted = max(self.peak_mounted, self.mounted_count)
             self.peak_descendants = max(self.peak_descendants, self.descendant_count)
-            self._restore_anchor()
+            self._restore_anchor(anchor)
         finally:
             self._applies_in_flight -= 1
 
@@ -1124,9 +1189,15 @@ class TranscriptPane(VerticalScroll):
         for widget, row in zip(unit.lines, rows, strict=False):
             widget.update_source(row)
         if len(rows) > len(unit.lines):
+            start = len(unit.lines)
             extras = [
-                TranscriptLine(row, kind=kind, no_wrap=unit.is_fallback)
-                for row in rows[len(unit.lines) :]
+                TranscriptLine(
+                    row,
+                    kind=kind,
+                    no_wrap=unit.is_fallback,
+                    first_in_entry=(start + index == 0),
+                )
+                for index, row in enumerate(rows[start:])
             ]
             if unit.banner is not None:
                 await self.mount_all(extras, before=unit.banner)
@@ -1135,6 +1206,8 @@ class TranscriptPane(VerticalScroll):
             else:
                 await self.mount_all(extras)
             unit.lines.extend(extras)
+        for index, widget in enumerate(unit.lines):
+            widget.set_first_in_entry(index == 0)
         if unit.banner is not None:
             total = len(_welded_entry_lines(kind, unit.applied_text))
             unit.banner.update(_banner_text(total - len(unit.lines), total))
@@ -1216,7 +1289,13 @@ class TranscriptPane(VerticalScroll):
             if len(source_lines) > allowed:
                 source_lines = source_lines[len(source_lines) - allowed :]
         widgets = [
-            TranscriptLine(line, kind=kind, no_wrap=is_fallback) for line in source_lines
+            TranscriptLine(
+                line,
+                kind=kind,
+                no_wrap=is_fallback,
+                first_in_entry=index == 0,
+            )
+            for index, line in enumerate(source_lines)
         ]
         banner = _fallback_banner(total_rows - len(widgets), total_rows) if is_fallback else None
         pending.extend(widgets)
@@ -1445,7 +1524,13 @@ class TranscriptPane(VerticalScroll):
             grown = new_lines[old_rows:]
             fill = max(0, cap - len(unit.lines))
             fresh = [
-                TranscriptLine(line, kind=kind, no_wrap=True) for line in grown[:fill]
+                TranscriptLine(
+                    line,
+                    kind=kind,
+                    no_wrap=True,
+                    first_in_entry=not unit.lines and index == 0,
+                )
+                for index, line in enumerate(grown[:fill])
             ]
             if fresh:
                 await self.mount_all(fresh, before=unit.banner)
@@ -1453,10 +1538,13 @@ class TranscriptPane(VerticalScroll):
             recycled_rows = 0
             for line in grown[fill:]:
                 head = unit.lines.pop(0)
+                head.set_first_in_entry(False)
                 head.update_source(line)
                 self.move_child(head, before=unit.banner)
                 unit.lines.append(head)
                 recycled_rows += 1
+            if unit.lines:
+                unit.lines[0].set_first_in_entry(True)
             # KTD4's second trap, unconditional: the banner is refreshed at
             # the end of EVERY growth patch, recycle-only included. Once a
             # fallback tail reaches the mount cap — the steady state of any
@@ -1496,7 +1584,40 @@ class TranscriptPane(VerticalScroll):
         """
         if widget is None or not widget.is_mounted:
             return
+        self._labelled_blocks.discard(widget)
         await getattr(widget, verb)(text)
+
+    def _apply_block_labels(self) -> None:
+        """Bold one group label in the first painted row of each block unit.
+
+        The Markdown document keeps parsing the exact raw entry body.  The
+        label is applied to the first content-bearing mounted block only after
+        parsing, so fences, tables, headings, and the ADR-0006 block factory are
+        unchanged and no heading widget or spacer row is introduced.
+        """
+        units = [self._entries[entry_id] for entry_id in self._entry_order]
+        units.extend(unit for unit in self._tails.values() if unit is not None)
+        for unit in units:
+            widget = unit.block
+            if widget is None or widget in self._labelled_blocks or not widget.is_mounted:
+                continue
+            label = _GROUP_LABELS[kind_group(unit.entry_kind or "assistant")]
+            prefix = Content(
+                f"{label}  ",
+                spans=[Span(0, len(label), Style(bold=True))],
+            )
+            for block in widget.query(MarkdownBlock):
+                raw_content = block.content
+                if isinstance(raw_content, Content):
+                    content = raw_content
+                elif isinstance(raw_content, str):
+                    content = Content(raw_content)
+                else:
+                    continue
+                if not content.plain.startswith(f"{label}  "):
+                    block.set_content(prefix + content)
+                self._labelled_blocks.add(widget)
+                break
 
     async def _safe_remove(self, widget: Widget) -> None:
         if widget.is_mounted:
@@ -1574,6 +1695,8 @@ class TranscriptPane(VerticalScroll):
                         removed_top_height += max(1, widget.outer_size.height)
                         to_remove.append(widget)
                         trimmed = True
+                    if trimmed and unit.lines:
+                        unit.lines[0].set_first_in_entry(True)
                     # The banner follows the retained rows here too — every
                     # other path that changes a fallback unit's row count
                     # (growth, retarget) already refreshes it, and a partial
@@ -1593,6 +1716,8 @@ class TranscriptPane(VerticalScroll):
                 removed_top_height += max(1, widget.outer_size.height)
                 to_remove.append(widget)
                 trimmed = True
+            if trimmed and tail.lines:
+                tail.lines[0].set_first_in_entry(True)
             if trimmed and tail.banner is not None:
                 tail.banner.update(_banner_text(tail_rows - len(tail.lines), tail_rows))
 
@@ -1718,7 +1843,110 @@ class TranscriptPane(VerticalScroll):
         else:
             self._condensed.update(text)
 
-    def _restore_anchor(self) -> None:
+    def _ordered_units(self) -> list[_MountedUnit]:
+        units = [self._entries[entry_id] for entry_id in self._entry_order]
+        units.extend(
+            unit
+            for kind in _TAIL_KINDS
+            if (unit := self._tails[kind]) is not None
+        )
+        return units
+
+    def capture_reading_anchor(self) -> TranscriptAnchor | None:
+        """Capture entry identity plus its source/cell offset at the top row."""
+        top = int(self.scroll_offset.y)
+        nearest: tuple[_MountedUnit, Widget, int] | None = None
+        for unit in self._ordered_units():
+            widgets = unit.widgets()
+            for index, widget in enumerate(widgets):
+                if widget is unit.banner or not widget.is_mounted:
+                    continue
+                y = widget.virtual_region.y
+                height = max(1, widget.outer_size.height)
+                if y <= top < y + height:
+                    nearest = (unit, widget, index)
+                    break
+                if y >= top and nearest is None:
+                    nearest = (unit, widget, index)
+                    break
+            if nearest is not None:
+                break
+        if nearest is None:
+            return None
+
+        unit, widget, index = nearest
+        retained_start = 0
+        if unit.kind == "line":
+            total = (
+                len(_welded_tail_lines(unit.entry_kind or "assistant", unit.applied_text))
+                if isinstance(unit.entry_id, str)
+                else len(_welded_entry_lines(unit.entry_kind or "system", unit.applied_text))
+            )
+            retained_start = max(0, total - len(unit.lines))
+        source_offset = retained_start + index if unit.kind == "line" else 0
+        anchor = TranscriptAnchor(
+            entry_id=unit.entry_id,
+            source_line_offset=source_offset,
+            cell_offset=max(0, top - widget.virtual_region.y),
+            widget=weakref.ref(widget),
+        )
+        self._stable_anchor = anchor
+        return anchor
+
+    def _widget_for_anchor(self, anchor: TranscriptAnchor) -> Widget | None:
+        widget = anchor.widget()
+        if widget is not None and widget.is_mounted:
+            return widget
+        if isinstance(anchor.entry_id, int):
+            unit = self._entries.get(anchor.entry_id)
+        else:
+            unit = self._tails.get(anchor.entry_id)
+        if unit is None:
+            return None
+        if unit.kind == "block":
+            return unit.block
+        total = (
+            len(_welded_tail_lines(unit.entry_kind or "assistant", unit.applied_text))
+            if isinstance(unit.entry_id, str)
+            else len(_welded_entry_lines(unit.entry_kind or "system", unit.applied_text))
+        )
+        retained_start = max(0, total - len(unit.lines))
+        index = max(0, min(len(unit.lines) - 1, anchor.source_line_offset - retained_start))
+        return unit.lines[index] if unit.lines else None
+
+    def restore_reading_anchor(self, anchor: TranscriptAnchor | None = None) -> None:
+        """Restore a captured reader position after the next settled layout."""
+        if self.follow:
+            motion = self.motion.scroll(animate=False)
+            self.scroll_end(
+                animate=motion.animate,
+                duration=motion.duration,
+                immediate=False,
+            )
+            return
+        target = anchor or self._stable_anchor
+        if target is not None:
+            self.call_after_refresh(self._restore_reading_anchor_now, target)
+
+    def _restore_reading_anchor_now(self, anchor: TranscriptAnchor) -> None:
+        widget = self._widget_for_anchor(anchor)
+        if widget is None:
+            return
+        motion = self.motion.scroll(animate=False)
+        y = widget.virtual_region.y + min(
+            anchor.cell_offset,
+            max(0, widget.outer_size.height - 1),
+        )
+        self.scroll_to(
+            y=max(0, y),
+            animate=motion.animate,
+            duration=motion.duration,
+            immediate=True,
+            release_anchor=False,
+        )
+        self._stable_anchor = self.capture_reading_anchor()
+
+    def _restore_anchor(self, anchor: TranscriptAnchor | None) -> None:
         removed_top_height = self._pending_removed_height
         self._pending_removed_height = 0
         if self.follow:
@@ -1732,13 +1960,48 @@ class TranscriptPane(VerticalScroll):
             # Textual's own `call_after_refresh` -- deferred to run once the
             # layout has actually settled, which is what this widget needs
             # every time, not only for a batch this size.
-            self.scroll_end(animate=False, immediate=False)
+            motion = self.motion.scroll(animate=False)
+            self.scroll_end(
+                animate=motion.animate,
+                duration=motion.duration,
+                immediate=False,
+            )
+        elif anchor is not None:
+            self.restore_reading_anchor(anchor)
         elif removed_top_height:
-            self.scroll_to(y=max(0, self.scroll_offset.y - removed_top_height), animate=False)
+            motion = self.motion.scroll(animate=False)
+            self.scroll_to(
+                y=max(0, self.scroll_offset.y - removed_top_height),
+                animate=motion.animate,
+                duration=motion.duration,
+            )
 
     def hold_anchor(self) -> None:
         self.follow = False
+        self._stable_anchor = self.capture_reading_anchor()
+        self.call_after_refresh(self.capture_reading_anchor)
+
+    def on_mouse_scroll_up(self, _event: events.MouseScrollUp) -> None:
+        """Unpin where Textual consumes the wheel event: on this scroll pane."""
+        self.hold_anchor()
+
+    def on_key(self, event: events.Key) -> None:
+        """Unpin upward keys and downward keys pressed above the bottom."""
+        moves_up = event.key in ("up", "pageup", "home")
+        moves_down = event.key in ("down", "pagedown")
+        if moves_up or (moves_down and not self.is_vertical_scroll_end):
+            self.hold_anchor()
 
     def follow_bottom(self) -> None:
         self.follow = True
-        self.scroll_end(animate=False, immediate=True)
+        self._stable_anchor = None
+        motion = self.motion.scroll(animate=False)
+        self.scroll_end(
+            animate=motion.animate,
+            duration=motion.duration,
+            immediate=True,
+        )
+
+    def on_resize(self, _event: events.Resize) -> None:
+        if not self.follow and self._stable_anchor is not None:
+            self.restore_reading_anchor(self._stable_anchor)

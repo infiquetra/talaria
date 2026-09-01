@@ -10,20 +10,27 @@ either half on its own is not.
 from __future__ import annotations
 
 import asyncio
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
+from textual import events
 from textual.widgets import Static
 
 from talaria.domain.projection import terminal_read, transcript_view
 from talaria.replay.gate import content_is_complete
+from talaria.status.runner import StatusRunner
 from talaria.ui.app import ALREADY_FOLLOWING_BOTTOM
 from tests.ui.conftest import (
     RecordingDispatcher,
     event,
+    feed,
     live_app,
     paused_app,
     records,
+    screen_text,
+    settle,
     streaming_turn,
 )
 
@@ -178,6 +185,96 @@ async def test_end_and_pageup_toggle_the_anchor(stress_frames: list[dict[str, An
         await app.shutdown_sources()
 
 
+@pytest.mark.parametrize("scroll_key", ("up", "down", "pageup", "pagedown", "home"))
+@pytest.mark.asyncio
+async def test_focused_keyboard_scroll_unpins_and_preserves_the_reading_position(
+    stress_frames: list[dict[str, Any]],
+    scroll_key: str,
+) -> None:
+    """Every vertical key that moves the focused pane must stop following."""
+    app, controls = paused_app(
+        stress_frames,
+        mount_cap=500,
+        reduced_motion=True,
+    )
+    async with app.run_test(size=(100, 20)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        pane.focus()
+        await pilot.pause()
+        assert app.focused is pane
+
+        if scroll_key in ("down", "pagedown"):
+            pane.scroll_to(
+                y=max(1, pane.max_scroll_y // 2),
+                animate=False,
+                immediate=True,
+            )
+        else:
+            pane.follow_bottom()
+        await pilot.pause()
+        assert pane.follow is True
+        before = float(pane.scroll_y)
+
+        await pilot.press(scroll_key)
+        await pilot.pause()
+        assert float(pane.scroll_y) != before, f"{scroll_key} did not move the focused pane"
+        assert pane.follow is False
+        held = float(pane.scroll_y)
+        held_screen = screen_text(app)
+        visible_line = next(
+            line
+            for turn in range(40)
+            for step in range(6)
+            if (line := f"line {turn}.{step}") in held_screen
+        )
+
+        for seq, frame in enumerate(streaming_turn(["later update\n"]), start=20_000):
+            feed(app, frame, seq=seq)
+        await settle(app, pilot)
+        assert float(pane.scroll_y) == held
+        assert visible_line in screen_text(app)
+        await app.shutdown_sources()
+
+
+@pytest.mark.parametrize("scroll_key", ("down", "pagedown"))
+@pytest.mark.asyncio
+async def test_focused_down_at_the_bottom_keeps_following_visible_updates(
+    stress_frames: list[dict[str, Any]],
+    scroll_key: str,
+) -> None:
+    """A key that cannot move farther down must not silently stop follow mode."""
+    app, controls = paused_app(
+        stress_frames,
+        mount_cap=500,
+        reduced_motion=True,
+    )
+    async with app.run_test(size=(100, 20)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        pane.focus()
+        pane.follow_bottom()
+        await pilot.pause()
+        assert app.focused is pane
+        assert pane.scroll_y == pane.max_scroll_y
+        bottom = float(pane.scroll_y)
+
+        await pilot.press(scroll_key)
+        await pilot.pause()
+        followed_after_key = pane.follow
+        assert float(pane.scroll_y) == bottom
+
+        newest_line = "newest line after bottom-boundary key"
+        for seq, frame in enumerate(streaming_turn([f"{newest_line}\n"]), start=21_000):
+            feed(app, frame, seq=seq)
+        await settle(app, pilot)
+
+        assert (followed_after_key, newest_line in screen_text(app)) == (True, True)
+        assert pane.follow is True
+        assert pane.scroll_y == pane.max_scroll_y
+        await app.shutdown_sources()
+
+
 @pytest.mark.asyncio
 async def test_f5_and_end_confirm_a_repeat_follow_without_losing_the_anchor() -> None:
     """B3 (AE3): re-following the newest line at the bottom of a paused
@@ -242,6 +339,170 @@ async def test_a_resize_storm_preserves_reflow_anchors_and_content(
         # Reflow, not truncation: the narrow pass must not have clipped text.
         assert "line 39.5" in view.text
         assert app.transcript.follow is False
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_identity_anchor_survives_append_status_growth_and_resize(
+    stress_frames: list[dict[str, Any]],
+    tmp_path: Path,
+) -> None:
+    app, controls = paused_app(stress_frames, mount_cap=200)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        assert pane.max_scroll_y > 2
+
+        pane.scroll_to(y=max(1, pane.max_scroll_y // 2), animate=False, immediate=True)
+        await pilot.pause()
+        pane.hold_anchor()
+        await pilot.pause()
+        held = pane.capture_reading_anchor()
+        assert held is not None
+
+        for seq, frame in enumerate(
+            streaming_turn(["new output one\n", "new output two\n"]),
+            start=10_000,
+        ):
+            feed(app, frame, seq=seq)
+        await settle(app, pilot)
+        assert pane.follow is False
+        assert pane.capture_reading_anchor() == held
+        assert pane.scroll_offset.y < pane.max_scroll_y
+
+        app.status_runner = StatusRunner(
+            argv=(sys.executable, "-c", "print('branch: main\\ntests: passing')"),
+            launch_cwd=tmp_path,
+            parent_env={},
+        )
+        status_anchor = pane.capture_reading_anchor()
+        result = await app.status_tick()
+        await pilot.pause()
+        await pilot.pause()
+        assert result is not None and result.outcome == "ok"
+        assert pane.capture_reading_anchor() == status_anchor
+
+        resize_anchor = pane.capture_reading_anchor()
+        await pilot.resize_terminal(62, 24)
+        await pilot.pause()
+        await pilot.pause()
+        assert pane.follow is False
+        assert pane.capture_reading_anchor() == resize_anchor
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_preview_and_inspector_reflow_restore_the_reading_anchor(
+    stress_frames: list[dict[str, Any]],
+) -> None:
+    app, controls = paused_app(stress_frames, mount_cap=200)
+    async with app.run_test(size=(132, 24)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        pane.scroll_to(y=max(1, pane.max_scroll_y // 2), animate=False, immediate=True)
+        await pilot.pause()
+        pane.hold_anchor()
+        await pilot.pause()
+        held = pane.capture_reading_anchor()
+        assert held is not None
+
+        await app.open_theme_picker()
+        await pilot.pause()
+        app.palette.move_theme_selection(1)
+        await pilot.pause()
+        await pilot.pause()
+        assert pane.capture_reading_anchor() == held
+
+        await app.palette.cancel_theme_selection()
+        await pilot.pause()
+        await pilot.pause()
+        assert pane.capture_reading_anchor() == held
+
+        app.action_toggle_inspector()
+        await pilot.pause()
+        await pilot.pause()
+        assert app.inspector.is_effectively_collapsed is True
+        assert pane.capture_reading_anchor() == held
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_pointer_scroll_unpins_before_later_chrome_reflow(
+    stress_frames: list[dict[str, Any]],
+) -> None:
+    """A wheel event is consumed by the scroll pane before it can bubble to
+    the app. The pane must unpin there so later chrome changes restore the
+    reader's position rather than treating it as a follow-bottom position.
+    """
+    app, controls = paused_app(stress_frames, mount_cap=200)
+    async with app.run_test(size=(132, 36)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        assert pane.follow is True
+        for _ in range(5):
+            pane.post_message(
+                events.MouseScrollUp(
+                    pane,
+                    x=10,
+                    y=10,
+                    delta_x=0,
+                    delta_y=-1,
+                    button=0,
+                    shift=False,
+                    meta=False,
+                    ctrl=False,
+                    screen_x=10,
+                    screen_y=10,
+                )
+            )
+        await pilot.pause()
+        assert pane.follow is False
+        held = pane.capture_reading_anchor()
+        assert held is not None
+
+        app.action_toggle_inspector()
+        await pilot.pause()
+        await pilot.pause()
+        assert app.inspector.is_effectively_collapsed is True
+        assert pane.capture_reading_anchor() == held
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_only_the_exact_bottom_follows_the_next_append() -> None:
+    app = live_app(RecordingDispatcher())
+    async with app.run_test(size=(70, 18)) as pilot:
+        seq = 100
+        for turn in range(20):
+            for frame in streaming_turn([f"turn {turn} line one\nline two\n"]):
+                feed(app, frame, seq=seq)
+                seq += 1
+        await settle(app, pilot)
+        pane = app.transcript
+
+        pane.follow_bottom()
+        await pilot.pause()
+        assert pane.scroll_offset.y == pane.max_scroll_y
+        for frame in streaming_turn(["pinned append\n"]):
+            feed(app, frame, seq=seq)
+            seq += 1
+        await settle(app, pilot)
+        assert pane.follow is True
+        assert pane.scroll_offset.y == pane.max_scroll_y
+
+        pane.scroll_to(y=max(0, pane.max_scroll_y - 1), animate=False, immediate=True)
+        await pilot.pause()
+        pane.hold_anchor()
+        await pilot.pause()
+        one_row_away = pane.capture_reading_anchor()
+        assert one_row_away is not None
+        for frame in streaming_turn(["unpinned append\n"]):
+            feed(app, frame, seq=seq)
+            seq += 1
+        await settle(app, pilot)
+        assert pane.follow is False
+        assert pane.capture_reading_anchor() == one_row_away
+        assert pane.scroll_offset.y < pane.max_scroll_y
         await app.shutdown_sources()
 
 

@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "e310531587e3b829617b0a6543df0774053c3f48b773ae164e995302e48436ae",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "e0e89a48df21155999640756040e2ead3f930a5a15dd82a191618b08dddd50a8",
+    "installed_files_sha256": "71afe3b1b74ec7cd2d92b43a8ad4dcce731be5bb8ca4ca4514427a3b4d66b19f",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
+  },
+  "checklist_item": 29,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-29-c4.ansi",
+    "capture_sha256": "fb875ece57f651c9960540346ecd6784a845cf6cb2264bb49fbf860e183063c4",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-29-c4-pty.json",
+    "pty_result_sha256": "48283a8b945cfbbcaf991899b676c8482e4df08c101c212cd18516a8bb94cee3",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-29-c4.png",
+    "screenshot_sha256": "da6d6203cae9c127ad5ffdecae18cdf6f2afa3e8948a24d671d3049ba372af44"
+  },
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "observations": [
+    "The 132-by-36 capture shows the required wide hierarchy with a docked 36-column inspector and one-row status bar."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-09-01T18:12:23+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "acceptance-replay"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Terminal.app 2.14",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Wide screenshot",
+  "verdict": "pass"
+}

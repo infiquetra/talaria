@@ -18,10 +18,14 @@ from typing import get_args
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets._markdown import MarkdownParagraph
 
 from talaria.domain.models import TranscriptKind
+from talaria.themes.builtins import REFINED_DEFAULT
 from talaria.ui.blocks import EntryMarkdown
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from talaria.ui.transcript import (
+    _GROUP_LABELS,
     _GROUP_VARIABLES,
     _KIND_GROUPS,
     KindGroup,
@@ -39,6 +43,11 @@ _VARIABLE_TOKEN = re.compile(r"\$([a-z][a-z0-9-]*)")
 
 
 class _Harness(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        BUILTIN_THEME_REGISTRY.register(self)
+        self.theme = REFINED_DEFAULT.slug
+
     def compose(self) -> ComposeResult:
         yield TranscriptPane(id="t")
 
@@ -214,8 +223,8 @@ async def test_line_widget_height_unchanged_by_group_styling() -> None:
     app = _Harness()
     async with app.run_test(size=(80, 24)) as pilot:
         pane = app.query_one("#t", TranscriptPane)
-        unstyled = TranscriptLine(_SAMPLE_TEXT)
-        styled = TranscriptLine(_SAMPLE_TEXT, kind="assistant")
+        unstyled = TranscriptLine(_SAMPLE_TEXT, first_in_entry=False)
+        styled = TranscriptLine(_SAMPLE_TEXT, kind="assistant", first_in_entry=False)
         await pane.mount_all([unstyled, styled])
         await pilot.pause()
         assert unstyled.outer_size.height == styled.outer_size.height == 1
@@ -250,8 +259,8 @@ async def test_line_widget_height_unchanged_at_the_wrap_boundary(pane_width: int
 
         for fill in (content_width, content_width + 1):
             text = "a" * fill
-            unstyled = TranscriptLine(text)
-            styled = TranscriptLine(text, kind="assistant")
+            unstyled = TranscriptLine(text, first_in_entry=False)
+            styled = TranscriptLine(text, kind="assistant", first_in_entry=False)
             await pane.mount_all([unstyled, styled])
             await pilot.pause()
             assert unstyled.content_size.width == styled.content_size.width, (
@@ -292,6 +301,57 @@ async def test_block_document_height_unchanged_by_group_styling() -> None:
         assert unstyled.styles.background != styled.styles.background
 
 
+@pytest.mark.asyncio
+async def test_one_line_markdown_entries_do_not_add_blank_rows_between_identities() -> None:
+    """Reasoning and assistant entries are Markdown documents, unlike the
+    other four identity groups. A paragraph's stock bottom margin must not
+    make those two kinds consume an otherwise blank transcript row.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        reasoning = EntryMarkdown(
+            ". Reasoning identity entry.",
+            classes=kind_group_css_class("reasoning"),
+        )
+        assistant = EntryMarkdown(
+            "A Talaria Assistant identity entry.",
+            classes=kind_group_css_class("assistant"),
+        )
+        activity = TranscriptLine("• Tool activity identity entry.", kind="tool")
+        await pane.mount_all([reasoning, assistant, activity])
+        await pilot.pause()
+
+        assert reasoning.outer_size.height == 1
+        assert assistant.outer_size.height == 1
+        assert assistant.virtual_region.y == reasoning.virtual_region.bottom
+        assert activity.virtual_region.y == assistant.virtual_region.bottom
+
+
+@pytest.mark.asyncio
+async def test_entry_trailing_trim_preserves_spacing_between_markdown_blocks() -> None:
+    """Only the final block loses its stock margin; paragraphs inside one
+    transcript entry retain the blank row that makes Markdown readable.
+    """
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        document = EntryMarkdown(
+            "first paragraph",
+            classes=kind_group_css_class("assistant"),
+        )
+        await pane.mount(document)
+        await pilot.pause()
+        await document.append("\n\nsecond paragraph")
+        await pilot.pause()
+
+        paragraphs = list(document.query(MarkdownParagraph))
+        assert len(paragraphs) == 2
+        assert paragraphs[0].styles.margin.bottom == 1
+        assert paragraphs[1].styles.margin.bottom == 0
+        assert document.outer_size.height == 3
+
+
 # ── KTD5: no new theme variable ─────────────────────────────────────────────
 
 
@@ -304,15 +364,16 @@ def test_group_variables_are_plain_colours_not_scalars() -> None:
     value (probed live; see the module docstring). This test would have
     caught that mistake by construction if it had shipped.
     """
-    app: App[None] = App()
+    app: App[None] = _Harness()
     variables = app.get_css_variables()
-    for group, name in _GROUP_VARIABLES.items():
-        assert name in variables, f"{group!r} names ${name}, not in the live theme"
-        value = str(variables[name])
-        assert not value.startswith("auto"), (
-            f"{group!r} names ${name} = {value!r}, an auto-contrast scalar, "
-            "not a colour Textual's CSS parser can use as a background/border value"
-        )
+    for group, names in _GROUP_VARIABLES.items():
+        for name in names:
+            assert name in variables, f"{group!r} names ${name}, not in the live theme"
+            value = str(variables[name])
+            assert not value.startswith("auto"), (
+                f"{group!r} names ${name} = {value!r}, an auto-contrast scalar, "
+                "not a colour Textual's CSS parser can use as a background/border value"
+            )
 
 
 def test_stylesheet_introduces_no_new_theme_variables() -> None:
@@ -323,7 +384,7 @@ def test_stylesheet_introduces_no_new_theme_variables() -> None:
     constraint: "no new theme variables... asserted against the
     stylesheet").
     """
-    app: App[None] = App()
+    app: App[None] = _Harness()
     variables = app.get_css_variables()
     used = set(_VARIABLE_TOKEN.findall(TranscriptPane.DEFAULT_CSS))
     assert used, "sanity check: the stylesheet should reference at least one $variable"
@@ -350,3 +411,19 @@ async def test_stylesheet_actually_parses_and_mounts() -> None:
         await pane.mount_all(widgets)
         await pilot.pause()
         assert len(list(pane.walk_children())) >= len(ALL_KINDS)
+
+
+def test_every_group_has_the_exact_fixed_non_colour_label() -> None:
+    assert _GROUP_LABELS == {
+        "operator": "> You",
+        "assistant": "A Talaria",
+        "reasoning": ". Reasoning",
+        "activity": "$ Tool/Subagent",
+        "session-record": "- Session",
+        "fault": "! Error",
+    }
+
+    for kind in ALL_KINDS:
+        widget = TranscriptLine("body", kind=kind)
+        assert str(widget.content).startswith(_GROUP_LABELS[kind_group(kind)])
+        assert widget.source == "body", "the display label changed the raw projection line"

@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "e536e4e7a694158a8ba409089c34d7bb8afa86f6c4efc74cb507d0be634134b4",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "5f5d0b1ab1e9f9f78e4f20920c001f2ff02a98e183b00abb7133b802dc87453c",
+    "installed_files_sha256": "e38c352f6131a205edf002709dfeb0f65eac2bd8446e075011bd1c01e54ca280",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 3,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-03-c2.ansi",
+    "capture_sha256": "467ed8b695f744f8566742a08875c525283010ec2f9b2d6af43eee31aa111e33",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-03-c2-pty.json",
+    "pty_result_sha256": "f064440f8b9d196442858788c8c13466e9d8df9140d9d603adbdd41f45ed2d62",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-03-c2.png",
+    "screenshot_sha256": "f910860a04afd712ce9a12ee6f76927b1d7712895bfa18fca54238c94de4e9b0"
+  },
+  "observations": [
+    "Transcript, StatusRegion, Composer, HelpBar, and the one-row BottomStatusBar retain the specified vertical hierarchy."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-09-01T03:01:46+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "acceptance-replay"
+  },
+  "terminal": {
+    "columns": 144,
+    "program": "Python pty.fork on macOS; terminal dimensions unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Main hierarchy",
+  "verdict": "pass"
+}

@@ -1,0 +1,21 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "resize": {"rows": 36, "columns": 132}},
+    {"at_seconds": 5.5, "key": "CTRL_B"},
+    {"at_seconds": 6.5, "key": "CTRL_B"},
+    {"at_seconds": 7.5, "hex_bytes": "1b5b313b3243"},
+    {"at_seconds": 8.25, "hex_bytes": "1b5b313b3243"},
+    {"at_seconds": 9.0, "hex_bytes": "1b5b313b3243"},
+    {"at_seconds": 11.0, "hex_bytes": "1b5b313b3244"},
+    {"at_seconds": 11.75, "hex_bytes": "1b5b313b3244"},
+    {"at_seconds": 12.5, "hex_bytes": "1b5b313b3244"},
+    {"at_seconds": 13.25, "hex_bytes": "1b5b313b3244"},
+    {"at_seconds": 14.0, "hex_bytes": "1b5b313b3244"},
+    {"at_seconds": 16.0, "hex_bytes": "1b5b313b3243"},
+    {"at_seconds": 16.75, "hex_bytes": "1b5b313b3243"},
+    {"at_seconds": 18.0, "key": "DOWN"},
+    {"at_seconds": 18.5, "key": "DOWN"},
+    {"at_seconds": 19.0, "key": "DOWN"},
+    {"at_seconds": 21.0, "key": "CTRL_Q"}
+  ]
+}

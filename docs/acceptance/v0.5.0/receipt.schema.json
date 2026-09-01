@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infiquetra.github.io/talaria/acceptance/v0.5.0/receipt.schema.json",
+  "title": "Talaria v0.5.0 acceptance item receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release",
+    "harness_commit",
+    "recorded_at",
+    "checklist_item",
+    "title",
+    "owner",
+    "tester",
+    "verdict",
+    "artifact",
+    "terminal",
+    "session",
+    "evidence",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": {"const": "talaria-v0.5.0-receipt-v1"},
+    "release": {"const": "0.5.0"},
+    "harness_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Git commit of the acceptance harness at pseudo-terminal drive time."
+    },
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "checklist_item": {"type": "integer", "minimum": 1, "maximum": 36},
+    "title": {"type": "string", "minLength": 1},
+    "owner": {"enum": ["shared", "talaria-t1", "talaria-t2"]},
+    "tester": {"enum": ["talaria-t1", "talaria-t2"]},
+    "verdict": {"enum": ["pass", "fail", "blocked", "reserved"]},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "wheel_filename",
+        "wheel_sha256",
+        "version",
+        "executable",
+        "executable_sha256",
+        "installed_files_sha256",
+        "distribution_root",
+        "install_receipt_path",
+        "install_receipt_sha256"
+      ],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "wheel_filename": {"type": "string", "pattern": "\\.whl$"},
+        "wheel_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "version": {"const": "0.5.0"},
+        "executable": {"type": "string", "minLength": 1},
+        "executable_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "installed_files_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "distribution_root": {"type": "string", "minLength": 1},
+        "install_receipt_path": {"type": "string", "minLength": 1},
+        "install_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["program", "term", "rows", "columns"],
+      "properties": {
+        "program": {"type": "string", "minLength": 1},
+        "term": {"type": "string", "minLength": 1},
+        "rows": {"type": "integer", "minimum": 1},
+        "columns": {"type": "integer", "minimum": 1}
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "profile", "model_route"],
+      "properties": {
+        "mode": {"enum": ["live", "replay", "install-probe", "failure"]},
+        "profile": {"type": "string", "minLength": 1},
+        "model_route": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requested",
+            "observed",
+            "status",
+            "fallback_reason",
+            "fallback_availability"
+          ],
+          "properties": {
+            "requested": {
+              "type": ["string", "null"],
+              "enum": [
+                "opencode-go / muse-spark-1.2-contributor",
+                "ollama (ollama-cloud) / glm-5.3-flash",
+                null
+              ]
+            },
+            "observed": {
+              "type": ["string", "null"],
+              "enum": [
+                "opencode-go / muse-spark-1.2-contributor",
+                "ollama (ollama-cloud) / glm-5.3-flash",
+                null
+              ]
+            },
+            "status": {"enum": ["used", "not-reached", "not-applicable"]},
+            "fallback_reason": {
+              "oneOf": [
+                {"type": "null"},
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["code", "detail"],
+                  "properties": {
+                    "code": {
+                      "enum": [
+                        "primary-unavailable",
+                        "connection-failure",
+                        "model-not-found",
+                        "bounded-test-incompletion"
+                      ]
+                    },
+                    "detail": {"type": "string", "minLength": 1}
+                  }
+                }
+              ]
+            },
+            "fallback_availability": {
+              "enum": ["available", "unavailable", "not-checked", "not-applicable"]
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capture_path",
+        "capture_sha256",
+        "screenshot_path",
+        "screenshot_sha256",
+        "redaction_review",
+        "pty_result_path",
+        "pty_result_sha256"
+      ],
+      "properties": {
+        "capture_path": {"type": "string", "minLength": 1},
+        "capture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "screenshot_path": {"type": "string", "minLength": 1},
+        "screenshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "redaction_review": {"enum": ["passed", "withheld", "pending"]},
+        "pty_result_path": {"type": "string", "minLength": 1},
+        "pty_result_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "observations": {"type": "array", "items": {"type": "string"}}
+  }
+}

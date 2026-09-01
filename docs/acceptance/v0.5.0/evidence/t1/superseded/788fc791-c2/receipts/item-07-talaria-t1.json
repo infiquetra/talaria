@@ -1,0 +1,51 @@
+{
+  "artifact": {
+    "commit": "788fc791fadd701cb74b7db8686c0a8bb444b8f8",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "1c0e59891eba9fc499500461748e1625534391f13376d34d3846a3ed57bc428e",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "bd9eeab9267bc9d6543d9373c26a8191eb5b176af14b505da9c25ea558941d31",
+    "installed_files_sha256": "a9eec240a48cc01763ad78e2b58153beb56a4df8afd75f0f783e612b4e875cbd",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "bc5406c8b201c08758b8c51db8ab54059fa291be93fa06766df662be9dea73be"
+  },
+  "checklist_item": 7,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-07-c2a.ansi",
+    "capture_sha256": "905745799a221eb39fb595d9861426ff61568466876921664bc5b78def1a7639",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-07-c2a-pty.json",
+    "pty_result_sha256": "5fb24d2e6fa7b28f644ebeff6381b4e963597a35ecd08f35e45c27ac02cdb948",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-07-c2a.png",
+    "screenshot_sha256": "1175fef267cbc6fabfab676ace5ff3bb22d43f9b9b9f610c760757be5ca7f518"
+  },
+  "observations": [
+    "Accessible High Contrast rendered the populated application with high-contrast borders, text, semantic markers and focus treatment."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T03:08:27+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated visual-surfaces replay; Accessible High Contrast"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Accessible High Contrast",
+  "verdict": "pass"
+}

@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
+    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 17,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-17-header-only.ansi",
+    "capture_sha256": "fc6523ccaf933c8d4dbe8816492a93cc8c4da773f2e8195d9c4b9b2f7351cc10",
+    "pty_result_path": "<scratch-root>/receipts/item-17-header-only-pty.json",
+    "pty_result_sha256": "674c1c468817d55acbea419e67a97f2bc137469679b0d77253906f6c3c32acfc",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-17-header-only.png",
+    "screenshot_sha256": "b65363de6dd1cf2ca7ffe99151f47b73a8c1de21790fde96aeb19a554c5e1f2d"
+  },
+  "observations": [
+    "The populated drive accurately renders held context, three changed files, operation details, and the completed subagent.",
+    "In a fresh header-only replay with no session values, Context, Changed Files, and Operation Details say none available from this session, but Tasks instead shows a synthetic needs-you unavailable row; the required honest empty Tasks state is absent."
+  ],
+  "owner": "talaria-t2",
+  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-acceptance-corpus"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Terminal.app 2.14",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t2",
+  "title": "Inspector content and empty states",
+  "verdict": "fail"
+}

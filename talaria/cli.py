@@ -14,7 +14,7 @@ import asyncio
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from talaria import __version__
 from talaria import config as config_module
@@ -25,11 +25,15 @@ from talaria.domain.startup import (
     StartupSelection,
     resolve_startup,
 )
+from talaria.status.contract import StatusBarSettings, StatusSegmentName
+from talaria.themes.storage import StoredThemeError
+from talaria.ui.literal import defang
 
 if TYPE_CHECKING:
     from talaria.status.runner import StatusRunner
     from talaria.transport.source import LiveSource
     from talaria.ui.app import TalariaApp
+    from talaria.ui.theme import ThemeRegistry
 
 __all__ = [
     "StartupConflictError",
@@ -139,6 +143,35 @@ def build_parser() -> argparse.ArgumentParser:
         "profile's [profiles.endpoints] entry in config.toml (v0.4 KTD5)",
     )
 
+    theme_parser = subparsers.add_parser(
+        "theme",
+        help="manage restart-scoped Talaria themes",
+    )
+    theme_subparsers = theme_parser.add_subparsers(
+        dest="theme_command",
+        required=True,
+    )
+    theme_import_parser = theme_subparsers.add_parser(
+        "import",
+        help="import one bounded Visual Studio Code color-theme JSON file",
+    )
+    theme_import_parser.add_argument(
+        "source",
+        type=Path,
+        metavar="FILE",
+        help="strict Visual Studio Code color-theme JSON file",
+    )
+    theme_import_parser.add_argument(
+        "--name",
+        metavar="NAME",
+        help="lowercase hyphenated storage name (default: source name or file stem)",
+    )
+    theme_import_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="write one versioned machine-readable report to standard output",
+    )
+
     gate_parser = subparsers.add_parser(
         "gate",
         help="run the framework validation gate and print its measurements as JSON",
@@ -184,19 +217,75 @@ def selection_from_args(args: argparse.Namespace) -> StartupSelection:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    if getattr(args, "command", None) == "record":
-        return run_record_command(args)
+    try:
+        if getattr(args, "command", None) == "record":
+            return run_record_command(args)
 
-    if getattr(args, "command", None) == "replay":
-        return run_replay(args)
+        if getattr(args, "command", None) == "replay":
+            return run_replay(args)
 
-    if getattr(args, "command", None) == "refresh-credential":
-        return run_refresh_credential(args)
+        if getattr(args, "command", None) == "refresh-credential":
+            return run_refresh_credential(args)
 
-    if getattr(args, "command", None) == "gate":
-        return run_gate_command(args)
+        if getattr(args, "command", None) == "theme":
+            return run_theme_import_command(args)
 
-    return run_live(args)
+        if getattr(args, "command", None) == "gate":
+            return run_gate_command(args)
+
+        return run_live(args)
+    except (config_module.ConfigError, StoredThemeError) as exc:
+        print(defang(f"talaria: {exc}"), file=sys.stderr)
+        return 2
+
+
+def run_theme_import_command(args: argparse.Namespace) -> int:
+    """Import one bounded theme and route its settled report by severity."""
+    import json
+
+    from talaria.ui.theme_import import ThemeImportError, import_vscode_theme
+
+    try:
+        report = import_vscode_theme(
+            args.source,
+            name=args.name,
+            config_dir=config_module.global_config_dir(),
+        )
+    except ThemeImportError as exc:
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "schema_version": "talaria-theme-import-error-v1",
+                        "kind": exc.kind,
+                        "message": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(defang(f"talaria: theme import failed: {exc}"), file=sys.stderr)
+        if exc.kind in {"unreadable", "empty", "malformed", "wrong-root"}:
+            return 3
+        if exc.kind in {"reserved-slug", "invalid-slug"}:
+            return 4
+        return 5
+
+    if args.json:
+        print(json.dumps(report.to_json_dict(), sort_keys=True))
+        return 0
+
+    for record in report.records():
+        stream = sys.stderr if record.severity == "warning" else sys.stdout
+        print(defang(record.text), file=stream)
+    return 0
+
+
+def _theme_registry(cfg: config_module.Config) -> ThemeRegistry:
+    """Load built-in and user themes once for this process start."""
+    from talaria.ui.theme import theme_registry_for_config
+
+    return theme_registry_for_config(config_dir=cfg.config_dir)
 
 
 def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
@@ -208,7 +297,7 @@ def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
     from talaria.status.contract import parse_command
     from talaria.status.runner import StatusRunner
 
-    argv = parse_command(cfg.get("status", "command"))
+    argv, _notice = parse_command(cfg.get("status", "command"))
     if argv is None:
         return None
     allowlist = cfg.get("environment", "allowlist", default=[]) or []
@@ -216,6 +305,23 @@ def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
         argv=argv,
         launch_cwd=Path.cwd(),
         allowlist=tuple(str(name) for name in allowlist),
+    )
+
+
+def _build_status_bar_settings(cfg: config_module.Config) -> StatusBarSettings:
+    """Forward the once-normalized status-bar configuration into the app."""
+    return StatusBarSettings(
+        segments=cast(
+            tuple[StatusSegmentName, ...],
+            cfg.get("status", "segments"),
+        ),
+        cwd_max_columns=cast(int, cfg.get("status", "cwd_max_columns")),
+        git_branch_max_columns=cast(
+            int, cfg.get("status", "git_branch_max_columns")
+        ),
+        agent_model_max_columns=cast(
+            int, cfg.get("status", "agent_model_max_columns")
+        ),
     )
 
 
@@ -342,7 +448,8 @@ def run_replay(args: argparse.Namespace) -> int:
         mode="replay",
         controls=controls,
         status_runner=_build_status_runner(cfg),
-        status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
+        status_interval=float(cfg.get("status", "interval_seconds")),
+        status_bar_settings=_build_status_bar_settings(cfg),
         paste_threshold=_build_paste_threshold(cfg),
         # **Derived from the recording, because replay has no other way to learn
         # it.** ``route_frame`` feeds the focused engine only frames whose profile
@@ -358,6 +465,12 @@ def run_replay(args: argparse.Namespace) -> int:
         # at the tagged profile. ``""`` for a single-connection log keeps the
         # default, which is what that log means.
         current_profile=getattr(source, "focus_profile", ""),
+        theme_name=cfg.get("theme", "name"),
+        theme_registry=_theme_registry(cfg),
+        reduced_motion=cast(bool, cfg.get("ui", "reduced_motion")),
+        startup_notices=cfg.notices,
+        theme_config_dir=cfg.config_dir,
+        launch_cwd=Path.cwd(),
     )
     app.run()
     return 0
@@ -614,9 +727,16 @@ def build_live_app(
         current_profile=connections.home,
         profile_endpoints=config_module.profile_endpoints(cfg),
         status_runner=_build_status_runner(cfg),
-        status_interval=float(cfg.get("status", "interval_seconds", default=5) or 5),
+        status_interval=float(cfg.get("status", "interval_seconds")),
+        status_bar_settings=_build_status_bar_settings(cfg),
         paste_threshold=_build_paste_threshold(cfg),
         startup=selection_from_args(args),
+        theme_name=cfg.get("theme", "name"),
+        theme_registry=_theme_registry(cfg),
+        reduced_motion=cast(bool, cfg.get("ui", "reduced_motion")),
+        startup_notices=cfg.notices,
+        theme_config_dir=cfg.config_dir,
+        launch_cwd=Path.cwd(),
     )
     holder.append(app)
     # ``source`` is no longer bound, and the removal is the point rather than an

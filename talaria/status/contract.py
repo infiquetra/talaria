@@ -19,19 +19,50 @@ import json
 import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from talaria.domain.projection import StatusPayload
 from talaria.recorder.redact import is_suspicious_key
+from talaria.text import defang
 
 # ── KTD5's frozen limits ────────────────────────────────────────────────
 
-#: Default tick interval, seconds. KTD5's documented default; the operator's
+#: Default tick interval, seconds. The operator's
 #: ``status.interval_seconds`` config setting (``talaria/config.py``)
 #: overrides it — this constant is the value used only when nothing else
 #: supplies one (e.g. a caller that builds a runner directly in a test).
-DEFAULT_INTERVAL_SECONDS: float = 10.0
+DEFAULT_INTERVAL_SECONDS: int = 5
+
+#: The true-bottom bar's public segment names, in default display order.
+StatusSegmentName = Literal[
+    "cwd",
+    "git_branch",
+    "agent_model",
+    "context",
+    "task_progress",
+    "connection",
+    "version",
+]
+DEFAULT_STATUS_SEGMENTS: tuple[StatusSegmentName, ...] = (
+    "cwd",
+    "git_branch",
+    "agent_model",
+    "context",
+    "task_progress",
+    "connection",
+    "version",
+)
+KNOWN_STATUS_SEGMENTS: frozenset[str] = frozenset(DEFAULT_STATUS_SEGMENTS)
+
+DEFAULT_CWD_MAX_COLUMNS = 24
+DEFAULT_GIT_BRANCH_MAX_COLUMNS = 18
+DEFAULT_AGENT_MODEL_MAX_COLUMNS = 24
+
+STATUS_INTERVAL_RANGE = (1, 3600)
+CWD_MAX_COLUMNS_RANGE = (8, 48)
+GIT_BRANCH_MAX_COLUMNS_RANGE = (8, 40)
+AGENT_MODEL_MAX_COLUMNS_RANGE = (10, 48)
 
 #: KTD5: "timeout 2s then kill".
 TIMEOUT_SECONDS: float = 2.0
@@ -209,37 +240,183 @@ def assert_frozen_shape(document: Mapping[str, Any]) -> None:
         raise AssertionError(f"status payload version drift: {document['version']!r} != 1")
 
 
-def parse_command(command: object) -> tuple[str, ...] | None:
-    """Split ``status.command`` (KTD15) into an argv array. No shell involved.
+def parse_command(command: object) -> tuple[tuple[str, ...] | None, str | None]:
+    """Split ``status.command`` and name why an invalid value was disabled.
 
     ``config.py`` stores ``status.command`` as the plain command-line string an
     operator writes in ``config.toml`` (``command = "git status"``); KTD5
     requires the child be exec'd directly from an argv array, never through a
     shell, so the split happens here rather than at the config layer.
     ``shlex.split`` gives POSIX quoting semantics without ever invoking
-    ``/bin/sh``. ``None`` or an all-whitespace string means "disabled" — no
-    child is ever spawned, matching KTD5's "an absent ``status.command``
-    disables the runner."
+    ``/bin/sh``. ``None`` means intentionally disabled, so it has no notice.
+    An empty string, a non-string value, or a string with invalid POSIX quoting
+    disables only the optional status command and returns a visible reason.
 
-    **Anything that is not a string also means disabled.** The argument is typed
-    ``object`` rather than ``str | None`` because the value arrives straight out
-    of the operator's TOML, where ``command = ["sh", "-c", "date"]`` is the
-    obvious guess for an argv array and is a list, which ``config.py`` freezes
-    to a tuple. Handing that to
-    ``shlex.split`` raises ``AttributeError`` from inside ``shlex``, and once
-    U10 put this call on the bare-``talaria`` launch path that became a raw
-    traceback and exit 1 with no interface at all — a whole client refusing to
-    start over an optional status line. The policy here is the one
-    ``cli._build_paste_threshold`` already documents for its own malformed
-    input: a bad setting turns its own feature off and does not stop the client.
-    Surfacing the bad setting to the operator is filed in
-    ``docs/engineering-journal/QUEUED.md``; today it is silent, which is a real
-    cost and is why that item exists.
+    The reason never repeats the configured command. A command may itself carry
+    sensitive text, and the operator needs the bad key and fallback, not another
+    copy of its contents in a terminal or log.
     """
+    if command is None:
+        return None, None
     if not isinstance(command, str):
-        return None
-    parts = shlex.split(command)
-    return tuple(parts) if parts else None
+        return None, "status.command must be a non-empty string; the status command is disabled"
+    if not command.strip():
+        return None, "status.command must not be empty; the status command is disabled"
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None, "status.command has invalid quoting; the status command is disabled"
+    if not parts:
+        return None, "status.command must not be empty; the status command is disabled"
+    return tuple(parts), None
+
+
+def normalize_bounded_integer(
+    key: str,
+    value: object,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> tuple[int, str | None]:
+    """Return an integer setting within its inclusive range, plus any notice."""
+    if isinstance(value, int) and not isinstance(value, bool) and minimum <= value <= maximum:
+        return value, None
+    return (
+        default,
+        f"{key} must be an integer from {minimum} through {maximum}; using {default}",
+    )
+
+
+def normalize_status_segments(
+    value: object,
+) -> tuple[tuple[StatusSegmentName, ...], tuple[str, ...]]:
+    """Normalize configured bar rows while preserving the first known occurrence.
+
+    A non-list value cannot express an order, so it receives the complete
+    default. A list with no recognized row keeps the bar useful by showing the
+    mandatory connection fallback alone. Unknown, non-string, and duplicate
+    entries are skipped and reported without preventing recognized rows.
+    """
+    if not isinstance(value, (list, tuple)):
+        return (
+            DEFAULT_STATUS_SEGMENTS,
+            ("status.segments must be a list of segment names; using the default order",),
+        )
+
+    segments: list[StatusSegmentName] = []
+    notices: list[str] = []
+    seen: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, str) or entry not in KNOWN_STATUS_SEGMENTS:
+            display = repr(defang(entry)) if isinstance(entry, str) else repr(entry)
+            notices.append(f"status.segments contains unknown segment {display}; ignoring it")
+            continue
+        if entry in seen:
+            notices.append(f"status.segments repeats {entry}; ignoring the duplicate")
+            continue
+        seen.add(entry)
+        segments.append(cast(StatusSegmentName, entry))
+
+    if not segments:
+        notices.append("status.segments contains no known segment; showing connection only")
+        segments.append("connection")
+    return tuple(segments), tuple(notices)
+
+
+@dataclass(frozen=True)
+class StatusBarSettings:
+    """The restart-resolved settings consumed by the bottom-bar renderer."""
+
+    segments: tuple[StatusSegmentName, ...] = DEFAULT_STATUS_SEGMENTS
+    cwd_max_columns: int = DEFAULT_CWD_MAX_COLUMNS
+    git_branch_max_columns: int = DEFAULT_GIT_BRANCH_MAX_COLUMNS
+    agent_model_max_columns: int = DEFAULT_AGENT_MODEL_MAX_COLUMNS
+
+    def toggled(self, segment: str) -> tuple[StatusBarSettings, str | None]:
+        """Toggle one known segment in memory, appending newly shown rows."""
+        if segment not in KNOWN_STATUS_SEGMENTS:
+            return self, f"bar: unknown segment {segment}"
+        if segment in self.segments:
+            segments = tuple(name for name in self.segments if name != segment)
+        else:
+            segments = (*self.segments, cast(StatusSegmentName, segment))
+        return (
+            StatusBarSettings(
+                segments=segments,
+                cwd_max_columns=self.cwd_max_columns,
+                git_branch_max_columns=self.git_branch_max_columns,
+                agent_model_max_columns=self.agent_model_max_columns,
+            ),
+            None,
+        )
+
+
+@dataclass(frozen=True)
+class NormalizedStatusSettings:
+    """Validated status values plus every operator-facing fallback notice."""
+
+    interval_seconds: int
+    bar: StatusBarSettings
+    notices: tuple[str, ...] = ()
+
+
+def normalize_status_settings(section: object) -> NormalizedStatusSettings:
+    """Normalize the winning ``[status]`` table after config precedence resolves."""
+    if not isinstance(section, Mapping):
+        return NormalizedStatusSettings(
+            interval_seconds=DEFAULT_INTERVAL_SECONDS,
+            bar=StatusBarSettings(),
+            notices=("status must be a table; using status defaults",),
+        )
+
+    segments, segment_notices = normalize_status_segments(
+        section.get("segments", DEFAULT_STATUS_SEGMENTS)
+    )
+    interval, interval_notice = normalize_bounded_integer(
+        "status.interval_seconds",
+        section.get("interval_seconds", DEFAULT_INTERVAL_SECONDS),
+        default=DEFAULT_INTERVAL_SECONDS,
+        minimum=STATUS_INTERVAL_RANGE[0],
+        maximum=STATUS_INTERVAL_RANGE[1],
+    )
+    cwd_max, cwd_notice = normalize_bounded_integer(
+        "status.cwd_max_columns",
+        section.get("cwd_max_columns", DEFAULT_CWD_MAX_COLUMNS),
+        default=DEFAULT_CWD_MAX_COLUMNS,
+        minimum=CWD_MAX_COLUMNS_RANGE[0],
+        maximum=CWD_MAX_COLUMNS_RANGE[1],
+    )
+    branch_max, branch_notice = normalize_bounded_integer(
+        "status.git_branch_max_columns",
+        section.get("git_branch_max_columns", DEFAULT_GIT_BRANCH_MAX_COLUMNS),
+        default=DEFAULT_GIT_BRANCH_MAX_COLUMNS,
+        minimum=GIT_BRANCH_MAX_COLUMNS_RANGE[0],
+        maximum=GIT_BRANCH_MAX_COLUMNS_RANGE[1],
+    )
+    agent_max, agent_notice = normalize_bounded_integer(
+        "status.agent_model_max_columns",
+        section.get("agent_model_max_columns", DEFAULT_AGENT_MODEL_MAX_COLUMNS),
+        default=DEFAULT_AGENT_MODEL_MAX_COLUMNS,
+        minimum=AGENT_MODEL_MAX_COLUMNS_RANGE[0],
+        maximum=AGENT_MODEL_MAX_COLUMNS_RANGE[1],
+    )
+    notices = [*segment_notices]
+    notices.extend(
+        notice
+        for notice in (interval_notice, cwd_notice, branch_notice, agent_notice)
+        if notice is not None
+    )
+    return NormalizedStatusSettings(
+        interval_seconds=interval,
+        bar=StatusBarSettings(
+            segments=segments,
+            cwd_max_columns=cwd_max,
+            git_branch_max_columns=branch_max,
+            agent_model_max_columns=agent_max,
+        ),
+        notices=tuple(notices),
+    )
 
 
 @dataclass(frozen=True)

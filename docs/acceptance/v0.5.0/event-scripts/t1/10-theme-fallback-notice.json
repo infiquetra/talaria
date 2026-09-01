@@ -1,0 +1,12 @@
+{
+  "events": [
+    {"at_seconds": 4.0, "text": "/theme "},
+    {"at_seconds": 4.25, "key": "ENTER"},
+    {"at_seconds": 5.75, "key": "DOWN"},
+    {"at_seconds": 7.0, "key": "DOWN"},
+    {"at_seconds": 8.25, "key": "DOWN"},
+    {"at_seconds": 9.5, "key": "DOWN"},
+    {"at_seconds": 11.0, "key": "ENTER"},
+    {"at_seconds": 14.0, "key": "CTRL_Q"}
+  ]
+}

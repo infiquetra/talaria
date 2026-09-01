@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
+  },
+  "checklist_item": 2,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-02-c4.ansi",
+    "capture_sha256": "c353640864b455ace3e25d4fca96dec3d97a947327bdb0aa8f1f2c198e68f1e1",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-02-c4-pty.json",
+    "pty_result_sha256": "9ac38aedafc881edb54f3b4685b55a27cbfe31a720d8f7aaa73c1656acb3415f",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-02-c4.png",
+    "screenshot_sha256": "3de4cdd4acf8ded7d56135dfeda8c4e89361237572e27ac967bfbd5b6b5304b7"
+  },
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "observations": [
+    "A real prompt completed with TALARIA-T1-C4-PRIMARY-OK; the recorded live frames and status bar named provider opencode-go and model muse-spark-1.2-contributor."
+  ],
+  "owner": "shared",
+  "recorded_at": "2026-09-01T18:19:49+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "live",
+    "model_route": {
+      "fallback_availability": "not-checked",
+      "fallback_reason": null,
+      "observed": "opencode-go / muse-spark-1.2-contributor",
+      "requested": "opencode-go / muse-spark-1.2-contributor",
+      "status": "used"
+    },
+    "profile": "default on isolated dashboard 8790"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Live primary route",
+  "verdict": "pass"
+}

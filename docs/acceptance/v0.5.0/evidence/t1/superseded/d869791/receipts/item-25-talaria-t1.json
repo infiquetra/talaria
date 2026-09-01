@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
+    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
+    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+  },
+  "checklist_item": 25,
+  "evidence": {
+    "capture_path": "<scratch-root>/raw/item-25-monochrome.ansi",
+    "capture_sha256": "bce9407b7dca79907b2f7485ee1dbd5bd5450af6458d1faef118e81e665a443c",
+    "pty_result_path": "<scratch-root>/receipts/item-25-monochrome-pty.json",
+    "pty_result_sha256": "0ff144aebad575b1a7eec6901656558874a316c37713244352748e604fc3fc7d",
+    "redaction_review": "passed",
+    "screenshot_path": "<scratch-root>/screenshots/item-25.png",
+    "screenshot_sha256": "ee0b8a2fe50c85db05bf96629e4a744e38511a48fcfffb4615465358052a27a3"
+  },
+  "observations": [
+    "The monochrome capture shows all six required identities: > You, A Talaria, . Reasoning, $ Tool/Subagent, - Session, and ! Error.",
+    "Blank spacer rows remain after Reasoning and Talaria assistant entries, violating the requirement that no entry gain a spacer row."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-08-31T12:13:38+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "deterministic-transcript-identities"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork acceptance driver; explicit NO_COLOR monochrome",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Transcript identity without color",
+  "verdict": "fail"
+}
