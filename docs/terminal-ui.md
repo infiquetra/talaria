@@ -133,8 +133,8 @@ aliases where the desktop delivers them.
 | `Ctrl+G` or `F2`, `/agents` | Toggle subagent rows | live and replay |
 | `Ctrl+C` or `F4` | Interrupt the in-flight turn | live; visibly refused in replay |
 | `End` or `F5` | Follow the newest transcript line | live and replay |
-| `/models` or `F11`; `F6` only outside composer focus | Open models | live; gateway-changing actions are refused in replay |
-| `/profiles` or `F12`; `F7` only outside composer focus | Open profiles | live; gateway-changing actions are refused in replay |
+| `/models`; `F11` from every focus; `F6` only outside composer focus | Open models | live; gateway-changing actions are refused in replay |
+| `/profiles`; `F12` from every focus; `F7` only outside composer focus | Open profiles | live; gateway-changing actions are refused in replay |
 | `F8` | Pause/resume playback | replay only |
 | `F9` / `F10` | Slower / faster playback | replay only |
 
