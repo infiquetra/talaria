@@ -457,6 +457,7 @@ def install_candidate(
         rows=rows,
         columns=columns,
         venv_bin=venv / "bin",
+        terminal_program="v050-install-probe",
     )
     integration_tree_raw = candidate.get("integration_tree")
     if not isinstance(integration_tree_raw, str):
@@ -527,13 +528,19 @@ def install_candidate(
     return receipt_path
 
 
-def _scrub_home_paths(value: Any, *, home: str) -> Any:
+def _scrub_public_paths(value: Any, *, home: str, scratch_root: str) -> Any:
     if isinstance(value, str):
-        return value.replace(home, "<home>")
+        return value.replace(scratch_root, "<scratch-root>").replace(home, "<home>")
     if isinstance(value, dict):
-        return {key: _scrub_home_paths(item, home=home) for key, item in value.items()}
+        return {
+            key: _scrub_public_paths(item, home=home, scratch_root=scratch_root)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [_scrub_home_paths(item, home=home) for item in value]
+        return [
+            _scrub_public_paths(item, home=home, scratch_root=scratch_root)
+            for item in value
+        ]
     return value
 
 
@@ -543,8 +550,15 @@ def write_public_install_receipt(receipt: dict[str, Any], destination: Path) -> 
     candidate = public.get("candidate")
     if not isinstance(candidate, dict):
         raise HarnessError("install receipt candidate must be an object")
+    scratch_root = public.get("scratch_root")
+    if not isinstance(scratch_root, str) or not scratch_root:
+        raise HarnessError("install receipt scratch_root must be a non-empty string")
     candidate["integration_tree"] = "<integration-tree>"
-    public = _scrub_home_paths(public, home=str(Path.home().resolve()))
+    public = _scrub_public_paths(
+        public,
+        home=str(Path.home().resolve()),
+        scratch_root=scratch_root,
+    )
     if not isinstance(public, dict):
         raise HarnessError("install receipt must be a JSON object")
     destination = destination.expanduser().resolve()

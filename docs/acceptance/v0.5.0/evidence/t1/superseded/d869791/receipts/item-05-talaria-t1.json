@@ -1,10 +1,10 @@
 {
   "artifact": {
     "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
     "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
     "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
     "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
     "version": "0.5.0",
@@ -13,12 +13,12 @@
   },
   "checklist_item": 5,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-05-color2.ansi",
+    "capture_path": "<scratch-root>/raw/item-05-color2.ansi",
     "capture_sha256": "dbbf00fa5a489c7997d280f73cb3492a382247c9a4028742c358c56ec338204b",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-05-color2-pty.json",
+    "pty_result_path": "<scratch-root>/receipts/item-05-color2-pty.json",
     "pty_result_sha256": "7ec6df212f6168c2389eb1634699f2786292e16f27ded0c108c5aaa0cd50fda5",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-05.png",
+    "screenshot_path": "<scratch-root>/screenshots/item-05.png",
     "screenshot_sha256": "e9bc7b56925dfc406c0008756b5309623bb8938771303d4fd0b44210c0866828"
   },
   "observations": [

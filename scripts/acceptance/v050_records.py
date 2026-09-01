@@ -20,8 +20,11 @@ from typing import Any
 from scripts.acceptance.v050_common import (
     RELEASE_VERSION,
     TESTERS,
+    VERDICTS,
     HarnessError,
     read_json_object,
+    require_object,
+    require_string,
     sha256_file,
     write_json_object,
 )
@@ -42,34 +45,24 @@ _PROVENANCE_BEGIN = "<!-- BEGIN GENERATED ACCEPTANCE PROVENANCE -->"
 _PROVENANCE_END = "<!-- END GENERATED ACCEPTANCE PROVENANCE -->"
 _MATRIX_BEGIN = "<!-- BEGIN GENERATED ACCEPTANCE VERDICTS -->"
 _MATRIX_END = "<!-- END GENERATED ACCEPTANCE VERDICTS -->"
+_STATUS_BEGIN = "<!-- BEGIN GENERATED ACCEPTANCE STATUS -->"
+_STATUS_END = "<!-- END GENERATED ACCEPTANCE STATUS -->"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
-def _string(value: Any, *, field: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise HarnessError(f"{field} must be a non-empty string")
-    return value
-
-
 def _commit(value: Any, *, field: str) -> str:
-    commit = _string(value, field=field)
+    commit = require_string(value, field=field)
     if not _COMMIT.fullmatch(commit):
         raise HarnessError(f"{field} must be a full lowercase 40-character Git commit")
     return commit
 
 
 def _digest(value: Any, *, field: str) -> str:
-    digest = _string(value, field=field)
+    digest = require_string(value, field=field)
     if not _SHA256.fullmatch(digest):
         raise HarnessError(f"{field} must be a lowercase SHA-256 digest")
     return digest
-
-
-def _object(value: Any, *, field: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise HarnessError(f"{field} must be an object")
-    return value
 
 
 def _repo_path(path: Path, repo_root: Path) -> str:
@@ -116,12 +109,12 @@ def _checklist(path: Path) -> list[dict[str, Any]]:
 def _candidate_from_install(receipt: dict[str, Any], *, path: Path) -> dict[str, str]:
     if receipt.get("schema_version") != "talaria-v0.5.0-install-v1":
         raise HarnessError(f"{path}: not a Talaria v0.5.0 install receipt")
-    candidate = _object(receipt.get("candidate"), field=f"{path}: candidate")
-    artifact = _object(receipt.get("artifact"), field=f"{path}: artifact")
-    version = _string(artifact.get("version"), field=f"{path}: artifact.version")
+    candidate = require_object(receipt.get("candidate"), field=f"{path}: candidate")
+    artifact = require_object(receipt.get("artifact"), field=f"{path}: artifact")
+    version = require_string(artifact.get("version"), field=f"{path}: artifact.version")
     if version != RELEASE_VERSION:
         raise HarnessError(f"{path}: installed version is {version!r}, not {RELEASE_VERSION!r}")
-    wheel_filename = _string(
+    wheel_filename = require_string(
         candidate.get("wheel_filename"), field=f"{path}: candidate.wheel_filename"
     )
     if not wheel_filename.endswith(".whl"):
@@ -187,7 +180,7 @@ def build_manifest(
 
     for path in sorted(evidence_root.glob("*/install-receipt.json")):
         receipt = read_json_object(path)
-        tester = _string(receipt.get("tester"), field=f"{path}: tester")
+        tester = require_string(receipt.get("tester"), field=f"{path}: tester")
         if tester not in TESTERS:
             raise HarnessError(f"{path}: unknown tester {tester!r}")
         if path.parent.name != _evidence_directory(tester):
@@ -234,7 +227,7 @@ def build_manifest(
     candidate_item_counts: Counter[tuple[str, str, str, str]] = Counter()
     for path in sorted(evidence_root.glob("*/receipts/*.json")):
         receipt = read_json_object(path)
-        tester = _string(receipt.get("tester"), field=f"{path}: tester")
+        tester = require_string(receipt.get("tester"), field=f"{path}: tester")
         if tester not in TESTERS:
             raise HarnessError(f"{path}: unknown tester {tester!r}")
         if path.parents[1].name != _evidence_directory(tester):
@@ -247,16 +240,16 @@ def build_manifest(
             raise HarnessError(f"duplicate item receipt {key}: {seen_items[key]} and {path}")
         seen_items[key] = path
 
-        artifact = _object(receipt.get("artifact"), field=f"{path}: artifact")
+        artifact = require_object(receipt.get("artifact"), field=f"{path}: artifact")
         identity = {
             "commit": _commit(artifact.get("commit"), field=f"{path}: artifact.commit"),
-            "wheel_filename": _string(
+            "wheel_filename": require_string(
                 artifact.get("wheel_filename"), field=f"{path}: artifact.wheel_filename"
             ),
             "wheel_sha256": _digest(
                 artifact.get("wheel_sha256"), field=f"{path}: artifact.wheel_sha256"
             ),
-            "version": _string(artifact.get("version"), field=f"{path}: artifact.version"),
+            "version": require_string(artifact.get("version"), field=f"{path}: artifact.version"),
         }
         install_identity = installs_by_tester.get(tester)
         if install_identity is None:
@@ -265,12 +258,15 @@ def build_manifest(
             raise HarnessError(f"{path}: item artifact does not match {tester}'s install receipt")
         candidate_item_counts[_candidate_key(identity)] += 1
 
-        evidence = _object(receipt.get("evidence"), field=f"{path}: evidence")
+        evidence = require_object(receipt.get("evidence"), field=f"{path}: evidence")
         capture_path = Path(
-            _string(evidence.get("capture_path"), field=f"{path}: evidence.capture_path")
+            require_string(evidence.get("capture_path"), field=f"{path}: evidence.capture_path")
         )
         screenshot_source = Path(
-            _string(evidence.get("screenshot_path"), field=f"{path}: evidence.screenshot_path")
+            require_string(
+                evidence.get("screenshot_path"),
+                field=f"{path}: evidence.screenshot_path",
+            )
         )
         screenshot_path = (
             evidence_root
@@ -289,7 +285,7 @@ def build_manifest(
             evidence.get("capture_sha256"), field=f"{path}: evidence.capture_sha256"
         )
         verdict = receipt.get("verdict")
-        if verdict not in {"pass", "fail", "blocked", "reserved"}:
+        if verdict not in VERDICTS:
             raise HarnessError(f"{path}: unknown verdict {verdict!r}")
         reason = _stale_reason(
             candidate_commit=identity["commit"],
@@ -301,7 +297,7 @@ def build_manifest(
         item_entries.append(
             {
                 "checklist_item": number,
-                "title": _string(receipt.get("title"), field=f"{path}: title"),
+                "title": require_string(receipt.get("title"), field=f"{path}: title"),
                 "tester": tester,
                 "verdict": verdict,
                 "candidate_commit": identity["commit"],
@@ -441,21 +437,6 @@ def _generated_region(document: str, begin: str, end: str) -> tuple[int, int, st
     return content_start, finish, document[content_start:finish]
 
 
-def _observations(matrix: str) -> dict[int, str]:
-    result: dict[int, str] = {}
-    for line in matrix.splitlines():
-        if not line.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in line.split("|")[1:-1]]
-        if len(cells) != 5 or not cells[0].isdigit():
-            continue
-        result[int(cells[0])] = cells[4]
-    if set(result) != set(range(1, 37)):
-        missing = sorted(set(range(1, 37)) - set(result))
-        raise HarnessError(f"results matrix has no hand-written observation for items {missing}")
-    return result
-
-
 def _status_cell(entry: dict[str, Any]) -> str:
     verdict = str(entry["verdict"]).upper()
     short_commit = str(entry["candidate_commit"])[:7]
@@ -477,7 +458,7 @@ def _install_status_cell(entry: dict[str, Any]) -> str:
 
 
 def _provenance_table(manifest: dict[str, Any]) -> str:
-    current = _object(manifest["current_candidate"], field="manifest.current_candidate")
+    current = require_object(manifest["current_candidate"], field="manifest.current_candidate")
     candidates = manifest["candidates"]
     assert isinstance(candidates, list)
     candidate_lines = []
@@ -490,7 +471,7 @@ def _provenance_table(manifest: dict[str, Any]) -> str:
         )
     candidate_summary = "<br>".join(candidate_lines) if candidate_lines else "none"
     wheel = current["wheel_sha256"] if current["wheel_sha256"] is not None else "not frozen"
-    counts = _object(manifest["counts"], field="manifest.counts")
+    counts = require_object(manifest["counts"], field="manifest.counts")
     return "\n".join(
         [
             "| Field | Generated value |",
@@ -507,12 +488,99 @@ def _provenance_table(manifest: dict[str, Any]) -> str:
     )
 
 
-def render_results_document(
-    document: str, *, manifest: dict[str, Any], checklist: list[dict[str, Any]]
+def _receipt_observation(receipt_path: str, *, repo_root: Path) -> str:
+    path = (repo_root / receipt_path).resolve()
+    try:
+        path.relative_to(repo_root.resolve())
+    except ValueError as exc:
+        raise HarnessError(f"receipt path escaped the repository: {path}") from exc
+    receipt = read_json_object(path)
+    raw = receipt.get("observations")
+    if not isinstance(raw, list) or not raw or not all(
+        isinstance(value, str) and value.strip() for value in raw
+    ):
+        raise HarnessError(f"{path}: observations must contain at least one non-empty string")
+    return " ".join(value.strip() for value in raw)
+
+
+def _observation_cell(
+    number: int,
+    *,
+    entries: list[dict[str, Any]],
+    install_entries: list[dict[str, Any]],
+    repo_root: Path,
 ) -> str:
-    """Replace only generated provenance and verdict cells, preserving commentary."""
-    _, _, matrix = _generated_region(document, _MATRIX_BEGIN, _MATRIX_END)
-    observations = _observations(matrix)
+    observations = [
+        _receipt_observation(str(entry["receipt_path"]), repo_root=repo_root)
+        for entry in entries
+        if int(entry["checklist_item"]) == number
+    ]
+    if observations:
+        return " ".join(observations).replace("|", "\\|").replace("\n", " ")
+    if number == 1 and install_entries:
+        return (
+            "The install receipts prove fresh, non-editable installations of the current "
+            "reviewed wheel."
+        )
+    return "No current receipt records an observation for this checklist item."
+
+
+def _blocking_rows(manifest: dict[str, Any]) -> list[tuple[int, str]]:
+    blocked: dict[int, str] = {}
+    for entry in manifest["receipts"]:
+        if entry["stale_candidate"] or entry["contract_status"] != "valid":
+            continue
+        verdict = str(entry["verdict"])
+        if verdict in {"fail", "blocked"}:
+            number = int(entry["checklist_item"])
+            blocked[number] = "fail" if verdict == "fail" else blocked.get(number, "blocked")
+    for missing in manifest["missing_current_receipts"]:
+        blocked.setdefault(int(missing["checklist_item"]), "missing")
+    return sorted(blocked.items())
+
+
+def _status_block(manifest: dict[str, Any]) -> str:
+    status = str(manifest["status"]).upper()
+    counts = require_object(manifest["counts"], field="manifest.counts")
+    blocked = _blocking_rows(manifest)
+    lines = [
+        f"## Status: **{status}**",
+        "",
+        "This verdict is generated from `artifact-manifest.json`; it is not maintained by hand. "
+        f"The manifest records {counts['current_receipts']} current receipts, "
+        f"{counts['stale_receipts']} stale receipts, and "
+        f"{counts['invalid_item_receipts']} invalid item receipts.",
+        "Regenerate it with "
+        f"`{manifest['generated_command']}`.",
+        "",
+        "```gate",
+        "id: talaria-v0-5-0-live-acceptance",
+        f"verdict: {status}",
+        "review-by: 2026-09-30",
+    ]
+    lines.extend(f"blocks-on: row-{number} {grade}" for number, grade in blocked)
+    lines.extend(["```", "", "## Evidence table", "", "| Item | Condition | Status |"])
+    lines.append("| ---: | --- | --- |")
+    if blocked:
+        titles = {
+            int(entry["checklist_item"]): str(entry["title"])
+            for entry in manifest["receipts"]
+        }
+        lines.extend(
+            f"| {number} | {titles.get(number, 'Missing checklist receipt')} | **{grade}** |"
+            for number, grade in blocked
+        )
+    return "\n".join(lines)
+
+
+def render_results_document(
+    document: str,
+    *,
+    manifest: dict[str, Any],
+    checklist: list[dict[str, Any]],
+    repo_root: Path = _REPO_ROOT,
+) -> str:
+    """Replace generated status, provenance, verdict, and observation projections."""
     receipt_entries = {
         (int(entry["checklist_item"]), str(entry["tester"])): entry
         for entry in manifest["receipts"]
@@ -538,11 +606,24 @@ def render_results_document(
                 cells.append(_install_status_cell(install_entries[tester]))
             else:
                 cells.append("`NO RECEIPT`")
+        observation = _observation_cell(
+            number,
+            entries=manifest["receipts"],
+            install_entries=manifest["install_receipts"],
+            repo_root=repo_root,
+        )
         lines.append(
-            f"| {number} | {item['title']} | {cells[0]} | {cells[1]} | "
-            f"{observations[number]} |"
+            f"| {number} | {item['title']} | {cells[0]} | {cells[1]} | {observation} |"
         )
     generated_matrix = "\n".join(lines)
+    status_start, status_finish, _ = _generated_region(document, _STATUS_BEGIN, _STATUS_END)
+    document = (
+        document[:status_start]
+        + "\n"
+        + _status_block(manifest)
+        + "\n"
+        + document[status_finish:]
+    )
     provenance_start, provenance_finish, _ = _generated_region(
         document, _PROVENANCE_BEGIN, _PROVENANCE_END
     )
@@ -577,6 +658,11 @@ def refresh_records(
     results_path: Path = _RESULTS_PATH,
 ) -> dict[str, Any]:
     """Regenerate both repository records from the receipt set."""
+    if not _git_commit_exists(repo_root, current_candidate_commit):
+        raise HarnessError(
+            f"current candidate commit does not exist in this repository: "
+            f"{current_candidate_commit}"
+        )
     manifest = build_manifest(
         repo_root=repo_root,
         evidence_root=evidence_root,
@@ -589,7 +675,7 @@ def refresh_records(
     except OSError as exc:
         raise HarnessError(f"cannot read results document {results_path}: {exc}") from exc
     rendered_results = render_results_document(
-        current_results, manifest=manifest, checklist=checklist
+        current_results, manifest=manifest, checklist=checklist, repo_root=repo_root
     )
     write_json_object(manifest_path, manifest, replace=True)
     results_path.write_text(rendered_results, encoding="utf-8")
@@ -606,7 +692,7 @@ def check_records(
 ) -> list[str]:
     """Return drift errors for the generated manifest and results verdicts."""
     current_manifest = read_json_object(manifest_path)
-    current_candidate = _object(
+    current_candidate = require_object(
         current_manifest.get("current_candidate"), field="manifest.current_candidate"
     )
     current_commit = _commit(
@@ -636,13 +722,41 @@ def check_records(
         results_text,
         manifest=expected_manifest,
         checklist=_checklist(checklist_path),
+        repo_root=repo_root,
     )
     if results_text != expected_results:
-        errors.append(
-            f"{_display_path(results_path, repo_root)} has verdict cells that disagree with the "
-            "receipts; regenerate the acceptance records"
-        )
+        prefix = _display_path(results_path, repo_root)
+        current_status = _generated_region(results_text, _STATUS_BEGIN, _STATUS_END)[2]
+        expected_status = _generated_region(expected_results, _STATUS_BEGIN, _STATUS_END)[2]
+        current_matrix = _generated_region(results_text, _MATRIX_BEGIN, _MATRIX_END)[2]
+        expected_matrix = _generated_region(expected_results, _MATRIX_BEGIN, _MATRIX_END)[2]
+        if current_status != expected_status:
+            errors.append(f"{prefix} has status that disagrees with the manifest")
+        if current_matrix != expected_matrix:
+            current_rows = _matrix_rows(current_matrix)
+            expected_rows = _matrix_rows(expected_matrix)
+            if any(
+                current_rows.get(number, [""] * 5)[4] != cells[4]
+                for number, cells in expected_rows.items()
+            ):
+                errors.append(f"{prefix} has observations that disagree with the receipts")
+            if any(
+                current_rows.get(number, [""] * 5)[:4] != cells[:4]
+                for number, cells in expected_rows.items()
+            ):
+                errors.append(f"{prefix} has verdict cells that disagree with the receipts")
     return errors
+
+
+def _matrix_rows(matrix: str) -> dict[int, list[str]]:
+    rows: dict[int, list[str]] = {}
+    for line in matrix.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", line)[1:-1]]
+        if len(cells) == 5 and cells[0].isdigit():
+            rows[int(cells[0])] = cells
+    return rows
 
 
 def choose_current_candidate_after_drive(
@@ -678,6 +792,17 @@ def _git_is_ancestor(repo_root: Path, older: str, newer: str) -> bool:
         return False
     detail = process.stderr.strip() or process.stdout.strip() or "unknown Git error"
     raise HarnessError(f"cannot compare candidate commits {older} and {newer}: {detail}")
+
+
+def _git_commit_exists(repo_root: Path, commit: str) -> bool:
+    process = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return process.returncode == 0
 
 
 def refresh_records_after_drive(

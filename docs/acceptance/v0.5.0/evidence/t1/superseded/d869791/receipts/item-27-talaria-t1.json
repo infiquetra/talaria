@@ -1,10 +1,10 @@
 {
   "artifact": {
     "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
     "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
+    "install_receipt_path": "<scratch-root>/install-receipt.json",
     "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
     "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
     "version": "0.5.0",
@@ -13,12 +13,12 @@
   },
   "checklist_item": 27,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-27-wheels.ansi",
+    "capture_path": "<scratch-root>/raw/item-27-wheels.ansi",
     "capture_sha256": "fc3d47262387786439faeabcb6f2ec50dac4e18ab612e33e9d36dd752ed00bca",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-27-wheels-pty.json",
+    "pty_result_path": "<scratch-root>/receipts/item-27-wheels-pty.json",
     "pty_result_sha256": "e96d8b1fee07fa5a86d3f61278d6c1899fcdaa2b43bbb5fcb32c4964d033284d",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-27.png",
+    "screenshot_path": "<scratch-root>/screenshots/item-27.png",
     "screenshot_sha256": "10c3b06fbcc47d0add2cb2fa7ed735d8cf8ac30d24dee4e9f41a6c511a4fece3"
   },
   "observations": [
