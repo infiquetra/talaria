@@ -16,14 +16,19 @@ from typing import Any
 from scripts.acceptance.v050_common import (
     FALLBACK_MODEL_ROUTE,
     FALLBACK_REASON_CODES,
+    ORDERED_VERDICTS,
     PRIMARY_MODEL_ROUTE,
     RELEASE_VERSION,
     TERMINAL_VERDICTS,
     TESTERS,
     VERDICTS,
     HarnessError,
+    active_receipt_paths,
+    is_quarantined_receipt,
     is_within,
     read_json_object,
+    receipt_paths,
+    repository_head,
     sha256_file,
     validate_tester,
     write_json_object,
@@ -61,6 +66,7 @@ _MACOS_ACCEPTANCE_SCRATCH_PATH = re.compile(
     rb"/private/var/folders/[A-Za-z0-9._/-]+/T/"
     rb"talaria-v050-[A-Za-z0-9._-]+(?:\xe2\x80\xa6)?"
 )
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _utc_now() -> str:
@@ -135,6 +141,9 @@ def validate_receipt(
         errors.append("schema_version is not talaria-v0.5.0-receipt-v1")
     if receipt.get("release") != RELEASE_VERSION:
         errors.append(f"release is not {RELEASE_VERSION}")
+    harness_commit = receipt.get("harness_commit")
+    if not isinstance(harness_commit, str) or not _COMMIT.fullmatch(harness_commit):
+        errors.append("harness_commit must be a full lowercase 40-character Git commit")
     number = receipt.get("checklist_item")
     tester = receipt.get("tester")
     owner = receipt.get("owner")
@@ -157,7 +166,10 @@ def validate_receipt(
     # Receipt validation accumulates defects for the operator; record generation
     # fails immediately at its trust boundary, but both use this same vocabulary.
     if verdict not in VERDICTS:
-        errors.append("verdict must be pass, fail, blocked, or reserved")
+        ordered = ", ".join(
+            (*ORDERED_VERDICTS[:-1], f"or {ORDERED_VERDICTS[-1]}")
+        )
+        errors.append(f"verdict must be {ordered}")
 
     try:
         artifact = _object(receipt.get("artifact"), field="artifact")
@@ -314,6 +326,10 @@ def validate_scratch_evidence_paths(
         raise HarnessError(
             "screenshot must remain in the tester scratch screenshots directory"
         )
+    if not capture.is_file():
+        raise HarnessError(f"capture does not exist: {capture}")
+    if not screenshot.is_file():
+        raise HarnessError(f"screenshot does not exist: {screenshot}")
 
 
 def record_receipt(args: argparse.Namespace) -> Path:
@@ -342,9 +358,6 @@ def record_receipt(args: argparse.Namespace) -> Path:
         screenshot=screenshot,
         scratch_root=scratch_root,
     )
-    if not screenshot.is_file():
-        raise HarnessError(f"screenshot does not exist: {screenshot}")
-
     candidate = _object(install.get("candidate"), field="install.candidate")
     artifact = _object(install.get("artifact"), field="install.artifact")
     requested = _ROUTE_ALIASES[args.route_requested]
@@ -367,6 +380,9 @@ def record_receipt(args: argparse.Namespace) -> Path:
     receipt = {
         "schema_version": "talaria-v0.5.0-receipt-v1",
         "release": RELEASE_VERSION,
+        "harness_commit": _string(
+            pty_result.get("harness_commit"), field="pty.harness_commit"
+        ),
         "recorded_at": _utc_now(),
         "checklist_item": args.item,
         "title": item["title"],
@@ -486,23 +502,6 @@ def _portable_json(
     return value.replace(home, "<home>")
 
 
-def _has_superseded_path(receipt: dict[str, Any]) -> bool:
-    artifact = receipt.get("artifact")
-    evidence = receipt.get("evidence")
-    path_values: list[Any] = []
-    if isinstance(artifact, dict):
-        path_values.append(artifact.get("install_receipt_path"))
-    if isinstance(evidence, dict):
-        path_values.extend(
-            evidence.get(field)
-            for field in ("capture_path", "screenshot_path", "pty_result_path")
-        )
-    return any(
-        isinstance(value, str) and "superseded" in Path(value).parts
-        for value in path_values
-    )
-
-
 def _png_ancillary_payloads(data: bytes) -> list[bytes]:
     """Return Portable Network Graphics ancillary chunks without image pixels."""
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -569,6 +568,44 @@ def _release_candidate_matches(
         return False, "release-relevant files differ from the evidence candidate"
     detail = diff.stderr.strip() or diff.stdout.strip() or "unknown Git error"
     return False, f"cannot compare release-relevant files: {detail}"
+
+
+def _harness_commit_matches(
+    evidence_commit: str, current_commit: str, *, repo_root: Path
+) -> tuple[bool, str]:
+    """Accept the current harness or an ancestor with identical harness bytes."""
+    if evidence_commit == current_commit:
+        return True, "exact"
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", evidence_commit, current_commit],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if ancestor.returncode != 0:
+        return False, "receipt harness is not an ancestor of the current harness"
+    diff = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--quiet",
+            evidence_commit,
+            current_commit,
+            "--",
+            "scripts/acceptance",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if diff.returncode == 0:
+        return True, "acceptance harness files are identical"
+    if diff.returncode == 1:
+        return False, "acceptance harness files differ from the receipt harness"
+    detail = diff.stderr.strip() or diff.stdout.strip() or "unknown Git error"
+    return False, f"cannot compare acceptance harness files: {detail}"
 
 
 def _write_portable_json(
@@ -711,7 +748,13 @@ def verify_run(
     evidence_root = evidence_root.expanduser().resolve()
     repo_root = repo_root.expanduser().resolve()
     manifest = read_json_object(manifest_path)
-    receipt_paths = sorted(evidence_root.glob("*/receipts/*.json"))
+    all_receipt_paths = receipt_paths(evidence_root)
+    current_receipt_paths = active_receipt_paths(evidence_root)
+    quarantined_receipt_paths = tuple(
+        path
+        for path in all_receipt_paths
+        if is_quarantined_receipt(path, evidence_root=evidence_root)
+    )
     install_paths = sorted(evidence_root.glob("*/install-receipt.json"))
     errors: list[str] = []
 
@@ -721,7 +764,7 @@ def verify_run(
         errors.append(str(exc))
         candidate = None
     if candidate is None:
-        if receipt_paths or install_paths:
+        if current_receipt_paths or install_paths:
             errors.append("manifest candidate is null while receipts exist")
         return errors
 
@@ -742,6 +785,15 @@ def verify_run(
                 "manifest candidate does not describe the released commit "
                 f"{expected_candidate_commit}: {reason}"
             )
+    try:
+        current_harness_commit = repository_head(repo_root)
+    except HarnessError as exc:
+        errors.append(str(exc))
+        current_harness_commit = None
+
+    quarantined_origins: dict[str, list[Path]] = {}
+    for path in quarantined_receipt_paths:
+        quarantined_origins.setdefault(sha256_file(path), []).append(path)
 
     manifest_receipts = manifest.get("receipts")
     if not isinstance(manifest_receipts, list):
@@ -761,12 +813,16 @@ def verify_run(
             install_entries[raw_entry["receipt_path"]] = raw_entry
 
     active_receipt_names: set[str] = set()
-    for path in receipt_paths:
+    for path in current_receipt_paths:
         relative = _repo_relative(path, repo_root=repo_root)
         active_receipt_names.add(relative)
         receipt = read_json_object(path)
-        if _has_superseded_path(receipt):
-            errors.append(f"{relative}: active receipt names a superseded evidence origin")
+        matching_origins = quarantined_origins.get(sha256_file(path), [])
+        for origin in matching_origins:
+            errors.append(
+                f"{relative}: active receipt has superseded evidence origin "
+                f"{_repo_relative(origin, repo_root=repo_root)}"
+            )
         for error in validate_receipt(
             receipt,
             verify_files=True,
@@ -774,6 +830,17 @@ def verify_run(
             repo_root=repo_root,
         ):
             errors.append(f"{relative}: {error}")
+        harness_commit = receipt.get("harness_commit")
+        if (
+            current_harness_commit is not None
+            and isinstance(harness_commit, str)
+            and _COMMIT.fullmatch(harness_commit)
+        ):
+            matches, reason = _harness_commit_matches(
+                harness_commit, current_harness_commit, repo_root=repo_root
+            )
+            if not matches:
+                errors.append(f"{relative}: incompatible harness_commit: {reason}")
         artifact = receipt.get("artifact")
         if isinstance(artifact, dict) and artifact.get("wheel_sha256") != expected_wheel:
             errors.append(f"{relative}: artifact.wheel_sha256 does not match the release candidate")
@@ -819,11 +886,12 @@ def verify_run(
 
     for relative in sorted(set(install_entries) - active_install_names):
         errors.append(f"manifest names an absent install receipt: {relative}")
-    if manifest.get("status") == "not-run" and (receipt_paths or install_paths):
+    if manifest.get("status") == "not-run" and (current_receipt_paths or install_paths):
         errors.append("manifest status is not-run while receipts exist")
+    acceptance_root = evidence_root.parents[1]
     evidence_paths = sorted(
         candidate_path
-        for candidate_path in evidence_root.rglob("*")
+        for candidate_path in acceptance_root.rglob("*")
         if candidate_path.is_file()
     )
     for path in evidence_paths:
@@ -876,7 +944,7 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument("--output", type=Path, required=True)
     record.add_argument("--tester", required=True)
     record.add_argument("--item", type=int, required=True)
-    record.add_argument("--verdict", choices=tuple(sorted(VERDICTS)), required=True)
+    record.add_argument("--verdict", choices=ORDERED_VERDICTS, required=True)
     record.add_argument(
         "--session-mode",
         choices=("live", "replay", "install-probe", "failure"),

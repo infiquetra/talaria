@@ -14,8 +14,9 @@ The v0.5.0 candidate makes the terminal interface themeable and adds persistent 
 context, an inspector, and a bounded read-only view of session-reported changes. The
 [v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md) was
 executed on 2026-08-31. **BLOCKED**: 43 of 43 expected checklist/tester slots are covered. The
-evidence set separately contains 44 current receipts (42 item and 2 install). Item verdicts are 41
-pass, 1 blocked, and 0 fail. Item 24 is the only blocker and is terminally
+evidence set separately contains 44 current receipts (42 item and 2 install). The one-receipt overlap
+is checklist item 1 for talaria-t2, which has both an item receipt and an install receipt. Item
+verdicts are 41 pass, 1 blocked, and 0 fail. Item 24 is the only blocker and is terminally
 unreachable because the gateway always assigns a request identifier.
 
 ### Added

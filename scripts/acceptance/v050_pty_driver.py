@@ -29,6 +29,7 @@ from scripts.acceptance.v050_common import (
     isolated_environment,
     probe_installed_artifact,
     read_json_object,
+    repository_head,
     sha256_file,
     validate_config_dir,
     validate_tester,
@@ -107,6 +108,18 @@ class PtyResult:
             "terminal_program": self.terminal_program,
             "timed_out": self.timed_out,
         }
+
+
+def pty_result_document(
+    *, tester: str, run: PtyResult, repo_root: Path
+) -> dict[str, Any]:
+    """Bind one drive result to the harness revision that produced it."""
+    return {
+        "schema_version": "talaria-v0.5.0-pty-v1",
+        "tester": tester,
+        "harness_commit": repository_head(repo_root),
+        **run.as_json(),
+    }
 
 
 def _positive_number(value: Any, *, field: str) -> float:
@@ -477,11 +490,11 @@ def _main(argv: list[str] | None = None) -> int:
         terminal_program=args.terminal_program,
         timeout=args.timeout,
     )
-    result_document = {
-        "schema_version": "talaria-v0.5.0-pty-v1",
-        "tester": tester,
-        **run.as_json(),
-    }
+    result_document = pty_result_document(
+        tester=tester,
+        run=run,
+        repo_root=Path(__file__).resolve().parents[2],
+    )
     write_json_object(result_path, result_document)
     refresh_records_after_drive(candidate_commit)
 

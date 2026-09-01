@@ -101,6 +101,7 @@
     },
     "counts": {
       "type": "object",
+      "description": "Derived evidence totals. Checklist coverage equals expected_receipts - missing_current_receipts; physical receipt-file totals are reported separately.",
       "additionalProperties": false,
       "required": [
         "expected_receipts",
@@ -114,16 +115,17 @@
         "item_verdicts"
       ],
       "properties": {
-        "expected_receipts": {"type": "integer", "minimum": 0},
-        "install_receipts": {"type": "integer", "minimum": 0},
-        "item_receipts": {"type": "integer", "minimum": 0},
-        "current_receipts": {"type": "integer", "minimum": 0},
-        "stale_receipts": {"type": "integer", "minimum": 0},
-        "invalid_item_receipts": {"type": "integer", "minimum": 0},
-        "missing_receipts_on_disk": {"type": "integer", "minimum": 0},
-        "missing_current_receipts": {"type": "integer", "minimum": 0},
+        "expected_receipts": {"type": "integer", "minimum": 0, "description": "Expected checklist item and tester pairs, with each shared item counted once per tester."},
+        "install_receipts": {"type": "integer", "minimum": 0, "description": "Top-level tester install receipt files, regardless of candidate binding."},
+        "item_receipts": {"type": "integer", "minimum": 0, "description": "Top-level non-quarantined checklist item receipt files, regardless of candidate binding."},
+        "current_receipts": {"type": "integer", "minimum": 0, "description": "Install and item receipt files bound to the current candidate."},
+        "stale_receipts": {"type": "integer", "minimum": 0, "description": "Install and item receipt files bound to another candidate."},
+        "invalid_item_receipts": {"type": "integer", "minimum": 0, "description": "Current item receipts that fail the receipt contract."},
+        "missing_receipts_on_disk": {"type": "integer", "minimum": 0, "description": "Expected checklist item and tester pairs with neither an item receipt nor an item 1 install receipt on disk."},
+        "missing_current_receipts": {"type": "integer", "minimum": 0, "description": "Expected checklist item and tester pairs without evidence bound to the current candidate."},
         "item_verdicts": {
           "type": "object",
+          "description": "Verdict totals claimed by current item receipt files.",
           "additionalProperties": false,
           "required": ["pass", "fail", "blocked", "reserved"],
           "properties": {
