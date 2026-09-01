@@ -7,8 +7,9 @@ The name comes from the _talaria_, Hermes's winged sandals. The project is inten
 > **Status: v0.5.0 release candidate.** Talaria dials a fleet of configured Hermes gateways, tracks
 > their sessions and waiting work, records every frame, and replays a recording with no socket open.
 > The feature code is integrated. The [v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
-> was executed on 2026-08-31. Its manifest status is **BLOCKED**: 43 of 43 receipts are current; item
-> verdicts are 40 pass, 1 blocked, and 0 fail. Item 24 is the only blocker and is terminally
+> was executed on 2026-08-31. **BLOCKED**: 43 of 43 expected checklist/tester slots are covered. The
+> evidence set separately contains 44 current receipts (42 item and 2 install). Item verdicts are 41
+> pass, 1 blocked, and 0 fail. Item 24 is the only blocker and is terminally
 > unreachable because the gateway always assigns a request identifier. Read the limits under
 > "Quick start" before relying on it.
 >
