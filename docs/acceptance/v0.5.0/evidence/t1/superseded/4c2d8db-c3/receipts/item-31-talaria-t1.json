@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
+    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+  },
+  "checklist_item": 31,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-31-c3.ansi",
+    "capture_sha256": "07e8b76878667a1250b557bbe7d50277025f0b713e0acf98c81252b12c9703bb",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-31-c3-pty.json",
+    "pty_result_sha256": "4c5a01fd6a204db5a5be6b59a41228138b00c94baa8d975f0e2666b20531df30",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-31-c3.png",
+    "screenshot_sha256": "fe24de62abeb5cd1a74843f576ec0d76a7abe72ed420b4d2bf0b17d92feb1afa"
+  },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "observations": [
+    "The installed importer rejected the committed malformed Visual Studio Code fixture with exit 3, reported the strict JSON error, and created no malformed-acceptance theme."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T15:32:09+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated malformed-import command"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Malformed Visual Studio Code import",
+  "verdict": "pass"
+}

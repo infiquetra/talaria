@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
-    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
   },
   "checklist_item": 28,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-28-c3.ansi",
-    "capture_sha256": "42166c3eb03937caaf80e30717f0c98ee643e9212ebe122447713e482046e4fc",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-28-c3-pty.json",
-    "pty_result_sha256": "c8b13bc107939e96630afb437210fb02991c27454cdba1adf8b05f4a28917196",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-28-c4.ansi",
+    "capture_sha256": "d72722a1ca5cf2a4377d05500fb98dc525cbec2cfebde647a5740949015fe93d",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-28-c4-pty.json",
+    "pty_result_sha256": "bc14f826190221eed5a77dd4442a44bde88edbd24eae5b7802f540b5574c9cfd",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-28-c3.png",
-    "screenshot_sha256": "38b0c153e5385360e0dbfcacbc4500489611f8421e0db37eb8f8b9b46aa631d1"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-28-c4.png",
+    "screenshot_sha256": "f1ad3693c4fc0226e83f893c8833779661dc3c53250414af275b5e3f6eb9ac88"
   },
-  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
   "observations": [
     "F5 pinned follow mode through appends, status updates and a real 132-to-119-to-132 resize; manual wheel input then unpinned before F5 restored bottom following."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-09-01T15:32:09+00:00",
+  "recorded_at": "2026-09-01T18:20:20+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

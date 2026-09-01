@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
-    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
   },
   "checklist_item": 6,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-06-c3.ansi",
-    "capture_sha256": "38e62133b3528aa2442dc0df7620927e900499a2379e069b9de877870a804dda",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-06-c3-pty.json",
-    "pty_result_sha256": "2ab1f7851196f948b23ef2353ec2a49ac4468494be9df17c7ebc52d4c75f0fa4",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-06-c4.ansi",
+    "capture_sha256": "3196a4f2401f27f46260875d9889320c0dd400928b0217c6b58ec3179650ca2f",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-06-c4-pty.json",
+    "pty_result_sha256": "5a2c2e7777f36cfa54d53f8be8f423b6baab36a5063070ff47bff1fb90bb5efd",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-06-c3.png",
-    "screenshot_sha256": "2e2b0cea964efbe10632ee924e785ebb35057682972a3bb9c057d5a29a5dfd64"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-06-c4.png",
+    "screenshot_sha256": "eeec8dca486a88f66ef942e4eade116c8bff352ef7ba7ef3fd5159458d4e16e9"
   },
-  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
   "observations": [
     "Neutral Dark rendered every populated surface with neutral dark surfaces and legible semantic contrast."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-09-01T15:32:09+00:00",
+  "recorded_at": "2026-09-01T18:19:49+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

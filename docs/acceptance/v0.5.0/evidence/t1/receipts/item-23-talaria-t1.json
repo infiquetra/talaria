@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
-    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
   },
   "checklist_item": 23,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-c3.ansi",
-    "capture_sha256": "b29685e7aab9d2975f7785381a982ef73aa4754f8d17a3eca549a23b2d2599d4",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-c3-pty.json",
-    "pty_result_sha256": "f25bddefdfa3c000ef61458786c7d1c40e72fb66652fbc4a79fc262c2d850757",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-23-c4.ansi",
+    "capture_sha256": "bb577bf5263dbb501b45be0d98e76d6ca0bbe3e9b01af2d74a92a55be6aeb34d",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-23-c4-pty.json",
+    "pty_result_sha256": "104af5dab90f221d6e9374039ee0369ee63d98fca81fb5dc81c83e7a5fcf04bf",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-c3.png",
-    "screenshot_sha256": "171a2d30dcaeb9c3258cfaba0ba82e1523c95ad8c225ca6ff9e6185a504dc0d6"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-23-c4.png",
+    "screenshot_sha256": "a2a143e988f8d98a846171c809900f001693bd7eafa64686a43e5a1c98d597e9"
   },
-  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
   "observations": [
-    "A healthy primary-route connection painted [..] wait and [ok] up; the controlled isolated-dashboard restart painted [~] retry and [x] down, while the separate item 33 capture proves [!] auth. All five remain literal in monochrome evidence."
+    "The healthy approved route painted [..] wait and [ok] up; stopping only isolated dashboard PID 48915 painted [~] retry and [x] down, the identical command restored it as PID 11988, and item 33 separately proves [!] auth."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-09-01T15:32:37+00:00",
+  "recorded_at": "2026-09-01T18:19:50+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -42,7 +42,7 @@
   },
   "terminal": {
     "columns": 132,
-    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned; NO_COLOR; isolated Hermes dashboard 8790",
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

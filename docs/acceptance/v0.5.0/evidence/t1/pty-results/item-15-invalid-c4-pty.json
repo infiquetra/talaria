@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "docs/acceptance/v0.5.0/corpora/t1/startup-notice.jsonl",
+    "--speed",
+    "0"
+  ],
+  "capture": {
+    "bytes": 58647,
+    "path": "<scratch-root>/raw/item-15-invalid-c4.ansi",
+    "sha256": "26d46f20b9985cd0977b2954881bdfcf4ce6ab5e4b17f5ccf3680cadcd21b102"
+  },
+  "columns": 132,
+  "duration_seconds": 8.275984,
+  "exit_code": 0,
+  "expected_literals": [
+    "status.command",
+    "status.interval_seconds"
+  ],
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

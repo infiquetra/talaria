@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "<scratch-root>/venv/bin/talaria",
+    "replay",
+    "docs/acceptance/v0.5.0/corpora/t1/visual-surfaces.jsonl"
+  ],
+  "capture": {
+    "bytes": 248368,
+    "path": "<scratch-root>/raw/item-09-repository-c4.ansi",
+    "sha256": "14bbad84f96cdb334be82a5fa606c24d416c39df3af31e492b86bec4b1361e66"
+  },
+  "columns": 132,
+  "duration_seconds": 12.302791,
+  "exit_code": 0,
+  "expected_literals": [
+    "v0.5.0"
+  ],
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

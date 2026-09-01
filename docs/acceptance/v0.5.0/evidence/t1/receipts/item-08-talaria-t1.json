@@ -1,32 +1,32 @@
 {
   "artifact": {
-    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
-    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "executable_sha256": "8e0b42957101154f840f1063bde6c31bff7dbaed836ab6a40260cfcb22b3afc7",
     "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
-    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
-    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "install_receipt_sha256": "f87588c173a82524f93737c97873e74502db82d41fc8c00d79c37a9f25b16521",
+    "installed_files_sha256": "7b17485b1fe4663bed46d00e3c11c059f7d71f7aff6fa55cc203086630861b92",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+    "wheel_sha256": "7322029e90617c4ef91657f16c5cf0e1baad92ee4a02907b4705be8df8d08625"
   },
   "checklist_item": 8,
   "evidence": {
-    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-08-c3b.ansi",
-    "capture_sha256": "1747d530717e97ff9ae44fc1d92b31fca6b670a5446feabebf7b15bc34cd2583",
-    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-08-c3b-pty.json",
-    "pty_result_sha256": "c5b4912414d06fa029dd99ad112cf5b66c7fd27019fd70f230b3d7738bfb5b4b",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-08-c4.ansi",
+    "capture_sha256": "f221a199be362ac86f7519edfb8ce08a1abd4770982194929b83a7ff585c879b",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-08-c4-pty.json",
+    "pty_result_sha256": "70b743a126ad0179f7aa8c49c6668d93f149123076e17b0e9dff8580ae11dc96",
     "redaction_review": "passed",
-    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-08-c3b.png",
-    "screenshot_sha256": "7f25d15b0e8fc4ce43c64788560304e5bc33a49d2d0fe1607c0681719114ade1"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-08-c4.png",
+    "screenshot_sha256": "b6cfefa316300a3a4239779a9234f8e25d9c209ef1a864308f0d1ac7036dac52"
   },
-  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "harness_commit": "d16357900f6f3b472ff6e0309e7bf7fe70ad9b06",
   "observations": [
-    "The picker previewed Dark Green Terminal and Neutral Dark, Escape restored Refined Default, and the scratch configuration hash and modification time remained unchanged."
+    "The picker previewed Dark Green Terminal and Neutral Dark, Escape restored Refined Default, and the scratch configuration SHA-256 remained 439427b14bd9b50d9aa8d0c99c8e1a9b51097630c90b94e81802150bb2ad5fcf."
   ],
   "owner": "talaria-t1",
-  "recorded_at": "2026-09-01T15:32:09+00:00",
+  "recorded_at": "2026-09-01T18:19:50+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {

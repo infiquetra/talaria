@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+    "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "21cc6610496455d946eb01fb269dc381af79f0998860d76aae69c58e986c1167",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "ee8e0ee1ce883d6719efa5263bc552c3d2a44832e8602ad7c746038becc90246",
+    "installed_files_sha256": "6138a46811ca17a27fdff6ee18755f502de0fdf1a96488b25f89558f5797e6af",
+    "version": "0.5.0",
+    "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
+    "wheel_sha256": "d5a41c67384e78d9b1048cb7c6524a668c20f8059031e0f5e0a93f0b289f7d88"
+  },
+  "checklist_item": 4,
+  "evidence": {
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-04-c3.ansi",
+    "capture_sha256": "e5ed3a841010f805c76d4cecbfce3ce342b7bdf09491829d028029ef4c661742",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-04-c3-pty.json",
+    "pty_result_sha256": "73443bcdbf823791fb3aa81fc9b168cb45e82219b972e28a4112a4c6c527a1aa",
+    "redaction_review": "passed",
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-04-c3.png",
+    "screenshot_sha256": "7f25d15b0e8fc4ce43c64788560304e5bc33a49d2d0fe1607c0681719114ade1"
+  },
+  "harness_commit": "4c2d8dbf0ddfb7f38ba1f228369ae2d929319758",
+  "observations": [
+    "Refined Default rendered the populated transcript, composer, agent row, status surfaces, inspector and diff with the specified cool-neutral hierarchy."
+  ],
+  "owner": "talaria-t1",
+  "recorded_at": "2026-09-01T15:32:08+00:00",
+  "release": "0.5.0",
+  "schema_version": "talaria-v0.5.0-receipt-v1",
+  "session": {
+    "mode": "replay",
+    "model_route": {
+      "fallback_availability": "not-applicable",
+      "fallback_reason": null,
+      "observed": null,
+      "requested": null,
+      "status": "not-applicable"
+    },
+    "profile": "isolated visual-surfaces replay; Refined Default"
+  },
+  "terminal": {
+    "columns": 132,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
+    "rows": 36,
+    "term": "xterm-256color"
+  },
+  "tester": "talaria-t1",
+  "title": "Refined Default",
+  "verdict": "pass"
+}
