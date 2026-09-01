@@ -97,9 +97,17 @@ talaria theme import FILE [--name NAME]
 ```
 
 The explicit name wins over a top-level theme name, which wins over the source filename. Talaria
-normalizes the result to a lowercase hyphenated slug and writes a canonical user theme under
-`<config-dir>/themes/<slug>.json`. Re-importing the same slug replaces that file atomically. A
-malformed, empty, or unsupported input fails before writing. The source file is never watched.
+requires the resulting name to already be a lowercase hyphenated slug. A name containing spaces,
+uppercase letters, path separators, or traversal is rejected before anything is written:
+
+```console
+$ talaria theme import theme.json --name 'Solar Flare'
+talaria: theme import failed: invalid theme slug: 'Solar Flare'
+```
+
+A valid import writes a canonical user theme under `<config-dir>/themes/<slug>.json`. Re-importing
+the same slug replaces that file atomically. A malformed, empty, or unsupported input fails before
+writing. The source file is never watched.
 
 The importer supports a deliberately bounded set of workbench colors and syntax scopes, reports
 unsupported inputs, composites supported alpha colors, and fills unmapped tokens from Refined
@@ -108,7 +116,7 @@ Default. The normative mapping and warning rules are in
 here.
 
 Imported themes become available to `/theme` only after a fresh process loads the stored theme
-library. In the current 0.5.0 candidate, an imported theme can be previewed and selected for that
-process, but saving its slug does not survive the next restart: startup configuration validation
-accepts only built-in slugs and visibly falls back to Refined Default. This is a known product defect,
-not a configuration technique to work around.
+library. Once a canonical theme document exists under `<TALARIA_CONFIG_DIR>/themes/` (or the default
+`~/.talaria/themes/`), its slug is accepted from `config.toml` at startup and can be persisted with
+the same explicit save commands as a built-in theme. The stored library is read once per process;
+there is no file watcher or external-file live reload.

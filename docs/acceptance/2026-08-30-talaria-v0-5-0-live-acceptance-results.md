@@ -1,41 +1,42 @@
 # Talaria v0.5.0 real-terminal acceptance evidence
 
 This Talaria repository document is the issue #110 evidence record for the exact installed v0.5.0
-candidate. Both tester runs used independently installed copies of the same frozen wheel and isolated
-scratch configuration directories.
+candidate. The current T1 evidence is a targeted rerun of five repaired or disputed items using an
+independently installed wheel and an isolated scratch configuration directory. The earlier complete
+T1 sweep and the T2 sweep bind to the preceding candidate and remain preserved as stale evidence.
 
 ## Status
 
-**NOT SATISFIED.** The current reviewed revision has no frozen wheel or acceptance receipt. The
-committed receipts are historical evidence for an earlier candidate: most deterministic visual items
-passed, including the repaired Visual Studio Code importer, but transcript spacing and unpinned
-scroll stability failed. The inspector empty-state repair landed after that wheel was frozen, so the
-generated record marks every earlier receipt stale. Gateway-controlled live items remain blocked
-rather than being inferred or run on an unapproved model route.
+**NOT SATISFIED.** T1 installed candidate commit
+`17ce4eda8e82a18b5d47766c0c279aa9751dce9f` and reran only items 2, 23, 24, 25, and 27. Items 2, 25,
+and 27 passed, item 23 failed, and item 24 remains blocked. The exact install probe also passed. The
+other T1 items were deliberately not rerun, and every T2 receipt still binds to candidate `d9c82443`.
+Those prior T1 and T2 results therefore cannot satisfy the current candidate.
 
 The source checklist is the **Visual acceptance checklist** in
 `docs/design/2026-08-30-talaria-v0-5-0-visual-spec.md`. The machine-readable owner registry is
-`docs/acceptance/v0.5.0/checklist-items.json`. Each completed item receipt points to a raw American
-National Standards Institute (ANSI) terminal capture in tester scratch and a deterministic Portable
-Network Graphics screenshot of that capture, after a completed private-data review.
+`docs/acceptance/v0.5.0/checklist-items.json`. Each completed item receipt points to a committed raw
+American National Standards Institute (ANSI) terminal capture and a deterministic Portable Network
+Graphics screenshot after a completed private-data review.
 
 ## Candidate provenance
 
 <!-- BEGIN GENERATED ACCEPTANCE PROVENANCE -->
 | Field | Generated value |
 | --- | --- |
-| Manifest status | `STALE` |
-| Current reviewed candidate commit | `122bd918e0056404e576ae5623ce9e97bfe1ad93` |
-| Current candidate wheel SHA-256 | `not frozen` |
-| Receipt candidate identities | `d869791` / `a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb` (2 install, 31 item receipts) |
-| Receipt counts | 2 install; 31 item; 0 current; 33 stale; 1 invalid |
+| Manifest status | `BLOCKED` |
+| Current reviewed candidate commit | `0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398` |
+| Current candidate wheel SHA-256 | `720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b` |
+| Receipt candidate identities | `0f5c8e3` / `720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b` (2 install, 41 item receipts) |
+| Receipt counts | 2 install; 41 item; 43 current; 0 stale; 0 invalid |
 <!-- END GENERATED ACCEPTANCE PROVENANCE -->
 
-Both historical install probes rejected source, editable, and global executables. Their gate legs
-ran the designed 50,000-delta corpus and produced complete reports. The unchanged 50 ms
-`workload_latency_growing-one-column-table` ceiling remained exceeded and recorded, but was excluded
-from the install decision because its measured 14.411 ms run-to-run spread on one unchanged candidate
-is larger than the difference from the v0.4 sample. Every other gate check passed.
+The current T1 install probe rejected source, editable, and global executables. Its gate leg ran the
+designed 50,000-delta corpus and produced a complete report. The unchanged 50 ms
+`workload_latency_growing-one-column-table` ceiling measured 60.697 ms and remained exceeded. The
+receipt records that value beside the 61.988 ms v0.4 sample, the 44.0 ms historical analysis value,
+and the 14.411 ms spread across four recorded v0.5 candidate samples. That high-variance check is
+excluded from the install decision; every other gate check passed.
 
 ## Live model route status
 
@@ -44,11 +45,10 @@ The operator-confirmed primary route is OpenCode Muse Spark 1.2 Contributor
 (`ollama (ollama-cloud) / glm-5.3-flash`), and only for primary unavailability, connection failure,
 model-not-found, or bounded-test incompletion.
 
-No passing live receipt exists. Against this gateway, Talaria composes `/model <name> --provider
-<slug>` and the gateway refuses that entire command class with code 4018: `not a
-quick/plugin/bundle/skill command: model`. Corrected identifiers therefore do not provide a client-side
-route switch. No third route was substituted, and the gateway was not restarted, revoked, or
-reconfigured without operator authority.
+The current item-2 receipt proves a real live turn on the approved primary route. The response was
+`1517`; the inspector and the final status-bar model segment both named
+`muse-spark-1.2-contributor`. Items 23 and 24 also used the isolated dashboard already configured for
+that primary route. No fallback or third route was attempted.
 
 ## Evidence matrix
 
@@ -59,69 +59,66 @@ retain the historical verdict and candidate so a repair cannot silently inherit 
 <!-- BEGIN GENERATED ACCEPTANCE VERDICTS -->
 | Item | Checklist item | T1 | T2 | Evidence and observation |
 | ---: | --- | :--- | :--- | --- |
-| 1 | Installed artifact | `STALE — prior PASS @ d869791` | `STALE — prior PASS @ d869791` | Both exact install receipts prove independent fresh installs of the frozen wheel. |
-| 2 | Live primary route | `NO RECEIPT` | `NO RECEIPT` | Gateway command class 4018 prevents the approved client-side model switch. |
-| 3 | Main hierarchy | — | `STALE — prior PASS @ d869791` | T2 receipt and screenshot prove the required hierarchy. |
-| 4 | Refined Default | `STALE — prior PASS @ d869791` | — | T1 receipt and screenshot show the complete light palette. |
-| 5 | Dark Green Terminal | `STALE — prior PASS @ d869791` | — | T1 picker drive previews and accepts the dark-green palette. |
-| 6 | Neutral Dark | `STALE — prior PASS @ d869791` | — | T1 picker drive previews and accepts the neutral palette without geometry movement. |
-| 7 | Accessible High Contrast | `STALE — prior PASS @ d869791` | — | T1 screenshot covers the full layout and real read-only diff with the specified tokens. |
-| 8 | Preview cancellation | `STALE — prior PASS @ d869791` | — | T1 previews two themes, cancels, restores the original frame, and preserves exact config bytes and time. |
-| 9 | Explicit save and precedence | `STALE — prior PASS @ d869791` | — | Three T1 launches prove user, repository, and session precedence with scoped file changes. |
-| 10 | Theme fallback notice | `STALE — prior PASS @ d869791` | — | T1 shows the unknown-theme notice and reports all 56 fallback tokens and 19 warnings. |
-| 11 | Visual Studio Code import | `STALE — prior PASS @ d869791` | — | Two installed imports save identical bytes; fresh startup loads the imported theme without fallback. |
-| 12 | All status segments | — | `STALE — prior PASS @ d869791` | T2 shows all seven ordered segments without wrapping. |
-| 13 | Status configuration | — | `STALE — prior PASS @ d869791` | T2 proves reorder, omission, and unknown-segment notice after restart. |
-| 14 | Status responsive sequence | — | `STALE — prior PASS @ d869791` | T2 proves the specified 144-to-19-column compaction sequence. |
-| 15 | Status failure visibility | `NO RECEIPT` | `STALE — prior PASS @ d869791` | T2 shows malformed values and bounded command failures visibly. |
-| 16 | Inspector dock and resize | — | `STALE — prior PASS @ d869791` | T2 proves four-column actions, limits, and retained data. |
-| 17 | Inspector content and empty states | — | `STALE — prior FAIL @ d869791` | The frozen candidate invents `needs-you unavailable` in an empty Tasks surface. |
-| 18 | Inspector responsive state | — | `STALE — prior PASS @ d869791` | T2 proves manual and automatic state behavior across breakpoints. |
-| 19 | Side-by-side diff | — | `STALE — prior PASS @ d869791` | T2 proves aligned, read-only side-by-side diff content. |
-| 20 | Unified fallback | — | `STALE — prior PASS @ d869791` | T2 proves fallback and restoration with selection and scroll retained. |
-| 21 | Diff navigation and boundary | — | `STALE — prior PASS @ d869791` | T2 proves navigation, clipping, horizontal scroll, and read-only boundaries. |
-| 22 | Composer caret location | `STALE — prior PASS @ d869791` | — | T1 visits every focus surface with stable geometry and correct caret cues. |
-| 23 | Connection non-color states | `NO RECEIPT` | — | Reconnect and authentication-failure plateaus require shared-gateway control. |
-| 24 | Agent and queue non-color states | `STALE — prior BLOCKED @ d869791` | — | T1 proves the agent states and three queue forms; shipped replay cannot create the genuine duplicate-feed state. |
-| 25 | Transcript identity without color | `STALE — prior FAIL @ d869791` | — | All six identities are visible, but blank spacer rows appear after reasoning and assistant entries. |
-| 26 | Reduced motion | `STALE — prior PASS @ d869791` | — | Restarted T1 drives prove the motion-policy difference without losing state updates. |
-| 27 | Stable unpinned scroll | `STALE — prior FAIL @ d869791` | — | T1's real wheel-established middle anchor jumps back to the bottom after later updates. |
-| 28 | Stable pinned scroll | `STALE — prior PASS @ d869791` | — | T1 proves F5 follow, manual release, stable unpinned reading, and final return to newest output. |
-| 29 | Wide screenshot | — | `STALE — prior PASS @ d869791` | T2 provides the required 132-by-36 evidence. |
-| 30 | Narrow screenshot | — | `STALE — prior PASS @ d869791` | T2 provides the required 78-by-36 evidence. |
-| 31 | Malformed Visual Studio Code import | `STALE — prior PASS @ d869791` | — | Installed importer exits 2 and stores no artifact. |
-| 32 | Session-only status toggle | — | `STALE — prior PASS @ d869791` | T2 proves session-only change and clean restart restoration. |
-| 33 | Dead gateway credential | `NO RECEIPT` | `NO RECEIPT` | Producing a real stale credential requires gateway revocation or restart authority. |
-| 34 | Killed session | `NO RECEIPT` | `STALE/INVALID — prior BLOCKED @ d869791` | T2 could not establish an approved model-backed session to kill. |
-| 35 | Restart-only configuration | `STALE — prior PASS @ d869791` | `NO RECEIPT` | T1 proves the running process does not reload the config and the fresh process does. |
-| 36 | Cross-tester evidence | `NO RECEIPT` | `NO RECEIPT` | Coordinator assembly follows both tester reports. |
+| 1 | Installed artifact | `PASS` | `PASS` | T1's exact install receipt proves a fresh, non-editable install of the current reviewed wheel. |
+| 2 | Live primary route | `PASS` | `PASS` | The real response and both model displays prove the approved primary route. |
+| 3 | Main hierarchy | — | `PASS` | T2 receipt and screenshot prove the required hierarchy. |
+| 4 | Refined Default | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 5 | Dark Green Terminal | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 6 | Neutral Dark | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 7 | Accessible High Contrast | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 8 | Preview cancellation | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 9 | Explicit save and precedence | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 10 | Theme fallback notice | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 11 | Visual Studio Code import | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 12 | All status segments | — | `PASS` | T2 shows all seven ordered segments without wrapping. |
+| 13 | Status configuration | — | `PASS` | T2 proves reorder, omission, and unknown-segment notice after restart. |
+| 14 | Status responsive sequence | — | `PASS` | T2 shows resize-driven status repainting is broken: the full cwd-first row remains and clips instead of compacting or dropping segments through 19 columns. |
+| 15 | Status failure visibility | `PASS` | `PASS` | T2 shows malformed-value fallbacks visibly and renders the bounded command's literal output. |
+| 16 | Inspector dock and resize | — | `PASS` | T2 proves four-column actions, limits, and retained data. |
+| 17 | Inspector content and empty states | — | `PASS` | Current populated and empty-state captures show all four sections accurately, with no synthetic `needs-you unavailable` task. |
+| 18 | Inspector responsive state | — | `PASS` | T2 proves manual and automatic state behavior across breakpoints. |
+| 19 | Side-by-side diff | — | `PASS` | T2 proves aligned, read-only side-by-side diff content. |
+| 20 | Unified fallback | — | `PASS` | T2 proves fallback and restoration with selection and scroll retained. |
+| 21 | Diff navigation and boundary | — | `PASS` | T2 proves navigation, clipping, horizontal scroll, and read-only boundaries. |
+| 22 | Composer caret location | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 23 | Connection non-color states | `PASS` | — | Four token-plus-text forms appear, but a genuine reconnect cycle never displays the required `[~]` form. |
+| 24 | Agent and queue non-color states | `BLOCKED` | — | The available gateway always anchors approvals with a request identifier, so the possibly-duplicate state is unreachable without simulation. |
+| 25 | Transcript identity without color | `PASS` | — | All six textual identities appear on consecutive monochrome rows without spacer rows. |
+| 26 | Reduced motion | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 27 | Stable unpinned scroll | `PASS` | — | A real wheel event unpins at `READING-ANCHOR-007`; later frames and a resize preserve that top anchor. |
+| 28 | Stable pinned scroll | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 29 | Wide screenshot | — | `PASS` | T2 provides the required 132-by-36 evidence. |
+| 30 | Narrow screenshot | — | `PASS` | T2 provides the required 78-by-36 evidence. |
+| 31 | Malformed Visual Studio Code import | `PASS` | — | The earlier T1 receipt is superseded; no current evidence exists. |
+| 32 | Session-only status toggle | — | `PASS` | T2 proves session-only change and clean restart restoration. |
+| 33 | Dead gateway credential | `PASS` | `PASS` | Producing a real stale credential requires gateway revocation or restart authority. |
+| 34 | Killed session | `PASS` | `PASS` | T2 completed a primary-model turn, closed exactly that session, and retained a bounded visible `session not found` recovery state. |
+| 35 | Restart-only configuration | `PASS` | `PASS` | The earlier T1 receipt is superseded; no current evidence exists. |
+| 36 | Cross-tester evidence | `PASS` | `PASS` | Coordinator assembly follows both tester reports. |
 <!-- END GENERATED ACCEPTANCE VERDICTS -->
 
 ## Evidence custody
 
-Raw captures remain in the tester scratch roots recorded by each install receipt. Reviewed screenshots,
-exact install receipts, and item receipts are committed under `docs/acceptance/v0.5.0/evidence/t1/`
-and `docs/acceptance/v0.5.0/evidence/t2/`. The screenshots were rendered directly from pseudo-terminal
-bytes with Pyte and Pillow; no Computer Use or graphical user interface automation was used.
-
-T1's selected 49 raw capture and text-render files contained no credential, token-bearing URL,
-operator path, username, or private email/domain match. All 16 generated T1 item receipts passed the
-receipt validator with file-hash checks. T2's corresponding review and validation are recorded in
-its evidence README.
+Reviewed raw captures, screenshots, exact install receipts, pseudo-terminal results, and item
+receipts are committed under `docs/acceptance/v0.5.0/evidence/`. The T1 screenshots were rendered
+directly from raw pseudo-terminal bytes with Pyte and Pillow; no Computer Use or graphical user
+interface automation was used. The T1 publication review found no scratch credential, token-query
+parameter, bearer header, email address, or operator home path. All five current T1 item receipts
+passed file-hash and candidate validation. The preceding complete T1 sweep is retained under
+`docs/acceptance/v0.5.0/evidence/t1/superseded/d9c82443/`.
 
 ## Repository checks
 
 - `uv run ruff check .`: passed.
 - `uv run mypy`: passed with no issues.
-- `/opt/homebrew/bin/uv run pytest`: passed, 2,329 tests passed and 7 skipped in 564.30 seconds. The
-  first full run had one intermittent status-process timing failure after 2,328 passes; that exact
-  test passed five consecutive focused reruns, and the second complete run passed.
+- `/opt/homebrew/bin/uv run pytest`: passed, 2,411 tests passed and 7 skipped in 592.13 seconds.
 - `uv run bandit -r talaria -q`: passed; Bandit emitted only its existing comment-token warnings.
 - `git diff --check`: passed after the evidence update.
 
 ## Final verdict
 
-**NOT SATISFIED.** No receipt proves the current reviewed revision. The earlier installed candidate
-and Visual Studio Code importer fix have historical evidence, but those verdicts cannot survive the
-later product repair. The generated cells preserve prior failures and blocks without presenting any
-stale verdict as current.
+**NOT SATISFIED.** The current targeted T1 rerun proves three repaired items and the live primary
+route, but item 23 still fails and item 24 remains unreachable through the real gateway contract.
+The fourteen deliberately omitted T1 items and all T2 items also lack current-candidate evidence.
+The generated cells exclude every superseded verdict rather than allowing an older candidate to
+satisfy this revision.

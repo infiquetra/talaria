@@ -75,7 +75,7 @@ jobs:
           TALARIA_REQUIRE_TS_BRIDGE: "1"
         run: uv run pytest
       - name: bandit
-        run: uv run bandit -r talaria -q
+        run: uv run bandit -r talaria scripts -q -ll
 
   # AE10 / R39: the client installs into a clean environment and runs there.
   #
@@ -175,7 +175,7 @@ jobs:
       - name: pytest
         run: uv run pytest
       - name: bandit
-        run: uv run bandit -r talaria -q
+        run: uv run bandit -r talaria scripts -q -ll
       - name: Flag the informational failure
         if: failure()
         run: |

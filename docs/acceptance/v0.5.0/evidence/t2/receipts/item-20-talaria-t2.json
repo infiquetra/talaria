@@ -1,31 +1,31 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/venv/bin/talaria",
-    "executable_sha256": "c7d70d8d529550853854dbc19709a56d630e472776d3bbc8437c49adb5cb2f95",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/install-receipt.json",
-    "install_receipt_sha256": "9b8bf4c2e95b5c9b45a278c913eee5674c50a04842ad705feec889ebe2d791fa",
-    "installed_files_sha256": "2005f6749b2e644d5dcbd4a67cbd7ed2515baa5d1805913d9005a29de5045f8f",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-1la168sh/venv/bin/talaria",
+    "executable_sha256": "fc1bbdda3286c213daadac4a6cad570a954801579294d46690dde91c242934ad",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t2/install-receipt.json",
+    "install_receipt_sha256": "c96c75197ba8e8ecc353cebcae13f66f431ab5f8a510246d718dffa934883726",
+    "installed_files_sha256": "f3bc52e79e7e5db444c1d068fd889c66bee2bafdc764e5dde9c65a7464706872",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 20,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/raw/item-20.ansi",
-    "capture_sha256": "7bfc4042c2c4bff4582da474bb186ada3607e0895f09c380572e651c47289bf0",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/receipts/item-20-pty.json",
-    "pty_result_sha256": "8ed85854c1b05d7c050438f02f2f3ae2d5a3e7e65a76e88148342e4f961031e4",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t2/raw/item-20-refusal-resize-fix.ansi",
+    "capture_sha256": "fa3e4236ae45eaad5fd624dc1a3bb17c2c54b0cddad920c8ab29e1330d3c9eba",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t2/pty-results/item-20-refusal-resize-fix-pty.json",
+    "pty_result_sha256": "4a749cc0e00f19d4a17df87881d04326901cd10b4941af054514f498a2022ac1",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t2-tdxgj8kp/screenshots/item-20.png",
-    "screenshot_sha256": "777dbb15386200c582dae957abf3340aa0a165bf971ef32f444ea7f0c3711081"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t2/screenshots/item-20-refusal-resize-fix.png",
+    "screenshot_sha256": "5162b8239b3fecc0696347a88d495f57bf11643457bb7bd20e4cc279bb167451"
   },
   "observations": [
-    "The same held file survives 112-to-111-to-112 transitions and explicit u/s changes with its selected hunk and horizontal anchor; raw/item-20-refusal.ansi shows the one-row side-by-side needs 112 columns refusal at 111."
+    "At a real 111-column terminal width the viewer remained unified and visibly reported side-by-side needs 112 columns; the full drive also crossed 112 and 111 repeatedly without losing diff context."
   ],
   "owner": "talaria-t2",
-  "recorded_at": "2026-08-31T06:21:34+00:00",
+  "recorded_at": "2026-08-31T21:53:04+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -37,11 +37,11 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-acceptance-corpus"
+    "profile": "deterministic-replay"
   },
   "terminal": {
-    "columns": 112,
-    "program": "Terminal.app 2.14",
+    "columns": 111,
+    "program": "Python pty.fork on macOS; COLUMNS/LINES unpinned",
     "rows": 36,
     "term": "xterm-256color"
   },

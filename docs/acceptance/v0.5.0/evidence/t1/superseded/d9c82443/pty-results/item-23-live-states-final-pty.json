@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria"
+  ],
+  "capture": {
+    "bytes": 72207,
+    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/raw/item-23-live-states-final.ansi",
+    "sha256": "f1fa0e24a6c091db1e0b6ce91c867675eeb7ceb835a414109c73d23071739c77"
+  },
+  "columns": 132,
+  "duration_seconds": 42.293057,
+  "exit_code": 0,
+  "expected_literals": [],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS; NO_COLOR; isolated Hermes dashboard 8790",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

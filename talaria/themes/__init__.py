@@ -77,6 +77,23 @@ _TOKEN_SET = frozenset(THEME_TOKENS)
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _OPAQUE_HEX_RE = re.compile(r"^#[0-9A-F]{6}$")
 
+THEME_NAME_TYPE_FALLBACK_NOTICE = (
+    "theme.name must be a string; using Refined Default ({default_slug})"
+)
+THEME_UNAVAILABLE_FALLBACK_NOTICE = (
+    "theme {requested!r} is not available; using Refined Default ({default_slug})"
+)
+
+
+def theme_fallback_notice(requested: object, default_slug: str) -> str:
+    """Format the one operator notice shared by both theme resolution paths."""
+    template = (
+        THEME_UNAVAILABLE_FALLBACK_NOTICE
+        if isinstance(requested, str)
+        else THEME_NAME_TYPE_FALLBACK_NOTICE
+    )
+    return template.format(requested=requested, default_slug=default_slug)
+
 
 @dataclass(frozen=True)
 class ThemeSpec:
@@ -114,4 +131,10 @@ class ThemeSpec:
         object.__setattr__(self, "tokens", MappingProxyType(copied))
 
 
-__all__ = ["THEME_TOKENS", "ThemeSpec"]
+__all__ = [
+    "THEME_NAME_TYPE_FALLBACK_NOTICE",
+    "THEME_TOKENS",
+    "THEME_UNAVAILABLE_FALLBACK_NOTICE",
+    "ThemeSpec",
+    "theme_fallback_notice",
+]

@@ -1,32 +1,31 @@
 {
   "artifact": {
-    "commit": "d86979127f871a479eb104fc10c886b5c5480a8c",
-    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/lib/python3.12/site-packages",
-    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/venv/bin/talaria",
-    "executable_sha256": "388b4b1b51f9f326109e37fefe57dacd98b99f6ef1b81b7e8c7b98dce7500090",
-    "install_receipt_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/install-receipt.json",
-    "install_receipt_sha256": "87c19c27b6327e95c68d7541bb5f8284cf2356311b8155e3226b929fd4327be4",
-    "installed_files_sha256": "d6fb843165d1f586f74d5fd2a04f8ec44ad3164bb96b08e1a138bd57f8e323a0",
+    "commit": "0f5c8e3e44a43c5956f94ec3ccc348b7cdba1398",
+    "distribution_root": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/lib/python3.12/site-packages",
+    "executable": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-zkue9fc4/venv/bin/talaria",
+    "executable_sha256": "379b44871125aa8f7c3ee008f04772c8231a5ae84b72239407a24d8cb5d1a5ac",
+    "install_receipt_path": "docs/acceptance/v0.5.0/evidence/t1/install-receipt.json",
+    "install_receipt_sha256": "f2bf3b02344930252cc75ca2e00a6656bfb70baa9d600d008233922bde5ad192",
+    "installed_files_sha256": "25c926daf82293cd81f5f92c22df5ac74e76474868f80417c89125fcee4a1eaf",
     "version": "0.5.0",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_sha256": "a165ad24bd2a4baa7d11aec5d5f434e1451fd688661fed1fe8919ca0c65a1afb"
+    "wheel_sha256": "720cc654d06a8075e0dc032289e0c1320b177bc5ee2bcebc1a962f8ea9d76e3b"
   },
   "checklist_item": 35,
   "evidence": {
-    "capture_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/raw/item-35-after-restart.ansi",
-    "capture_sha256": "4730b3054bafc1b9d794736b1d80f96df7b74a542e4bae250e269337b8112956",
-    "pty_result_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/receipts/item-35-after-restart-pty.json",
-    "pty_result_sha256": "0f12193e658c72ce3240dd89804ba13905fc90188962126ec300998bf919f991",
+    "capture_path": "docs/acceptance/v0.5.0/evidence/t1/raw/item-35-after-final2.ansi",
+    "capture_sha256": "cf458eea457181c1c94a583531631ee8ec36c431b0aad7db0dbeb341fd9ef211",
+    "pty_result_path": "docs/acceptance/v0.5.0/evidence/t1/pty-results/item-35-after-final2-pty.json",
+    "pty_result_sha256": "47aa55940d8a9c46c5e33cf712010d9dc614ab89b8931dca01b1bc6f758623d6",
     "redaction_review": "passed",
-    "screenshot_path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-ok03fkr2/screenshots/item-35-after-restart.png",
-    "screenshot_sha256": "5e2627ba973e361e9c3446c8971759da46bd3fa4067fcd2d3fba613f41124e09"
+    "screenshot_path": "docs/acceptance/v0.5.0/evidence/t1/screenshots/item-35-after-final2.png",
+    "screenshot_sha256": "5e216bab414550eff01fbf82bb64802d3a40ee36e4d889b6616229524f0e4c1c"
   },
   "observations": [
-    "Editing the scratch config while the first process ran left its Accessible High Contrast presentation unchanged; only the fresh process loaded Neutral Dark.",
-    "The before-restart capture and screenshot are raw/item-35-before-restart.ansi and screenshots/item-35-before-restart.png."
+    "The running interface stayed Accessible High Contrast after the scratch config changed to Neutral Dark; only a clean restart applied Neutral Dark."
   ],
   "owner": "shared",
-  "recorded_at": "2026-08-31T12:13:39+00:00",
+  "recorded_at": "2026-08-31T20:44:32+00:00",
   "release": "0.5.0",
   "schema_version": "talaria-v0.5.0-receipt-v1",
   "session": {
@@ -38,7 +37,7 @@
       "requested": null,
       "status": "not-applicable"
     },
-    "profile": "deterministic-restart-only-config"
+    "profile": "isolated-restart-only-configuration"
   },
   "terminal": {
     "columns": 132,

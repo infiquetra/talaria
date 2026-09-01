@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/venv/bin/talaria",
+    "theme",
+    "import",
+    "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/fixtures/malformed.json",
+    "--name",
+    "malformed-acceptance"
+  ],
+  "capture": {
+    "bytes": 242,
+    "path": "/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/talaria-v050-talaria-t1-oi_yp0dd/raw/item-31-final2.ansi",
+    "sha256": "1f58db69695be37fa30aad29d7e40b0b4104c40f3fcf6d69e64c7dade61716e4"
+  },
+  "columns": 132,
+  "duration_seconds": 0.148011,
+  "exit_code": 3,
+  "expected_literals": [
+    "is not strict JSON"
+  ],
+  "missing_literals": [],
+  "rows": 36,
+  "schema_version": "talaria-v0.5.0-pty-v1",
+  "term": "xterm-256color",
+  "terminal_program": "Python pty.fork on macOS",
+  "tester": "talaria-t1",
+  "timed_out": false
+}

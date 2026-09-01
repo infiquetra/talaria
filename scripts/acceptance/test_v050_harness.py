@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from scripts.acceptance.v050_common import (
     FALLBACK_MODEL_ROUTE,
@@ -15,14 +17,82 @@ from scripts.acceptance.v050_common import (
     HarnessError,
     isolated_environment,
     probe_installed_artifact,
+    sha256_file,
     validate_config_dir,
     validate_wheel_direct_url,
 )
-from scripts.acceptance.v050_install_probe import _probe_bare_launch, _probe_gate
+from scripts.acceptance.v050_install_probe import (
+    _probe_bare_launch,
+    _probe_gate,
+    write_public_install_receipt,
+)
 from scripts.acceptance.v050_pty_driver import DriveEvent, parse_events, run_pty
-from scripts.acceptance.v050_receipt import validate_receipt
+from scripts.acceptance.v050_receipt import _portable_json, validate_receipt, verify_run
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_TEXTUAL_RESIZE_PROGRAM = r"""
+import os
+
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.events import Resize
+from textual.widgets import Static
+
+from talaria.ui.status_bar import BottomStatusBar, BottomStatusBarView
+
+
+VIEW = BottomStatusBarView(
+    cwd="/workspace/acceptance",
+    git_branch="orch/talaria-v0-5-0",
+    agent_provider="OpenCode",
+    agent_model="Muse Spark 1.2 Contributor",
+    input_tokens=32000,
+    output_tokens=0,
+    context_window=128000,
+    tasks_completed=3,
+    tasks_total=7,
+    attention_count=1,
+    connection="connected",
+    version="0.5.0",
+)
+
+
+class ResizeProbe(App[None]):
+    CSS = '''
+    Screen { layout: vertical; }
+    #body { height: 1fr; }
+    '''
+    BINDINGS = [Binding("ctrl+q", "quit", "Quit")]
+
+    def compose(self) -> ComposeResult:
+        yield Static("real Textual resize probe", id="body")
+        yield BottomStatusBar(VIEW, id="bottom-status")
+
+    def get_theme_variable_defaults(self) -> dict[str, str]:
+        return {
+            "talaria-status-background": "#010203",
+            "talaria-status-text": "#111213",
+            "talaria-status-muted": "#212223",
+            "talaria-status-separator": "#313233",
+            "talaria-status-success": "#41A243",
+            "talaria-status-warning": "#B18223",
+            "talaria-status-error": "#C14243",
+            "talaria-status-attention": "#5182D3",
+        }
+
+    def on_resize(self, event: Resize) -> None:
+        if event.size.width == 19:
+            self.set_timer(0.20, self.report_narrow_form)
+
+    def report_narrow_form(self) -> None:
+        bar = self.query_one("#bottom-status", BottomStatusBar)
+        rendered = bar.render()
+        os.write(1, f"\r\nTEXTUAL-NARROW:{rendered.plain}:{bar.size.width}\r\n".encode())
+
+
+ResizeProbe().run()
+"""
 
 
 def _complete_gate_report(
@@ -85,7 +155,8 @@ raise SystemExit({exit_code})
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
-def test_real_pty_preserves_ansi_keys_and_resize(tmp_path: Path) -> None:
+def test_real_pty_preserves_ansi_keys_and_kernel_resize(tmp_path: Path) -> None:
+    """The low-level probe proves TIOCGWINSZ changes, not Textual reflow."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     environment = isolated_environment(
@@ -124,6 +195,44 @@ def test_real_pty_preserves_ansi_keys_and_resize(tmp_path: Path) -> None:
     assert result.columns == 80
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the acceptance terminal is POSIX-only")
+def test_real_textual_child_observes_pty_resize_and_renders_narrow_form(tmp_path: Path) -> None:
+    """The environment must not hide a real pseudo-terminal resize from Textual."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    environment = isolated_environment(
+        config_dir=config_dir,
+        term="xterm-256color",
+        rows=36,
+        columns=144,
+    )
+    result = run_pty(
+        executable=Path(sys.executable),
+        argv=[sys.executable, "-c", _TEXTUAL_RESIZE_PROGRAM],
+        cwd=_REPO_ROOT,
+        environment=environment,
+        capture_path=tmp_path / "raw" / "textual-resize.ansi",
+        events=[
+            DriveEvent(1.50, "resize", (36, 19)),
+            DriveEvent(3.00, "key", "CTRL_Q"),
+        ],
+        expected_literals=["TEXTUAL-NARROW:[ok]:19"],
+        rows=36,
+        columns=144,
+        term="xterm-256color",
+        terminal_program="real Textual child through the acceptance pseudo-terminal",
+        timeout=5.0,
+    )
+
+    assert result.exit_code == 0
+    assert not result.timed_out
+    assert result.missing_literals == ()
+    assert "COLUMNS" not in environment
+    assert "LINES" not in environment
+    assert result.rows == 36
+    assert result.columns == 19
+
+
 def test_isolated_environment_makes_colour_mode_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -131,6 +240,8 @@ def test_isolated_environment_makes_colour_mode_explicit(
     config_dir.mkdir()
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setenv("FORCE_COLOR", "0")
+    monkeypatch.setenv("COLUMNS", "999")
+    monkeypatch.setenv("LINES", "999")
 
     colour = isolated_environment(
         config_dir=config_dir,
@@ -148,6 +259,8 @@ def test_isolated_environment_makes_colour_mode_explicit(
 
     assert "NO_COLOR" not in colour
     assert "FORCE_COLOR" not in colour
+    assert "COLUMNS" not in colour
+    assert "LINES" not in colour
     assert colour["COLORTERM"] == "truecolor"
     assert monochrome["NO_COLOR"] == "1"
     assert "COLORTERM" not in monochrome
@@ -490,3 +603,297 @@ def test_pending_redaction_review_cannot_pass() -> None:
     }
     errors = validate_receipt(_receipt(route=route, redaction="pending"), verify_files=False)
     assert "a receipt cannot pass before capture and screenshot redaction review" in errors
+
+
+def _primary_receipt() -> dict[str, Any]:
+    return _receipt(
+        route={
+            "requested": PRIMARY_MODEL_ROUTE,
+            "observed": PRIMARY_MODEL_ROUTE,
+            "status": "used",
+            "fallback_reason": None,
+            "fallback_availability": "unavailable",
+        }
+    )
+
+
+def test_receipt_file_verification_accepts_bytes_then_rejects_missing_capture(
+    tmp_path: Path,
+) -> None:
+    capture = tmp_path / "raw" / "item-02.ansi"
+    screenshot = tmp_path / "screenshots" / "item-02.png"
+    capture.parent.mkdir()
+    screenshot.parent.mkdir()
+    capture.write_bytes(b"terminal bytes\x1b[32m")
+    screenshot.write_bytes(b"portable network graphics bytes")
+    receipt = _primary_receipt()
+    evidence = receipt["evidence"]
+    evidence["capture_path"] = str(capture)
+    evidence["capture_sha256"] = sha256_file(capture)
+    evidence["screenshot_path"] = str(screenshot)
+    evidence["screenshot_sha256"] = sha256_file(screenshot)
+
+    assert validate_receipt(receipt, verify_files=True) == []
+    capture.unlink()
+
+    errors = validate_receipt(receipt, verify_files=True)
+    assert any(error.startswith("capture file is missing:") for error in errors)
+
+
+def test_receipt_file_verification_rejects_changed_capture(tmp_path: Path) -> None:
+    capture = tmp_path / "raw" / "item-02.ansi"
+    screenshot = tmp_path / "screenshots" / "item-02.png"
+    capture.parent.mkdir()
+    screenshot.parent.mkdir()
+    capture.write_bytes(b"terminal bytes")
+    screenshot.write_bytes(b"portable network graphics bytes")
+    receipt = _primary_receipt()
+    evidence = receipt["evidence"]
+    evidence["capture_path"] = str(capture)
+    evidence["capture_sha256"] = sha256_file(capture)
+    evidence["screenshot_path"] = str(screenshot)
+    evidence["screenshot_sha256"] = sha256_file(screenshot)
+
+    capture.write_bytes(capture.read_bytes() + b"changed")
+
+    errors = validate_receipt(receipt, verify_files=True)
+    assert any(error.startswith("capture hash does not match its file:") for error in errors)
+
+
+def test_receipt_commit_must_match_the_release_candidate() -> None:
+    receipt = _primary_receipt()
+
+    assert validate_receipt(
+        receipt, verify_files=False, expected_commit="a" * 40
+    ) == []
+    errors = validate_receipt(receipt, verify_files=False, expected_commit="b" * 40)
+
+    assert errors == ["artifact.commit does not match the release candidate"]
+
+
+def test_receipt_rejects_the_current_operator_home_path() -> None:
+    receipt = _primary_receipt()
+    receipt["observations"] = [str(Path.home() / "private-workspace")]
+
+    errors = validate_receipt(receipt, verify_files=False)
+
+    assert "receipt contains the current user's home path" in errors
+
+
+def test_public_install_receipt_scrubs_source_tree_and_operator_home(tmp_path: Path) -> None:
+    receipt = {
+        "schema_version": "talaria-v0.5.0-install-v1",
+        "tester": "talaria-t2",
+        "scratch_root": str(Path.home() / "acceptance"),
+        "candidate": {
+            "commit": "a" * 40,
+            "integration_tree": str(Path.home() / "source"),
+            "wheel_sha256": "b" * 64,
+        },
+    }
+    destination = tmp_path / "install-receipt.json"
+
+    write_public_install_receipt(receipt, destination)
+    public = json.loads(destination.read_text(encoding="utf-8"))
+
+    assert public["candidate"]["integration_tree"] == "<integration-tree>"
+    assert str(Path.home()) not in destination.read_text(encoding="utf-8")
+
+
+def _write_verify_run_fixture(
+    tmp_path: Path,
+    *,
+    manifest_commit: str,
+    receipt_commit: str,
+    include_receipt: bool = True,
+    install_home_path: bool = False,
+) -> tuple[Path, Path]:
+    evidence_root = tmp_path / "docs" / "acceptance" / "v0.5.0" / "evidence"
+    tester_root = evidence_root / "t1"
+    receipt_path = tester_root / "receipts" / "item-02-talaria-t1.json"
+    install_path = tester_root / "install-receipt.json"
+    capture = tester_root / "raw" / "item-02.ansi"
+    screenshot = tester_root / "screenshots" / "item-02.png"
+    capture.parent.mkdir(parents=True)
+    screenshot.parent.mkdir(parents=True)
+    receipt_path.parent.mkdir(parents=True)
+    capture.write_bytes(b"capture")
+    screenshot.write_bytes(b"screenshot")
+    receipt = _primary_receipt()
+    receipt["artifact"]["commit"] = receipt_commit
+    receipt["artifact"]["wheel_sha256"] = "b" * 64
+    receipt["evidence"]["capture_path"] = capture.relative_to(tmp_path).as_posix()
+    receipt["evidence"]["capture_sha256"] = sha256_file(capture)
+    receipt["evidence"]["screenshot_path"] = screenshot.relative_to(tmp_path).as_posix()
+    receipt["evidence"]["screenshot_sha256"] = sha256_file(screenshot)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    install = {
+        "schema_version": "talaria-v0.5.0-install-v1",
+        "tester": "talaria-t1",
+        "candidate": {
+            "commit": manifest_commit,
+            "wheel_sha256": "b" * 64,
+            "integration_tree": (
+                str(Path.home() / "source") if install_home_path else "<integration-tree>"
+            ),
+        },
+    }
+    install_path.write_text(json.dumps(install), encoding="utf-8")
+    receipt_relative = receipt_path.relative_to(tmp_path).as_posix()
+    install_relative = install_path.relative_to(tmp_path).as_posix()
+    manifest = {
+        "status": "blocked",
+        "current_candidate": {
+            "commit": manifest_commit,
+            "wheel_sha256": "b" * 64,
+        },
+        "receipts": (
+            [
+                {
+                    "receipt_path": receipt_relative,
+                    "receipt_sha256": sha256_file(receipt_path),
+                    "checklist_item": 2,
+                    "tester": "talaria-t1",
+                    "verdict": "pass",
+                }
+            ]
+            if include_receipt
+            else []
+        ),
+        "install_receipts": [
+            {
+                "receipt_path": install_relative,
+                "receipt_sha256": sha256_file(install_path),
+            }
+        ],
+    }
+    manifest_path = tmp_path / "artifact-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path, evidence_root
+
+
+def test_verify_run_rejects_null_candidate_while_receipts_exist(tmp_path: Path) -> None:
+    evidence_root = tmp_path / "evidence"
+    receipt_path = evidence_root / "t1" / "receipts" / "item-02.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text("{}", encoding="utf-8")
+    manifest_path = tmp_path / "artifact-manifest.json"
+    manifest_path.write_text(
+        json.dumps({"status": "not-run", "current_candidate": None, "receipts": []}),
+        encoding="utf-8",
+    )
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert errors == ["manifest candidate is null while receipts exist"]
+
+
+def test_verify_run_rejects_receipt_from_another_candidate(tmp_path: Path) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path, manifest_commit="b" * 40, receipt_commit="a" * 40
+    )
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any(
+        error.endswith("artifact.commit does not match the release candidate")
+        for error in errors
+    )
+
+
+def test_verify_run_rejects_receipt_absent_from_manifest(tmp_path: Path) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path,
+        manifest_commit="a" * 40,
+        receipt_commit="a" * 40,
+        include_receipt=False,
+    )
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any(error.startswith("receipt is absent from manifest:") for error in errors)
+
+
+def test_verify_run_rejects_home_path_in_install_receipt(tmp_path: Path) -> None:
+    manifest_path, evidence_root = _write_verify_run_fixture(
+        tmp_path,
+        manifest_commit="a" * 40,
+        receipt_commit="a" * 40,
+        install_home_path=True,
+    )
+
+    errors = verify_run(manifest_path, evidence_root=evidence_root, repo_root=tmp_path)
+
+    assert any("install receipt contains the current user's home path" in error for error in errors)
+
+
+def test_portable_json_makes_repository_paths_relative_and_scrubs_home(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repo"
+    document = {
+        "event_script": str(repository / "docs" / "event.json"),
+        "external_home_path": str(Path.home() / "private" / "capture.json"),
+    }
+
+    portable = _portable_json(document, repo_root=repository)
+
+    assert portable == {
+        "event_script": "docs/event.json",
+        "external_home_path": "<home>/private/capture.json",
+    }
+
+
+def test_acceptance_schemas_validate_current_manifest_and_active_receipts() -> None:
+    acceptance_root = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+    manifest_schema = json.loads(
+        (acceptance_root / "artifact-manifest.schema.json").read_text(encoding="utf-8")
+    )
+    receipt_schema = json.loads(
+        (acceptance_root / "receipt.schema.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator.check_schema(manifest_schema)
+    Draft202012Validator.check_schema(receipt_schema)
+
+    manifest = json.loads(
+        (acceptance_root / "artifact-manifest.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator(manifest_schema).validate(manifest)
+    receipt_paths = sorted((acceptance_root / "evidence").glob("*/receipts/*.json"))
+    assert receipt_paths
+    receipt_validator = Draft202012Validator(receipt_schema)
+    for receipt_path in receipt_paths:
+        receipt_validator.validate(json.loads(receipt_path.read_text(encoding="utf-8")))
+
+
+def test_manifest_schema_rejects_non_not_run_status_without_receipts() -> None:
+    acceptance_root = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+    schema = json.loads(
+        (acceptance_root / "artifact-manifest.schema.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (acceptance_root / "artifact-manifest.json").read_text(encoding="utf-8")
+    )
+    invalid = copy.deepcopy(manifest)
+    invalid["status"] = "blocked"
+    invalid["receipts"] = []
+
+    errors = list(Draft202012Validator(schema).iter_errors(invalid))
+
+    assert any(error.validator == "minItems" for error in errors)
+
+
+def test_manifest_schema_rejects_receipts_when_status_is_not_run() -> None:
+    acceptance_root = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
+    schema = json.loads(
+        (acceptance_root / "artifact-manifest.schema.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (acceptance_root / "artifact-manifest.json").read_text(encoding="utf-8")
+    )
+    invalid = copy.deepcopy(manifest)
+    invalid["status"] = "not-run"
+
+    errors = list(Draft202012Validator(schema).iter_errors(invalid))
+
+    assert any(error.validator == "maxItems" for error in errors)
