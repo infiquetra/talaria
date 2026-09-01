@@ -23,6 +23,11 @@ from talaria.status.runner import StatusTickResult
 from talaria.ui.app import TalariaApp
 from tests.ui.conftest import RecordingDispatcher, event, feed, live_app, settle
 
+INSPECTOR_DISCARD_NOTICE = (
+    "press tab to return to the message box — "
+    "typing is paused while the inspector holds the focus"
+)
+
 
 def _screen_text(app: TalariaApp) -> str:
     # Reuse conftest's screen_text helper inline to avoid import cycle? Use same impl.
@@ -43,6 +48,10 @@ async def _focus_transcript(app: TalariaApp, pilot: Any) -> None:
 
 async def _focus_prompts_container(app: TalariaApp, pilot: Any) -> None:
     app.prompts.focus()
+    await pilot.pause()
+
+async def _focus_inspector(app: TalariaApp, pilot: Any) -> None:
+    app.inspector.focus()
     await pilot.pause()
 
 def _notice(app: TalariaApp) -> str:
@@ -205,6 +214,65 @@ async def test_ae2_prompts_container_printable_shows_notice() -> None:
         assert "prompts" in notice.lower(), "prompts region not named"
         assert app.screen.focused is before_focus
         assert app.composer.text == before_text
+        await app.shutdown_sources()
+
+@pytest.mark.asyncio
+async def test_inspector_printable_shows_exact_discard_notice() -> None:
+    """A printable key in the docked inspector announces the discarded input."""
+    app = live_app(RecordingDispatcher())
+    async with app.run_test(size=(140, 30)) as pilot:
+        await settle(app, pilot)
+        await _focus_inspector(app, pilot)
+        before_focus = app.screen.focused
+        before_text = app.composer.text
+
+        await pilot.press("x")
+        await pilot.pause()
+
+        assert _notice(app) == INSPECTOR_DISCARD_NOTICE
+        assert app.screen.focused is before_focus
+        assert app.composer.text == before_text
+        await app.shutdown_sources()
+
+@pytest.mark.asyncio
+async def test_ctrl_b_overlay_printable_shows_inspector_discard_notice() -> None:
+    """Ctrl+B's automatic narrow-overlay focus receives the same warning."""
+    app = live_app(RecordingDispatcher())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await settle(app, pilot)
+        assert app.screen.focused is app.composer.text_area
+
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+
+        focused = app.screen.focused
+        assert app.inspector.is_overlay
+        assert focused is not None and app.inspector in focused.ancestors_with_self
+
+        await pilot.press("x")
+        await pilot.pause()
+
+        assert _notice(app) == INSPECTOR_DISCARD_NOTICE
+        assert app.composer.text == ""
+        await app.shutdown_sources()
+
+@pytest.mark.asyncio
+async def test_inspector_discard_notice_latch_clears_on_focus_change() -> None:
+    """Leaving the inspector clears its one-notice-per-focus-hold latch."""
+    app = live_app(RecordingDispatcher())
+    async with app.run_test(size=(140, 30)) as pilot:
+        await settle(app, pilot)
+        await _focus_inspector(app, pilot)
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert _notice(app) == INSPECTOR_DISCARD_NOTICE
+        assert app._discard_latch == "inspector"
+
+        app.composer.text_area.focus()
+        await pilot.pause()
+
+        assert app._discard_latch == ""
         await app.shutdown_sources()
 
 @pytest.mark.asyncio
