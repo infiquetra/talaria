@@ -676,22 +676,60 @@ def test_a_replay_launch_still_gets_the_same_configured_thresholds(
 
 
 @pytest.mark.parametrize(
-    ("toml_value", "expected_allowlist"),
+    "toml_value",
     [
-        ("false", ()),
-        ("0", ()),
-        ("0.0", ()),
-        ("[]", ()),
-        ('"FOO"', ("F", "O", "O")),
+        "false",
+        "0",
+        "0.0",
+        "[]",
+        '"FOO"',
+        '""',
+        "42",
+        "true",
+        '{name = "FOO"}',
+        '[["FOO"]]',
+        '["FOO", 42]',
     ],
 )
-def test_falsy_and_string_allowlists_reach_the_status_runner_without_notice(
+def test_non_list_allowlists_fall_back_to_the_empty_default(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    toml_value: str,
+) -> None:
+    """Scalar, mapping, and nested allowlists resolve to the safe default.
+
+    A scalar TOML string must never iterate character by character, and a
+    truthy non-iterable must never raise: both fall back to the empty default
+    with runner behavior identical to an unset allowlist.
+    """
+    (isolated_global_config_dir / "config.toml").write_text(
+        f'[status]\ncommand = "/usr/bin/true"\n'
+        f"[environment]\nallowlist = {toml_value}\n",
+        encoding="utf-8",
+    )
+    cfg = config_module.load_config(cwd=tmp_path)
+
+    runner = cli_module._build_status_runner(cfg)
+
+    assert runner is not None
+    assert runner._allowlist == ()
+    assert cfg.notices == ()
+
+
+@pytest.mark.parametrize(
+    ("toml_value", "expected_allowlist"),
+    [
+        ('["FOO", "BAR"]', ("FOO", "BAR")),
+        ("[]", ()),
+    ],
+)
+def test_list_allowlists_forward_unchanged(
     isolated_global_config_dir: Path,
     tmp_path: Path,
     toml_value: str,
     expected_allowlist: tuple[str, ...],
 ) -> None:
-    """Pin the silent cases that the deferred allowlist debt must describe."""
+    """A well-shaped list allowlist keeps its exact behavior, empty included."""
     (isolated_global_config_dir / "config.toml").write_text(
         f'[status]\ncommand = "/usr/bin/true"\n'
         f"[environment]\nallowlist = {toml_value}\n",
@@ -706,24 +744,21 @@ def test_falsy_and_string_allowlists_reach_the_status_runner_without_notice(
     assert cfg.notices == ()
 
 
-@pytest.mark.parametrize("toml_value", ["42", "true"])
-def test_truthy_non_iterable_allowlists_raise_at_status_runner_construction(
-    isolated_global_config_dir: Path,
-    tmp_path: Path,
-    toml_value: str,
+def test_null_allowlist_override_falls_back_to_the_empty_default(
+    isolated_global_config_dir: Path, tmp_path: Path
 ) -> None:
-    """Pin the raising cases without broadening this repair into validation."""
+    """A null allowlist (reachable via overrides, not TOML) is a safe default."""
     (isolated_global_config_dir / "config.toml").write_text(
-        f'[status]\ncommand = "/usr/bin/true"\n'
-        f"[environment]\nallowlist = {toml_value}\n",
-        encoding="utf-8",
+        '[status]\ncommand = "/usr/bin/true"\n', encoding="utf-8"
     )
-    cfg = config_module.load_config(cwd=tmp_path)
+    cfg = config_module.load_config(
+        cli_overrides={"environment": {"allowlist": None}}, cwd=tmp_path
+    )
 
-    with pytest.raises(TypeError):
-        cli_module._build_status_runner(cfg)
+    runner = cli_module._build_status_runner(cfg)
 
-    assert cfg.notices == ()
+    assert runner is not None
+    assert runner._allowlist == ()
 
 
 def test_the_configured_status_command_reaches_the_live_app(
