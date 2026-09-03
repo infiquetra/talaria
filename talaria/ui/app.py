@@ -32,7 +32,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import time as _wall_clock
@@ -53,6 +53,7 @@ from talaria.config import (
     ConfigError,
     KeyBindings,
     ThemeSaveScope,
+    global_config_dir,
     resolve_keybindings,
     save_theme,
 )
@@ -189,6 +190,14 @@ from talaria.replay.source import REPLAY_EPOCH
 from talaria.status.contract import StatusBarSettings
 from talaria.status.local import capture_local_status
 from talaria.status.runner import StatusRunner, StatusTickResult
+from talaria.themes.marketplace import (
+    MarketplaceError,
+    MarketplaceTransport,
+    UrllibMarketplaceTransport,
+    resolve_marketplace_source,
+    search_marketplace,
+)
+from talaria.themes.sources import load_import_sources
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
 from talaria.transport.compat_check import CompatReport, HealthProbe, probe_seams
@@ -258,6 +267,12 @@ from talaria.ui.status_bar import (
 )
 from talaria.ui.status_region import StatusRegion
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY, DEFAULT_THEME_SLUG, ThemeRegistry
+from talaria.ui.theme_import import (
+    ImportReport,
+    ThemeImportError,
+    import_marketplace_theme,
+    reload_imported_theme,
+)
 from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptAnchor, TranscriptPane
 
 #: KTD14's coalescing boundary. Deltas accumulate in the domain transcript and
@@ -1244,6 +1259,7 @@ class TalariaApp(App[None]):
         theme_config_dir: Path | None = None,
         launch_cwd: Path | None = None,
         keybindings: Mapping[str, Any] | None = None,
+        marketplace_transport: MarketplaceTransport | None = None,
     ) -> None:
         super().__init__()
         #: The resolved inspector/interrupt chords (#120 U1). The class table
@@ -1264,6 +1280,16 @@ class TalariaApp(App[None]):
         self.session_theme_slug: str | None = None
         self.theme_config_dir = theme_config_dir
         self.launch_cwd = launch_cwd if launch_cwd is not None else Path.cwd()
+        self.marketplace_transport: MarketplaceTransport = (
+            marketplace_transport
+            if marketplace_transport is not None
+            else UrllibMarketplaceTransport()
+        )
+        #: Serializes explicit theme Reloads and marketplace fetch-applies so
+        #: two concurrent re-imports cannot interleave one registry rebuild.
+        #: Nothing here watches the filesystem: the lock only orders the
+        #: explicit user actions above.
+        self._theme_apply_lock = asyncio.Lock()
         # One restart-scoped value is injected into every motion-aware widget.
         # It never changes in response to a file edit or session command.
         self.motion = MotionPolicy(reduced=reduced_motion)
@@ -5341,16 +5367,65 @@ class TalariaApp(App[None]):
         self._notice(f"bar: {segment} {state} for this session")
 
     def _perform_theme(self, argument: str) -> None:
-        """Open theme browsing or explicitly persist the current selection."""
+        """Open theme browsing, select, fetch, reload, or explicitly persist."""
         self.composer.clear()
-        words = argument.strip().lower().split()
+        words = argument.strip().split()
         if not words:
             self._spawn_live(self.open_theme_picker())
             return
+        verb = words[0].lower()
+        if verb == "save":
+            self._perform_theme_save(argument)
+            return
+        if verb == "select":
+            self._select_theme(words)
+            return
+        if verb == "search":
+            query = argument.strip()[len(words[0]) :].strip()
+            if not query:
+                self._notice('/theme search needs a query — try /theme search "solar"')
+                return
+            self._spawn_live(self._search_marketplace_themes(query))
+            return
+        if verb == "fetch":
+            rest = argument.strip()[len(words[0]) :].strip()
+            head, marker, tail = rest.partition(" --name ")
+            ref = head.strip()
+            name = tail.strip() or None if marker else None
+            if not ref:
+                self._notice(
+                    "/theme fetch needs a source — "
+                    "try /theme fetch publisher/extension"
+                )
+                return
+            self._spawn_live(self._fetch_marketplace_theme(ref, name))
+            return
+        if verb == "reload":
+            if len(words) > 2:
+                self._notice(
+                    "/theme reload takes one optional theme name — nothing changed"
+                )
+                return
+            self._spawn_live(
+                self._reload_imported_theme(words[1] if len(words) == 2 else None)
+            )
+            return
+        self._notice(
+            f"/theme {argument.strip()!r} is not understood — "
+            "try /theme, /theme select <name>, /theme search <query>, "
+            "/theme fetch <source>, /theme reload [name], /theme save, "
+            "or /theme save repository"
+        )
+
+    def _perform_theme_save(self, argument: str) -> None:
+        """Explicitly persist the current selection; the save-only path."""
+        words = argument.strip().lower().split()
         if words[0] != "save" or len(words) > 2:
             self._notice(
                 f"/theme {argument.strip()!r} is not understood — "
-                "try /theme, /theme save, or /theme save repository"
+                "try /theme, /theme select <name>, /theme search <query>, "
+                "/theme fetch <source>, /theme reload [name], /theme save, "
+                "or /theme save repository"
             )
             return
         scope: ThemeSaveScope = "user"
@@ -5375,6 +5450,163 @@ class TalariaApp(App[None]):
             self._notice(f"theme was not saved — {exc}")
             return
         self._notice(f"saved theme {selected!r} to the {scope} config at {path}")
+
+    def _select_theme(self, words: list[str]) -> None:
+        """Preview one registry theme immediately; persistence stays explicit.
+
+        Invalid names keep the current theme, and a spec that cannot render
+        keeps rendering the old theme — both with a visible notice.
+        """
+        if len(words) != 2:
+            self._notice("/theme select needs one theme name — nothing changed")
+            return
+        slug = words[1]
+        if slug not in self.theme_registry.slugs:
+            self._notice(f"theme {slug!r} is not available — keeping {self.theme!r}")
+            return
+        previous = self.theme
+        try:
+            self.register_theme(self.theme_registry.to_textual_theme(slug))
+            self.theme = slug
+        except Exception as exc:
+            # Restoring a theme that rendered seconds ago cannot fail in a
+            # way the operator can act on; suppress keeps the notice honest.
+            with suppress(Exception):
+                self.theme = previous
+            self._notice(
+                f"theme {slug!r} could not preview ({exc}) — keeping {previous!r}"
+            )
+            return
+        self.session_theme_slug = slug
+        self._notice(
+            f"theme {slug!r} previewing for this session — /theme save to persist"
+        )
+
+    def _theme_config_root(self) -> Path:
+        """Return the configuration directory owning themes and sources."""
+        if self.theme_config_dir is not None:
+            return self.theme_config_dir
+        return global_config_dir()
+
+    async def _search_marketplace_themes(self, query: str) -> None:
+        """List bounded marketplace entries; searching never changes a theme."""
+        try:
+            entries = await asyncio.to_thread(
+                search_marketplace, query, transport=self.marketplace_transport
+            )
+        except (MarketplaceError, ValueError) as exc:
+            self._notice(f"theme search failed: {exc} — keeping {self.theme!r}")
+            return
+        if not entries:
+            self._notice(f"no marketplace themes matched {query!r} — nothing changed")
+            return
+        rows = []
+        for entry in entries:
+            origin = (
+                f"{entry.publisher}/{entry.extension}"
+                if entry.publisher
+                else entry.download_url
+            )
+            rows.append(
+                f"{entry.theme_label} ({origin}) — "
+                f"fetch with /theme fetch {entry.source_id}"
+            )
+        self._notice("marketplace themes:\n" + "\n".join(rows))
+
+    async def _fetch_marketplace_theme(self, ref: str, name: str | None) -> None:
+        """Fetch one marketplace source and preview it live when valid."""
+        async with self._theme_apply_lock:
+            try:
+                entry = await asyncio.to_thread(
+                    resolve_marketplace_source,
+                    ref,
+                    transport=self.marketplace_transport,
+                )
+                report = await asyncio.to_thread(
+                    import_marketplace_theme,
+                    entry,
+                    transport=self.marketplace_transport,
+                    name=name,
+                    config_dir=self._theme_config_root(),
+                )
+            except (MarketplaceError, ThemeImportError, ValueError, OSError) as exc:
+                self._notice(f"theme fetch failed: {exc} — keeping {self.theme!r}")
+                return
+            self._apply_import_report(report, action="fetched")
+
+    async def _reload_imported_theme(self, slug: str | None) -> None:
+        """Re-run the import pipeline for one recorded source; never watched.
+
+        The stored theme is rewritten and the live theme re-resolved only
+        after the fresh source validates fully. Any failure keeps rendering
+        the current theme with a notice — never a partial application, and
+        never a teardown of the live session.
+        """
+        async with self._theme_apply_lock:
+            target = slug or self.session_theme_slug or self.configured_theme_slug
+            if slug is not None and slug not in self.theme_registry.slugs:
+                self._notice(
+                    f"theme {slug!r} is not available — keeping {self.theme!r}"
+                )
+                return
+            sources, _notices = load_import_sources(
+                config_dir=self._theme_config_root()
+            )
+            source = sources.get(target)
+            if source is None:
+                self._notice(
+                    f"theme {target!r} has no recorded import source — "
+                    f"keeping {self.theme!r}"
+                )
+                return
+            try:
+                report = await asyncio.to_thread(
+                    reload_imported_theme,
+                    slug=target,
+                    source=source,
+                    transport=self.marketplace_transport,
+                    config_dir=self._theme_config_root(),
+                )
+            except (
+                MarketplaceError,
+                ThemeImportError,
+                ValueError,
+                OSError,
+            ) as exc:
+                self._notice(f"theme reload failed: {exc} — keeping {self.theme!r}")
+                return
+            self._apply_import_report(report, action="reloaded")
+
+    def _apply_import_report(self, report: ImportReport, *, action: str) -> None:
+        """Swap one validated spec into the live registry and preview it."""
+        slug = report.theme.slug
+        previous = self.theme
+        try:
+            specs = (
+                tuple(
+                    spec
+                    for spec in self.theme_registry.specs
+                    if spec.slug != slug
+                )
+                + (report.theme,)
+            )
+            registry = ThemeRegistry(specs)
+            self.register_theme(registry.to_textual_theme(slug))
+            self.theme_registry = registry
+            self.theme = slug
+        except Exception as exc:
+            with suppress(Exception):
+                self.theme = previous
+            self._notice(
+                f"theme {slug!r} could not apply ({exc}) — keeping {previous!r}"
+            )
+            return
+        self.session_theme_slug = slug
+        self._notice(
+            f"theme {slug!r} {action}: {report.mapped_count} source tokens, "
+            f"{report.fallback_count} fallbacks, "
+            f"{report.unsupported_count} warnings"
+        )
 
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.

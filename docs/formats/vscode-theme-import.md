@@ -134,17 +134,63 @@ has an explicit `severity`, so consumers never infer routing from English text.
 On failure, `schema_version` is `talaria-theme-import-error-v1`. The object
 carries the stable `kind` and a human-readable `message`; the exit status still
 uses the table below. The `kind` vocabulary is `unreadable`, `empty`,
-`malformed`, `wrong-root`, `reserved-slug`, `invalid-slug`, and `unwritable`.
-These seven values distinguish the documented causes even when several share
+`malformed`, `wrong-root`, `reserved-slug`, `invalid-slug`, `unwritable`,
+`unknown-source`, `ambiguous-source`, `network`, and `oversized`.
+These eleven values distinguish the documented causes even when several share
 one exit status.
 
 | Exit status | Meaning |
 |---|---|
 | 0 | Import completed; warnings, if any, are present in the report |
 | 2 | Command-line usage error |
-| 3 | Source file unreadable, empty, malformed, or structurally unsupported |
+| 3 | Source file unreadable, empty, malformed, or structurally unsupported; or marketplace source unknown, ambiguous, unreachable, or oversized |
 | 4 | Requested storage slug invalid or reserved |
 | 5 | Validated theme could not be written |
+
+## Marketplace sources
+
+`talaria theme search QUERY [--limit N] [--json]` lists at most `N` entries (default 10,
+hard bound 25) without downloading anything. Its `--json` listing uses
+`schema_version` `talaria-theme-search-v1` and carries `query`, `count`, and an ordered
+`entries` array of `source_id`, `publisher`, `extension`, `theme_label`, `description`,
+and `download_url` objects.
+
+`talaria theme fetch REF [--name NAME] [--json]` resolves one user-selected reference and
+imports it with no manual download step. `REF` is either a `publisher/extension[/theme]`
+reference — the optional third segment selects one contributed theme by 1-based index or
+exact label — or a direct `http(s)` URL to a raw theme JSON file. The user-selected source
+is accepted as given: there is no additional trust policy. A reference that names nothing
+fails as `unknown-source`; a reference matching several themes without a selector fails as
+`ambiguous-source` and lists the available labels. Only `http(s)` download URLs are
+supported.
+
+Marketplace rules under the same strictness:
+
+1. Fetch is transport only. Fetched bytes enter the same strict bytes entry point as a
+   local file, so every input, resolution, alpha, and report rule above holds identically
+   for both sources: the same bytes parse, and the same bytes fail with the same kind.
+2. Fetched bytes are parsed, never executed, imported, or dynamically loaded as code.
+3. Payloads larger than 262144 bytes are refused as `oversized` before parsing. Registry
+   and transport failures — unreachable hosts, non-200 answers, invalid registry JSON —
+   fail as `network`. A failed or invalid fetch preserves the current theme with a notice
+   and writes nothing.
+4. The storage name is the explicit `--name` when given, else the slugified marketplace
+   theme label (`Solar Flare` becomes `solar-flare`). The payload's own top-level `name`
+   is a display string and never a storage slug. Built-in slugs stay reserved.
+
+## Recorded sources and explicit Reload
+
+Every successful file or marketplace import records its source in
+`<config-dir>/theme-sources.json` (`schema_version` `talaria-theme-sources-v1`), mapping
+each slug to its absolute file path or marketplace reference. `/theme reload [name]`
+re-reads that recorded source through the same strict entry point, rewrites the stored
+theme only after the fresh source validates fully, and applies the re-resolved theme
+live with no restart. Any failure — unreadable file, network error, invalid content —
+keeps rendering the current theme with a notice and leaves the stored file untouched.
+Reloading a theme with no recorded source, or a built-in theme, is a visible no-op.
+
+The source file is never watched after import: an edit changes nothing until an explicit
+reload, and concurrent reloads serialize behind one lock rather than interleaving.
 
 ## Stored user-theme format
 
