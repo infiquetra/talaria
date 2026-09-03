@@ -199,6 +199,12 @@ class CommandCatalog:
     warning: str = ""
     available: bool = True
     failure: str = ""
+    #: The gateway's ``commands`` metadata map, carried as read. U1 (#119)
+    #: established it is a distinct per-command metadata map — not a second
+    #: spelling of ``pairs`` — so it is kept apart from the listing rather
+    #: than merged into it: nothing here is dispatchable, and nothing downstream
+    #: reads it for routing. Only string-valued rows survive the decode.
+    commands_meta: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def gateway_entries(self) -> tuple[CommandEntry, ...]:
@@ -271,6 +277,24 @@ def _category_index(raw: Any) -> dict[str, str]:
     return index
 
 
+def _commands_meta(raw: Any) -> dict[str, str]:
+    """The ``commands`` metadata map as plain strings, or empty when it is not one.
+
+    U1 (#119) established the key carries a per-command metadata map distinct
+    from ``pairs`` — never merged into the listing, never dispatched from. A
+    malformed map (absent, null, wrong-typed, junk rows) degrades to empty
+    rather than raising: this runs at startup under the same R5 discipline as
+    the listing itself.
+    """
+    meta: dict[str, str] = {}
+    if not isinstance(raw, Mapping):
+        return meta
+    for key, value in raw.items():
+        if isinstance(key, str) and key and isinstance(value, str):
+            meta.setdefault(key, value)
+    return meta
+
+
 def decode_catalog(result: Any) -> CommandCatalog:
     """Turn a ``commands.catalog`` reply into a listing Talaria can render.
 
@@ -279,6 +303,9 @@ def decode_catalog(result: Any) -> CommandCatalog:
     same R5 discipline the frame decoder applies, for the same reason: this
     runs at startup and a client that cannot start because a listing was odd is
     worse than one that starts and says the listing was odd.
+
+    The ``commands`` metadata map rides along in :attr:`CommandCatalog.commands_meta`
+    without touching the listing: ``pairs`` stays the only source of rows.
     """
     if not isinstance(result, Mapping):
         return unavailable_catalog(CATALOG_UNAVAILABLE)
@@ -345,6 +372,7 @@ def decode_catalog(result: Any) -> CommandCatalog:
         },
         warning=warning if isinstance(warning, str) else "",
         available=True,
+        commands_meta=_commands_meta(result.get("commands")),
     )
 
 

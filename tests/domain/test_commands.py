@@ -270,6 +270,83 @@ def test_the_gateways_own_warning_is_carried_rather_than_swallowed() -> None:
     assert catalog.warning == "skill discovery unavailable: boom"
 
 
+def test_a_commands_keyed_catalogue_carries_metadata_without_merging_it() -> None:
+    """U1 (#119) established ``commands`` is a metadata map, not pair rows.
+
+    Merging it into the listing would advertise dispatches the gateway never
+    offered (the alias-merge KTD1 forbids); dropping it would unread the
+    gateway's own shape. It rides along untouched while ``pairs`` stays the
+    only source of rows — including a metadata-only name, which must never
+    become an entry.
+    """
+    meta = {"/help": "Show help", "/model": "Pick a model", "/meta-only": "nowhere in pairs"}
+    catalog = decode_catalog(catalog_reply(commands=meta))
+    plain = decode_catalog(catalog_reply())
+
+    assert catalog.available is True
+    assert dict(catalog.commands_meta) == meta
+    assert [entry.name for entry in catalog.entries] == [
+        entry.name for entry in plain.entries
+    ]
+    assert catalog.entry_for("/meta-only") is None
+    assert [entry.name for entry in catalog.gateway_entries] == [
+        entry.name for entry in plain.gateway_entries
+    ]
+
+
+@pytest.mark.parametrize(
+    "commands",
+    [
+        None,
+        "nope",
+        7,
+        ["not", "a", "mapping"],
+        {},
+        {"": "empty key goes nowhere", "/ok": "kept", 7: "non-string key dropped"},
+        {"/null-row": None, "/nested-row": {"description": "x"}, "/ok": "kept"},
+    ],
+)
+def test_a_malformed_commands_map_degrades_rather_than_raising(commands: object) -> None:
+    """Every wrong shape of the metadata map decodes without raising.
+
+    Junk rows never promote to dispatchable entries; string rows still land.
+    """
+    catalog = decode_catalog(catalog_reply(commands=commands, categories="nope"))
+
+    assert catalog.available is True
+    # Junk never reaches the listing under any malformed shape …
+    assert catalog.entry_for("/ok") is None
+    # … and only string rows survive in the metadata.
+    assert all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in catalog.commands_meta.items()
+    )
+    if (
+        isinstance(commands, dict)
+        and isinstance(commands.get("/ok"), str)
+    ):
+        assert catalog.commands_meta["/ok"] == "kept"
+    else:
+        assert "/ok" not in catalog.commands_meta
+
+
+def test_a_commands_map_with_many_rows_decodes_without_a_bound() -> None:
+    """The live map carries over a hundred rows; size alone is not malformation."""
+    meta = {f"/cmd-{index}": f"command {index}" for index in range(5000)}
+    catalog = decode_catalog(catalog_reply(commands=meta))
+
+    assert catalog.available is True
+    assert len(catalog.commands_meta) == 5000
+
+
+def test_a_commands_map_without_pairs_is_still_an_unreadable_catalogue() -> None:
+    """Metadata without a listing is genuinely odd, not a listing by another name."""
+    catalog = decode_catalog({"commands": {"/help": "Show help"}})
+
+    assert catalog.available is False
+    assert catalog.failure
+
+
 def test_an_alias_resolves_through_the_gateways_own_canon_map() -> None:
     catalog = decode_catalog(catalog_reply())
     assert catalog.canonical("/h") == "/help"
