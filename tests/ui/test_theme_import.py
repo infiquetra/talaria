@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
+from textual.color import Color
 
 import talaria.cli
 from talaria.cli import build_parser, main
@@ -1261,6 +1262,72 @@ async def test_theme_reload_reimports_edited_source_without_restart(
         # Reload is safe mid-turn: session state survives the re-resolve.
         assert tuple(entry.text for entry in app.state.transcript) == before_texts
         assert app.session_theme_slug == "solar-flare"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_same_slug_reload_repaints_the_live_screen(
+    tmp_path: Path,
+) -> None:
+    """Stale-paint repair (option b): a same-slug spec swap repaints.
+
+    Assigning the unchanged slug never wakes Textual's theme watcher, so
+    without the explicit repaint the re-registered spec stays invisible even
+    though the registry holds the new values.
+    """
+    config_dir, source = _imported_app_config(tmp_path)
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="solar-flare",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        before = app.screen.styles.background
+
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        payload["colors"]["editor.background"] = "#445566"
+        source.write_text(json.dumps(payload), encoding="utf-8")
+
+        await _submit_theme_command(app, pilot, "/theme reload")
+
+        assert app.theme == "solar-flare"
+        after = app.screen.styles.background
+        assert after != before
+        assert after == Color.parse("#445566")
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_same_slug_reload_without_changes_repaints_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The option-b gate: an identical re-resolve schedules no refresh."""
+    config_dir, _source = _imported_app_config(tmp_path)
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="solar-flare",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        calls: list[str] = []
+        original = app.refresh_css
+
+        def spy(*, animate: bool = True) -> None:
+            calls.append("refresh")
+            original(animate=animate)
+
+        monkeypatch.setattr(app, "refresh_css", spy)
+        await _submit_theme_command(app, pilot, "/theme reload")
+
+        assert app.theme == "solar-flare"
+        assert calls == []
         await app.shutdown_sources()
 
 
