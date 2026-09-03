@@ -7,8 +7,8 @@ gateway request, a filesystem scan, or a polling loop.
 ## Screen layout
 
 The transcript body and optional inspector share the main area. Below them are the composer, the
-one-row help bar, and the one-row bottom status bar. The older multi-row `StatusRegion` remains
-inside the body for configured command output and notices; it is not the bottom bar.
+one-row help bar, and the bottom status bar. The older multi-row `StatusRegion` remains
+inside the body for plain-text command output and notices; it is not the bottom bar.
 
 ## Bottom status bar
 
@@ -33,7 +33,10 @@ region as described in [Configuration](configuration.md).
 
 ### Responsive status bar
 
-The bottom bar is always exactly one row and never wraps. Widths are terminal columns after Textual
+The segment row is always exactly one row and never wraps. A status command emitting a version-2
+document (`docs/formats/status-line.md`) stacks up to 8 script rows above it; with no script rows
+the bar is one row. Every script row clips to the terminal width with a trailing ellipsis, and a
+resize reflows all rows on the next paint. Widths are terminal columns after Textual
 has handled the resize.
 
 | Width | Default result |

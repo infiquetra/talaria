@@ -2374,6 +2374,13 @@ class TalariaApp(App[None]):
         anchor = self._capture_layout_anchor()
         try:
             await self.status_region.apply(result)
+            # The bar owns version-2 script rows; the region keeps the
+            # marker. A tick carrying no script document leaves the bar's
+            # last good render alone — that retention is the fallback.
+            try:
+                self.bottom_status_bar.apply_script_result(result)
+            except NoMatches:  # pragma: no cover - teardown race
+                pass
         finally:
             self._restore_layout_anchor(anchor)
         return result
