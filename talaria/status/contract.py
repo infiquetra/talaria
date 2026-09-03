@@ -116,6 +116,22 @@ FORWARDED_TALARIA_VARS: tuple[str, ...] = (
 #: pattern-filtered — see :func:`_strip_query`.
 GATEWAY_URL_ENV_VAR = "TALARIA_GATEWAY_URL"
 
+#: Provider credential names that never forward, even when the operator names
+#: them on ``environment.allowlist``. ``is_suspicious_key`` does not flag
+#: these vendor-prefixed names — its API-key pattern anchors to the whole
+#: name, so ``OPENAI_API_KEY`` reads as "some vendor's key" rather than a
+#: credential shape — which is exactly why they are enumerated here instead
+#: of relying on pattern coverage. Compared case-insensitively; the names
+#: themselves are the only thing recorded, never any value.
+DENIED_PROVIDER_KEYS: frozenset[str] = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "GITHUB_PAT",
+    }
+)
+
 
 def _strip_query(url: str) -> str:
     """Drop the query string and fragment, keeping scheme/host/path only.
@@ -169,7 +185,10 @@ def build_child_env(
     is asserted against :func:`~talaria.recorder.redact.is_suspicious_key`
     before being forwarded. A ``TALARIA_*`` prefix is not by itself a pass
     (KTD5): the credential-shaped-name deny outranks the enumerated
-    ``TALARIA_*`` set and the operator allowlist both.
+    ``TALARIA_*`` set and the operator allowlist both. The exact provider
+    names in :data:`DENIED_PROVIDER_KEYS` are denied first, by name, because
+    the pattern check does not flag them — deny outranks the allowlist for
+    those names unconditionally.
 
     Value sanitizing happens in :func:`_sanitize`, on the one path every
     forwarded variable takes, rather than in the loop that happens to know about
@@ -182,6 +201,8 @@ def build_child_env(
     child_env: dict[str, str] = {}
 
     def _maybe_forward(name: str, value: str) -> None:
+        if name.upper() in DENIED_PROVIDER_KEYS:
+            return
         if is_suspicious_key(name):
             return
         child_env[name] = _sanitize(name, value)

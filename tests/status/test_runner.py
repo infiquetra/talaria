@@ -20,6 +20,7 @@ from talaria.status.contract import (
     DEFAULT_CWD_MAX_COLUMNS,
     DEFAULT_GIT_BRANCH_MAX_COLUMNS,
     DEFAULT_INTERVAL_SECONDS,
+    DENIED_PROVIDER_KEYS,
     GIT_BRANCH_MAX_COLUMNS_RANGE,
     STATUS_INTERVAL_RANGE,
     ProcessLimits,
@@ -257,5 +258,57 @@ def test_overlap_recovers_on_the_next_tick(tmp_path: Path, sample_payload: Statu
         await runner.tick(sample_payload)
         result = await runner.tick(sample_payload)
         assert result.outcome == "ok"
+
+    asyncio.run(scenario())
+
+
+def test_status_runner_tick_never_forwards_provider_keys(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """U2 through the ``StatusRunner`` tick path (synthetic values only).
+
+    The runner builds the child environment through ``build_child_env``, so
+    the allowlisted provider keys must be absent from what the child actually
+    observes, while a benign allowlisted variable still forwards and the
+    gateway URL still arrives sanitized.
+    """
+    script = (
+        "import json, os, sys\n"
+        "json.load(sys.stdin)\n"
+        "for name in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', "
+        "'AWS_ACCESS_KEY_ID', 'GITHUB_PAT', 'MY_STATUS_OK', "
+        "'TALARIA_GATEWAY_URL'):\n"
+        "    print(name + '=' + os.environ.get(name, '<absent>'))\n"
+    )
+
+    async def scenario() -> None:
+        parent_env = {
+            "PATH": "/usr/bin:/bin",
+            "OPENAI_API_KEY": "synthetic-openai-test-key",
+            "ANTHROPIC_API_KEY": "synthetic-anthropic-test-key",
+            "AWS_ACCESS_KEY_ID": "synthetic-aws-test-key",
+            "GITHUB_PAT": "synthetic-github-test-pat",
+            "MY_STATUS_OK": "staging",
+            "TALARIA_GATEWAY_URL": (
+                "ws://127.0.0.1:9119/api/ws?token=synthetic-test-token"
+            ),
+        }
+        runner = StatusRunner(
+            argv=python_argv(script),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(),
+            allowlist=tuple(DENIED_PROVIDER_KEYS) + ("MY_STATUS_OK",),
+            parent_env=parent_env,
+        )
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        forwarded: dict[str, str] = {}
+        for row in result.rows:
+            name, _, value = row.partition("=")
+            forwarded[name] = value
+        for name in DENIED_PROVIDER_KEYS:
+            assert forwarded[name] == "<absent>"
+        assert forwarded["MY_STATUS_OK"] == "staging"
+        assert forwarded["TALARIA_GATEWAY_URL"] == "ws://127.0.0.1:9119/api/ws"
 
     asyncio.run(scenario())

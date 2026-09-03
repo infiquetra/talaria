@@ -300,11 +300,22 @@ def _build_status_runner(cfg: config_module.Config) -> StatusRunner | None:
     argv, _notice = parse_command(cfg.get("status", "command"))
     if argv is None:
         return None
-    allowlist = cfg.get("environment", "allowlist", default=[]) or []
+    raw_allowlist = cfg.get("environment", "allowlist", default=[])
+    if isinstance(raw_allowlist, (list, tuple)) and all(
+        isinstance(name, str) for name in raw_allowlist
+    ):
+        allowlist = tuple(raw_allowlist)
+    else:
+        # A scalar TOML string would otherwise iterate character by character
+        # (``"FOO"`` -> ``("F", "O", "O")``), and a truthy non-iterable raised
+        # ``TypeError`` here. Either outcome is a launch-path crash or a
+        # silently wrong child environment, so any non-list shape — scalars,
+        # mappings, nested lists — falls back to the empty default instead.
+        allowlist = ()
     return StatusRunner(
         argv=argv,
         launch_cwd=Path.cwd(),
-        allowlist=tuple(str(name) for name in allowlist),
+        allowlist=allowlist,
     )
 
 
