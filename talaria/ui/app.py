@@ -88,9 +88,9 @@ from talaria.domain.compat import (
     ProbeTrigger,
     SeamBoard,
     apply_probe_round,
-    board_lines,
     empty_board,
     seam_probe_due,
+    split_seam_lines,
 )
 from talaria.domain.composer_history import ComposerHistory
 from talaria.domain.composer_history import push as history_push
@@ -1405,6 +1405,11 @@ class TalariaApp(App[None]):
         #: load-bearing: ``None`` is what keeps the render tick from putting four
         #: never-observed rows on screen in replay, where no probe runs at all.
         self._seam_lines: tuple[str, ...] | None = None
+        #: The diagnostics lines currently in the inspector, or ``None`` before
+        #: the first move. Tracked beside :attr:`_seam_lines` because the two
+        #: surfaces paint from one split and either half can move without the
+        #: other when a failed move falls back to leaving rows visible.
+        self._inspector_diag_lines: tuple[str, ...] | None = None
         #: How many ``paste.collapse`` round trips are outstanding. Non-zero
         #: means the composer still holds a literal body that is about to be
         #: replaced, so Enter must not put it into the turn.
@@ -4498,7 +4503,14 @@ class TalariaApp(App[None]):
         return report
 
     async def _render_seams(self) -> None:
-        """Push the seam board onto the status region, ages and all.
+        """Push the seam board onto the inspector and the status region (#122).
+
+        One board snapshot feeds both surfaces through
+        :func:`~talaria.domain.compat.split_seam_lines`: the inspector holds
+        every seam row, and the region keeps only the actionable subset, so a
+        clean board leaves the region empty and a failing seam stays visible
+        there. Classifying once from one snapshot is what keeps a failure
+        arriving mid-move from racing the alert path.
 
         The clock is ``state.last_observed_at`` — the frame clock, never a wall
         clock read at render time — so a replayed recording renders the same
@@ -4510,21 +4522,44 @@ class TalariaApp(App[None]):
 
         Nothing repaints when the text has not moved, which is what lets the
         render tick call this at its own frequency — see :meth:`_refresh_seam_ages`
-        for why it must.
+        for why it must. A move the inspector cannot take leaves the rows in
+        the region rather than dropping them.
         """
-        lines = board_lines(self.seams, self.state.last_observed_at)
-        if lines == self._seam_lines:
+        region_lines, inspector_lines = split_seam_lines(
+            self.seams, self.state.last_observed_at
+        )
+        if (
+            region_lines == self._seam_lines
+            and inspector_lines == self._inspector_diag_lines
+        ):
             return
         try:
             region = self.status_region
         except NoMatches:  # pragma: no cover - teardown race
             return
-        self._seam_lines = lines
         anchor = self._capture_layout_anchor()
         try:
-            await region.apply_seams(lines)
+            moved = await self._render_inspector_diagnostics(inspector_lines)
+            shown = region_lines if moved else inspector_lines
+            await region.apply_seams(shown)
         finally:
             self._restore_layout_anchor(anchor)
+        self._seam_lines = shown
+        if moved:
+            self._inspector_diag_lines = inspector_lines
+
+    async def _render_inspector_diagnostics(self, lines: tuple[str, ...]) -> bool:
+        """Move one board snapshot's rows into the inspector (#122).
+
+        False when the inspector is gone — the teardown race :meth:`_render_seams`
+        already guards for the region — so the caller can leave the rows where
+        they stay visible instead.
+        """
+        try:
+            inspector = self.inspector
+        except NoMatches:  # pragma: no cover - teardown race
+            return False
+        return await inspector.apply_diagnostics(lines)
 
     async def _refresh_seam_ages(self) -> None:
         """Let a painted seam line grow older on screen.
