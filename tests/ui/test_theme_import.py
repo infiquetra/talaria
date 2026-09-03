@@ -3,19 +3,32 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
+import threading
 from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
-from talaria.cli import build_parser
+import talaria.cli
+from talaria.cli import build_parser, main
 from talaria.config import load_config
 from talaria.themes import THEME_TOKENS
 from talaria.themes.builtins import BUILTIN_THEMES
+from talaria.themes.marketplace import (
+    MAX_MARKETPLACE_BYTES,
+    MarketplaceEntry,
+    MarketplaceError,
+    fetch_marketplace_bytes,
+    resolve_marketplace_source,
+    search_marketplace,
+    slugify_theme_label,
+)
+from talaria.themes.sources import load_import_sources
 from talaria.themes.storage import StoredThemeError, load_user_theme_spec
 from talaria.ui.theme import serialize_user_theme, theme_registry_for_config
 from talaria.ui.theme_import import (
@@ -23,9 +36,14 @@ from talaria.ui.theme_import import (
     SYNTAX_MAPPINGS,
     WORKBENCH_MAPPINGS,
     ThemeImportError,
+    import_marketplace_theme,
     import_vscode_theme,
+    prepare_marketplace_import,
     prepare_vscode_theme_import,
+    prepare_vscode_theme_import_bytes,
+    reload_imported_theme,
 )
+from tests.ui.conftest import event, paused_app, screen_text
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "vscode-themes"
 SAMPLE = FIXTURES / "sample-dark.json"
@@ -624,3 +642,769 @@ def test_import_never_reads_an_include_path(tmp_path: Path) -> None:
     assert report.unsupported_entries == (
         "root.include is unsupported; external theme files are not read",
     )
+
+
+# ── issue #124: marketplace import and live reload ────────────────────────
+
+SAMPLE_BYTES = SAMPLE.read_bytes()
+
+
+def _marketplace_entry(
+    *,
+    source_id: str = "acme/solar/1",
+    publisher: str = "acme",
+    extension: str = "solar",
+    theme_label: str = "Solar Flare",
+    description: str = "A synthetic marketplace theme",
+    download_url: str = "https://example.invalid/themes/solar-flare.json",
+) -> MarketplaceEntry:
+    return MarketplaceEntry(
+        source_id=source_id,
+        publisher=publisher,
+        extension=extension,
+        theme_label=theme_label,
+        description=description,
+        download_url=download_url,
+    )
+
+
+class _FakeMarketplaceTransport:
+    """In-memory marketplace double: no network, no manual download step."""
+
+    def __init__(
+        self,
+        entries: tuple[MarketplaceEntry, ...] = (),
+        files: dict[str, bytes] | None = None,
+    ) -> None:
+        self._entries = tuple(entries)
+        self._files = dict(files or {})
+        self.search_calls: list[tuple[str, int]] = []
+        self.lookup_calls: list[tuple[str, str]] = []
+        self.fetch_calls: list[str] = []
+        self.search_error: Exception | None = None
+        self.fetch_error: Exception | None = None
+        self.fetch_gate: threading.Event | None = None
+        self._guard = threading.Lock()
+        self._active = 0
+        self.max_active = 0
+
+    def search(
+        self, query: str, *, limit: int
+    ) -> tuple[MarketplaceEntry, ...]:
+        self.search_calls.append((query, limit))
+        if self.search_error is not None:
+            raise self.search_error
+        lowered = query.strip().lower()
+        matched = tuple(
+            entry
+            for entry in self._entries
+            if lowered
+            in f"{entry.theme_label} {entry.publisher} "
+            f"{entry.extension} {entry.description}".lower()
+        )
+        return matched[:limit]
+
+    def lookup(
+        self, publisher: str, extension: str
+    ) -> tuple[MarketplaceEntry, ...]:
+        self.lookup_calls.append((publisher, extension))
+        return tuple(
+            entry
+            for entry in self._entries
+            if entry.publisher == publisher and entry.extension == extension
+        )
+
+    def fetch_bytes(self, entry: MarketplaceEntry) -> bytes:
+        self.fetch_calls.append(entry.source_id)
+        if self.fetch_gate is not None:
+            with self._guard:
+                self._active += 1
+                self.max_active = max(self.max_active, self._active)
+            try:
+                assert self.fetch_gate.wait(timeout=10)
+            finally:
+                with self._guard:
+                    self._active -= 1
+        if self.fetch_error is not None:
+            raise self.fetch_error
+        return self._files[entry.source_id]
+
+
+def _solar_transport() -> _FakeMarketplaceTransport:
+    entry = _marketplace_entry()
+    return _FakeMarketplaceTransport(
+        entries=(entry,), files={entry.source_id: SAMPLE_BYTES}
+    )
+
+
+def test_marketplace_bytes_parse_identically_to_the_same_file_on_disk(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    entry = _marketplace_entry()
+
+    from_bytes = prepare_marketplace_import(
+        SAMPLE_BYTES, entry, name="solar-flare", config_dir=config_dir
+    )
+    from_disk = prepare_vscode_theme_import(
+        SAMPLE, name="solar-flare", config_dir=config_dir
+    )
+
+    assert from_bytes.mapped_values == from_disk.mapped_values
+    assert from_bytes.fallback_tokens == from_disk.fallback_tokens
+    assert from_bytes.unsupported_entries == from_disk.unsupported_entries
+    assert dict(from_bytes.theme.tokens) == dict(from_disk.theme.tokens)
+    assert from_bytes.theme.dark is from_disk.theme.dark
+    assert from_bytes.target_path == from_disk.target_path
+    assert not config_dir.exists(), "preparing either report changed the filesystem"
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        (b"{oops", "is not strict JSON"),
+        (b"   ", "is empty"),
+        (b"[1, 2]", "root must be a JSON object"),
+        (b'{"colors": {"editor.background": "#12"}}', "no usable supported"),
+    ],
+)
+def test_marketplace_bytes_fail_with_file_identical_strictness(
+    tmp_path: Path, data: bytes, message: str
+) -> None:
+    entry = _marketplace_entry()
+
+    with pytest.raises(ThemeImportError, match=re.escape(message)) as from_bytes:
+        prepare_marketplace_import(data, entry, config_dir=tmp_path / "config")
+
+    disk_source = tmp_path / "same-bytes.json"
+    disk_source.write_bytes(data)
+    with pytest.raises(ThemeImportError, match=re.escape(message)) as from_disk:
+        prepare_vscode_theme_import(disk_source, name="same-bytes")
+
+    assert from_bytes.value.kind == from_disk.value.kind
+
+
+def test_marketplace_search_select_fetch_round_trip_without_manual_download(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    transport = _solar_transport()
+
+    found = search_marketplace("solar", transport=transport)
+    assert [entry.source_id for entry in found] == ["acme/solar/1"]
+
+    selected = resolve_marketplace_source("acme/solar", transport=transport)
+    assert selected.source_id == "acme/solar/1"
+
+    fetched = fetch_marketplace_bytes(selected, transport=transport)
+    assert fetched == SAMPLE_BYTES
+
+    report = import_marketplace_theme(
+        selected, transport=transport, name="solar-flare", config_dir=config_dir
+    )
+
+    assert report.target_path == config_dir / "themes" / "solar-flare.json"
+    assert report.target_path.is_file()
+    # No manual download step: the only new files are the stored theme and
+    # its recorded source; nothing was staged by hand.
+    assert sorted(
+        path.relative_to(config_dir).as_posix()
+        for path in config_dir.rglob("*")
+        if path.is_file()
+    ) == ["theme-sources.json", "themes/solar-flare.json"]
+    sources, notices = load_import_sources(config_dir=config_dir)
+    assert notices == ()
+    assert sources["solar-flare"].kind == "marketplace"
+    assert sources["solar-flare"].ref == "acme/solar/1"
+
+
+def test_marketplace_reference_forms_resolve_or_reject() -> None:
+    first = _marketplace_entry()
+    second = _marketplace_entry(
+        source_id="acme/solar/2",
+        theme_label="Solar Ember",
+        download_url="https://example.invalid/themes/solar-ember.json",
+    )
+    transport = _FakeMarketplaceTransport(entries=(first, second))
+
+    assert (
+        resolve_marketplace_source("acme/solar/2", transport=transport).theme_label
+        == "Solar Ember"
+    )
+    assert (
+        resolve_marketplace_source(
+            "acme/solar/Solar Ember", transport=transport
+        ).theme_label
+        == "Solar Ember"
+    )
+    direct = resolve_marketplace_source(
+        "https://example.invalid/themes/solar-flare.json", transport=transport
+    )
+    assert direct.download_url == "https://example.invalid/themes/solar-flare.json"
+
+    with pytest.raises(MarketplaceError) as unknown:
+        resolve_marketplace_source("nope/nothing", transport=transport)
+    assert unknown.value.kind == "unknown-source"
+
+    with pytest.raises(MarketplaceError) as ambiguous:
+        resolve_marketplace_source("acme/solar", transport=transport)
+    assert ambiguous.value.kind == "ambiguous-source"
+    assert "Solar Flare" in str(ambiguous.value)
+
+    with pytest.raises(MarketplaceError) as bad_scheme:
+        resolve_marketplace_source("ftp://example.invalid/theme.json", transport=transport)
+    assert bad_scheme.value.kind == "unknown-source"
+
+
+def test_marketplace_network_oversize_and_malformed_rejections_carry_kinds(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    network = _solar_transport()
+    network.fetch_error = MarketplaceError("dial refused", kind="network")
+    entry = _marketplace_entry()
+
+    with pytest.raises(MarketplaceError) as network_error:
+        fetch_marketplace_bytes(entry, transport=network)
+    assert network_error.value.kind == "network"
+
+    oversized = _FakeMarketplaceTransport(
+        entries=(entry,),
+        files={entry.source_id: b"x" * (MAX_MARKETPLACE_BYTES + 1)},
+    )
+    with pytest.raises(MarketplaceError) as oversize_error:
+        import_marketplace_theme(entry, transport=oversized, config_dir=config_dir)
+    assert oversize_error.value.kind == "oversized"
+    assert not config_dir.exists(), "an oversized payload wrote before parsing"
+
+    malformed = _FakeMarketplaceTransport(
+        entries=(entry,), files={entry.source_id: b"{oops"}
+    )
+    with pytest.raises(ThemeImportError) as malformed_error:
+        import_marketplace_theme(entry, transport=malformed, config_dir=config_dir)
+    assert malformed_error.value.kind == "malformed"
+    assert not config_dir.exists(), "a malformed payload wrote before parsing"
+
+
+def test_marketplace_bytes_are_parsed_never_executed() -> None:
+    for module in (
+        "talaria/themes/marketplace.py",
+        "talaria/ui/theme_import.py",
+    ):
+        source = (REPO_ROOT / module).read_text(encoding="utf-8")
+        assert "importlib" not in source
+        assert "__import__" not in source
+        assert re.search(r"(?<![\w.])exec\s*\(", source) is None
+        assert re.search(r"(?<![\w.])eval\s*\(", source) is None
+        for match in re.finditer(r"compile\s*\(", source):
+            start = max(0, source.rfind("\n", 0, match.start()))
+            assert "re.compile" in source[start : match.end()]
+
+
+def test_bytes_entry_point_derives_a_stem_from_its_label(
+    tmp_path: Path,
+) -> None:
+    payload = dict(json.loads(SAMPLE_BYTES))
+    del payload["name"]
+
+    report = prepare_vscode_theme_import_bytes(
+        json.dumps(payload).encode("utf-8"),
+        source_label="https://example.invalid/Solar Flare.json",
+        config_dir=tmp_path / "config",
+    )
+
+    assert report.target_name == "solar-flare"
+    assert report.theme.tokens["talaria.canvas"] == "#102030"
+
+
+def test_slugify_theme_label_derives_storage_stems() -> None:
+    assert slugify_theme_label("Solar Flare") == "solar-flare"
+    assert slugify_theme_label("  Dark Modern  ") == "dark-modern"
+    assert slugify_theme_label("One_Dark.Pro") == "one-dark-pro"
+    assert slugify_theme_label("!!!") == ""
+
+
+def _patch_marketplace_transport(
+    monkeypatch: pytest.MonkeyPatch, transport: _FakeMarketplaceTransport
+) -> None:
+    monkeypatch.setattr(
+        talaria.cli, "_default_marketplace_transport", lambda: transport
+    )
+
+
+def test_cli_search_lists_bounded_entries_as_prose_and_json(
+    isolated_global_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    del isolated_global_config_dir
+    first = _marketplace_entry()
+    second = _marketplace_entry(
+        source_id="acme/solar/2",
+        theme_label="Solar Ember",
+        download_url="https://example.invalid/themes/solar-ember.json",
+    )
+    transport = _FakeMarketplaceTransport(entries=(first, second))
+    _patch_marketplace_transport(monkeypatch, transport)
+
+    assert main(["theme", "search", "solar", "--limit", "999"]) == 0
+    prose = capsys.readouterr().out
+    assert "Solar Flare" in prose
+    assert "Solar Ember" in prose
+    assert "acme/solar/1" in prose
+    # The page is bounded even when the operator asks for more.
+    assert transport.search_calls == [("solar", 25)]
+
+    assert main(["theme", "search", "solar", "--json"]) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["schema_version"] == "talaria-theme-search-v1"
+    assert document["query"] == "solar"
+    assert document["count"] == 2
+    assert [entry["source_id"] for entry in document["entries"]] == [
+        "acme/solar/1",
+        "acme/solar/2",
+    ]
+
+
+def test_cli_fetch_imports_without_manual_download(
+    isolated_global_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_marketplace_transport(monkeypatch, _solar_transport())
+
+    assert main(["theme", "fetch", "acme/solar", "--name", "solar-flare"]) == 0
+    prose = capsys.readouterr().out
+    assert "Imported solar-flare as user theme solar-flare" in prose
+
+    stored = isolated_global_config_dir / "themes" / "solar-flare.json"
+    assert stored.is_file()
+    sources, _notices = load_import_sources(
+        config_dir=isolated_global_config_dir
+    )
+    assert sources["solar-flare"].ref == "acme/solar/1"
+
+
+def test_cli_fetch_unknown_source_exits_three_and_writes_nothing(
+    isolated_global_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_marketplace_transport(monkeypatch, _solar_transport())
+
+    assert main(["theme", "fetch", "nope/nothing", "--json"]) == 3
+    document = json.loads(capsys.readouterr().out)
+    assert document["schema_version"] == "talaria-theme-import-error-v1"
+    assert document["kind"] == "unknown-source"
+    assert not (isolated_global_config_dir / "themes").exists()
+
+
+def test_cli_search_and_fetch_synopses_cover_every_parser_option() -> None:
+    theme_parser = _subparser(build_parser(), "theme")
+    guide = THEMES_GUIDE.read_text(encoding="utf-8")
+    for operation, command in (("search", "QUERY"), ("fetch", "REF")):
+        operation_parser = _subparser(theme_parser, operation)
+        expected_options = {
+            option
+            for action in operation_parser._actions  # noqa: SLF001 - no public accessor
+            if action.dest != "help"
+            for option in action.option_strings
+        }
+        match = re.search(
+            rf"(?m)^talaria theme {operation} {command}[^\n]*$", guide
+        )
+        assert match is not None, operation
+        assert expected_options
+        assert all(option in match.group(0) for option in expected_options)
+
+
+def test_file_import_records_its_source_for_reload(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    source = tmp_path / "solar.json"
+    source.write_bytes(SAMPLE_BYTES)
+
+    report = import_vscode_theme(source, name="solar-flare", config_dir=config_dir)
+
+    sources, notices = load_import_sources(config_dir=config_dir)
+    assert notices == ()
+    assert sources["solar-flare"].kind == "file"
+    assert sources["solar-flare"].ref == str(source.absolute())
+    assert report.target_path.is_file()
+
+
+def test_reload_reimports_edited_file_source_without_restart(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    source = tmp_path / "solar.json"
+    source.write_bytes(SAMPLE_BYTES)
+    report = import_vscode_theme(source, name="solar-flare", config_dir=config_dir)
+    assert report.theme.tokens["talaria.canvas"] == "#102030"
+
+    payload = json.loads(SAMPLE_BYTES)
+    payload["colors"]["editor.background"] = "#112233"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    sources, _notices = load_import_sources(config_dir=config_dir)
+    reread = reload_imported_theme(
+        slug="solar-flare",
+        source=sources["solar-flare"],
+        config_dir=config_dir,
+    )
+
+    assert reread.theme.tokens["talaria.canvas"] == "#112233"
+    stored = json.loads(reread.target_path.read_text(encoding="utf-8"))
+    assert stored["tokens"]["talaria.canvas"] == "#112233"
+
+
+def test_reload_of_now_invalid_source_preserves_the_stored_file(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    source = tmp_path / "solar.json"
+    source.write_bytes(SAMPLE_BYTES)
+    report = import_vscode_theme(source, name="solar-flare", config_dir=config_dir)
+    before = report.target_path.read_bytes()
+
+    source.write_text("{oops", encoding="utf-8")
+    sources, _notices = load_import_sources(config_dir=config_dir)
+    with pytest.raises(ThemeImportError, match="not strict JSON"):
+        reload_imported_theme(
+            slug="solar-flare",
+            source=sources["solar-flare"],
+            config_dir=config_dir,
+        )
+
+    assert report.target_path.read_bytes() == before
+
+
+def test_reload_of_missing_source_file_preserves_the_stored_file(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    source = tmp_path / "solar.json"
+    source.write_bytes(SAMPLE_BYTES)
+    report = import_vscode_theme(source, name="solar-flare", config_dir=config_dir)
+    before = report.target_path.read_bytes()
+    source.unlink()
+
+    sources, _notices = load_import_sources(config_dir=config_dir)
+    with pytest.raises(ThemeImportError, match="could not be read"):
+        reload_imported_theme(
+            slug="solar-flare",
+            source=sources["solar-flare"],
+            config_dir=config_dir,
+        )
+
+    assert report.target_path.read_bytes() == before
+
+
+def test_reload_of_edited_marketplace_source_without_restart(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(
+        entries=(entry,), files={entry.source_id: SAMPLE_BYTES}
+    )
+    report = import_marketplace_theme(
+        entry, transport=transport, name="solar-flare", config_dir=config_dir
+    )
+    assert report.theme.tokens["talaria.canvas"] == "#102030"
+
+    payload = json.loads(SAMPLE_BYTES)
+    payload["colors"]["editor.background"] = "#445566"
+    transport._files[entry.source_id] = json.dumps(payload).encode("utf-8")
+
+    sources, _notices = load_import_sources(config_dir=config_dir)
+    reread = reload_imported_theme(
+        slug="solar-flare",
+        source=sources["solar-flare"],
+        transport=transport,
+        config_dir=config_dir,
+    )
+
+    assert reread.theme.tokens["talaria.canvas"] == "#445566"
+
+
+async def _submit_theme_command(app: object, pilot: object, text: str) -> None:
+    app.composer.text = text  # type: ignore[attr-defined]
+    app.composer.text_area.focus()  # type: ignore[attr-defined]
+    await pilot.press("enter")  # type: ignore[attr-defined]
+    await app.settle_live()  # type: ignore[attr-defined]
+    await pilot.pause()  # type: ignore[attr-defined]
+
+
+def _imported_app_config(
+    tmp_path: Path, *, edited_canvas: str | None = None
+) -> tuple[Path, Path]:
+    """Stage one file-sourced theme and return (config_dir, source)."""
+    config_dir = tmp_path / "config"
+    source = tmp_path / "solar.json"
+    payload = json.loads(SAMPLE_BYTES)
+    if edited_canvas is not None:
+        payload["colors"]["editor.background"] = edited_canvas
+    source.write_text(json.dumps(payload), encoding="utf-8")
+    import_vscode_theme(source, name="solar-flare", config_dir=config_dir)
+    return config_dir, source
+
+
+@pytest.mark.asyncio
+async def test_theme_fetch_failure_preserves_current_theme_with_notice(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    transport = _solar_transport()
+    transport.fetch_error = MarketplaceError("dial refused", kind="network")
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+        marketplace_transport=transport,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _submit_theme_command(app, pilot, "/theme fetch acme/solar")
+        assert app.theme == "refined-default"
+        assert app.session_theme_slug is None
+        rendered = screen_text(app)
+        assert "theme fetch failed" in rendered
+        assert "keeping 'refined-default'" in rendered
+        assert not config_dir.exists(), "a failed fetch wrote user config"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_fetch_unknown_and_oversize_sources_preserve_theme(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(
+        entries=(entry,),
+        files={entry.source_id: b"x" * (MAX_MARKETPLACE_BYTES + 1)},
+    )
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+        marketplace_transport=transport,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _submit_theme_command(app, pilot, "/theme fetch nope/nothing")
+        assert app.theme == "refined-default"
+        assert "is unknown" in screen_text(app)
+
+        await _submit_theme_command(app, pilot, "/theme fetch acme/solar/1")
+        assert app.theme == "refined-default"
+        # The composer notice clips on screen; its full text names the bound.
+        assert "past the" in app.composer.notice
+        assert "byte bound" in app.composer.notice
+        assert "keeping 'refined-default'" in app.composer.notice
+        assert not (config_dir / "themes").exists()
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_fetch_applies_valid_theme_live_without_persisting(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    transport = _solar_transport()
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+        marketplace_transport=transport,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _submit_theme_command(
+            app, pilot, "/theme fetch acme/solar --name solar-flare"
+        )
+        assert app.theme == "solar-flare"
+        assert app.session_theme_slug == "solar-flare"
+        resolved = app.theme_registry.resolve("solar-flare")
+        assert resolved.tokens["talaria.canvas"] == "#102030"
+        assert "fetched" in screen_text(app)
+        assert not (config_dir / "config.toml").exists(), (
+            "fetching previewed without an explicit save"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_reload_reimports_edited_source_without_restart(
+    tmp_path: Path,
+) -> None:
+    config_dir, source = _imported_app_config(tmp_path)
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="solar-flare",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+    before_texts = tuple(entry.text for entry in app.state.transcript)
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert app.theme == "solar-flare"
+
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        payload["colors"]["editor.background"] = "#112233"
+        source.write_text(json.dumps(payload), encoding="utf-8")
+
+        await _submit_theme_command(app, pilot, "/theme reload")
+
+        assert app.theme == "solar-flare"
+        resolved = app.theme_registry.resolve("solar-flare")
+        assert resolved.tokens["talaria.canvas"] == "#112233"
+        assert "reloaded" in screen_text(app)
+        # Reload is safe mid-turn: session state survives the re-resolve.
+        assert tuple(entry.text for entry in app.state.transcript) == before_texts
+        assert app.session_theme_slug == "solar-flare"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_reload_of_invalid_source_preserves_theme_and_file(
+    tmp_path: Path,
+) -> None:
+    config_dir, source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
+    before = stored.read_bytes()
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="solar-flare",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        source.write_text("{oops", encoding="utf-8")
+        await _submit_theme_command(app, pilot, "/theme reload solar-flare")
+
+        assert app.theme == "solar-flare"
+        assert stored.read_bytes() == before
+        assert app.theme_registry.resolve("solar-flare").tokens[
+            "talaria.canvas"
+        ] == "#102030"
+        rendered = screen_text(app)
+        assert "theme reload failed" in rendered
+        assert "keeping 'solar-flare'" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_reload_without_recorded_source_preserves_theme(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _submit_theme_command(app, pilot, "/theme reload")
+
+        assert app.theme == "refined-default"
+        assert "no recorded import source" in screen_text(app)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_edited_source_without_reload_changes_nothing_live(
+    tmp_path: Path,
+) -> None:
+    """Without an explicit Reload, an edited source file changes nothing."""
+    config_dir, source = _imported_app_config(tmp_path)
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="solar-flare",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        payload["colors"]["editor.background"] = "#112233"
+        source.write_text(json.dumps(payload), encoding="utf-8")
+
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "solar-flare"
+        assert app.theme_registry.resolve("solar-flare").tokens[
+            "talaria.canvas"
+        ] == "#102030"
+        await app.shutdown_sources()
+
+
+def test_theme_reload_registers_no_filesystem_watcher() -> None:
+    for module in (
+        "talaria/themes/marketplace.py",
+        "talaria/themes/sources.py",
+        "talaria/ui/theme_import.py",
+        "talaria/ui/app.py",
+    ):
+        source = (REPO_ROOT / module).read_text(encoding="utf-8")
+        for token in (
+            "watchdog",
+            "watchfiles",
+            "inotify",
+            "Observer",
+            "add_watch",
+            "watch_file",
+            "poll_mtime",
+        ):
+            assert token not in source, f"{module} mentions {token}"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reloads_serialize(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(
+        entries=(entry,), files={entry.source_id: SAMPLE_BYTES}
+    )
+    import_marketplace_theme(
+        entry, transport=transport, name="solar-flare", config_dir=config_dir
+    )
+    payload = json.loads(SAMPLE_BYTES)
+    payload["colors"]["editor.background"] = "#445566"
+    transport._files[entry.source_id] = json.dumps(payload).encode("utf-8")
+
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="solar-flare",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+        marketplace_transport=transport,
+    )
+    async with app.run_test(size=(80, 24)):
+        # The setup import above already fetched once; only Reloads count here.
+        transport.fetch_calls.clear()
+        transport.lookup_calls.clear()
+        transport.fetch_gate = threading.Event()
+        first = asyncio.create_task(app._reload_imported_theme("solar-flare"))
+        await asyncio.sleep(0.3)
+        second = asyncio.create_task(app._reload_imported_theme("solar-flare"))
+        await asyncio.sleep(0.3)
+
+        # The second Reload waits behind the lock instead of fetching alongside.
+        assert transport.fetch_calls == [entry.source_id]
+
+        transport.fetch_gate.set()
+        await asyncio.gather(first, second)
+
+        assert transport.fetch_calls == [entry.source_id, entry.source_id]
+        assert transport.max_active == 1
+        assert app.theme == "solar-flare"
+        assert app.theme_registry.resolve("solar-flare").tokens[
+            "talaria.canvas"
+        ] == "#445566"
+        await app.shutdown_sources()

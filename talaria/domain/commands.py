@@ -521,7 +521,8 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "/theme",
         "theme",
         "Preview or save the session theme",
-        argument_hint="[save [user|repository]]",
+        argument_hint="[select <name>|search <query>|fetch <source>|reload [name]|"
+        "save [user|repository]]",
     ),
     LocalCommand(
         "/bar",

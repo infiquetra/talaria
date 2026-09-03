@@ -72,6 +72,16 @@ Enter `/theme` to open the theme picker. `Up` and `Down` preview the highlighted
 and restores the theme that was active when it opened. Browsing, previewing, accepting a session
 theme, and quitting do not write a file.
 
+`/theme select <name>` previews one installed theme immediately without opening the picker, for
+example `/theme select neutral-dark`. Like the picker, it accepts the theme for the current
+Talaria process only. An unknown name keeps the current theme and says so:
+
+```text
+theme 'not-installed' is not available — keeping 'refined-default'
+```
+
+A theme that cannot render also keeps the current theme with a notice naming the failure.
+
 Persistence is separate:
 
 - `/theme save` saves the current theme in the user configuration. `/theme save user` is the
@@ -145,6 +155,25 @@ Import a strict Visual Studio Code color-theme JSON file with:
 talaria theme import FILE [--name NAME] [--json]
 ```
 
+Search the marketplace and fetch a theme with no manual download step:
+
+```text
+talaria theme search QUERY [--limit N] [--json]
+talaria theme fetch REF [--name NAME] [--json]
+```
+
+`REF` is a `publisher/extension[/theme]` reference or a direct `http(s)` URL to a raw theme
+JSON file. The user-selected source is accepted as given; there is no additional trust policy.
+Fetched bytes are parsed by the same strict entry point as local files and are never executed.
+The same search, fetch, and reload steps are available inside the app as `/theme search <query>`,
+`/theme fetch <source> [--name <name>]`, and `/theme reload [name]`. A search lists bounded
+entries with the reference to fetch, for example:
+
+```text
+marketplace themes:
+Solar Flare (acme/solar) — fetch with /theme fetch acme/solar/1
+```
+
 `--json` writes one versioned machine-readable report to standard output. Its success and error
 fields are defined in the
 [Visual Studio Code theme import format](formats/vscode-theme-import.md).
@@ -171,5 +200,20 @@ here.
 Imported themes become available to `/theme` only after a fresh process loads the stored theme
 library. Once a canonical theme document exists under `<TALARIA_CONFIG_DIR>/themes/` (or the default
 `~/.talaria/themes/`), its slug is accepted from `config.toml` at startup and can be persisted with
-the same explicit save commands as a built-in theme. The stored library is read once per process;
-there is no file watcher or external-file live reload.
+the same explicit save commands as a built-in theme.
+
+Every successful import records its source beside the library in
+`<config-dir>/theme-sources.json`, mapping each slug to its file path or marketplace reference.
+`/theme reload [name]` re-runs the import pipeline for that recorded source and applies the
+re-resolved theme live, with no restart:
+
+```text
+theme 'solar-flare' reloaded: 40 source tokens, 18 fallbacks, 0 warnings
+```
+
+`reload` with no name re-imports the current session theme. A failed or invalid reload keeps
+rendering the current theme with a notice and never partially applies. There is no file watcher:
+editing a source file changes nothing until an explicit reload, and concurrent reloads serialize
+behind one lock. The mapping, warning, and report rules for both sources are in
+[Visual Studio Code theme import format](formats/vscode-theme-import.md); they are not duplicated
+here.

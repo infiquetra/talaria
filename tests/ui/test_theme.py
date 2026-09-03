@@ -760,3 +760,119 @@ def test_no_host_argument_means_no_host_notices() -> None:
     resolved = ThemeRegistry((REFINED_DEFAULT, partial)).resolve("no-host-layer")
 
     assert not any("host" in notice for notice in resolved.notices)
+
+
+# ── issue #124: /theme select previews immediately, persisting explicitly ──
+
+
+@pytest.mark.asyncio
+async def test_theme_select_previews_immediately_without_persisting(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme select neutral-dark"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "neutral-dark"
+        assert app.session_theme_slug == "neutral-dark"
+        rendered = screen_text(app)
+        assert "'neutral-dark' previewing for this session" in rendered
+        assert not config_dir.exists(), "a preview wrote user config"
+        assert not (tmp_path / ".talaria").exists(), (
+            "a preview wrote repository config"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_select_invalid_name_keeps_current_theme() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme select not-installed"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "refined-default"
+        assert app.session_theme_slug is None
+        rendered = screen_text(app)
+        assert "'not-installed' is not available" in rendered
+        assert "keeping 'refined-default'" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_select_broken_spec_keeps_rendering_old_theme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from talaria.ui.theme import ThemeRegistry
+
+    original = ThemeRegistry.to_textual_theme
+
+    def refuse_neutral_dark(
+        self: ThemeRegistry, requested: object
+    ) -> object:
+        if requested == "neutral-dark":
+            raise RuntimeError("synthetic render failure")
+        return original(self, requested)
+
+    app, _ = paused_app([event("gateway.ready", {})])
+    # Patch after construction: startup registers every built-in theme, and
+    # only the later select may fail.
+    monkeypatch.setattr(
+        ThemeRegistry, "to_textual_theme", refuse_neutral_dark
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme select neutral-dark"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "refined-default"
+        rendered = screen_text(app)
+        assert "could not preview" in rendered
+        assert "keeping 'refined-default'" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_select_then_save_persists_explicitly(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme select neutral-dark"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        app.composer.text = "/theme save"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert (config_dir / "config.toml").read_text(encoding="utf-8") == (
+            '[theme]\nname = "neutral-dark"\n'
+        )
+        await app.shutdown_sources()

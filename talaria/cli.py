@@ -171,6 +171,46 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="write one versioned machine-readable report to standard output",
     )
+    theme_search_parser = theme_subparsers.add_parser(
+        "search",
+        help="search the marketplace for importable color themes",
+    )
+    theme_search_parser.add_argument(
+        "query",
+        metavar="QUERY",
+        help="free-text marketplace search query",
+    )
+    theme_search_parser.add_argument(
+        "--limit",
+        metavar="N",
+        type=int,
+        default=10,
+        help="maximum entries to list (1-25, default 10)",
+    )
+    theme_search_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="write one versioned machine-readable listing to standard output",
+    )
+    theme_fetch_parser = theme_subparsers.add_parser(
+        "fetch",
+        help="fetch one marketplace theme with no manual download step",
+    )
+    theme_fetch_parser.add_argument(
+        "source",
+        metavar="REF",
+        help="publisher/extension[/theme] reference or http(s) theme URL",
+    )
+    theme_fetch_parser.add_argument(
+        "--name",
+        metavar="NAME",
+        help="lowercase hyphenated storage name (default: marketplace theme label)",
+    )
+    theme_fetch_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="write one versioned machine-readable report to standard output",
+    )
 
     gate_parser = subparsers.add_parser(
         "gate",
@@ -228,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             return run_refresh_credential(args)
 
         if getattr(args, "command", None) == "theme":
-            return run_theme_import_command(args)
+            return run_theme_command(args)
 
         if getattr(args, "command", None) == "gate":
             return run_gate_command(args)
@@ -237,6 +277,40 @@ def main(argv: list[str] | None = None) -> int:
     except (config_module.ConfigError, StoredThemeError) as exc:
         print(defang(f"talaria: {exc}"), file=sys.stderr)
         return 2
+
+
+def _default_marketplace_transport() -> Any:
+    """Build the live registry transport; tests monkeypatch this seam."""
+    from talaria.themes.marketplace import UrllibMarketplaceTransport
+
+    return UrllibMarketplaceTransport()
+
+
+def _theme_error_json(kind: str, message: str) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "schema_version": "talaria-theme-import-error-v1",
+            "kind": kind,
+            "message": message,
+        },
+        sort_keys=True,
+    )
+
+
+def _exit_for_import_kind(kind: str) -> int:
+    if kind in {"unreadable", "empty", "malformed", "wrong-root"}:
+        return 3
+    if kind in {"reserved-slug", "invalid-slug"}:
+        return 4
+    return 5
+
+
+def _exit_for_marketplace_kind(kind: str) -> int:
+    if kind in {"unknown-source", "ambiguous-source", "network", "oversized"}:
+        return 3
+    return _exit_for_import_kind(kind)
 
 
 def run_theme_import_command(args: argparse.Namespace) -> int:
@@ -253,23 +327,10 @@ def run_theme_import_command(args: argparse.Namespace) -> int:
         )
     except ThemeImportError as exc:
         if args.json:
-            print(
-                json.dumps(
-                    {
-                        "schema_version": "talaria-theme-import-error-v1",
-                        "kind": exc.kind,
-                        "message": str(exc),
-                    },
-                    sort_keys=True,
-                )
-            )
+            print(_theme_error_json(exc.kind, str(exc)))
         else:
             print(defang(f"talaria: theme import failed: {exc}"), file=sys.stderr)
-        if exc.kind in {"unreadable", "empty", "malformed", "wrong-root"}:
-            return 3
-        if exc.kind in {"reserved-slug", "invalid-slug"}:
-            return 4
-        return 5
+        return _exit_for_import_kind(exc.kind)
 
     if args.json:
         print(json.dumps(report.to_json_dict(), sort_keys=True))
@@ -279,6 +340,120 @@ def run_theme_import_command(args: argparse.Namespace) -> int:
         stream = sys.stderr if record.severity == "warning" else sys.stdout
         print(defang(record.text), file=stream)
     return 0
+
+
+def run_theme_search_command(
+    args: argparse.Namespace, *, transport: Any = None
+) -> int:
+    """List bounded marketplace entries without downloading anything."""
+    import json
+
+    from talaria.themes.marketplace import MarketplaceError, search_marketplace
+
+    active = transport if transport is not None else _default_marketplace_transport()
+    try:
+        entries = search_marketplace(
+            args.query, transport=active, limit=args.limit
+        )
+    except MarketplaceError as exc:
+        if args.json:
+            print(_theme_error_json(exc.kind, str(exc)))
+        else:
+            print(defang(f"talaria: theme search failed: {exc}"), file=sys.stderr)
+        return _exit_for_marketplace_kind(exc.kind)
+    except ValueError as exc:
+        print(defang(f"talaria: theme search failed: {exc}"), file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "schema_version": "talaria-theme-search-v1",
+                    "count": len(entries),
+                    "entries": [
+                        {
+                            "description": entry.description,
+                            "download_url": entry.download_url,
+                            "extension": entry.extension,
+                            "publisher": entry.publisher,
+                            "source_id": entry.source_id,
+                            "theme_label": entry.theme_label,
+                        }
+                        for entry in entries
+                    ],
+                    "query": args.query,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if not entries:
+        print(f"no marketplace themes matched {args.query!r}")
+        return 0
+    for index, entry in enumerate(entries, start=1):
+        origin = (
+            f"{entry.publisher}/{entry.extension}"
+            if entry.publisher
+            else entry.download_url
+        )
+        print(defang(f"{index}. {entry.theme_label} ({origin}) — {entry.source_id}"))
+    return 0
+
+
+def run_theme_fetch_command(
+    args: argparse.Namespace, *, transport: Any = None
+) -> int:
+    """Fetch one marketplace theme with no manual download step."""
+    import json
+
+    from talaria.themes.marketplace import (
+        MarketplaceError,
+        resolve_marketplace_source,
+    )
+    from talaria.ui.theme_import import ThemeImportError, import_marketplace_theme
+
+    active = transport if transport is not None else _default_marketplace_transport()
+    try:
+        entry = resolve_marketplace_source(args.source, transport=active)
+        report = import_marketplace_theme(
+            entry,
+            transport=active,
+            name=args.name,
+            config_dir=config_module.global_config_dir(),
+        )
+    except MarketplaceError as exc:
+        if args.json:
+            print(_theme_error_json(exc.kind, str(exc)))
+        else:
+            print(defang(f"talaria: theme fetch failed: {exc}"), file=sys.stderr)
+        return _exit_for_marketplace_kind(exc.kind)
+    except ThemeImportError as exc:
+        if args.json:
+            print(_theme_error_json(exc.kind, str(exc)))
+        else:
+            print(defang(f"talaria: theme fetch failed: {exc}"), file=sys.stderr)
+        return _exit_for_import_kind(exc.kind)
+
+    if args.json:
+        print(json.dumps(report.to_json_dict(), sort_keys=True))
+        return 0
+
+    for record in report.records():
+        stream = sys.stderr if record.severity == "warning" else sys.stdout
+        print(defang(record.text), file=stream)
+    return 0
+
+
+def run_theme_command(args: argparse.Namespace) -> int:
+    """Route one ``talaria theme`` operation to its settled handler."""
+    operation = getattr(args, "theme_command", None)
+    if operation == "search":
+        return run_theme_search_command(args)
+    if operation == "fetch":
+        return run_theme_fetch_command(args)
+    return run_theme_import_command(args)
 
 
 def _theme_registry(cfg: config_module.Config) -> ThemeRegistry:
