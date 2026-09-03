@@ -9,11 +9,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from talaria.domain.projection import StatusPayload
 from talaria.status.contract import (
     FROZEN_TOP_LEVEL_FIELDS,
+    SCRIPT_OUTPUT_VERSION,
+    ScriptDocumentError,
+    ScriptRow,
     assert_frozen_shape,
     encode_payload,
+    parse_script_rows,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -95,3 +101,89 @@ def test_contract_doc_field_list_matches_the_serializer() -> None:
     for field_name in FROZEN_TOP_LEVEL_FIELDS:
         pattern = rf"`{re.escape(field_name)}`"
         assert re.search(pattern, text), f"{field_name!r} not documented in {_CONTRACT_DOC}"
+
+
+def test_frozen_shape_still_rejects_actually_unknown_shapes_loudly() -> None:
+    """The v1 stdin guard is not loosened by the v2 output intake.
+
+    Neither a drifted field set nor a document naming the *output*
+    version passes the frozen shape: the two version namespaces (stdin
+    payload vs script-output document) must never be confused.
+    """
+    drifted = _payload().to_json_dict()
+    drifted["rows"] = []
+    with pytest.raises(AssertionError, match="field drift"):
+        assert_frozen_shape(drifted)
+
+    output_versioned = _payload().to_json_dict()
+    output_versioned["version"] = SCRIPT_OUTPUT_VERSION
+    with pytest.raises(AssertionError, match="version drift"):
+        assert_frozen_shape(output_versioned)
+
+
+# ── #125 U1: the versioned script-output intake ──────────────────────────
+
+
+def test_v1_plain_text_is_not_a_document_and_renders_through_the_text_path() -> None:
+    """Non-JSON stdout returns ``None``: the v1 literal-row path, unchanged."""
+    assert parse_script_rows("branch: main\ntests: 296\n") is None
+    assert parse_script_rows("") is None
+
+
+@pytest.mark.parametrize("scalar", ["123", "null", "true", "[1, 2]", '"just a string"'])
+def test_scalar_and_array_json_stay_literal_v1_rows(scalar: str) -> None:
+    """Only a JSON *object* claims structure. A v1 script printing a bare
+    number keeps rendering that number rather than tripping a document
+    protocol it never opted into."""
+    assert parse_script_rows(scalar) is None
+
+
+def test_valid_version_two_document_yields_script_rows() -> None:
+    rows = parse_script_rows(
+        '{"version": 2, "rows": ["plain", {"text": "colored", "color": "warning"}]}'
+    )
+    assert rows == (ScriptRow(text="plain"), ScriptRow(text="colored", color="warning"))
+
+
+def test_row_color_defaults_to_text_and_empty_shapes_are_kept() -> None:
+    assert parse_script_rows('{"version": 2, "rows": [{"text": "x"}]}') == (
+        ScriptRow(text="x", color="text"),
+    )
+    # An explicit empty list is a good render (clear the bar), not an error.
+    assert parse_script_rows('{"version": 2, "rows": []}') == ()
+    # An empty-string row is literal content, not a missing row.
+    assert parse_script_rows('{"version": 2, "rows": [""]}') == (ScriptRow(text=""),)
+
+
+def test_pretty_printed_multiline_document_parses() -> None:
+    """The intake runs on the whole stdout text, so a document spanning
+    lines is one document — the runner must not split it into v1 rows."""
+    rows = parse_script_rows('{\n  "version": 2,\n  "rows": ["a", "b"]\n}\n')
+    assert rows == (ScriptRow(text="a"), ScriptRow(text="b"))
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        '{"rows": []}',
+        '{"version": 1, "rows": []}',
+        '{"version": 3, "rows": []}',
+        '{"version": "2", "rows": []}',
+        '{"version": null, "rows": []}',
+        '{"version": 2}',
+        '{"version": 2, "rows": null}',
+        '{"version": 2, "rows": "nope"}',
+        '{"version": 2, "rows": [null]}',
+        '{"version": 2, "rows": [42]}',
+        '{"version": 2, "rows": [{}]}',
+        '{"version": 2, "rows": [{"text": 42}]}',
+        '{"version": 2, "rows": [{"text": "x", "color": 42}]}',
+        '{"version": 2, "rows": [], "extra": 1}',
+        '{"version": 2, "rows": [{"text": "x", "bogus": 1}]}',
+    ],
+)
+def test_unknown_shapes_raise_rather_than_render_junk(document: str) -> None:
+    """Missing/jumped versions, null or wrong-typed fields, and unknown
+    keys at either level are all loud — junk never reaches the bar."""
+    with pytest.raises(ScriptDocumentError):
+        parse_script_rows(document)

@@ -24,8 +24,11 @@ from talaria.domain.projection import StatusPayload
 from talaria.status.contract import (
     TRUNCATION_MARKER,
     ProcessLimits,
+    ScriptDocumentError,
+    ScriptRow,
     build_child_env,
     encode_payload,
+    parse_script_rows,
 )
 
 #: One tick's categorical outcome. ``ok`` is the only non-failure member;
@@ -35,6 +38,7 @@ TickOutcome = Literal[
     "ok",
     "empty_output",
     "invalid_output",
+    "invalid_document",
     "nonzero_exit",
     "timeout",
     "missing_executable",
@@ -53,6 +57,7 @@ _READ_CHUNK_BYTES = 8192
 _MARKERS: dict[TickOutcome, str] = {
     "empty_output": "status: no output",
     "invalid_output": "status: invalid output (not UTF-8)",
+    "invalid_document": "status: invalid script document",
     "nonzero_exit": "status: command failed",
     "timeout": "status: command timed out",
     "missing_executable": "status: command not found",
@@ -70,6 +75,14 @@ class StatusTickResult:
     Row and byte truncation are both possible on a successful tick, so
     ``truncated`` is a separate flag rather than folded into ``outcome`` —
     truncation is not a failure, it is a bounded success (R22).
+
+    ``script_rows`` carries a version-2 script document's rows, and only
+    then: it is a tuple (possibly empty — an explicit ``"rows": []``
+    clears the bar) when this tick's stdout was a valid v2 document, and
+    ``None`` for every other tick, including v1 plain-text ticks and all
+    failures. The bar replaces its script rows only on a non-``None``
+    tick and otherwise keeps its previous good render; the in-body
+    region never renders ``script_rows`` (ownership, not z-order).
     """
 
     outcome: TickOutcome
@@ -77,6 +90,7 @@ class StatusTickResult:
     truncated: bool = False
     exit_code: int | None = None
     marker: str | None = None
+    script_rows: tuple[ScriptRow, ...] | None = None
 
     @property
     def is_failure(self) -> bool:
@@ -306,6 +320,23 @@ class StatusRunner:
         if text == "":
             return StatusTickResult(outcome="empty_output", marker=_MARKERS["empty_output"])
 
+        # A version-2 script document is detected on the whole decoded text
+        # before any line splitting: a pretty-printed document spans lines,
+        # and splitting first would mangle it into v1 rows. Byte-truncated
+        # output skips this branch — a cut mid-document no longer parses,
+        # and the v1 literal path below is the byte-identical fallback
+        # rather than a guess about what the cut removed.
+        if not byte_truncated:
+            try:
+                script_rows = parse_script_rows(text)
+            except ScriptDocumentError as exc:
+                return StatusTickResult(
+                    outcome="invalid_document",
+                    marker=f"{_MARKERS['invalid_document']}: {exc}",
+                )
+            if script_rows is not None:
+                return self._script_rows_result(script_rows)
+
         # Rows are literal text (R22: ANSI is never interpreted, only split on
         # newlines). A single trailing newline is not itself an extra empty
         # row; interior blank lines are kept literal.
@@ -325,6 +356,23 @@ class StatusRunner:
             rows = tuple(lines)
 
         return StatusTickResult(outcome="ok", rows=rows, truncated=row_truncated or byte_truncated)
+
+    def _script_rows_result(self, script_rows: tuple[ScriptRow, ...]) -> StatusTickResult:
+        """Bound a version-2 document's rows the same way v1 text rows bind.
+
+        The row limit and the visible truncation marker are the runner's,
+        not the document's: a script cannot opt out of the bound by
+        choosing a richer output shape. ``rows`` stays empty — the in-body
+        region renders nothing for a v2 tick; the bar owns these rows.
+        """
+        row_truncated = len(script_rows) > self._limits.row_limit
+        if row_truncated:
+            bounded = tuple(script_rows[: self._limits.row_limit - 1]) + (
+                ScriptRow(text=f"{TRUNCATION_MARKER} ({len(script_rows)} rows)"),
+            )
+        else:
+            bounded = script_rows
+        return StatusTickResult(outcome="ok", truncated=row_truncated, script_rows=bounded)
 
     async def _pump(
         self, process: asyncio.subprocess.Process, payload_bytes: bytes

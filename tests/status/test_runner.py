@@ -8,6 +8,7 @@ portable and each script fully controls its own behavior.
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 
 import pytest
@@ -310,5 +311,112 @@ def test_status_runner_tick_never_forwards_provider_keys(
             assert forwarded[name] == "<absent>"
         assert forwarded["MY_STATUS_OK"] == "staging"
         assert forwarded["TALARIA_GATEWAY_URL"] == "ws://127.0.0.1:9119/api/ws"
+
+    asyncio.run(scenario())
+
+
+# ── #125 U3: script edits are effective on the next refresh ──────────────
+
+
+def test_script_edits_take_effect_on_the_next_tick_without_restart(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """The runner execs the script fresh every tick: editing the script
+    file changes what the next tick renders, with no restart and no
+    overlap-policy bypass (one runner, sequential ticks)."""
+    script_path = tmp_path / "status_script.py"
+    script_path.write_text(
+        "import json, sys; json.load(sys.stdin); "
+        "print(json.dumps({'version': 2, 'rows': ['rev-one']}))\n",
+        encoding="utf-8",
+    )
+
+    async def scenario() -> None:
+        runner = StatusRunner(
+            argv=(sys.executable, str(script_path)),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(),
+        )
+        first = await runner.tick(sample_payload)
+        assert first.outcome == "ok"
+        assert first.script_rows is not None
+        assert tuple(row.text for row in first.script_rows) == ("rev-one",)
+
+        script_path.write_text(
+            "import json, sys; json.load(sys.stdin); "
+            "print(json.dumps({'version': 2, 'rows': ['rev-two']}))\n",
+            encoding="utf-8",
+        )
+        second = await runner.tick(sample_payload)
+        assert second.outcome == "ok"
+        assert second.script_rows is not None
+        assert tuple(row.text for row in second.script_rows) == ("rev-two",)
+
+    asyncio.run(scenario())
+
+
+# ── #125 U4: trust and filtering hold in the same tick ───────────────────
+#
+# Every name and value below is synthetic: the names are the documented
+# provider key names, the values are obvious fakes. Nothing here ever
+# held a real credential.
+
+
+def test_trusted_script_rows_render_while_allowlisted_provider_keys_stay_denied(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """R5 conjunctive: the configured script runs as configured (its v2
+    rows arrive on the bar channel) *while* the deny boundary holds (the
+    four allowlisted provider keys are absent from what the child saw)
+    and the gateway URL arrives sanitized — one tick proves both halves,
+    because the script reports its own environment inside its rows."""
+    script = (
+        "import json, os, sys\n"
+        "json.load(sys.stdin)\n"
+        "def show(name):\n"
+        "    return os.environ.get(name, '<absent>')\n"
+        "rows = ['MY_STATUS_OK=' + show('MY_STATUS_OK')]\n"
+        "for name in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', "
+        "'AWS_ACCESS_KEY_ID', 'GITHUB_PAT'):\n"
+        "    rows.append(name + '=' + show(name))\n"
+        "rows.append('TALARIA_GATEWAY_URL=' + show('TALARIA_GATEWAY_URL'))\n"
+        "print(json.dumps({'version': 2, 'rows': rows}))\n"
+    )
+
+    async def scenario() -> None:
+        parent_env = {
+            "PATH": "/usr/bin:/bin",
+            "OPENAI_API_KEY": "synthetic-openai-test-key",
+            "ANTHROPIC_API_KEY": "synthetic-anthropic-test-key",
+            "AWS_ACCESS_KEY_ID": "synthetic-aws-test-key",
+            "GITHUB_PAT": "synthetic-github-test-pat",
+            "MY_STATUS_OK": "staging",
+            "TALARIA_GATEWAY_URL": (
+                "ws://127.0.0.1:9119/api/ws?token=synthetic-test-token"
+            ),
+        }
+        runner = StatusRunner(
+            argv=python_argv(script),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(),
+            allowlist=tuple(DENIED_PROVIDER_KEYS) + ("MY_STATUS_OK",),
+            parent_env=parent_env,
+        )
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        assert result.script_rows is not None
+        observed: dict[str, str] = {}
+        for row in result.script_rows:
+            name, _, value = row.text.partition("=")
+            observed[name] = value
+        # Trust half: the configured script's rows arrived as configured.
+        assert observed["MY_STATUS_OK"] == "staging"
+        assert observed["TALARIA_GATEWAY_URL"] == "ws://127.0.0.1:9119/api/ws"
+        # Deny half: every allowlisted provider key stayed out.
+        for name in DENIED_PROVIDER_KEYS:
+            assert observed[name] == "<absent>"
+        # No synthetic credential material anywhere in the render.
+        assert not any("synthetic-" in row.text for row in result.script_rows)
+        assert not any("token=" in row.text for row in result.script_rows)
 
     asyncio.run(scenario())

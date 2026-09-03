@@ -24,7 +24,7 @@ from talaria.domain.compat import (
     apply_probe_round,
     empty_board,
 )
-from talaria.status.contract import TRUNCATION_MARKER
+from talaria.status.contract import TRUNCATION_MARKER, ScriptRow
 from talaria.status.runner import StatusTickResult
 from talaria.ui.app import TalariaApp
 from talaria.ui.inspector import EMPTY_SECTION
@@ -465,4 +465,45 @@ async def test_a_never_probed_board_paints_no_seam_rows() -> None:
         await app._render_tick()
         await pilot.pause()
         assert app.status_region.seam_texts == (), "a render tick painted an unprobed board"
+        await app.shutdown_sources()
+
+
+# ── #125 coexistence: the bar owns script rows, the region keeps the marker ──
+#
+# Ownership, asserted from the region side: a version-2 tick renders
+# nothing here (not even when it carries script rows), while a bad
+# document still surfaces its notice through this widget's marker.
+
+
+@pytest.mark.asyncio
+async def test_a_version_two_tick_renders_no_region_rows() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.status_region.apply(
+            StatusTickResult(
+                outcome="ok",
+                script_rows=(ScriptRow("bar-row"), ScriptRow("wip: 2", "warning")),
+            )
+        )
+        await pilot.pause()
+        assert app.status_region.row_texts == ()
+        assert app.status_region.marker_text == ""
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_document_tick_marks_the_region_without_rows() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.status_region.apply(
+            StatusTickResult(
+                outcome="invalid_document",
+                marker="status: invalid script document: unknown script document version 9",
+            )
+        )
+        await pilot.pause()
+        assert app.status_region.row_texts == ()
+        assert app.status_region.marker_text == (
+            "[x] status: invalid script document: unknown script document version 9"
+        )
         await app.shutdown_sources()

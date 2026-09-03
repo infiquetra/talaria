@@ -2,6 +2,34 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-09-03
+
+### Script rows belong to the bar by output version, not by negotiation (#125)
+
+**Decision.** A status script's stdout renders on the true-bottom bar if and only if it is a
+valid version-2 JSON document (`{"version": 2, "rows": [...]}`); every other stdout — plain
+text, scalar/array JSON, or an invalid document — keeps the existing in-body region behavior
+byte for byte. Only a JSON *object* engages the document protocol, so a v1 script printing a
+bare number keeps rendering that number. Coexistence between the bar and `StatusRegion` is by
+ownership (v2 rows vs v1 rows plus the marker), never by z-order; `status_region.py` is
+untouched. `tests/status/test_process_contract.py` (intake through a real child),
+`tests/ui/test_status_bar.py` (bar rendering and ownership), and
+`tests/ui/test_status_region.py` (coexistence only) pin each side.
+
+**Rationale.** The v1 output contract in `docs/formats/status-line.md` is frozen, and moving
+plain-text rows to the bar would break it along with every deployed script. Gating on the
+object shape makes the new surface purely additive: no existing test changed, and the one
+widget behavioral fix found during implementation (a row-count change needs
+`refresh(layout=True)`, not a repaint) is pinned by the multirow placement tests.
+
+**Rejected alternatives.** Moving all script rows to the bar was rejected because it rewrites
+the frozen v1 contract. Treating every JSON-looking stdout as a document was rejected because
+it would turn a v1 script's literal `"123"` into an `invalid_document` marker. A second
+runner or a planning-time script execution was out of scope per the unit's non-goals.
+
+**Revisit when.** A version-3 output document is specified, or the bar/region ownership split
+is renegotiated with #122's diagnostics work.
+
 ## 2026-09-01
 
 ### Talaria's reduced-motion setting is the sole animation authority
