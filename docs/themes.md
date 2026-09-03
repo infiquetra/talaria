@@ -1,6 +1,6 @@
 # Themes
 
-Talaria 0.5.0 has four built-in themes and a 58-token public color vocabulary. Theme
+Talaria has five built-in themes and a 58-token public color vocabulary. Theme
 preview is immediate, but persistence is always an explicit action.
 
 ## Built-in themes
@@ -11,10 +11,59 @@ preview is immediate, but persistence is always an explicit action.
 | Dark Green Terminal | `dark-green-terminal` | dark |
 | Neutral Dark | `neutral-dark` | dark |
 | Accessible High Contrast | `accessible-high-contrast` | dark |
+| Homebrew | `homebrew` | dark |
 
 Refined Default is the fallback when no theme is configured or a configured theme cannot be
 resolved. Accessible High Contrast uses the release's strongest contrast palette; the name does not
 claim that every terminal emulator, font, or user setting has been independently certified.
+
+## Homebrew
+
+Homebrew is a restrained green-black theme for operators who live in green-tinted terminals but
+find Dark Green Terminal's neon accents fatiguing. It is available everywhere a built-in theme is
+— the `/theme` picker, `theme.name` configuration, and the theme registry — but it is never
+selected at startup: a fresh process without configuration still opens on Refined Default.
+
+Provenance: Homebrew was designed for Talaria v0.6.0, not sampled from any host terminal palette.
+Its canvas, surface, and status fills are near-black greens (`#050905`, `#0A120D`, `#030604`);
+body text is a soft green-grey (`#C9D9CE`); primary, accent, and transcript markers are muted
+sages (`#6FA287`, `#4E9A6A`, `#5FA86F`) rather than neon. The flat chrome families
+(canvas/surface/panel/text/border/selection/status/inspector) are the tokens a host terminal
+palette could equally describe; the transcript, diff, and syntax families are Talaria-semantic and
+stay Talaria-owned. Every body pairing holds the 4.5 text floor and every component pairing the
+3.0 floor, measured the same way as the first four themes. Homebrew also exercises the groups
+layer below: each transcript category carries its own subtle body tint while the shared body text
+remains the one value an override replaces wholesale.
+
+## Inheritance rules
+
+Every theme — built-in, stored user theme, or imported — resolves through one order in
+`ThemeRegistry.resolve`, so imported themes share the same semantics with no second
+implementation:
+
+1. shared defaults: the registry default's tokens (Refined Default for the built-in registry);
+2. host palette: an explicitly passed host mapping, only for the flat chrome tokens where
+   terminal colors meaningfully apply (canvas, surface, panel, text, borders, focus, selection,
+   status fill/text/separator, inspector chrome) — transcript, diff, and syntax tokens are never
+   inherited;
+3. groups: the specification's sparse per-category values, one transcript category at a time
+   (`operator`, `assistant`, `reasoning`, `activity`, `session`, `fault`), each naming any of its
+   three roles by nickname (`text`, `marker`, `background`) or by canonical token name;
+4. overrides: the specification's own tokens, which always win.
+
+Each layer is sparse: an empty group, an unknown category or token, a null value, or a malformed
+color falls through to the next layer instead of breaking the rest, and a malformed group color is
+reported in the resolution notices. A category with no group text uses the theme's shared body
+text; an unknown category falls back to the plain-surface default (shared body text on the default
+surface).
+
+Readability is a floor, not a suggestion. Category body text must hold 4.5 against its fill and
+stripe markers 3.0, reusing the existing contrast machinery; a combination below the floor resolves
+to the shared text, the default theme's marker, or black/white — visibly noticed — rather than
+rendering. Inherited host values that break the text/canvas or selection pairings revert to the
+built-in mapping with a notice; explicit Talaria overrides are never reverted. An unresolvable
+host palette (absent, misshapen, or empty) degrades to the built-in mapping with a notice, never a
+crash or a blank theme.
 
 ## Preview and select a theme
 

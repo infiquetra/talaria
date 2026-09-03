@@ -10,6 +10,15 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable appearance.** Themes resolve through sparse inheritance — shared defaults, an
+  explicitly passed host terminal palette (flat chrome only; transcript, diff, and syntax stay
+  Talaria-owned), per-category transcript groups, then individual overrides — with unreadable
+  combinations held to the measured contrast floors instead of rendered. `TranscriptPane` can
+  reclaim its left-edge offset for content width. Fifth built-in theme `homebrew`, a restrained
+  green-black palette; the startup default is still Refined Default.
+
 ## [0.5.0] — 2026-09-01
 
 Talaria v0.5.0 makes the terminal interface themeable and adds persistent bottom-of-screen

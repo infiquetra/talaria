@@ -21,9 +21,10 @@ from textual.app import App, ComposeResult
 from textual.widgets._markdown import MarkdownParagraph
 
 from talaria.domain.models import TranscriptKind
+from talaria.themes import ThemeSpec
 from talaria.themes.builtins import REFINED_DEFAULT
 from talaria.ui.blocks import EntryMarkdown
-from talaria.ui.theme import BUILTIN_THEME_REGISTRY
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY, ThemeRegistry
 from talaria.ui.transcript import (
     _GROUP_LABELS,
     _GROUP_VARIABLES,
@@ -411,6 +412,125 @@ async def test_stylesheet_actually_parses_and_mounts() -> None:
         await pane.mount_all(widgets)
         await pilot.pause()
         assert len(list(pane.walk_children())) >= len(ALL_KINDS)
+
+
+#: A theme that exercises every U2 independence axis at once: two
+#: categories with distinct body texts, one marker-only token override, and
+#: one background-only group value. Every value holds its readability floor
+#: against Refined Default's light fills (dark text and markers throughout),
+#: so the surface shows exactly what the spec requests.
+_TUNED_SPEC = ThemeSpec(
+    slug="category-tuned",
+    name="Category Tuned",
+    dark=False,
+    tokens={"talaria.transcript.fault": "#7A1F1F"},
+    groups={
+        "assistant": {"talaria.text": "#1A3A1A"},
+        "fault": {"talaria.text": "#5A1A1A"},
+        "reasoning": {"talaria.transcript.reasoning.background": "#E2E8F0"},
+    },
+)
+
+_TUNED_REGISTRY = ThemeRegistry((REFINED_DEFAULT, _TUNED_SPEC))
+_TUNED_RESOLVED = _TUNED_REGISTRY.resolve("category-tuned")
+
+
+class _TunedHarness(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        _TUNED_REGISTRY.register(self)
+        self.theme = _TUNED_SPEC.slug
+
+    def compose(self) -> ComposeResult:
+        yield TranscriptPane(id="t")
+
+
+def _computed_color(widget: TranscriptLine) -> str:
+    """The widget's computed foreground as an uppercase hex color."""
+    color = widget.styles.color
+    return f"#{color.r:02X}{color.g:02X}{color.b:02X}"
+
+
+def test_the_tuned_spec_resolves_exactly_as_written() -> None:
+    """No floor or fill should rewrite the independence fixture itself."""
+    assert _TUNED_RESOLVED.filled_tokens == tuple(
+        token
+        for token in REFINED_DEFAULT.tokens
+        if token
+        not in (
+            "talaria.transcript.fault",
+            "talaria.transcript.reasoning.background",
+        )
+    )
+    assert _TUNED_RESOLVED.transcript_text["assistant"] == "#1A3A1A"
+    assert _TUNED_RESOLVED.transcript_text["fault"] == "#5A1A1A"
+    assert (
+        _TUNED_RESOLVED.tokens["talaria.transcript.reasoning.background"]
+        == "#E2E8F0"
+    )
+    assert not any(
+        "readability floor" in notice or "malformed" in notice
+        for notice in _TUNED_RESOLVED.notices
+    )
+
+
+@pytest.mark.asyncio
+async def test_category_body_text_paints_independently_per_group() -> None:
+    """Two tuned categories paint their own texts; the rest share one."""
+    app = _TunedHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        widgets = {
+            kind: TranscriptLine(_SAMPLE_TEXT, kind=kind)
+            for kind in ("assistant", "user", "reasoning", "tool", "error")
+        }
+        await pane.mount_all(list(widgets.values()))
+        await pilot.pause()
+
+        assert _computed_color(widgets["assistant"]) == "#1A3A1A"
+        assert _computed_color(widgets["error"]) == "#5A1A1A"
+        shared = _computed_color(widgets["user"])
+        assert shared == REFINED_DEFAULT.tokens["talaria.text"]
+        assert _computed_color(widgets["tool"]) == shared
+        # Reasoning names no text, so it shares — even with a background.
+        assert _computed_color(widgets["reasoning"]) == shared
+
+
+@pytest.mark.asyncio
+async def test_marker_override_moves_the_stripe_but_not_the_fill() -> None:
+    """A marker-only token override recolors the border beside the old fill."""
+    app = _TunedHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        tuned = TranscriptLine(_SAMPLE_TEXT, kind="error")
+        await pane.mount(tuned)
+        await pilot.pause()
+
+        border_color = tuned.styles.border_left[1]
+        assert (border_color.r, border_color.g, border_color.b) == (0x7A, 0x1F, 0x1F)
+        background = tuned.styles.background
+        assert (background.r, background.g, background.b) == (0xFD, 0xED, 0xEF)
+
+
+@pytest.mark.asyncio
+async def test_background_group_value_moves_the_fill_but_not_the_stripe() -> None:
+    """The mirror axis: a background-only group value keeps the old stripe."""
+    app = _TunedHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        tuned = TranscriptLine(_SAMPLE_TEXT, kind="reasoning")
+        await pane.mount(tuned)
+        await pilot.pause()
+
+        background = tuned.styles.background
+        assert (background.r, background.g, background.b) == (0xE2, 0xE8, 0xF0)
+        border_color = tuned.styles.border_left[1]
+        expected = REFINED_DEFAULT.tokens["talaria.transcript.reasoning"]
+        assert (border_color.r, border_color.g, border_color.b) == (
+            int(expected[1:3], 16),
+            int(expected[3:5], 16),
+            int(expected[5:7], 16),
+        )
 
 
 def test_every_group_has_the_exact_fixed_non_colour_label() -> None:
