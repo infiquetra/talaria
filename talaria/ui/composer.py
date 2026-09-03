@@ -171,24 +171,39 @@ class ChatTextArea(TextArea):
             if event.key == "enter":
                 entry = palette.selected_entry
                 if entry is not None:
-                    # Insert canonical name with trailing space, never dispatch.
-                    catalog = getattr(app, "catalog", None)
-                    if catalog is not None:
-                        canon = catalog.canonical(entry.name)
-                    else:
-                        canon = entry.name
-                    canon = canon.lstrip("/")
-                    text = f"/{canon} "
-                    self.text = text
+                    # #121 single-Enter dispatch: the pick travels as the bare
+                    # entry name through the same Submitted funnel typed input
+                    # takes — no parallel dispatcher, no pre-resolution. The
+                    # funnel's own resolve_command applies the catalogue canon,
+                    # the local-first order, and the unsupported refusal, so a
+                    # null/stale/unsupported pick behaves exactly like its
+                    # typed twin (unsupported stays a notice, never dispatched,
+                    # never dropped).
+                    #
+                    # Idempotency is structural, one mechanism: the selection
+                    # is consumed (hide_slash clears it synchronously, before
+                    # anything is posted) and the composer is emptied, so the
+                    # single Submitted below is the only submission this pick
+                    # can produce. A repeat, bounce, double-Enter, or
+                    # in-flight second Enter finds no selection and no
+                    # resubmittable line — it submits empty text, which the
+                    # funnel answers without a dispatch. A later dispatch
+                    # needs a fresh selection. Click still inserts (#121
+                    # leaves it: see PaletteRegion.on_click).
+                    name = entry.name
+                    if not name.startswith("/"):
+                        name = f"/{name}"
+                    await palette.hide_slash()
+                    self.text = ""
                     try:
-                        self.cursor_location = (0, len(text))
+                        self.cursor_location = (0, 0)
                     except (ValueError, AttributeError, NoScreen, ScreenStackError):
                         pass
                     try:
                         self.focus()
                     except (NoScreen, ScreenStackError, AttributeError):
                         pass
-                    await palette.hide_slash()
+                    self.post_message(self.Submitted(self, name))
                 # When no match, keep text as-is and keep palette open
                 # (zero-match handling). Either way, consume the key so
                 # it does not submit or insert a newline.
