@@ -56,7 +56,9 @@ drop `task_progress`; below 20 columns the breakpoint drops it and keeps minimum
 
 ## Right inspector
 
-`Ctrl+B` or `/inspector` toggles the inspector. At 120 columns and wider it docks on the right. It
+`Ctrl+O` or `/inspector` toggles the inspector. `Ctrl+B` was the previous default; Herdr
+captures it before Talaria sees it when nested, so it is documented as replaced rather than
+bound. At 120 columns and wider it docks on the right. It
 starts at 36 columns, resizes in four-column steps, and clamps to 28–48 columns. While focus is in a
 docked inspector, `Shift+Left` narrows it and `Shift+Right` widens it.
 
@@ -125,12 +127,12 @@ aliases where the desktop delivers them.
 
 | Key or route | Action | Availability |
 | --- | --- | --- |
-| `Ctrl+Q` | Quit | live and replay |
-| `Ctrl+B`, `/inspector` | Toggle inspector | live and replay |
+| `Ctrl+Q` | Quit the client | live and replay |
+| `Ctrl+O`, `/inspector` | Toggle inspector | live and replay |
 | `/diffs` | Open held diffs | live and replay |
 | `/` or `F3` | Open/list commands | live and replay |
 | `Ctrl+G` or `F2`, `/agents` | Toggle subagent rows | live and replay |
-| `Ctrl+C` or `F4` | Interrupt the in-flight turn | live; visibly refused in replay |
+| `Ctrl+S` or `F4` | Cancel the in-flight turn (never quits the client) | live; visibly refused in replay |
 | `End` or `F5` | Follow the newest transcript line | live and replay |
 | `/models`; `F11` from every focus; `F6` only outside composer focus | Open models | live; gateway-changing actions are refused in replay |
 | `/profiles`; `F12` from every focus; `F7` only outside composer focus | Open profiles | live; gateway-changing actions are refused in replay |
@@ -139,6 +141,12 @@ aliases where the desktop delivers them.
 
 `F1` has no Talaria action. The shipped help bar reports `F1` and `F2` as eaten on macOS before the
 application receives them; `Ctrl+G` is the primary subagent-row binding for that reason.
+
+The inspector toggle and the turn-cancel chord are configurable because no single default
+survives every terminal multiplexer: see the `keys` table in [Configuration](configuration.md).
+The help footer always labels cancel-turn beside quit-client, so the two can never be mistaken
+for one another. `Ctrl+C` left the interrupt action; pressed out of habit it reaches the text
+area's copy binding or the framework's quit hint, never the turn and never the exit.
 
 ## Focus, motion, and scroll
 

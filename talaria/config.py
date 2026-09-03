@@ -64,6 +64,136 @@ class ConfigError(Exception):
     """
 
 
+#: Default chord for the session-inspector toggle (v0.6.0 #120, decision A).
+DEFAULT_INSPECTOR_KEY = "ctrl+o"
+#: Default chord for cancelling the in-flight turn (#120, decision B).
+DEFAULT_INTERRUPT_KEY = "ctrl+s"
+#: The replaced inspector default. Herdr captures ``Ctrl+B`` before Talaria
+#: sees it when nested, so it stays named here as the replaced default — it is
+#: documentation, not a binding, and nothing binds it anymore.
+REPLACED_INSPECTOR_KEY = "ctrl+b"
+#: Keys a ``[keys]`` override may never claim. ``Ctrl+Q`` is the quit anchor,
+#: and a cancel press must never quit the client (#120 U2) — so a configured
+#: chord that collides with it falls back with a notice instead of binding.
+RESERVED_KEYS = frozenset({"ctrl+q"})
+
+#: Modifiers Talaria recognizes in a configured chord.
+_KEY_MODIFIERS = frozenset({"ctrl", "alt", "shift", "super"})
+#: Multi-character key names Talaria recognizes. Single alphanumeric keys and
+#: ``f1``–``f12`` are accepted without being listed; anything else falls back
+#: with a notice rather than binding a dead key that fails silently.
+_KEY_NAMES = frozenset(
+    {
+        "enter",
+        "escape",
+        "tab",
+        "backspace",
+        "delete",
+        "insert",
+        "home",
+        "end",
+        "up",
+        "down",
+        "left",
+        "right",
+        "pageup",
+        "pagedown",
+        "space",
+    }
+)
+_KEY_SHAPE_RE = re.compile(r"^[a-z0-9]+(\+[a-z0-9]+)*$")
+_KEY_FUNCTION_RE = re.compile(r"^f([1-9]|1[0-2])$")
+
+
+def _valid_key(value: Any) -> str | None:
+    """The normalized key name when ``value`` names a bindable key, else None.
+
+    Normalization is lowercase-and-strip, so ``Ctrl+O`` configures ``ctrl+o``.
+    Anything that is not a string, is empty, has an unknown modifier, or ends
+    in a key name outside the recognized set answers None, and the caller
+    falls back to the default with a notice.
+    """
+    if not isinstance(value, str):
+        return None
+    lowered = value.strip().lower()
+    if not lowered or _KEY_SHAPE_RE.fullmatch(lowered) is None:
+        return None
+    *modifiers, final = lowered.split("+")
+    if any(modifier not in _KEY_MODIFIERS for modifier in modifiers):
+        return None
+    if len(final) == 1 and final.isalnum():
+        return lowered
+    if _KEY_FUNCTION_RE.fullmatch(final) is not None:
+        return lowered
+    if final in _KEY_NAMES:
+        return lowered
+    return None
+
+
+@dataclass(frozen=True)
+class KeyBindings:
+    """The resolved inspector/interrupt chords after fallback normalization."""
+
+    toggle_inspector: str
+    interrupt: str
+
+
+def resolve_keybindings(
+    raw: Mapping[str, Any] | None,
+) -> tuple[KeyBindings, tuple[str, ...]]:
+    """Resolve a ``[keys]`` mapping to chords, falling back safely.
+
+    Every failure mode — a missing table, an empty, null, or non-string value,
+    an unknown key name, a reserved collision, or both actions assigned the
+    same chord — resolves to a default and is named in the returned notices.
+    A duplicate assignment resets *both* actions to their defaults: falling
+    back only one of them could land on the other's still-duplicate value.
+    """
+    source = dict(raw) if isinstance(raw, Mapping) else {}
+    notices: list[str] = []
+
+    inspector = _valid_key(source.get("toggle_inspector"))
+    if inspector is None:
+        if "toggle_inspector" in source:
+            notices.append(
+                "keys.toggle_inspector "
+                f"{source.get('toggle_inspector')!r} is not a key Talaria "
+                f"recognizes; using {DEFAULT_INSPECTOR_KEY}"
+            )
+        inspector = DEFAULT_INSPECTOR_KEY
+    interrupt = _valid_key(source.get("interrupt"))
+    if interrupt is None:
+        if "interrupt" in source:
+            notices.append(
+                f"keys.interrupt {source.get('interrupt')!r} is not a key "
+                f"Talaria recognizes; using {DEFAULT_INTERRUPT_KEY}"
+            )
+        interrupt = DEFAULT_INTERRUPT_KEY
+
+    if inspector in RESERVED_KEYS:
+        notices.append(
+            f"keys.toggle_inspector {inspector!r} is reserved for quitting; "
+            f"using {DEFAULT_INSPECTOR_KEY}"
+        )
+        inspector = DEFAULT_INSPECTOR_KEY
+    if interrupt in RESERVED_KEYS:
+        notices.append(
+            f"keys.interrupt {interrupt!r} is reserved for quitting; "
+            f"using {DEFAULT_INTERRUPT_KEY}"
+        )
+        interrupt = DEFAULT_INTERRUPT_KEY
+
+    if inspector == interrupt:
+        notices.append(
+            f"keys.toggle_inspector and keys.interrupt are both {inspector!r}; "
+            f"using {DEFAULT_INSPECTOR_KEY} and {DEFAULT_INTERRUPT_KEY}"
+        )
+        inspector = DEFAULT_INSPECTOR_KEY
+        interrupt = DEFAULT_INTERRUPT_KEY
+
+    return KeyBindings(toggle_inspector=inspector, interrupt=interrupt), tuple(notices)
+
+
 #: Built-in defaults. Every key a later unit reads must have an entry here so
 #: that a missing config file never produces a missing setting. The type of the
 #: value recorded here is also what environment-variable overrides are coerced
@@ -81,6 +211,14 @@ DEFAULTS: dict[str, Any] = {
     },
     "environment": {"allowlist": []},
     "composer": {"paste_collapse_lines": 6, "paste_collapse_bytes": 512},
+    # #120's keybinding surface: the inspector toggle and the turn-cancel
+    # chords, configurable because no single default survives every terminal
+    # multiplexer. Normalized in _normalize_config, so an invalid value falls
+    # back with a notice rather than binding a dead or dangerous key.
+    "keys": {
+        "toggle_inspector": DEFAULT_INSPECTOR_KEY,
+        "interrupt": DEFAULT_INTERRUPT_KEY,
+    },
     # U4's profile endpoints: a name-to-gateway-URL map the operator writes.
     # It has no environment-variable override and never will — a map cannot be
     # expressed as one ``TALARIA_*`` scalar, and inventing an encoding for it
@@ -98,6 +236,8 @@ _ENV_KEY_MAP: dict[str, tuple[str, str]] = {
     "TALARIA_STATUS_INTERVAL_SECONDS": ("status", "interval_seconds"),
     "TALARIA_COMPOSER_PASTE_COLLAPSE_LINES": ("composer", "paste_collapse_lines"),
     "TALARIA_COMPOSER_PASTE_COLLAPSE_BYTES": ("composer", "paste_collapse_bytes"),
+    "TALARIA_KEYS_TOGGLE_INSPECTOR": ("keys", "toggle_inspector"),
+    "TALARIA_KEYS_INTERRUPT": ("keys", "interrupt"),
 }
 
 _TRUE_LITERALS = frozenset({"1", "true", "yes", "on"})
@@ -256,6 +396,21 @@ class Config:
         return node
 
 
+def keybindings(cfg: Config) -> KeyBindings:
+    """The resolved inspector/interrupt chords for BINDINGS construction.
+
+    Reads the normalized ``[keys]`` section, so every fallback the winning
+    value needed is already applied — and already named in ``cfg.notices``,
+    which is why the notices :func:`resolve_keybindings` also returns are
+    discarded here rather than surfaced twice.
+    """
+    section = cfg.get("keys", default={})
+    bindings, _ = resolve_keybindings(
+        section if isinstance(section, Mapping) else None
+    )
+    return bindings
+
+
 def profile_endpoints(cfg: Config) -> Mapping[str, str]:
     """The operator's ``[profiles.endpoints]`` map, with non-string rows dropped.
 
@@ -331,6 +486,21 @@ def _normalize_config(
     notices.extend(normalized_status.notices)
     if command_notice is not None:
         notices.append(command_notice)
+
+    keys_source = merged.get("keys")
+    bindings, key_notices = resolve_keybindings(
+        keys_source if isinstance(keys_source, Mapping) else None
+    )
+    if not isinstance(keys_source, Mapping):
+        notices.append(
+            "keys must be a table with toggle_inspector and interrupt keys; "
+            f"using {DEFAULT_INSPECTOR_KEY} and {DEFAULT_INTERRUPT_KEY}"
+        )
+    merged["keys"] = {
+        "toggle_inspector": bindings.toggle_inspector,
+        "interrupt": bindings.interrupt,
+    }
+    notices.extend(key_notices)
     return merged, tuple(notices)
 
 

@@ -165,17 +165,17 @@ async def test_ae2_follow_bottom_via_end_and_f5_alias() -> None:
 
 @pytest.mark.asyncio
 async def test_ae3_interrupt_guard_idle_shows_notice_and_does_not_dispatch() -> None:
-    """P1-A: idle ctrl+c is a no-op with visible feedback, not a dispatch.
+    """P1-A: idle ctrl+s is a no-op with visible feedback, not a dispatch.
 
-    The guard is load-bearing because ctrl+c reclaims Textual's system quit
-    binding. The first press when no turn is in flight must not send
+    The guard is load-bearing because the chord cancels a turn when one is in
+    flight. The first press when no turn is in flight must not send
     session.interrupt and must show NOTHING_TO_INTERRUPT.
     """
     app = live_app(RecordingDispatcher())
     async with app.run_test() as pilot:
         # No message.start, so turn is idle
         assert app.state.turn == "idle"
-        await pilot.press("ctrl+c")
+        await pilot.press("ctrl+s")
         await app.settle_live()
         await pilot.pause()
         assert not any(m == "session.interrupt" for m, _ in app.dispatcher.calls)  # type: ignore[union-attr]
@@ -196,13 +196,13 @@ async def test_ae3_interrupt_guard_idle_shows_notice_and_does_not_dispatch() -> 
 
 @pytest.mark.asyncio
 async def test_ae3_interrupt_when_streaming_dispatches() -> None:
-    """P1-A: when a turn is streaming, ctrl+c and F4 dispatch session.interrupt."""
+    """P1-A: when a turn is streaming, ctrl+s and F4 dispatch session.interrupt."""
     app = live_app(RecordingDispatcher())
     async with app.run_test() as pilot:
         feed(app, event("message.start", {}))
         await settle(app, pilot)
         assert app.state.turn == "streaming"
-        await pilot.press("ctrl+c")
+        await pilot.press("ctrl+s")
         await app.settle_live()
         await pilot.pause()
         assert any(m == "session.interrupt" for m, _ in app.dispatcher.calls)  # type: ignore[union-attr]
@@ -230,7 +230,7 @@ async def test_ae3_interrupt_in_replay_is_inert() -> None:
     source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
     app3 = TalariaApp(source, mode="replay", controls=controls)
     async with app3.run_test() as pilot:
-        await pilot.press("ctrl+c")
+        await pilot.press("ctrl+s")
         await pilot.pause()
         assert any(o.name == "interrupt" for o in controls.refusals)
         await app3.shutdown_sources()
@@ -246,7 +246,8 @@ def test_ae3_f4_and_f10_unmeasured_are_structural_only() -> None:
 
     f4_keys = [b.key for b in AppClass.BINDINGS if b.action == "interrupt"]  # type: ignore
     assert "f4" in f4_keys, "F4 alias missing"
-    assert "ctrl+c" in f4_keys, "ctrl+c primary missing"
+    assert "ctrl+s" in f4_keys, "ctrl+s primary missing"
+    assert "ctrl+c" not in f4_keys, "ctrl+c left the interrupt action (#120)"
 
     f10_keys = [b.key for b in AppClass.BINDINGS if b.action == "speed_up"]  # type: ignore
     assert "f10" in f10_keys
@@ -368,8 +369,11 @@ async def test_ae6_row_is_discoverable() -> None:
         live_text = app_live.help_bar.help_text
         assert len(live_text) <= 80, f"live footer {len(live_text)} >80: {live_text!r}"
         assert "F8" not in live_text, "live should not advertise replay keys"
-        assert "ctrl+g" in live_text or "F2" in live_text
-        assert "ctrl+c" in live_text
+        assert "ctrl+o" in live_text, "live should name the inspector chord"
+        assert "ctrl+s" in live_text, "live should name the cancel chord"
+        assert "cancel-turn" in live_text, "live should label cancel-turn"
+        assert "ctrl+q" in live_text, "live should name the quit chord"
+        assert "quit" in live_text, "live should label quit-client"
         assert "F1" in live_text
         assert "eaten" in live_text.lower()
         await pilot.pause()
@@ -380,7 +384,8 @@ async def test_ae6_row_is_discoverable() -> None:
         assert app_live.bottom_status_bar.region.height == 1
         rendered = "".join(seg.text for seg in strips[row])
         assert "…" not in rendered, f"live footer clipped at 80x24: {rendered!r}"
-        assert "eaten on macOS" in rendered, f"live tail missing: {rendered!r}"
+        assert "cancel-turn" in rendered, f"live cancel label missing: {rendered!r}"
+        assert "F1/F2 eaten" in rendered, f"live tail missing: {rendered!r}"
         await app_live.shutdown_sources()
 
     from talaria.replay.source import ReplaySource
@@ -395,6 +400,8 @@ async def test_ae6_row_is_discoverable() -> None:
         assert "F8" in replay_text
         assert "F9" in replay_text
         assert "F10" in replay_text
+        assert "ctrl+o" in replay_text, "replay should name the inspector chord"
+        assert "ctrl+s" not in replay_text
         assert "ctrl+c" not in replay_text
         await pilot.pause()
         strips = app_replay.screen._compositor.render_strips()
@@ -404,7 +411,7 @@ async def test_ae6_row_is_discoverable() -> None:
         assert app_replay.bottom_status_bar.region.height == 1
         rendered = "".join(seg.text for seg in strips[row])
         assert "…" not in rendered, f"replay footer clipped at 80x24: {rendered!r}"
-        assert "eaten on macOS" in rendered, f"replay tail missing: {rendered!r}"
+        assert "F1/F2 eaten" in rendered, f"replay tail missing: {rendered!r}"
         await app_replay.shutdown_sources()
 
 
@@ -431,7 +438,8 @@ def test_ae9_no_composer_collision() -> None:
     assert "/" not in keys
     assert "ctrl+up" not in keys
     assert "ctrl+g" in keys
-    assert "ctrl+c" in keys
+    assert "ctrl+s" in keys
+    assert "ctrl+o" in keys
 
 
 def test_ae11_project_check_is_clean() -> None:
@@ -441,7 +449,9 @@ def test_ae11_project_check_is_clean() -> None:
     keys = {b.key for b in AppClass.BINDINGS}  # type: ignore
     # Must have the expected primary bindings
     assert "ctrl+g" in keys
-    assert "ctrl+c" in keys
+    assert "ctrl+s" in keys
+    assert "ctrl+o" in keys
+    assert "ctrl+b" not in keys, "the replaced inspector default stays unbound"
     assert "f8" in keys
     assert "ctrl+q" in keys
     # Help bar must exist as a widget class

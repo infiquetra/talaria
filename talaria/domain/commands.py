@@ -532,7 +532,7 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand(
         "/inspector",
         "inspector",
-        "Toggle the session inspector (ctrl+b)",
+        "Toggle the session inspector (ctrl+o)",
     ),
     LocalCommand(
         "/diffs",

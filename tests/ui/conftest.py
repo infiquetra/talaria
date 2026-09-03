@@ -115,6 +115,7 @@ def live_app(
     *,
     coalesce_interval: float = 3600.0,
     connections: Any = None,
+    **kwargs: Any,
 ) -> TalariaApp:
     """A live-mode app whose only renders are the ones a test asks for.
 
@@ -158,6 +159,7 @@ def live_app(
         dispatcher=dispatcher,
         coalesce_interval=coalesce_interval,
         connections=connections,
+        **kwargs,
     )
 
 
