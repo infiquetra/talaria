@@ -4,6 +4,28 @@
 
 ## 2026-09-03
 
+### A same-value-silent reactive needs an explicit repaint call after a same-key spec swap
+
+**Evidence.** Issue #124's marketplace import re-registered a rebuilt theme under the
+currently-active slug and assigned the unchanged slug back. The live screen kept painting the
+old variables: Textual's `theme` reactive only wakes `_watch_theme` on a slug change, so the
+new Theme object sat in the registry while nothing repainted. The tester proved it live
+(old canvas 43 fills, new 0), and the repair (`_repaint_theme_if_changed` at
+`talaria/ui/app.py`, running the framework's own `_invalidate_css` + scheduled `refresh_css` +
+`theme_changed_signal.publish` tail) flipped the metrics exactly (new 43, old 0). Pinned by
+`tests/ui/test_theme_import.py::test_same_slug_reload_repaints_the_live_screen` plus a
+no-misfire gate test for identical reloads.
+
+**Mechanism.** A same-value-silent reactive conflates "assigned the same key" with "nothing
+changed", which is correct for selection state but wrong for registry content keyed by that
+state. The fix is not a louder reactive (`always_update`) or a mutate-and-restore round trip:
+it is a value-compared (`Theme.__eq__`) explicit call of the framework's own apply steps,
+fired only on a real same-slug difference.
+
+**Generalizable rule.** Whenever a registry is keyed by a reactive value, a same-key content
+swap needs its own change signal — write the repaint test first (asserting the new content is
+observable), watch it fail through the silent reactive, then add the explicit apply.
+
 ### A lenient theme layer needs a test that feeds it null, not just garbage
 
 **Evidence.** Issue #123's per-category groups layer is deliberately lenient: unknown categories,
