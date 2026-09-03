@@ -34,6 +34,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from time import time as _wall_clock
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
@@ -43,6 +44,7 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.theme import Theme
 from textual.timer import Timer
 from textual.widgets import Static
 
@@ -5451,6 +5453,22 @@ class TalariaApp(App[None]):
             return
         self._notice(f"saved theme {selected!r} to the {scope} config at {path}")
 
+    def _repaint_theme_if_changed(self, new: Theme, old: Theme | None) -> None:
+        """Repaint after a same-slug spec swap whose Theme actually changed.
+
+        Textual's ``theme`` reactive only wakes its watcher on a slug change,
+        so re-registering a rebuilt spec under the current slug paints nothing
+        without this. Fires only on a real value difference — a no-op
+        re-resolve repaints nothing — running the framework's own apply steps
+        (invalidate, scheduled refresh, change publish) without redeclaring
+        them and without a mutate-and-restore round trip.
+        """
+        if old is not None and old == new:
+            return
+        self._invalidate_css()
+        self.call_next(partial(self.refresh_css, animate=False))
+        self.call_next(self.theme_changed_signal.publish, new)
+
     def _select_theme(self, words: list[str]) -> None:
         """Preview one registry theme immediately; persistence stays explicit.
 
@@ -5465,8 +5483,10 @@ class TalariaApp(App[None]):
             self._notice(f"theme {slug!r} is not available — keeping {self.theme!r}")
             return
         previous = self.theme
+        old_theme = self.available_themes.get(slug)
         try:
-            self.register_theme(self.theme_registry.to_textual_theme(slug))
+            new_theme = self.theme_registry.to_textual_theme(slug)
+            self.register_theme(new_theme)
             self.theme = slug
         except Exception as exc:
             # Restoring a theme that rendered seconds ago cannot fail in a
@@ -5477,6 +5497,8 @@ class TalariaApp(App[None]):
                 f"theme {slug!r} could not preview ({exc}) — keeping {previous!r}"
             )
             return
+        if previous == slug:
+            self._repaint_theme_if_changed(new_theme, old_theme)
         self.session_theme_slug = slug
         self._notice(
             f"theme {slug!r} previewing for this session — /theme save to persist"
@@ -5581,6 +5603,7 @@ class TalariaApp(App[None]):
         """Swap one validated spec into the live registry and preview it."""
         slug = report.theme.slug
         previous = self.theme
+        old_theme = self.available_themes.get(slug)
         try:
             specs = (
                 tuple(
@@ -5591,7 +5614,8 @@ class TalariaApp(App[None]):
                 + (report.theme,)
             )
             registry = ThemeRegistry(specs)
-            self.register_theme(registry.to_textual_theme(slug))
+            new_theme = registry.to_textual_theme(slug)
+            self.register_theme(new_theme)
             self.theme_registry = registry
             self.theme = slug
         except Exception as exc:
@@ -5601,6 +5625,8 @@ class TalariaApp(App[None]):
                 f"theme {slug!r} could not apply ({exc}) — keeping {previous!r}"
             )
             return
+        if previous == slug:
+            self._repaint_theme_if_changed(new_theme, old_theme)
         self.session_theme_slug = slug
         self._notice(
             f"theme {slug!r} {action}: {report.mapped_count} source tokens, "
