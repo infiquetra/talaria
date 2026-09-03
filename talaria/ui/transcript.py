@@ -46,15 +46,20 @@ handing its document to the entry it just became — is keyed on it too.
 document — carries exactly one ``transcript--group-*`` CSS class, chosen by
 :func:`kind_group` from :data:`_KIND_GROUPS`, R7's verbatim twelve-to-group
 table. The channel is background tint plus a left-edge border (the "gutter
-marker"), never a change to the body text's own foreground colour — a fence's
-own syntax highlighting inside a reasoning or assistant document paints
-foreground spans, and a channel carried by foreground colour would be exactly
-what that highlighting could erase (R8). U6 routes each group through its
-dedicated ``talaria.transcript.*`` marker/background token pair and puts the
-group's fixed non-colour label in its existing first painted row. The domain
-source and block factory remain unchanged. The one-column border consumes a
-column, so both mounted unit types reserve that column unconditionally; moving
-the reserved column from padding to border keeps wrapping and height stable.
+marker"). The body text keeps its own independent per-category color, which
+defaults to the shared ``talaria.text`` — a fence's own syntax highlighting
+inside a reasoning or assistant document paints foreground spans, so the
+tint-plus-stripe channel (never the text color) is what survives that
+highlighting and still carries the group (R8). U6 routes each group through
+its dedicated ``talaria.transcript.*`` marker/background token pair and puts
+the group's fixed non-colour label in its existing first painted row; v0.6.0
+adds the per-category body text resolved through the theme registry's groups
+layer and held to the readability floor there. The domain source and block
+factory remain unchanged. The one-column border consumes a column, so both
+mounted unit types reserve that column unconditionally; moving the reserved
+column from padding to border keeps wrapping and height stable.
+:meth:`TranscriptPane.set_show_left_offset` optionally reclaims that column
+for content instead of painting it.
 """
 
 from __future__ import annotations
@@ -206,26 +211,63 @@ _KIND_GROUPS: Final[dict[TranscriptKind, KindGroup]] = {
     "unknown-event": "fault",
 }
 
-#: U6's dedicated theme-token pair for each transcript group. The pin test in
+#: U6's dedicated theme variables for each transcript group, plus the
+#: v0.6.0 per-category body text variable: (stripe marker, fill
+#: background, body text). The marker and background name the group's
+#: existing ``talaria.transcript.*`` tokens; the text names the group's
+#: resolved body color, which defaults to the shared ``talaria.text`` and
+#: is held to the readability floor at resolution. The pin test in
 #: ``tests/ui/test_kind_styles.py`` resolves the variables through a mounted
 #: built-in theme rather than trusting this table alone.
-_GROUP_VARIABLES: Final[dict[KindGroup, tuple[str, str]]] = {
-    "operator": ("talaria-transcript-operator", "talaria-transcript-operator-background"),
+_GROUP_VARIABLES: Final[dict[KindGroup, tuple[str, str, str]]] = {
+    "operator": (
+        "talaria-transcript-operator",
+        "talaria-transcript-operator-background",
+        "talaria-transcript-operator-text",
+    ),
     "assistant": (
         "talaria-transcript-assistant",
         "talaria-transcript-assistant-background",
+        "talaria-transcript-assistant-text",
     ),
     "reasoning": (
         "talaria-transcript-reasoning",
         "talaria-transcript-reasoning-background",
+        "talaria-transcript-reasoning-text",
     ),
-    "activity": ("talaria-transcript-activity", "talaria-transcript-activity-background"),
+    "activity": (
+        "talaria-transcript-activity",
+        "talaria-transcript-activity-background",
+        "talaria-transcript-activity-text",
+    ),
     "session-record": (
         "talaria-transcript-session",
         "talaria-transcript-session-background",
+        "talaria-transcript-session-text",
     ),
-    "fault": ("talaria-transcript-fault", "talaria-transcript-fault-background"),
+    "fault": (
+        "talaria-transcript-fault",
+        "talaria-transcript-fault-background",
+        "talaria-transcript-fault-text",
+    ),
 }
+
+#: The theme category each kind group reads its group values from. The
+#: names match the ``talaria.transcript.<category>`` token infix, which is
+#: why the session-record group reads the ``session`` category.
+_KIND_GROUP_CATEGORIES: Final[dict[KindGroup, str]] = {
+    "operator": "operator",
+    "assistant": "assistant",
+    "reasoning": "reasoning",
+    "activity": "activity",
+    "session-record": "session",
+    "fault": "fault",
+}
+
+
+def kind_category(kind: TranscriptKind) -> str:
+    """The theme category styling ``kind``'s transcript group."""
+    return _KIND_GROUP_CATEGORIES[kind_group(kind)]
 
 #: Redundant first-row identity required by the visual specification.  These
 #: labels are presentation only: :attr:`TranscriptLine.source` and every
@@ -288,7 +330,7 @@ _GROUP_LABELS: Final[dict[KindGroup, str]] = {
 _GROUP_CSS_RULES: Final[str] = "\n".join(
     f"""
     TranscriptPane .transcript--group-{group} {{
-        color: $talaria-text;
+        color: ${text};
         background: ${background};
         border-left: thick ${marker};
     }}
@@ -297,8 +339,16 @@ _GROUP_CSS_RULES: Final[str] = "\n".join(
     }}
     TranscriptPane TranscriptLine.transcript--group-{group} {{
         padding-left: 0;
+    }}
+    TranscriptPane.transcript--no-offset .transcript--group-{group} {{
+        color: ${text};
+        background: ${background};
+        border-left: none;
+    }}
+    TranscriptPane.transcript--no-offset EntryMarkdown.transcript--group-{group} {{
+        padding: 0 2 0 0;
     }}"""
-    for group, (marker, background) in _GROUP_VARIABLES.items()
+    for group, (marker, background, text) in _GROUP_VARIABLES.items()
 )
 
 
@@ -713,6 +763,9 @@ class TranscriptPane(VerticalScroll):
     TranscriptPane TranscriptLine {{
         padding-left: 1;
     }}
+    TranscriptPane.transcript--no-offset TranscriptLine {{
+        padding-left: 0;
+    }}
     {_GROUP_CSS_RULES}
     """
 
@@ -721,10 +774,18 @@ class TranscriptPane(VerticalScroll):
         *,
         mount_cap: int = DEFAULT_MOUNT_CAP,
         motion: MotionPolicy = STANDARD_MOTION,
+        show_left_offset: bool = True,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.mount_cap = max(1, mount_cap)
+        #: Whether the one-column left offset (the reserved padding column
+        #: plus the group gutter stripe) is painted. Turning it off reclaims
+        #: the columns for content: the stripe is removed and the reserved
+        #: padding returns to the content width, so wrapped rows reflow
+        #: rather than merely repaint.
+        self._show_left_offset = True
+        self.set_show_left_offset(show_left_offset)
         self.motion = motion
         self.follow = True
         self._applies_in_flight = 0
@@ -766,6 +827,26 @@ class TranscriptPane(VerticalScroll):
         #: last caught up to (CR6).
         self.last_applied_entries: EntryScopedView | None = None
         self._pending_removed_height = 0
+
+    @property
+    def show_left_offset(self) -> bool:
+        """Whether the gutter stripe and its reserved column are painted."""
+        return self._show_left_offset
+
+    def set_show_left_offset(self, show: bool) -> None:
+        """Paint or reclaim the left-edge offset, reflowing content.
+
+        Removing the offset drops the one-column gutter stripe and returns
+        its reserved column to the content width; restoring it re-reserves
+        the column. Either direction reflows wrapped rows instead of
+        clipping them. Safe before mount (the class is recorded and
+        applied when the widget mounts) and after.
+        """
+        self._show_left_offset = show
+        if show:
+            self.remove_class("transcript--no-offset")
+        else:
+            self.add_class("transcript--no-offset")
         #: High-water mark of :attr:`descendant_count` (U6). Tracked
         #: separately from :attr:`peak_mounted` because the two ceilings
         #: KTD1(a) states are different budgets over different counts: a

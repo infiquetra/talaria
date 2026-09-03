@@ -238,8 +238,11 @@ def test_v050_release_notes_describe_the_shipped_upgrade_surfaces() -> None:
 
     assert f"# Talaria v{__version__}" in document
     assert "v0.4.0" in document
-    assert len(BUILTIN_THEMES) == 4
-    for theme in BUILTIN_THEMES:
+    # Homebrew shipped in v0.6.0, after these notes — the four v0.5.0 themes
+    # are still every theme these notes may name.
+    v050_themes = [spec for spec in BUILTIN_THEMES if spec.slug != "homebrew"]
+    assert len(v050_themes) == 4
+    for theme in v050_themes:
         assert theme.name in document
 
     for required in (

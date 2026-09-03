@@ -2,6 +2,28 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-03
+
+### A lenient theme layer needs a test that feeds it null, not just garbage
+
+**Evidence.** Issue #123's per-category groups layer is deliberately lenient: unknown categories,
+unknown tokens, nulls, and malformed colors all fall through at resolution. The first
+implementation treated only unknown keys as silent and counted JSON null as malformed, which was
+wrong per the contract's "nulls fall through" clause — and the suite caught it before any other
+check ran: `tests/themes/test_inheritance.py::test_empty_groups_unknown_keys_and_nulls_fall_through_silently`
+failed with `ignores malformed group colors: assistant.talaria.text` where it expected only the
+fill notice (`talaria/ui/theme.py`, `_category_group_roles`).
+
+**Mechanism.** A validity predicate (`is_opaque_hex_color`) answers "is this a color" with False
+for both "present but wrong" and "explicitly unset", and the caller mapped False to one outcome
+(malformed). Null is a third state with its own contract meaning — the sparse layer's spelling of
+"unset" — so it needs its own branch before the predicate ever runs, the same way the stored-theme
+reader shape-checks groups (`string-or-null`) separately from color validity.
+
+**Generalizable rule.** When a contract names N fall-through causes, write one test input per cause
+in a single test — the null input caught a conflation that unknown-key and malformed inputs alone
+could never distinguish.
+
 ## 2026-09-01
 
 ### Receipts that bind to a harness commit forbid squash-merging the release branch
