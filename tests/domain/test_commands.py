@@ -941,3 +941,52 @@ def test_needs_resolves_locally_even_if_a_gateway_ever_advertises_it() -> None:
         "the collision is invisible in the listing, which is the one place it "
         "could be noticed"
     )
+
+
+# ── #121 picked-line funnel parity ─────────────────────────────────────────
+#
+# The picker dispatches the bare entry name with no pre-resolution, so these
+# pin what that wiring relies on: a bare pick resolves exactly like its typed
+# twins, the confirmation second act survives the funnel intact, and an
+# unsupported pick refuses by name.
+
+
+def test_121_a_bare_pick_resolves_like_its_typed_twins() -> None:
+    """#121 U2: ``/model``, ``/model ``, and ``/MODEL`` are one invocation."""
+    catalog = decode_catalog(catalog_reply())
+    picked = resolve_command("/model", catalog)
+    assert isinstance(picked, GatewayInvocation)
+    assert picked == resolve_command("/model ", catalog)
+    assert picked == resolve_command("/MODEL", catalog)
+    assert (picked.name, picked.argument, picked.listed) == ("/model", "", True)
+
+
+def test_121_the_confirm_word_survives_the_funnel() -> None:
+    """#121 U2: the indexed resend shape reaches the gate with ``confirm`` intact.
+
+    :meth:`_perform_models` keys its second act on the literal word; a funnel
+    that trimmed or reordered the argument would silently turn the confirm
+    into another first act.
+    """
+    first = resolve_command("/models 1 default", None)
+    second = resolve_command("/models 1 default confirm", None)
+    assert isinstance(first, LocalInvocation)
+    assert isinstance(second, LocalInvocation)
+    assert first.argument == "1 default"
+    assert second.argument == "1 default confirm"
+
+
+def test_121_an_unsupported_pick_refuses_by_name() -> None:
+    """#121 U1: a stale pick that went unsupported is a refusal, never a dispatch."""
+    resolution = resolve_command("/density", decode_catalog(catalog_reply()))
+    assert isinstance(resolution, UnsupportedInvocation)
+    assert resolution.name == "/density"
+
+
+def test_121_a_local_pick_resolves_before_the_catalogue() -> None:
+    """#121 U2: PC6 precedence holds for picks — ``/bar`` never reaches the socket."""
+    catalog = decode_catalog(catalog_reply(pairs=[["/bar", "Gateway's own bar"]]))
+    resolution = resolve_command("/bar", catalog)
+    assert isinstance(resolution, LocalInvocation)
+    assert resolution.command.action == "bar"
+    assert resolution.argument == ""
