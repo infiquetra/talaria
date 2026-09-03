@@ -999,14 +999,21 @@ async def test_the_app_probes_at_attach_and_renders_the_board() -> None:
             assert "approval.pending" in calls
             region = app.query_one("#status", StatusRegion)
             texts = region.seam_texts
+            diag = app.inspector.diag_texts
         await app.shutdown_sources()
     finally:
         await stub.stop()
 
-    assert [text.split(":")[0] for text in texts] == [s.name for s in SEAM_CATALOGUE]
-    roster = next(text for text in texts if text.startswith("roster:"))
+    # #122: a clean board leaves the region empty — healthy present rows need
+    # no operator action, so they live in the inspector now.
+    assert texts == ()
+    names = [line.strip().split(":")[0] for line in diag]
+    assert names == [s.name for s in SEAM_CATALOGUE]
+    roster = next(line for line in diag if line.strip().startswith("roster:"))
     assert "present" in roster
-    kanban = next(text for text in texts if text.startswith("kanban-dispatcher:"))
+    kanban = next(
+        line for line in diag if line.strip().startswith("kanban-dispatcher:")
+    )
     assert "board queue source off" in kanban
 
 
@@ -1031,11 +1038,17 @@ async def test_a_painted_seam_line_grows_older_and_eventually_says_stale() -> No
     reads a wall clock, which is the defect R20's ages exist to prevent.
     """
     from talaria.domain.startup import StartupSelection
+    from talaria.ui.app import TalariaApp
     from talaria.ui.status_region import StatusRegion
     from tests.transport.test_session_startup import live_app, sent, until
 
-    def roster_line(region: StatusRegion) -> str:
-        return next(text for text in region.seam_texts if text.startswith("roster:"))
+    def inspector_roster(app: TalariaApp) -> str:
+        diag = app.inspector.diag_texts
+        return next(line for line in diag if line.strip().startswith("roster:"))
+
+    def region_roster(region: StatusRegion) -> str | None:
+        matches = [text for text in region.seam_texts if text.startswith("roster:")]
+        return matches[0] if matches else None
 
     stub = StubGateway(responder=startup_responder_for_seams())
     await stub.start()
@@ -1045,20 +1058,25 @@ async def test_a_painted_seam_line_grows_older_and_eventually_says_stale() -> No
             await until(lambda: app._startup_done)
             probed_at_attach = len([n for n in sent(stub) if n == "session.active_list"])
             region = app.query_one("#status", StatusRegion)
-            assert "0s ago" in roster_line(region)
+            # #122: a fresh present row lives in the inspector, not the region.
+            assert "0s ago" in inspector_roster(app)
+            assert region_roster(region) is None
 
             app.state = replace(app.state, last_observed_at=app.state.last_observed_at + 30.0)
             await app._render_tick()
-            aged = roster_line(region)
+            aged = inspector_roster(app)
             assert "30s ago" in aged
             assert "stale" not in aged
+            assert region_roster(region) is None
 
             app.state = replace(
                 app.state,
                 last_observed_at=app.state.last_observed_at + PROBE_REVALIDATION_S,
             )
             await app._render_tick()
-            assert "stale" in roster_line(region)
+            # Stale currency is ambiguous, so the row returns to the region.
+            assert region_roster(region) is not None
+            assert "stale" in region_roster(region)  # type: ignore[operator]
 
             # Drawing is not probing. The cadence rule this unit is built around
             # governs the socket, and two repaints must not have touched it.
