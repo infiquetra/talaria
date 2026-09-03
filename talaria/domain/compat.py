@@ -173,7 +173,14 @@ COMPAT_BASELINE: tuple[MethodBaseline, ...] = (
             "skills": "object",
             "skill_count": "int",
             "warning": "str",
+            "commands": "object",
         },
+        # U1 (#119) observed the live gateway answering with a ``commands``
+        # metadata map alongside ``pairs`` — a distinct per-command map, not a
+        # second spelling of the rows. Pinned when present (wrong-typed still
+        # drifts), tolerated when absent so gateways predating the key do not
+        # report a missing-key break they never had.
+        optional_keys=frozenset({"commands"}),
     ),
     MethodBaseline(
         method="session.list",
