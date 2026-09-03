@@ -47,7 +47,15 @@ from textual.timer import Timer
 from textual.widgets import Static
 
 from talaria import __version__
-from talaria.config import ConfigError, ThemeSaveScope, save_theme
+from talaria.config import (
+    DEFAULT_INSPECTOR_KEY,
+    DEFAULT_INTERRUPT_KEY,
+    ConfigError,
+    KeyBindings,
+    ThemeSaveScope,
+    resolve_keybindings,
+    save_theme,
+)
 from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.commands import (
     CATALOG_METHOD,
@@ -358,11 +366,13 @@ PROMPT_NO_LONGER_LIVE: Final[str] = REFUSED_NOT_OUTSTANDING
 #: pacing register's own ("this session is live — nothing changed").
 ALREADY_FOLLOWING_BOTTOM: Final[str] = "the newest line is already followed — nothing changed"
 
-#: Shown when ctrl+c is pressed with no turn in flight (A4 P1-A).
+#: Shown when the interrupt chord is pressed with no turn in flight (A4 P1-A,
+#: #120 U2).
 #:
-#: ``ctrl+c`` is a system quit binding in Textual; this unit reclaims it for
-#: the destructive interrupt, so a guard and visible feedback are load-bearing.
-#: The first press when nothing is in flight is a no-op that says so, matching
+#: The chord defaults to ``ctrl+s`` (#120 decision B) and is configurable via
+#: the ``[keys]`` surface; ``ctrl+c`` left the interrupt action and is now
+#: unbound, reaching no quit path. Either way the guard is load-bearing:
+#: the first press when nothing is in flight is a no-op that says so, matching
 #: :data:`ALREADY_FOLLOWING_BOTTOM` — a signal whose failure is
 #: indistinguishable from success is worse than no signal.
 NOTHING_TO_INTERRUPT: Final[str] = "nothing to interrupt — no turn is in flight"
@@ -1067,13 +1077,17 @@ class ModelDefaultWriter(Protocol):
 
 
 class HelpBar(Static):
-    """One-row binding listing, scoped to the current mode (A4 KTD4).
+    """One-row binding listing, scoped to the current mode (A4 KTD4, #120 U2).
 
     A eaten key sends no bytes, so the program cannot detect that it was eaten
     and cannot warn at runtime. The correction is a redundant primary path and
     a static listing that names both, before the key is pressed. The listing is
     scoped so replay does not advertise live keys and live does not advertise
     the three replay pacing keys as if they toggle something.
+
+    The live listing names cancel-turn and quit-client side by side, so the
+    two chords can never be mistaken for one another: the interrupt chord
+    cancels the turn, ``ctrl+q`` quits the client, and nothing else quits.
     """
 
     DEFAULT_CSS = """
@@ -1089,22 +1103,30 @@ class HelpBar(Static):
         super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
         self._help_text = ""
 
-    def update_for_mode(self, mode: str) -> None:
+    def update_for_mode(
+        self,
+        mode: str,
+        *,
+        inspector_key: str = DEFAULT_INSPECTOR_KEY,
+        interrupt_key: str = DEFAULT_INTERRUPT_KEY,
+    ) -> None:
         from talaria.ui.literal import literal_text  # local import to avoid cycle
 
         if mode == "replay":
             # Replay: keep the pacing controls and the inspector's reliable
             # routes visible without clipping at the standard 80-column size.
             text = (
-                "ctrl+b inspector · / commands · F8 pause · "
-                "F9/F10 speed · F1/F2 eaten on macOS"
+                f"{inspector_key} inspector · / commands · F8 pause · "
+                "F9/F10 speed · F1/F2 eaten"
             )
         else:
             # Live: pacing keys are inert, so not advertised. The inspector's
-            # global chord is rendered beside its slash-command fallback.
+            # global chord is rendered beside its slash-command fallback, and
+            # the interrupt chord is labelled cancel-turn beside ctrl+q's
+            # quit, so a cancel press can never read as a quit press.
             text = (
-                "ctrl+b inspector · / commands · ctrl+g · ctrl+c · "
-                "F1/F2 eaten on macOS"
+                f"{inspector_key} inspector · / commands · "
+                f"{interrupt_key} cancel-turn · ctrl+q quit · F1/F2 eaten"
             )
         self._help_text = text
         self.update(literal_text(text))
@@ -1114,28 +1136,27 @@ class HelpBar(Static):
         return self._help_text
 
 
-class TalariaApp(App[None]):
-    """The replay-driven shell: transcript, sub-agent rows, status region, composer."""
+def build_app_bindings(
+    inspector_key: str, interrupt_key: str
+) -> list[BindingType]:
+    """Build the app binding table for one pair of configurable chords.
 
-    TITLE = "talaria"
+    The single construction point #120's ``[keys]`` surface feeds: the class
+    table is this function called with the defaults, and a configured
+    override is this function called with the resolved chords (applied to the
+    instance map in :meth:`TalariaApp._apply_keybindings`).
 
-    CSS = """
-    Screen {
-        layout: vertical;
-    }
-    #body {
-        height: 1fr;
-        width: 1fr;
-    }
-    #main-and-inspector {
-        height: 1fr;
-        width: 1fr;
-    }
+    The inspector chord defaults to ``ctrl+o`` (decision A): ``ctrl+b`` was
+    the previous default and Herdr captures it before Talaria sees it when
+    nested, so it is documented in :data:`talaria.config.REPLACED_INSPECTOR_KEY`
+    as replaced rather than bound. The interrupt chord defaults to ``ctrl+s``
+    (decision B): ``ctrl+c`` left the interrupt action and is now unbound,
+    reaching no quit path. ``f4`` stays as the interrupt alias and quit stays
+    on ``ctrl+q``, so cancel-turn and quit-client always have both ends visible.
     """
-
-    BINDINGS: ClassVar[list[BindingType]] = [
+    return [
         Binding("ctrl+q", "quit", "quit", priority=True),
-        Binding("ctrl+b", "toggle_inspector", "inspector", priority=True),
+        Binding(inspector_key, "toggle_inspector", "inspector", priority=True),
         # A4 KTD1/KTD2: F1 removed — the focus-owning card (A1) is the anchor,
         # so the jump has no job on this desktop. On macOS F1/F2 are eaten before
         # Talaria sees them; a eaten key sends no bytes and the program cannot
@@ -1143,7 +1164,7 @@ class TalariaApp(App[None]):
         # F2/F4 remain as aliases where the desktop delivers them (KTD3).
         Binding("ctrl+g", "toggle_agents", "sub-agents", priority=True),
         Binding("f2", "toggle_agents", "sub-agents", priority=True, show=False),
-        Binding("ctrl+c", "interrupt", "interrupt", priority=True),
+        Binding(interrupt_key, "interrupt", "interrupt", priority=True),
         Binding("f4", "interrupt", "interrupt", priority=True, show=False),
         Binding("f8", "toggle_pause", "pause/resume", priority=True),
         Binding("f9", "slow_down", "slower", priority=True),
@@ -1166,6 +1187,34 @@ class TalariaApp(App[None]):
             "f12", "toggle_profiles", "profiles", priority=True, show=False
         ),
     ]
+
+
+class TalariaApp(App[None]):
+    """The replay-driven shell: transcript, sub-agent rows, status region, composer."""
+
+    TITLE = "talaria"
+
+    CSS = """
+    Screen {
+        layout: vertical;
+    }
+    #body {
+        height: 1fr;
+        width: 1fr;
+    }
+    #main-and-inspector {
+        height: 1fr;
+        width: 1fr;
+    }
+    """
+
+    #: The default binding table. #120's ``[keys]`` surface feeds BINDINGS
+    #: construction through :func:`build_app_bindings`, which is the single
+    #: point that applies a configured override; this table is that function
+    #: called with the defaults.
+    BINDINGS: ClassVar[list[BindingType]] = build_app_bindings(
+        DEFAULT_INSPECTOR_KEY, DEFAULT_INTERRUPT_KEY
+    )
 
     def __init__(
         self,
@@ -1194,8 +1243,20 @@ class TalariaApp(App[None]):
         startup_notices: tuple[str, ...] = (),
         theme_config_dir: Path | None = None,
         launch_cwd: Path | None = None,
+        keybindings: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__()
+        #: The resolved inspector/interrupt chords (#120 U1). The class table
+        #: carries the defaults; a configured override moves its action's
+        #: entry on this instance's binding map, so one app's override never
+        #: leaks into another's. Restart-scoped like ``reduced_motion``: read
+        #: once here, never re-read from configuration afterwards.
+        resolved_keys, key_notices = resolve_keybindings(keybindings)
+        self.keybindings: KeyBindings = resolved_keys
+        self.inspector_key = resolved_keys.toggle_inspector
+        self.interrupt_key = resolved_keys.interrupt
+        self._keybinding_notices = key_notices
+        self._apply_keybindings()
         self.theme_registry = theme_registry or BUILTIN_THEME_REGISTRY
         resolved_theme = self.theme_registry.resolve(theme_name)
         self.theme_registry.register(self)
@@ -1337,6 +1398,13 @@ class TalariaApp(App[None]):
             focused=SessionState(), focused_profile=current_profile or DEFAULT_PROFILE
         )
         for notice in self._startup_notices:
+            self.state = record_local_note(
+                self.state, notice, at=self.state.last_observed_at
+            )
+        # A configured chord that fell back says so in the transcript, beside
+        # the other startup notices — a silently remapped key is the failure
+        # this whole surface exists to prevent.
+        for notice in self._keybinding_notices:
             self.state = record_local_note(
                 self.state, notice, at=self.state.last_observed_at
             )
@@ -1830,7 +1898,11 @@ class TalariaApp(App[None]):
             self._status_task = asyncio.create_task(self._status_loop())
         self.fetch_catalog()
         try:
-            self.help_bar.update_for_mode(self.mode)
+            self.help_bar.update_for_mode(
+                self.mode,
+                inspector_key=self.inspector_key,
+                interrupt_key=self.interrupt_key,
+            )
         except NoMatches:
             pass
         self.composer.text_area.focus()
@@ -2318,6 +2390,49 @@ class TalariaApp(App[None]):
         self.controls.slow_down()
         self._notice(self._pacing_notice())
 
+    def _apply_keybindings(self) -> None:
+        """Move the two configurable chords onto this instance's binding map.
+
+        The map is a per-instance copy of the merged class table, so moving an
+        entry here never touches another app's bindings. A chord left at its
+        default is already in place and is not touched.
+        """
+        keymap = self._bindings.key_to_bindings
+        self._move_binding(
+            keymap,
+            "toggle_inspector",
+            DEFAULT_INSPECTOR_KEY,
+            self.inspector_key,
+        )
+        self._move_binding(
+            keymap, "interrupt", DEFAULT_INTERRUPT_KEY, self.interrupt_key
+        )
+
+    @staticmethod
+    def _move_binding(
+        keymap: dict[str, list[Binding]],
+        action: str,
+        old_key: str,
+        new_key: str,
+    ) -> None:
+        """Move one action's entry from ``old_key`` to ``new_key`` in place."""
+        if old_key == new_key:
+            return
+        old_entries = keymap.get(old_key, [])
+        description = next(
+            (entry.description for entry in old_entries if entry.action == action),
+            action,
+        )
+        remaining = [entry for entry in old_entries if entry.action != action]
+        if remaining:
+            keymap[old_key] = remaining
+        else:
+            keymap.pop(old_key, None)
+        if not any(entry.action == action for entry in keymap.get(new_key, [])):
+            keymap.setdefault(new_key, []).append(
+                Binding(new_key, action, description, priority=True)
+            )
+
     def action_toggle_inspector(self) -> None:
         """Toggle the process-local dock or narrow overlay."""
         anchor = self._capture_layout_anchor()
@@ -2395,7 +2510,9 @@ class TalariaApp(App[None]):
     def action_interrupt(self) -> None:
         """Stop the in-flight turn (R4) — inert in replay (AE11) and inert when idle (P1-A).
 
-        ``ctrl+c`` reclaims Textual's system quit binding, so the guard is
+        Reached via the configurable interrupt chord (``ctrl+s`` by default,
+        ``f4`` stays as the alias); ``ctrl+c`` left this action and falls
+        through to Textual's system quit hint, so the guard is still
         load-bearing: the first press when no turn is in flight is a no-op
         that says so, matching :data:`ALREADY_FOLLOWING_BOTTOM`'s visible
         nothing-happened.

@@ -235,14 +235,14 @@ async def test_inspector_printable_shows_exact_discard_notice() -> None:
         await app.shutdown_sources()
 
 @pytest.mark.asyncio
-async def test_ctrl_b_overlay_printable_shows_inspector_discard_notice() -> None:
-    """Ctrl+B's automatic narrow-overlay focus receives the same warning."""
+async def test_ctrl_o_overlay_printable_shows_inspector_discard_notice() -> None:
+    """Ctrl+O's automatic narrow-overlay focus receives the same warning."""
     app = live_app(RecordingDispatcher())
     async with app.run_test(size=(100, 30)) as pilot:
         await settle(app, pilot)
         assert app.screen.focused is app.composer.text_area
 
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
 
         focused = app.screen.focused

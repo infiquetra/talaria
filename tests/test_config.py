@@ -383,6 +383,94 @@ def test_reduced_motion_has_no_environment_or_command_line_alias(
     assert cfg.notices == ()
 
 
+def test_keys_defaults_are_ctrl_o_and_ctrl_s_with_no_notices(
+    tmp_path: Path,
+) -> None:
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", "toggle_inspector") == "ctrl+o"
+    assert cfg.get("keys", "interrupt") == "ctrl+s"
+    assert cfg.notices == ()
+
+
+def test_keys_toml_override_takes_effect(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[keys]\ntoggle_inspector = "ctrl+x"\ninterrupt = "f4"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", "toggle_inspector") == "ctrl+x"
+    assert cfg.get("keys", "interrupt") == "f4"
+    assert cfg.notices == ()
+
+
+def test_keys_environment_override_beats_the_toml_file(
+    isolated_global_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[keys]\ntoggle_inspector = "ctrl+x"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("TALARIA_KEYS_TOGGLE_INSPECTOR", "alt+o")
+    monkeypatch.setenv("TALARIA_KEYS_INTERRUPT", "alt+s")
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", "toggle_inspector") == "alt+o"
+    assert cfg.get("keys", "interrupt") == "alt+s"
+    assert cfg.notices == ()
+
+
+@pytest.mark.parametrize(
+    ("body", "inspector", "interrupt", "notice_fragment"),
+    [
+        ('[keys]\ntoggle_inspector = ""\n', "ctrl+o", "ctrl+s", "keys.toggle_inspector"),
+        ('[keys]\ntoggle_inspector = 7\n', "ctrl+o", "ctrl+s", "keys.toggle_inspector"),
+        (
+            '[keys]\ntoggle_inspector = "ctrl+banana"\n',
+            "ctrl+o",
+            "ctrl+s",
+            "keys.toggle_inspector",
+        ),
+        (
+            '[keys]\ninterrupt = "ctrl+q"\n',
+            "ctrl+o",
+            "ctrl+s",
+            "reserved for quitting",
+        ),
+        (
+            '[keys]\ntoggle_inspector = "ctrl+x"\ninterrupt = "ctrl+x"\n',
+            "ctrl+o",
+            "ctrl+s",
+            "are both",
+        ),
+        ("[keys]\n", "ctrl+o", "ctrl+s", None),
+        ('keys = "ctrl+x"\n', "ctrl+o", "ctrl+s", "must be a table"),
+    ],
+)
+def test_keys_invalid_values_fall_back_visibly(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    body: str,
+    inspector: str,
+    interrupt: str,
+    notice_fragment: str | None,
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(body, encoding="utf-8")
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", "toggle_inspector") == inspector
+    assert cfg.get("keys", "interrupt") == interrupt
+    if notice_fragment is None:
+        assert cfg.notices == ()
+    else:
+        assert any(notice_fragment in notice for notice in cfg.notices), cfg.notices
+
+
 def test_global_config_toml_overrides_default(
     isolated_global_config_dir: Path, tmp_path: Path
 ) -> None:
@@ -774,6 +862,7 @@ def test_v050_user_guide_toml_examples_parse_and_match_runtime_defaults() -> Non
     }
     assert example["environment"] == DEFAULTS["environment"]
     assert example["composer"] == DEFAULTS["composer"]
+    assert example["keys"] == DEFAULTS["keys"]
     assert example["profiles"] == DEFAULTS["profiles"]
 
 

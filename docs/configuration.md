@@ -61,6 +61,10 @@ allowlist = []
 paste_collapse_lines = 6
 paste_collapse_bytes = 512
 
+[keys]
+toggle_inspector = "ctrl+o"
+interrupt = "ctrl+s"
+
 [profiles.endpoints]
 # work = "ws://127.0.0.1:9119/api/ws"
 ```
@@ -83,6 +87,8 @@ defaults.
 | `environment.allowlist` | array of strings, empty | Environment-variable names the optional status command may receive. Its child environment is default-deny; credential-like names remain subject to the status security boundary. No environment alias. |
 | `composer.paste_collapse_lines` | integer, `6` | Collapses a paste meeting this line threshold. Zero or a negative value disables this half of the threshold. `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES` is its environment alias. |
 | `composer.paste_collapse_bytes` | integer, `512` | Collapses a paste meeting this byte threshold. Zero or a negative value disables this half of the threshold. `TALARIA_COMPOSER_PASTE_COLLAPSE_BYTES` is its environment alias. |
+| `keys.toggle_inspector` | string, `"ctrl+o"` | Chord toggling the session inspector. `Ctrl+B` was the previous default; Herdr captures it when nested, so it stays documented as replaced rather than bound. `TALARIA_KEYS_TOGGLE_INSPECTOR` is its environment alias. |
+| `keys.interrupt` | string, `"ctrl+s"` | Chord cancelling the in-flight turn. `Ctrl+C` left this action; pressed out of habit it reaches the text area's copy binding or the framework's quit hint, never the turn. `TALARIA_KEYS_INTERRUPT` is its environment alias. |
 | `profiles.endpoints` | table of string URLs, empty | Maps a Hermes profile name to the gateway endpoint Talaria should dial. Blank or non-string values are ignored. The map has no environment alias. |
 
 The responsive widths and segment forms are fixed product behavior; changing a maximum does not move
@@ -91,9 +97,11 @@ a breakpoint. See [Terminal UI](terminal-ui.md#responsive-status-bar) for that t
 ## Validation and compatibility
 
 Talaria deep-merges each configured table onto the defaults, so files written before 0.5.0 do not
-need migration. A missing table or key takes the new default. After precedence resolves, only the
-`theme`, `ui`, and `status` tables are normalized: an invalid value in those tables uses its
-documented fallback and adds a visible startup notice.
+need migration. A missing table or key takes the new default. After precedence resolves, the
+`theme`, `ui`, `status`, and `keys` tables are normalized: an invalid value in those tables uses its
+documented fallback and adds a visible startup notice. For `keys`, empty, non-string, and
+unrecognized chord names fall back to their defaults; `ctrl+q` is reserved for quitting and falls
+back; and assigning both actions the same chord resets both to their defaults.
 
 The other tables reach their launch consumers without that normalization. A malformed `composer`
 threshold remains raw in the loaded configuration, then is silently replaced by its default when
@@ -112,6 +120,7 @@ key, or inline table; it leaves every other key and comment untouched, verifies 
 changed in exactly that way, and replaces the file atomically. It is not a general configuration
 serializer.
 
-No command writes the status, user-interface, environment, composer, or profile tables. `/bar`
-toggles a known segment in memory for the running process and never writes. Inspector width and open
-state, and diff mode/navigation state, are also process-local and have no configuration rows.
+No command writes the status, user-interface, environment, composer, keybinding, or
+profile tables. `/bar` toggles a known segment in memory for the running process and never
+writes. Inspector width and open state, and diff mode/navigation state, are also process-local
+and have no configuration rows.

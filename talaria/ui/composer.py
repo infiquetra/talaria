@@ -405,7 +405,7 @@ class ChatTextArea(TextArea):
         else:
             # Unknown non-printable key — honest default is to close the palette
             # rather than leave it open with stale filter. This covers keys like
-            # "f5", "ctrl+c" (which bubbles elsewhere), etc.
+            # "f5", "ctrl+s" (which bubbles to the app's priority interrupt), etc.
             is_caret_move = True
 
         if is_caret_move:

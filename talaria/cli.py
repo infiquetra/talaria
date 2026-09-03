@@ -482,6 +482,7 @@ def run_replay(args: argparse.Namespace) -> int:
         startup_notices=cfg.notices,
         theme_config_dir=cfg.config_dir,
         launch_cwd=Path.cwd(),
+        keybindings=cfg.get("keys", default={}),
     )
     app.run()
     return 0
@@ -748,6 +749,7 @@ def build_live_app(
         startup_notices=cfg.notices,
         theme_config_dir=cfg.config_dir,
         launch_cwd=Path.cwd(),
+        keybindings=cfg.get("keys", default={}),
     )
     holder.append(app)
     # ``source`` is no longer bound, and the removal is the point rather than an
