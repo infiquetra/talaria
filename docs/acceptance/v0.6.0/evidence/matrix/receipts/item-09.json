@@ -1,6 +1,6 @@
 {
   "artifact": {
-    "commit": "e967c203868173c0515bd41ff29f1bc424173490",
+    "commit": "6e2baf16fbf6af7de68ea93c8f7fc19e38e98882",
     "version": "0.6.0",
     "wheel_filename": "talaria-0.6.0-py3-none-any.whl",
     "wheel_sha256": "05c8d9752cf10637a206b455360a357e877131e8c6c709a756bb7282b6b28601"
@@ -12,9 +12,9 @@
     "observation": "sparse inheritance and offset reclaim",
     "source": "https://github.com/infiquetra/talaria/issues/127"
   },
-  "harness_commit": "e967c203868173c0515bd41ff29f1bc424173490",
+  "harness_commit": "6e2baf16fbf6af7de68ea93c8f7fc19e38e98882",
   "issue": "https://github.com/infiquetra/talaria/issues/123",
-  "recorded_at": "2026-09-04T03:11:46+00:00",
+  "recorded_at": "2026-09-04T05:03:00+00:00",
   "release": "0.6.0",
   "schema_version": "talaria-v0.6.0-receipt-v1",
   "tester": "controller",

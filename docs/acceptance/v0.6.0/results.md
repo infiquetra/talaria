@@ -1,6 +1,6 @@
 # Talaria v0.6.0 acceptance results
 
-Twelve controller-observed live-matrix rows against the verified tree, candidate commit `e967c203868173c0515bd41ff29f1bc424173490`, wheel `talaria-0.6.0-py3-none-any.whl` (`05c8d9752cf1…), gate `v0-6-daily-driver`. Every row passed; the full matrix report lives on https://github.com/infiquetra/talaria/issues/127.
+Twelve controller-observed live-matrix rows against the verified tree, candidate commit `6e2baf16fbf6af7de68ea93c8f7fc19e38e98882`, wheel `talaria-0.6.0-py3-none-any.whl` (`05c8d9752cf1…), gate `v0-6-daily-driver`. Every row passed; the full matrix report lives on https://github.com/infiquetra/talaria/issues/127.
 
 | Item | Row | Verdict |
 | ---: | --- | --- |

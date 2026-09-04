@@ -17,7 +17,7 @@
     "stale_receipts": 0
   },
   "current_candidate": {
-    "commit": "e967c203868173c0515bd41ff29f1bc424173490",
+    "commit": "6e2baf16fbf6af7de68ea93c8f7fc19e38e98882",
     "version": "0.6.0",
     "wheel_filename": "talaria-0.6.0-py3-none-any.whl",
     "wheel_sha256": "05c8d9752cf10637a206b455360a357e877131e8c6c709a756bb7282b6b28601"
@@ -25,21 +25,21 @@
   "gate0_receipts": [
     {
       "receipt_path": "docs/acceptance/v0.6.0/gate0.json",
-      "receipt_sha256": "cb8e199d440980fec122c1c5d26f975dc2b2019f0b4a40f9a3547f32ae17fa57"
+      "receipt_sha256": "3b3a0854ce96fd920ef99816a0b4d7903e5e396857b8b5607c1bb542ba1447af"
     }
   ],
   "gate_id": "v0-6-daily-driver",
-  "generated_command": "uv run python -m scripts.acceptance.v060_evidence record --candidate-commit e967c203868173c0515bd41ff29f1bc424173490 --wheel talaria-0.6.0-py3-none-any.whl",
-  "harness_commit": "e967c203868173c0515bd41ff29f1bc424173490",
+  "generated_command": "uv run python -m scripts.acceptance.v060_evidence record --candidate-commit 6e2baf16fbf6af7de68ea93c8f7fc19e38e98882 --wheel talaria-0.6.0-py3-none-any.whl",
+  "harness_commit": "6e2baf16fbf6af7de68ea93c8f7fc19e38e98882",
   "install_receipts": [
     {
       "receipt_path": "docs/acceptance/v0.6.0/evidence/probe-1/install-receipt.json",
-      "receipt_sha256": "1129c9c0167efd8c359684fd748ea399210983ba97dcc878be78ffad1d145d8b",
+      "receipt_sha256": "80d1194dff13a3180a84f952b6dcc55d85d9be73d77f2aec989cc8a63019bf08",
       "tester": "operator"
     },
     {
       "receipt_path": "docs/acceptance/v0.6.0/evidence/probe-2/install-receipt.json",
-      "receipt_sha256": "0ee45397a0237f920b4fc4dbee918bf3dd31b10ca65b15f60b60db3c1e890407",
+      "receipt_sha256": "5df555a235ab20ff878de47c8aff703e7c2995a509be6c9484aafb3d4f02d2d3",
       "tester": "operator"
     }
   ],
@@ -48,7 +48,7 @@
     {
       "checklist_item": 1,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-01.json",
-      "receipt_sha256": "a4c75f6a44a293ab2a2bd0dc574288fdc982be818149d2752c0f71dd80da5b0d",
+      "receipt_sha256": "bc3b2f589b495cdf0fd42449cb683a49f25c0564d8d9f912014d2d37fb144fe0",
       "tester": "controller",
       "title": "119/F1 catalog truth",
       "verdict": "pass"
@@ -56,7 +56,7 @@
     {
       "checklist_item": 2,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-02.json",
-      "receipt_sha256": "88c489bcd6804f0a3bd19fec514cf66cadef42b3f48b957844557058877cca86",
+      "receipt_sha256": "5a68923f6b36f6dbd5f36881978ff6f13fda8ea25666ad66d19d382e80300d4f",
       "tester": "controller",
       "title": "119/F2 honest 4018",
       "verdict": "pass"
@@ -64,7 +64,7 @@
     {
       "checklist_item": 3,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-03.json",
-      "receipt_sha256": "f9285de8018343ab1cf7dab26779623dce7feefd3a505151c49690c146529fbb",
+      "receipt_sha256": "f3120625783eef0cc787c9bc41ee1e8201b66a709bc39a84d6e4c45c5928e9db",
       "tester": "controller",
       "title": "120/F3 nested toggle",
       "verdict": "pass"
@@ -72,7 +72,7 @@
     {
       "checklist_item": 4,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-04.json",
-      "receipt_sha256": "48de921161efef34ba62f95f84160292598b9c3f3f950a4e6d0fff20ed388ab3",
+      "receipt_sha256": "c72e14818c4e553f399a1083d1670300b7bab4a533896f023959f2b5986a14dc",
       "tester": "controller",
       "title": "120/F4 idle cancel",
       "verdict": "pass"
@@ -80,7 +80,7 @@
     {
       "checklist_item": 5,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-05.json",
-      "receipt_sha256": "dbf15e615282ecb343cd63e2a4f8c8001b50e312addac324a5f948c1aa9ef083",
+      "receipt_sha256": "c3c2e2856d9a0f744274a929c0fcacf7895f2c7d79e5a0094f054a02ca7a960b",
       "tester": "controller",
       "title": "122/F5 inspector diagnostics",
       "verdict": "pass"
@@ -88,7 +88,7 @@
     {
       "checklist_item": 6,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-06.json",
-      "receipt_sha256": "69c23dbadcc7eb700f76e8b17bbd14a2b179f6f2c82995566741858581c4e069",
+      "receipt_sha256": "95e879f2a885bb2a694f1fe0abdcf1cf62a957eccc271b49c9fe0d77587599cc",
       "tester": "controller",
       "title": "125/F6 bar pickup",
       "verdict": "pass"
@@ -96,7 +96,7 @@
     {
       "checklist_item": 7,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-07.json",
-      "receipt_sha256": "04f269420a89fcae921e83e591db63c912b3f6803a0d82eb649dc874cf7f33ba",
+      "receipt_sha256": "91a7247a16ced32f674a65c50167eec561b09030f9d6a743956314037559a778",
       "tester": "controller",
       "title": "124/F7 import round trip",
       "verdict": "pass"
@@ -104,7 +104,7 @@
     {
       "checklist_item": 8,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-08.json",
-      "receipt_sha256": "4ebe0cd13c1d73f43eee8699b765ff5c327eba78d16cf927aeb6cc5f1b88d4c7",
+      "receipt_sha256": "180d6f865f14e939208dbc50f0afcfb23a72d37d74d43e74eace976170346da9",
       "tester": "controller",
       "title": "123/F8 Homebrew",
       "verdict": "pass"
@@ -112,7 +112,7 @@
     {
       "checklist_item": 9,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-09.json",
-      "receipt_sha256": "8aac02f1fe573963f966a6bb50661fadd94256f2a97d95e5c99a0f1c65afffbc",
+      "receipt_sha256": "beefb6a310740d7fdb4478b22601c1fc05e3f4be937e1585c83e7e441b97b1c3",
       "tester": "controller",
       "title": "123/F9 inheritance",
       "verdict": "pass"
@@ -120,7 +120,7 @@
     {
       "checklist_item": 10,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-10.json",
-      "receipt_sha256": "b1c5f78c8539d7efc88cd397caf4068bf41fcf71d8844ec3226fda0046ddf18f",
+      "receipt_sha256": "1ff54e56ac6641368674afc6c30c67862a01f7e8a4ced2223af967a9170cde84",
       "tester": "controller",
       "title": "121/F10 picker parity",
       "verdict": "pass"
@@ -128,7 +128,7 @@
     {
       "checklist_item": 11,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-11.json",
-      "receipt_sha256": "6aebe341128a22a782ac2631b644a0b0a3805271b12911a01c7e5738fce39502",
+      "receipt_sha256": "e6df9762a35b716fa00da23de6a9cb56eb2f747f8d1ec7775484d068c0660150",
       "tester": "controller",
       "title": "126 credential deny",
       "verdict": "pass"
@@ -136,13 +136,13 @@
     {
       "checklist_item": 12,
       "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-12.json",
-      "receipt_sha256": "eb126c6fd8b1a588bcc5c552b2ffd0a643c529b6a919be3e4718f5b1915aee7f",
+      "receipt_sha256": "f69f76324318c9b9cc980ad766d626c89ac58da9fa94bc3f43d38b299a156a4c",
       "tester": "controller",
       "title": "annex Hermes touch",
       "verdict": "pass"
     }
   ],
-  "recorded_at": "2026-09-04T03:11:46+00:00",
+  "recorded_at": "2026-09-04T05:03:00+00:00",
   "results_document": "docs/acceptance/v0.6.0/results.md",
   "schema_version": "talaria-v0.6.0-artifact-manifest-v1",
   "status": "complete"

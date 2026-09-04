@@ -13,4 +13,4 @@ Gate-0 ran on merged tree `c571590`: uv sync clean; ruff clean; mypy clean (201 
 
 ## Release-time refresh
 
-Candidate commit `e967c203868173c0515bd41ff29f1bc424173490` names the verified bytes. Re-run this record flow on the release tree before tagging so the manifest binds the tag commit.
+Candidate commit `6e2baf16fbf6af7de68ea93c8f7fc19e38e98882` names the verified bytes. Re-run this record flow on the release tree before tagging so the manifest binds the tag commit.
