@@ -12,6 +12,7 @@ from textual.theme import Theme
 
 from talaria.config import atomic_replace_bytes, global_config_dir
 from talaria.themes import (
+    INHERIT_BACKGROUND,
     THEME_TOKENS,
     TRANSCRIPT_CATEGORIES,
     TRANSCRIPT_CATEGORY_TOKENS,
@@ -128,6 +129,10 @@ class ResolvedTheme:
     filled_tokens: tuple[str, ...] = ()
     notices: tuple[str, ...] = ()
     transcript_text: Mapping[str, str] = field(default_factory=dict)
+    #: The spec's bar-state rule (issue #141): whether the transcript's
+    #: left offset column paints. Carried through resolution so one read
+    #: of a resolved theme names every visible normalization it made.
+    transcript_bar_visible: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tokens", MappingProxyType(dict(self.tokens)))
@@ -199,6 +204,10 @@ def _category_group_roles(
             return
         if isinstance(value, str) and is_opaque_hex_color(value):
             usable[role] = value
+        elif role == "background" and value == INHERIT_BACKGROUND:
+            # The one non-color group value (D2): a representation, not a
+            # color, so it is only spelled on the role it represents.
+            usable[role] = INHERIT_BACKGROUND
         else:
             malformed.append(f"{category}.{key}")
 
@@ -247,6 +256,16 @@ class ThemeRegistry:
     def default(self) -> ThemeSpec:
         return self._by_slug[self._default_slug]
 
+    def transcript_bar_visible(self, slug: str) -> bool:
+        """Whether the named theme paints the transcript's left offset column.
+
+        Unknown slugs keep the column visible: the bar-state rule degrades
+        to the layout every theme has always had rather than hiding chrome
+        it cannot attribute to a theme.
+        """
+        spec = self._by_slug.get(slug)
+        return spec.transcript_bar_visible if spec is not None else True
+
     def resolve(
         self, requested: object, *, host_palette: object = None
     ) -> ResolvedTheme:
@@ -288,6 +307,7 @@ class ThemeRegistry:
             self._hold_host_readability(spec, tokens, adopted, notices)
 
         group_sourced: list[str] = []
+        inherit_sourced: list[str] = []
         malformed_groups: list[str] = []
         category_roles: dict[str, dict[str, str]] = {}
         for category in TRANSCRIPT_CATEGORIES:
@@ -295,11 +315,30 @@ class ThemeRegistry:
             category_roles[category] = usable
             malformed_groups.extend(malformed)
             roles = TRANSCRIPT_CATEGORY_TOKENS[category]
+            background_token = roles["background"]
+            background_inherited = usable.get("background") == INHERIT_BACKGROUND
+            if background_inherited:
+                # D2's no-fill representation: the category paints on the
+                # canvas, resolved here so the readability floors below
+                # measure against the canvas and a canvas change
+                # re-resolves the inheritance. The representation wins
+                # over the token value it replaces — stored themes must
+                # still define that token, and its value is exactly what
+                # this supersedes.
+                tokens[background_token] = tokens["talaria.canvas"]
+                inherit_sourced.append(category)
             for role in ("marker", "background"):
                 token = roles[role]
+                if role == "background" and background_inherited:
+                    continue
                 if token not in spec.tokens and role in usable:
                     tokens[token] = usable[role]
                     group_sourced.append(token)
+        if inherit_sourced:
+            notices.append(
+                f"theme {spec.name!r} paints transcript categories on the canvas: "
+                + ", ".join(sorted(inherit_sourced))
+            )
         if group_sourced:
             notices.append(
                 f"theme {spec.name!r} styles transcript categories from its groups: "
@@ -311,12 +350,17 @@ class ThemeRegistry:
                 + ", ".join(sorted(malformed_groups))
             )
 
+        inherit_tokens = frozenset(
+            TRANSCRIPT_CATEGORY_TOKENS[category]["background"]
+            for category in inherit_sourced
+        )
         filled = tuple(
             token
             for token in THEME_TOKENS
             if token not in spec.tokens
             and token not in adopted
             and token not in group_sourced
+            and token not in inherit_tokens
         )
         if filled:
             notices.append(
@@ -333,6 +377,7 @@ class ThemeRegistry:
             filled_tokens=filled,
             notices=tuple(notices),
             transcript_text=transcript_text,
+            transcript_bar_visible=spec.transcript_bar_visible,
         )
 
     def _hold_host_readability(

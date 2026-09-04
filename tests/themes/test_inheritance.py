@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from talaria.themes import THEME_TOKENS, ThemeSpec
+from talaria.themes import THEME_TOKENS, ThemeSpec, contrast_ratio
 from talaria.themes.builtins import (
     ACCESSIBLE_HIGH_CONTRAST,
     BUILTIN_THEMES,
@@ -27,7 +27,12 @@ from talaria.themes.storage import (
     load_user_theme_spec,
     serialize_user_theme,
 )
-from talaria.ui.theme import BUILTIN_THEME_REGISTRY, ThemeRegistry
+from talaria.ui.theme import (
+    BUILTIN_THEME_REGISTRY,
+    TRANSCRIPT_MARKER_CONTRAST_FLOOR,
+    TRANSCRIPT_TEXT_CONTRAST_FLOOR,
+    ThemeRegistry,
+)
 
 ORIGINAL_FOUR = (
     REFINED_DEFAULT,
@@ -267,3 +272,207 @@ def test_stored_themes_reject_misshapen_groups(tmp_path: Path) -> None:
 
     with pytest.raises(StoredThemeError, match="groups must map categories"):
         load_user_theme_spec(path)
+
+
+# ── D2 (#141): ``inherit`` paints a category on the canvas ─────────────────
+
+
+def test_inherit_background_resolves_to_the_canvas() -> None:
+    """``inherit`` on one category's background role paints that category's
+    transcript on the canvas with no distinct fill; every sibling category
+    keeps its own fill, and the resolution is visibly noticed."""
+    spec = ThemeSpec(
+        slug="canvas-example",
+        name="Canvas Example",
+        dark=True,
+        tokens=dict(REFINED_DEFAULT.tokens),
+        groups={"assistant": {"background": "inherit"}},
+    )
+    resolved = _sparse_registry(spec).resolve("canvas-example")
+
+    canvas = resolved.tokens["talaria.canvas"]
+    assert resolved.tokens["talaria.transcript.assistant.background"] == canvas
+    assert resolved.category_style("assistant").background == canvas
+    for category in ("operator", "reasoning", "activity", "session", "fault"):
+        assert (
+            resolved.tokens[f"talaria.transcript.{category}.background"]
+            == REFINED_DEFAULT.tokens[f"talaria.transcript.{category}.background"]
+        )
+    assert any(
+        "paints transcript categories on the canvas" in notice
+        and "assistant" in notice
+        for notice in resolved.notices
+    )
+
+
+def test_inherit_beats_the_background_token_it_replaces() -> None:
+    """Stored themes must define every canonical token, so the inherit
+    marker wins over the background token value it supersedes — that value
+    is exactly the black-fill workaround the representation replaces."""
+    spec = ThemeSpec(
+        slug="inherit-wins",
+        name="Inherit Wins",
+        dark=True,
+        tokens={
+            **REFINED_DEFAULT.tokens,
+            "talaria.transcript.fault.background": "#010101",
+        },
+        groups={"fault": {"talaria.transcript.fault.background": "inherit"}},
+    )
+    resolved = _sparse_registry(spec).resolve("inherit-wins")
+
+    assert (
+        resolved.tokens["talaria.transcript.fault.background"]
+        == resolved.tokens["talaria.canvas"]
+    )
+
+
+def test_inherit_measures_the_text_floor_against_the_canvas() -> None:
+    """With no fill, the category's body text is held to 4.5 against the
+    canvas, not against a fill that no longer paints."""
+    spec = ThemeSpec(
+        slug="floor-canvas",
+        name="Floor Canvas",
+        dark=True,
+        tokens={**REFINED_DEFAULT.tokens, "talaria.canvas": "#050505"},
+        groups={"assistant": {"background": "inherit", "talaria.text": "#0A0A0A"}},
+    )
+    resolved = _sparse_registry(spec).resolve("floor-canvas")
+
+    canvas = resolved.tokens["talaria.canvas"]
+    assert contrast_ratio("#0A0A0A", canvas) < TRANSCRIPT_TEXT_CONTRAST_FLOOR
+    held = resolved.transcript_text["assistant"]
+    assert contrast_ratio(held, canvas) >= TRANSCRIPT_TEXT_CONTRAST_FLOOR
+    assert any(
+        "holds the readability floor" in notice and "assistant.text" in notice
+        for notice in resolved.notices
+    )
+
+
+def test_inherit_measures_the_marker_floor_against_the_canvas() -> None:
+    """A stripe that matches the canvas is exactly the invisible-marker
+    evasion the bar-state rule refuses: the 3.0 component floor holds
+    against the canvas instead."""
+    spec = ThemeSpec(
+        slug="marker-canvas",
+        name="Marker Canvas",
+        dark=True,
+        tokens={
+            **REFINED_DEFAULT.tokens,
+            "talaria.canvas": "#050505",
+            "talaria.transcript.reasoning": "#050505",
+        },
+        groups={"reasoning": {"background": "inherit"}},
+    )
+    resolved = _sparse_registry(spec).resolve("marker-canvas")
+
+    canvas = resolved.tokens["talaria.canvas"]
+    held = resolved.tokens["talaria.transcript.reasoning"]
+    assert held != canvas
+    assert contrast_ratio(held, canvas) >= TRANSCRIPT_MARKER_CONTRAST_FLOOR
+    assert any(
+        "holds the readability floor" in notice and "reasoning.marker" in notice
+        for notice in resolved.notices
+    )
+
+
+def test_inherit_on_a_partial_spec_is_not_reported_as_filled() -> None:
+    """An imported spec that omits the background token and names
+    ``inherit`` resolves it to the canvas — the token was not filled from
+    Refined Default, and the fill notice must not claim it was."""
+    spec = ThemeSpec(
+        slug="partial-inherit",
+        name="Partial Inherit",
+        dark=True,
+        tokens={},
+        groups={"session": {"background": "inherit"}},
+    )
+    resolved = _sparse_registry(spec).resolve("partial-inherit")
+
+    assert (
+        resolved.tokens["talaria.transcript.session.background"]
+        == resolved.tokens["talaria.canvas"]
+    )
+    assert "talaria.transcript.session.background" not in resolved.filled_tokens
+    assert not any(
+        "talaria.transcript.session.background" in notice
+        for notice in resolved.notices
+        if "filled missing tokens" in notice
+    )
+
+
+def test_inherit_is_malformed_off_the_background_role() -> None:
+    """``inherit`` names a representation, not a color: spelled on the text
+    or marker role it is malformed, reported, and falls through."""
+    spec = ThemeSpec(
+        slug="inherit-misplaced",
+        name="Inherit Misplaced",
+        dark=True,
+        tokens=dict(REFINED_DEFAULT.tokens),
+        groups={
+            "assistant": {
+                "talaria.text": "inherit",
+                "talaria.transcript.assistant": "inherit",
+            }
+        },
+    )
+    resolved = _sparse_registry(spec).resolve("inherit-misplaced")
+
+    assert (
+        resolved.transcript_text["assistant"] == REFINED_DEFAULT.tokens["talaria.text"]
+    )
+    assert (
+        resolved.tokens["talaria.transcript.assistant"]
+        == REFINED_DEFAULT.tokens["talaria.transcript.assistant"]
+    )
+    assert any(
+        "ignores malformed group colors" in notice
+        and "assistant.talaria.text" in notice
+        and "assistant.talaria.transcript.assistant" in notice
+        for notice in resolved.notices
+    )
+
+
+def test_inherit_tracks_a_canvas_change() -> None:
+    """The inheritance resolves at resolve time: a canvas adopted from the
+    host palette is the canvas the category paints on, not the built-in
+    default's. The host canvas holds the text floor, or the readability
+    guard — not this test — would rightly revert it."""
+    spec = ThemeSpec(
+        slug="canvas-track",
+        name="Canvas Track",
+        dark=True,
+        tokens={},
+        groups={"assistant": {"background": "inherit"}},
+    )
+    resolved = _sparse_registry(spec).resolve(
+        "canvas-track", host_palette={"talaria.canvas": "#F0F0EE"}
+    )
+
+    assert resolved.tokens["talaria.canvas"] == "#F0F0EE"
+    assert resolved.tokens["talaria.transcript.assistant.background"] == "#F0F0EE"
+
+
+def test_stored_themes_round_trip_inherit_backgrounds(tmp_path: Path) -> None:
+    """The canonical stored format carries the inherit marker, and a loaded
+    theme resolves it exactly as the spec did."""
+    spec = ThemeSpec(
+        slug="stored-inherit",
+        name="Stored Inherit",
+        dark=True,
+        tokens=dict(REFINED_DEFAULT.tokens),
+        groups={"assistant": {"background": "inherit"}, "fault": {"text": "#202020"}},
+    )
+    path = tmp_path / "stored-inherit.json"
+    path.write_bytes(serialize_user_theme(spec))
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["groups"]["assistant"] == {"background": "inherit"}
+
+    loaded = load_user_theme_spec(path)
+    resolved = ThemeRegistry((REFINED_DEFAULT, loaded)).resolve("stored-inherit")
+    assert (
+        resolved.tokens["talaria.transcript.assistant.background"]
+        == resolved.tokens["talaria.canvas"]
+    )
+    assert resolved.transcript_text["fault"] == "#202020"

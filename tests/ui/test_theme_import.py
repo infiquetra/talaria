@@ -212,8 +212,17 @@ def test_import_is_canonical_idempotent_and_loads_in_a_fresh_registry(
     assert first_bytes == serialize_user_theme(first.theme)
     assert first_bytes.endswith(b"\n") and not first_bytes.endswith(b"\n\n")
     payload = json.loads(first_bytes)
-    assert tuple(payload) == ("dark", "groups", "name", "schema_version", "slug", "tokens")
+    assert tuple(payload) == (
+        "dark",
+        "groups",
+        "name",
+        "schema_version",
+        "slug",
+        "tokens",
+        "transcript_bar_visible",
+    )
     assert payload["schema_version"] == "talaria-theme-v1"
+    assert payload["transcript_bar_visible"] is True
     assert tuple(payload["tokens"]) == tuple(sorted(THEME_TOKENS))
     assert list((config_dir / "themes").iterdir()) == [first.target_path]
 

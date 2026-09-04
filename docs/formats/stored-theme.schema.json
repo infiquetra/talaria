@@ -19,6 +19,10 @@
         "additionalProperties": {"type": ["string", "null"]}
       }
     },
+    "transcript_bar_visible": {
+      "$comment": "Optional bar-state field added in v0.6.1 (issue #141); absent means the transcript's left offset column paints, as in every prior theme. false hides the bar under the theme's control.",
+      "type": "boolean"
+    },
     "dark": {"type": "boolean"},
     "name": {
       "type": "string",

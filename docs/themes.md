@@ -48,7 +48,9 @@ implementation:
    inherited;
 3. groups: the specification's sparse per-category values, one transcript category at a time
    (`operator`, `assistant`, `reasoning`, `activity`, `session`, `fault`), each naming any of its
-   three roles by nickname (`text`, `marker`, `background`) or by canonical token name;
+   three roles by nickname (`text`, `marker`, `background`) or by canonical token name. A
+   background role may also name the one non-color value, `inherit`, which paints that category on
+   the canvas instead of its own fill;
 4. overrides: the specification's own tokens, which always win.
 
 Each layer is sparse: an empty group, an unknown category or token, a null value, or a malformed
@@ -64,6 +66,50 @@ rendering. Inherited host values that break the text/canvas or selection pairing
 built-in mapping with a notice; explicit Talaria overrides are never reverted. An unresolvable
 host palette (absent, misshapen, or empty) degrades to the built-in mapping with a notice, never a
 crash or a blank theme.
+
+## Transcript backgrounds without a fill
+
+A theme can paint any transcript category directly on the canvas instead of behind its own tinted
+box. Set the category's background role to `inherit` in the groups layer — the nickname and the
+canonical token spelling both work:
+
+```json
+{
+  "groups": {
+    "assistant": { "background": "inherit" },
+    "reasoning": { "talaria.transcript.reasoning.background": "inherit" }
+  }
+}
+```
+
+`inherit` is a representation, not a color: at resolution time the category's background resolves
+to `talaria.canvas`, so changing the canvas or switching themes re-resolves the inheritance. The
+category's body text and stripe marker hold their readability floors against the canvas — a stripe
+that matches the canvas is exactly the invisible-marker evasion the floor refuses. A stored theme
+still defines the category's canonical background token, and validation is unchanged; `inherit`
+names the value that supersedes that token, which is what removes the matching-black-fill
+workaround rather than loosening the rule around it. Categories the theme does not name keep their
+own fills, so one theme can mix filled and unfilled categories. `inherit` spelled on the text or
+marker role is malformed and is reported in the resolution notices.
+
+## Transcript bar visibility
+
+The left offset column beside transcript text — the reserved padding column plus the group gutter
+stripe — is theme-controlled. A theme hides the bar entirely with one optional top-level field in
+its stored document:
+
+```json
+{
+  "transcript_bar_visible": false
+}
+```
+
+Visibility follows the active theme: switching themes hides or restores the bar, and a theme that
+does not name the field keeps the column every theme has always had. Hiding the bar returns its
+column to the content width, so wrapped rows reflow rather than clip, at every terminal width.
+Matching marker colors are not a hidden state — the 3.0 marker floor still refuses them — and a
+separate configuration switch is not a substitute: bar visibility is a theme decision, not a
+client setting.
 
 ## Preview and select a theme
 
