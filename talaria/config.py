@@ -734,9 +734,9 @@ def load_config(
     merged = _deep_merge(merged, _read_toml(cwd / ".talaria" / "config.toml"))
     merged = _deep_merge(merged, _env_overrides())
     if cli_overrides:
-        # ``theme.name`` deliberately has no command-line override. Session
-        # selection belongs to the running application and persists only when
-        # the operator explicitly invokes ``/theme save``.
+        # ``theme.name`` deliberately has no command-line override. Selection
+        # belongs to the running application and persists to user configuration
+        # automatically upon explicit selection in the UI.
         allowed_cli_overrides = dict(cli_overrides)
         allowed_cli_overrides.pop("theme", None)
         # Reduced motion is restart-to-apply configuration with no environment

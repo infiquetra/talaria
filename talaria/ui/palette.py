@@ -68,7 +68,7 @@ CATALOG_WARNING_PREFIX = "the gateway reported: "
 NO_MATCHING = "no matching commands"
 
 #: Theme mode reuses the palette region but gives it its own honest header.
-THEME_HEADER = "themes: Up/Down preview · Enter use this session · Escape cancel"
+THEME_HEADER = "themes: Up/Down preview · Enter select and save · Escape cancel"
 
 #: Regex for the slash-name class that KTD2 defines: slash, then a letter,
 #: then letters/digits/underscore/hyphen, end-anchored, no trailing space.

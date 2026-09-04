@@ -4129,18 +4129,16 @@ class TalariaApp(App[None]):
     async def open_theme_picker(self) -> None:
         """Open theme mode at the currently applied session selection."""
         self._theme_preview_anchor = self._capture_layout_anchor()
-        user_specs, _notices = load_user_theme_specs(
+        user_specs, notices = load_user_theme_specs(
             config_dir=self._theme_config_root()
         )
+        if notices:
+            self._notice("\n".join(notices))
         known_by_slug = {s.slug: s for s in self.theme_registry.specs}
-        changed = False
         for spec in user_specs:
             if spec.slug not in known_by_slug or known_by_slug[spec.slug] != spec:
-                known_by_slug[spec.slug] = spec
-                changed = True
-        if changed:
-            self.theme_registry = ThemeRegistry(tuple(known_by_slug.values()))
-            self.theme_registry.register(self)
+                with suppress(Exception):
+                    self._install_theme_spec(spec, activate=False)
         await self.palette.open_theme_picker(
             self.theme_registry.specs,
             current_slug=self.theme,
@@ -5490,7 +5488,7 @@ class TalariaApp(App[None]):
                 )
                 return
             self._spawn_live(
-                self._reload_imported_theme(words[1] if len(words) == 2 else None)
+                self._refresh_stored_theme(words[1] if len(words) == 2 else None)
             )
             return
         self._notice(
@@ -5550,6 +5548,39 @@ class TalariaApp(App[None]):
         self.call_next(partial(self.refresh_css, animate=False))
         self.call_next(self.theme_changed_signal.publish, new)
 
+    def _install_theme_spec(
+        self,
+        spec_or_slug: ThemeSpec | str,
+        *,
+        activate: bool = True,
+    ) -> None:
+        """Install or update one theme spec in the registry and framework.
+
+        Registers the Textual theme, optionally activates it, repaints if
+        the theme was already active, and restores prior state on failure.
+        """
+        slug = spec_or_slug.slug if isinstance(spec_or_slug, ThemeSpec) else spec_or_slug
+        previous_theme = self.theme
+        previous_registry = self.theme_registry
+        old_theme = self.available_themes.get(slug)
+        try:
+            if isinstance(spec_or_slug, ThemeSpec):
+                specs = tuple(
+                    s for s in self.theme_registry.specs if s.slug != slug
+                ) + (spec_or_slug,)
+                self.theme_registry = ThemeRegistry(specs)
+            new_theme = self.theme_registry.to_textual_theme(slug)
+            self.register_theme(new_theme)
+            if activate:
+                self.theme = slug
+            if previous_theme == slug:
+                self._repaint_theme_if_changed(new_theme, old_theme)
+        except Exception:
+            with suppress(Exception):
+                self.theme_registry = previous_registry
+                self.theme = previous_theme
+            raise
+
     def _select_theme(self, words: list[str]) -> None:
         """Select one theme, applying it live and persisting to user configuration.
 
@@ -5560,41 +5591,32 @@ class TalariaApp(App[None]):
             self._notice("/theme select needs one theme name — nothing changed")
             return
         slug = words[1]
+        previous = self.theme
         if slug not in self.theme_registry.slugs:
             path = user_theme_path(slug, config_dir=self._theme_config_root())
             if path.is_file():
                 try:
                     spec = load_user_theme_spec(path)
-                    specs = (
-                        tuple(s for s in self.theme_registry.specs if s.slug != slug)
-                        + (spec,)
-                    )
-                    self.theme_registry = ThemeRegistry(specs)
                 except StoredThemeError as exc:
                     self._notice(
                         f"theme {slug!r} could not be loaded: {exc} — keeping {self.theme!r}"
                     )
                     return
+                target: ThemeSpec | str = spec
             else:
                 self._notice(f"theme {slug!r} is not available — keeping {self.theme!r}")
                 return
-        previous = self.theme
-        old_theme = self.available_themes.get(slug)
+        else:
+            target = slug
+
         try:
-            new_theme = self.theme_registry.to_textual_theme(slug)
-            self.register_theme(new_theme)
-            self.theme = slug
+            self._install_theme_spec(target, activate=True)
         except Exception as exc:
-            # Restoring a theme that rendered seconds ago cannot fail in a
-            # way the operator can act on; suppress keeps the notice honest.
-            with suppress(Exception):
-                self.theme = previous
             self._notice(
                 f"theme {slug!r} could not preview ({exc}) — keeping {previous!r}"
             )
             return
-        if previous == slug:
-            self._repaint_theme_if_changed(new_theme, old_theme)
+
         self.session_theme_slug = slug
         try:
             save_theme(
@@ -5663,7 +5685,7 @@ class TalariaApp(App[None]):
                 return
             self._apply_import_report(report, action="fetched")
 
-    async def _reload_imported_theme(self, slug: str | None) -> None:
+    async def _refresh_stored_theme(self, slug: str | None) -> None:
         """Refresh one stored theme from its local file; never watched.
 
         The stored theme is refreshed from its canonical JSON file under
@@ -5698,32 +5720,15 @@ class TalariaApp(App[None]):
             except StoredThemeError as exc:
                 self._notice(f"theme reload failed: {exc} — keeping {self.theme!r}")
                 return
-            self._apply_stored_theme(spec, action="refreshed")
+            self._apply_refreshed_theme(spec, action="refreshed")
 
-    def _apply_stored_theme(self, spec: ThemeSpec, *, action: str) -> None:
+    def _apply_refreshed_theme(self, spec: ThemeSpec, *, action: str) -> None:
         """Swap one validated stored spec into the live registry and apply it."""
         slug = spec.slug
         previous = self.theme
-        old_theme = self.available_themes.get(slug)
         try:
-            specs = (
-                tuple(
-                    s
-                    for s in self.theme_registry.specs
-                    if s.slug != slug
-                )
-                + (spec,)
-            )
-            registry = ThemeRegistry(specs)
-            new_theme = registry.to_textual_theme(slug)
-            self.register_theme(new_theme)
-            self.theme_registry = registry
-            if previous == slug:
-                self.theme = slug
-                self._repaint_theme_if_changed(new_theme, old_theme)
+            self._install_theme_spec(spec, activate=(previous == slug))
         except Exception as exc:
-            with suppress(Exception):
-                self.theme = previous
             self._notice(
                 f"theme {slug!r} could not apply ({exc}) — keeping {previous!r}"
             )
@@ -5735,37 +5740,21 @@ class TalariaApp(App[None]):
             )
         else:
             self._notice(
-                f"theme {slug!r} {action} in theme registry (applied live, no restart required)"
+                f"theme {slug!r} {action} in registry for later selection — "
+                f"current theme remains {previous!r}"
             )
 
     def _apply_import_report(self, report: ImportReport, *, action: str) -> None:
         """Swap one validated spec into the live registry and preview it."""
         slug = report.theme.slug
         previous = self.theme
-        old_theme = self.available_themes.get(slug)
         try:
-            specs = (
-                tuple(
-                    spec
-                    for spec in self.theme_registry.specs
-                    if spec.slug != slug
-                )
-                + (report.theme,)
-            )
-            registry = ThemeRegistry(specs)
-            new_theme = registry.to_textual_theme(slug)
-            self.register_theme(new_theme)
-            self.theme_registry = registry
-            self.theme = slug
+            self._install_theme_spec(report.theme, activate=True)
         except Exception as exc:
-            with suppress(Exception):
-                self.theme = previous
             self._notice(
                 f"theme {slug!r} could not apply ({exc}) — keeping {previous!r}"
             )
             return
-        if previous == slug:
-            self._repaint_theme_if_changed(new_theme, old_theme)
         self.session_theme_slug = slug
         self._notice(
             f"theme {slug!r} {action}: {report.mapped_count} source tokens, "

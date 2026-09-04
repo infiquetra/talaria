@@ -17,6 +17,7 @@ from talaria.config import load_config
 from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
 from talaria.themes.storage import load_user_theme_specs
+from talaria.ui.palette import THEME_HEADER
 from talaria.ui.theme import (
     BUILTIN_THEME_REGISTRY,
     DEFAULT_THEME_SLUG,
@@ -492,6 +493,8 @@ async def test_theme_picker_renders_five_rows_previews_and_escape_restores() -> 
         await pilot.pause()
 
         rendered = screen_text(app)
+        assert THEME_HEADER in rendered
+        assert "Enter select and save" in rendered
         assert all(name in rendered for name in BUILTIN_NAMES)
         assert HOMEBREW_NAME in rendered
         assert list(app.palette.row_texts) == [
@@ -1149,6 +1152,95 @@ async def test_theme_reload_distinguishes_local_refresh_from_upstream_reimport(
         )
         assert (
             "refreshed from stored file (applied live, no restart required)"
+            in app.composer.notice
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_picker_surfaces_invalid_stored_theme_notice_and_preserves_appearance(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    themes_dir = config_dir / "themes"
+    themes_dir.mkdir(parents=True)
+
+    # Valid custom theme file
+    valid_spec = _sample_custom_spec("valid-custom", canvas="#335577")
+    write_user_theme(valid_spec, config_dir=config_dir)
+
+    # Malformed custom theme file
+    (themes_dir / "broken-theme.json").write_text("{corrupt-json", encoding="utf-8")
+
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert app.theme == "refined-default"
+
+        await app.open_theme_picker()
+        await pilot.pause()
+
+        # Last good appearance is preserved
+        assert app.theme == "refined-default"
+        # Notice is surfaced
+        assert "broken-theme.json" in app.composer.notice
+        assert "skipped" in app.composer.notice
+
+        # Valid theme is included in the picker alongside built-ins
+        assert "valid-custom" in app.theme_registry.slugs
+        assert "broken-theme" not in app.theme_registry.slugs
+        assert any("Valid Custom" in row for row in app.palette.row_texts)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_reload_inactive_theme_refreshes_registry_without_activation(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    spec = _sample_custom_spec("inactive-theme", canvas="#112233")
+    write_user_theme(spec, config_dir=config_dir)
+
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="refined-default",
+        theme_registry=ThemeRegistry((*BUILTIN_THEMES, spec)),
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert app.theme == "refined-default"
+        assert (
+            app.theme_registry.resolve("inactive-theme").tokens["talaria.canvas"]
+            == "#112233"
+        )
+
+        # Edit the inactive theme file on disk
+        updated_spec = _sample_custom_spec("inactive-theme", canvas="#778899")
+        write_user_theme(updated_spec, config_dir=config_dir)
+
+        app.composer.text = "/theme reload inactive-theme"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        # Current theme remains active
+        assert app.theme == "refined-default"
+        # Inactive theme is refreshed in registry
+        assert (
+            app.theme_registry.resolve("inactive-theme").tokens["talaria.canvas"]
+            == "#778899"
+        )
+        # Notice confirms refreshed in registry and current theme remains active
+        assert (
+            "theme 'inactive-theme' refreshed in registry for later selection — "
+            "current theme remains 'refined-default'"
             in app.composer.notice
         )
         await app.shutdown_sources()

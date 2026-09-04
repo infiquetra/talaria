@@ -145,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     theme_parser = subparsers.add_parser(
         "theme",
-        help="manage restart-scoped Talaria themes",
+        help="manage stored and imported Talaria themes",
     )
     theme_subparsers = theme_parser.add_subparsers(
         dest="theme_command",

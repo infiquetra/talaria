@@ -19,12 +19,13 @@ General precedence is highest first:
 5. built-in defaults.
 
 The theme and reduced-motion rows deliberately have no command-line or environment override. A
-theme selected in the running picker is a final, in-memory scope above the repository file.
+theme selected in the running picker applies live and persists to the user configuration automatically.
 
-Configuration is restart-to-apply. Talaria does not watch configuration files and does not reload
-external edits in this release. `/theme` changes the current session immediately, and `/bar` changes
-the current status-bar segment set immediately; neither action persists unless its own documented
-save route exists.
+External configuration edits are restart-to-apply. Talaria does not watch configuration files and does
+not reload external file edits at runtime. In the running application, explicit theme selection
+(`/theme select <name>` or `Enter` in the picker) applies live and persists `theme.name` to user scope
+immediately, `/theme reload [name]` refreshes local stored theme files live, and `/bar` changes the
+status-bar segment set immediately for the running process.
 
 ## Complete default shape
 
@@ -114,8 +115,10 @@ is different: it is a launch error that names the offending file.
 
 ## What Talaria writes
 
-Talaria writes only the top-level `theme.name` setting, and only after `/theme save`, `/theme save
-user`, or `/theme save repository`. The narrow writer supports an existing `[theme]` table, dotted
+Talaria writes only the top-level `theme.name` setting. It persists `theme.name` to the user
+configuration immediately upon explicit theme selection (`/theme select <name>` or `Enter` in the
+`/theme` picker) or explicit save (`/theme save [user]`), and to repository configuration upon
+`/theme save repository`. The narrow writer supports an existing `[theme]` table, dotted
 key, or inline table; it leaves every other key and comment untouched, verifies the parsed document
 changed in exactly that way, and replaces the file atomically. It is not a general configuration
 serializer.
