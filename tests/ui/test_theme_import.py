@@ -696,6 +696,7 @@ class _FakeMarketplaceTransport:
         self.search_error: Exception | None = None
         self.fetch_error: Exception | None = None
         self.fetch_gate: threading.Event | None = None
+        self.fetch_entered: threading.Event | None = None
         self._guard = threading.Lock()
         self._active = 0
         self.max_active = 0
@@ -728,6 +729,8 @@ class _FakeMarketplaceTransport:
 
     def fetch_bytes(self, entry: MarketplaceEntry) -> bytes:
         self.fetch_calls.append(entry.source_id)
+        if self.fetch_entered is not None:
+            self.fetch_entered.set()
         if self.fetch_gate is not None:
             with self._guard:
                 self._active += 1
@@ -1595,6 +1598,7 @@ async def test_concurrent_reloads_serialize(
     async with app.run_test(size=(80, 24)):
         import talaria.ui.app as app_module
 
+        load_entered = threading.Event()
         load_gate = threading.Event()
         load_calls: list[Path] = []
         active = 0
@@ -1609,6 +1613,7 @@ async def test_concurrent_reloads_serialize(
                 if active > max_active:
                     max_active = active
                 load_calls.append(path)
+            load_entered.set()
             load_gate.wait(timeout=5.0)
             try:
                 return original_load(path)
@@ -1618,10 +1623,10 @@ async def test_concurrent_reloads_serialize(
 
         monkeypatch.setattr(app_module, "load_user_theme_spec", gated_load)
 
-        first = asyncio.create_task(app._reload_imported_theme("solar-flare"))
-        await asyncio.sleep(0.1)
-        second = asyncio.create_task(app._reload_imported_theme("solar-flare"))
-        await asyncio.sleep(0.1)
+        first = asyncio.create_task(app._refresh_stored_theme("solar-flare"))
+        await asyncio.to_thread(load_entered.wait, 5.0)
+        second = asyncio.create_task(app._refresh_stored_theme("solar-flare"))
+        await asyncio.sleep(0)
 
         # The second reload waits behind the lock instead of reading concurrently.
         assert len(load_calls) == 1
@@ -1657,14 +1662,15 @@ async def test_concurrent_fetches_serialize(tmp_path: Path) -> None:
         transport.fetch_calls.clear()
         transport.lookup_calls.clear()
         transport.fetch_gate = threading.Event()
+        transport.fetch_entered = threading.Event()
         first = asyncio.create_task(
             app._fetch_marketplace_theme(entry.source_id, "solar-flare")
         )
-        await asyncio.sleep(0.1)
+        await asyncio.to_thread(transport.fetch_entered.wait, 5.0)
         second = asyncio.create_task(
             app._fetch_marketplace_theme(entry.source_id, "solar-flare")
         )
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)
 
         # The second fetch waits behind the lock instead of fetching alongside.
         assert transport.fetch_calls == [entry.source_id]

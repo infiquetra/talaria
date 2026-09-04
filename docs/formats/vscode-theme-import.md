@@ -178,19 +178,26 @@ Marketplace rules under the same strictness:
    theme label (`Solar Flare` becomes `solar-flare`). The payload's own top-level `name`
    is a display string and never a storage slug. Built-in slugs stay reserved.
 
-## Recorded sources and explicit Reload
+## Recorded sources, local refresh, and upstream reimport
 
 Every successful file or marketplace import records its source in
 `<config-dir>/theme-sources.json` (`schema_version` `talaria-theme-sources-v1`), mapping
-each slug to its absolute file path or marketplace reference. `/theme reload [name]`
-re-reads that recorded source through the same strict entry point, rewrites the stored
-theme only after the fresh source validates fully, and applies the re-resolved theme
-live with no restart. Any failure — unreadable file, network error, invalid content —
-keeps rendering the current theme with a notice and leaves the stored file untouched.
-Reloading a theme with no recorded source, or a built-in theme, is a visible no-op.
+each slug to its absolute file path or marketplace reference.
 
-The source file is never watched after import: an edit changes nothing until an explicit
-reload, and concurrent reloads serialize behind one lock rather than interleaving.
+Talaria strictly distinguishes local theme refresh from upstream reimport:
+
+- **Local refresh:** `/theme reload [name]` refreshes the theme directly from its local stored
+  file (`<config-dir>/themes/<slug>.json`). It does not require an import source, applying saved
+  edits to stored user themes live immediately without restart. If the stored file is malformed,
+  the current appearance is preserved with an actionable validation notice. Reloading a built-in
+  theme is a visible no-op with an explanatory notice.
+- **Upstream reimport:** `/theme fetch <source>` (or CLI `talaria theme fetch` and `talaria theme import`)
+  re-reads the upstream source through the strict import entry point, rewrites the canonical stored
+  theme only after the fresh source validates fully, records the origin in `theme-sources.json`,
+  and applies the re-resolved theme live with no restart.
+
+Neither stored theme files nor source files are watched by the filesystem: an edit changes nothing
+until an explicit reload or reimport, and concurrent reloads and fetches serialize behind one lock.
 
 ## Stored user-theme format
 
