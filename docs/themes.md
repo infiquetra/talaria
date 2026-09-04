@@ -1,7 +1,7 @@
 # Themes
 
-Talaria has five built-in themes and a 58-token public color vocabulary. Theme
-preview is immediate, but persistence is always an explicit action.
+Talaria has five built-in themes and a 58-token public color vocabulary. An
+explicit theme selection applies live and persists to user configuration automatically.
 
 ## Built-in themes
 
@@ -67,14 +67,15 @@ crash or a blank theme.
 
 ## Preview and select a theme
 
-Enter `/theme` to open the theme picker. `Up` and `Down` preview the highlighted theme immediately.
-`Enter` accepts it for the current Talaria process and closes the picker. `Escape` closes the picker
-and restores the theme that was active when it opened. Browsing, previewing, accepting a session
-theme, and quitting do not write a file.
+Enter `/theme` to open the theme picker. `Up` and `Down` preview the highlighted theme immediately
+for the running session only; browsing and previewing do not write to configuration. `Escape` closes
+the picker and restores the persisted theme that was active when it opened. `Enter` accepts the highlighted
+theme, applies it live immediately, and automatically persists `theme.name` to the user configuration
+(`~/.talaria/config.toml` or the directory selected by `TALARIA_CONFIG_DIR`).
 
-`/theme select <name>` previews one installed theme immediately without opening the picker, for
-example `/theme select neutral-dark`. Like the picker, it accepts the theme for the current
-Talaria process only. An unknown name keeps the current theme and says so:
+`/theme select <name>` selects one installed or stored theme immediately, applies it live, and
+persists `theme.name` to the user configuration automatically (for example `/theme select neutral-dark`).
+An unknown name keeps the current theme and says so:
 
 ```text
 theme 'not-installed' is not available — keeping 'refined-default'
@@ -82,11 +83,11 @@ theme 'not-installed' is not available — keeping 'refined-default'
 
 A theme that cannot render also keeps the current theme with a notice naming the failure.
 
-Persistence is separate:
+Repository-scope persistence remains an explicit command:
 
-- `/theme save` saves the current theme in the user configuration. `/theme save user` is the
-  explicit form of the same command.
-- `/theme save repository` saves it in `./.talaria/config.toml` for the current repository.
+- `/theme save repository` saves the current theme in `./.talaria/config.toml` for the current
+  repository.
+- `/theme save` (or `/theme save user`) explicitly saves the current theme to the user configuration.
 
 Both commands change only the top-level `theme.name` setting, whether the existing TOML uses a
 `[theme]` table, a dotted key, or an inline table. They preserve every other configuration key and
@@ -98,11 +99,10 @@ The four theme scopes resolve in this order, from lowest to highest precedence:
 2. the user configuration at `~/.talaria/config.toml`, or the directory selected by
    `TALARIA_CONFIG_DIR`;
 3. the repository configuration at `./.talaria/config.toml`;
-4. the unsaved selection held by the running process.
+4. the session selection held in memory by the running process.
 
-A later scope replaces the earlier selection. Configuration files are read at startup. Talaria does
-not watch them, so an external edit or an explicit save affects the next process, while a picker
-selection affects only the current one.
+An explicit selection (`Enter` in `/theme` or `/theme select <name>`) writes to the user configuration
+scope (scope 2) immediately while applying to the running session (scope 4).
 
 ## Token vocabulary
 
@@ -197,23 +197,56 @@ Default. The normative mapping and warning rules are in
 [Visual Studio Code theme import format](formats/vscode-theme-import.md); they are not duplicated
 here.
 
-Imported themes become available to `/theme` only after a fresh process loads the stored theme
-library. Once a canonical theme document exists under `<TALARIA_CONFIG_DIR>/themes/` (or the default
-`~/.talaria/themes/`), its slug is accepted from `config.toml` at startup and can be persisted with
-the same explicit save commands as a built-in theme.
+Stored user themes live under `<TALARIA_CONFIG_DIR>/themes/<slug>.json` (or the default
+`~/.talaria/themes/<slug>.json`). A stored theme may be produced by `/theme fetch`, created by
+hand, or forked from an existing theme. Standalone stored theme files do not require an import-source
+registration: placing or editing a valid canonical theme file under `<config-dir>/themes/` makes it
+available to the running session.
 
-Every successful import records its source beside the library in
-`<config-dir>/theme-sources.json`, mapping each slug to its file path or marketplace reference.
-`/theme reload [name]` re-runs the import pipeline for that recorded source and applies the
-re-resolved theme live, with no restart:
+## Local refresh versus upstream reimport
 
-```text
-theme 'solar-flare' reloaded: 40 source tokens, 18 fallbacks, 0 warnings
-```
+Talaria strictly distinguishes refreshing saved local theme files from reimporting an upstream source:
 
-`reload` with no name re-imports the current session theme. A failed or invalid reload keeps
-rendering the current theme with a notice and never partially applies. There is no file watcher:
-editing a source file changes nothing until an explicit reload, and concurrent reloads serialize
-behind one lock. The mapping, warning, and report rules for both sources are in
-[Visual Studio Code theme import format](formats/vscode-theme-import.md); they are not duplicated
-here.
+- **Local refresh:** `/theme reload [name]` refreshes the theme directly from its stored file
+  (`<config-dir>/themes/<slug>.json`). It never requires an import source, applying saved local edits
+  live immediately without exiting:
+
+  ```text
+  theme 'my-theme' refreshed from stored file (applied live, no restart required)
+  ```
+
+  Running `/theme reload` with no argument refreshes the currently active theme. Built-in themes
+  (`refined-default`, `dark-green-terminal`, `neutral-dark`, `accessible-high-contrast`, `homebrew`)
+  are code constants and have no stored file on disk to refresh.
+  If a stored theme file is malformed or missing required tokens, reload fails with an actionable
+  validation error and keeps the last good appearance intact.
+
+- **Upstream reimport:** `/theme fetch <source> [--name <name>]` (or the CLI `talaria theme fetch`
+  and `talaria theme import`) fetches or re-fetches from an upstream VS Code source or marketplace
+  reference, compiles the colors into Talaria tokens, writes `<config-dir>/themes/<slug>.json`,
+  records the origin in `<config-dir>/theme-sources.json`, and applies the result live:
+
+  ```text
+  theme 'solar-flare' fetched: 40 source tokens, 18 fallbacks, 0 warnings (applied live, no restart required)
+  ```
+
+Concurrent reloads and fetches serialize behind one lock. There is no external file watcher:
+editing a stored theme file on disk changes nothing until an explicit `/theme reload [name]` or a
+restart.
+
+## Activation rules: live versus restart
+
+Talaria distinguishes settings that apply live from those requiring a process restart:
+
+- **Applied live (no restart required):**
+  - Selecting a theme via `/theme select <name>` or `Enter` in the `/theme` picker applies live and
+    persists `theme.name` to the user configuration immediately.
+  - Refreshing a stored theme via `/theme reload [name]` applies live immediately.
+  - Fetching an upstream theme via `/theme fetch <source>` applies live immediately.
+  - Bottom bar visibility toggles (`/bar`) apply live immediately.
+  Activation notices explicitly confirm that the change applied live with no restart required.
+
+- **Restart required:**
+  - External edits made directly to configuration files (`config.toml`) by text editor take effect
+    on the next process startup.
+  - Built-in theme code definitions are immutable at runtime.
