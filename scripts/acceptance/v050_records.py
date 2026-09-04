@@ -173,6 +173,7 @@ def build_manifest(
     evidence_root: Path = _EVIDENCE_ROOT,
     checklist_path: Path = _CHECKLIST_PATH,
     current_candidate_commit: str,
+    release_version: str = RELEASE_VERSION,
 ) -> dict[str, Any]:
     """Build one deterministic manifest from committed receipt files."""
     current_commit = _commit(
@@ -384,7 +385,7 @@ def build_manifest(
             "commit": current_commit,
             "wheel_filename": None,
             "wheel_sha256": None,
-            "version": RELEASE_VERSION,
+            "version": release_version,
             "has_install_receipt": False,
         }
     else:

@@ -146,10 +146,33 @@ jobs:
           # Harness utilities keep script coverage while excluding known low-severity fixture noise.
           uv run bandit -r scripts -q -ll
 
-      - name: Verify the v0.5.0 acceptance run
+      - name: Resolve the acceptance manifest and gate for this version
+        id: acceptance
+        shell: bash
+        # The tag already passed the strict shape check above, so the same
+        # strip-suffix idiom as the version-match step is safe here: `v0.6.0`
+        # and `v0.6.0-rc1` both resolve to version `0.6.0`.
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          version="${TAG#v}"
+          version="${version%%-*}"
+          manifest="docs/acceptance/v$version/artifact-manifest.json"
+          if [ ! -f "$manifest" ]; then
+            echo "::error::No acceptance manifest at $manifest for tag $TAG. A release needs its version's evidence tree."
+            exit 1
+          fi
+          gate_id="$(uv run python -c 'import json,sys; print(json.load(open(sys.argv[1])).get("gate_id", "v0-1-daily-driver"))' "$manifest")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "gate_id=$gate_id" >> "$GITHUB_OUTPUT"
+          echo "Tag $TAG resolves to manifest $manifest with gate $gate_id."
+
+      - name: Verify the acceptance run
         run: >-
           uv run python -m scripts.acceptance.v050_receipt verify-run
-          --manifest docs/acceptance/v0.5.0/artifact-manifest.json
+          --manifest ${{ steps.acceptance.outputs.manifest }}
+          --evidence-root docs/acceptance/v${{ steps.acceptance.outputs.version }}/evidence
           --expect-candidate "${{ github.sha }}"
 
       - name: The gate must read READY
@@ -157,26 +180,27 @@ jobs:
         env:
           ALLOW_RED_GATE: ${{ inputs.allow_red_gate }}
           REASON: ${{ inputs.reason }}
+          GATE_ID: ${{ steps.acceptance.outputs.gate_id }}
         run: |
           set +e
           # Only stdout is captured. The script's stderr carries the reason a
           # read failed, and that belongs in the run log rather than /dev/null.
-          verdict="$(uv run python scripts/gate_verdict.py --id v0-1-daily-driver --expect READY)"
+          verdict="$(uv run python scripts/gate_verdict.py --id "$GATE_ID" --expect READY)"
           status=$?
           set -e
 
           if [ "$status" = "2" ]; then
-            echo "::error::The v0-1-daily-driver gate could not be read at all. This is deliberately not overridable: an override would be overriding nothing. Find the gating document."
+            echo "::error::The $GATE_ID gate could not be read at all. This is deliberately not overridable: an override would be overriding nothing. Find the gating document."
             exit 1
           fi
 
           if [ "$status" = "0" ]; then
-            echo "Gate v0-1-daily-driver reads $verdict."
+            echo "Gate $GATE_ID reads $verdict."
             exit 0
           fi
 
           if [ "$ALLOW_RED_GATE" != "true" ]; then
-            echo "::error::Gate v0-1-daily-driver reads '$verdict', not READY. Refusing to release. If this release is the fix for whatever turned the gate red, re-run this workflow manually with allow_red_gate and a reason."
+            echo "::error::Gate $GATE_ID reads '$verdict', not READY. Refusing to release. If this release is the fix for whatever turned the gate red, re-run this workflow manually with allow_red_gate and a reason."
             exit 1
           fi
 
@@ -185,7 +209,7 @@ jobs:
             exit 1
           fi
 
-          echo "::warning title=Released over a red gate::Gate v0-1-daily-driver reads '$verdict'. Reason given: $REASON"
+          echo "::warning title=Released over a red gate::Gate $GATE_ID reads '$verdict'. Reason given: $REASON"
 
       - name: Build the distributions
         run: uv build --out-dir dist
