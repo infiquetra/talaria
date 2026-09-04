@@ -877,6 +877,65 @@ def test_github_file_page_url_converts_to_the_raw_file() -> None:
     assert resolved.download_url == api_url
 
 
+def test_case_varied_page_urls_convert_on_scheme_and_host_only() -> None:
+    assert convert_page_url(
+        "HTTPS://GITHUB.COM/acme/themes/blob/main/solar.json"
+    ) == "https://raw.githubusercontent.com/acme/themes/main/solar.json"
+    assert convert_page_url(
+        "https://Open-VSX.Org/extension/acme/solar"
+    ) == "acme/solar"
+    # Path shapes stay exact: an uppercased page kind is not a file page.
+    assert (
+        convert_page_url("https://github.com/acme/themes/BLOB/main/solar.json")
+        is None
+    )
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(entries=(entry,))
+    resolved = resolve_marketplace_source(
+        "HTTPS://Open-VSX.Org/extension/acme/solar", transport=transport
+    )
+    assert transport.lookup_calls == [("acme", "solar")]
+    assert resolved.source_id == "acme/solar/1"
+
+
+@pytest.mark.asyncio
+async def test_theme_fetch_renders_appearance_lead_and_full_report(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    raw_url = "https://example.invalid/warnings-dark.json"
+    payload = (FIXTURES / "unsupported-dark.json").read_bytes()
+    transport = _FakeMarketplaceTransport(entries=(), files={raw_url: payload})
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+        marketplace_transport=transport,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _submit_theme_command(
+            app, pilot, f"/theme fetch {raw_url} --name warnings-dark"
+        )
+        assert app.theme == "warnings-dark"
+        assert app.session_theme_slug == "warnings-dark"
+        notice = app.composer.notice
+        assert (
+            "theme 'warnings-dark' fetched: 2 source tokens, "
+            "56 fallbacks, 19 warnings" in notice
+        )
+        assert "Appearance: 56 tokens use Refined Default values" in notice
+        assert "fallback: talaria.surface <- Refined Default" in notice
+        assert (
+            "warning: root.include is unsupported; "
+            "external theme files are not read" in notice
+        )
+        lead_at = notice.index("Appearance: 56 tokens")
+        fallback_at = notice.index("fallback: talaria.")
+        warning_at = notice.index("warning: root.include")
+        assert lead_at < fallback_at < warning_at
+        await app.shutdown_sources()
+
+
 def test_open_vsx_extension_page_resolves_as_its_registry_reference() -> None:
     entry = _marketplace_entry()
     transport = _FakeMarketplaceTransport(entries=(entry,))

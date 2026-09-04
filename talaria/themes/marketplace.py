@@ -61,18 +61,18 @@ _SLUG_RUN_RE: Final[re.Pattern[str]] = re.compile(r"[^a-z0-9]+")
 #: the raw file: ``github.com/<owner>/<repo>/blob/<rev>/<path>`` (and the
 #: ``/raw/`` variant) converts to the ``raw.githubusercontent.com`` URL for
 #: the same revision and path. The converted URL fetches under the same
-#: size bound as any direct URL; the page itself is never fetched.
-_GITHUB_PAGE_RE: Final[re.Pattern[str]] = re.compile(
-    r"^https://github\.com/"
-    r"(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)/"
-    r"(?:blob|raw)/(?P<rev>[^/]+)/(?P<path>.+)$"
+#: size bound as any direct URL; the page itself is never fetched. Only the
+#: scheme and host match case-insensitively; the path shape stays exact.
+_GITHUB_PATH_RE: Final[re.Pattern[str]] = re.compile(
+    r"/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)/"
+    r"(?:blob|raw)/(?P<rev>[^/]+)/(?P<path>.+)"
 )
 
 #: An Open VSX extension page names the same ``publisher/extension`` the
 #: registry lookup takes: ``open-vsx.org/extension/<publisher>/<extension>``.
-_OPEN_VSX_PAGE_RE: Final[re.Pattern[str]] = re.compile(
-    r"^https://open-vsx\.org/extension/"
-    r"(?P<publisher>[A-Za-z0-9_.-]+)/(?P<extension>[A-Za-z0-9_.-]+)/?$"
+#: Scheme and host match case-insensitively; the path shape stays exact.
+_OPEN_VSX_PATH_RE: Final[re.Pattern[str]] = re.compile(
+    r"/extension/(?P<publisher>[A-Za-z0-9_.-]+)/(?P<extension>[A-Za-z0-9_.-]+)/?"
 )
 
 #: Gallery hosts whose web pages are never raw theme files. Their
@@ -183,20 +183,32 @@ def convert_page_url(ref: str) -> str | None:
     else — gallery search pages, other hosts, other paths — returns
     ``None``: the page is explained, never guessed at. Conversion is a
     string rewrite only; every bound still applies to what is fetched.
+    ``urlsplit`` lowercases the scheme and host, so those match
+    case-insensitively while the path shape stays exact.
     """
-    page = _GITHUB_PAGE_RE.match(ref.strip())
-    if page is not None:
-        return (
-            "https://raw.githubusercontent.com/"
-            f"{page.group('owner')}/{page.group('repo')}/"
-            f"{page.group('rev')}/{page.group('path')}"
-        )
-    extension_page = _OPEN_VSX_PAGE_RE.match(ref.strip())
-    if extension_page is not None:
-        return (
-            f"{extension_page.group('publisher')}"
-            f"/{extension_page.group('extension')}"
-        )
+    try:
+        split = urllib.parse.urlsplit(ref.strip())
+    except ValueError:
+        return None
+    if split.scheme.lower() != "https":
+        return None
+    host = split.hostname or ""
+    if host.lower() == "github.com":
+        page = _GITHUB_PATH_RE.fullmatch(split.path)
+        if page is not None:
+            return (
+                "https://raw.githubusercontent.com/"
+                f"{page.group('owner')}/{page.group('repo')}/"
+                f"{page.group('rev')}/{page.group('path')}"
+            )
+        return None
+    if host.lower() == "open-vsx.org":
+        extension_page = _OPEN_VSX_PATH_RE.fullmatch(split.path)
+        if extension_page is not None:
+            return (
+                f"{extension_page.group('publisher')}"
+                f"/{extension_page.group('extension')}"
+            )
     return None
 
 
