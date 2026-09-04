@@ -5760,11 +5760,16 @@ class TalariaApp(App[None]):
             )
             return
         self.session_theme_slug = slug
-        self._notice(
+        confirmation = (
             f"theme {slug!r} {action}: {report.mapped_count} source tokens, "
             f"{report.fallback_count} fallbacks, "
             f"{report.unsupported_count} warnings (applied live, no restart required)"
         )
+        # Item 4 holds in the app too: the confirmation keeps the
+        # live-application fact, then the appearance lead and the complete
+        # ordered report follow so the operator sees which fallbacks changed
+        # the look and can reach every detail.
+        self._notice(confirmation + "\n" + "\n".join(report.lines()[1:]))
 
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.
