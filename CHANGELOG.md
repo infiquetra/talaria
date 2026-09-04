@@ -10,14 +10,35 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-04
+
+Talaria v0.6.0 is a configurable daily-driver follow-up to v0.5.0, answering ten
+manual-test findings against the v0.5 implementation. See the
+[v0.6.0 release notes](docs/releases/v0.6.0.md) for the limits, the upgrade
+reasons, and the findings-to-evidence map.
+
 ### Added
 
+- **Honest gateway compatibility reporting.** `/model` and slash dispatch report what the
+  connected gateway actually supports, with drift surfacing loudly instead of failing quietly.
+- **Herdr-safe keyboard defaults.** Configurable `Ctrl+O` inspector chord and `Ctrl+S`
+  cancel-turn default with an honest footer, safe under nested terminal capture.
+- **Single-Enter picker dispatch.** Slash commands execute directly from the picker through
+  the same funnel as typed input, exactly once, with picked-vs-typed parity.
+- **Inspector-housed diagnostics.** Operational seam rows live in the inspector with an
+  honest-empty state; the status region keeps only the actionable subset.
+- **Script-driven multirow bottom bar.** Versioned script-document intake renders true-bottom
+  rows with safe colors, bounds, refresh pickup without restart, and last-good fallback.
+- **Marketplace theme import with explicit Reload.** Bounded `theme import` plus `/theme reload`
+  that repaints the live screen, with trust-as-configured source policy.
 - **Configurable appearance.** Themes resolve through sparse inheritance — shared defaults, an
   explicitly passed host terminal palette (flat chrome only; transcript, diff, and syntax stay
   Talaria-owned), per-category transcript groups, then individual overrides — with unreadable
   combinations held to the measured contrast floors instead of rendered. `TranscriptPane` can
   reclaim its left-edge offset for content width. Fifth built-in theme `homebrew`, a restrained
   green-black palette; the startup default is still Refined Default.
+- **Status-script credential hardening.** Provider credentials are denied over an allowlist
+  with guarded scalar handling, and gateway URLs are sanitized before display.
 
 ## [0.5.0] — 2026-09-01
 
@@ -427,7 +448,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/infiquetra/talaria/releases/tag/v0.6.0
 [0.5.0]: https://github.com/infiquetra/talaria/releases/tag/v0.5.0
 [0.4.0]: https://github.com/infiquetra/talaria/releases/tag/v0.4.0
 [0.3.0]: https://github.com/infiquetra/talaria/releases/tag/v0.3.0
