@@ -1,0 +1,23 @@
+{
+  "artifact": {
+    "commit": "e967c203868173c0515bd41ff29f1bc424173490",
+    "version": "0.6.0",
+    "wheel_filename": "talaria-0.6.0-py3-none-any.whl",
+    "wheel_sha256": "05c8d9752cf10637a206b455360a357e877131e8c6c709a756bb7282b6b28601"
+  },
+  "checklist_item": 3,
+  "evidence": {
+    "kind": "reported-live-matrix",
+    "method": "live sessions plus shell probes against the verified tree; existing sessions preserved; no real secrets",
+    "observation": "nested Ctrl+O toggle plus override",
+    "source": "https://github.com/infiquetra/talaria/issues/127"
+  },
+  "harness_commit": "e967c203868173c0515bd41ff29f1bc424173490",
+  "issue": "https://github.com/infiquetra/talaria/issues/120",
+  "recorded_at": "2026-09-04T03:11:46+00:00",
+  "release": "0.6.0",
+  "schema_version": "talaria-v0.6.0-receipt-v1",
+  "tester": "controller",
+  "title": "120/F3 nested toggle",
+  "verdict": "pass"
+}

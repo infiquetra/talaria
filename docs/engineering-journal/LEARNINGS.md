@@ -2,6 +2,35 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-04
+
+### Any edit under scripts/acceptance permanently reds the v0.5.0 receipt re-verification test on that branch
+
+**Evidence.** The version-agnostic release path (branch `work/060-release-path`) adds
+`scripts/acceptance/versioning.py` and extends the receipt validators, as specified. The full
+suite then fails `scripts/acceptance/test_v050_harness.py::test_committed_acceptance_receipts_match_current_harness`
+with 42 `incompatible harness_commit: acceptance harness files differ from the receipt harness`
+errors: `_harness_commit_matches` (`scripts/acceptance/v050_receipt.py:602`) accepts the current
+checkout only when `git diff --quiet <receipt-commit> HEAD -- scripts/acceptance` is clean, so
+every current or future harness edit — however additive — invalidates re-verification of the
+committed v0.5.0 receipts at that HEAD. The v0.6.0 evidence itself is unaffected (12/12 pass,
+gate id `v0-6-daily-driver`): the release workflow verifies only the manifest resolved from the
+tag, and the candidate check scopes to `talaria`, `pyproject.toml`, `uv.lock`, `src`, so
+docs-only commits keep it green.
+
+**Mechanism.** The ancestry rule conflates "the harness that recorded this receipt" with "the
+harness directory at HEAD". That is the correct conservatism for re-verifying old receipts, but
+it makes the v0.5.0 re-verification test a one-way gate: it can only ever pass on branches that
+never touch the harness again. A version bump trips the sibling tripwire the same way — the
+`tests/docs/test_v050_release_docs.py` pins assert the live `__version__` against v0.5.0-era
+docs, so any 0.6.0 tree fails them until the release-prep owner updates the install guide and
+release notes.
+
+**Generalizable rule.** When a test pins committed evidence against the live tree, name the
+edit scope that reds it in the test's own docstring, and route the expected red to the owning
+branch instead of fixing it locally: receipt immutability means the red is the control working,
+not a regression.
+
 ## 2026-09-03
 
 ### A same-value-silent reactive needs an explicit repaint call after a same-key spec swap

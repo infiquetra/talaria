@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infiquetra.github.io/talaria/acceptance/v0.6.0/artifact-manifest.schema.json",
+  "title": "Talaria v0.6.0 generated acceptance artifact manifest",
+  "description": "JSON Schema validates document shape only; receipt counts, candidate binding, hashes, and verdict invariants are enforced by the generic version validation in tests/docs/test_acceptance_versions.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "gate_id",
+    "generated_command",
+    "status",
+    "recorded_at",
+    "harness_commit",
+    "current_candidate",
+    "counts",
+    "receipts",
+    "install_receipts",
+    "gate0_receipts",
+    "results_document",
+    "notes_document"
+  ],
+  "properties": {
+    "$schema": {"const": "./artifact-manifest.schema.json"},
+    "schema_version": {"const": "talaria-v0.6.0-artifact-manifest-v1"},
+    "gate_id": {"const": "v0-6-daily-driver"},
+    "generated_command": {"type": "string", "minLength": 1},
+    "status": {"const": "complete"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "harness_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "current_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "version", "wheel_filename", "wheel_sha256"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "version": {"const": "0.6.0"},
+        "wheel_filename": {"type": "string", "minLength": 1},
+        "wheel_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_receipts",
+        "install_receipts",
+        "invalid_item_receipts",
+        "item_receipts",
+        "item_verdicts",
+        "missing_current_receipts",
+        "missing_receipts_on_disk",
+        "stale_receipts",
+        "current_receipts"
+      ],
+      "properties": {
+        "expected_receipts": {"const": 12},
+        "install_receipts": {"type": "integer", "minimum": 1},
+        "invalid_item_receipts": {"const": 0},
+        "item_receipts": {"const": 12},
+        "item_verdicts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["blocked", "fail", "pass", "reserved"],
+          "properties": {
+            "blocked": {"const": 0},
+            "fail": {"const": 0},
+            "pass": {"const": 12},
+            "reserved": {"const": 0}
+          }
+        },
+        "missing_current_receipts": {"const": 0},
+        "missing_receipts_on_disk": {"const": 0},
+        "stale_receipts": {"const": 0},
+        "current_receipts": {"type": "integer", "minimum": 12}
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt_path",
+          "receipt_sha256",
+          "checklist_item",
+          "tester",
+          "verdict",
+          "title"
+        ],
+        "properties": {
+          "receipt_path": {"type": "string", "minLength": 1},
+          "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "checklist_item": {"type": "integer", "minimum": 1, "maximum": 12},
+          "tester": {"const": "controller"},
+          "verdict": {"const": "pass"},
+          "title": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "install_receipts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["receipt_path", "receipt_sha256", "tester"],
+        "properties": {
+          "receipt_path": {"type": "string", "minLength": 1},
+          "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "tester": {"const": "operator"}
+        }
+      }
+    },
+    "gate0_receipts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["receipt_path", "receipt_sha256"],
+        "properties": {
+          "receipt_path": {"type": "string", "minLength": 1},
+          "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "results_document": {"type": "string", "minLength": 1},
+    "notes_document": {"type": "string", "minLength": 1}
+  }
+}
