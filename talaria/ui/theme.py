@@ -87,6 +87,16 @@ TRANSCRIPT_TEXT_CONTRAST_FLOOR: Final[float] = 4.5
 #: marker/fill pairings against.
 TRANSCRIPT_MARKER_CONTRAST_FLOOR: Final[float] = 3.0
 
+#: The theme variable carrying the transcript bar state (issue #141). No CSS
+#: rule consumes it; it exists so the registered Textual Theme value is
+#: complete. Textual's ``theme`` reactive is silent on same-slug sets, and
+#: the app repaints a same-slug spec swap only when the Theme value actually
+#: differs — a bar-only reload must therefore register as a real change, or
+#: the mounted gutter stays stale while everything else repaints. The pane
+#: itself reads the live registry; this variable makes the change visible
+#: to the framework's own guard.
+TRANSCRIPT_BAR_VARIABLE: Final[str] = "talaria-transcript-bar-visible"
+
 
 def _hold_contrast_floor(
     foreground: str,
@@ -321,10 +331,12 @@ class ThemeRegistry:
                 # D2's no-fill representation: the category paints on the
                 # canvas, resolved here so the readability floors below
                 # measure against the canvas and a canvas change
-                # re-resolves the inheritance. The representation wins
-                # over the token value it replaces — stored themes must
-                # still define that token, and its value is exactly what
-                # this supersedes.
+                # re-resolves the inheritance. This is the single explicit
+                # exception to the "the spec's own tokens always win"
+                # order — a background token value names a fill color, and
+                # `inherit` says there is none to paint. Stored themes must
+                # still define that token; its value is exactly what this
+                # supersedes.
                 tokens[background_token] = tokens["talaria.canvas"]
                 inherit_sourced.append(category)
             for role in ("marker", "background"):
@@ -478,7 +490,17 @@ class ThemeRegistry:
         return resolved
 
     def to_textual_theme(self, requested: object) -> Theme:
-        """Convert one resolved theme to Textual's registered theme shape."""
+        """Convert one resolved theme to Textual's registered theme shape.
+
+        The transcript's left offset column follows the active theme (#141),
+        so the bar state rides in the registered Theme value through
+        :data:`TRANSCRIPT_BAR_VARIABLE`. Textual's ``theme`` reactive is
+        silent on same-slug sets, and the app repaints a same-slug spec swap
+        only when the Theme value actually differs — without the variable a
+        bar-only reload compares equal, paints nothing, and the mounted
+        gutter stays stale. The pane reads the live registry; this makes the
+        change visible to the framework's own guard.
+        """
         resolved = requested if isinstance(requested, ResolvedTheme) else self.resolve(requested)
         tokens = resolved.tokens
         variables = {
@@ -491,6 +513,9 @@ class ThemeRegistry:
         for token, names in _COMPATIBILITY_VARIABLES.items():
             value = tokens[token]
             variables.update({name: value for name in names})
+        variables[TRANSCRIPT_BAR_VARIABLE] = (
+            "true" if resolved.transcript_bar_visible else "false"
+        )
 
         return Theme(
             name=resolved.slug,
