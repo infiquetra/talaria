@@ -4,6 +4,31 @@
 
 ## 2026-09-04
 
+### A page URL is not a big file: reject gallery pages before fetching, convert file pages before resolving (C3/#142)
+
+**Evidence.** The v0.6.1 C3 unit found the reported file-page failure mode's trigger in
+`resolve_marketplace_source` (`talaria/themes/marketplace.py`): every `http(s)` URL was
+treated as a direct raw-file URL, so a GitHub blob page fetched its HTML and died as
+`oversized` — telling the operator their small theme file was too big. The repair converts
+GitHub file pages to raw URLs and Open VSX extension pages to registry references as pure
+string rewrites (no new fetching, every bound intact), and rejects gallery hosts early with
+the supported-forms explanation — except `/api/` file paths, which still fetch directly.
+Pinned by `test_file_page_url_never_reports_a_small_theme_as_oversized` and
+`test_gallery_search_page_yields_supported_forms_not_a_size_error` in
+`tests/ui/test_theme_import.py`.
+
+**Mechanism.** Size and parse failures are downstream of a classification decision: once a
+page URL is misclassified as a file URL, no downstream message can be truthful, because the
+bytes genuinely are oversized HTML. The fix belongs at the classification point, not in the
+error prose — though the `oversized` notice still carries a page-vs-raw hint for hosts no
+rule recognizes.
+
+**Generalizable rule.** When a user-supplied locator can name either a thing or a page about
+the thing, classify page-vs-thing before any network use, and make the unconvertible case
+explain the supported inputs rather than downloading the page to discover it is one.
+
+## 2026-09-04
+
 ### Any edit under scripts/acceptance permanently reds the v0.5.0 receipt re-verification test on that branch
 
 **Evidence.** The version-agnostic release path (branch `work/060-release-path`) adds
