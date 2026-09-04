@@ -22,7 +22,11 @@ from talaria.themes.storage import (
     load_user_theme_spec,
     serialize_user_theme,
 )
-from talaria.ui.theme import BUILTIN_THEME_REGISTRY, ThemeRegistry
+from talaria.ui.theme import (
+    BUILTIN_THEME_REGISTRY,
+    TRANSCRIPT_BAR_VARIABLE,
+    ThemeRegistry,
+)
 
 
 def _hidden_spec() -> ThemeSpec:
@@ -114,3 +118,28 @@ def test_stored_themes_reject_a_non_boolean_bar_field(tmp_path: Path) -> None:
         StoredThemeError, match="transcript_bar_visible must be a boolean"
     ):
         load_user_theme_spec(path)
+
+
+def test_the_bar_state_rides_in_the_registered_theme_value() -> None:
+    """P1 repair (#141): Textual's theme reactive is silent on same-slug
+    sets, and the app repaints a same-slug spec swap only when the
+    registered Theme value actually differs. The bar state must therefore
+    be part of that value, or a bar-only reload compares equal, paints
+    nothing, and the mounted gutter stays stale."""
+    registry = ThemeRegistry((REFINED_DEFAULT, _hidden_spec()))
+
+    visible = registry.to_textual_theme("refined-default")
+    hidden = registry.to_textual_theme("bar-hidden")
+    assert visible.variables[TRANSCRIPT_BAR_VARIABLE] == "true"
+    assert hidden.variables[TRANSCRIPT_BAR_VARIABLE] == "false"
+
+    rebuilt = ThemeSpec(
+        slug=REFINED_DEFAULT.slug,
+        name=REFINED_DEFAULT.name,
+        dark=REFINED_DEFAULT.dark,
+        tokens=dict(REFINED_DEFAULT.tokens),
+        transcript_bar_visible=False,
+    )
+    assert ThemeRegistry((rebuilt,)).to_textual_theme(rebuilt.slug) != visible, (
+        "a bar-only same-slug rebuild must register as a real theme change"
+    )

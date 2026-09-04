@@ -53,7 +53,9 @@ implementation:
    three roles by nickname (`text`, `marker`, `background`) or by canonical token name. A
    background role may also name the one non-color value, `inherit`, which paints that category on
    the canvas instead of its own fill;
-4. overrides: the specification's own tokens, which always win.
+4. overrides: the specification's own tokens, which always win — with one explicit exception,
+   named in the section below: a groups-layer background value of `inherit` is a representation
+   directive (no fill), not a color, and it supersedes the background token it names.
 
 Each layer is sparse: an empty group, an unknown category or token, a null value, or a malformed
 color falls through to the next layer instead of breaking the rest, and a malformed group color is
@@ -89,10 +91,13 @@ to `talaria.canvas`, so changing the canvas or switching themes re-resolves the 
 category's body text and stripe marker hold their readability floors against the canvas — a stripe
 that matches the canvas is exactly the invisible-marker evasion the floor refuses. A stored theme
 still defines the category's canonical background token, and validation is unchanged; `inherit`
-names the value that supersedes that token, which is what removes the matching-black-fill
-workaround rather than loosening the rule around it. Categories the theme does not name keep their
-own fills, so one theme can mix filled and unfilled categories. `inherit` spelled on the text or
-marker role is malformed and is reported in the resolution notices.
+supersedes that token's value — the single explicit exception to the inheritance order's
+"the specification's own tokens always win" rule, which exists because the token value names a
+fill color and `inherit` says there is none to paint. That is what removes the
+matching-black-fill workaround rather than loosening the rule around it. Categories the theme
+does not name keep their own fills, so one theme can mix filled and unfilled categories.
+`inherit` spelled on the text or marker role is malformed and is reported in the resolution
+notices.
 
 ## Transcript bar visibility
 
@@ -107,11 +112,13 @@ its stored document:
 ```
 
 Visibility follows the active theme: switching themes hides or restores the bar, and a theme that
-does not name the field keeps the column every theme has always had. Hiding the bar returns its
-column to the content width, so wrapped rows reflow rather than clip, at every terminal width.
-Matching marker colors are not a hidden state — the 3.0 marker floor still refuses them — and a
-separate configuration switch is not a substitute: bar visibility is a theme decision, not a
-client setting.
+does not name the field keeps the column every theme has always had. The bar state rides in the
+theme value registered with the terminal framework, so a reload under the same slug counts as a
+real change too: reloading a theme whose only change is bar metadata repaints the mounted
+transcript instead of leaving a stale gutter. Hiding the bar returns its column to the content
+width, so wrapped rows reflow rather than clip, at every terminal width. Matching marker colors
+are not a hidden state — the 3.0 marker floor still refuses them — and a separate configuration
+switch is not a substitute: bar visibility is a theme decision, not a client setting.
 
 ## Preview and select a theme
 

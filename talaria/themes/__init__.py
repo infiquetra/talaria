@@ -117,9 +117,10 @@ TRANSCRIPT_CATEGORY_TOKENS: Mapping[str, Mapping[str, str]] = MappingProxyType(
 #: ``background`` role (issue #141, design selection D2): the category's
 #: transcript text is painted on ``talaria.canvas`` with no distinct fill,
 #: resolved at theme resolution time so a canvas change re-resolves it.
-#: The value names a representation, not a color — it wins over the
-#: background token value it replaces, which stored themes must still
-#: define. Any other role spelling it is malformed and reported.
+#: The value names a representation, not a color — it is the single
+#: explicit exception to the "the spec's own tokens always win" order,
+#: superseding the background token value it replaces, which stored themes
+#: must still define. Any other role spelling it is malformed and reported.
 INHERIT_BACKGROUND: str = "inherit"
 
 

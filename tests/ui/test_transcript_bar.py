@@ -22,6 +22,7 @@ Two layers of cases:
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -34,6 +35,7 @@ from talaria.themes import ThemeSpec
 from talaria.themes.builtins import REFINED_DEFAULT
 from talaria.ui.blocks import EntryMarkdown
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY, ThemeRegistry
+from talaria.ui.theme_import import ImportReport
 from talaria.ui.transcript import (
     TranscriptLine,
     TranscriptPane,
@@ -283,6 +285,79 @@ async def test_switching_themes_hides_and_restores_the_bar_without_clipping(
         assert _BAR_RESPONSE in _screen_words(app)
 
         app.theme = REFINED_DEFAULT.slug
+        await pilot.pause()
+        await pilot.pause()
+        assert pane.show_left_offset is True
+        assert probe.content_size.width == width_visible
+        assert _BAR_RESPONSE in _screen_words(app)
+
+        await probe.remove()
+        await app.shutdown_sources()
+
+
+def _reload_report(spec: ThemeSpec, target_path: Path) -> ImportReport:
+    return ImportReport(
+        mapped_values={},
+        unsupported_entries=(),
+        fallback_tokens=(),
+        composites=(),
+        target_name=spec.name,
+        target_path=target_path,
+        theme=spec,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_bar_only_same_slug_reload_moves_the_gutter(tmp_path: Path) -> None:
+    """P1 repair regression (#141 item 16 / Live 06): reloading a theme
+    under its own slug where only the bar metadata changed must still move
+    the mounted gutter. Textual's theme reactive is silent on same-slug
+    sets, and the app repaints a same-slug spec swap only when the
+    registered Theme value actually differs — the bar state rides in that
+    value (``talaria-transcript-bar-visible``) for exactly this reason.
+    The case drives the reload's own apply path and proves the gutter
+    moves, content reflows, and nothing clips — in both directions."""
+    app, controls = paused_app(_bar_frames())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        assert pane.show_left_offset is True
+
+        probe = TranscriptLine("x" * 60, kind="assistant", first_in_entry=False)
+        await pane.mount(probe)
+        await pilot.pause()
+        width_visible = probe.content_size.width
+
+        hidden = ThemeSpec(
+            slug=REFINED_DEFAULT.slug,
+            name=REFINED_DEFAULT.name,
+            dark=REFINED_DEFAULT.dark,
+            tokens=dict(REFINED_DEFAULT.tokens),
+            transcript_bar_visible=False,
+        )
+        app._apply_import_report(
+            _reload_report(hidden, tmp_path / f"{hidden.slug}.json"),
+            action="reloaded",
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert pane.show_left_offset is False, (
+            "a bar-only same-slug reload left the mounted gutter stale"
+        )
+        assert probe.content_size.width == width_visible + 1
+        assert _BAR_RESPONSE in _screen_words(app)
+
+        visible = ThemeSpec(
+            slug=REFINED_DEFAULT.slug,
+            name=REFINED_DEFAULT.name,
+            dark=REFINED_DEFAULT.dark,
+            tokens=dict(REFINED_DEFAULT.tokens),
+            transcript_bar_visible=True,
+        )
+        app._apply_import_report(
+            _reload_report(visible, tmp_path / f"{visible.slug}.json"),
+            action="reloaded",
+        )
         await pilot.pause()
         await pilot.pause()
         assert pane.show_left_offset is True
