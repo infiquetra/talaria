@@ -18,7 +18,7 @@ from textual.color import Color
 import talaria.cli
 from talaria.cli import build_parser, main
 from talaria.config import load_config
-from talaria.themes import THEME_TOKENS
+from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import BUILTIN_THEMES
 from talaria.themes.marketplace import (
     MAX_MARKETPLACE_BYTES,
@@ -1233,10 +1233,11 @@ async def test_theme_fetch_applies_valid_theme_live_without_persisting(
 
 
 @pytest.mark.asyncio
-async def test_theme_reload_reimports_edited_source_without_restart(
+async def test_theme_reload_refreshes_edited_stored_file_without_restart(
     tmp_path: Path,
 ) -> None:
-    config_dir, source = _imported_app_config(tmp_path)
+    config_dir, _source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
         [event("gateway.ready", {})],
@@ -1249,16 +1250,16 @@ async def test_theme_reload_reimports_edited_source_without_restart(
     async with app.run_test(size=(80, 24)) as pilot:
         assert app.theme == "solar-flare"
 
-        payload = json.loads(source.read_text(encoding="utf-8"))
-        payload["colors"]["editor.background"] = "#112233"
-        source.write_text(json.dumps(payload), encoding="utf-8")
+        payload = json.loads(stored.read_text(encoding="utf-8"))
+        payload["tokens"]["talaria.canvas"] = "#112233"
+        stored.write_text(json.dumps(payload), encoding="utf-8")
 
         await _submit_theme_command(app, pilot, "/theme reload")
 
         assert app.theme == "solar-flare"
         resolved = app.theme_registry.resolve("solar-flare")
         assert resolved.tokens["talaria.canvas"] == "#112233"
-        assert "reloaded" in screen_text(app)
+        assert "refreshed" in screen_text(app)
         # Reload is safe mid-turn: session state survives the re-resolve.
         assert tuple(entry.text for entry in app.state.transcript) == before_texts
         assert app.session_theme_slug == "solar-flare"
@@ -1275,7 +1276,8 @@ async def test_same_slug_reload_repaints_the_live_screen(
     without the explicit repaint the re-registered spec stays invisible even
     though the registry holds the new values.
     """
-    config_dir, source = _imported_app_config(tmp_path)
+    config_dir, _source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
         [event("gateway.ready", {})],
@@ -1287,9 +1289,9 @@ async def test_same_slug_reload_repaints_the_live_screen(
     async with app.run_test(size=(80, 24)) as pilot:
         before = app.screen.styles.background
 
-        payload = json.loads(source.read_text(encoding="utf-8"))
-        payload["colors"]["editor.background"] = "#445566"
-        source.write_text(json.dumps(payload), encoding="utf-8")
+        payload = json.loads(stored.read_text(encoding="utf-8"))
+        payload["tokens"]["talaria.canvas"] = "#445566"
+        stored.write_text(json.dumps(payload), encoding="utf-8")
 
         await _submit_theme_command(app, pilot, "/theme reload")
 
@@ -1335,9 +1337,8 @@ async def test_same_slug_reload_without_changes_repaints_nothing(
 async def test_theme_reload_of_invalid_source_preserves_theme_and_file(
     tmp_path: Path,
 ) -> None:
-    config_dir, source = _imported_app_config(tmp_path)
+    config_dir, _source = _imported_app_config(tmp_path)
     stored = config_dir / "themes" / "solar-flare.json"
-    before = stored.read_bytes()
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
         [event("gateway.ready", {})],
@@ -1347,11 +1348,11 @@ async def test_theme_reload_of_invalid_source_preserves_theme_and_file(
         launch_cwd=tmp_path,
     )
     async with app.run_test(size=(80, 24)) as pilot:
-        source.write_text("{oops", encoding="utf-8")
+        stored.write_text("{oops", encoding="utf-8")
         await _submit_theme_command(app, pilot, "/theme reload solar-flare")
 
         assert app.theme == "solar-flare"
-        assert stored.read_bytes() == before
+        assert stored.read_text(encoding="utf-8") == "{oops"
         assert app.theme_registry.resolve("solar-flare").tokens[
             "talaria.canvas"
         ] == "#102030"
@@ -1376,7 +1377,7 @@ async def test_theme_reload_without_recorded_source_preserves_theme(
         await _submit_theme_command(app, pilot, "/theme reload")
 
         assert app.theme == "refined-default"
-        assert "no recorded import source" in screen_text(app)
+        assert "built-in theme and has no stored file" in screen_text(app)
         await app.shutdown_sources()
 
 
@@ -1385,7 +1386,8 @@ async def test_edited_source_without_reload_changes_nothing_live(
     tmp_path: Path,
 ) -> None:
     """Without an explicit Reload, an edited source file changes nothing."""
-    config_dir, source = _imported_app_config(tmp_path)
+    config_dir, _source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
         [event("gateway.ready", {})],
@@ -1395,9 +1397,9 @@ async def test_edited_source_without_reload_changes_nothing_live(
         launch_cwd=tmp_path,
     )
     async with app.run_test(size=(80, 24)) as pilot:
-        payload = json.loads(source.read_text(encoding="utf-8"))
-        payload["colors"]["editor.background"] = "#112233"
-        source.write_text(json.dumps(payload), encoding="utf-8")
+        payload = json.loads(stored.read_text(encoding="utf-8"))
+        payload["tokens"]["talaria.canvas"] = "#112233"
+        stored.write_text(json.dumps(payload), encoding="utf-8")
 
         await app.settle_live()
         await pilot.pause()
@@ -1430,18 +1432,14 @@ def test_theme_reload_registers_no_filesystem_watcher() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_reloads_serialize(tmp_path: Path) -> None:
-    config_dir = tmp_path / "config"
-    entry = _marketplace_entry()
-    transport = _FakeMarketplaceTransport(
-        entries=(entry,), files={entry.source_id: SAMPLE_BYTES}
-    )
-    import_marketplace_theme(
-        entry, transport=transport, name="solar-flare", config_dir=config_dir
-    )
-    payload = json.loads(SAMPLE_BYTES)
-    payload["colors"]["editor.background"] = "#445566"
-    transport._files[entry.source_id] = json.dumps(payload).encode("utf-8")
+async def test_concurrent_reloads_serialize(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir, _source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
+    payload = json.loads(stored.read_text(encoding="utf-8"))
+    payload["tokens"]["talaria.canvas"] = "#445566"
+    stored.write_text(json.dumps(payload), encoding="utf-8")
 
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
@@ -1450,19 +1448,82 @@ async def test_concurrent_reloads_serialize(tmp_path: Path) -> None:
         theme_registry=registry,
         theme_config_dir=config_dir,
         launch_cwd=tmp_path,
+    )
+    async with app.run_test(size=(80, 24)):
+        import talaria.ui.app as app_module
+
+        load_gate = threading.Event()
+        load_calls: list[Path] = []
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        original_load = load_user_theme_spec
+
+        def gated_load(path: Path) -> ThemeSpec:
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                if active > max_active:
+                    max_active = active
+                load_calls.append(path)
+            load_gate.wait(timeout=5.0)
+            try:
+                return original_load(path)
+            finally:
+                with lock:
+                    active -= 1
+
+        monkeypatch.setattr(app_module, "load_user_theme_spec", gated_load)
+
+        first = asyncio.create_task(app._reload_imported_theme("solar-flare"))
+        await asyncio.sleep(0.1)
+        second = asyncio.create_task(app._reload_imported_theme("solar-flare"))
+        await asyncio.sleep(0.1)
+
+        # The second reload waits behind the lock instead of reading concurrently.
+        assert len(load_calls) == 1
+        assert max_active == 1
+
+        load_gate.set()
+        await asyncio.gather(first, second)
+
+        assert len(load_calls) == 2
+        assert max_active == 1
+        assert app.theme == "solar-flare"
+        assert app.theme_registry.resolve("solar-flare").tokens[
+            "talaria.canvas"
+        ] == "#445566"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_fetches_serialize(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(
+        entries=(entry,), files={entry.source_id: SAMPLE_BYTES}
+    )
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="solar-flare",
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
         marketplace_transport=transport,
     )
     async with app.run_test(size=(80, 24)):
-        # The setup import above already fetched once; only Reloads count here.
         transport.fetch_calls.clear()
         transport.lookup_calls.clear()
         transport.fetch_gate = threading.Event()
-        first = asyncio.create_task(app._reload_imported_theme("solar-flare"))
-        await asyncio.sleep(0.3)
-        second = asyncio.create_task(app._reload_imported_theme("solar-flare"))
-        await asyncio.sleep(0.3)
+        first = asyncio.create_task(
+            app._fetch_marketplace_theme(entry.source_id, "solar-flare")
+        )
+        await asyncio.sleep(0.1)
+        second = asyncio.create_task(
+            app._fetch_marketplace_theme(entry.source_id, "solar-flare")
+        )
+        await asyncio.sleep(0.1)
 
-        # The second Reload waits behind the lock instead of fetching alongside.
+        # The second fetch waits behind the lock instead of fetching alongside.
         assert transport.fetch_calls == [entry.source_id]
 
         transport.fetch_gate.set()
@@ -1471,7 +1532,4 @@ async def test_concurrent_reloads_serialize(tmp_path: Path) -> None:
         assert transport.fetch_calls == [entry.source_id, entry.source_id]
         assert transport.max_active == 1
         assert app.theme == "solar-flare"
-        assert app.theme_registry.resolve("solar-flare").tokens[
-            "talaria.canvas"
-        ] == "#445566"
         await app.shutdown_sources()

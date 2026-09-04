@@ -15,8 +15,9 @@ environment variable, a repo-local ``./.talaria/config.toml``, the global
 ``~/.talaria/config.toml`` (or its ``TALARIA_CONFIG_DIR`` redirection), and the
 built-in default. Consumers (U5's status runner, U6, U7's credential provider)
 call :func:`load_config` rather than touching the filesystem themselves.
-``theme.name`` deliberately has no environment or command-line override; its
-later session scope is in memory and only :func:`save_theme` persists it.
+``theme.name`` deliberately has no environment or command-line override; an
+explicit selection in the UI persists it to user scope immediately via :func:`save_theme`,
+while repository persistence is requested via explicit save.
 
 **Consumer contract.** The resolved snapshot is deeply immutable, which changes
 the types a caller gets back: every mapping is a ``MappingProxyType`` and every

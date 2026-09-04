@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from talaria.ui.theme import (
     ThemeRegistry,
     contrast_ratio,
     textual_variable_name,
+    theme_registry_for_config,
+    write_user_theme,
 )
 from talaria.ui.theme_import import import_vscode_theme
 from tests.ui.conftest import event, paused_app, screen_text
@@ -513,7 +516,7 @@ async def test_theme_picker_renders_five_rows_previews_and_escape_restores() -> 
 
 
 @pytest.mark.asyncio
-async def test_enter_keeps_the_preview_in_memory_and_browsing_writes_nothing(
+async def test_enter_persists_selection_and_browsing_writes_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -529,12 +532,23 @@ async def test_enter_keeps_the_preview_in_memory_and_browsing_writes_nothing(
             session_slug=None,
         )
 
-        await pilot.press("down", "down", "enter")
+        # Browsing previews only — no config written yet
+        await pilot.press("down", "down")
+        await pilot.pause()
+        assert app.theme == "neutral-dark"
+        assert not config_dir.exists()
+
+        # Enter confirms and persists to user scope immediately
+        await pilot.press("enter")
         await pilot.pause()
 
         assert app.theme == "neutral-dark"
         assert app.palette.is_theme_active is False
-        assert not config_dir.exists()
+        config_file = config_dir / "config.toml"
+        assert config_file.exists()
+        assert tomllib.loads(config_file.read_text(encoding="utf-8")) == {
+            "theme": {"name": "neutral-dark"}
+        }
         await app.shutdown_sources()
 
 
@@ -577,24 +591,37 @@ async def test_theme_command_applies_session_precedence_and_cancel_restores_it(
         assert app.palette.selected_theme is not None
         assert app.palette.selected_theme.slug == "dark-green-terminal"
 
-        await pilot.press("down", "enter")
+        # Moving down previews session-only without writing to disk.
+        await pilot.press("down")
         await pilot.pause()
         assert app.theme == "neutral-dark"
-        assert app.session_theme_slug == "neutral-dark"
-        assert not config_dir.exists(), "an in-memory selection wrote user config"
-        assert not (tmp_path / ".talaria").exists(), (
-            "an in-memory selection wrote repository config"
-        )
+        assert not config_dir.exists(), "picker preview wrote user config"
 
+        # Escape cancels preview and restores open-time persisted theme.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.theme == "dark-green-terminal"
+        assert not config_dir.exists(), "picker cancel wrote user config"
+
+        # Re-open picker: Enter explicitly accepts and persists to user config.
         app.composer.text = "/theme"
         app.composer.text_area.focus()
         await pilot.press("enter")
         await app.settle_live()
-        await pilot.press("down", "escape")
+        await pilot.press("down", "enter")
         await pilot.pause()
 
         assert app.theme == "neutral-dark"
         assert app.session_theme_slug == "neutral-dark"
+        assert (config_dir / "config.toml").is_file(), (
+            "an accepted selection did not write user config"
+        )
+        assert tomllib.loads(
+            (config_dir / "config.toml").read_text(encoding="utf-8")
+        ) == {"theme": {"name": "neutral-dark"}}
+        assert not (tmp_path / ".talaria").exists(), (
+            "an accepted selection wrote repository config"
+        )
         await app.shutdown_sources()
 
 
@@ -762,11 +789,23 @@ def test_no_host_argument_means_no_host_notices() -> None:
     assert not any("host" in notice for notice in resolved.notices)
 
 
-# ── issue #124: /theme select previews immediately, persisting explicitly ──
+# ── issue #140 (C1): automatic persistence and local reload ─────────────────
+
+
+def _sample_custom_spec(slug: str = "custom-theme", *, canvas: str = "#112233") -> ThemeSpec:
+    tokens = dict(REFINED_DEFAULT.tokens)
+    tokens["talaria.canvas"] = canvas
+    return ThemeSpec(
+        slug=slug,
+        name=slug.replace("-", " ").title(),
+        dark=True,
+        tokens=tokens,
+        groups={},
+    )
 
 
 @pytest.mark.asyncio
-async def test_theme_select_previews_immediately_without_persisting(
+async def test_theme_select_persists_to_user_scope_immediately(
     tmp_path: Path,
 ) -> None:
     config_dir = tmp_path / "user"
@@ -786,10 +825,14 @@ async def test_theme_select_previews_immediately_without_persisting(
         assert app.theme == "neutral-dark"
         assert app.session_theme_slug == "neutral-dark"
         rendered = screen_text(app)
-        assert "'neutral-dark' previewing for this session" in rendered
-        assert not config_dir.exists(), "a preview wrote user config"
+        assert "'neutral-dark' selected" in rendered
+        assert "applied live, saved to user configuration" in rendered
+        assert (config_dir / "config.toml").is_file(), "selection did not write user config"
+        assert tomllib.loads(
+            (config_dir / "config.toml").read_text(encoding="utf-8")
+        ) == {"theme": {"name": "neutral-dark"}}
         assert not (tmp_path / ".talaria").exists(), (
-            "a preview wrote repository config"
+            "a user selection wrote repository config"
         )
         await app.shutdown_sources()
 
@@ -850,7 +893,41 @@ async def test_theme_select_broken_spec_keeps_rendering_old_theme(
 
 
 @pytest.mark.asyncio
-async def test_theme_select_then_save_persists_explicitly(
+async def test_theme_select_loads_unregistered_stored_user_theme(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    spec = _sample_custom_spec("unregistered-custom", canvas="#334455")
+    write_user_theme(spec, config_dir=config_dir)
+
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert "unregistered-custom" not in app.theme_registry.slugs
+
+        app.composer.text = "/theme select unregistered-custom"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "unregistered-custom"
+        assert app.session_theme_slug == "unregistered-custom"
+        assert "'unregistered-custom' selected" in app.composer.notice
+        assert "applied live, saved to user configuration" in app.composer.notice
+        assert (config_dir / "config.toml").is_file()
+        assert tomllib.loads(
+            (config_dir / "config.toml").read_text(encoding="utf-8")
+        ) == {"theme": {"name": "unregistered-custom"}}
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_select_then_save_repository_persists_explicitly(
     tmp_path: Path,
 ) -> None:
     config_dir = tmp_path / "user"
@@ -867,12 +944,211 @@ async def test_theme_select_then_save_persists_explicitly(
         await app.settle_live()
         await pilot.pause()
 
-        app.composer.text = "/theme save"
+        # Selection already saved to user scope; /theme save repository persists to repo scope.
+        app.composer.text = "/theme save repository"
         app.composer.text_area.focus()
         await pilot.press("enter")
         await pilot.pause()
 
-        assert (config_dir / "config.toml").read_text(encoding="utf-8") == (
-            '[theme]\nname = "neutral-dark"\n'
+        assert tomllib.loads(
+            (tmp_path / ".talaria" / "config.toml").read_text(encoding="utf-8")
+        ) == {"theme": {"name": "neutral-dark"}}
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_reload_sourceless_custom_theme_applies_saved_edits(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    spec = _sample_custom_spec("standalone-theme", canvas="#112233")
+    write_user_theme(spec, config_dir=config_dir)
+
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="standalone-theme",
+        theme_registry=ThemeRegistry((*BUILTIN_THEMES, spec)),
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert app.theme == "standalone-theme"
+        assert app.theme_registry.resolve("standalone-theme").tokens["talaria.canvas"] == "#112233"
+
+        # Edit stored user theme file directly on disk without an import source.
+        updated_spec = _sample_custom_spec("standalone-theme", canvas="#998877")
+        write_user_theme(updated_spec, config_dir=config_dir)
+
+        app.composer.text = "/theme reload"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "standalone-theme"
+        resolved = app.theme_registry.resolve("standalone-theme")
+        assert resolved.tokens["talaria.canvas"] == "#998877"
+        assert "'standalone-theme' refreshed from stored file" in app.composer.notice
+        assert "applied live, no restart required" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_reload_malformed_theme_keeps_last_good_appearance_and_recovers(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    spec = _sample_custom_spec("editable-theme", canvas="#223344")
+    theme_file = write_user_theme(spec, config_dir=config_dir)
+
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="editable-theme",
+        theme_registry=ThemeRegistry((*BUILTIN_THEMES, spec)),
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert app.theme == "editable-theme"
+
+        # Corrupt the file with invalid JSON syntax.
+        theme_file.write_text("{corrupt-json", encoding="utf-8")
+
+        app.composer.text = "/theme reload editable-theme"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        # Last good appearance is preserved.
+        assert app.theme == "editable-theme"
+        assert app.theme_registry.resolve("editable-theme").tokens["talaria.canvas"] == "#223344"
+        assert "theme reload failed" in app.composer.notice
+        assert "keeping 'editable-theme'" in app.composer.notice
+
+        # Corrupt the file by omitting a required canonical token.
+        bad_payload = {
+            "dark": True,
+            "groups": {},
+            "name": "Editable Theme",
+            "schema_version": "talaria-theme-v1",
+            "slug": "editable-theme",
+            "tokens": {"talaria.canvas": "#111111"},
+        }
+        theme_file.write_text(json.dumps(bad_payload), encoding="utf-8")
+
+        app.composer.text = "/theme reload editable-theme"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "editable-theme"
+        assert app.theme_registry.resolve("editable-theme").tokens["talaria.canvas"] == "#223344"
+        assert "theme reload failed" in app.composer.notice
+        assert "every canonical token" in app.composer.notice
+
+        # Recover: write a valid corrected theme file.
+        valid_recovered = _sample_custom_spec("editable-theme", canvas="#778899")
+        write_user_theme(valid_recovered, config_dir=config_dir)
+
+        app.composer.text = "/theme reload editable-theme"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "editable-theme"
+        assert (
+            app.theme_registry.resolve("editable-theme").tokens["talaria.canvas"]
+            == "#778899"
+        )
+        assert (
+            "refreshed from stored file (applied live, no restart required)"
+            in app.composer.notice
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_reload_builtin_theme_preserves_appearance_with_notice() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme reload refined-default"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "refined-default"
+        assert "is a built-in theme and has no stored file to refresh" in app.composer.notice
+        assert "keeping 'refined-default'" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_reload_distinguishes_local_refresh_from_upstream_reimport(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    source_file = tmp_path / "upstream.json"
+    colors: dict[str, str] = {"editor.background": "#121212"}
+    source_payload = {
+        "name": "Upstream Theme",
+        "type": "dark",
+        "colors": colors,
+    }
+    source_file.write_text(json.dumps(source_payload), encoding="utf-8")
+    import_vscode_theme(source_file, name="dual-test", config_dir=config_dir)
+
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="dual-test",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        assert app.theme == "dual-test"
+        assert app.theme_registry.resolve("dual-test").tokens["talaria.canvas"] == "#121212"
+
+        # Modify the upstream source file only.
+        colors["editor.background"] = "#999999"
+        source_file.write_text(json.dumps(source_payload), encoding="utf-8")
+
+        # Local reload refreshes from stored file — upstream edit is NOT applied.
+        app.composer.text = "/theme reload"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme_registry.resolve("dual-test").tokens["talaria.canvas"] == "#121212"
+
+        # Modify the stored file directly.
+        stored_file = config_dir / "themes" / "dual-test.json"
+        stored_data = json.loads(stored_file.read_text(encoding="utf-8"))
+        stored_data["tokens"]["talaria.canvas"] = "#343434"
+        stored_file.write_text(json.dumps(stored_data), encoding="utf-8")
+
+        # Local reload picks up the stored file edit immediately.
+        app.composer.text = "/theme reload"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert (
+            app.theme_registry.resolve("dual-test").tokens["talaria.canvas"]
+            == "#343434"
+        )
+        assert (
+            "refreshed from stored file (applied live, no restart required)"
+            in app.composer.notice
         )
         await app.shutdown_sources()
