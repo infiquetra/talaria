@@ -198,6 +198,10 @@ class ThemeSpec:
     #: that does not name the field keeps the column every prior theme
     #: always had.
     transcript_bar_visible: bool = True
+    #: One-line provenance or character note shown where the theme is
+    #: described (the ``/theme`` picker row). Empty for every theme that
+    #: carries no such note; built-ins other than Homebrew leave it empty.
+    description: str = ""
 
     def __post_init__(self) -> None:
         if not _SLUG_RE.fullmatch(self.slug):
@@ -217,6 +221,22 @@ class ThemeSpec:
         ):
             raise ValueError(
                 "theme display name must not contain control or format characters"
+            )
+        if not isinstance(self.description, str):
+            raise ValueError("theme description must be a string")
+        if len(self.description) > _THEME_NAME_MAX_LENGTH:
+            raise ValueError(
+                "theme description must be at most "
+                f"{_THEME_NAME_MAX_LENGTH} characters"
+            )
+        if any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or unicodedata.category(character) == "Cf"
+            for character in self.description
+        ):
+            raise ValueError(
+                "theme description must not contain control or format characters"
             )
 
         copied = dict(self.tokens)

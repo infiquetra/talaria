@@ -431,8 +431,16 @@ class PaletteRegion(Vertical):
 
     @staticmethod
     def _format_theme_row(spec: ThemeSpec, *, active: bool) -> str:
-        """One theme row with the visual contract's fixed focus gutter."""
-        return f"{'>' if active else ' '} {spec.name}"
+        """One theme row with the visual contract's fixed focus gutter.
+
+        A spec carrying a description (today only the Homebrew built-in
+        per D4) states it on its own row; undescribed themes render exactly
+        as before. The palette itself is unchanged.
+        """
+        row = f"{'>' if active else ' '} {spec.name}"
+        if spec.description.strip():
+            row += f" — {spec.description.strip()}"
+        return row
 
     @staticmethod
     def _degraded_line(catalog: CommandCatalog | None) -> str:

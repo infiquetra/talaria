@@ -24,6 +24,7 @@ from talaria.themes.marketplace import (
     MAX_MARKETPLACE_BYTES,
     MarketplaceEntry,
     MarketplaceError,
+    convert_page_url,
     fetch_marketplace_bytes,
     resolve_marketplace_source,
     search_marketplace,
@@ -36,6 +37,7 @@ from talaria.ui.theme_import import (
     ALWAYS_FALLBACK_TOKENS,
     SYNTAX_MAPPINGS,
     WORKBENCH_MAPPINGS,
+    ImportReport,
     ThemeImportError,
     import_marketplace_theme,
     import_vscode_theme,
@@ -864,6 +866,138 @@ def test_marketplace_reference_forms_resolve_or_reject() -> None:
     with pytest.raises(MarketplaceError) as bad_scheme:
         resolve_marketplace_source("ftp://example.invalid/theme.json", transport=transport)
     assert bad_scheme.value.kind == "unknown-source"
+
+
+def test_github_file_page_url_converts_to_the_raw_file() -> None:
+    assert convert_page_url(
+        "https://github.com/acme/themes/blob/main/solar.json"
+    ) == "https://raw.githubusercontent.com/acme/themes/main/solar.json"
+    assert convert_page_url(
+        "https://github.com/acme/themes/raw/v1.2/themes/solar.json"
+    ) == "https://raw.githubusercontent.com/acme/themes/v1.2/themes/solar.json"
+    assert convert_page_url("https://example.invalid/themes/solar.json") is None
+    assert convert_page_url("acme/solar") is None
+    # Registry file URLs are already direct: no conversion, no gallery block.
+    api_url = "https://open-vsx.org/api/acme/solar/1.0/file/solar.json"
+    assert convert_page_url(api_url) is None
+    resolved = resolve_marketplace_source(
+        api_url, transport=_FakeMarketplaceTransport(entries=())
+    )
+    assert resolved.download_url == api_url
+
+
+def test_open_vsx_extension_page_resolves_as_its_registry_reference() -> None:
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(entries=(entry,))
+
+    resolved = resolve_marketplace_source(
+        "https://open-vsx.org/extension/acme/solar", transport=transport
+    )
+
+    assert transport.lookup_calls == [("acme", "solar")]
+    assert resolved.source_id == "acme/solar/1"
+
+
+def test_gallery_search_page_yields_supported_forms_not_a_size_error() -> None:
+    transport = _FakeMarketplaceTransport(entries=())
+
+    for page_url in (
+        "https://open-vsx.org/?search=solar",
+        "https://marketplace.visualstudio.com/items?itemName=acme.solar",
+    ):
+        with pytest.raises(MarketplaceError) as page:
+            resolve_marketplace_source(page_url, transport=transport)
+
+        assert page.value.kind == "unknown-source"
+        message = str(page.value)
+        assert "gallery web page" in message
+        assert "publisher/extension" in message
+        assert "raw theme" in message
+    assert transport.lookup_calls == []
+    assert transport.fetch_calls == []
+
+
+def test_file_page_url_never_reports_a_small_theme_as_oversized(
+    tmp_path: Path,
+) -> None:
+    """The reported failure mode: a blob page URL for a small theme file."""
+    config_dir = tmp_path / "config"
+    raw_url = "https://raw.githubusercontent.com/acme/themes/main/solar.json"
+    transport = _FakeMarketplaceTransport(
+        entries=(), files={raw_url: SAMPLE_BYTES}
+    )
+
+    resolved = resolve_marketplace_source(
+        "https://github.com/acme/themes/blob/main/solar.json",
+        transport=transport,
+    )
+    assert resolved.download_url == raw_url
+
+    report = import_marketplace_theme(
+        resolved, transport=transport, name="solar-flare", config_dir=config_dir
+    )
+    assert report.mapped_count == 40
+    assert report.fallback_count == 18
+
+
+def test_oversized_notice_distinguishes_pages_from_raw_files() -> None:
+    entry = _marketplace_entry()
+    oversized = _FakeMarketplaceTransport(
+        entries=(entry,),
+        files={entry.source_id: b"x" * (MAX_MARKETPLACE_BYTES + 1)},
+    )
+
+    with pytest.raises(MarketplaceError) as too_big:
+        fetch_marketplace_bytes(entry, transport=oversized)
+
+    assert too_big.value.kind == "oversized"
+    assert "raw theme file" in str(too_big.value)
+
+
+def test_import_summary_leads_with_appearance_changing_fallbacks(
+    tmp_path: Path,
+) -> None:
+    report = import_vscode_theme(
+        FIXTURES / "unsupported-dark.json", config_dir=tmp_path
+    )
+    lines = report.lines()
+
+    assert lines[0] == (
+        "Imported warnings-dark as user theme warnings-dark: "
+        "2 source tokens, 56 fallbacks, 19 warnings."
+    )
+    assert lines[1].startswith("Appearance: 56 tokens use Refined Default")
+    assert "19 source features were not imported" in lines[1]
+    fallback_first = next(
+        index for index, line in enumerate(lines) if line.startswith("fallback: ")
+    )
+    warning_first = next(
+        index for index, line in enumerate(lines) if line.startswith("warning: ")
+    )
+    assert fallback_first < warning_first
+    assert sum(line.startswith("warning: ") for line in lines) == 19
+    assert sum(line.startswith("fallback: ") for line in lines) == 56
+
+
+def test_import_summary_with_no_fallbacks_or_warnings_states_it_plainly(
+    tmp_path: Path,
+) -> None:
+    from talaria.themes import ThemeSpec
+
+    report = ImportReport(
+        mapped_values={"talaria.canvas": "#000000"},
+        unsupported_entries=(),
+        fallback_tokens=(),
+        composites=(),
+        target_name="plain",
+        target_path=tmp_path / "plain.json",
+        theme=ThemeSpec(slug="plain", name="Plain", dark=True, tokens={}),
+    )
+
+    assert report.lines()[1] == (
+        "Appearance: every token renders as authored; nothing fell back "
+        "and nothing was ignored."
+    )
 
 
 def test_marketplace_network_oversize_and_malformed_rejections_carry_kinds(

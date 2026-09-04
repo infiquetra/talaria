@@ -73,6 +73,17 @@ def test_homebrew_is_complete_and_valid() -> None:
     )
 
 
+def test_homebrew_states_its_provenance_per_d4() -> None:
+    """D4(a): point-of-use provenance; the palette itself is unchanged."""
+    assert HOMEBREW.description == (
+        "Talaria-designed green-black palette (v0.6.0) — not sampled "
+        "from a host terminal, not the Homebrew package manager"
+    )
+    for spec in BUILTIN_THEMES:
+        if spec is not HOMEBREW:
+            assert spec.description == "", spec.slug
+
+
 def test_homebrew_is_never_the_default() -> None:
     """The startup default does not move: Refined Default stays first."""
     assert REFINED_DEFAULT.slug == "refined-default"

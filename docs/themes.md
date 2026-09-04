@@ -24,7 +24,9 @@ find Dark Green Terminal's neon accents fatiguing. It is available everywhere a 
 — the `/theme` picker, `theme.name` configuration, and the theme registry — but it is never
 selected at startup: a fresh process without configuration still opens on Refined Default.
 
-Provenance: Homebrew was designed for Talaria v0.6.0, not sampled from any host terminal palette.
+Provenance: Homebrew was designed for Talaria v0.6.0, not sampled from any host terminal palette,
+and it is not the Homebrew package manager — the shared name is a coincidence, and the palette
+is Talaria-original. The same note rides the `/theme` picker row.
 Its canvas, surface, and status fills are near-black greens (`#050905`, `#0A120D`, `#030604`);
 body text is a soft green-grey (`#C9D9CE`); primary, accent, and transcript markers are muted
 sages (`#6FA287`, `#4E9A6A`, `#5FA86F`) rather than neon. The flat chrome families
@@ -208,9 +210,15 @@ talaria theme search QUERY [--limit N] [--json]
 talaria theme fetch REF [--name NAME] [--json]
 ```
 
-`REF` is a `publisher/extension[/theme]` reference or a direct `http(s)` URL to a raw theme
-JSON file. The user-selected source is accepted as given; there is no additional trust policy.
-Fetched bytes are parsed by the same strict entry point as local files and are never executed.
+`REF` is a `publisher/extension[/theme]` reference from the Open VSX registry, a direct
+`http(s)` URL to a raw theme JSON file, a GitHub file-page URL (converted to the raw file
+automatically), or an Open VSX extension page (resolved as its `publisher/extension`
+reference). A gallery search page or any other web page is not fetchable: run `/theme search`
+first and fetch the reference it lists. The user-selected source is accepted as given; there
+is no additional trust policy. Fetched bytes are parsed by the same strict entry point as
+local files and are never executed. Every bound still applies after conversion: payloads past
+the size bound fail as `oversized` even when they started as a page URL — a page URL fetches
+the page, so use the raw file when a page is refused.
 The same search, fetch, and reload steps are available inside the app as `/theme search <query>`,
 `/theme fetch <source> [--name <name>]`, and `/theme reload [name]`. A search lists bounded
 entries with the reference to fetch, for example:

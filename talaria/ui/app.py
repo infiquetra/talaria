@@ -5466,7 +5466,10 @@ class TalariaApp(App[None]):
         if verb == "search":
             query = argument.strip()[len(words[0]) :].strip()
             if not query:
-                self._notice('/theme search needs a query — try /theme search "solar"')
+                self._notice(
+                    '/theme search needs a query — try /theme search "solar" '
+                    "(searches the Open VSX registry)"
+                )
                 return
             self._spawn_live(self._search_marketplace_themes(query))
             return
@@ -5477,8 +5480,9 @@ class TalariaApp(App[None]):
             name = tail.strip() or None if marker else None
             if not ref:
                 self._notice(
-                    "/theme fetch needs a source — "
-                    "try /theme fetch publisher/extension"
+                    "/theme fetch needs a source — try /theme fetch "
+                    "publisher/extension, a raw theme file URL, or a GitHub "
+                    "file-page URL (converted to the raw file automatically)"
                 )
                 return
             self._spawn_live(self._fetch_marketplace_theme(ref, name))

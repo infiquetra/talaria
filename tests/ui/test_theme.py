@@ -499,7 +499,8 @@ async def test_theme_picker_renders_five_rows_previews_and_escape_restores() -> 
             "  Dark Green Terminal",
             "  Neutral Dark",
             "  Accessible High Contrast",
-            "  Homebrew",
+            "  Homebrew — Talaria-designed green-black palette (v0.6.0) — "
+            "not sampled from a host terminal, not the Homebrew package manager",
         ]
 
         await pilot.press("down")
