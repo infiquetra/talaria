@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final, Protocol
@@ -11,8 +11,18 @@ from typing import Final, Protocol
 from textual.theme import Theme
 
 from talaria.config import atomic_replace_bytes, global_config_dir
-from talaria.themes import THEME_TOKENS, ThemeSpec, theme_fallback_notice
+from talaria.themes import (
+    THEME_TOKENS,
+    TRANSCRIPT_CATEGORIES,
+    TRANSCRIPT_CATEGORY_TOKENS,
+    ThemeSpec,
+    contrast_ratio,
+    is_opaque_hex_color,
+    relative_luminance,
+    theme_fallback_notice,
+)
 from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
+from talaria.themes.host_palette import apply_host_palette
 from talaria.themes.storage import (
     StoredThemeError,
     load_user_theme_specs,
@@ -20,26 +30,6 @@ from talaria.themes.storage import (
 )
 
 DEFAULT_THEME_SLUG: Final[str] = REFINED_DEFAULT.slug
-
-
-def relative_luminance(color: str) -> float:
-    """Return WCAG 2.2 relative luminance for one opaque ``#RRGGBB`` colour."""
-    channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
-    linear = [
-        channel / 12.92
-        if channel <= 0.04045
-        else ((channel + 0.055) / 1.055) ** 2.4
-        for channel in channels
-    ]
-    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
-
-
-def contrast_ratio(first: str, second: str) -> float:
-    """Measure the WCAG 2.2 contrast ratio between two opaque colours."""
-    lighter, darker = sorted(
-        (relative_luminance(first), relative_luminance(second)), reverse=True
-    )
-    return (lighter + 0.05) / (darker + 0.05)
 
 
 class ThemeRegistrar(Protocol):
@@ -86,6 +76,49 @@ def textual_variable_name(token: str) -> str:
     return token.replace(".", "-")
 
 
+#: The readability floor for per-category transcript body text: the same
+#: 4.5 text minimum the visual specification measures every other body
+#: pairing against.
+TRANSCRIPT_TEXT_CONTRAST_FLOOR: Final[float] = 4.5
+
+#: The readability floor for per-category transcript stripe markers: the
+#: same 3.0 non-text component minimum the specification measures the
+#: marker/fill pairings against.
+TRANSCRIPT_MARKER_CONTRAST_FLOOR: Final[float] = 3.0
+
+
+def _hold_contrast_floor(
+    foreground: str,
+    background: str,
+    floor: float,
+    fallback: str,
+) -> tuple[str, bool]:
+    """Return a foreground holding ``floor`` against ``background``.
+
+    The second element reports whether the requested foreground was kept.
+    A failing foreground falls back to ``fallback`` when it holds, else to
+    whichever of black or white holds — one of the two always does: below
+    a luminance of 0.175 white exceeds 4.5, above it black does, so the
+    floor is a guarantee, never an aspiration.
+    """
+    if contrast_ratio(foreground, background) >= floor:
+        return foreground, True
+    if contrast_ratio(fallback, background) >= floor:
+        return fallback, False
+    white = contrast_ratio("#FFFFFF", background)
+    black = contrast_ratio("#000000", background)
+    return ("#FFFFFF" if white >= black else "#000000"), False
+
+
+@dataclass(frozen=True)
+class TranscriptCategoryStyle:
+    """One transcript category's resolved text, stripe, and fill colors."""
+
+    text: str
+    marker: str
+    background: str
+
+
 @dataclass(frozen=True)
 class ResolvedTheme:
     """A complete theme plus every visible normalization result."""
@@ -94,9 +127,33 @@ class ResolvedTheme:
     tokens: Mapping[str, str]
     filled_tokens: tuple[str, ...] = ()
     notices: tuple[str, ...] = ()
+    transcript_text: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tokens", MappingProxyType(dict(self.tokens)))
+        object.__setattr__(
+            self, "transcript_text", MappingProxyType(dict(self.transcript_text))
+        )
+
+    def category_style(self, category: str) -> TranscriptCategoryStyle:
+        """The resolved text/stripe/fill triple for one transcript category.
+
+        Unknown categories fall back to the plain-surface default — global
+        body text on the default surface — rather than raising, so a caller
+        with a category this theme never named still renders legibly.
+        """
+        role_tokens = TRANSCRIPT_CATEGORY_TOKENS.get(category)
+        if role_tokens is None:
+            return TranscriptCategoryStyle(
+                text=self.tokens["talaria.text"],
+                marker=self.tokens["talaria.text.muted"],
+                background=self.tokens["talaria.surface"],
+            )
+        return TranscriptCategoryStyle(
+            text=self.transcript_text.get(category, self.tokens["talaria.text"]),
+            marker=self.tokens[role_tokens["marker"]],
+            background=self.tokens[role_tokens["background"]],
+        )
 
     @property
     def slug(self) -> str:
@@ -109,6 +166,49 @@ class ResolvedTheme:
     @property
     def dark(self) -> bool:
         return self.spec.dark
+
+
+def transcript_text_variable(category: str) -> str:
+    """Return the Textual custom-variable name for one category body text."""
+    return f"talaria-transcript-{category}-text"
+
+
+def _category_group_roles(
+    groups: Mapping[str, Mapping[str, str | None]],
+    category: str,
+) -> tuple[dict[str, str], list[str]]:
+    """Read one category's usable group roles and its malformed entries.
+
+    Both the role nicknames (``text``, ``marker``, ``background``) and the
+    canonical token names spell the same three roles; the canonical spelling
+    wins when both name one role. Unknown keys, nulls, non-mapping entries,
+    and malformed colors fall through — malformed colors are reported so the
+    operator can see them, everything else is silently unset.
+    """
+    roles = TRANSCRIPT_CATEGORY_TOKENS[category]
+    entry = groups.get(category)
+    if not isinstance(entry, Mapping):
+        return {}, []
+    usable: dict[str, str] = {}
+    malformed: list[str] = []
+    canonical = {token: role for role, token in roles.items()}
+
+    def claim(role: str, key: str, value: object) -> None:
+        if role in usable or value is None:
+            # JSON null spells "unset", the sparse layer's favorite word.
+            return
+        if isinstance(value, str) and is_opaque_hex_color(value):
+            usable[role] = value
+        else:
+            malformed.append(f"{category}.{key}")
+
+    for key, value in entry.items():
+        if key in canonical:
+            claim(canonical[key], str(key), value)
+    for key, value in entry.items():
+        if key in ("text", "marker", "background"):
+            claim(str(key), str(key), value)
+    return usable, malformed
 
 
 class ThemeRegistry:
@@ -147,8 +247,18 @@ class ThemeRegistry:
     def default(self) -> ThemeSpec:
         return self._by_slug[self._default_slug]
 
-    def resolve(self, requested: object) -> ResolvedTheme:
-        """Resolve one requested slug and describe every fallback visibly."""
+    def resolve(
+        self, requested: object, *, host_palette: object = None
+    ) -> ResolvedTheme:
+        """Resolve one requested slug and describe every fallback visibly.
+
+        The single funnel every theme passes through, so built-in, user,
+        and imported specifications share one inheritance semantics:
+        shared defaults, then the host palette where terminal colors apply,
+        then per-category groups, then individual overrides. Each layer is
+        sparse — an empty, unknown, null, or malformed entry falls through
+        to the next layer instead of breaking the rest.
+        """
         notices: list[str] = []
         if not isinstance(requested, str):
             spec = self.default
@@ -158,22 +268,169 @@ class ThemeRegistry:
             if spec is self.default and requested != self._default_slug:
                 notices.append(theme_fallback_notice(requested, self._default_slug))
 
-        filled = tuple(token for token in THEME_TOKENS if token not in spec.tokens)
-        tokens = {
-            token: spec.tokens.get(token, self.default.tokens[token])
+        default_tokens = self.default.tokens
+        adopted: tuple[str, ...] = ()
+        if host_palette is None:
+            tokens = {
+                token: spec.tokens.get(token, default_tokens[token])
+                for token in THEME_TOKENS
+            }
+        else:
+            hosted = apply_host_palette(
+                default_tokens, host_palette, overrides=spec.tokens
+            )
+            tokens = {
+                token: hosted.tokens.get(token, default_tokens[token])
+                for token in THEME_TOKENS
+            }
+            adopted = hosted.adopted_tokens
+            notices.extend(hosted.notices)
+            self._hold_host_readability(spec, tokens, adopted, notices)
+
+        group_sourced: list[str] = []
+        malformed_groups: list[str] = []
+        category_roles: dict[str, dict[str, str]] = {}
+        for category in TRANSCRIPT_CATEGORIES:
+            usable, malformed = _category_group_roles(spec.groups, category)
+            category_roles[category] = usable
+            malformed_groups.extend(malformed)
+            roles = TRANSCRIPT_CATEGORY_TOKENS[category]
+            for role in ("marker", "background"):
+                token = roles[role]
+                if token not in spec.tokens and role in usable:
+                    tokens[token] = usable[role]
+                    group_sourced.append(token)
+        if group_sourced:
+            notices.append(
+                f"theme {spec.name!r} styles transcript categories from its groups: "
+                + ", ".join(sorted(group_sourced))
+            )
+        if malformed_groups:
+            notices.append(
+                f"theme {spec.name!r} ignores malformed group colors: "
+                + ", ".join(sorted(malformed_groups))
+            )
+
+        filled = tuple(
+            token
             for token in THEME_TOKENS
-        }
+            if token not in spec.tokens
+            and token not in adopted
+            and token not in group_sourced
+        )
         if filled:
             notices.append(
                 f"theme {spec.name!r} filled missing tokens from Refined Default: "
                 + ", ".join(filled)
             )
+
+        transcript_text = self._resolve_category_text(
+            spec, tokens, category_roles, notices
+        )
         return ResolvedTheme(
             spec=spec,
             tokens=tokens,
             filled_tokens=filled,
             notices=tuple(notices),
+            transcript_text=transcript_text,
         )
+
+    def _hold_host_readability(
+        self,
+        spec: ThemeSpec,
+        tokens: dict[str, str],
+        adopted: tuple[str, ...],
+        notices: list[str],
+    ) -> None:
+        """Revert inherited host values that break the readability floor.
+
+        Only host-adopted tokens are ever reverted — explicit Talaria
+        overrides stay exactly as specified, even when they are the pair
+        that fails. Each reverted token returns to the shared default with
+        a visible notice.
+        """
+        adopted_set = frozenset(adopted)
+        pairs = (
+            ("talaria.text", "talaria.canvas", TRANSCRIPT_TEXT_CONTRAST_FLOOR),
+            (
+                "talaria.selection.text",
+                "talaria.selection.background",
+                TRANSCRIPT_TEXT_CONTRAST_FLOOR,
+            ),
+        )
+        for foreground_token, background_token, floor in pairs:
+            foreground = tokens[foreground_token]
+            background = tokens[background_token]
+            if contrast_ratio(foreground, background) >= floor:
+                continue
+            reverted = sorted(
+                token
+                for token in (foreground_token, background_token)
+                if token in adopted_set
+            )
+            if not reverted:
+                continue
+            default_tokens = self.default.tokens
+            for token in reverted:
+                tokens[token] = default_tokens[token]
+            notices.append(
+                f"theme {spec.name!r} keeps the readability floor: host values "
+                f"for {', '.join(reverted)} reverted to the built-in mapping"
+            )
+
+    def _resolve_category_text(
+        self,
+        spec: ThemeSpec,
+        tokens: dict[str, str],
+        category_roles: Mapping[str, Mapping[str, str]],
+        notices: list[str],
+    ) -> dict[str, str]:
+        """Resolve each category's body text against the readability floor.
+
+        The requested value is the category's group text when present, else
+        the theme's shared body text. A value below the floor falls back to
+        the shared text, then the default theme's text, then black or white
+        — so an unreadable combination resolves to the floor rather than
+        rendering. Stripe markers hold their own component floor the same
+        way, falling back to the default theme's marker first.
+        """
+        default_tokens = self.default.tokens
+        resolved: dict[str, str] = {}
+        held: list[str] = []
+        for category in TRANSCRIPT_CATEGORIES:
+            roles = TRANSCRIPT_CATEGORY_TOKENS[category]
+            background = tokens[roles["background"]]
+            requested = category_roles[category].get("text", tokens["talaria.text"])
+            fallback = (
+                default_tokens["talaria.text"]
+                if requested == tokens["talaria.text"]
+                else tokens["talaria.text"]
+            )
+            held_text, text_kept = _hold_contrast_floor(
+                requested,
+                background,
+                TRANSCRIPT_TEXT_CONTRAST_FLOOR,
+                fallback,
+            )
+            resolved[category] = held_text
+            if not text_kept:
+                held.append(f"{category}.text")
+            marker_token = roles["marker"]
+            held_marker, marker_kept = _hold_contrast_floor(
+                tokens[marker_token],
+                background,
+                TRANSCRIPT_MARKER_CONTRAST_FLOOR,
+                default_tokens[marker_token],
+            )
+            if not marker_kept:
+                tokens[marker_token] = held_marker
+                held.append(f"{category}.marker")
+        if held:
+            notices.append(
+                f"theme {spec.name!r} holds the readability floor instead of "
+                f"the requested values: {', '.join(sorted(held))}"
+            )
+        return resolved
 
     def to_textual_theme(self, requested: object) -> Theme:
         """Convert one resolved theme to Textual's registered theme shape."""
@@ -182,6 +439,10 @@ class ThemeRegistry:
         variables = {
             textual_variable_name(token): value for token, value in tokens.items()
         }
+        for category in TRANSCRIPT_CATEGORIES:
+            variables[transcript_text_variable(category)] = resolved.category_style(
+                category
+            ).text
         for token, names in _COMPATIBILITY_VARIABLES.items():
             value = tokens[token]
             variables.update({name: value for name in names})
@@ -239,14 +500,18 @@ def theme_registry_for_config(*, config_dir: Path | None = None) -> ThemeRegistr
 __all__ = [
     "BUILTIN_THEME_REGISTRY",
     "DEFAULT_THEME_SLUG",
+    "TRANSCRIPT_MARKER_CONTRAST_FLOOR",
+    "TRANSCRIPT_TEXT_CONTRAST_FLOOR",
     "ResolvedTheme",
     "StoredThemeError",
     "ThemeRegistry",
+    "TranscriptCategoryStyle",
     "contrast_ratio",
     "relative_luminance",
     "serialize_user_theme",
     "theme_registry_for_config",
     "textual_variable_name",
+    "transcript_text_variable",
     "user_theme_path",
     "write_user_theme",
 ]

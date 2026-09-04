@@ -82,7 +82,36 @@ narrow projection.
 Write plain text to stdout, one status row per line. Rows are rendered **as literal text** — ANSI
 escape sequences are not interpreted, so color codes will show up as visible escape characters, not
 as color. Keep output short: only the first 8 lines are shown, and output past 16 KiB is truncated.
-Both truncations are marked visibly rather than silently cut.
+Both truncations are marked visibly rather than silently cut. Plain-text output renders in the
+in-body status region, exactly as it always has.
+
+A command that wants its rows on the true-bottom bar instead writes one JSON document of the
+form below (version 2 of the *output* document — a separate version namespace from the version-1
+*input* document above, which is unchanged). Anything that is not a JSON object stays on the
+plain-text path above, byte for byte: a script printing a bare number or a bare word never trips
+this protocol.
+
+```json
+{
+  "version": 2,
+  "rows": ["tests: 296", { "text": "wip: 2", "color": "warning" }]
+}
+```
+
+| field     | type                                                        | meaning                                              |
+| --------- | ----------------------------------------------------------- | ----------------------------------------------------- |
+| `version` | `int`                                                        | Always `2` for this document shape. Any other version is rejected with a visible notice. |
+| `rows`    | `(str \| { "text": str, "color"?: str })[]`                  | Up to 8 rows for the bottom bar; an empty list clears the bar to its segment row. |
+
+`color` names one of the bar's own semantic tokens (`text`, `muted`, `separator`, `success`,
+`warning`, `error`, `attention`) and defaults to `text`. Any other value falls back to `text` —
+it is a request, never a style, so markup, hex codes, and color names cannot smuggle formatting
+through it. Row text renders literally, exactly like plain-text rows.
+
+A document that is null, wrong-typed, version-jumped, or carries unknown fields is rejected with
+a categorical `invalid script document` marker in the status region. The bar keeps its previous
+good rows — output problems never blank it and never crash Talaria. The same row bound (8) and
+byte cap (16 KiB) apply to documents as to plain text.
 
 Anything written to stderr is captured separately, capped at 4 KiB, and used **only** to annotate a
 failure — it never appears among the rendered rows, so a command cannot make diagnostic chatter look

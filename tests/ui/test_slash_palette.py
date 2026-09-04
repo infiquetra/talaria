@@ -25,7 +25,7 @@ from talaria.domain.composer_history import ComposerHistory
 from talaria.themes.builtins import BUILTIN_THEMES
 from talaria.transport.rpc import RpcOutcome
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY
-from tests.ui.conftest import event, live_app, paused_app
+from tests.ui.conftest import event, live_app, paused_app, settle
 
 _REPOSITORY_ROOT = Path(__file__).parents[2]
 _PICKER_COMMANDS = ("/models", "/profiles")
@@ -460,7 +460,15 @@ async def test_ae5_local_vs_gateway_distinction() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ae6_selection_inserts_never_submits() -> None:
+async def test_ae6_selection_dispatches_once_through_resolve() -> None:
+    """#121: Enter on a selected entry dispatches it exactly once (U1).
+
+    The pre-#121 contract was insert-never-submit; this test pins the
+    replacement. The pick travels as the bare entry name through the same
+    Submitted funnel as typed input: one ``slash.exec`` call, the picked
+    (not the filter) text in history, an emptied composer, and a closed
+    palette. Click keeps the old insert rule — asserted below, not here.
+    """
     disp = RecordingDispatcher()
     app = live_app(disp)
     cat = _catalog_with(
@@ -485,33 +493,25 @@ async def test_ae6_selection_inserts_never_submits() -> None:
         for ch in "/mod":
             await pilot.press(ch)
             await pilot.pause()
-        before_calls = len(disp.calls)
-        await pilot.press("enter")
+        # Talaria locals group first, so index 1 is the gateway /model.
+        assert [e.name for e in app.palette.filtered_entries] == ["/models", "/model"]
+        await pilot.press("down")
         await pilot.pause()
-        # Should be canonical name plus trailing space, focus in composer, palette closed
-        # Check exact canonical: /model or /models inserted with trailing space
-        assert app.composer.text == "/model " or app.composer.text == "/models "
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/model"
+        await pilot.press("enter")
+        await settle(app, pilot)
+        # Exactly one gateway invocation for the picked command, and the
+        # history holds the pick — not the "/mod" filter text being replaced.
+        slash_calls = [call for call in disp.calls if call[0] == "slash.exec"]
+        assert len(slash_calls) == 1
+        assert slash_calls[0][1]["command"] == "model"
+        assert app.composer.text == ""
         assert app.palette.is_slash_active is False
         assert app.focused is app.composer.text_area
-        assert len(disp.calls) == before_calls  # no dispatch
-        # Trailing space does not reopen palette
-        assert not app.palette.is_slash_active
-        # Alias insertion: filter "/exit" should insert canonical "/quit "
-        app.composer.text = ""
-        await pilot.pause()
-        if app.palette.is_slash_active:
-            await app.palette.hide_slash()
-            await pilot.pause()
-        app.composer.text_area.focus()
-        await pilot.pause()
-        # Need catalog with alias mapping /exit -> /quit already set; test alias path
-        # The catalog has canon {"/exit": "/quit"}, so filtering "/ex" should show alias
-        # Instead directly test via palette: set prefix "ex" manually and check canonical insert
-        # Build a filtered view with alias entry
-        # For this catalog, "/quit" is local, "/exit" is not in entries but canon maps to /quit
-        # Simpler: verify that inserted text via Enter uses canonical (tested above uses catalog.canonical)  # noqa: E501
-        # So we trust canonical handling; no extra row needed.
-        # Click also inserts via real click on row
+        assert "/model" in app.composer_history.entries
+        # Click still inserts via real click on row (Enter-only dispatch:
+        # #121 leaves click on the old insert rule).
         app.composer.text = ""
         await pilot.pause()
         if app.palette.is_slash_active:
@@ -744,14 +744,20 @@ async def test_ae9_key_seam_with_c1() -> None:
         assert app.palette.row_texts[0] == app.palette.row_texts[0]  # placeholder, real check below
         # Check that rendered rows include selected entry name
         assert any(app.palette.selected_entry.name in row for row in app.palette.row_texts)
-        # Enter inserts rather than submits or recalls
-        before_text = app.composer.text
-        await pilot.press("enter")
+        # Enter dispatches the selection (#121) rather than inserting or recalling.
+        # Down first so the pick is the gateway /model (index 0 is local /models).
+        await pilot.press("down")
         await pilot.pause()
-        assert app.composer.text != before_text
-        assert app.composer.text.endswith(" ")
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/model"
+        await pilot.press("enter")
+        await settle(app, pilot)
         assert not app.palette.is_slash_active
+        assert app.composer.text == ""
+        assert len([call for call in disp.calls if call[0] == "slash.exec"]) == 1
         # History recall that writes slash programmatically does not open palette (ruling 3)
+        # Reset the walk: the dispatch above legitimately entered history.
+        app.composer_history = ComposerHistory(entries=("/models 1", "hello"))
         app.composer.text = ""
         await pilot.pause()
         if app.palette.is_slash_active:
@@ -970,10 +976,13 @@ async def test_palette_move_selection_scrolls_into_view() -> None:
         # Scroll offset must have moved from 0 so row 15 is visible
         # Before fix scroll_y was 0 and row 15 was at y=20 off-screen
         assert app.palette.scroll_offset.y > 0
-        # Pressing Enter should insert the visible selected command
+        # Pressing Enter dispatches the visible selected command (#121), once.
         await pilot.press("enter")
-        await pilot.pause()
-        assert app.composer.text == "/cmd15 "
+        await settle(app, pilot)
+        slash_calls = [call for call in disp.calls if call[0] == "slash.exec"]
+        assert len(slash_calls) == 1
+        assert slash_calls[0][1]["command"] == "cmd15"
+        assert app.composer.text == ""
         assert not app.palette.is_slash_active
         await app.shutdown_sources()
 
@@ -1045,4 +1054,352 @@ async def test_filtered_order_groups_talaria_first_like_browse() -> None:
         # The rendered rows carry the same order, not just the backing tuple.
         rendered = [text.split()[0] for text in app.palette.row_texts]
         assert rendered == ["/agents", "/models", "/about", "/model"], rendered
+        await app.shutdown_sources()
+
+
+# ── #121 single-Enter slash picker dispatch (U1/U2/U3) ────────────────────
+#
+# Enter on a selected slash entry dispatches it exactly once through the same
+# Submitted → resolve_command funnel as typed input. Every dispatch below
+# counts invocations (dispatcher calls or perform_local_command entries), not
+# just outcomes: an outcome assertion cannot tell one dispatch from two.
+
+
+async def _type_filter(pilot: Any, app: Any, text: str) -> None:
+    """Type ``text`` through the key path so the slash palette opens."""
+    app.composer.text = ""
+    await pilot.pause()
+    if app.palette.is_slash_active:
+        await app.palette.hide_slash()
+        await pilot.pause()
+    app.composer.text_area.focus()
+    await pilot.pause()
+    for ch in text:
+        await pilot.press(ch)
+        await pilot.pause()
+
+
+def _slash_exec_calls(disp: RecordingDispatcher) -> list[tuple[str, Mapping[str, Any]]]:
+    return [call for call in disp.calls if call[0] == "slash.exec"]
+
+
+@pytest.mark.asyncio
+async def test_121_picked_local_command_dispatches_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U1: Enter on a local pick runs perform_local_command exactly once."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/bar", "Status bar", "Talaria", "talaria-local")])
+    await app.render_catalog()
+    local_calls: list[Any] = []
+    original = app.perform_local_command
+
+    def counting(invocation: Any) -> bool:
+        local_calls.append(invocation)
+        return original(invocation)
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app, "perform_local_command", counting)
+        await pilot.pause()
+        await _type_filter(pilot, app, "/ba")
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/bar"
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert len(local_calls) == 1
+        assert local_calls[0].command.name == "/bar"
+        assert local_calls[0].argument == ""
+        assert _slash_exec_calls(disp) == []
+        assert "bar" in app.composer.notice
+        assert app.composer.text == ""
+        assert not app.palette.is_slash_active
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_121_unselected_enter_dispatches_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U1: Enter with no match keeps the text, the open palette, and sends nothing."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/model", "Gateway model", "Session", "dispatch")])
+    await app.render_catalog()
+    local_calls: list[Any] = []
+    original = app.perform_local_command
+
+    def counting(invocation: Any) -> bool:
+        local_calls.append(invocation)
+        return original(invocation)
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app, "perform_local_command", counting)
+        await pilot.pause()
+        await _type_filter(pilot, app, "/zzzzzzz")
+        assert app.palette.is_slash_active
+        assert app.palette.selected_entry is None
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.composer.text == "/zzzzzzz"
+        assert app.palette.is_slash_active
+        assert local_calls == []
+        assert _slash_exec_calls(disp) == []
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_121_typing_path_unchanged() -> None:
+    """U1: a typed full line with the palette closed still submits once (R2)."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/status", "Gateway status", "Info", "dispatch")])
+    await app.render_catalog()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Trailing space closes the slash predicate, so this Enter is the
+        # plain typed path, never the picker.
+        app.composer.text = "/status "
+        await pilot.pause()
+        assert not app.palette.is_slash_active
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await settle(app, pilot)
+        slash_calls = _slash_exec_calls(disp)
+        assert len(slash_calls) == 1
+        assert slash_calls[0][1]["command"] == "status"
+        assert "/status" in app.composer_history.entries
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_121_parity_args_required_speed_demands_its_argument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U2: a picked bare command demands args exactly like its typed twin.
+
+    Replay mode, where the pacing controls are live: ``/speed`` with no rate
+    must refuse with the same notice and no dispatch on both paths. The one
+    disclosed difference is the composer: the pick consumes the line (the
+    exactly-once mechanism), while typed input keeps it for editing.
+    """
+    app, _ = paused_app([event("gateway.ready", {})])
+    local_calls: list[Any] = []
+    original = app.perform_local_command
+
+    def counting(invocation: Any) -> bool:
+        local_calls.append(invocation)
+        return original(invocation)
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app, "perform_local_command", counting)
+        await pilot.pause()
+        # Picked path: filter to /speed (a Talaria local, listed with no catalogue).
+        await _type_filter(pilot, app, "/spe")
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/speed"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(local_calls) == 1
+        assert local_calls[0].command.name == "/speed"
+        assert local_calls[0].argument == ""
+        picked_notice = app.composer.notice
+        assert "rate" in picked_notice
+        assert app.composer.text == ""
+        assert "/speed" not in app.composer_history.entries
+
+        # Typed twin: the same bare line with the palette closed.
+        local_calls.clear()
+        app.composer.text = "/speed "
+        await pilot.pause()
+        assert not app.palette.is_slash_active
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(local_calls) == 1
+        assert local_calls[0].command.name == "/speed"
+        assert local_calls[0].argument == ""
+        assert app.composer.notice == picked_notice
+        assert "/speed" not in app.composer_history.entries
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_121_parity_confirmation_gate_models_bare_opens_picker_both_ways(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U2: a picked confirmation-gated command gates exactly like its typed twin.
+
+    A bare pick can never spell the ``<n> default [confirm]`` second act, so
+    parity here means the pick reaches the *same* ``LocalInvocation`` (same
+    command, same empty argument) and takes the same first step — opening the
+    picker with no default write — as the typed bare line. The indexed resend
+    shape itself (``/models 1 default`` → ``confirm_required`` → ``/models 1
+    default confirm``) is always typed and is pinned by the picker suite's own
+    two-act tests, which this unit leaves untouched; both suites run in
+    verification.
+    """
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with(
+        [
+            ("/model", "Gateway model", "Session", "dispatch"),
+            ("/models", "Local models", "Talaria", "talaria-local"),
+        ]
+    )
+    await app.render_catalog()
+    local_calls: list[Any] = []
+    original = app.perform_local_command
+
+    def counting(invocation: Any) -> bool:
+        local_calls.append(invocation)
+        return original(invocation)
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app, "perform_local_command", counting)
+        await pilot.pause()
+        # Picked path: /models groups first, so index 0 is already the pick.
+        await _type_filter(pilot, app, "/mod")
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/models"
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert len(local_calls) == 1
+        picked_invocation = local_calls[0]
+        assert picked_invocation.command.name == "/models"
+        assert picked_invocation.argument == ""
+        # No model catalogue is loaded, so the first step is the honest
+        # notice — and, crucially, no default write of any kind.
+        picked_notice = app.composer.notice
+        assert "model" in picked_notice.lower()
+        assert _slash_exec_calls(disp) == []
+
+        # Typed twin: the same bare line with the palette closed.
+        local_calls.clear()
+        app.composer.text = "/models "
+        await pilot.pause()
+        assert not app.palette.is_slash_active
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert len(local_calls) == 1
+        assert local_calls[0] == picked_invocation
+        assert app.composer.notice == picked_notice
+        assert _slash_exec_calls(disp) == []
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_121_double_enter_dispatches_once() -> None:
+    """U3: two rapid Enters on one selection produce a single invocation."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/status", "Gateway status", "Info", "dispatch")])
+    await app.render_catalog()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _type_filter(pilot, app, "/sta")
+        assert app.palette.selected_entry is not None
+        # Bounce: two Enters before any settle. The first consumes the
+        # selection and empties the composer, so the second submits empty
+        # text — answered without a dispatch.
+        await pilot.press("enter")
+        await pilot.press("enter")
+        await settle(app, pilot)
+        slash_calls = _slash_exec_calls(disp)
+        assert len(slash_calls) == 1
+        assert slash_calls[0][1]["command"] == "status"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_121_triple_enter_bounce_dispatches_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U3: key-repeat style bounce on a local pick invokes once."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/bar", "Status bar", "Talaria", "talaria-local")])
+    await app.render_catalog()
+    local_calls: list[Any] = []
+    original = app.perform_local_command
+
+    def counting(invocation: Any) -> bool:
+        local_calls.append(invocation)
+        return original(invocation)
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app, "perform_local_command", counting)
+        await pilot.pause()
+        await _type_filter(pilot, app, "/ba")
+        assert app.palette.selected_entry is not None
+        await pilot.press("enter")
+        await pilot.press("enter")
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert len(local_calls) == 1
+        assert _slash_exec_calls(disp) == []
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_121_post_completion_enter_needs_a_fresh_selection() -> None:
+    """U3: after a pick completes, bare Enter is a no-op; a fresh pick dispatches."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/status", "Gateway status", "Info", "dispatch")])
+    await app.render_catalog()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _type_filter(pilot, app, "/sta")
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert len(_slash_exec_calls(disp)) == 1
+        # Post-completion: the composer is empty, so Enter submits prose.
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert len(_slash_exec_calls(disp)) == 1
+        # A fresh selection is a new intentional dispatch.
+        await _type_filter(pilot, app, "/sta")
+        assert app.palette.selected_entry is not None
+        await pilot.press("enter")
+        await settle(app, pilot)
+        slash_calls = _slash_exec_calls(disp)
+        assert len(slash_calls) == 2
+        assert all(call[1]["command"] == "status" for call in slash_calls)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_121_stale_unsupported_pick_is_refused_never_dispatched() -> None:
+    """U1: a pick that went unsupported since render resolves the normal path.
+
+    The catalogue is swapped after the selection renders, without re-render,
+    so the stale pick still names ``/status`` while the current catalogue
+    refuses it. The funnel must answer unsupported with its notice — never
+    dispatched, never silently dropped.
+    """
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/status", "Gateway status", "Info", "dispatch")])
+    await app.render_catalog()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _type_filter(pilot, app, "/sta")
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/status"
+        # The catalogue changes; the render has not caught up.
+        app.catalog = _catalog_with([("/status", "TUI status", "TUI", "unsupported")])
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert _slash_exec_calls(disp) == []
+        notice = app.composer.notice
+        assert "/status" in notice
+        assert "unsupported" in notice
+        assert not app.palette.is_slash_active
         await app.shutdown_sources()

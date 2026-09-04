@@ -15,8 +15,9 @@ the caret, discards every printable key sent to it, and draws no caret anywhere.
 
 The result is an interface that has quietly stopped accepting text. Nothing is
 greyed out, the composer still shows its placeholder because it is still empty,
-and the app answers ``ctrl+c`` normally because those bindings are ``priority``
-and never needed the caret. So the operator types a message, sees no characters
+and the app answers the inspector and interrupt chords normally because
+those bindings are ``priority`` and never needed the caret. So the operator
+types a message, sees no characters
 appear, and has nothing on screen to tell them why. The only reliable way out is
 to quit and relaunch.
 

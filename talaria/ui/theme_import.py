@@ -12,6 +12,19 @@ from typing import Any, Final, Literal
 
 from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import REFINED_DEFAULT
+from talaria.themes.marketplace import (
+    MAX_MARKETPLACE_BYTES,
+    MarketplaceEntry,
+    MarketplaceTransport,
+    fetch_marketplace_bytes,
+    resolve_marketplace_source,
+    slugify_theme_label,
+)
+from talaria.themes.sources import (
+    ImportSource,
+    ImportSourceKind,
+    record_import_source,
+)
 from talaria.ui.theme import (
     BUILTIN_THEME_REGISTRY,
     ThemeRegistry,
@@ -361,30 +374,47 @@ def _display_key(key: object) -> str:
     return rendered
 
 
-def _parse_source(path: Path) -> Mapping[str, Any]:
+def _parse_bytes(data: bytes, *, label: str) -> Mapping[str, Any]:
+    """Parse one in-memory payload with the single strict source strictness.
+
+    Local files and marketplace downloads both land here, so the
+    readability, emptiness, strict-JSON, and root-shape rules — and every
+    message — hold identically for both sources.
+    """
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
         raise ThemeImportError(
-            f"{path} could not be read as UTF-8 JSON: {exc}",
+            f"{label} could not be read as UTF-8 JSON: {exc}",
             kind="unreadable",
         ) from exc
     if not text.strip():
         raise ThemeImportError(
-            f"{path} is empty; expected a Visual Studio Code theme object",
+            f"{label} is empty; expected a Visual Studio Code theme object",
             kind="empty",
         )
     try:
         payload = json.loads(text, parse_constant=_reject_json_constant)
     except (json.JSONDecodeError, ValueError) as exc:
         raise ThemeImportError(
-            f"{path} is not strict JSON: {exc}", kind="malformed"
+            f"{label} is not strict JSON: {exc}", kind="malformed"
         ) from exc
     if not isinstance(payload, dict):
         raise ThemeImportError(
-            f"{path} root must be a JSON object", kind="wrong-root"
+            f"{label} root must be a JSON object", kind="wrong-root"
         )
     return payload
+
+
+def _parse_source(path: Path) -> Mapping[str, Any]:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise ThemeImportError(
+            f"{path} could not be read as UTF-8 JSON: {exc}",
+            kind="unreadable",
+        ) from exc
+    return _parse_bytes(data, label=str(path))
 
 
 def _parse_color(value: object) -> _SourceColor | None:
@@ -467,14 +497,14 @@ def _dark_flag(payload: Mapping[str, Any], warnings: list[str]) -> bool:
     return REFINED_DEFAULT.dark
 
 
-def _target_slug(path: Path, payload: Mapping[str, Any], name: str | None) -> str:
+def _target_slug(stem: str, payload: Mapping[str, Any], name: str | None) -> str:
     selected: object
     if name is not None:
         selected = name
     elif "name" in payload:
         selected = payload["name"]
     else:
-        selected = path.stem
+        selected = stem
     if not isinstance(selected, str):
         raise ThemeImportError(
             "theme name must be a lowercase hyphenated string",
@@ -704,22 +734,23 @@ def _map_syntax(
     return composites
 
 
-def prepare_vscode_theme_import(
-    source: Path,
+def _prepare_report(
+    payload: Mapping[str, Any],
     *,
-    name: str | None = None,
-    config_dir: Path | None = None,
+    display: str,
+    stem: str,
+    name: str | None,
+    config_dir: Path | None,
 ) -> ImportReport:
-    """Parse and completely report one import without changing the filesystem."""
-    payload = _parse_source(source)
+    """Run the one shared report pipeline over an already-parsed payload."""
     warnings = _root_warnings(payload)
-    slug = _target_slug(source, payload, name)
+    slug = _target_slug(stem, payload, name)
     dark = _dark_flag(payload, warnings)
     colors, had_colors = _workbench_colors(payload, warnings)
     rules, had_rules = _token_rules(payload, warnings)
     if not had_colors and not had_rules:
         raise ThemeImportError(
-            f"{source} has neither a colors object nor a tokenColors array",
+            f"{display} has neither a colors object nor a tokenColors array",
             kind="wrong-root",
         )
 
@@ -727,7 +758,8 @@ def prepare_vscode_theme_import(
     composites.extend(_map_syntax(rules, mapped, warnings))
     if not mapped:
         raise ThemeImportError(
-            f"{source} contains no usable supported workbench color or TextMate scope",
+            f"{display} contains no usable supported workbench color "
+            "or TextMate scope",
             kind="wrong-root",
         )
 
@@ -753,18 +785,10 @@ def prepare_vscode_theme_import(
     )
 
 
-def import_vscode_theme(
-    source: Path,
-    *,
-    name: str | None = None,
-    config_dir: Path | None = None,
+def _write_report(
+    report: ImportReport, *, config_dir: Path | None
 ) -> ImportReport:
-    """Validate fully, then atomically create or replace one user theme."""
-    report = prepare_vscode_theme_import(
-        source,
-        name=name,
-        config_dir=config_dir,
-    )
+    """Atomically store one fully validated report, changing nothing else."""
     try:
         written = write_user_theme(report.theme, config_dir=config_dir)
     except OSError as exc:
@@ -780,6 +804,197 @@ def import_vscode_theme(
     return report
 
 
+def prepare_vscode_theme_import(
+    source: Path,
+    *,
+    name: str | None = None,
+    config_dir: Path | None = None,
+) -> ImportReport:
+    """Parse and completely report one import without changing the filesystem."""
+    payload = _parse_source(source)
+    return _prepare_report(
+        payload,
+        display=str(source),
+        stem=source.stem,
+        name=name,
+        config_dir=config_dir,
+    )
+
+
+def prepare_vscode_theme_import_bytes(
+    data: bytes,
+    *,
+    source_label: str,
+    name: str | None = None,
+    config_dir: Path | None = None,
+) -> ImportReport:
+    """Parse in-memory bytes with the identical strictness as a local file.
+
+    Marketplace downloads land here instead of growing a second parser:
+    the same bytes that parse from disk parse here, and the same bytes
+    that fail from disk fail here with the same kind.
+    """
+    payload = _parse_bytes(bytes(data), label=source_label)
+    last_segment = source_label.rsplit("/", 1)[-1]
+    if last_segment.lower().endswith(".json"):
+        last_segment = last_segment[: -len(".json")]
+    stem = slugify_theme_label(last_segment) or "marketplace-theme"
+    return _prepare_report(
+        payload,
+        display=source_label,
+        stem=stem,
+        name=name,
+        config_dir=config_dir,
+    )
+
+
+def prepare_marketplace_import(
+    data: bytes,
+    entry: MarketplaceEntry,
+    *,
+    name: str | None = None,
+    config_dir: Path | None = None,
+) -> ImportReport:
+    """Parse fetched marketplace bytes without changing the filesystem.
+
+    The storage name is the explicit ``name`` when given, else the
+    slugified marketplace theme label; the payload's own top-level name
+    is a display string and never a storage slug.
+    """
+    fallback = slugify_theme_label(entry.theme_label) or None
+    return prepare_vscode_theme_import_bytes(
+        data,
+        source_label=entry.download_url,
+        name=name if name is not None else fallback,
+        config_dir=config_dir,
+    )
+
+
+def _record_source(
+    report: ImportReport, *, kind: ImportSourceKind, ref: str
+) -> None:
+    """Remember one import source without letting a sidecar failure mislead.
+
+    The theme file is already validated and written when this runs; a
+    sidecar failure is reported with the same ``unwritable`` kind the
+    write path uses so callers keep one failure vocabulary.
+    """
+    try:
+        record_import_source(
+            config_dir=report.target_path.parent.parent,
+            slug=report.theme.slug,
+            kind=kind,
+            ref=ref,
+        )
+    except OSError as exc:
+        raise ThemeImportError(
+            f"theme {report.theme.slug!r} was stored but its import source "
+            f"could not be recorded: {exc}",
+            kind="unwritable",
+        ) from exc
+
+
+def import_vscode_theme(
+    source: Path,
+    *,
+    name: str | None = None,
+    config_dir: Path | None = None,
+) -> ImportReport:
+    """Validate fully, then atomically create or replace one user theme."""
+    report = _write_report(
+        prepare_vscode_theme_import(
+            source,
+            name=name,
+            config_dir=config_dir,
+        ),
+        config_dir=config_dir,
+    )
+    _record_source(
+        report, kind="file", ref=str(Path(source).expanduser().absolute())
+    )
+    return report
+
+
+def import_marketplace_theme(
+    entry: MarketplaceEntry,
+    *,
+    transport: MarketplaceTransport,
+    name: str | None = None,
+    config_dir: Path | None = None,
+    max_bytes: int | None = None,
+) -> ImportReport:
+    """Fetch one marketplace entry and import it with no manual download step.
+
+    Fetched bytes are parsed, never executed: they travel from the
+    transport straight into the single strict bytes entry point.
+    """
+    data = fetch_marketplace_bytes(
+        entry,
+        transport=transport,
+        max_bytes=MAX_MARKETPLACE_BYTES if max_bytes is None else max_bytes,
+    )
+    report = _write_report(
+        prepare_marketplace_import(data, entry, name=name, config_dir=config_dir),
+        config_dir=config_dir,
+    )
+    _record_source(report, kind="marketplace", ref=entry.source_id)
+    return report
+
+
+def reload_imported_theme(
+    *,
+    slug: str,
+    source: ImportSource,
+    transport: MarketplaceTransport | None = None,
+    config_dir: Path | None = None,
+    max_bytes: int | None = None,
+) -> ImportReport:
+    """Re-run the import pipeline for one recorded source without watching it.
+
+    The stored theme is rewritten only after the fresh source validates
+    fully; any failure raises before anything is written or applied, so
+    the current theme is preserved.
+    """
+    from talaria.themes.marketplace import UrllibMarketplaceTransport
+
+    if source.slug != slug:
+        raise ThemeImportError(
+            f"recorded source {source.ref!r} belongs to {source.slug!r}, "
+            f"not {slug!r}",
+            kind="wrong-root",
+        )
+    if source.kind == "file":
+        path = Path(source.ref).expanduser()
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ThemeImportError(
+                f"{source.ref} could not be read as UTF-8 JSON: {exc}",
+                kind="unreadable",
+            ) from exc
+        label = source.ref
+    elif source.kind == "marketplace":
+        active = transport if transport is not None else UrllibMarketplaceTransport()
+        entry = resolve_marketplace_source(source.ref, transport=active)
+        data = fetch_marketplace_bytes(
+            entry,
+            transport=active,
+            max_bytes=MAX_MARKETPLACE_BYTES if max_bytes is None else max_bytes,
+        )
+        label = entry.download_url
+    else:  # pragma: no cover - ImportSource validates kind at construction
+        raise ThemeImportError(
+            f"recorded source kind {source.kind!r} is not supported",
+            kind="wrong-root",
+        )
+    return _write_report(
+        prepare_vscode_theme_import_bytes(
+            data, source_label=label, name=slug, config_dir=config_dir
+        ),
+        config_dir=config_dir,
+    )
+
+
 __all__ = [
     "ALWAYS_FALLBACK_TOKENS",
     "AlphaComposite",
@@ -789,6 +1004,10 @@ __all__ = [
     "ThemeImportError",
     "ThemeImportErrorKind",
     "WORKBENCH_MAPPINGS",
+    "import_marketplace_theme",
     "import_vscode_theme",
+    "prepare_marketplace_import",
     "prepare_vscode_theme_import",
+    "prepare_vscode_theme_import_bytes",
+    "reload_imported_theme",
 ]

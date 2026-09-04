@@ -99,8 +99,10 @@ uv run talaria record ws://127.0.0.1:9119/api/ws   # endpoint override, no crede
 
 # Replay that recording through the full interface. F8 pauses, F9/F10 change
 # speed (replay only), ctrl+g/F2 folds sub-agent rows — F2
-# is Mission Control on macOS — ctrl+c/F4 interrupts the turn when one is
-# in flight, end/F5 re-follows the newest line, F3/ / shows commands, F6/models and F7/profiles
+# is Mission Control on macOS — ctrl+s/F4 cancels the turn when one is
+# in flight (ctrl+q quits the client; the two are labelled apart in the
+# footer), ctrl+o toggles the inspector, end/F5 re-follows the newest line,
+# F3/ / shows commands, F6/models and F7/profiles
 # open pickers; F1 is eaten on macOS and the approval card now owns focus so
 # no jump key is needed (Tab or click reaches the card in the two residual
 # cases). Controls that would change something on the gateway are visibly inert

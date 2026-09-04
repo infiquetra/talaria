@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import html
 import re
+import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from rich.cells import cell_len
@@ -18,16 +20,27 @@ from talaria.domain.projection import StatusPayload
 from talaria.domain.queue import NeedsYouQueue
 from talaria.domain.session_list import decode_active_list
 from talaria.domain.state import apply_active_list
-from talaria.status.contract import StatusBarSettings, normalize_status_segments
+from talaria.status.contract import (
+    DENIED_PROVIDER_KEYS,
+    ScriptRow,
+    StatusBarSettings,
+    normalize_status_segments,
+)
 from talaria.status.local import LocalStatus
+from talaria.status.runner import StatusRunner, StatusTickResult
 from talaria.ui.literal import INVISIBLE_MARK, defang
 from talaria.ui.status_bar import (
+    _SCRIPT_COLOR_TOKENS,
     BottomStatusBar,
     BottomStatusBarView,
+    StatusToken,
     _breakpoint,
     build_status_bar_view,
+    render_script_row,
     render_status_bar,
+    script_color_token,
 )
+from tests.status.conftest import python_argv
 from tests.ui.conftest import RecordingDispatcher, event, live_app, paused_app
 
 
@@ -667,3 +680,305 @@ async def test_bar_command_toggles_one_known_segment_only_in_the_running_session
             not isinstance(binding, Binding) or binding.action != "bar"
             for binding in app.BINDINGS
         )
+
+
+# ── #125: the script-driven multirow bottom status bar ───────────────────
+
+
+def test_script_color_tokens_cover_exactly_the_bar_token_set() -> None:
+    """The safe-color set cannot drift from the bar's own token set: a
+    new token without a component class (or vice versa) fails here."""
+    assert _SCRIPT_COLOR_TOKENS == set(get_args(StatusToken))
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["text", "muted", "separator", "success", "warning", "error", "attention"],
+)
+def test_every_bar_token_is_requestable_by_a_script(token: str) -> None:
+    assert script_color_token(token) == token
+
+
+@pytest.mark.parametrize("requested", ["Warning", " SUCCESS ", "Error"])
+def test_script_color_matching_ignores_case_and_surrounding_space(requested: str) -> None:
+    assert script_color_token(requested) == requested.strip().lower()
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    ["red", "#ff0000", "[red]", "", "blink", "text-muted", "inherit", "none", "success;"],
+)
+def test_unsafe_script_colors_fall_back_to_text(unsafe: str) -> None:
+    assert script_color_token(unsafe) == "text"
+
+
+def test_script_row_clips_with_ellipsis_inside_the_width() -> None:
+    run = render_script_row(ScriptRow("x" * 50, "success"), 20)
+
+    assert run.token == "success"
+    assert cell_len(run.text) == 20
+    assert run.text.endswith("…")
+
+
+def test_script_row_text_is_literal_and_defanged_not_interpreted() -> None:
+    run = render_script_row(ScriptRow("\x1b[2Jcleared? [red]not a colour[/red]", "red"), 180)
+
+    assert "␛[2J" in run.text
+    assert "[red]" in run.text
+    # ``red`` is not a bar token, so the color request is contained too.
+    assert run.token == "text"
+
+
+def _script_ok(*rows: ScriptRow) -> StatusTickResult:
+    return StatusTickResult(outcome="ok", script_rows=tuple(rows))
+
+
+@pytest.mark.asyncio
+async def test_script_rows_stack_above_the_segment_row_at_true_bottom() -> None:
+    app = StatusBarHarness(_view())
+
+    async with app.run_test(size=(180, 24)) as pilot:
+        await pilot.pause()
+        assert app.bar.region.height == 1
+
+        app.bar.apply_script_result(
+            _script_ok(ScriptRow("tests: 296"), ScriptRow("wip: 2", "warning"))
+        )
+        await pilot.pause()
+
+        assert app.bar.script_rows == (
+            ScriptRow("tests: 296"),
+            ScriptRow("wip: 2", "warning"),
+        )
+        assert app.bar.region.height == 3
+        assert app.bar.region.y + app.bar.region.height == 24
+        rendered = app.bar.render().plain.split("\n")
+        assert rendered[:-1] == ["tests: 296", "wip: 2"]
+        assert rendered[-1] == app.bar.last_render.plain
+        visible = _screen_text(app)
+        assert "tests: 296" in visible
+        assert "wip: 2" in visible
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_document_clears_script_rows_to_the_segment_row() -> None:
+    app = StatusBarHarness(_view())
+
+    async with app.run_test(size=(180, 24)) as pilot:
+        await pilot.pause()
+        app.bar.apply_script_result(_script_ok(ScriptRow("stale")))
+        await pilot.pause()
+        assert app.bar.region.height == 2
+
+        app.bar.apply_script_result(_script_ok())
+        await pilot.pause()
+        assert app.bar.script_rows == ()
+        assert app.bar.region.height == 1
+        assert app.bar.region.y + app.bar.region.height == 24
+
+
+@pytest.mark.asyncio
+async def test_script_rows_clip_to_narrow_widths_without_overflow() -> None:
+    app = StatusBarHarness(_view())
+
+    async with app.run_test(size=(20, 24)) as pilot:
+        await pilot.pause()
+        app.bar.apply_script_result(
+            _script_ok(ScriptRow("a very long script row that cannot fit", "error"))
+        )
+        await pilot.pause()
+
+        lines = app.bar.render().plain.split("\n")
+        assert len(lines) == 2
+        for line in lines:
+            assert cell_len(line) <= 20
+        assert lines[0].endswith("…")
+        assert app.bar.region.y + app.bar.region.height == 24
+
+
+@pytest.mark.asyncio
+async def test_resize_reflows_script_rows_without_tearing() -> None:
+    app = StatusBarHarness(_view())
+
+    async with app.run_test(size=(180, 24)) as pilot:
+        await pilot.pause()
+        app.bar.apply_script_result(
+            _script_ok(ScriptRow("a very long script row that needs the full width"))
+        )
+        await pilot.pause()
+        assert app.bar.render().plain.split("\n")[0] == (
+            "a very long script row that needs the full width"
+        )
+
+        await pilot.resize_terminal(40, 24)
+        await pilot.pause()
+        lines = app.bar.render().plain.split("\n")
+        for line in lines:
+            assert cell_len(line) <= 40
+        assert lines[0].endswith("…")
+        assert app.bar.region.y + app.bar.region.height == 24
+
+
+def _write_script(path: Path, body: str) -> None:
+    path.write_text(
+        f"import json, sys; json.load(sys.stdin); {body}\n", encoding="utf-8"
+    )
+
+
+@pytest.mark.asyncio
+async def test_failing_tick_preserves_last_good_rows_with_a_region_notice(
+    tmp_path: Path,
+) -> None:
+    """U3's fallback-plus-notice end to end: a crash keeps the bar's last
+    good rows while the region carries the categorical marker; a fixed
+    script refreshes the bar on the next tick without a restart."""
+    script_path = tmp_path / "status_script.py"
+    _write_script(script_path, "print(json.dumps({'version': 2, 'rows': ['rev-one']}))")
+
+    app, _controls = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        app.status_runner = StatusRunner(
+            argv=(sys.executable, str(script_path)),
+            launch_cwd=tmp_path,
+            parent_env={},
+        )
+
+        good = await app.status_tick()
+        await pilot.pause()
+        assert good is not None and good.outcome == "ok"
+        assert tuple(row.text for row in app.bottom_status_bar.script_rows) == ("rev-one",)
+        assert app.status_region.row_texts == ()
+
+        _write_script(script_path, "sys.exit(3)")
+        bad = await app.status_tick()
+        await pilot.pause()
+        assert bad is not None and bad.outcome == "nonzero_exit"
+        assert tuple(row.text for row in app.bottom_status_bar.script_rows) == ("rev-one",)
+        assert "failed" in app.status_region.marker_text
+
+        _write_script(
+            script_path, "print(json.dumps({'version': 2, 'rows': ['rev-two']}))"
+        )
+        recovered = await app.status_tick()
+        await pilot.pause()
+        assert recovered is not None and recovered.outcome == "ok"
+        assert tuple(row.text for row in app.bottom_status_bar.script_rows) == ("rev-two",)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_v1_ticks_leave_bar_rows_alone_while_the_region_shows_them(
+    tmp_path: Path,
+) -> None:
+    """Ownership, both directions in one session: a v2 tick feeds the bar
+    and nothing in the region; a v1 tick feeds the region and the bar
+    keeps its rows."""
+    script_path = tmp_path / "status_script.py"
+    _write_script(script_path, "print(json.dumps({'version': 2, 'rows': ['bar-row']}))")
+
+    app, _controls = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.status_runner = StatusRunner(
+            argv=(sys.executable, str(script_path)),
+            launch_cwd=tmp_path,
+            parent_env={},
+        )
+
+        scripted = await app.status_tick()
+        await pilot.pause()
+        assert scripted is not None and scripted.outcome == "ok"
+        assert tuple(row.text for row in app.bottom_status_bar.script_rows) == ("bar-row",)
+        assert not app.status_region.row_texts
+        assert app.status_region.marker_text == ""
+
+        _write_script(script_path, "print('branch: main\\ntests: 296')")
+        plain = await app.status_tick()
+        await pilot.pause()
+        assert plain is not None and plain.outcome == "ok"
+        assert app.status_region.row_texts == ("branch: main", "tests: 296")
+        assert tuple(row.text for row in app.bottom_status_bar.script_rows) == ("bar-row",)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_invalid_document_tick_keeps_the_bar_and_marks_the_region(
+    tmp_path: Path,
+) -> None:
+    """U1's runtime half on screen: a version-jumped document never
+    reaches the bar (last good stays) and the region names the problem."""
+    script_path = tmp_path / "status_script.py"
+    _write_script(script_path, "print(json.dumps({'version': 2, 'rows': ['good']}))")
+
+    app, _controls = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.status_runner = StatusRunner(
+            argv=(sys.executable, str(script_path)),
+            launch_cwd=tmp_path,
+            parent_env={},
+        )
+        await app.status_tick()
+        await pilot.pause()
+        assert tuple(row.text for row in app.bottom_status_bar.script_rows) == ("good",)
+
+        _write_script(script_path, "print(json.dumps({'version': 9, 'rows': ['junk']}))")
+        jumped = await app.status_tick()
+        await pilot.pause()
+        assert jumped is not None and jumped.outcome == "invalid_document"
+        assert tuple(row.text for row in app.bottom_status_bar.script_rows) == ("good",)
+        assert app.status_region.row_texts == ()
+        assert "invalid script document" in app.status_region.marker_text
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_bar_renders_trust_and_deny_rows_without_credential_material(
+    tmp_path: Path,
+) -> None:
+    """U4 on screen: the configured script's rows render (trust) while
+    the allowlisted provider keys stay absent from what the child saw
+    (filtering) — synthetic values only, nothing real anywhere."""
+    script = (
+        "import json, os, sys\n"
+        "json.load(sys.stdin)\n"
+        "def show(name):\n"
+        "    return os.environ.get(name, '<absent>')\n"
+        "rows = ['MY_STATUS_OK=' + show('MY_STATUS_OK')]\n"
+        "for name in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', "
+        "'AWS_ACCESS_KEY_ID', 'GITHUB_PAT'):\n"
+        "    rows.append(name + '=' + show(name))\n"
+        "print(json.dumps({'version': 2, 'rows': rows}))\n"
+    )
+
+    app, _controls = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        parent_env = {
+            "PATH": "/usr/bin:/bin",
+            "OPENAI_API_KEY": "synthetic-openai-test-key",
+            "ANTHROPIC_API_KEY": "synthetic-anthropic-test-key",
+            "AWS_ACCESS_KEY_ID": "synthetic-aws-test-key",
+            "GITHUB_PAT": "synthetic-github-test-pat",
+            "MY_STATUS_OK": "staging",
+        }
+        app.status_runner = StatusRunner(
+            argv=python_argv(script),
+            launch_cwd=tmp_path,
+            allowlist=tuple(DENIED_PROVIDER_KEYS) + ("MY_STATUS_OK",),
+            parent_env=parent_env,
+        )
+        result = await app.status_tick()
+        await pilot.pause()
+
+        assert result is not None and result.outcome == "ok"
+        texts = tuple(row.text for row in app.bottom_status_bar.script_rows)
+        assert "MY_STATUS_OK=staging" in texts
+        for name in DENIED_PROVIDER_KEYS:
+            assert f"{name}=<absent>" in texts
+        visible = _screen_text(app)
+        assert "MY_STATUS_OK=staging" in visible
+        assert "OPENAI_API_KEY=<absent>" in visible
+        assert "synthetic-" not in visible
+        await app.shutdown_sources()

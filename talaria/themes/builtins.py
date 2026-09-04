@@ -1,8 +1,9 @@
-"""Talaria's four built-in themes.
+"""Talaria's built-in themes.
 
-Every value is copied verbatim from the integrated visual specification dated
-2026-08-30.  Keeping the built-ins as Python constants makes them unambiguous
-wheel content and gives the issue #105 importer a stable fallback source.
+The first four values are copied verbatim from the integrated visual
+specification dated 2026-08-30.  Keeping the built-ins as Python constants
+makes them unambiguous wheel content and gives the issue #105 importer a
+stable fallback source.
 """
 
 from __future__ import annotations
@@ -273,17 +274,108 @@ ACCESSIBLE_HIGH_CONTRAST = ThemeSpec(
     },
 )
 
+#: Homebrew (issue #123): the fifth built-in, a restrained green-black theme
+#: for operators who live in green-tinted terminals but find
+#: :data:`DARK_GREEN_TERMINAL`'s neon accents fatiguing. Provenance: designed
+#: for Talaria v0.6.0, not sampled from any host terminal palette — every
+#: value below was chosen in this file and measured against the same floors
+#: the visual specification pins for the first four themes (body pairings at
+#: 4.5 or better, component pairings at 3.0 or better; the transcript
+#: category triples hold 9.2 or better on text and 5.7 or better on markers).
+#: Mapping: the canvas/surface/panel/text/border/selection/status families
+#: are flat chrome a terminal palette could equally describe, while the
+#: transcript, diff, and syntax families are Talaria-semantic and stay
+#: Talaria-owned per decision C. The per-category body tints ride the groups
+#: layer (``talaria.text`` reinterpreted per category) so the shared body
+#: text remains the one value an override replaces wholesale. Homebrew is
+#: registered beside the other built-ins but is never the startup default.
+HOMEBREW = ThemeSpec(
+    slug="homebrew",
+    name="Homebrew",
+    dark=True,
+    tokens={
+        "talaria.canvas": "#050905",
+        "talaria.surface": "#0A120D",
+        "talaria.panel": "#0E1811",
+        "talaria.text": "#C9D9CE",
+        "talaria.text.muted": "#7E937F",
+        "talaria.primary": "#6FA287",
+        "talaria.secondary": "#8A9E7E",
+        "talaria.accent": "#4E9A6A",
+        "talaria.success": "#5FA86F",
+        "talaria.warning": "#C9A44A",
+        "talaria.error": "#D97B7B",
+        "talaria.border": "#558F66",
+        "talaria.border.muted": "#3B6B46",
+        "talaria.focus": "#356B47",
+        "talaria.selection.background": "#356B47",
+        "talaria.selection.text": "#E8F2EA",
+        "talaria.status.background": "#030604",
+        "talaria.status.text": "#C9D9CE",
+        "talaria.status.muted": "#7E937F",
+        "talaria.status.separator": "#527F5E",
+        "talaria.status.success": "#5FA86F",
+        "talaria.status.warning": "#C9A44A",
+        "talaria.status.error": "#D97B7B",
+        "talaria.status.attention": "#4E9A6A",
+        "talaria.inspector.background": "#0A120D",
+        "talaria.inspector.border": "#558F66",
+        "talaria.inspector.heading": "#6FA287",
+        "talaria.transcript.operator": "#6FA287",
+        "talaria.transcript.operator.background": "#0B1410",
+        "talaria.transcript.assistant": "#5FA86F",
+        "talaria.transcript.assistant.background": "#0A1310",
+        "talaria.transcript.reasoning": "#8A9E7E",
+        "talaria.transcript.reasoning.background": "#0D130E",
+        "talaria.transcript.activity": "#5E9E8E",
+        "talaria.transcript.activity.background": "#0A1210",
+        "talaria.transcript.session": "#7E937F",
+        "talaria.transcript.session.background": "#0C110D",
+        "talaria.transcript.fault": "#D97B7B",
+        "talaria.transcript.fault.background": "#160C0C",
+        "talaria.diff.context": "#C9D9CE",
+        "talaria.diff.line-number": "#7E937F",
+        "talaria.diff.added": "#7CC496",
+        "talaria.diff.added.background": "#0B1A10",
+        "talaria.diff.removed": "#DE9A9A",
+        "talaria.diff.removed.background": "#1A0E0E",
+        "talaria.diff.hunk": "#7FA8B8",
+        "talaria.diff.hunk.background": "#0A1418",
+        "talaria.diff.intraline-added.background": "#1E4A2E",
+        "talaria.diff.intraline-removed.background": "#5A2323",
+        "talaria.syntax.comment": "#7E937F",
+        "talaria.syntax.keyword": "#8FBF9B",
+        "talaria.syntax.string": "#7CC496",
+        "talaria.syntax.number": "#C9A44A",
+        "talaria.syntax.function": "#7FA8B8",
+        "talaria.syntax.type": "#6EAA9A",
+        "talaria.syntax.variable": "#C9D9CE",
+        "talaria.syntax.operator": "#8A9E7E",
+        "talaria.syntax.constant": "#C99A6E",
+    },
+    groups={
+        "operator": {"talaria.text": "#D4E2D8"},
+        "assistant": {"talaria.text": "#C9D9CE"},
+        "reasoning": {"talaria.text": "#BFCBBF"},
+        "activity": {"talaria.text": "#C2D4CB"},
+        "session": {"talaria.text": "#A9B8AC"},
+        "fault": {"talaria.text": "#E3CFCF"},
+    },
+)
+
 BUILTIN_THEMES: tuple[ThemeSpec, ...] = (
     REFINED_DEFAULT,
     DARK_GREEN_TERMINAL,
     NEUTRAL_DARK,
     ACCESSIBLE_HIGH_CONTRAST,
+    HOMEBREW,
 )
 
 __all__ = [
     "ACCESSIBLE_HIGH_CONTRAST",
     "BUILTIN_THEMES",
     "DARK_GREEN_TERMINAL",
+    "HOMEBREW",
     "NEUTRAL_DARK",
     "REFINED_DEFAULT",
 ]
