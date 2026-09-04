@@ -403,10 +403,12 @@ def record(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate-commit", required=True)
-    parser.add_argument("--wheel", type=Path, required=True)
-    parser.add_argument("--recorded-at", default=None)
-    parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    record_cmd = subparsers.add_parser("record", help="record the evidence tree")
+    record_cmd.add_argument("--candidate-commit", required=True)
+    record_cmd.add_argument("--wheel", type=Path, required=True)
+    record_cmd.add_argument("--recorded-at", default=None)
+    record_cmd.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     return parser
 
 
