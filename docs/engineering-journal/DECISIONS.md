@@ -2,6 +2,35 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-09-04
+
+### v0.5.0 receipt re-verification is retired (superseded)
+
+**Decision.** The committed v0.5.0 acceptance evidence stays byte-identical in
+history, but nothing re-verifies it against the live tree anymore: the
+`test_committed_acceptance_receipts_match_current_harness` test is removed
+from `scripts/acceptance/test_v050_harness.py`. Retirement ends the
+re-verification obligation; it does not touch the evidence.
+
+**Rationale.** The harness-ancestry rule (`_harness_commit_matches`,
+`scripts/acceptance/v050_receipt.py`) compares the whole `scripts/acceptance`
+directory between the receipt commit and HEAD, so every harness evolution —
+however additive — permanently reds re-verification of the frozen v0.5.0
+receipts. Per-release whole-directory pinning cannot survive any harness
+evolution, which makes the test a one-way gate: green only on branches that
+never touch the harness again. The version-agnostic release path each release
+verifies only its own tagged manifest, so no release depends on this
+re-verification. The ancestry rule itself and its fixture-pinned tests stay in
+force for current-version evidence.
+
+**Decided by.** Operator, explicit direction for the v0.6.0 release path
+(branch `work/060-release-path`).
+
+**Revisit when.** A future release needs to re-attest v0.5.0 evidence against a
+newer harness — then re-record the v0.5.0 receipts at the new harness commit
+instead of resurrecting this test, or scope the ancestry comparison to a
+per-release file set.
+
 ## 2026-09-03
 
 ### Script rows belong to the bar by output version, not by negotiation (#125)

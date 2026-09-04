@@ -4,8 +4,10 @@ This document gates the v0.6.0 release the way the v0.1 verdict gated its
 release: one fenced block states the verdict, and the evidence table below is
 the authority behind it. The twelve rows are the ten manual-test findings plus
 the credential hardening and the Hermes-touch annex, each graded against what
-was actually run — Gate-0 on the merged tree, the twelve controller-observed
-live-matrix rows, and the automated suites that pin every row's behavior.
+was actually run — the Gate-0 result on its tree, the fourteen receipts bound
+to the candidate on theirs, and the automated suites that pin every row's
+behavior. Gate-0 and the candidate live on different commits; the provenance
+section below names both and shows why the result transfers.
 
 ```gate
 id: v0-6-daily-driver
@@ -30,14 +32,25 @@ review-by: 2026-09-30
 | 11 | Four provider credential names denied even when allowlisted | measured | `tests/status/test_env.py` synthetic-key denial plus the controller row |
 | 12 | No Hermes touch anywhere in the v0.6.0 scope | met | No gateway code changed; compat baselines green; controller annex row |
 
-## Candidate provenance
+## Candidate provenance — two trees, one product
 
-Gate-0 ran on merged tree `c571590`: uv sync clean, ruff clean, mypy clean
-(201 files), pytest 2804 passed with 7 skipped, bandit exit 0, git diff
---check clean. The live matrix ran in scratch against the same tree with
-existing sessions preserved and no real secrets. The machine-readable record
-is `docs/acceptance/v0.6.0/artifact-manifest.json`, which binds twelve item
-receipts, two install-probe receipts, and the Gate-0 record to the candidate.
+Gate-0 ran at `c571590` (merge PR #136): uv sync clean, ruff clean, mypy
+clean (201 files), pytest 2804 passed with 7 skipped, bandit exit 0, git diff
+--check clean. The machine-readable Gate-0 record is
+`docs/acceptance/v0.6.0/gate0.json`, which pins `candidate_commit` and `tree`
+to `c571590`.
+
+The fourteen receipts (twelve item plus two install-probe) and
+`docs/acceptance/v0.6.0/artifact-manifest.json` bind to candidate `e967c20`.
+Between the two trees the product is unchanged:
+`git diff c571590 e967c20 -- talaria/ pyproject.toml uv.lock src/` shows
+exactly one line, `__version__ = "0.5.0"` → `"0.6.0"`. The rest of the delta
+is the release machinery itself (the version-agnostic workflow,
+`scripts/acceptance/versioning.py`, additive v0.6.0 validators), one new test
+file (`tests/docs/test_acceptance_versions.py`), and docs. The live matrix ran
+in scratch against the candidate tree with existing sessions preserved and no
+real secrets. No behavior change rides between Gate-0 and the candidate
+binding, which is why the Gate-0 result transfers to the candidate.
 
 ## Limitations carried, not hidden
 
