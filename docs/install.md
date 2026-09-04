@@ -54,10 +54,10 @@ uv run talaria --version
 uv run talaria --help
 ```
 
-A successful v0.5.0 install prints this version line:
+A successful v0.6.0 install prints this version line:
 
 ```text
-talaria 0.5.0
+talaria 0.6.0
 ```
 
 The help output identifies Talaria as a `Hermes-native terminal UI client` and lists `record`,

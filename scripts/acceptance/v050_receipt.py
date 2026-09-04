@@ -47,6 +47,7 @@ _MANIFEST_PATH = _ACCEPTANCE_ROOT / "artifact-manifest.json"
 _EVIDENCE_ROOT = _ACCEPTANCE_ROOT / "evidence"
 _PUBLIC_EVIDENCE_ROOTS = (
     Path("docs/acceptance/v0.5.0"),
+    Path("docs/acceptance/v0.6.0"),
     Path("docs/evidence"),
 )
 _ROUTE_ALIASES: dict[str, str | None] = {
@@ -757,6 +758,98 @@ def publish_receipt(
     return output
 
 
+V060_ITEM_SCHEMA = "talaria-v0.6.0-receipt-v1"
+V060_INSTALL_SCHEMA = "talaria-v0.6.0-install-v1"
+V060_RELEASE = "0.6.0"
+
+
+def _validate_v060_receipt(
+    receipt: dict[str, Any],
+    *,
+    expected_commit: str | None = None,
+    expected_wheel: str | None = None,
+) -> list[str]:
+    """Return every defect in a version-0.6.0 matrix item receipt.
+
+    Additive alongside :func:`validate_receipt`, which stays the sole reader
+    of the v0.5.0 shape: v0.6.0 rows transcribe controller-observed live
+    results (provenance in ``evidence``) rather than PTY captures, so they
+    carry no terminal/session fields to check. What is checked — schema and
+    release consts, checklist range, tester, verdict, and the candidate bind —
+    mirrors the v0.5.0 vocabulary so the shared manifest loop below applies
+    unchanged.
+    """
+    errors: list[str] = []
+    if _contains_home_path(receipt):
+        errors.append("receipt contains the current user's home path")
+    if receipt.get("schema_version") != V060_ITEM_SCHEMA:
+        errors.append(f"schema_version is not {V060_ITEM_SCHEMA}")
+    if receipt.get("release") != V060_RELEASE:
+        errors.append(f"release is not {V060_RELEASE}")
+    harness_commit = receipt.get("harness_commit")
+    if not isinstance(harness_commit, str) or not _COMMIT.fullmatch(harness_commit):
+        errors.append("harness_commit must be a full lowercase 40-character Git commit")
+    number = receipt.get("checklist_item")
+    if not isinstance(number, int) or isinstance(number, bool) or not 1 <= number <= 12:
+        errors.append("checklist_item is not an integer from 1 through 12")
+    if receipt.get("tester") != "controller":
+        errors.append("tester is not controller")
+    if receipt.get("verdict") not in VERDICTS:
+        errors.append("verdict must be pass, fail, blocked, or reserved")
+    try:
+        artifact = _object(receipt.get("artifact"), field="artifact")
+        if expected_commit is not None and artifact.get("commit") != expected_commit:
+            errors.append("artifact.commit does not match the release candidate")
+        if expected_wheel is not None and artifact.get("wheel_sha256") != expected_wheel:
+            errors.append("artifact.wheel_sha256 does not match the release candidate")
+        if artifact.get("version") != V060_RELEASE:
+            errors.append(f"artifact.version is not {V060_RELEASE}")
+    except HarnessError as exc:
+        errors.append(str(exc))
+    try:
+        evidence = _object(receipt.get("evidence"), field="evidence")
+        if not isinstance(evidence.get("source"), str) or not evidence["source"].strip():
+            errors.append("evidence.source must be a non-empty provenance pointer")
+        if not isinstance(evidence.get("observation"), str) or not evidence["observation"].strip():
+            errors.append("evidence.observation must be a non-empty observation")
+    except HarnessError as exc:
+        errors.append(str(exc))
+    return errors
+
+
+def _validate_v060_install(
+    install: dict[str, Any],
+    *,
+    expected_commit: str | None = None,
+    expected_wheel: str | None = None,
+) -> list[str]:
+    """Return every defect in a version-0.6.0 install-probe receipt."""
+    errors: list[str] = []
+    if install.get("schema_version") != V060_INSTALL_SCHEMA:
+        errors.append(f"schema_version is not {V060_INSTALL_SCHEMA}")
+    if install.get("tester") != "operator":
+        errors.append("tester is not operator")
+    try:
+        candidate = _object(install.get("candidate"), field="candidate")
+        if expected_commit is not None and candidate.get("commit") != expected_commit:
+            errors.append("candidate.commit does not match the release candidate")
+        if expected_wheel is not None and candidate.get("wheel_sha256") != expected_wheel:
+            errors.append("candidate.wheel_sha256 does not match the release candidate")
+        if candidate.get("version") != V060_RELEASE:
+            errors.append(f"candidate.version is not {V060_RELEASE}")
+    except HarnessError as exc:
+        errors.append(str(exc))
+    try:
+        result = _object(install.get("install"), field="install")
+        if result.get("version_reported") != V060_RELEASE:
+            errors.append(f"install.version_reported is not {V060_RELEASE}")
+        if result.get("help_ok") is not True:
+            errors.append("install.help_ok is not true")
+    except HarnessError as exc:
+        errors.append(str(exc))
+    return errors
+
+
 def _manifest_candidate(manifest: dict[str, Any]) -> dict[str, Any] | None:
     candidate = manifest.get("current_candidate", manifest.get("candidate"))
     if candidate is None:
@@ -851,12 +944,20 @@ def verify_run(
                 f"{relative}: active receipt has superseded evidence origin "
                 f"{_repo_relative(origin, repo_root=repo_root)}"
             )
-        for error in validate_receipt(
-            receipt,
-            verify_files=True,
-            expected_commit=expected_commit,
-            repo_root=repo_root,
-        ):
+        if receipt.get("schema_version") == V060_ITEM_SCHEMA:
+            validator = _validate_v060_receipt(
+                receipt,
+                expected_commit=expected_commit,
+                expected_wheel=expected_wheel,
+            )
+        else:
+            validator = validate_receipt(
+                receipt,
+                verify_files=True,
+                expected_commit=expected_commit,
+                repo_root=repo_root,
+            )
+        for error in validator:
             errors.append(f"{relative}: {error}")
         harness_commit = receipt.get("harness_commit")
         if (
@@ -896,6 +997,13 @@ def verify_run(
         install = read_json_object(path)
         if _contains_home_path(install):
             errors.append(f"{relative}: install receipt contains the current user's home path")
+        if install.get("schema_version") == V060_INSTALL_SCHEMA:
+            for error in _validate_v060_install(
+                install,
+                expected_commit=expected_commit,
+                expected_wheel=expected_wheel,
+            ):
+                errors.append(f"{relative}: {error}")
         try:
             install_candidate = _object(
                 install.get("candidate"), field=f"{relative}: candidate"

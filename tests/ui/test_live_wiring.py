@@ -16,14 +16,17 @@ Pairing a paused source with a live dispatcher is what isolates the binding.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from talaria.domain.commands import CATALOG_METHOD
+from talaria.domain.compat import SeamObservation, apply_probe_round, empty_board
 from talaria.domain.models import ConnectionStatus
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.replay.source import ReplaySource
+from talaria.status.runner import StatusTickResult
 from talaria.transport.rpc import (
     LOST_WITH_TRANSPORT,
     NEVER_SENT,
@@ -499,4 +502,53 @@ async def test_the_reconnect_epoch_is_what_makes_the_marker_once_per_connection(
 
         app.note_reconnect(3)
         assert len(app.state.transcript) == 2, "a genuine later reconnect went unannounced"
+        await app.shutdown_sources()
+
+
+# ── #122 (U3): failures stay visible in live mode while diagnostics move ──
+
+
+@pytest.mark.asyncio
+async def test_live_failure_paths_stay_visible_while_diagnostics_move() -> None:
+    """A status failure and a transport notice land while the seams are moved."""
+    dispatcher = RecordingDispatcher()
+    app = live_app(dispatcher)
+
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        clock = app.state.last_observed_at
+        board = apply_probe_round(
+            empty_board(app.fleet_profile),
+            (
+                SeamObservation(
+                    seam="roster",
+                    status="present",
+                    source="probe roster",
+                    trigger="attach",
+                ),
+                SeamObservation(
+                    seam="approval-detail",
+                    status="present",
+                    source="probe approval-detail",
+                    trigger="attach",
+                ),
+            ),
+            at=clock,
+        )
+        app.fleet = replace(app.fleet, seam_boards={app.fleet_profile: board})
+        await app._render_seams()
+        await pilot.pause()
+        assert app.status_region.seam_texts == ()
+        assert len(app.inspector.diag_texts) == 4
+
+        await app.status_region.apply(
+            StatusTickResult(outcome="timeout", marker="status: slow command")
+        )
+        app.note_connection_state("reconnecting")
+        await pilot.pause()
+
+        assert app.status_region.marker_text == "[x] status: slow command"
+        assert "connection lost" in app.composer.notice
+        assert app.status_region.seam_texts == ()
+        assert len(app.inspector.diag_texts) == 4
         await app.shutdown_sources()

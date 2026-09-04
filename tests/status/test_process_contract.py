@@ -550,3 +550,177 @@ def test_an_argv_the_kernel_never_sees_still_yields_a_categorical_outcome(
             assert result.marker is not None
 
     asyncio.run(scenario())
+
+
+# ── #125 U1/U3: the version-2 script document through a real child ───────
+
+
+def test_version_two_document_reaches_the_bar_channel_not_the_region_rows(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """Ownership at the tick boundary: v2 rows travel on ``script_rows``
+    for the bar; the region's ``rows`` stay empty for the same tick."""
+    script = (
+        "import sys, json; json.load(sys.stdin); "
+        "print(json.dumps({'version': 2, "
+        "'rows': ['tests: 296', {'text': 'wip: 2', 'color': 'warning'}]}))"
+    )
+
+    async def scenario() -> None:
+        runner = StatusRunner(argv=python_argv(script), launch_cwd=tmp_path, limits=_fast_limits())
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        assert result.rows == ()
+        assert result.marker is None
+        assert result.script_rows is not None
+        assert tuple((row.text, row.color) for row in result.script_rows) == (
+            ("tests: 296", "text"),
+            ("wip: 2", "warning"),
+        )
+        assert not result.truncated
+
+    asyncio.run(scenario())
+
+
+def test_pretty_printed_document_survives_newline_splitting(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """A multi-line document is detected before line splitting, so it is
+    one document rather than several v1 rows of JSON source."""
+    script = (
+        "import sys, json; json.load(sys.stdin); "
+        "print(json.dumps({'version': 2, 'rows': ['a', 'b']}, indent=2))"
+    )
+
+    async def scenario() -> None:
+        runner = StatusRunner(argv=python_argv(script), launch_cwd=tmp_path, limits=_fast_limits())
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        assert result.script_rows is not None
+        assert tuple(row.text for row in result.script_rows) == ("a", "b")
+
+    asyncio.run(scenario())
+
+
+def test_explicit_empty_rows_clear_the_bar_without_failing(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    script = (
+        "import sys, json; json.load(sys.stdin); "
+        "print(json.dumps({'version': 2, 'rows': []}))"
+    )
+
+    async def scenario() -> None:
+        runner = StatusRunner(argv=python_argv(script), launch_cwd=tmp_path, limits=_fast_limits())
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        assert result.script_rows == ()
+
+    asyncio.run(scenario())
+
+
+def test_null_wrong_typed_and_jumped_documents_yield_a_categorical_marker(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """U1's runtime half: unknown shapes never raise out of the tick and
+    never render — they resolve to ``invalid_document`` with a notice,
+    carrying no rows on either channel."""
+    documents = [
+        "{'version': 2, 'rows': None}",
+        "{'version': 2, 'rows': [{'text': 42}]}",
+        "{'version': 9, 'rows': ['future']}",
+        "{'version': 1, 'rows': ['no-such-shape']}",
+        "{'version': 2, 'rows': [], 'bogus': True}",
+    ]
+
+    async def scenario() -> None:
+        for document in documents:
+            script = (
+                "import sys, json; json.load(sys.stdin); "
+                f"print(json.dumps({document}))"
+            )
+            runner = StatusRunner(
+                argv=python_argv(script), launch_cwd=tmp_path, limits=_fast_limits()
+            )
+            result = await runner.tick(sample_payload)
+            assert result.outcome == "invalid_document", document
+            assert result.marker is not None, document
+            assert "invalid script document" in result.marker, document
+            assert result.rows == (), document
+            assert result.script_rows is None, document
+
+    asyncio.run(scenario())
+
+
+def test_document_rows_past_the_bound_truncate_with_a_visible_marker(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """The row bound is the runner's, not the document's: a v2 script
+    cannot opt out of it by choosing the richer output shape."""
+    script = (
+        "import sys, json; json.load(sys.stdin); "
+        "print(json.dumps({'version': 2, "
+        "'rows': [f'row-{i}' for i in range(12)]}))"
+    )
+
+    async def scenario() -> None:
+        runner = StatusRunner(
+            argv=python_argv(script),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(row_limit=8),
+        )
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        assert result.rows == ()
+        assert result.script_rows is not None
+        assert len(result.script_rows) == 8
+        assert tuple(row.text for row in result.script_rows[:7]) == tuple(
+            f"row-{i}" for i in range(7)
+        )
+        assert "truncated" in result.script_rows[-1].text
+        assert result.truncated is True
+
+    asyncio.run(scenario())
+
+
+def test_scalar_json_output_stays_a_literal_v1_row(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """A v1 script printing a bare number renders that number — only a
+    JSON object engages the document protocol."""
+    script = "import sys, json; json.load(sys.stdin); print(42)"
+
+    async def scenario() -> None:
+        runner = StatusRunner(argv=python_argv(script), launch_cwd=tmp_path, limits=_fast_limits())
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        assert result.rows == ("42",)
+        assert result.script_rows is None
+
+    asyncio.run(scenario())
+
+
+def test_byte_truncated_document_falls_back_to_literal_text(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """A document cut mid-stream by the byte cap is shown literally
+    rather than guessed at: truncation bounds what is shown, and the
+    intake never reconstructs what the cap removed."""
+    script = (
+        "import sys, json; json.load(sys.stdin); "
+        "print(json.dumps({'version': 2, 'rows': ['aaaa', 'bbbb', 'cccc']}))"
+    )
+
+    async def scenario() -> None:
+        runner = StatusRunner(
+            argv=python_argv(script),
+            launch_cwd=tmp_path,
+            limits=_fast_limits(stdout_limit_bytes=10),
+        )
+        result = await runner.tick(sample_payload)
+        assert result.outcome == "ok"
+        assert result.script_rows is None
+        assert result.truncated is True
+        assert sum(len(row) for row in result.rows) <= 10
+
+    asyncio.run(scenario())

@@ -1,0 +1,149 @@
+{
+  "$schema": "./artifact-manifest.schema.json",
+  "counts": {
+    "current_receipts": 14,
+    "expected_receipts": 12,
+    "install_receipts": 2,
+    "invalid_item_receipts": 0,
+    "item_receipts": 12,
+    "item_verdicts": {
+      "blocked": 0,
+      "fail": 0,
+      "pass": 12,
+      "reserved": 0
+    },
+    "missing_current_receipts": 0,
+    "missing_receipts_on_disk": 0,
+    "stale_receipts": 0
+  },
+  "current_candidate": {
+    "commit": "6e2baf16fbf6af7de68ea93c8f7fc19e38e98882",
+    "version": "0.6.0",
+    "wheel_filename": "talaria-0.6.0-py3-none-any.whl",
+    "wheel_sha256": "05c8d9752cf10637a206b455360a357e877131e8c6c709a756bb7282b6b28601"
+  },
+  "gate0_receipts": [
+    {
+      "receipt_path": "docs/acceptance/v0.6.0/gate0.json",
+      "receipt_sha256": "3b3a0854ce96fd920ef99816a0b4d7903e5e396857b8b5607c1bb542ba1447af"
+    }
+  ],
+  "gate_id": "v0-6-daily-driver",
+  "generated_command": "uv run python -m scripts.acceptance.v060_evidence record --candidate-commit 6e2baf16fbf6af7de68ea93c8f7fc19e38e98882 --wheel talaria-0.6.0-py3-none-any.whl",
+  "harness_commit": "6e2baf16fbf6af7de68ea93c8f7fc19e38e98882",
+  "install_receipts": [
+    {
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/probe-1/install-receipt.json",
+      "receipt_sha256": "80d1194dff13a3180a84f952b6dcc55d85d9be73d77f2aec989cc8a63019bf08",
+      "tester": "operator"
+    },
+    {
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/probe-2/install-receipt.json",
+      "receipt_sha256": "5df555a235ab20ff878de47c8aff703e7c2995a509be6c9484aafb3d4f02d2d3",
+      "tester": "operator"
+    }
+  ],
+  "notes_document": "docs/acceptance/v0.6.0/notes.md",
+  "receipts": [
+    {
+      "checklist_item": 1,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-01.json",
+      "receipt_sha256": "bc3b2f589b495cdf0fd42449cb683a49f25c0564d8d9f912014d2d37fb144fe0",
+      "tester": "controller",
+      "title": "119/F1 catalog truth",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 2,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-02.json",
+      "receipt_sha256": "5a68923f6b36f6dbd5f36881978ff6f13fda8ea25666ad66d19d382e80300d4f",
+      "tester": "controller",
+      "title": "119/F2 honest 4018",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 3,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-03.json",
+      "receipt_sha256": "f3120625783eef0cc787c9bc41ee1e8201b66a709bc39a84d6e4c45c5928e9db",
+      "tester": "controller",
+      "title": "120/F3 nested toggle",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 4,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-04.json",
+      "receipt_sha256": "c72e14818c4e553f399a1083d1670300b7bab4a533896f023959f2b5986a14dc",
+      "tester": "controller",
+      "title": "120/F4 idle cancel",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 5,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-05.json",
+      "receipt_sha256": "c3c2e2856d9a0f744274a929c0fcacf7895f2c7d79e5a0094f054a02ca7a960b",
+      "tester": "controller",
+      "title": "122/F5 inspector diagnostics",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 6,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-06.json",
+      "receipt_sha256": "95e879f2a885bb2a694f1fe0abdcf1cf62a957eccc271b49c9fe0d77587599cc",
+      "tester": "controller",
+      "title": "125/F6 bar pickup",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 7,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-07.json",
+      "receipt_sha256": "91a7247a16ced32f674a65c50167eec561b09030f9d6a743956314037559a778",
+      "tester": "controller",
+      "title": "124/F7 import round trip",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 8,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-08.json",
+      "receipt_sha256": "180d6f865f14e939208dbc50f0afcfb23a72d37d74d43e74eace976170346da9",
+      "tester": "controller",
+      "title": "123/F8 Homebrew",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 9,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-09.json",
+      "receipt_sha256": "beefb6a310740d7fdb4478b22601c1fc05e3f4be937e1585c83e7e441b97b1c3",
+      "tester": "controller",
+      "title": "123/F9 inheritance",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 10,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-10.json",
+      "receipt_sha256": "1ff54e56ac6641368674afc6c30c67862a01f7e8a4ced2223af967a9170cde84",
+      "tester": "controller",
+      "title": "121/F10 picker parity",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 11,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-11.json",
+      "receipt_sha256": "e6df9762a35b716fa00da23de6a9cb56eb2f747f8d1ec7775484d068c0660150",
+      "tester": "controller",
+      "title": "126 credential deny",
+      "verdict": "pass"
+    },
+    {
+      "checklist_item": 12,
+      "receipt_path": "docs/acceptance/v0.6.0/evidence/matrix/receipts/item-12.json",
+      "receipt_sha256": "f69f76324318c9b9cc980ad766d626c89ac58da9fa94bc3f43d38b299a156a4c",
+      "tester": "controller",
+      "title": "annex Hermes touch",
+      "verdict": "pass"
+    }
+  ],
+  "recorded_at": "2026-09-04T05:03:00+00:00",
+  "results_document": "docs/acceptance/v0.6.0/results.md",
+  "schema_version": "talaria-v0.6.0-artifact-manifest-v1",
+  "status": "complete"
+}

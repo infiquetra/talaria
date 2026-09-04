@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import ClassVar
 
 from textual import events
@@ -114,8 +115,31 @@ class InspectorFileRow(Static):
         )
 
 
+class InspectorDiagRow(Static):
+    """One relocated seam row (#122), focusable like the task and file rows."""
+
+    can_focus = True
+
+    def __init__(self, line: str) -> None:
+        super().__init__("", markup=False, classes="inspector--diag")
+        self.diag_line = line
+
+    def on_mount(self) -> None:
+        self._refresh_line()
+
+    def on_focus(self) -> None:
+        self._refresh_line()
+
+    def on_blur(self) -> None:
+        self._refresh_line()
+
+    def _refresh_line(self) -> None:
+        gutter = ">" if self.has_focus else " "
+        self.update(literal_text(f"{gutter} {self.diag_line}"))
+
+
 class Inspector(VerticalScroll):
-    """Four inspector sections plus session-only responsive geometry.
+    """Five inspector sections plus session-only responsive geometry.
 
     The app calls :meth:`set_terminal_width` from its screen resize boundary.
     Keeping that input explicit avoids a timer and avoids mistaking this
@@ -162,20 +186,23 @@ class Inspector(VerticalScroll):
         height: auto;
     }
     Inspector .inspector--task,
-    Inspector .inspector--file {
+    Inspector .inspector--file,
+    Inspector .inspector--diag {
         width: 1fr;
         height: 1;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
-    Inspector .inspector--empty {
+    Inspector .inspector--empty,
+    Inspector .inspector--diag-empty {
         width: 1fr;
         height: auto;
         text-wrap: wrap;
     }
     Inspector .inspector--task:focus,
     Inspector .inspector--file:focus,
-    Inspector .inspector--file-selected {
+    Inspector .inspector--file-selected,
+    Inspector .inspector--diag:focus {
         color: $talaria-inspector-heading;
         text-style: bold;
     }
@@ -213,6 +240,8 @@ class Inspector(VerticalScroll):
         self._operation_widget: Static | None = None
         self._task_rows: list[InspectorTaskRow] = []
         self._file_rows: list[InspectorFileRow] = []
+        self._diagnostics: Vertical | None = None
+        self._diag_rows: list[InspectorDiagRow] = []
 
     def compose(self) -> ComposeResult:
         yield Static("TASKS", markup=False, classes="inspector--heading inspector--heading-first")
@@ -227,6 +256,9 @@ class Inspector(VerticalScroll):
         yield Static("OPERATION DETAILS", markup=False, classes="inspector--heading")
         self._operation_widget = Static("", markup=False, classes="inspector--operation")
         yield self._operation_widget
+        yield Static("DIAGNOSTICS", markup=False, classes="inspector--heading")
+        self._diagnostics = Vertical(_diag_empty_row(), classes="inspector--section")
+        yield self._diagnostics
 
     def on_mount(self) -> None:
         self.set_terminal_width(self.app.size.width)
@@ -285,8 +317,40 @@ class Inspector(VerticalScroll):
             else str(self._operation_widget.content)
         )
 
+    @property
+    def diag_texts(self) -> tuple[str, ...]:
+        return tuple(str(row.content) for row in self._diag_rows)
+
+    async def apply_diagnostics(self, lines: Sequence[str]) -> bool:
+        """Replace the diagnostics section from one probe-board snapshot.
+
+        Deliberately outside :meth:`apply`: seam ages advance with no event
+        behind them, so folding diagnostics into the view projection would
+        rebuild every section (and drop inspector focus) each time an age
+        flips. This syncs the one section incrementally, the way
+        :meth:`~talaria.ui.status_region.StatusRegion.apply_seams` does.
+
+        An empty ``lines`` restores the honest empty row rather than a zero —
+        a count here would read as data. Returns False when the section does
+        not exist yet, so the caller can leave the rows where they are visible.
+        """
+        if self._diagnostics is None:
+            return False
+        await self._diagnostics.remove_children()
+        self._diag_rows = [InspectorDiagRow(line) for line in lines]
+        if self._diag_rows:
+            await self._diagnostics.mount(*self._diag_rows)
+        else:
+            await self._diagnostics.mount(_diag_empty_row())
+        return True
+
     async def apply(self, view: InspectorView) -> None:
-        """Replace all four sections from one immutable domain projection."""
+        """Replace the four view sections from one immutable domain projection.
+
+        The diagnostics section is not part of the view — it follows the probe
+        board through :meth:`apply_diagnostics` — so a re-projection never
+        drops relocated rows.
+        """
         self._view = view
         if self._tasks is None or self._context_widget is None or self._files is None:
             return
@@ -414,7 +478,7 @@ class Inspector(VerticalScroll):
             previous.focus()
 
     def _focusable_rows(self) -> list[Widget]:
-        return [*self._task_rows, *self._file_rows]
+        return [*self._task_rows, *self._file_rows, *self._diag_rows]
 
     def _focus_first_row(self) -> None:
         rows = self._focusable_rows()
@@ -444,6 +508,20 @@ def _empty_row() -> Static:
         literal_text(f"  {EMPTY_SECTION}"),
         markup=False,
         classes="inspector--empty",
+    )
+
+
+def _diag_empty_row() -> Static:
+    """The diagnostics section's own honest-empty row (#122).
+
+    The same sentence as :func:`_empty_row` under its own class, because the
+    empty-section suite pins exactly four ``inspector--empty`` rows for the
+    view-driven sections and this probe-driven section is not one of them.
+    """
+    return Static(
+        literal_text(f"  {EMPTY_SECTION}"),
+        markup=False,
+        classes="inspector--diag-empty",
     )
 
 

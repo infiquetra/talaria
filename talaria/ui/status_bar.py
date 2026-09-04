@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, cast
 
 from rich.cells import cell_len, get_character_cell_size
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.widgets import Static
@@ -21,8 +22,9 @@ from textual.widgets import Static
 from talaria.domain.models import ConnectionStatus
 from talaria.domain.projection import StatusPayload
 from talaria.domain.queue import NeedsYouQueue
-from talaria.status.contract import StatusBarSettings, StatusSegmentName
+from talaria.status.contract import ScriptRow, StatusBarSettings, StatusSegmentName
 from talaria.status.local import LocalStatus
+from talaria.status.runner import StatusTickResult
 from talaria.ui.literal import defang
 
 StatusToken = Literal["text", "muted", "separator", "success", "warning", "error", "attention"]
@@ -467,6 +469,40 @@ def _clip_runs(runs: Sequence[StatusRun], width: int) -> tuple[StatusRun, ...]:
     return tuple(clipped)
 
 
+#: The only colors a status script may request for its bar rows: the
+#: bar's own semantic tokens, nothing else. A script asking for ``red``,
+#: ``#ff0000``, or ``[red]`` gets ``"text"`` — the request is contained,
+#: never interpreted, so a script cannot smuggle Rich markup or arbitrary
+#: styling through the color field. (The row *text* is defanged separately
+#: at render time, like every other untrusted string on this surface.)
+_SCRIPT_COLOR_TOKENS: frozenset[str] = frozenset(
+    {"text", "muted", "separator", "success", "warning", "error", "attention"}
+)
+
+
+def script_color_token(color: str) -> StatusToken:
+    """Map a script-requested color onto a bar token, safely.
+
+    Exact token names (case-insensitive, surrounding whitespace ignored)
+    pass through; everything else — color names, hex codes, markup,
+    empty strings — falls back to ``"text"`` rather than failing the row.
+    """
+    normalized = color.strip().lower()
+    if normalized in _SCRIPT_COLOR_TOKENS:
+        return cast(StatusToken, normalized)
+    return "text"
+
+
+def render_script_row(row: ScriptRow, width: int) -> StatusRun:
+    """Render one script-controlled row: literal, width-clipped, safely colored.
+
+    The text goes through the same trailing-ellipsis clip the segments use
+    (which defangs first), so an oversized row ends in ``…`` rather than
+    overflowing, and escape sequences or markup arrive visible, never obeyed.
+    """
+    return StatusRun(_trailing_ellipsis(row.text, width), script_color_token(row.color))
+
+
 def render_status_bar(
     view: BottomStatusBarView,
     width: int,
@@ -506,7 +542,18 @@ def render_status_bar(
 
 
 class BottomStatusBar(Static):
-    """Exactly one true-bottom row, styled only with status-bar tokens."""
+    """The true-bottom surface: script rows above one segment row.
+
+    With no script rows this is exactly one row, as before. Each
+    version-2 tick's script rows stack above the segment row, newest
+    document replacing the previous one; any other tick leaves them
+    untouched, so a failing script falls back to the last good render
+    rather than blanking the bar. Styled only with status-bar tokens.
+
+    ``max-height: 9`` is the rendered-height bound: the runner caps a
+    document at ``ROW_LIMIT`` (8) rows, plus the one segment row. The
+    widget never grows past what one tick can hand it.
+    """
 
     COMPONENT_CLASSES: ClassVar[set[str]] = {
         "bottom-status--text",
@@ -520,9 +567,9 @@ class BottomStatusBar(Static):
 
     DEFAULT_CSS = """
     BottomStatusBar {
-        height: 1;
+        height: auto;
         min-height: 1;
-        max-height: 1;
+        max-height: 9;
         width: 1fr;
         overflow: hidden hidden;
         text-wrap: nowrap;
@@ -581,6 +628,7 @@ class BottomStatusBar(Static):
         super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
         self._view = view
         self._settings = settings if settings is not None else StatusBarSettings()
+        self._script_rows: tuple[ScriptRow, ...] = ()
         self._last_render = StatusBarRender((), ())
 
     @property
@@ -592,6 +640,11 @@ class BottomStatusBar(Static):
         return self._settings
 
     @property
+    def script_rows(self) -> tuple[ScriptRow, ...]:
+        """The last good version-2 script rows (empty when none arrived)."""
+        return self._script_rows
+
+    @property
     def last_render(self) -> StatusBarRender:
         return self._last_render
 
@@ -601,6 +654,22 @@ class BottomStatusBar(Static):
             return
         self._view = view
         self.refresh()
+
+    def apply_script_result(self, result: StatusTickResult) -> None:
+        """Replace the script rows on a version-2 tick; retain otherwise.
+
+        ``script_rows is None`` means this tick carried no script document
+        (a v1 plain-text tick or any failure), and the bar keeps its
+        previous good render — that retention *is* the fallback. An
+        explicit empty tuple (``"rows": []``) clears the script rows to
+        the segment row alone, which is a good render, not a blank bar.
+        """
+        if result.script_rows is None or result.script_rows == self._script_rows:
+            return
+        self._script_rows = result.script_rows
+        # Layout, not just repaint: the row count changed, so the auto
+        # height must be recomputed or the new rows never get a region.
+        self.refresh(layout=True)
 
     def toggle_segment(self, segment: str) -> str | None:
         """Apply the session-only ``/bar`` toggle; no configuration is written."""
@@ -614,13 +683,24 @@ class BottomStatusBar(Static):
         self.refresh()
 
     def render(self) -> Text:
-        rendered = render_status_bar(self._view, self.size.width, self._settings)
+        width = self.size.width
+        rendered = render_status_bar(self._view, width, self._settings)
         self._last_render = rendered
-        parts = [
+        parts: list[str | tuple[str, Style]] = []
+        for row in self._script_rows:
+            run = render_script_row(row, width)
+            parts.append(
+                (
+                    run.text,
+                    self.get_component_rich_style(self._COMPONENT_FOR_TOKEN[run.token]),
+                )
+            )
+            parts.append("\n")
+        parts.extend(
             (
                 run.text,
                 self.get_component_rich_style(self._COMPONENT_FOR_TOKEN[run.token]),
             )
             for run in rendered.runs
-        ]
+        )
         return Text.assemble(*parts, no_wrap=True, overflow="ellipsis", end="")

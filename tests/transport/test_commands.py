@@ -861,6 +861,32 @@ async def test_a_refused_command_is_named_and_the_text_is_kept(
         await app.shutdown_sources()
 
 
+@pytest.mark.asyncio
+async def test_a_model_refusal_is_reported_honestly(
+    command_gateway: StubGateway,
+) -> None:
+    """U1 (#119) established the 4018 is gateway-issued, so it is surfaced as-is.
+
+    ``/model`` refused on both legs is the gateway saying the command did not
+    run — Talaria writes down that refusal with the command named, keeps the
+    text for a retry, and invents no method and no warning of its own.
+    """
+    app, _source = live_app(command_gateway)
+    async with app.run_test(size=SCREEN) as pilot:
+        await ready(command_gateway, app, pilot)
+        await run_command(app, pilot, "/model")
+
+        assert sent(command_gateway, SLASH_EXEC_METHOD) == [
+            {"command": "model", "session_id": "s1"}
+        ]
+        assert sent(command_gateway, DISPATCH_METHOD) == [
+            {"name": "model", "arg": "", "session_id": "s1"}
+        ]
+        assert "not a quick/plugin/bundle/skill command" in transcript_text(app)
+        assert app.composer.text == "/model"
+        await app.shutdown_sources()
+
+
 # ── scenario 3: the local set never reaches the socket ───────────────────
 
 

@@ -236,10 +236,13 @@ def test_v050_release_notes_describe_the_shipped_upgrade_surfaces() -> None:
     """Release notes cover each reader-visible v0.5.0 addition against code-owned names."""
     document = _V050_RELEASE_NOTES_PATH.read_text(encoding="utf-8")
 
-    assert f"# Talaria v{__version__}" in document
+    assert "# Talaria v0.5.0" in document
     assert "v0.4.0" in document
-    assert len(BUILTIN_THEMES) == 4
-    for theme in BUILTIN_THEMES:
+    # Homebrew shipped in v0.6.0, after these notes — the four v0.5.0 themes
+    # are still every theme these notes may name.
+    v050_themes = [spec for spec in BUILTIN_THEMES if spec.slug != "homebrew"]
+    assert len(v050_themes) == 4
+    for theme in v050_themes:
         assert theme.name in document
 
     for required in (
@@ -297,5 +300,5 @@ def test_v050_is_a_dated_released_section_with_a_tag_reference() -> None:
         "[0.5.0]: https://github.com/infiquetra/talaria/releases/tag/v0.5.0" in changelog
     )
     assert (
-        "[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.5.0...HEAD" in changelog
+        "[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.0...HEAD" in changelog
     )
