@@ -902,6 +902,13 @@ def test_case_varied_page_urls_convert_on_scheme_and_host_only() -> None:
 async def test_theme_fetch_renders_appearance_lead_and_full_report(
     tmp_path: Path,
 ) -> None:
+    """The full report must be rendered, not just stored.
+
+    The composer notice is one ellipsized row, so this test sweeps the
+    scrollable transcript and asserts the confirmation, the appearance
+    lead, a fallback line, and a warning line each RENDER on screen, in
+    that order. Backing-store text alone proves nothing about visibility.
+    """
     config_dir = tmp_path / "config"
     raw_url = "https://example.invalid/warnings-dark.json"
     payload = (FIXTURES / "unsupported-dark.json").read_bytes()
@@ -912,27 +919,42 @@ async def test_theme_fetch_renders_appearance_lead_and_full_report(
         launch_cwd=tmp_path,
         marketplace_transport=transport,
     )
+    # Short line-start fragments: transcript rows wrap, so only a fragment
+    # at the start of its row is guaranteed contiguous on screen.
+    markers = {
+        "confirmation": "theme 'warnings-dark' fetched:",
+        "counts": "2 source tokens, 56 fallbacks,",
+        "lead": "Appearance: 56 tokens",
+        "fallback": "fallback: talaria.surface",
+        "warning": "warning: root.include",
+    }
     async with app.run_test(size=(80, 24)) as pilot:
         await _submit_theme_command(
             app, pilot, f"/theme fetch {raw_url} --name warnings-dark"
         )
         assert app.theme == "warnings-dark"
         assert app.session_theme_slug == "warnings-dark"
-        notice = app.composer.notice
-        assert (
-            "theme 'warnings-dark' fetched: 2 source tokens, "
-            "56 fallbacks, 19 warnings" in notice
+        pane = app.transcript
+        bottom = int(pane.max_scroll_y)
+        positions = sorted(set([0] + list(range(0, bottom + 1, 8)) + [bottom]))
+        seen: dict[str, int] = {}
+        for position in positions:
+            pane.scroll_to(y=position, animate=False, immediate=True)
+            await pilot.pause()
+            frame = screen_text(app)
+            for key, fragment in markers.items():
+                if key not in seen and fragment in frame:
+                    seen[key] = position
+        assert set(seen) == set(markers), (
+            "report lines never rendered",
+            sorted(set(markers) - set(seen)),
         )
-        assert "Appearance: 56 tokens use Refined Default values" in notice
-        assert "fallback: talaria.surface <- Refined Default" in notice
         assert (
-            "warning: root.include is unsupported; "
-            "external theme files are not read" in notice
-        )
-        lead_at = notice.index("Appearance: 56 tokens")
-        fallback_at = notice.index("fallback: talaria.")
-        warning_at = notice.index("warning: root.include")
-        assert lead_at < fallback_at < warning_at
+            seen["confirmation"]
+            <= seen["lead"]
+            <= seen["fallback"]
+            <= seen["warning"]
+        ), seen
         await app.shutdown_sources()
 
 
@@ -1452,8 +1474,14 @@ async def test_theme_reload_reimports_edited_source_without_restart(
         resolved = app.theme_registry.resolve("solar-flare")
         assert resolved.tokens["talaria.canvas"] == "#112233"
         assert "reloaded" in screen_text(app)
-        # Reload is safe mid-turn: session state survives the re-resolve.
-        assert tuple(entry.text for entry in app.state.transcript) == before_texts
+        # Reload is safe mid-turn: session state survives the re-resolve,
+        # and the transcript gains exactly the reload report — item 4
+        # holds for reload the same way it holds for fetch.
+        after_texts = tuple(entry.text for entry in app.state.transcript)
+        assert after_texts[: len(before_texts)] == before_texts
+        assert len(after_texts) == len(before_texts) + 1
+        assert "theme 'solar-flare' reloaded:" in after_texts[-1]
+        assert "Appearance: 18 tokens use Refined Default values" in after_texts[-1]
         assert app.session_theme_slug == "solar-flare"
         await app.shutdown_sources()
 

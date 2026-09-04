@@ -62,6 +62,7 @@ from talaria.config import (
 from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.commands import (
     CATALOG_METHOD,
+    COMMAND_OUTPUT_CLIP,
     DISPATCH_METHOD,
     LIVE_HAS_NO_REPLAY_CLOCK,
     PASTE_COLLAPSE_METHOD,
@@ -5679,11 +5680,21 @@ class TalariaApp(App[None]):
             f"{report.fallback_count} fallbacks, "
             f"{report.unsupported_count} warnings"
         )
-        # Item 4 holds in the app too: the confirmation keeps the
-        # live-application fact, then the appearance lead and the complete
-        # ordered report follow so the operator sees which fallbacks changed
-        # the look and can reach every detail.
-        self._notice(confirmation + "\n" + "\n".join(report.lines()[1:]))
+        # Item 4 holds in the app too, on the two surfaces that can hold it.
+        # The composer notice is one ellipsized row, so it keeps the concise
+        # confirmation plus a pointer. The complete ordered report — lead,
+        # fallbacks, composites, warnings — goes into the scrollable
+        # transcript as a command result, bounded once at COMMAND_OUTPUT_CLIP
+        # with a marked truncation like every other slash-command output, so
+        # one import cannot displace the conversation around it.
+        detail = confirmation + "\n" + "\n".join(report.lines()[1:])
+        if len(detail) > COMMAND_OUTPUT_CLIP:
+            detail = detail[:COMMAND_OUTPUT_CLIP] + "…"
+        self.state = record_command_result(
+            self.state, detail, at=self.state.last_observed_at
+        )
+        self._notice(confirmation + " — full report in the transcript")
+        self._dirty = True
 
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.
