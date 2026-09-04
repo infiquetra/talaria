@@ -4,6 +4,27 @@
 
 ## 2026-09-04
 
+### A seam nobody calls after mount can secretly be an initializer — wiring it live turns its side effects into behavior
+
+**Evidence.** Issue #141's bar-state rule drives `TranscriptPane.set_show_left_offset` from the
+active theme; before that, only the constructor ever called it. The method's body carried three
+first-time initializations (`peak_descendants = 0`, a fresh `_labelled_blocks` WeakSet,
+`_stable_anchor = None`) placed there because `__init__` always calls the method exactly once.
+Landing the theme wiring would have made every theme switch reset the descendant high-water mark,
+discard the labelled-block memo, and drop the stable scroll anchor — a behavior change no
+pre-wiring test could see, because the extra calls did not exist yet. The initializations moved
+to `__init__` in the same commit as the wiring, before the method's call count grew past one.
+
+**Mechanism.** A method called from exactly one place accumulates the caller's setup work
+because the two bodies run as one in practice. The invariant "runs once" lives in the call
+graph, not in the method, so nothing inside the method guards it — and a new caller converts
+first-time setup into per-call side effects.
+
+**Generalizable rule.** Before wiring an existing method into a new runtime path, read its whole
+body for side effects that were only ever meant to run once, and move first-time initializations
+into the constructor in the same commit as the new wiring — not after the first report of a
+reset counter or a lost anchor.
+
 ### Any edit under scripts/acceptance permanently reds the v0.5.0 receipt re-verification test on that branch
 
 **Evidence.** The version-agnostic release path (branch `work/060-release-path`) adds

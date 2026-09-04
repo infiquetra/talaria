@@ -372,8 +372,7 @@ Wide session at 142 columns, with the inspector closed:
 ┌─ Talaria · live · default/session-7 ───────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │┃ > You  [operator]                                                                                                                         │
 │┃   Please inspect the current change and explain the failing check.                                                                        │
-│┃ A Talaria  [assistant]                                                                                                                    │
-│┃   The status interval is negative, so startup must reject it visibly and retain the documented default.                                   │
+│┃ The status interval is negative, so startup must reject it visibly and retain the documented default.  [assistant]                        │
 │┃ · Reasoning  [reasoning]                                                                                                                  │
 │┃   I am checking the config boundary before changing the rendering path.                                                                   │
 │┃ $ read talaria/config.py  [activity]                                                                                                      │
@@ -752,7 +751,7 @@ In the bottom bar's task_progress segment, the literal !N queue-attention marker
 
 - Palette, dialog, agent, inspector, and file-list rows reserve a one-column prefix. Focused is > and unfocused is a space. Color and bold are secondary cues.
 - Prompt controls keep their current focus-within tint and add the same reserved > marker on the focused row.
-- Transcript first rows identify groups without color: > You, A Talaria, . Reasoning, $ Tool/Subagent, - Session, and ! Error. The labels occupy the entry's existing first row; they do not insert a heading row.
+- Transcript first rows identify groups without color: > You, . Reasoning, $ Tool/Subagent, - Session, and ! Error. The labels occupy the entry's existing first row; they do not insert a heading row. The assistant group carries no fixed label (#141): the removed `A Talaria` was a fixed client label, not model text or a resolved profile identity, and the group stays identifiable without color through its gutter stripe and the spacing around its entries. No replacement identity label takes its place, and response content that happens to mention the same words is untouched.
 - Diff lines retain +, -, and @@. Read only remains in the viewer header and key-hint line.
 
 ## Height-invariant focus and caret

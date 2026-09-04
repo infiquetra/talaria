@@ -202,7 +202,9 @@ reserved.
 Talaria writes `<config>/themes/<slug>.json` only after parsing and reporting
 complete successfully. The stored object contains `schema_version` with the
 value `talaria-theme-v1`, `dark`, `name`, `slug`, and the complete `tokens`
-mapping. The normative schema is
+mapping, and optionally the sparse per-category `groups` layer and the
+`transcript_bar_visible` bar-state flag (absent means the transcript's left
+offset column paints). The normative schema is
 [`stored-theme.schema.json`](stored-theme.schema.json). Keys are sorted, values
 are opaque uppercase `#RRGGBB`, and the file has exactly one trailing newline.
 A later import of the same slug atomically replaces that path. If the path is a

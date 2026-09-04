@@ -94,6 +94,7 @@ from talaria.ui.blocks import EntryMarkdown, parser_factory
 from talaria.ui.literal import defang, literal_text
 from talaria.ui.markdown import inline_markdown
 from talaria.ui.motion import STANDARD_MOTION, MotionPolicy
+from talaria.ui.theme import ThemeRegistry
 
 #: KTD1(a)'s tier-two line cap and the wrapped-rows trigger threshold. The
 #: name and the number are unchanged from v0.1 (ADR-0005 decision 3, amended
@@ -272,9 +273,12 @@ def kind_category(kind: TranscriptKind) -> str:
 #: Redundant first-row identity required by the visual specification.  These
 #: labels are presentation only: :attr:`TranscriptLine.source` and every
 #: :class:`_MountedUnit` keep the domain's original, unwelded content.
+#: The assistant group carries no entry (#141, item 18): ``A Talaria`` was a
+#: fixed client label, not model text or a resolved profile identity, and the
+#: group stays identifiable without color through its gutter stripe and the
+#: spacing around its entries, so no replacement label takes its place.
 _GROUP_LABELS: Final[dict[KindGroup, str]] = {
     "operator": "> You",
-    "assistant": "A Talaria",
     "reasoning": ". Reasoning",
     "activity": "$ Tool/Subagent",
     "session-record": "- Session",
@@ -525,7 +529,11 @@ def _line_renderable(
 
     if not first_in_entry or kind is None:
         return rendered
-    label = _GROUP_LABELS[kind_group(kind)]
+    label = _GROUP_LABELS.get(kind_group(kind))
+    if label is None:
+        # The assistant group has no fixed label (#141): its first row is
+        # the response's own content, verbatim.
+        return rendered
     labelled = Text(label, style="bold", no_wrap=no_wrap, end="")
     if body:
         labelled.append("  ")
@@ -827,6 +835,19 @@ class TranscriptPane(VerticalScroll):
         #: last caught up to (CR6).
         self.last_applied_entries: EntryScopedView | None = None
         self._pending_removed_height = 0
+        #: High-water mark of :attr:`descendant_count` (U6). Tracked
+        #: separately from :attr:`peak_mounted` because the two ceilings
+        #: KTD1(a) states are different budgets over different counts: a
+        #: single table can mount hundreds of per-cell descendants from one
+        #: top-level ``mounted_count`` entry, so a peak over the top-level
+        #: count alone cannot see that spike. Initialized here rather than
+        #: in :meth:`set_show_left_offset` because the bar-state rule
+        #: (#141) calls that seam on every theme change, and a toggle must
+        #: not discard the high-water mark, the labelled-block memo, or the
+        #: stable anchor it is given.
+        self.peak_descendants = 0
+        self._labelled_blocks: weakref.WeakSet[EntryMarkdown] = weakref.WeakSet()
+        self._stable_anchor: TranscriptAnchor | None = None
 
     @property
     def show_left_offset(self) -> bool:
@@ -840,22 +861,41 @@ class TranscriptPane(VerticalScroll):
         its reserved column to the content width; restoring it re-reserves
         the column. Either direction reflows wrapped rows instead of
         clipping them. Safe before mount (the class is recorded and
-        applied when the widget mounts) and after.
+        applied when the widget mounts) and after. The bar-state rule
+        (#141) drives this from the active theme, so a call changes only
+        the offset state — bookkeeping such as the descendant high-water
+        mark is initialized once in :meth:`__init__` and survives toggles.
         """
         self._show_left_offset = show
         if show:
             self.remove_class("transcript--no-offset")
         else:
             self.add_class("transcript--no-offset")
-        #: High-water mark of :attr:`descendant_count` (U6). Tracked
-        #: separately from :attr:`peak_mounted` because the two ceilings
-        #: KTD1(a) states are different budgets over different counts: a
-        #: single table can mount hundreds of per-cell descendants from one
-        #: top-level ``mounted_count`` entry, so a peak over the top-level
-        #: count alone cannot see that spike.
-        self.peak_descendants = 0
-        self._labelled_blocks: weakref.WeakSet[EntryMarkdown] = weakref.WeakSet()
-        self._stable_anchor: TranscriptAnchor | None = None
+
+    def on_mount(self) -> None:
+        #: The bar-state rule (#141) applies the active theme's bar
+        #: visibility at mount and on every theme change, through the
+        #: framework's own change signal — the same seam the app uses to
+        #: restore its layout anchor, so a picker preview or a same-slug
+        #: reload republishes it without any app.py edit.
+        self._apply_theme_bar_state()
+        self.app.theme_changed_signal.subscribe(self, self._on_theme_changed)
+
+    def _on_theme_changed(self, _theme: object) -> None:
+        self._apply_theme_bar_state()
+
+    def _apply_theme_bar_state(self) -> None:
+        """Paint or reclaim the offset column per the active theme.
+
+        Only a TalariaApp carries a theme registry; a pane mounted in any
+        other app (a test harness) keeps the constructor's choice. An
+        unknown slug keeps the column visible — the rule degrades to the
+        layout every theme has always had, never a guess.
+        """
+        registry: ThemeRegistry | None = getattr(self.app, "theme_registry", None)
+        if registry is None:
+            return
+        self.set_show_left_offset(registry.transcript_bar_visible(self.app.theme))
 
     # ── measurement surface ──────────────────────────────────────────────
 
@@ -1682,7 +1722,11 @@ class TranscriptPane(VerticalScroll):
             widget = unit.block
             if widget is None or widget in self._labelled_blocks or not widget.is_mounted:
                 continue
-            label = _GROUP_LABELS[kind_group(unit.entry_kind or "assistant")]
+            label = _GROUP_LABELS.get(kind_group(unit.entry_kind or "assistant"))
+            if label is None:
+                # The assistant group carries no fixed label (#141): the
+                # document's own first block stays exactly as parsed.
+                continue
             prefix = Content(
                 f"{label}  ",
                 spans=[Span(0, len(label), Style(bold=True))],

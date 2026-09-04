@@ -11,7 +11,11 @@ from talaria.themes.builtins import BUILTIN_THEMES
 
 STORED_THEME_SCHEMA_VERSION = "talaria-theme-v1"
 _REQUIRED_FIELDS = frozenset({"dark", "name", "slug", "tokens"})
-_ALLOWED_FIELDS = _REQUIRED_FIELDS | {"schema_version", "groups"}
+_ALLOWED_FIELDS = _REQUIRED_FIELDS | {
+    "schema_version",
+    "groups",
+    "transcript_bar_visible",
+}
 
 
 class StoredThemeError(ValueError):
@@ -35,6 +39,7 @@ def serialize_user_theme(spec: ThemeSpec) -> bytes:
         "schema_version": STORED_THEME_SCHEMA_VERSION,
         "slug": spec.slug,
         "tokens": dict(spec.tokens),
+        "transcript_bar_visible": spec.transcript_bar_visible,
     }
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
@@ -98,11 +103,21 @@ def load_user_theme_spec(path: Path) -> ThemeSpec:
             f"{path} stored user theme groups must map categories to "
             "token-name/string-or-null objects"
         )
+    transcript_bar_visible = payload.get("transcript_bar_visible", True)
+    if not isinstance(transcript_bar_visible, bool):
+        raise StoredThemeError(
+            f"{path} stored user theme transcript_bar_visible must be a boolean"
+        )
     if path.stem != slug:
         raise StoredThemeError(f"{path} filename does not match stored slug {slug!r}")
     try:
         spec = ThemeSpec(
-            slug=slug, name=name, dark=dark, tokens=tokens, groups=raw_groups
+            slug=slug,
+            name=name,
+            dark=dark,
+            tokens=tokens,
+            groups=raw_groups,
+            transcript_bar_visible=transcript_bar_visible,
         )
     except ValueError as exc:
         raise StoredThemeError(
