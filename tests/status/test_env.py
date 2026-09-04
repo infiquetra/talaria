@@ -6,7 +6,10 @@ a live child's actual environment (the doc's own "asserted, not filtered").
 
 from __future__ import annotations
 
+import pytest
+
 from talaria.status.contract import (
+    DENIED_PROVIDER_KEYS,
     FORWARDED_TALARIA_VARS,
     GATEWAY_URL_ENV_VAR,
     build_child_env,
@@ -244,3 +247,73 @@ def test_stripping_userinfo_keeps_the_port_and_ipv6_brackets() -> None:
         allowlist=(),
     )
     assert child6["TALARIA_GATEWAY_URL"] == "ws://[::1]:8765/api/ws"
+
+
+# ── T1/U2: the four-key deny proof ────────────────────────────────────────
+#
+# Every name and value below is synthetic (R4): the names are the documented
+# provider key names, the values are obvious fakes. Nothing here ever held a
+# real credential.
+
+
+@pytest.mark.parametrize("name", sorted(DENIED_PROVIDER_KEYS))
+def test_provider_credential_names_never_forward_even_when_allowlisted(
+    name: str,
+) -> None:
+    """Deny outranks the allowlist for each of the four provider keys."""
+    env = build_child_env(
+        parent_env=_parent_env(**{name: f"synthetic-{name.lower()}-test-value"}),
+        allowlist=(name,),
+    )
+    assert name not in env
+
+
+def test_all_four_provider_keys_denied_together_while_benign_forwards() -> None:
+    """The boundary holds across loops, and the allowlist still works."""
+    names = sorted(DENIED_PROVIDER_KEYS)
+    parent = _parent_env(MY_STATUS_OK="staging")
+    parent.update({name: f"synthetic-{name.lower()}-test-value" for name in names})
+    env = build_child_env(parent_env=parent, allowlist=tuple(names) + ("MY_STATUS_OK",))
+
+    for name in names:
+        assert name not in env
+    assert not any("synthetic-" in value for value in env.values())
+    assert env["MY_STATUS_OK"] == "staging"
+
+
+def test_talaria_prefixed_credential_name_denied_even_when_allowlisted() -> None:
+    """A ``TALARIA_*`` prefix is not a pass, allowlisted or not."""
+    env = build_child_env(
+        parent_env=_parent_env(TALARIA_API_TOKEN="synthetic-test-value"),
+        allowlist=("TALARIA_API_TOKEN",),
+    )
+    assert "TALARIA_API_TOKEN" not in env
+
+
+# ── #125 U4: trust and filtering compose in one environment ──────────────
+#
+# Every name and value below is synthetic (R4): the names are the
+# documented provider key names, the values are obvious fakes. Nothing
+# here ever held a real credential.
+
+
+def test_trust_and_filtering_compose_in_one_child_environment() -> None:
+    """R5 conjunctive at the env layer: in a single construction, the
+    operator's benign allowlist entry forwards, all four allowlisted
+    provider keys stay denied, and the gateway URL arrives sanitized."""
+    names = sorted(DENIED_PROVIDER_KEYS)
+    parent = _parent_env(
+        MY_STATUS_OK="staging",
+        TALARIA_GATEWAY_URL="ws://127.0.0.1:9119/api/ws?token=synthetic-test-token",
+    )
+    parent.update({name: f"synthetic-{name.lower()}-test-value" for name in names})
+    env = build_child_env(
+        parent_env=parent,
+        allowlist=tuple(names) + ("MY_STATUS_OK", GATEWAY_URL_ENV_VAR),
+    )
+
+    assert env["MY_STATUS_OK"] == "staging"
+    assert env[GATEWAY_URL_ENV_VAR] == "ws://127.0.0.1:9119/api/ws"
+    for name in names:
+        assert name not in env
+    assert not any("synthetic-" in value for value in env.values())

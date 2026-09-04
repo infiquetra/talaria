@@ -2,6 +2,79 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-04
+
+### Any edit under scripts/acceptance permanently reds the v0.5.0 receipt re-verification test on that branch
+
+**Evidence.** The version-agnostic release path (branch `work/060-release-path`) adds
+`scripts/acceptance/versioning.py` and extends the receipt validators, as specified. The full
+suite then fails `scripts/acceptance/test_v050_harness.py::test_committed_acceptance_receipts_match_current_harness`
+with 42 `incompatible harness_commit: acceptance harness files differ from the receipt harness`
+errors: `_harness_commit_matches` (`scripts/acceptance/v050_receipt.py:602`) accepts the current
+checkout only when `git diff --quiet <receipt-commit> HEAD -- scripts/acceptance` is clean, so
+every current or future harness edit — however additive — invalidates re-verification of the
+committed v0.5.0 receipts at that HEAD. The v0.6.0 evidence itself is unaffected (12/12 pass,
+gate id `v0-6-daily-driver`): the release workflow verifies only the manifest resolved from the
+tag, and the candidate check scopes to `talaria`, `pyproject.toml`, `uv.lock`, `src`, so
+docs-only commits keep it green.
+
+**Mechanism.** The ancestry rule conflates "the harness that recorded this receipt" with "the
+harness directory at HEAD". That is the correct conservatism for re-verifying old receipts, but
+it makes the v0.5.0 re-verification test a one-way gate: it can only ever pass on branches that
+never touch the harness again. A version bump trips the sibling tripwire the same way — the
+`tests/docs/test_v050_release_docs.py` pins assert the live `__version__` against v0.5.0-era
+docs, so any 0.6.0 tree fails them until the release-prep owner updates the install guide and
+release notes.
+
+**Generalizable rule.** When a test pins committed evidence against the live tree, name the
+edit scope that reds it in the test's own docstring, and route the expected red to the owning
+branch instead of fixing it locally: receipt immutability means the red is the control working,
+not a regression.
+
+## 2026-09-03
+
+### A same-value-silent reactive needs an explicit repaint call after a same-key spec swap
+
+**Evidence.** Issue #124's marketplace import re-registered a rebuilt theme under the
+currently-active slug and assigned the unchanged slug back. The live screen kept painting the
+old variables: Textual's `theme` reactive only wakes `_watch_theme` on a slug change, so the
+new Theme object sat in the registry while nothing repainted. The tester proved it live
+(old canvas 43 fills, new 0), and the repair (`_repaint_theme_if_changed` at
+`talaria/ui/app.py`, running the framework's own `_invalidate_css` + scheduled `refresh_css` +
+`theme_changed_signal.publish` tail) flipped the metrics exactly (new 43, old 0). Pinned by
+`tests/ui/test_theme_import.py::test_same_slug_reload_repaints_the_live_screen` plus a
+no-misfire gate test for identical reloads.
+
+**Mechanism.** A same-value-silent reactive conflates "assigned the same key" with "nothing
+changed", which is correct for selection state but wrong for registry content keyed by that
+state. The fix is not a louder reactive (`always_update`) or a mutate-and-restore round trip:
+it is a value-compared (`Theme.__eq__`) explicit call of the framework's own apply steps,
+fired only on a real same-slug difference.
+
+**Generalizable rule.** Whenever a registry is keyed by a reactive value, a same-key content
+swap needs its own change signal — write the repaint test first (asserting the new content is
+observable), watch it fail through the silent reactive, then add the explicit apply.
+
+### A lenient theme layer needs a test that feeds it null, not just garbage
+
+**Evidence.** Issue #123's per-category groups layer is deliberately lenient: unknown categories,
+unknown tokens, nulls, and malformed colors all fall through at resolution. The first
+implementation treated only unknown keys as silent and counted JSON null as malformed, which was
+wrong per the contract's "nulls fall through" clause — and the suite caught it before any other
+check ran: `tests/themes/test_inheritance.py::test_empty_groups_unknown_keys_and_nulls_fall_through_silently`
+failed with `ignores malformed group colors: assistant.talaria.text` where it expected only the
+fill notice (`talaria/ui/theme.py`, `_category_group_roles`).
+
+**Mechanism.** A validity predicate (`is_opaque_hex_color`) answers "is this a color" with False
+for both "present but wrong" and "explicitly unset", and the caller mapped False to one outcome
+(malformed). Null is a third state with its own contract meaning — the sparse layer's spelling of
+"unset" — so it needs its own branch before the predicate ever runs, the same way the stored-theme
+reader shape-checks groups (`string-or-null`) separately from color validity.
+
+**Generalizable rule.** When a contract names N fall-through causes, write one test input per cause
+in a single test — the null input caught a conflation that unknown-key and malformed inputs alone
+could never distinguish.
+
 ## 2026-09-01
 
 ### Receipts that bind to a harness commit forbid squash-merging the release branch

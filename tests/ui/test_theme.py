@@ -18,6 +18,7 @@ from talaria.themes.builtins import BUILTIN_THEMES, REFINED_DEFAULT
 from talaria.themes.storage import load_user_theme_specs
 from talaria.ui.theme import (
     BUILTIN_THEME_REGISTRY,
+    DEFAULT_THEME_SLUG,
     ThemeRegistry,
     contrast_ratio,
     textual_variable_name,
@@ -44,6 +45,13 @@ BUILTIN_NAMES = (
     "Neutral Dark",
     "Accessible High Contrast",
 )
+
+#: The v0.5.0 visual specification pins exactly these four themes. Homebrew
+#: (issue #123) is the fifth built-in beside them: it is measured against
+#: the same floors but pinned in ``tests/themes/test_homebrew.py``, never by
+#: the release specification's tables.
+ORIGINAL_BUILTIN_NAMES = BUILTIN_NAMES
+HOMEBREW_NAME = "Homebrew"
 
 BRIDGES: Mapping[str, tuple[str, ...]] = {
     "talaria.canvas": ("background",),
@@ -97,9 +105,10 @@ def test_the_registry_is_the_exact_58_token_visual_specification() -> None:
     expected = _visual_spec_values()
 
     assert len(THEME_TOKENS) == 58
-    assert tuple(spec.name for spec in BUILTIN_THEMES) == BUILTIN_NAMES
+    originals = [spec for spec in BUILTIN_THEMES if spec.name in ORIGINAL_BUILTIN_NAMES]
+    assert tuple(spec.name for spec in originals) == ORIGINAL_BUILTIN_NAMES
     assert tuple(expected[BUILTIN_NAMES[0]]) == THEME_TOKENS
-    for spec in BUILTIN_THEMES:
+    for spec in originals:
         assert dict(spec.tokens) == expected[spec.name]
 
 
@@ -291,7 +300,9 @@ def test_all_sixteen_status_semantic_pairs_match_the_measured_ratios() -> None:
             )
             for spec in BUILTIN_THEMES
         )
-        assert observed == ratios
+        # The release specification measures the original four; Homebrew
+        # holds the same floor without rewriting the release tables.
+        assert observed[:4] == ratios
         assert min(observed) >= 4.5
 
 
@@ -450,13 +461,14 @@ def test_the_complete_contrast_matrix_matches_the_measured_visual_specification(
             round(contrast_ratio(spec.tokens[foreground], spec.tokens[background]), 2)
             for spec in BUILTIN_THEMES
         )
-        assert observed == expected[pair], pair
+        assert observed[:4] == expected[pair], pair
         assert min(observed) >= minimum, pair
 
+    reachable = {spec.name: spec for spec in BUILTIN_THEMES}
     accessible = min(
         contrast_ratio(
-            BUILTIN_THEMES[-1].tokens[foreground],
-            BUILTIN_THEMES[-1].tokens[background],
+            reachable["Accessible High Contrast"].tokens[foreground],
+            reachable["Accessible High Contrast"].tokens[background],
         )
         for foreground, background in pairs.values()
     )
@@ -464,7 +476,7 @@ def test_the_complete_contrast_matrix_matches_the_measured_visual_specification(
 
 
 @pytest.mark.asyncio
-async def test_theme_picker_renders_four_rows_previews_and_escape_restores() -> None:
+async def test_theme_picker_renders_five_rows_previews_and_escape_restores() -> None:
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(80, 24)) as pilot:
         BUILTIN_THEME_REGISTRY.register(app)
@@ -478,11 +490,13 @@ async def test_theme_picker_renders_four_rows_previews_and_escape_restores() -> 
 
         rendered = screen_text(app)
         assert all(name in rendered for name in BUILTIN_NAMES)
+        assert HOMEBREW_NAME in rendered
         assert list(app.palette.row_texts) == [
             "> Refined Default",
             "  Dark Green Terminal",
             "  Neutral Dark",
             "  Accessible High Contrast",
+            "  Homebrew",
         ]
 
         await pilot.press("down")
@@ -616,6 +630,249 @@ async def test_theme_save_command_writes_user_default_and_explicit_repository(
 
         repository_path = repository / ".talaria" / "config.toml"
         assert repository_path.read_text(encoding="utf-8") == (
+            '[theme]\nname = "neutral-dark"\n'
+        )
+        await app.shutdown_sources()
+
+
+def test_homebrew_is_selectable_but_never_startup_selected() -> None:
+    """Issue #123 U4: available by default, never the default."""
+    assert DEFAULT_THEME_SLUG == "refined-default"
+
+    selected = BUILTIN_THEME_REGISTRY.resolve("homebrew")
+    assert selected.slug == "homebrew"
+    assert selected.notices == ()
+
+    assert BUILTIN_THEME_REGISTRY.resolve("not-installed").slug == "refined-default"
+    assert BUILTIN_THEME_REGISTRY.resolve(7).slug == "refined-default"
+    assert BUILTIN_THEME_REGISTRY.default.slug == "refined-default"
+
+
+@pytest.mark.asyncio
+async def test_startup_with_homebrew_configured_selects_homebrew() -> None:
+    """Selectability, end to end: an operator who configures it gets it."""
+    app, _ = paused_app([event("gateway.ready", {})], theme_name="homebrew")
+
+    assert app.theme == "homebrew"
+    assert app.session_theme_slug is None
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await app.shutdown_sources()
+
+
+def test_resolve_layers_host_palette_between_default_and_overrides() -> None:
+    """The single funnel order: defaults, then host, then groups, then tokens."""
+    partial = ThemeSpec(
+        slug="host-layered",
+        name="Host Layered",
+        dark=True,
+        tokens={"talaria.text": "#EEEEEE"},
+    )
+    registry = ThemeRegistry((REFINED_DEFAULT, partial))
+
+    resolved = registry.resolve(
+        "host-layered",
+        host_palette={
+            "talaria.text": "#DDDDDD",
+            "talaria.canvas": "#101010",
+            "talaria.transcript.operator": "#333333",
+        },
+    )
+
+    # The override beats the host for the text ...
+    assert resolved.tokens["talaria.text"] == "#EEEEEE"
+    # ... the host beats the default for the canvas ...
+    assert resolved.tokens["talaria.canvas"] == "#101010"
+    # ... and the host never reaches Talaria-semantic tokens.
+    assert (
+        resolved.tokens["talaria.transcript.operator"]
+        == REFINED_DEFAULT.tokens["talaria.transcript.operator"]
+    )
+    assert any("inherited host terminal colors" in notice for notice in resolved.notices)
+
+
+def test_host_values_that_break_readability_revert_with_a_notice() -> None:
+    """Decision C: readability survives inheritance; overrides never revert."""
+    partial = ThemeSpec(
+        slug="host-unreadable",
+        name="Host Unreadable",
+        dark=True,
+        tokens={},
+    )
+    registry = ThemeRegistry((REFINED_DEFAULT, partial))
+
+    resolved = registry.resolve(
+        "host-unreadable",
+        host_palette={"talaria.text": "#F6F8FA", "talaria.canvas": "#F6F8FA"},
+    )
+
+    assert resolved.tokens["talaria.text"] == REFINED_DEFAULT.tokens["talaria.text"]
+    assert resolved.tokens["talaria.canvas"] == REFINED_DEFAULT.tokens[
+        "talaria.canvas"
+    ]
+    assert any("keeps the readability floor" in notice for notice in resolved.notices)
+
+
+def test_an_explicit_override_survives_a_failing_host_pair() -> None:
+    """Only host-adopted tokens revert — an override stands even unreadable."""
+    partial = ThemeSpec(
+        slug="host-override-stands",
+        name="Host Override Stands",
+        dark=True,
+        tokens={"talaria.text": "#F6F8FA"},
+    )
+    registry = ThemeRegistry((REFINED_DEFAULT, partial))
+
+    resolved = registry.resolve(
+        "host-override-stands",
+        host_palette={"talaria.canvas": "#F6F8FA"},
+    )
+
+    assert resolved.tokens["talaria.text"] == "#F6F8FA"
+
+
+def test_an_unresolvable_host_palette_degrades_with_a_notice() -> None:
+    """No palette, no crash, no blank theme — the built-in mapping stands."""
+    partial = ThemeSpec(
+        slug="host-missing",
+        name="Host Missing",
+        dark=True,
+        tokens={},
+    )
+    registry = ThemeRegistry((REFINED_DEFAULT, partial))
+
+    host: object
+    for host in ("not-a-palette", {}):
+        resolved = registry.resolve("host-missing", host_palette=host)
+
+        assert dict(resolved.tokens) == dict(REFINED_DEFAULT.tokens)
+        assert any("host terminal palette" in notice for notice in resolved.notices)
+
+
+def test_no_host_argument_means_no_host_notices() -> None:
+    """The host layer is opt-in: existing resolutions stay byte-identical."""
+    partial = ThemeSpec(
+        slug="no-host-layer",
+        name="No Host Layer",
+        dark=True,
+        tokens={},
+    )
+    resolved = ThemeRegistry((REFINED_DEFAULT, partial)).resolve("no-host-layer")
+
+    assert not any("host" in notice for notice in resolved.notices)
+
+
+# ── issue #124: /theme select previews immediately, persisting explicitly ──
+
+
+@pytest.mark.asyncio
+async def test_theme_select_previews_immediately_without_persisting(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme select neutral-dark"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "neutral-dark"
+        assert app.session_theme_slug == "neutral-dark"
+        rendered = screen_text(app)
+        assert "'neutral-dark' previewing for this session" in rendered
+        assert not config_dir.exists(), "a preview wrote user config"
+        assert not (tmp_path / ".talaria").exists(), (
+            "a preview wrote repository config"
+        )
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_select_invalid_name_keeps_current_theme() -> None:
+    app, _ = paused_app([event("gateway.ready", {})])
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme select not-installed"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "refined-default"
+        assert app.session_theme_slug is None
+        rendered = screen_text(app)
+        assert "'not-installed' is not available" in rendered
+        assert "keeping 'refined-default'" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_select_broken_spec_keeps_rendering_old_theme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from talaria.ui.theme import ThemeRegistry
+
+    original = ThemeRegistry.to_textual_theme
+
+    def refuse_neutral_dark(
+        self: ThemeRegistry, requested: object
+    ) -> object:
+        if requested == "neutral-dark":
+            raise RuntimeError("synthetic render failure")
+        return original(self, requested)
+
+    app, _ = paused_app([event("gateway.ready", {})])
+    # Patch after construction: startup registers every built-in theme, and
+    # only the later select may fail.
+    monkeypatch.setattr(
+        ThemeRegistry, "to_textual_theme", refuse_neutral_dark
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme select neutral-dark"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        assert app.theme == "refined-default"
+        rendered = screen_text(app)
+        assert "could not preview" in rendered
+        assert "keeping 'refined-default'" in app.composer.notice
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_theme_select_then_save_persists_explicitly(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "user"
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text = "/theme select neutral-dark"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await app.settle_live()
+        await pilot.pause()
+
+        app.composer.text = "/theme save"
+        app.composer.text_area.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert (config_dir / "config.toml").read_text(encoding="utf-8") == (
             '[theme]\nname = "neutral-dark"\n'
         )
         await app.shutdown_sources()

@@ -16,12 +16,20 @@ from typing import Any
 
 import pytest
 from textual import events
+from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from talaria.domain.projection import terminal_read, transcript_view
 from talaria.replay.gate import content_is_complete
 from talaria.status.runner import StatusRunner
 from talaria.ui.app import ALREADY_FOLLOWING_BOTTOM
+from talaria.ui.blocks import EntryMarkdown
+from talaria.ui.theme import BUILTIN_THEME_REGISTRY
+from talaria.ui.transcript import (
+    TranscriptLine,
+    TranscriptPane,
+    kind_group_css_class,
+)
 from tests.ui.conftest import (
     RecordingDispatcher,
     event,
@@ -717,3 +725,117 @@ async def test_two_renders_can_never_reconcile_the_pane_at_the_same_time(
         assert len(pane.rendered_lines) + pane.condensed_count == view.total_lines
         assert pane.rendered_lines == view.lines[pane.condensed_count :]
         await app.shutdown_sources()
+
+
+# ── issue #123 U3: the left-edge offset is layout space, not paint ──────────
+
+
+class _OffsetHarness(App[None]):
+    """Two full-width panes side by side in offset: on above, off below."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        BUILTIN_THEME_REGISTRY.register(self)
+        self.theme = "refined-default"
+
+    def compose(self) -> ComposeResult:
+        yield TranscriptPane(id="offset-on")
+        yield TranscriptPane(id="offset-off", show_left_offset=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [20, 40, 80])
+async def test_offset_removal_reclaims_exactly_one_column_for_lines(
+    width: int,
+) -> None:
+    """Offset on/off content widths differ by exactly the reserved column —
+    at wide terminals and at a narrow 20-column one alike."""
+    app = _OffsetHarness()
+    async with app.run_test(size=(width, 24)) as pilot:
+        on = app.query_one("#offset-on", TranscriptPane)
+        off = app.query_one("#offset-off", TranscriptPane)
+        assert off.show_left_offset is False
+        assert on.show_left_offset is True
+
+        styled_on = TranscriptLine("sample", kind="assistant", first_in_entry=False)
+        styled_off = TranscriptLine("sample", kind="assistant", first_in_entry=False)
+        plain_on = TranscriptLine("sample", first_in_entry=False)
+        plain_off = TranscriptLine("sample", first_in_entry=False)
+        await on.mount_all([styled_on, plain_on])
+        await off.mount_all([styled_off, plain_off])
+        await pilot.pause()
+
+        assert styled_off.content_size.width - styled_on.content_size.width == 1
+        assert plain_off.content_size.width - plain_on.content_size.width == 1
+        assert styled_off.content_size.width > 0
+        # The channel survives the reclaim: same fill, no stripe.
+        assert styled_off.styles.background == styled_on.styles.background
+        assert styled_off.styles.border_left != styled_on.styles.border_left
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [20, 40, 80])
+async def test_offset_removal_reclaims_both_reserved_columns_for_documents(
+    width: int,
+) -> None:
+    """A block document reserved two columns (stripe plus compensation)."""
+    paragraph = "word " * 60
+    app = _OffsetHarness()
+    async with app.run_test(size=(width, 24)) as pilot:
+        on = app.query_one("#offset-on", TranscriptPane)
+        off = app.query_one("#offset-off", TranscriptPane)
+        doc_on = EntryMarkdown(paragraph, classes=kind_group_css_class("assistant"))
+        doc_off = EntryMarkdown(paragraph, classes=kind_group_css_class("assistant"))
+        await on.mount(doc_on)
+        await off.mount(doc_off)
+        await pilot.pause()
+
+        assert doc_off.content_size.width - doc_on.content_size.width == 2
+        assert doc_off.outer_size.height <= doc_on.outer_size.height
+        assert doc_off.styles.background == doc_on.styles.background
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_space_reflows_wrapped_rows() -> None:
+    """A line one cell past the offset-on width fits whole once reclaimed."""
+    app = _OffsetHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        on = app.query_one("#offset-on", TranscriptPane)
+        off = app.query_one("#offset-off", TranscriptPane)
+        probe = TranscriptLine("x", kind="assistant", first_in_entry=False)
+        await on.mount(probe)
+        await pilot.pause()
+        exact_overflow = "a" * (probe.content_size.width + 1)
+        await probe.remove()
+
+        wrapped = TranscriptLine(exact_overflow, kind="assistant", first_in_entry=False)
+        reflowed = TranscriptLine(exact_overflow, kind="assistant", first_in_entry=False)
+        await on.mount(wrapped)
+        await off.mount(reflowed)
+        await pilot.pause()
+
+        assert wrapped.outer_size.height == 2
+        assert reflowed.outer_size.height == 1
+        assert reflowed.content_size.width - wrapped.content_size.width == 1
+
+
+@pytest.mark.asyncio
+async def test_offset_toggle_restores_the_reserved_column() -> None:
+    """The setter round-trips: reclaim, restore, and the width follows."""
+    app = _OffsetHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#offset-off", TranscriptPane)
+        line = TranscriptLine("sample", kind="assistant", first_in_entry=False)
+        await pane.mount(line)
+        await pilot.pause()
+        reclaimed = line.content_size.width
+
+        pane.set_show_left_offset(True)
+        await pilot.pause()
+        assert pane.show_left_offset is True
+        assert line.content_size.width == reclaimed - 1
+
+        pane.set_show_left_offset(False)
+        await pilot.pause()
+        assert pane.show_left_offset is False
+        assert line.content_size.width == reclaimed

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 THEME_TOKENS: tuple[str, ...] = (
@@ -79,6 +79,70 @@ _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _OPAQUE_HEX_RE = re.compile(r"^#[0-9A-F]{6}$")
 _THEME_NAME_MAX_LENGTH = 128
 
+#: The six transcript categories a theme can style as one group each. The
+#: names match the ``talaria.transcript.<category>`` token infix, not the UI
+#: ``KindGroup`` spelling: the session-record group reads the ``session``
+#: infix. ``talaria/ui/transcript.py`` owns the mapping between the two.
+TRANSCRIPT_CATEGORIES: tuple[str, ...] = (
+    "operator",
+    "assistant",
+    "reasoning",
+    "activity",
+    "session",
+    "fault",
+)
+
+_TRANSCRIPT_CATEGORY_SET = frozenset(TRANSCRIPT_CATEGORIES)
+
+#: The canonical token each transcript category's group entry may address.
+#: ``text`` reinterprets the shared ``talaria.text`` token in that category's
+#: scope: a group-level ``talaria.text`` value paints only that category's
+#: body text, while the theme-wide ``talaria.text`` override still paints
+#: every category that names no group value. ``marker`` and ``background``
+#: are the category's existing stripe and fill tokens.
+TRANSCRIPT_CATEGORY_TOKENS: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        category: MappingProxyType(
+            {
+                "text": "talaria.text",
+                "marker": f"talaria.transcript.{category}",
+                "background": f"talaria.transcript.{category}.background",
+            }
+        )
+        for category in TRANSCRIPT_CATEGORIES
+    }
+)
+
+
+def is_transcript_category(name: object) -> bool:
+    """True for one of the six known transcript category names."""
+    return name in _TRANSCRIPT_CATEGORY_SET
+
+
+def is_opaque_hex_color(value: object) -> bool:
+    """True for an opaque uppercase ``#RRGGBB`` runtime color."""
+    return isinstance(value, str) and _OPAQUE_HEX_RE.fullmatch(value) is not None
+
+
+def relative_luminance(color: str) -> float:
+    """Return WCAG 2.2 relative luminance for one opaque ``#RRGGBB`` colour."""
+    channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in channels
+    ]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast_ratio(first: str, second: str) -> float:
+    """Measure the WCAG 2.2 contrast ratio between two opaque colours."""
+    lighter, darker = sorted(
+        (relative_luminance(first), relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
 THEME_NAME_TYPE_FALLBACK_NOTICE = (
     "theme.name must be a string; using Refined Default ({default_slug})"
 )
@@ -111,6 +175,13 @@ class ThemeSpec:
     name: str
     dark: bool
     tokens: Mapping[str, str]
+    #: Sparse per-category group values: category name to token name to
+    #: color. Deliberately lenient where :attr:`tokens` is strict — unknown
+    #: categories, unknown tokens, nulls, and malformed colors all fall
+    #: through at resolution instead of raising here, so one bad group
+    #: entry can never break the rest of the theme. An importer (issue
+    #: #124) targets this layer without reimplementing resolution.
+    groups: Mapping[str, Mapping[str, str | None]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not _SLUG_RE.fullmatch(self.slug):
@@ -145,12 +216,30 @@ class ThemeSpec:
                 + ", ".join(invalid)
             )
         object.__setattr__(self, "tokens", MappingProxyType(copied))
+        raw_groups = self.groups
+        if not isinstance(raw_groups, Mapping):
+            raise ValueError("theme groups must be a mapping of category to token values")
+        frozen_groups = {
+            category: MappingProxyType(dict(values))
+            if isinstance(values, Mapping)
+            else MappingProxyType({})
+            for category, values in raw_groups.items()
+        }
+        object.__setattr__(
+            self, "groups", MappingProxyType(frozen_groups)
+        )
 
 
 __all__ = [
     "THEME_NAME_TYPE_FALLBACK_NOTICE",
     "THEME_TOKENS",
     "THEME_UNAVAILABLE_FALLBACK_NOTICE",
+    "TRANSCRIPT_CATEGORIES",
+    "TRANSCRIPT_CATEGORY_TOKENS",
     "ThemeSpec",
+    "contrast_ratio",
+    "is_opaque_hex_color",
+    "is_transcript_category",
+    "relative_luminance",
     "theme_fallback_notice",
 ]

@@ -1,0 +1,23 @@
+{
+  "artifact": {
+    "commit": "6e2baf16fbf6af7de68ea93c8f7fc19e38e98882",
+    "version": "0.6.0",
+    "wheel_filename": "talaria-0.6.0-py3-none-any.whl",
+    "wheel_sha256": "05c8d9752cf10637a206b455360a357e877131e8c6c709a756bb7282b6b28601"
+  },
+  "checklist_item": 2,
+  "evidence": {
+    "kind": "reported-live-matrix",
+    "method": "live sessions plus shell probes against the verified tree; existing sessions preserved; no real secrets",
+    "observation": "model refusal surfaces the gateway 4018",
+    "source": "https://github.com/infiquetra/talaria/issues/127"
+  },
+  "harness_commit": "6e2baf16fbf6af7de68ea93c8f7fc19e38e98882",
+  "issue": "https://github.com/infiquetra/talaria/issues/119",
+  "recorded_at": "2026-09-04T05:03:00+00:00",
+  "release": "0.6.0",
+  "schema_version": "talaria-v0.6.0-receipt-v1",
+  "tester": "controller",
+  "title": "119/F2 honest 4018",
+  "verdict": "pass"
+}

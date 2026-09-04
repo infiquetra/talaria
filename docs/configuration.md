@@ -61,6 +61,10 @@ allowlist = []
 paste_collapse_lines = 6
 paste_collapse_bytes = 512
 
+[keys]
+toggle_inspector = "ctrl+o"
+interrupt = "ctrl+s"
+
 [profiles.endpoints]
 # work = "ws://127.0.0.1:9119/api/ws"
 ```
@@ -72,7 +76,7 @@ defaults.
 
 | Path | Type and default | Contract |
 | --- | --- | --- |
-| `theme.name` | string, `"refined-default"` | Selects a theme. The four built-in slugs and canonical stored imported slugs discovered under `<TALARIA_CONFIG_DIR>/themes/` are accepted at startup. An unknown or non-string value visibly falls back to Refined Default. There is no environment or command-line alias. See [Themes](themes.md) for scopes and persistence. |
+| `theme.name` | string, `"refined-default"` | Selects a theme. The five built-in slugs and canonical stored imported slugs discovered under `<TALARIA_CONFIG_DIR>/themes/` are accepted at startup. An unknown or non-string value visibly falls back to Refined Default. There is no environment or command-line alias. See [Themes](themes.md) for scopes and persistence. |
 | `ui.reduced_motion` | boolean, `false` | Makes nonessential progress frames static and routed scrolling immediate. A non-boolean value visibly falls back to `false`. There is no environment or command-line alias. |
 | `status.command` | optional string, omitted/disabled | Runs as a fixed argument vector without a shell in the existing multi-row `StatusRegion`. An empty, non-string, or unparseable value disables only that region and produces a startup notice. `TALARIA_STATUS_COMMAND` is its environment alias. |
 | `status.interval_seconds` | integer, `5` | Status-command cadence, inclusive range 1–3600. An invalid value visibly falls back to 5. `TALARIA_STATUS_INTERVAL_SECONDS` is its environment alias. |
@@ -83,6 +87,8 @@ defaults.
 | `environment.allowlist` | array of strings, empty | Environment-variable names the optional status command may receive. Its child environment is default-deny; credential-like names remain subject to the status security boundary. No environment alias. |
 | `composer.paste_collapse_lines` | integer, `6` | Collapses a paste meeting this line threshold. Zero or a negative value disables this half of the threshold. `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES` is its environment alias. |
 | `composer.paste_collapse_bytes` | integer, `512` | Collapses a paste meeting this byte threshold. Zero or a negative value disables this half of the threshold. `TALARIA_COMPOSER_PASTE_COLLAPSE_BYTES` is its environment alias. |
+| `keys.toggle_inspector` | string, `"ctrl+o"` | Chord toggling the session inspector. `Ctrl+B` was the previous default; Herdr captures it when nested, so it stays documented as replaced rather than bound. `TALARIA_KEYS_TOGGLE_INSPECTOR` is its environment alias. |
+| `keys.interrupt` | string, `"ctrl+s"` | Chord cancelling the in-flight turn. `Ctrl+C` left this action; pressed out of habit it reaches the text area's copy binding or the framework's quit hint, never the turn. `TALARIA_KEYS_INTERRUPT` is its environment alias. |
 | `profiles.endpoints` | table of string URLs, empty | Maps a Hermes profile name to the gateway endpoint Talaria should dial. Blank or non-string values are ignored. The map has no environment alias. |
 
 The responsive widths and segment forms are fixed product behavior; changing a maximum does not move
@@ -91,17 +97,19 @@ a breakpoint. See [Terminal UI](terminal-ui.md#responsive-status-bar) for that t
 ## Validation and compatibility
 
 Talaria deep-merges each configured table onto the defaults, so files written before 0.5.0 do not
-need migration. A missing table or key takes the new default. After precedence resolves, only the
-`theme`, `ui`, and `status` tables are normalized: an invalid value in those tables uses its
-documented fallback and adds a visible startup notice.
+need migration. A missing table or key takes the new default. After precedence resolves, the
+`theme`, `ui`, `status`, and `keys` tables are normalized: an invalid value in those tables uses its
+documented fallback and adds a visible startup notice. For `keys`, empty, non-string, and
+unrecognized chord names fall back to their defaults; `ctrl+q` is reserved for quitting and falls
+back; and assigning both actions the same chord resets both to their defaults.
 
 The other tables reach their launch consumers without that normalization. A malformed `composer`
 threshold remains raw in the loaded configuration, then is silently replaced by its default when
 the paste threshold is built. Blank or non-string `profiles.endpoints` rows are silently dropped.
-For an enabled status command, `42` and `true` are truthy non-iterables and raise `TypeError`.
-`false`, `0`, `0.0`, and an empty list are treated as no allowlist and produce no notice. A string is
-iterated character by character, so `"FOO"` becomes `('F', 'O', 'O')` with no notice and produces an
-effectively empty default-deny allowlist rather than the requested name. Syntactically invalid TOML
+For an enabled status command, only a list of strings forwards as `environment.allowlist`.
+Any other shape — `42`, `true`, `false`, `0`, `0.0`, a string such as `"FOO"`, a mapping, or a
+nested list — falls back to the empty default with no notice: it never raises and never forwards
+character fragments. Syntactically invalid TOML
 is different: it is a launch error that names the offending file.
 
 ## What Talaria writes
@@ -112,6 +120,7 @@ key, or inline table; it leaves every other key and comment untouched, verifies 
 changed in exactly that way, and replaces the file atomically. It is not a general configuration
 serializer.
 
-No command writes the status, user-interface, environment, composer, or profile tables. `/bar`
-toggles a known segment in memory for the running process and never writes. Inspector width and open
-state, and diff mode/navigation state, are also process-local and have no configuration rows.
+No command writes the status, user-interface, environment, composer, keybinding, or
+profile tables. `/bar` toggles a known segment in memory for the running process and never
+writes. Inspector width and open state, and diff mode/navigation state, are also process-local
+and have no configuration rows.

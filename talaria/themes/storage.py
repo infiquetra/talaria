@@ -11,7 +11,7 @@ from talaria.themes.builtins import BUILTIN_THEMES
 
 STORED_THEME_SCHEMA_VERSION = "talaria-theme-v1"
 _REQUIRED_FIELDS = frozenset({"dark", "name", "slug", "tokens"})
-_ALLOWED_FIELDS = _REQUIRED_FIELDS | {"schema_version"}
+_ALLOWED_FIELDS = _REQUIRED_FIELDS | {"schema_version", "groups"}
 
 
 class StoredThemeError(ValueError):
@@ -28,6 +28,9 @@ def serialize_user_theme(spec: ThemeSpec) -> bytes:
         )
     payload = {
         "dark": spec.dark,
+        "groups": {
+            category: dict(values) for category, values in spec.groups.items()
+        },
         "name": spec.name,
         "schema_version": STORED_THEME_SCHEMA_VERSION,
         "slug": spec.slug,
@@ -80,10 +83,27 @@ def load_user_theme_spec(path: Path) -> ThemeSpec:
         raise StoredThemeError(
             f"{path} stored user theme token names and values must be strings"
         )
+    raw_groups = payload.get("groups", {})
+    if not isinstance(raw_groups, dict) or any(
+        not isinstance(category, str)
+        or not isinstance(values, dict)
+        or any(
+            not isinstance(token, str)
+            or not (isinstance(value, str) or value is None)
+            for token, value in values.items()
+        )
+        for category, values in raw_groups.items()
+    ):
+        raise StoredThemeError(
+            f"{path} stored user theme groups must map categories to "
+            "token-name/string-or-null objects"
+        )
     if path.stem != slug:
         raise StoredThemeError(f"{path} filename does not match stored slug {slug!r}")
     try:
-        spec = ThemeSpec(slug=slug, name=name, dark=dark, tokens=tokens)
+        spec = ThemeSpec(
+            slug=slug, name=name, dark=dark, tokens=tokens, groups=raw_groups
+        )
     except ValueError as exc:
         raise StoredThemeError(
             f"{path} is not a valid stored user theme: {exc}"

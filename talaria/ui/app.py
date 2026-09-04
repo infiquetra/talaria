@@ -32,8 +32,9 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from time import time as _wall_clock
 from typing import Any, ClassVar, Final, Literal, Protocol, runtime_checkable
@@ -43,11 +44,21 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.theme import Theme
 from textual.timer import Timer
 from textual.widgets import Static
 
 from talaria import __version__
-from talaria.config import ConfigError, ThemeSaveScope, save_theme
+from talaria.config import (
+    DEFAULT_INSPECTOR_KEY,
+    DEFAULT_INTERRUPT_KEY,
+    ConfigError,
+    KeyBindings,
+    ThemeSaveScope,
+    global_config_dir,
+    resolve_keybindings,
+    save_theme,
+)
 from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.commands import (
     CATALOG_METHOD,
@@ -77,9 +88,9 @@ from talaria.domain.compat import (
     ProbeTrigger,
     SeamBoard,
     apply_probe_round,
-    board_lines,
     empty_board,
     seam_probe_due,
+    split_seam_lines,
 )
 from talaria.domain.composer_history import ComposerHistory
 from talaria.domain.composer_history import push as history_push
@@ -181,6 +192,14 @@ from talaria.replay.source import REPLAY_EPOCH
 from talaria.status.contract import StatusBarSettings
 from talaria.status.local import capture_local_status
 from talaria.status.runner import StatusRunner, StatusTickResult
+from talaria.themes.marketplace import (
+    MarketplaceError,
+    MarketplaceTransport,
+    UrllibMarketplaceTransport,
+    resolve_marketplace_source,
+    search_marketplace,
+)
+from talaria.themes.sources import load_import_sources
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
 from talaria.transport.compat_check import CompatReport, HealthProbe, probe_seams
@@ -250,6 +269,12 @@ from talaria.ui.status_bar import (
 )
 from talaria.ui.status_region import StatusRegion
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY, DEFAULT_THEME_SLUG, ThemeRegistry
+from talaria.ui.theme_import import (
+    ImportReport,
+    ThemeImportError,
+    import_marketplace_theme,
+    reload_imported_theme,
+)
 from talaria.ui.transcript import DEFAULT_MOUNT_CAP, TranscriptAnchor, TranscriptPane
 
 #: KTD14's coalescing boundary. Deltas accumulate in the domain transcript and
@@ -358,11 +383,13 @@ PROMPT_NO_LONGER_LIVE: Final[str] = REFUSED_NOT_OUTSTANDING
 #: pacing register's own ("this session is live — nothing changed").
 ALREADY_FOLLOWING_BOTTOM: Final[str] = "the newest line is already followed — nothing changed"
 
-#: Shown when ctrl+c is pressed with no turn in flight (A4 P1-A).
+#: Shown when the interrupt chord is pressed with no turn in flight (A4 P1-A,
+#: #120 U2).
 #:
-#: ``ctrl+c`` is a system quit binding in Textual; this unit reclaims it for
-#: the destructive interrupt, so a guard and visible feedback are load-bearing.
-#: The first press when nothing is in flight is a no-op that says so, matching
+#: The chord defaults to ``ctrl+s`` (#120 decision B) and is configurable via
+#: the ``[keys]`` surface; ``ctrl+c`` left the interrupt action and is now
+#: unbound, reaching no quit path. Either way the guard is load-bearing:
+#: the first press when nothing is in flight is a no-op that says so, matching
 #: :data:`ALREADY_FOLLOWING_BOTTOM` — a signal whose failure is
 #: indistinguishable from success is worse than no signal.
 NOTHING_TO_INTERRUPT: Final[str] = "nothing to interrupt — no turn is in flight"
@@ -1067,13 +1094,17 @@ class ModelDefaultWriter(Protocol):
 
 
 class HelpBar(Static):
-    """One-row binding listing, scoped to the current mode (A4 KTD4).
+    """One-row binding listing, scoped to the current mode (A4 KTD4, #120 U2).
 
     A eaten key sends no bytes, so the program cannot detect that it was eaten
     and cannot warn at runtime. The correction is a redundant primary path and
     a static listing that names both, before the key is pressed. The listing is
     scoped so replay does not advertise live keys and live does not advertise
     the three replay pacing keys as if they toggle something.
+
+    The live listing names cancel-turn and quit-client side by side, so the
+    two chords can never be mistaken for one another: the interrupt chord
+    cancels the turn, ``ctrl+q`` quits the client, and nothing else quits.
     """
 
     DEFAULT_CSS = """
@@ -1089,22 +1120,30 @@ class HelpBar(Static):
         super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
         self._help_text = ""
 
-    def update_for_mode(self, mode: str) -> None:
+    def update_for_mode(
+        self,
+        mode: str,
+        *,
+        inspector_key: str = DEFAULT_INSPECTOR_KEY,
+        interrupt_key: str = DEFAULT_INTERRUPT_KEY,
+    ) -> None:
         from talaria.ui.literal import literal_text  # local import to avoid cycle
 
         if mode == "replay":
             # Replay: keep the pacing controls and the inspector's reliable
             # routes visible without clipping at the standard 80-column size.
             text = (
-                "ctrl+b inspector · / commands · F8 pause · "
-                "F9/F10 speed · F1/F2 eaten on macOS"
+                f"{inspector_key} inspector · / commands · F8 pause · "
+                "F9/F10 speed · F1/F2 eaten"
             )
         else:
             # Live: pacing keys are inert, so not advertised. The inspector's
-            # global chord is rendered beside its slash-command fallback.
+            # global chord is rendered beside its slash-command fallback, and
+            # the interrupt chord is labelled cancel-turn beside ctrl+q's
+            # quit, so a cancel press can never read as a quit press.
             text = (
-                "ctrl+b inspector · / commands · ctrl+g · ctrl+c · "
-                "F1/F2 eaten on macOS"
+                f"{inspector_key} inspector · / commands · "
+                f"{interrupt_key} cancel-turn · ctrl+q quit · F1/F2 eaten"
             )
         self._help_text = text
         self.update(literal_text(text))
@@ -1114,28 +1153,27 @@ class HelpBar(Static):
         return self._help_text
 
 
-class TalariaApp(App[None]):
-    """The replay-driven shell: transcript, sub-agent rows, status region, composer."""
+def build_app_bindings(
+    inspector_key: str, interrupt_key: str
+) -> list[BindingType]:
+    """Build the app binding table for one pair of configurable chords.
 
-    TITLE = "talaria"
+    The single construction point #120's ``[keys]`` surface feeds: the class
+    table is this function called with the defaults, and a configured
+    override is this function called with the resolved chords (applied to the
+    instance map in :meth:`TalariaApp._apply_keybindings`).
 
-    CSS = """
-    Screen {
-        layout: vertical;
-    }
-    #body {
-        height: 1fr;
-        width: 1fr;
-    }
-    #main-and-inspector {
-        height: 1fr;
-        width: 1fr;
-    }
+    The inspector chord defaults to ``ctrl+o`` (decision A): ``ctrl+b`` was
+    the previous default and Herdr captures it before Talaria sees it when
+    nested, so it is documented in :data:`talaria.config.REPLACED_INSPECTOR_KEY`
+    as replaced rather than bound. The interrupt chord defaults to ``ctrl+s``
+    (decision B): ``ctrl+c`` left the interrupt action and is now unbound,
+    reaching no quit path. ``f4`` stays as the interrupt alias and quit stays
+    on ``ctrl+q``, so cancel-turn and quit-client always have both ends visible.
     """
-
-    BINDINGS: ClassVar[list[BindingType]] = [
+    return [
         Binding("ctrl+q", "quit", "quit", priority=True),
-        Binding("ctrl+b", "toggle_inspector", "inspector", priority=True),
+        Binding(inspector_key, "toggle_inspector", "inspector", priority=True),
         # A4 KTD1/KTD2: F1 removed — the focus-owning card (A1) is the anchor,
         # so the jump has no job on this desktop. On macOS F1/F2 are eaten before
         # Talaria sees them; a eaten key sends no bytes and the program cannot
@@ -1143,7 +1181,7 @@ class TalariaApp(App[None]):
         # F2/F4 remain as aliases where the desktop delivers them (KTD3).
         Binding("ctrl+g", "toggle_agents", "sub-agents", priority=True),
         Binding("f2", "toggle_agents", "sub-agents", priority=True, show=False),
-        Binding("ctrl+c", "interrupt", "interrupt", priority=True),
+        Binding(interrupt_key, "interrupt", "interrupt", priority=True),
         Binding("f4", "interrupt", "interrupt", priority=True, show=False),
         Binding("f8", "toggle_pause", "pause/resume", priority=True),
         Binding("f9", "slow_down", "slower", priority=True),
@@ -1166,6 +1204,34 @@ class TalariaApp(App[None]):
             "f12", "toggle_profiles", "profiles", priority=True, show=False
         ),
     ]
+
+
+class TalariaApp(App[None]):
+    """The replay-driven shell: transcript, sub-agent rows, status region, composer."""
+
+    TITLE = "talaria"
+
+    CSS = """
+    Screen {
+        layout: vertical;
+    }
+    #body {
+        height: 1fr;
+        width: 1fr;
+    }
+    #main-and-inspector {
+        height: 1fr;
+        width: 1fr;
+    }
+    """
+
+    #: The default binding table. #120's ``[keys]`` surface feeds BINDINGS
+    #: construction through :func:`build_app_bindings`, which is the single
+    #: point that applies a configured override; this table is that function
+    #: called with the defaults.
+    BINDINGS: ClassVar[list[BindingType]] = build_app_bindings(
+        DEFAULT_INSPECTOR_KEY, DEFAULT_INTERRUPT_KEY
+    )
 
     def __init__(
         self,
@@ -1194,8 +1260,21 @@ class TalariaApp(App[None]):
         startup_notices: tuple[str, ...] = (),
         theme_config_dir: Path | None = None,
         launch_cwd: Path | None = None,
+        keybindings: Mapping[str, Any] | None = None,
+        marketplace_transport: MarketplaceTransport | None = None,
     ) -> None:
         super().__init__()
+        #: The resolved inspector/interrupt chords (#120 U1). The class table
+        #: carries the defaults; a configured override moves its action's
+        #: entry on this instance's binding map, so one app's override never
+        #: leaks into another's. Restart-scoped like ``reduced_motion``: read
+        #: once here, never re-read from configuration afterwards.
+        resolved_keys, key_notices = resolve_keybindings(keybindings)
+        self.keybindings: KeyBindings = resolved_keys
+        self.inspector_key = resolved_keys.toggle_inspector
+        self.interrupt_key = resolved_keys.interrupt
+        self._keybinding_notices = key_notices
+        self._apply_keybindings()
         self.theme_registry = theme_registry or BUILTIN_THEME_REGISTRY
         resolved_theme = self.theme_registry.resolve(theme_name)
         self.theme_registry.register(self)
@@ -1203,6 +1282,16 @@ class TalariaApp(App[None]):
         self.session_theme_slug: str | None = None
         self.theme_config_dir = theme_config_dir
         self.launch_cwd = launch_cwd if launch_cwd is not None else Path.cwd()
+        self.marketplace_transport: MarketplaceTransport = (
+            marketplace_transport
+            if marketplace_transport is not None
+            else UrllibMarketplaceTransport()
+        )
+        #: Serializes explicit theme Reloads and marketplace fetch-applies so
+        #: two concurrent re-imports cannot interleave one registry rebuild.
+        #: Nothing here watches the filesystem: the lock only orders the
+        #: explicit user actions above.
+        self._theme_apply_lock = asyncio.Lock()
         # One restart-scoped value is injected into every motion-aware widget.
         # It never changes in response to a file edit or session command.
         self.motion = MotionPolicy(reduced=reduced_motion)
@@ -1316,6 +1405,11 @@ class TalariaApp(App[None]):
         #: load-bearing: ``None`` is what keeps the render tick from putting four
         #: never-observed rows on screen in replay, where no probe runs at all.
         self._seam_lines: tuple[str, ...] | None = None
+        #: The diagnostics lines currently in the inspector, or ``None`` before
+        #: the first move. Tracked beside :attr:`_seam_lines` because the two
+        #: surfaces paint from one split and either half can move without the
+        #: other when a failed move falls back to leaving rows visible.
+        self._inspector_diag_lines: tuple[str, ...] | None = None
         #: How many ``paste.collapse`` round trips are outstanding. Non-zero
         #: means the composer still holds a literal body that is about to be
         #: replaced, so Enter must not put it into the turn.
@@ -1337,6 +1431,13 @@ class TalariaApp(App[None]):
             focused=SessionState(), focused_profile=current_profile or DEFAULT_PROFILE
         )
         for notice in self._startup_notices:
+            self.state = record_local_note(
+                self.state, notice, at=self.state.last_observed_at
+            )
+        # A configured chord that fell back says so in the transcript, beside
+        # the other startup notices — a silently remapped key is the failure
+        # this whole surface exists to prevent.
+        for notice in self._keybinding_notices:
             self.state = record_local_note(
                 self.state, notice, at=self.state.last_observed_at
             )
@@ -1830,7 +1931,11 @@ class TalariaApp(App[None]):
             self._status_task = asyncio.create_task(self._status_loop())
         self.fetch_catalog()
         try:
-            self.help_bar.update_for_mode(self.mode)
+            self.help_bar.update_for_mode(
+                self.mode,
+                inspector_key=self.inspector_key,
+                interrupt_key=self.interrupt_key,
+            )
         except NoMatches:
             pass
         self.composer.text_area.focus()
@@ -2269,6 +2374,13 @@ class TalariaApp(App[None]):
         anchor = self._capture_layout_anchor()
         try:
             await self.status_region.apply(result)
+            # The bar owns version-2 script rows; the region keeps the
+            # marker. A tick carrying no script document leaves the bar's
+            # last good render alone — that retention is the fallback.
+            try:
+                self.bottom_status_bar.apply_script_result(result)
+            except NoMatches:  # pragma: no cover - teardown race
+                pass
         finally:
             self._restore_layout_anchor(anchor)
         return result
@@ -2317,6 +2429,49 @@ class TalariaApp(App[None]):
             return
         self.controls.slow_down()
         self._notice(self._pacing_notice())
+
+    def _apply_keybindings(self) -> None:
+        """Move the two configurable chords onto this instance's binding map.
+
+        The map is a per-instance copy of the merged class table, so moving an
+        entry here never touches another app's bindings. A chord left at its
+        default is already in place and is not touched.
+        """
+        keymap = self._bindings.key_to_bindings
+        self._move_binding(
+            keymap,
+            "toggle_inspector",
+            DEFAULT_INSPECTOR_KEY,
+            self.inspector_key,
+        )
+        self._move_binding(
+            keymap, "interrupt", DEFAULT_INTERRUPT_KEY, self.interrupt_key
+        )
+
+    @staticmethod
+    def _move_binding(
+        keymap: dict[str, list[Binding]],
+        action: str,
+        old_key: str,
+        new_key: str,
+    ) -> None:
+        """Move one action's entry from ``old_key`` to ``new_key`` in place."""
+        if old_key == new_key:
+            return
+        old_entries = keymap.get(old_key, [])
+        description = next(
+            (entry.description for entry in old_entries if entry.action == action),
+            action,
+        )
+        remaining = [entry for entry in old_entries if entry.action != action]
+        if remaining:
+            keymap[old_key] = remaining
+        else:
+            keymap.pop(old_key, None)
+        if not any(entry.action == action for entry in keymap.get(new_key, [])):
+            keymap.setdefault(new_key, []).append(
+                Binding(new_key, action, description, priority=True)
+            )
 
     def action_toggle_inspector(self) -> None:
         """Toggle the process-local dock or narrow overlay."""
@@ -2395,7 +2550,9 @@ class TalariaApp(App[None]):
     def action_interrupt(self) -> None:
         """Stop the in-flight turn (R4) — inert in replay (AE11) and inert when idle (P1-A).
 
-        ``ctrl+c`` reclaims Textual's system quit binding, so the guard is
+        Reached via the configurable interrupt chord (``ctrl+s`` by default,
+        ``f4`` stays as the alias); ``ctrl+c`` left this action and falls
+        through to Textual's system quit hint, so the guard is still
         load-bearing: the first press when no turn is in flight is a no-op
         that says so, matching :data:`ALREADY_FOLLOWING_BOTTOM`'s visible
         nothing-happened.
@@ -4353,7 +4510,14 @@ class TalariaApp(App[None]):
         return report
 
     async def _render_seams(self) -> None:
-        """Push the seam board onto the status region, ages and all.
+        """Push the seam board onto the inspector and the status region (#122).
+
+        One board snapshot feeds both surfaces through
+        :func:`~talaria.domain.compat.split_seam_lines`: the inspector holds
+        every seam row, and the region keeps only the actionable subset, so a
+        clean board leaves the region empty and a failing seam stays visible
+        there. Classifying once from one snapshot is what keeps a failure
+        arriving mid-move from racing the alert path.
 
         The clock is ``state.last_observed_at`` — the frame clock, never a wall
         clock read at render time — so a replayed recording renders the same
@@ -4365,21 +4529,44 @@ class TalariaApp(App[None]):
 
         Nothing repaints when the text has not moved, which is what lets the
         render tick call this at its own frequency — see :meth:`_refresh_seam_ages`
-        for why it must.
+        for why it must. A move the inspector cannot take leaves the rows in
+        the region rather than dropping them.
         """
-        lines = board_lines(self.seams, self.state.last_observed_at)
-        if lines == self._seam_lines:
+        region_lines, inspector_lines = split_seam_lines(
+            self.seams, self.state.last_observed_at
+        )
+        if (
+            region_lines == self._seam_lines
+            and inspector_lines == self._inspector_diag_lines
+        ):
             return
         try:
             region = self.status_region
         except NoMatches:  # pragma: no cover - teardown race
             return
-        self._seam_lines = lines
         anchor = self._capture_layout_anchor()
         try:
-            await region.apply_seams(lines)
+            moved = await self._render_inspector_diagnostics(inspector_lines)
+            shown = region_lines if moved else inspector_lines
+            await region.apply_seams(shown)
         finally:
             self._restore_layout_anchor(anchor)
+        self._seam_lines = shown
+        if moved:
+            self._inspector_diag_lines = inspector_lines
+
+    async def _render_inspector_diagnostics(self, lines: tuple[str, ...]) -> bool:
+        """Move one board snapshot's rows into the inspector (#122).
+
+        False when the inspector is gone — the teardown race :meth:`_render_seams`
+        already guards for the region — so the caller can leave the rows where
+        they stay visible instead.
+        """
+        try:
+            inspector = self.inspector
+        except NoMatches:  # pragma: no cover - teardown race
+            return False
+        return await inspector.apply_diagnostics(lines)
 
     async def _refresh_seam_ages(self) -> None:
         """Let a painted seam line grow older on screen.
@@ -5224,16 +5411,65 @@ class TalariaApp(App[None]):
         self._notice(f"bar: {segment} {state} for this session")
 
     def _perform_theme(self, argument: str) -> None:
-        """Open theme browsing or explicitly persist the current selection."""
+        """Open theme browsing, select, fetch, reload, or explicitly persist."""
         self.composer.clear()
-        words = argument.strip().lower().split()
+        words = argument.strip().split()
         if not words:
             self._spawn_live(self.open_theme_picker())
             return
+        verb = words[0].lower()
+        if verb == "save":
+            self._perform_theme_save(argument)
+            return
+        if verb == "select":
+            self._select_theme(words)
+            return
+        if verb == "search":
+            query = argument.strip()[len(words[0]) :].strip()
+            if not query:
+                self._notice('/theme search needs a query — try /theme search "solar"')
+                return
+            self._spawn_live(self._search_marketplace_themes(query))
+            return
+        if verb == "fetch":
+            rest = argument.strip()[len(words[0]) :].strip()
+            head, marker, tail = rest.partition(" --name ")
+            ref = head.strip()
+            name = tail.strip() or None if marker else None
+            if not ref:
+                self._notice(
+                    "/theme fetch needs a source — "
+                    "try /theme fetch publisher/extension"
+                )
+                return
+            self._spawn_live(self._fetch_marketplace_theme(ref, name))
+            return
+        if verb == "reload":
+            if len(words) > 2:
+                self._notice(
+                    "/theme reload takes one optional theme name — nothing changed"
+                )
+                return
+            self._spawn_live(
+                self._reload_imported_theme(words[1] if len(words) == 2 else None)
+            )
+            return
+        self._notice(
+            f"/theme {argument.strip()!r} is not understood — "
+            "try /theme, /theme select <name>, /theme search <query>, "
+            "/theme fetch <source>, /theme reload [name], /theme save, "
+            "or /theme save repository"
+        )
+
+    def _perform_theme_save(self, argument: str) -> None:
+        """Explicitly persist the current selection; the save-only path."""
+        words = argument.strip().lower().split()
         if words[0] != "save" or len(words) > 2:
             self._notice(
                 f"/theme {argument.strip()!r} is not understood — "
-                "try /theme, /theme save, or /theme save repository"
+                "try /theme, /theme select <name>, /theme search <query>, "
+                "/theme fetch <source>, /theme reload [name], /theme save, "
+                "or /theme save repository"
             )
             return
         scope: ThemeSaveScope = "user"
@@ -5258,6 +5494,187 @@ class TalariaApp(App[None]):
             self._notice(f"theme was not saved — {exc}")
             return
         self._notice(f"saved theme {selected!r} to the {scope} config at {path}")
+
+    def _repaint_theme_if_changed(self, new: Theme, old: Theme | None) -> None:
+        """Repaint after a same-slug spec swap whose Theme actually changed.
+
+        Textual's ``theme`` reactive only wakes its watcher on a slug change,
+        so re-registering a rebuilt spec under the current slug paints nothing
+        without this. Fires only on a real value difference — a no-op
+        re-resolve repaints nothing — running the framework's own apply steps
+        (invalidate, scheduled refresh, change publish) without redeclaring
+        them and without a mutate-and-restore round trip.
+        """
+        if old is not None and old == new:
+            return
+        self._invalidate_css()
+        self.call_next(partial(self.refresh_css, animate=False))
+        self.call_next(self.theme_changed_signal.publish, new)
+
+    def _select_theme(self, words: list[str]) -> None:
+        """Preview one registry theme immediately; persistence stays explicit.
+
+        Invalid names keep the current theme, and a spec that cannot render
+        keeps rendering the old theme — both with a visible notice.
+        """
+        if len(words) != 2:
+            self._notice("/theme select needs one theme name — nothing changed")
+            return
+        slug = words[1]
+        if slug not in self.theme_registry.slugs:
+            self._notice(f"theme {slug!r} is not available — keeping {self.theme!r}")
+            return
+        previous = self.theme
+        old_theme = self.available_themes.get(slug)
+        try:
+            new_theme = self.theme_registry.to_textual_theme(slug)
+            self.register_theme(new_theme)
+            self.theme = slug
+        except Exception as exc:
+            # Restoring a theme that rendered seconds ago cannot fail in a
+            # way the operator can act on; suppress keeps the notice honest.
+            with suppress(Exception):
+                self.theme = previous
+            self._notice(
+                f"theme {slug!r} could not preview ({exc}) — keeping {previous!r}"
+            )
+            return
+        if previous == slug:
+            self._repaint_theme_if_changed(new_theme, old_theme)
+        self.session_theme_slug = slug
+        self._notice(
+            f"theme {slug!r} previewing for this session — /theme save to persist"
+        )
+
+    def _theme_config_root(self) -> Path:
+        """Return the configuration directory owning themes and sources."""
+        if self.theme_config_dir is not None:
+            return self.theme_config_dir
+        return global_config_dir()
+
+    async def _search_marketplace_themes(self, query: str) -> None:
+        """List bounded marketplace entries; searching never changes a theme."""
+        try:
+            entries = await asyncio.to_thread(
+                search_marketplace, query, transport=self.marketplace_transport
+            )
+        except (MarketplaceError, ValueError) as exc:
+            self._notice(f"theme search failed: {exc} — keeping {self.theme!r}")
+            return
+        if not entries:
+            self._notice(f"no marketplace themes matched {query!r} — nothing changed")
+            return
+        rows = []
+        for entry in entries:
+            origin = (
+                f"{entry.publisher}/{entry.extension}"
+                if entry.publisher
+                else entry.download_url
+            )
+            rows.append(
+                f"{entry.theme_label} ({origin}) — "
+                f"fetch with /theme fetch {entry.source_id}"
+            )
+        self._notice("marketplace themes:\n" + "\n".join(rows))
+
+    async def _fetch_marketplace_theme(self, ref: str, name: str | None) -> None:
+        """Fetch one marketplace source and preview it live when valid."""
+        async with self._theme_apply_lock:
+            try:
+                entry = await asyncio.to_thread(
+                    resolve_marketplace_source,
+                    ref,
+                    transport=self.marketplace_transport,
+                )
+                report = await asyncio.to_thread(
+                    import_marketplace_theme,
+                    entry,
+                    transport=self.marketplace_transport,
+                    name=name,
+                    config_dir=self._theme_config_root(),
+                )
+            except (MarketplaceError, ThemeImportError, ValueError, OSError) as exc:
+                self._notice(f"theme fetch failed: {exc} — keeping {self.theme!r}")
+                return
+            self._apply_import_report(report, action="fetched")
+
+    async def _reload_imported_theme(self, slug: str | None) -> None:
+        """Re-run the import pipeline for one recorded source; never watched.
+
+        The stored theme is rewritten and the live theme re-resolved only
+        after the fresh source validates fully. Any failure keeps rendering
+        the current theme with a notice — never a partial application, and
+        never a teardown of the live session.
+        """
+        async with self._theme_apply_lock:
+            target = slug or self.session_theme_slug or self.configured_theme_slug
+            if slug is not None and slug not in self.theme_registry.slugs:
+                self._notice(
+                    f"theme {slug!r} is not available — keeping {self.theme!r}"
+                )
+                return
+            sources, _notices = load_import_sources(
+                config_dir=self._theme_config_root()
+            )
+            source = sources.get(target)
+            if source is None:
+                self._notice(
+                    f"theme {target!r} has no recorded import source — "
+                    f"keeping {self.theme!r}"
+                )
+                return
+            try:
+                report = await asyncio.to_thread(
+                    reload_imported_theme,
+                    slug=target,
+                    source=source,
+                    transport=self.marketplace_transport,
+                    config_dir=self._theme_config_root(),
+                )
+            except (
+                MarketplaceError,
+                ThemeImportError,
+                ValueError,
+                OSError,
+            ) as exc:
+                self._notice(f"theme reload failed: {exc} — keeping {self.theme!r}")
+                return
+            self._apply_import_report(report, action="reloaded")
+
+    def _apply_import_report(self, report: ImportReport, *, action: str) -> None:
+        """Swap one validated spec into the live registry and preview it."""
+        slug = report.theme.slug
+        previous = self.theme
+        old_theme = self.available_themes.get(slug)
+        try:
+            specs = (
+                tuple(
+                    spec
+                    for spec in self.theme_registry.specs
+                    if spec.slug != slug
+                )
+                + (report.theme,)
+            )
+            registry = ThemeRegistry(specs)
+            new_theme = registry.to_textual_theme(slug)
+            self.register_theme(new_theme)
+            self.theme_registry = registry
+            self.theme = slug
+        except Exception as exc:
+            with suppress(Exception):
+                self.theme = previous
+            self._notice(
+                f"theme {slug!r} could not apply ({exc}) — keeping {previous!r}"
+            )
+            return
+        if previous == slug:
+            self._repaint_theme_if_changed(new_theme, old_theme)
+        self.session_theme_slug = slug
+        self._notice(
+            f"theme {slug!r} {action}: {report.mapped_count} source tokens, "
+            f"{report.fallback_count} fallbacks, "
+            f"{report.unsupported_count} warnings"
+        )
 
     def _perform_models(self, argument: str) -> None:
         """Route ``/models``: no argument opens or closes it, one selects.

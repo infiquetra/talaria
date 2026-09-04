@@ -26,6 +26,7 @@ from talaria.ui.inspector import (
     MAX_INSPECTOR_WIDTH,
     MIN_INSPECTOR_WIDTH,
     Inspector,
+    InspectorDiagRow,
 )
 from talaria.ui.picker import SessionModel
 from tests.domain.conftest import raw_event, replay
@@ -70,7 +71,7 @@ class InspectorHarness(App[None]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("ctrl+b", "toggle_inspector", "inspector", priority=True),
+        Binding("ctrl+o", "toggle_inspector", "inspector", priority=True),
     ]
 
     def __init__(self, view: InspectorView) -> None:
@@ -180,13 +181,13 @@ def _seeded_view() -> InspectorView:
 
 
 @pytest.mark.asyncio
-async def test_ctrl_b_and_local_command_toggle_the_wide_dock() -> None:
+async def test_ctrl_o_and_local_command_toggle_the_wide_dock() -> None:
     app = InspectorHarness(_seeded_view())
     async with app.run_test(size=(132, 30)) as pilot:
         assert app.inspector.is_docked
         assert app.inspector.panel_width == 36
 
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_effectively_collapsed
         assert app.inspector.requested_collapsed
@@ -230,7 +231,7 @@ async def test_119_120_transitions_restore_only_the_requested_open_state() -> No
         await pilot.pause()
         assert app.inspector.is_docked
 
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.requested_collapsed
         await pilot.resize_terminal(119, 30)
@@ -248,8 +249,8 @@ async def test_docked_request_returns_after_narrow_overlay_open_and_close() -> N
         assert not app.inspector.requested_collapsed
 
         await pilot.resize_terminal(78, 30)
-        await pilot.press("ctrl+b")
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
+        await pilot.press("ctrl+o")
         await pilot.pause()
 
         assert not app.inspector.requested_collapsed
@@ -262,12 +263,12 @@ async def test_docked_request_returns_after_narrow_overlay_open_and_close() -> N
 async def test_collapsed_request_survives_a_narrow_overlay_peek() -> None:
     app = InspectorHarness(_seeded_view())
     async with app.run_test(size=(132, 30)) as pilot:
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         assert app.inspector.is_effectively_collapsed
         assert app.inspector.requested_collapsed
 
         await pilot.resize_terminal(78, 30)
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_overlay
         assert app.inspector.requested_collapsed
@@ -286,16 +287,16 @@ async def test_narrow_overlay_cycle_never_changes_requested_collapsed(
     app = InspectorHarness(_seeded_view())
     async with app.run_test(size=(132, 30)) as pilot:
         if start_collapsed:
-            await pilot.press("ctrl+b")
+            await pilot.press("ctrl+o")
         assert app.inspector.requested_collapsed is start_collapsed
 
         await pilot.resize_terminal(78, 30)
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_overlay
         assert app.inspector.requested_collapsed is start_collapsed
 
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_effectively_collapsed
         assert app.inspector.requested_collapsed is start_collapsed
@@ -310,7 +311,7 @@ async def test_narrow_overlay_keeps_main_width_and_escape_restores_focus() -> No
         await pilot.pause()
         width_before = main.region.width
 
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_overlay
         assert app.inspector.effective_width == 36
@@ -325,7 +326,7 @@ async def test_narrow_overlay_keeps_main_width_and_escape_restores_focus() -> No
         assert app.focused is main
 
         await pilot.resize_terminal(30, 30)
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_overlay
         assert app.inspector.effective_width == 30
@@ -341,7 +342,7 @@ async def test_widening_an_open_overlay_restores_the_exact_prior_focus() -> None
         await pilot.pause()
 
         await pilot.resize_terminal(78, 30)
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_overlay
         assert app.focused is not main
@@ -361,7 +362,7 @@ async def test_composer_receives_typing_after_overlay_closes_on_widen() -> None:
         await pilot.pause()
 
         await pilot.resize_terminal(78, 30)
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_overlay
 
@@ -379,7 +380,7 @@ async def test_narrow_to_narrow_resize_keeps_an_open_overlay() -> None:
     async with app.run_test(size=(78, 30)) as pilot:
         main = app.query_one("#main", FocusTarget)
         main.focus()
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_overlay
 
@@ -482,17 +483,17 @@ def test_empty_sentence_matches_both_inspector_documents() -> None:
 
 
 @pytest.mark.asyncio
-async def test_production_app_ctrl_b_and_inspector_command_are_socket_free() -> None:
+async def test_production_app_ctrl_o_and_inspector_command_are_socket_free() -> None:
     dispatcher = RecordingDispatcher()
     app = live_app(dispatcher)
 
     async with app.run_test(size=(132, 30)) as pilot:
         await pilot.pause()
         assert app.inspector.is_docked
-        assert "ctrl+b inspector" in app.help_bar.help_text
+        assert "ctrl+o inspector" in app.help_bar.help_text
         assert "/ commands" in app.help_bar.help_text
 
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_effectively_collapsed
 
@@ -526,7 +527,7 @@ async def test_production_resize_adapter_preserves_dock_and_overlay_geometry() -
         body_width = app.query_one("#body").region.width
         app.composer.text_area.focus()
 
-        await pilot.press("ctrl+b")
+        await pilot.press("ctrl+o")
         await pilot.pause()
         assert app.inspector.is_overlay
         assert app.inspector.region.width == 36
@@ -599,3 +600,96 @@ async def test_production_render_boundary_populates_all_held_sections() -> None:
         await pilot.pause()
         assert app.inspector.selected_file_key == "talaria/config.py"
         assert app.dispatcher is None
+
+
+# ── #122: the inspector holds the relocated diagnostics rows ──────────
+
+
+_DIAG_LINES = (
+    "roster: present — fleet roster available (probe, 0s ago)",
+    "approval-detail: present — foreign approval detail available (probe, 0s ago)",
+    "http-runner: not observed — admin catalogue not observed",
+    "kanban-dispatcher: not observed — board queue source off",
+)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_section_starts_honestly_empty() -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)):
+        assert app.inspector.diag_texts == ()
+        empty = app.inspector.query_one(".inspector--diag-empty", Static)
+        assert str(empty.content) == f"  {EMPTY_SECTION}"
+        headings = [
+            str(node.content)
+            for node in app.inspector.query(".inspector--heading").nodes
+            if isinstance(node, Static)
+        ]
+        assert "DIAGNOSTICS" in headings
+
+
+@pytest.mark.asyncio
+async def test_moved_rows_are_reachable_as_focusable_diag_rows() -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await app.inspector.apply_diagnostics(_DIAG_LINES)
+        await pilot.pause()
+
+        assert len(app.inspector.diag_texts) == 4
+        assert app.inspector.diag_texts[0] == f"  {_DIAG_LINES[0]}"
+        assert "kanban-dispatcher" in app.inspector.diag_texts[3]
+
+        first = app.inspector.query(".inspector--diag").nodes[0]
+        assert isinstance(first, InspectorDiagRow)
+        first.focus()
+        await pilot.pause()
+        assert app.focused is first
+        app.query_one("#main", FocusTarget).focus()
+        await pilot.pause()
+        assert app.focused is not first
+
+
+@pytest.mark.asyncio
+async def test_an_empty_move_restores_the_honest_empty_row() -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await app.inspector.apply_diagnostics(("roster: present",))
+        await pilot.pause()
+        assert len(app.inspector.diag_texts) == 1
+
+        await app.inspector.apply_diagnostics(())
+        await pilot.pause()
+        assert not app.inspector.diag_texts
+        empty = app.inspector.query_one(".inspector--diag-empty", Static)
+        assert str(empty.content) == f"  {EMPTY_SECTION}"
+
+
+@pytest.mark.asyncio
+async def test_a_view_reprojection_preserves_diagnostics() -> None:
+    """apply() owns four sections; diagnostics follow the probe board, not the view."""
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await app.inspector.apply_diagnostics(("roster: present",))
+        await pilot.pause()
+        before = app.inspector.diag_texts
+        assert len(before) == 1
+
+        await app.inspector.apply(_seeded_view())
+        await pilot.pause()
+        assert app.inspector.diag_texts == before
+
+
+@pytest.mark.asyncio
+async def test_diag_rows_join_up_down_keyboard_navigation() -> None:
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await app.inspector.apply_diagnostics(("roster: present",))
+        await pilot.pause()
+        tasks = app.inspector.query(".inspector--task").nodes
+        assert len(tasks) == 2  # the seeded approval row and the agent row
+        tasks[0].focus()
+        await pilot.pause()
+        for _ in range(3):  # second task, the file row, then the diag row
+            app.inspector.action_next_row()
+            await pilot.pause()
+        assert isinstance(app.focused, InspectorDiagRow)

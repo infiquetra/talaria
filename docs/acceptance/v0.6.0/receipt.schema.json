@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infiquetra.github.io/talaria/acceptance/v0.6.0/receipt.schema.json",
+  "title": "Talaria v0.6.0 acceptance item receipt",
+  "description": "Shape of one transcribed live-matrix row. Rows transcribe controller-observed results with explicit provenance; they carry no terminal captures.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release",
+    "checklist_item",
+    "title",
+    "issue",
+    "tester",
+    "verdict",
+    "artifact",
+    "harness_commit",
+    "recorded_at",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {"const": "talaria-v0.6.0-receipt-v1"},
+    "release": {"const": "0.6.0"},
+    "checklist_item": {"type": "integer", "minimum": 1, "maximum": 12},
+    "title": {"type": "string", "minLength": 1},
+    "issue": {"type": "string", "minLength": 1},
+    "tester": {"const": "controller"},
+    "verdict": {"enum": ["pass", "fail", "blocked", "reserved"]},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "version", "wheel_filename", "wheel_sha256"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "version": {"const": "0.6.0"},
+        "wheel_filename": {"type": "string", "minLength": 1},
+        "wheel_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "harness_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "method", "observation"],
+      "properties": {
+        "kind": {"const": "reported-live-matrix"},
+        "source": {"type": "string", "minLength": 1},
+        "method": {"type": "string", "minLength": 1},
+        "observation": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

@@ -10,9 +10,10 @@ was happening. The question a test has to ask is the operator's question.
 
 The failure was silent in every direction. The composer still showed its
 placeholder, because a composer with no text always does. The interface still
-answered ``ctrl+c``, because those bindings are ``priority`` and never needed
-the caret. Nothing was greyed out and nothing was on screen to say the app had
-stopped listening — the only reliable way out was to quit and relaunch.
+answered the inspector and interrupt chords, because those bindings are
+``priority`` and never needed the caret. Nothing was greyed out and nothing
+was on screen to say the app had stopped listening — the only reliable way
+out was to quit and relaunch.
 """
 
 from __future__ import annotations

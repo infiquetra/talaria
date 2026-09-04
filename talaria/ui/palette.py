@@ -633,7 +633,7 @@ class PaletteRegion(Vertical):
     # ── click ────────────────────────────────────────────────────────────
 
     async def on_click(self, event: events.Click) -> None:
-        """Click on a filtered row selects it (same insert rule as Enter)."""
+        """Click on a filtered row inserts it; Enter dispatches (#121)."""
         if self.is_theme_active:
             target = event.widget
             if isinstance(target, Static) and target in self._rows:

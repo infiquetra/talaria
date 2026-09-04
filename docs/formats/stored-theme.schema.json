@@ -11,6 +11,14 @@
       "$comment": "Optional for v0.5.0 migration compatibility; required starting in v0.6.0.",
       "const": "talaria-theme-v1"
     },
+    "groups": {
+      "$comment": "Optional sparse per-category layer added in v0.6.0; absent means no group values. Unknown categories, unknown tokens, nulls, and malformed colors fall through at resolution.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"type": ["string", "null"]}
+      }
+    },
     "dark": {"type": "boolean"},
     "name": {
       "type": "string",

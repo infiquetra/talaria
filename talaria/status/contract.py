@@ -80,6 +80,122 @@ ROW_LIMIT: int = 8
 #: :data:`ROW_LIMIT`, or more bytes than :data:`STDOUT_LIMIT_BYTES`.
 TRUNCATION_MARKER: str = "… truncated"
 
+# ── The versioned script-output intake (#125) ─────────────────────────────
+#
+# A status script's stdout is either v1 plain-text rows (one row per line,
+# rendered literally — the contract ``docs/formats/status-line.md`` freezes)
+# or a versioned JSON document carried on that same stdout. Version 2 is the
+# only document version this Talaria understands; it adds script-controlled
+# rows (text plus a requested color) that render on the true-bottom bar
+# rather than in the in-body status region.
+
+#: The only script-output document version understood here. A document
+#: naming any other version is an unknown shape, not an older dialect:
+#: there never was a v1 JSON output shape, so ``{"version": 1, ...}`` on
+#: stdout is rejected rather than guessed at.
+SCRIPT_OUTPUT_VERSION: int = 2
+
+#: Top-level keys a version-2 script document may carry. Exact, like
+#: :data:`FROZEN_TOP_LEVEL_FIELDS`: an unknown key is a shape the reader
+#: does not understand, and rendering around it is how junk reaches a bar.
+SCRIPT_DOCUMENT_FIELDS: frozenset[str] = frozenset({"version", "rows"})
+
+#: Keys one version-2 row object may carry. ``color`` is optional and
+#: defaults to ``"text"``; anything else is an unknown shape.
+SCRIPT_ROW_FIELDS: frozenset[str] = frozenset({"text", "color"})
+
+
+@dataclass(frozen=True)
+class ScriptRow:
+    """One script-controlled bar row from a version-2 output document.
+
+    ``color`` is the script's *request*, not a style: the bar maps it
+    through its safe-color rules at render time (unknown names fall back
+    to ``"text"``), so no free-form color value ever reaches the terminal
+    framework. Carried raw here so the intake stays a shape check rather
+    than growing a presentation mapping the domain core must not own.
+    """
+
+    text: str
+    color: str = "text"
+
+
+class ScriptDocumentError(ValueError):
+    """A JSON-object stdout that is not a valid version-2 script document.
+
+    Raised rather than rendered: an unknown shape on stdout is a broken
+    script talking, and the bar keeps its previous good render with a
+    notice instead of showing junk. A ``ValueError`` (not ``AssertionError``)
+    because this fires at runtime on operator-script output, where a crash
+    is never the answer — the runner converts it to a categorical tick
+    outcome, the same way every other per-tick failure is reported.
+    """
+
+
+def parse_script_rows(text: str) -> tuple[ScriptRow, ...] | None:
+    """Split version-2 script documents from v1 plain-text rows.
+
+    Returns ``None`` when ``text`` is not a JSON object at all — that is
+    the v1 plain-text path, which the caller renders byte-identically
+    through the existing text normalizer. (Scalar and array JSON —
+    ``123``, ``null``, ``[1]`` — also return ``None``: a v1 script
+    printing a bare number keeps rendering that number rather than
+    tripping a document protocol it never opted into. Only an object
+    claims structure, so only an object is held to the document shape.)
+
+    Returns the script rows (possibly empty: an explicit ``"rows": []``
+    clears the bar to its segment row) for a valid version-2 document.
+
+    Raises :class:`ScriptDocumentError` for a JSON object that is not a
+    valid version-2 document: a missing or jumped ``version``, a
+    missing or wrong-typed ``rows``, a null or wrong-typed row, or any
+    unknown key at either level. The caller reports that loudly (a
+    categorical marker, never a render of the junk) while the bar keeps
+    its previous good rows.
+    """
+    try:
+        document = json.loads(text)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    version = document.get("version", None)
+    if version != SCRIPT_OUTPUT_VERSION:
+        raise ScriptDocumentError(
+            f"unknown script document version {version!r}; "
+            f"this Talaria renders version {SCRIPT_OUTPUT_VERSION}"
+        )
+    unknown_top = set(document.keys()) - SCRIPT_DOCUMENT_FIELDS
+    if unknown_top:
+        raise ScriptDocumentError(
+            f"unknown script document field(s): {sorted(unknown_top)}"
+        )
+    if not isinstance(document.get("rows"), list):
+        raise ScriptDocumentError(
+            'a version-2 script document needs "rows" as a list of rows'
+        )
+    rows: list[ScriptRow] = []
+    for entry in document["rows"]:
+        if isinstance(entry, str):
+            rows.append(ScriptRow(text=entry))
+            continue
+        if not isinstance(entry, dict):
+            raise ScriptDocumentError(
+                f"a version-2 row is text or an object, not {type(entry).__name__}"
+            )
+        unknown_row = set(entry.keys()) - SCRIPT_ROW_FIELDS
+        if unknown_row:
+            raise ScriptDocumentError(
+                f"unknown script row field(s): {sorted(unknown_row)}"
+            )
+        if not isinstance(entry.get("text"), str):
+            raise ScriptDocumentError('a version-2 row object needs "text" as a string')
+        color = entry.get("color", "text")
+        if not isinstance(color, str):
+            raise ScriptDocumentError('a version-2 row "color" must be a string')
+        rows.append(ScriptRow(text=entry["text"], color=color))
+    return tuple(rows)
+
 # ── KTD5's environment deny boundary ────────────────────────────────────
 
 #: Passed through unconditionally by name (not by prefix, so nothing here
@@ -115,6 +231,22 @@ FORWARDED_TALARIA_VARS: tuple[str, ...] = (
 #: rides this URL). Its query string is stripped entirely rather than
 #: pattern-filtered — see :func:`_strip_query`.
 GATEWAY_URL_ENV_VAR = "TALARIA_GATEWAY_URL"
+
+#: Provider credential names that never forward, even when the operator names
+#: them on ``environment.allowlist``. ``is_suspicious_key`` does not flag
+#: these vendor-prefixed names — its API-key pattern anchors to the whole
+#: name, so ``OPENAI_API_KEY`` reads as "some vendor's key" rather than a
+#: credential shape — which is exactly why they are enumerated here instead
+#: of relying on pattern coverage. Compared case-insensitively; the names
+#: themselves are the only thing recorded, never any value.
+DENIED_PROVIDER_KEYS: frozenset[str] = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "GITHUB_PAT",
+    }
+)
 
 
 def _strip_query(url: str) -> str:
@@ -169,7 +301,10 @@ def build_child_env(
     is asserted against :func:`~talaria.recorder.redact.is_suspicious_key`
     before being forwarded. A ``TALARIA_*`` prefix is not by itself a pass
     (KTD5): the credential-shaped-name deny outranks the enumerated
-    ``TALARIA_*`` set and the operator allowlist both.
+    ``TALARIA_*`` set and the operator allowlist both. The exact provider
+    names in :data:`DENIED_PROVIDER_KEYS` are denied first, by name, because
+    the pattern check does not flag them — deny outranks the allowlist for
+    those names unconditionally.
 
     Value sanitizing happens in :func:`_sanitize`, on the one path every
     forwarded variable takes, rather than in the loop that happens to know about
@@ -182,6 +317,8 @@ def build_child_env(
     child_env: dict[str, str] = {}
 
     def _maybe_forward(name: str, value: str) -> None:
+        if name.upper() in DENIED_PROVIDER_KEYS:
+            return
         if is_suspicious_key(name):
             return
         child_env[name] = _sanitize(name, value)

@@ -132,6 +132,9 @@ HEALTHY: dict[str, dict[str, Any]] = {
         "skills": {},
         "skill_count": 0,
         "warning": "",
+        # The U1-established metadata map (#119): a small sample of the live
+        # shape, which the baseline pins as a known object key.
+        "commands": {"/status": "Show session status"},
     },
     # The roster's own reply. Same top-level key as ``session.list`` and a
     # deliberately different row: U1 verified live that an ``active_list`` row
