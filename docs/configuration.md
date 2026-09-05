@@ -95,6 +95,63 @@ defaults.
 The responsive widths and segment forms are fixed product behavior; changing a maximum does not move
 a breakpoint. See [Terminal UI](terminal-ui.md#responsive-status-bar) for that table.
 
+## Starter status configuration
+
+Copy `docs/examples/status_bar_starter.py` somewhere durable (for example `~/.talaria/`) and point
+`status.command` at it. Only the command needs setting; every other status key keeps its default
+by deep-merge:
+
+```toml
+[status]
+command = "python3 /home/operator/.talaria/status_bar_starter.py"
+```
+
+Replace `/home/operator` with the real absolute path. The command string is split with POSIX
+quoting and exec'd directly — there is no shell, so `~` and environment variables do not expand
+and a relative path resolves against the launch directory, not the configuration file. An empty,
+non-string, or unparseable command disables only the status region with a startup notice; a
+missing executable or a failing script keeps the rest of the interface usable and shows its
+categorical failure marker in the region instead of rows.
+
+## Status script input fields
+
+Each tick writes one JSON document to the script's stdin. The field set below is verified against
+`StatusPayload.to_json_dict()` (`talaria/domain/projection.py`), the single source the payload
+encoder copies verbatim — anything not listed here is not in the input, however familiar its
+name sounds from other tools.
+
+| Field | Status |
+| --- | --- |
+| `version` (integer, always `1`) | always present |
+| `mode`, `connection`, `turn`, `pending_prompts` | always present |
+| `session` (`{id, title\|null}`) | always present |
+| `subagents` (`{active, terminal}`) | always present |
+| `usage` (`{input_tokens, output_tokens}`) | present, **null unless both counters have been observed** |
+| context window (used, maximum, percent) | **absent — unavailable, label it, never fabricate it** |
+| rate limits | **absent — unavailable, label it, never fabricate it** |
+| spending / cost | **absent — unavailable, label it, never fabricate it** |
+
+The three absences are real gaps in what the gateway path delivers to the script, not misreadings.
+A `session.context_breakdown` call exists on the gateway but is not part of this input; wiring it
+in is future work, not something a status script can reach today. The starter script above renders
+each absence as a labelled `unavailable` row — copy that pattern rather than guessing numbers.
+
+The child environment is default-deny: `PATH`, `HOME`, `SHELL`, `TERM`, `TMPDIR`, `LANG`/`LC_*`,
+five `TALARIA_*` names (with the gateway URL's query string stripped), plus exactly the
+`environment.allowlist` names that are not credential-shaped. Credential-like names never forward,
+even allowlisted.
+
+## When status changes apply
+
+- Editing the status *script file* takes effect on the next tick: the runner spawns the script
+fresh every tick, so there is nothing to restart and nothing cached. (`tests/status/test_runner.py`
+pins this: `test_script_edits_take_effect_on_the_next_tick_without_restart`.)
+- Changing status *configuration* — the command, interval, segments, column limits, or allowlist —
+needs a restart. Configuration resolves once at startup and Talaria does not watch the files.
+- `/bar` toggles the segment set live for the running process; it changes no file.
+- This section promises nothing beyond status behavior: whether other configuration reloads live
+is shared with the configuration views and decided there.
+
 ## Validation and compatibility
 
 Talaria deep-merges each configured table onto the defaults, so files written before 0.5.0 do not

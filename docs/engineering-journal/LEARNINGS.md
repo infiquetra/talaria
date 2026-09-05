@@ -2,6 +2,29 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-05
+
+### C4 needed no production code: verify behavior first, then write the setup path (#143)
+
+**Evidence.** The C4 status-bar setup unit (item 7 setup path, item 6 apply/restart rule)
+landed as docs, a starter script, and tests with zero production-byte changes: script-edits-live
+was already pinned (`test_script_edits_take_effect_on_the_next_tick_without_restart`, fresh
+exec per tick), every failure outcome already carried a categorical marker, and config
+restart-to-apply was already documented and constructed once at startup. The work was a
+starting point plus honest boundaries, not a repair.
+
+**Mechanism.** "Verify the existing behavior first" (the child contract's own words) decided
+the shape: reading the runner, the contract, and the existing tests before writing showed
+all three acceptance behaviors already held, so the unit's risk moved from implementation to
+documentation accuracy — the field table had to match the serializer exactly, and the starter
+had to render unavailable fields as labelled rather than fabricating them.
+
+**Generalizable rule.** When the contract says verify-first, treat "no code change" as a
+possible passing result and say so in the report: a docs-and-tests unit that proves the
+behavior holds is stronger than a gratuitous refactor that risks it.
+
+## 2026-09-04
+
 ## 2026-09-04
 
 ### A seam nobody calls after mount can secretly be an initializer — wiring it live turns its side effects into behavior
