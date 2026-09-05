@@ -212,7 +212,13 @@ async def test_status_region_geometry_is_invariant_across_focus_states() -> None
         await app.shutdown_sources()
 
 
-# ── #122: routine seam rows move into the inspector ─────────────────────
+# ── #122/#144: the seam board lives in the inspector alone ──────────────
+#
+# #122 moved routine rows into the inspector and kept the actionable subset
+# above the composer; #144 closed that second surface. What these tests pin
+# now: every seam row — clean, actionable, or stale — renders in the
+# inspector's diagnostics section and nowhere above the composer, with the
+# inspector open or closed.
 
 
 def _paint_board(
@@ -244,9 +250,18 @@ def _diag_names(app: TalariaApp) -> tuple[str, ...]:
     return tuple(line.strip().split(":")[0] for line in app.inspector.diag_texts)
 
 
+def _region_texts(app: TalariaApp) -> str:
+    """Everything the status region renders, joined for one substring check.
+
+    The region has no seam surface any more, so the honest pin is on its whole
+    rendered content: nothing it shows may name a seam.
+    """
+    return "\n".join((*app.status_region.row_texts, app.status_region.marker_text))
+
+
 @pytest.mark.asyncio
-async def test_routine_seam_rows_move_out_of_the_region() -> None:
-    """U2: a clean board leaves the region empty and fills the inspector."""
+async def test_a_clean_board_renders_in_the_inspector_alone() -> None:
+    """A clean board fills the inspector and leaves the region empty."""
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(132, 30)) as pilot:
         await pilot.pause()
@@ -254,15 +269,14 @@ async def test_routine_seam_rows_move_out_of_the_region() -> None:
         await app._render_seams()
         await pilot.pause()
 
-        assert app.status_region.seam_texts == ()
         assert _diag_names(app) == (
             "roster",
             "approval-detail",
             "http-runner",
             "kanban-dispatcher",
         )
-        assert app.status_region.marker_text == ""
-        assert app.status_region.focus_text.startswith("caret:")
+        assert screen_text(app).count("roster:") == 1, "the inspector copy is the only one"
+        assert _region_texts(app) == ""
         await app.shutdown_sources()
 
 
@@ -270,8 +284,8 @@ async def test_routine_seam_rows_move_out_of_the_region() -> None:
     "status", ["absent", "incompatible", "degraded", "parameter-invalid"]
 )
 @pytest.mark.asyncio
-async def test_actionable_seam_rows_stay_visible_in_the_region(status: str) -> None:
-    """U1/U2: a seam naming a lost capability stays AND is held in full."""
+async def test_actionable_seam_rows_never_return_above_the_composer(status: str) -> None:
+    """#144: a seam naming a lost capability is inspector-only, in full."""
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(132, 30)) as pilot:
         await pilot.pause()
@@ -279,23 +293,25 @@ async def test_actionable_seam_rows_stay_visible_in_the_region(status: str) -> N
         await app._render_seams()
         await pilot.pause()
 
-        region = app.status_region.seam_texts
-        assert len(region) == 1
-        assert region[0].startswith("roster:")
-        assert status in region[0]
         assert _diag_names(app) == (
             "roster",
             "approval-detail",
             "http-runner",
             "kanban-dispatcher",
         )
-        assert any(region[0] in line for line in app.inspector.diag_texts)
+        roster = next(line for line in app.inspector.diag_texts if "roster:" in line)
+        assert status in roster
+        assert screen_text(app).count("roster:") == 1, (
+            "an actionable row must not duplicate above the composer"
+        )
+        assert _region_texts(app) == ""
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
-async def test_a_stale_present_seam_stays_visible() -> None:
-    """U1: an un-revalidated verdict is ambiguous currency, so it stays."""
+async def test_a_stale_present_seam_grows_stale_in_the_inspector_only() -> None:
+    """An un-revalidated verdict is ambiguous currency — and #144 keeps even
+    the stale copy off the composer, which is the duplicate the operator saw."""
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(132, 30)) as pilot:
         await pilot.pause()
@@ -303,29 +319,66 @@ async def test_a_stale_present_seam_stays_visible() -> None:
         await app._render_seams()
         await pilot.pause()
 
-        region = app.status_region.seam_texts
-        assert len(region) == 1
-        assert region[0].startswith("roster:")
-        assert "stale" in region[0]
+        roster = next(line for line in app.inspector.diag_texts if "roster:" in line)
+        assert "stale" in roster
+        assert screen_text(app).count("roster:") == 1
+        assert _region_texts(app) == ""
+
+        # The age refresh is a display transition on existing data (I4's
+        # trigger bound): it repaints the inspector's row and nothing else.
+        await app._refresh_seam_ages()
+        await pilot.pause()
+        assert screen_text(app).count("roster:") == 1
+        assert _region_texts(app) == ""
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_with_the_inspector_closed_an_actionable_board_renders_nowhere_inline() -> (
+    None
+):
+    """#144's rule holds with the inspector hidden: the rows do not fall back
+    above the composer, they wait in state for the inspector to reopen."""
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        app.inspector.toggle()
+        await pilot.pause()
+
+        _paint_board(app, {"roster": "absent", "approval-detail": "present"})
+        await app._render_seams()
+        await pilot.pause()
+
+        assert "roster:" not in screen_text(app), (
+            "a closed inspector must not push diagnostics above the composer"
+        )
+        assert _region_texts(app) == ""
+        assert _diag_names(app) == (
+            "roster",
+            "approval-detail",
+            "http-runner",
+            "kanban-dispatcher",
+        )
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
 async def test_an_unprobed_board_keeps_the_inspector_honestly_empty() -> None:
-    """U2: no probe yet is an empty sentence in the inspector, never a zero."""
+    """No probe yet is an empty sentence in the inspector, never a zero."""
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(132, 30)) as pilot:
         await pilot.pause()
-        assert app.status_region.seam_texts == ()
         assert app.inspector.diag_texts == ()
+        assert _region_texts(app) == ""
         empty = app.inspector.query_one(".inspector--diag-empty", Static)
         assert str(empty.content) == f"  {EMPTY_SECTION}"
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
-async def test_a_seam_failing_mid_move_still_surfaces_in_the_region() -> None:
-    """U3: a row that moved out returns the tick its probe turns against it."""
+async def test_a_seam_failing_mid_move_surfaces_in_the_inspector_alone() -> None:
+    """A seam that turns against the interface mid-move updates its inspector
+    row — it does not return above the composer to be seen."""
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(132, 30)) as pilot:
         await pilot.pause()
@@ -335,7 +388,7 @@ async def test_a_seam_failing_mid_move_still_surfaces_in_the_region() -> None:
         )
         await app._render_seams()
         await pilot.pause()
-        assert app.status_region.seam_texts == ()
+        assert screen_text(app).count("roster:") == 1
 
         board = apply_probe_round(
             board,
@@ -354,32 +407,33 @@ async def test_a_seam_failing_mid_move_still_surfaces_in_the_region() -> None:
         await app._render_seams()
         await pilot.pause()
 
-        region = app.status_region.seam_texts
-        assert len(region) == 1
-        assert region[0].startswith("roster: absent")
-        assert len(app.inspector.diag_texts) == 4
+        roster = next(line for line in app.inspector.diag_texts if "roster:" in line)
+        assert roster.startswith("  roster: absent")
+        assert screen_text(app).count("roster:") == 1
+        assert _region_texts(app) == ""
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
-async def test_marker_focus_and_notice_paths_survive_the_move() -> None:
-    """U3: the alert paths the move did not touch still reach the marker."""
+async def test_marker_and_notice_paths_survive_the_seam_move() -> None:
+    """The alert paths the seam move did not touch still reach the marker, and
+    the caret row in the inspector's context is not clobbered by a seam paint."""
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(132, 30)) as pilot:
         await pilot.pause()
-        focus_before = app.status_region.focus_text
+        context_before = app.inspector.context_text
+        assert "caret" in context_before
         _paint_board(app, {"roster": "present", "approval-detail": "present"})
         await app._render_seams()
         await pilot.pause()
-        assert app.status_region.seam_texts == ()
-        assert app.status_region.focus_text == focus_before
+        assert app.inspector.context_text == context_before
 
         await app.status_region.apply(
             StatusTickResult(outcome="timeout", marker="status: slow command")
         )
         await pilot.pause()
         assert app.status_region.marker_text == "[x] status: slow command"
-        assert app.status_region.seam_texts == ()
+        assert app.status_region.row_texts == ()
         assert len(app.inspector.diag_texts) == 4
 
         app.status_region.show_configuration_notice(
@@ -392,14 +446,17 @@ async def test_marker_focus_and_notice_paths_survive_the_move() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_failed_move_leaves_rows_visible_in_the_region(
+async def test_a_failed_move_drops_the_board_until_the_next_paint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """U2: when the inspector cannot take the rows, the region keeps them all."""
+    """#144 removed the region fallback: an inspector that cannot take the rows
+    leaves them nowhere on screen, and the unset cache retries on the next paint
+    rather than remembering a refusal as done."""
 
     async def _refused(self: TalariaApp, lines: tuple[str, ...]) -> bool:
         return False
 
+    original = TalariaApp._render_inspector_diagnostics
     monkeypatch.setattr(TalariaApp, "_render_inspector_diagnostics", _refused)
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(132, 30)) as pilot:
@@ -409,13 +466,26 @@ async def test_a_failed_move_leaves_rows_visible_in_the_region(
         await pilot.pause()
 
         assert _diag_names(app) == ()
-        assert len(app.status_region.seam_texts) == 4
+        assert "roster:" not in screen_text(app), (
+            "a refused move must not fall back to the retired region copy"
+        )
+        assert _region_texts(app) == ""
+
+        monkeypatch.setattr(TalariaApp, "_render_inspector_diagnostics", original)
+        await app._render_seams()
+        await pilot.pause()
+        assert _diag_names(app) == (
+            "roster",
+            "approval-detail",
+            "http-runner",
+            "kanban-dispatcher",
+        )
         await app.shutdown_sources()
 
 
 @pytest.mark.asyncio
-async def test_clean_flow_snapshot_keeps_routine_rows_out_of_the_region() -> None:
-    """U3: steady-state ticks render the chat with nowhere routine leaking."""
+async def test_clean_flow_snapshot_keeps_routine_rows_out_of_the_composer_area() -> None:
+    """Steady-state ticks render the chat with nowhere routine leaking."""
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(132, 30)) as pilot:
         await pilot.pause()
@@ -430,8 +500,8 @@ async def test_clean_flow_snapshot_keeps_routine_rows_out_of_the_region() -> Non
 
         text = screen_text(app)
         assert "hello" in text
-        assert "roster: present" in text  # moved, not gone: it lives in the inspector
-        assert app.status_region.seam_texts == ()
+        assert text.count("roster:") == 1  # moved, not gone: it lives in the inspector
+        assert app.status_region.row_texts == ()
         assert app.status_region.marker_text == ""
         assert not any(
             "roster:" in entry.text or "approval-detail:" in entry.text
@@ -461,10 +531,10 @@ async def test_a_never_probed_board_paints_no_seam_rows() -> None:
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        assert app.status_region.seam_texts == ()
+        assert app.inspector.diag_texts == ()
         await app._render_tick()
         await pilot.pause()
-        assert app.status_region.seam_texts == (), "a render tick painted an unprobed board"
+        assert app.inspector.diag_texts == (), "a render tick painted an unprobed board"
         await app.shutdown_sources()
 
 

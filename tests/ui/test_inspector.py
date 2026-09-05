@@ -459,16 +459,25 @@ async def test_empty_rows_paint_the_complete_sentence_at_every_panel_width(
         assert app.inspector.region.width == panel_width
         empty_rows = [
             *app.inspector.query(".inspector--empty").nodes,
-            app.inspector.query_one(".inspector--context", Static),
             app.inspector.query_one(".inspector--operation", Static),
         ]
-        assert len(empty_rows) == 4
+        assert len(empty_rows) == 3
         for row in empty_rows:
             painted = " ".join(
                 row.render_line(y).text.strip() for y in range(row.size.height)
             )
             assert EMPTY_SECTION in " ".join(painted.split())
             assert row.size.height == (2 if panel_width in (28, 36) else 1)
+
+        # #144: the context section carries its caret row above the sentence,
+        # so it paints one row taller at every width, sentence complete.
+        context = app.inspector.query_one(".inspector--context", Static)
+        context_painted = " ".join(
+            context.render_line(y).text.strip() for y in range(context.size.height)
+        )
+        assert "caret" in context_painted
+        assert EMPTY_SECTION in " ".join(context_painted.split())
+        assert context.size.height == (3 if panel_width in (28, 36) else 2)
 
 
 def test_empty_sentence_matches_both_inspector_documents() -> None:
@@ -693,3 +702,87 @@ async def test_diag_rows_join_up_down_keyboard_navigation() -> None:
             app.inspector.action_next_row()
             await pilot.pause()
         assert isinstance(app.focused, InspectorDiagRow)
+
+
+# ── #144: the caret-location row lives in the context section ─────────
+
+
+@pytest.mark.asyncio
+async def test_the_caret_row_renders_before_any_projection_arrives() -> None:
+    """The row is UI state: it exists the moment the inspector does, ahead of
+    any view, and an empty session context still says so beside it."""
+
+    class Bare(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.register_theme(
+                Theme(
+                    name="inspector-test",
+                    primary="#0969DA",
+                    foreground="#1F2328",
+                    background="#F6F8FA",
+                    surface="#FFFFFF",
+                    variables={
+                        "talaria-inspector-background": "#FFFFFF",
+                        "talaria-inspector-border": "#6E7781",
+                        "talaria-inspector-heading": "#0969DA",
+                    },
+                )
+            )
+            self.theme = "inspector-test"
+
+        def compose(self) -> ComposeResult:
+            yield Inspector(id="inspector")
+
+        @property
+        def inspector(self) -> Inspector:
+            return self.query_one("#inspector", Inspector)
+
+    app = Bare()
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        lines = app.inspector.context_text.splitlines()
+        assert lines[0] == "  caret    composer"
+        assert lines[1] == f"  {EMPTY_SECTION}"
+
+
+@pytest.mark.asyncio
+async def test_the_caret_row_leads_the_context_rows_and_tracks_focus() -> None:
+    """First row, repainted in place on every region change, with the seeded
+    session rows surviving the repaint. The app-level wiring that calls this
+    on every focus event is pinned separately, in test_focus_indication."""
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        lines = app.inspector.context_text.splitlines()
+        assert lines[0] == "  caret    composer"
+        assert "session  session-7" in app.inspector.context_text
+
+        app.inspector.set_focus_region("main")
+        await pilot.pause()
+        assert "caret    main" in app.inspector.context_text
+        # Repaint, not remount: the session rows survive the region change.
+        assert "session  session-7" in app.inspector.context_text
+
+        app.inspector.set_focus_region("inspector")
+        await pilot.pause()
+        assert "caret    inspector" in app.inspector.context_text
+        assert "session  session-7" in app.inspector.context_text
+
+
+@pytest.mark.asyncio
+async def test_a_view_reprojection_keeps_the_caret_row_reading_the_live_region() -> (
+    None
+):
+    """apply() rebuilds the section from the projection; the caret row it
+    re-renders must carry the region reported *now*, not the one at mount."""
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        app.inspector.set_focus_region("main")
+        await pilot.pause()
+
+        await app.inspector.apply(_seeded_view())
+        await pilot.pause()
+        assert "caret    main" in app.inspector.context_text
+        assert "session  session-7" in app.inspector.context_text

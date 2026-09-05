@@ -804,7 +804,7 @@ async def test_markup_and_control_canaries_reach_the_seam_line_inert() -> None:
     """
     from textual.app import App, ComposeResult
 
-    from talaria.ui.status_region import StatusRegion
+    from talaria.ui.inspector import Inspector
     from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 
     canary = "[bold red]markup[/] \x1b[2J <script>x</script>"
@@ -816,7 +816,7 @@ async def test_markup_and_control_canaries_reach_the_seam_line_inert() -> None:
             self.theme = "refined-default"
 
         def compose(self) -> ComposeResult:
-            yield StatusRegion(id="status")
+            yield Inspector(id="inspector")
 
     class Refusing(HealthyDispatcher):
         async def call(
@@ -838,10 +838,10 @@ async def test_markup_and_control_canaries_reach_the_seam_line_inert() -> None:
 
     app = Host()
     async with app.run_test() as pilot:
-        region = app.query_one("#status", StatusRegion)
-        await region.apply_seams(board_lines(board, 3.0))
+        inspector = app.query_one("#inspector", Inspector)
+        await inspector.apply_diagnostics(board_lines(board, 3.0))
         await pilot.pause()
-        roster = next(text for text in region.seam_texts if text.startswith("roster:"))
+        roster = next(text for text in inspector.diag_texts if "roster:" in text)
 
     assert "\x1b" not in roster, "the escape sequence must not reach the screen"
     assert "␛[2J" in roster, "and it must be visible as a literal instead"
@@ -855,7 +855,7 @@ async def test_the_seam_rows_render_every_seam_in_catalogue_order() -> None:
     that a gap is rendered, not omitted."""
     from textual.app import App, ComposeResult
 
-    from talaria.ui.status_region import StatusRegion
+    from talaria.ui.inspector import Inspector
     from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 
     class Host(App[None]):
@@ -865,14 +865,14 @@ async def test_the_seam_rows_render_every_seam_in_catalogue_order() -> None:
             self.theme = "refined-default"
 
         def compose(self) -> ComposeResult:
-            yield StatusRegion(id="status")
+            yield Inspector(id="inspector")
 
     app = Host()
     async with app.run_test() as pilot:
-        region = app.query_one("#status", StatusRegion)
-        await region.apply_seams(board_lines(empty_board(), 0.0))
+        inspector = app.query_one("#inspector", Inspector)
+        await inspector.apply_diagnostics(board_lines(empty_board(), 0.0))
         await pilot.pause()
-        texts = region.seam_texts
+        texts = tuple(line.strip() for line in inspector.diag_texts)
 
     assert len(texts) == len(SEAM_CATALOGUE)
     assert [text.split(":")[0] for text in texts] == [s.name for s in SEAM_CATALOGUE]
@@ -884,8 +884,10 @@ async def test_seam_rows_survive_a_status_command_tick() -> None:
     """Seam rows are a separate list from the status command's rows, so an
     unrelated status tick does not blink the seam board off screen."""
     from textual.app import App, ComposeResult
+    from textual.containers import Horizontal
 
     from talaria.status.runner import StatusTickResult
+    from talaria.ui.inspector import Inspector
     from talaria.ui.status_region import StatusRegion
     from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 
@@ -896,18 +898,21 @@ async def test_seam_rows_survive_a_status_command_tick() -> None:
             self.theme = "refined-default"
 
         def compose(self) -> ComposeResult:
-            yield StatusRegion(id="status")
+            with Horizontal():
+                yield StatusRegion(id="status")
+                yield Inspector(id="inspector")
 
     app = Host()
     async with app.run_test() as pilot:
         region = app.query_one("#status", StatusRegion)
-        await region.apply_seams(board_lines(empty_board(), 0.0))
+        inspector = app.query_one("#inspector", Inspector)
+        await inspector.apply_diagnostics(board_lines(empty_board(), 0.0))
         await region.apply(
             StatusTickResult(outcome="ok", rows=("branch: main",), marker="")
         )
         await pilot.pause()
         assert region.row_texts == ("branch: main",)
-        assert len(region.seam_texts) == len(SEAM_CATALOGUE)
+        assert len(inspector.diag_texts) == len(SEAM_CATALOGUE)
 
 
 # ── what a fleet seam's absence does *not* do ────────────────────────────
@@ -998,15 +1003,15 @@ async def test_the_app_probes_at_attach_and_renders_the_board() -> None:
             assert "session.active_list" in calls
             assert "approval.pending" in calls
             region = app.query_one("#status", StatusRegion)
-            texts = region.seam_texts
+            rows = region.row_texts
             diag = app.inspector.diag_texts
         await app.shutdown_sources()
     finally:
         await stub.stop()
 
-    # #122: a clean board leaves the region empty — healthy present rows need
-    # no operator action, so they live in the inspector now.
-    assert texts == ()
+    # #144: the board lives in the inspector alone; the region above the
+    # composer renders no seam rows at all, healthy or not.
+    assert rows == ()
     names = [line.strip().split(":")[0] for line in diag]
     assert names == [s.name for s in SEAM_CATALOGUE]
     roster = next(line for line in diag if line.strip().startswith("roster:"))
@@ -1047,7 +1052,7 @@ async def test_a_painted_seam_line_grows_older_and_eventually_says_stale() -> No
         return next(line for line in diag if line.strip().startswith("roster:"))
 
     def region_roster(region: StatusRegion) -> str | None:
-        matches = [text for text in region.seam_texts if text.startswith("roster:")]
+        matches = [text for text in region.row_texts if text.startswith("roster:")]
         return matches[0] if matches else None
 
     stub = StubGateway(responder=startup_responder_for_seams())
@@ -1074,9 +1079,11 @@ async def test_a_painted_seam_line_grows_older_and_eventually_says_stale() -> No
                 last_observed_at=app.state.last_observed_at + PROBE_REVALIDATION_S,
             )
             await app._render_tick()
-            # Stale currency is ambiguous, so the row returns to the region.
-            assert region_roster(region) is not None
-            assert "stale" in region_roster(region)  # type: ignore[operator]
+            # #144: stale currency stays in the inspector — the region is not a
+            # seam surface any more, so an ambiguous verdict does not return
+            # above the composer.
+            assert "stale" in inspector_roster(app)
+            assert region_roster(region) is None
 
             # Drawing is not probing. The cadence rule this unit is built around
             # governs the socket, and two repaints must not have touched it.
