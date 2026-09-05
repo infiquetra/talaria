@@ -56,6 +56,40 @@ SENSITIVE_KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(.*[-_])?token$", re.IGNORECASE),
 )
 
+#: Attachment params withheld from recorded frames, keyed by method (C9).
+#:
+#: Attachment *content* and operator-local *paths* never reach recorded
+#: evidence or logs. The content keys carry base64 bytes (``content_base64``
+#: and its ``data`` alias on ``image.attach_bytes``, ``data_url`` on
+#: ``file.attach``); the path keys carry the operator's local filesystem
+#: layout (``path`` request params, ``filename``/``ext`` hints, the
+#: ``name`` preference). Every one of these is request-side: gateway
+#: replies carry gateway-side staged paths and ``@file:`` references, which
+#: stay recordable because they name nothing on the operator's disk.
+#:
+#: Scoped per method, not global. ``data`` bare would deny half the
+#: protocol's payload keys; here it is denied only under
+#: ``image.attach_bytes``, the one method where Hermes itself documents it
+#: as the base64 alias. ``path`` is denied only under the two attach
+#: methods that take an operator-local path — a global ``path`` rule would
+#: withhold gateway-side staged paths from replies, destroying the evidence
+#: that says which workspace file the agent can read. That is the same
+#: over-redaction lesson as the ``token``/``max_tokens`` split above.
+#:
+#: Key names verified against ``tui_gateway/server.py`` (Hermes
+#: ``8980b816f`` corroborating the I6 finding at ``63279301b``):
+#: ``file.attach`` takes ``path``/``data_url``/``name``;
+#: ``image.attach_bytes`` takes ``content_base64``/``data``/``filename``/
+#: ``ext``; ``image.detach`` takes ``path``. The detach path names an
+#: already-staged gateway file rather than operator disk, and is denied
+#: anyway: uniformity beats saving one marked hole, and the reply's
+#: ``detached``/``count`` still records that the removal happened.
+ATTACHMENT_PARAM_DENY: dict[str, frozenset[str]] = {
+    "file.attach": frozenset({"path", "data_url", "name"}),
+    "image.attach_bytes": frozenset({"content_base64", "data", "filename", "ext"}),
+    "image.detach": frozenset({"path"}),
+}
+
 #: Query-parameter names withheld from a recorded ``endpoint``/attach URL in
 #: addition to the key-name net above. ``token`` is already caught by
 #: :data:`SENSITIVE_KEY_PATTERNS`; ``ticket`` and ``internal`` are the
