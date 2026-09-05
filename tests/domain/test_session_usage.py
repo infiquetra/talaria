@@ -170,17 +170,17 @@ def test_inspector_usage_row_presentation() -> None:
     view_unobserved = inspector_view(
         entry_scoped_view(state_unobserved), usage=state_unobserved.usage
     )
-    lines_unobserved = _context_lines(view_unobserved)
+    lines_unobserved = _context_lines(view_unobserved, "composer")
     assert not any(line.strip().startswith("usage") for line in lines_unobserved)
 
     state_zero = SessionState()
     zero_usage = state_zero.usage.merged_with({"input": 0, "output": 0})
     view_zero = inspector_view(entry_scoped_view(state_zero), usage=zero_usage)
-    lines_zero = _context_lines(view_zero)
+    lines_zero = _context_lines(view_zero, "composer")
     assert any("usage    0 input · 0 output" in line for line in lines_zero)
 
     state_active = SessionState()
     active_usage = state_active.usage.merged_with({"input": 1200, "output": 350})
     view_active = inspector_view(entry_scoped_view(state_active), usage=active_usage)
-    lines_active = _context_lines(view_active)
+    lines_active = _context_lines(view_active, "composer")
     assert any("usage    1200 input · 350 output" in line for line in lines_active)
