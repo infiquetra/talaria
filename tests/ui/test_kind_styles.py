@@ -533,10 +533,58 @@ async def test_background_group_value_moves_the_fill_but_not_the_stripe() -> Non
         )
 
 
+#: D2's no-fill representation (#141): the assistant category names
+#: ``inherit``, so its resolved fill is the canvas itself — the mitigation
+#: for "Textual needs an explicit background per widget" verified on a
+#: mounted widget's computed style, not assumed from the token table.
+_CANVAS_SPEC = ThemeSpec(
+    slug="canvas-fill",
+    name="Canvas Fill",
+    dark=False,
+    tokens=dict(REFINED_DEFAULT.tokens),
+    groups={"assistant": {"background": "inherit"}},
+)
+
+_CANVAS_REGISTRY = ThemeRegistry((REFINED_DEFAULT, _CANVAS_SPEC))
+
+
+class _CanvasHarness(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        _CANVAS_REGISTRY.register(self)
+        self.theme = _CANVAS_SPEC.slug
+
+    def compose(self) -> ComposeResult:
+        yield TranscriptPane(id="t")
+
+
+def _computed_background(widget: TranscriptLine) -> str:
+    color = widget.styles.background
+    return f"#{color.r:02X}{color.g:02X}{color.b:02X}"
+
+
+@pytest.mark.asyncio
+async def test_inherit_background_paints_the_canvas_not_a_box() -> None:
+    """An inherited background computes to the canvas color on the mounted
+    widget — no distinct box behind the category — while a sibling category
+    keeps its own fill and the stripe survives against the canvas."""
+    app = _CanvasHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        assistant = TranscriptLine(_SAMPLE_TEXT, kind="assistant")
+        operator = TranscriptLine(_SAMPLE_TEXT, kind="user")
+        await pane.mount_all([assistant, operator])
+        await pilot.pause()
+
+        canvas = _CANVAS_SPEC.tokens["talaria.canvas"]
+        assert _computed_background(assistant) == canvas
+        assert _computed_background(operator) != canvas
+        assert assistant.styles.border_left[0] == "thick"
+
+
 def test_every_group_has_the_exact_fixed_non_colour_label() -> None:
     assert _GROUP_LABELS == {
         "operator": "> You",
-        "assistant": "A Talaria",
         "reasoning": ". Reasoning",
         "activity": "$ Tool/Subagent",
         "session-record": "- Session",
@@ -545,5 +593,38 @@ def test_every_group_has_the_exact_fixed_non_colour_label() -> None:
 
     for kind in ALL_KINDS:
         widget = TranscriptLine("body", kind=kind)
-        assert str(widget.content).startswith(_GROUP_LABELS[kind_group(kind)])
+        group = kind_group(kind)
+        if group == "assistant":
+            continue
+        assert str(widget.content).startswith(_GROUP_LABELS[group])
         assert widget.source == "body", "the display label changed the raw projection line"
+
+
+@pytest.mark.asyncio
+async def test_the_assistant_group_carries_no_fixed_label() -> None:
+    """#141 item 18: ``A Talaria`` was a fixed client label, not model
+    text. The assistant group's first row is the response's own content —
+    no replacement identity label takes its place — and the group stays
+    identifiable without color through its gutter stripe."""
+    for kind in ALL_KINDS:
+        if kind_group(kind) != "assistant":
+            continue
+        widget = TranscriptLine("body", kind=kind)
+        assert str(widget.content) == "body"
+        assert widget.source == "body"
+
+    response = "A Talaria reply that mentions the client by name."
+    widget = TranscriptLine(response, kind="assistant")
+    assert str(widget.content) == response, (
+        "matching words inside genuine response content were touched"
+    )
+
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one("#t", TranscriptPane)
+        assistant = TranscriptLine(_SAMPLE_TEXT, kind="assistant")
+        await pane.mount(assistant)
+        await pilot.pause()
+        assert assistant.styles.border_left[0] == "thick", (
+            "the assistant group lost its non-color stripe cue"
+        )

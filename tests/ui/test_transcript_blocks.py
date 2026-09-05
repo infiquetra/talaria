@@ -151,14 +151,9 @@ def _fallback_entries(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("kind", "label"),
-    [("assistant", "A Talaria"), ("reasoning", ". Reasoning")],
-)
-async def test_block_entries_add_the_fixed_label_without_changing_raw_markdown(
-    kind: TranscriptKind,
-    label: str,
-) -> None:
+async def test_block_entries_add_the_fixed_label_without_changing_raw_markdown() -> None:
+    kind: TranscriptKind = "reasoning"
+    label = ". Reasoning"
     raw = "# heading\n\nbody with **emphasis**"
     entry = TranscriptEntryRecord(
         entry_id=1,
@@ -185,6 +180,85 @@ async def test_block_entries_add_the_fixed_label_without_changing_raw_markdown(
         assert content.get_style_at_offset(0).bold is True
         assert unit.applied_text == raw
         assert unit.block.source == raw
+
+
+@pytest.mark.asyncio
+async def test_assistant_block_entries_carry_no_client_label() -> None:
+    """#141 item 18: the assistant block keeps the exact parsed document —
+    no ``A Talaria`` prefix, no replacement identity label — while the raw
+    markdown the pane applied and the document it built stay byte-identical
+    to the entry body."""
+    raw = "# heading\n\nbody with **emphasis**"
+    entry = TranscriptEntryRecord(
+        entry_id=1,
+        kind="assistant",
+        raw_body=raw,
+        committed=True,
+        line_span=(0, 3),
+    )
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(TranscriptPane)
+        await _apply(pane, (entry,))
+        await pilot.pause()
+
+        unit = pane._entries[1]
+        assert unit.block is not None
+        first = next(
+            block
+            for block in unit.block.query(MarkdownBlock)
+            if cast(Content, block.content).plain
+        )
+        content = cast(Content, first.content)
+        assert content.plain == "heading"
+        assert "A Talaria" not in content.plain
+        assert unit.applied_text == raw
+        assert unit.block.source == raw
+
+
+@pytest.mark.asyncio
+async def test_a_history_resume_preserves_content_and_carries_no_label() -> None:
+    """#141's history-resume clause, at the pane's own seam: a resumed
+    history swaps in a non-overlapping entry-id lineage, the pane resets,
+    and the resumed content renders complete — still without the removed
+    client label and without losing the response body."""
+    first = TranscriptEntryRecord(
+        entry_id=1,
+        kind="assistant",
+        raw_body="first answer body",
+        committed=True,
+        line_span=(0, 1),
+    )
+    resumed = TranscriptEntryRecord(
+        entry_id=5,
+        kind="assistant",
+        raw_body="resumed answer body",
+        committed=True,
+        line_span=(0, 1),
+    )
+    app = _Harness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(TranscriptPane)
+        await _apply(pane, (first,))
+        await pilot.pause()
+        assert pane.rendered_lines == ("first answer body",)
+
+        await _apply(pane, (resumed,))
+        await pilot.pause()
+
+        assert 1 not in pane._entries, "the outgoing lineage survived the resume"
+        assert pane.rendered_lines == ("resumed answer body",)
+        unit = pane._entries[5]
+        assert unit.block is not None
+        assert unit.block.source == "resumed answer body"
+        first_block = next(
+            block
+            for block in unit.block.query(MarkdownBlock)
+            if cast(Content, block.content).plain
+        )
+        content = cast(Content, first_block.content)
+        assert content.plain == "resumed answer body"
+        assert "A Talaria" not in content.plain
 
 
 # ── construct-aware estimate calibration (KTD1(a)) ──────────────────────────

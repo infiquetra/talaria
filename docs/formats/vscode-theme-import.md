@@ -1,7 +1,8 @@
 # Visual Studio Code color-theme import
 
 Talaria imports one strict Visual Studio Code color-theme JSON file into one
-restart-scoped user theme. This document is the public allowlist. Nothing outside
+stored user theme loaded at startup, discovered by the theme picker, and
+reloadable live on demand. This document is the public allowlist. Nothing outside
 these tables is inferred, and the source file is never watched after import.
 
 The mapping and resolution rules below are copied verbatim from the v0.5.0 visual
@@ -178,19 +179,26 @@ Marketplace rules under the same strictness:
    theme label (`Solar Flare` becomes `solar-flare`). The payload's own top-level `name`
    is a display string and never a storage slug. Built-in slugs stay reserved.
 
-## Recorded sources and explicit Reload
+## Recorded sources, local refresh, and upstream reimport
 
 Every successful file or marketplace import records its source in
 `<config-dir>/theme-sources.json` (`schema_version` `talaria-theme-sources-v1`), mapping
-each slug to its absolute file path or marketplace reference. `/theme reload [name]`
-re-reads that recorded source through the same strict entry point, rewrites the stored
-theme only after the fresh source validates fully, and applies the re-resolved theme
-live with no restart. Any failure — unreadable file, network error, invalid content —
-keeps rendering the current theme with a notice and leaves the stored file untouched.
-Reloading a theme with no recorded source, or a built-in theme, is a visible no-op.
+each slug to its absolute file path or marketplace reference.
 
-The source file is never watched after import: an edit changes nothing until an explicit
-reload, and concurrent reloads serialize behind one lock rather than interleaving.
+Talaria strictly distinguishes local theme refresh from upstream reimport:
+
+- **Local refresh:** `/theme reload [name]` refreshes the theme directly from its local stored
+  file (`<config-dir>/themes/<slug>.json`). It does not require an import source, applying saved
+  edits to stored user themes live immediately without restart. If the stored file is malformed,
+  the current appearance is preserved with an actionable validation notice. Reloading a built-in
+  theme is a visible no-op with an explanatory notice.
+- **Upstream reimport:** `/theme fetch <source>` (or CLI `talaria theme fetch` and `talaria theme import`)
+  re-reads the upstream source through the strict import entry point, rewrites the canonical stored
+  theme only after the fresh source validates fully, records the origin in `theme-sources.json`,
+  and applies the re-resolved theme live with no restart.
+
+Neither stored theme files nor source files are watched by the filesystem: an edit changes nothing
+until an explicit reload or reimport, and concurrent reloads and fetches serialize behind one lock.
 
 ## Stored user-theme format
 
@@ -202,13 +210,16 @@ reserved.
 Talaria writes `<config>/themes/<slug>.json` only after parsing and reporting
 complete successfully. The stored object contains `schema_version` with the
 value `talaria-theme-v1`, `dark`, `name`, `slug`, and the complete `tokens`
-mapping. The normative schema is
+mapping, and optionally the sparse per-category `groups` layer and the
+`transcript_bar_visible` bar-state flag (absent means the transcript's left
+offset column paints). The normative schema is
 [`stored-theme.schema.json`](stored-theme.schema.json). Keys are sorted, values
 are opaque uppercase `#RRGGBB`, and the file has exactly one trailing newline.
 A later import of the same slug atomically replaces that path. If the path is a
 symlink, Talaria replaces the link itself and never writes through to its target.
-Imported themes are read only when a new Talaria process constructs its theme registry;
-source-file changes are not watched.
+Imported themes are read at startup when constructing the theme registry,
+discovered when opening the theme picker, and refreshed live via
+`/theme reload [name]`; stored files and source files are not watched.
 
 During v0.5.0, the reader treats a stored theme without `schema_version` as
 version one. The field becomes required in v0.6.0. A file carrying any other

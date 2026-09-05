@@ -18,12 +18,13 @@ from textual.color import Color
 import talaria.cli
 from talaria.cli import build_parser, main
 from talaria.config import load_config
-from talaria.themes import THEME_TOKENS
+from talaria.themes import THEME_TOKENS, ThemeSpec
 from talaria.themes.builtins import BUILTIN_THEMES
 from talaria.themes.marketplace import (
     MAX_MARKETPLACE_BYTES,
     MarketplaceEntry,
     MarketplaceError,
+    convert_page_url,
     fetch_marketplace_bytes,
     resolve_marketplace_source,
     search_marketplace,
@@ -36,6 +37,7 @@ from talaria.ui.theme_import import (
     ALWAYS_FALLBACK_TOKENS,
     SYNTAX_MAPPINGS,
     WORKBENCH_MAPPINGS,
+    ImportReport,
     ThemeImportError,
     import_marketplace_theme,
     import_vscode_theme,
@@ -212,8 +214,17 @@ def test_import_is_canonical_idempotent_and_loads_in_a_fresh_registry(
     assert first_bytes == serialize_user_theme(first.theme)
     assert first_bytes.endswith(b"\n") and not first_bytes.endswith(b"\n\n")
     payload = json.loads(first_bytes)
-    assert tuple(payload) == ("dark", "groups", "name", "schema_version", "slug", "tokens")
+    assert tuple(payload) == (
+        "dark",
+        "groups",
+        "name",
+        "schema_version",
+        "slug",
+        "tokens",
+        "transcript_bar_visible",
+    )
     assert payload["schema_version"] == "talaria-theme-v1"
+    assert payload["transcript_bar_visible"] is True
     assert tuple(payload["tokens"]) == tuple(sorted(THEME_TOKENS))
     assert list((config_dir / "themes").iterdir()) == [first.target_path]
 
@@ -685,6 +696,7 @@ class _FakeMarketplaceTransport:
         self.search_error: Exception | None = None
         self.fetch_error: Exception | None = None
         self.fetch_gate: threading.Event | None = None
+        self.fetch_entered: threading.Event | None = None
         self._guard = threading.Lock()
         self._active = 0
         self.max_active = 0
@@ -717,6 +729,8 @@ class _FakeMarketplaceTransport:
 
     def fetch_bytes(self, entry: MarketplaceEntry) -> bytes:
         self.fetch_calls.append(entry.source_id)
+        if self.fetch_entered is not None:
+            self.fetch_entered.set()
         if self.fetch_gate is not None:
             with self._guard:
                 self._active += 1
@@ -855,6 +869,234 @@ def test_marketplace_reference_forms_resolve_or_reject() -> None:
     with pytest.raises(MarketplaceError) as bad_scheme:
         resolve_marketplace_source("ftp://example.invalid/theme.json", transport=transport)
     assert bad_scheme.value.kind == "unknown-source"
+
+
+def test_github_file_page_url_converts_to_the_raw_file() -> None:
+    assert convert_page_url(
+        "https://github.com/acme/themes/blob/main/solar.json"
+    ) == "https://raw.githubusercontent.com/acme/themes/main/solar.json"
+    assert convert_page_url(
+        "https://github.com/acme/themes/raw/v1.2/themes/solar.json"
+    ) == "https://raw.githubusercontent.com/acme/themes/v1.2/themes/solar.json"
+    assert convert_page_url("https://example.invalid/themes/solar.json") is None
+    assert convert_page_url("acme/solar") is None
+    # Registry file URLs are already direct: no conversion, no gallery block.
+    api_url = "https://open-vsx.org/api/acme/solar/1.0/file/solar.json"
+    assert convert_page_url(api_url) is None
+    resolved = resolve_marketplace_source(
+        api_url, transport=_FakeMarketplaceTransport(entries=())
+    )
+    assert resolved.download_url == api_url
+
+
+def test_case_varied_page_urls_convert_on_scheme_and_host_only() -> None:
+    assert convert_page_url(
+        "HTTPS://GITHUB.COM/acme/themes/blob/main/solar.json"
+    ) == "https://raw.githubusercontent.com/acme/themes/main/solar.json"
+    assert convert_page_url(
+        "https://Open-VSX.Org/extension/acme/solar"
+    ) == "acme/solar"
+    # Path shapes stay exact: an uppercased page kind is not a file page.
+    assert (
+        convert_page_url("https://github.com/acme/themes/BLOB/main/solar.json")
+        is None
+    )
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(entries=(entry,))
+    resolved = resolve_marketplace_source(
+        "HTTPS://Open-VSX.Org/extension/acme/solar", transport=transport
+    )
+    assert transport.lookup_calls == [("acme", "solar")]
+    assert resolved.source_id == "acme/solar/1"
+
+
+@pytest.mark.asyncio
+async def test_theme_fetch_renders_appearance_lead_and_full_report(
+    tmp_path: Path,
+) -> None:
+    """The full report must be rendered, not just stored.
+
+    The composer notice is one ellipsized row, so this test sweeps the
+    scrollable transcript and asserts the confirmation, the appearance
+    lead, a fallback line, and a warning line each RENDER on screen, in
+    that order. Backing-store text alone proves nothing about visibility.
+    """
+    config_dir = tmp_path / "config"
+    raw_url = "https://example.invalid/warnings-dark.json"
+    payload = (FIXTURES / "unsupported-dark.json").read_bytes()
+    transport = _FakeMarketplaceTransport(entries=(), files={raw_url: payload})
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+        marketplace_transport=transport,
+    )
+    # Short line-start fragments: transcript rows wrap, so only a fragment
+    # at the start of its row is guaranteed contiguous on screen.
+    markers = {
+        "confirmation": "theme 'warnings-dark' fetched:",
+        "counts": "2 source tokens, 56 fallbacks,",
+        "parts": "(2 parts in transcript)",
+        "lead": "Appearance: 56 tokens",
+        "fallback": "fallback: talaria.surface",
+        "warning": "warning: root.include",
+        "last_warning": "warning: tokenColors[5] is invalid",
+    }
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _submit_theme_command(
+            app, pilot, f"/theme fetch {raw_url} --name warnings-dark"
+        )
+        assert app.theme == "warnings-dark"
+        assert app.session_theme_slug == "warnings-dark"
+        pane = app.transcript
+        bottom = int(pane.max_scroll_y)
+        positions = sorted(set([0] + list(range(0, bottom + 1, 8)) + [bottom]))
+        seen: dict[str, int] = {}
+        for position in positions:
+            pane.scroll_to(y=position, animate=False, immediate=True)
+            await pilot.pause()
+            frame = screen_text(app)
+            for key, fragment in markers.items():
+                if key not in seen and fragment in frame:
+                    seen[key] = position
+        assert set(seen) == set(markers), (
+            "report lines never rendered",
+            sorted(set(markers) - set(seen)),
+        )
+        assert (
+            seen["confirmation"]
+            <= seen["lead"]
+            <= seen["fallback"]
+            <= seen["warning"]
+            <= seen["last_warning"]
+        ), seen
+        await app.shutdown_sources()
+
+
+def test_chunk_report_lines_packs_without_splitting() -> None:
+    from talaria.ui.app import chunk_report_lines
+
+    lines = ["a" * 3000, "b" * 1500, "c"]
+    parts = chunk_report_lines(lines, bound=4000)
+    assert len(parts) == 2
+    assert all(len(part) <= 4000 for part in parts)
+    assert "\n".join(parts) == "\n".join(lines)
+    assert chunk_report_lines(["x"], bound=4000) == ("x",)
+    assert chunk_report_lines([], bound=4000) == ()
+
+
+def test_open_vsx_extension_page_resolves_as_its_registry_reference() -> None:
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(entries=(entry,))
+
+    resolved = resolve_marketplace_source(
+        "https://open-vsx.org/extension/acme/solar", transport=transport
+    )
+
+    assert transport.lookup_calls == [("acme", "solar")]
+    assert resolved.source_id == "acme/solar/1"
+
+
+def test_gallery_search_page_yields_supported_forms_not_a_size_error() -> None:
+    transport = _FakeMarketplaceTransport(entries=())
+
+    for page_url in (
+        "https://open-vsx.org/?search=solar",
+        "https://marketplace.visualstudio.com/items?itemName=acme.solar",
+    ):
+        with pytest.raises(MarketplaceError) as page:
+            resolve_marketplace_source(page_url, transport=transport)
+
+        assert page.value.kind == "unknown-source"
+        message = str(page.value)
+        assert "gallery web page" in message
+        assert "publisher/extension" in message
+        assert "raw theme" in message
+    assert transport.lookup_calls == []
+    assert transport.fetch_calls == []
+
+
+def test_file_page_url_never_reports_a_small_theme_as_oversized(
+    tmp_path: Path,
+) -> None:
+    """The reported failure mode: a blob page URL for a small theme file."""
+    config_dir = tmp_path / "config"
+    raw_url = "https://raw.githubusercontent.com/acme/themes/main/solar.json"
+    transport = _FakeMarketplaceTransport(
+        entries=(), files={raw_url: SAMPLE_BYTES}
+    )
+
+    resolved = resolve_marketplace_source(
+        "https://github.com/acme/themes/blob/main/solar.json",
+        transport=transport,
+    )
+    assert resolved.download_url == raw_url
+
+    report = import_marketplace_theme(
+        resolved, transport=transport, name="solar-flare", config_dir=config_dir
+    )
+    assert report.mapped_count == 40
+    assert report.fallback_count == 18
+
+
+def test_oversized_notice_distinguishes_pages_from_raw_files() -> None:
+    entry = _marketplace_entry()
+    oversized = _FakeMarketplaceTransport(
+        entries=(entry,),
+        files={entry.source_id: b"x" * (MAX_MARKETPLACE_BYTES + 1)},
+    )
+
+    with pytest.raises(MarketplaceError) as too_big:
+        fetch_marketplace_bytes(entry, transport=oversized)
+
+    assert too_big.value.kind == "oversized"
+    assert "raw theme file" in str(too_big.value)
+
+
+def test_import_summary_leads_with_appearance_changing_fallbacks(
+    tmp_path: Path,
+) -> None:
+    report = import_vscode_theme(
+        FIXTURES / "unsupported-dark.json", config_dir=tmp_path
+    )
+    lines = report.lines()
+
+    assert lines[0] == (
+        "Imported warnings-dark as user theme warnings-dark: "
+        "2 source tokens, 56 fallbacks, 19 warnings."
+    )
+    assert lines[1].startswith("Appearance: 56 tokens use Refined Default")
+    assert "19 source features were not imported" in lines[1]
+    fallback_first = next(
+        index for index, line in enumerate(lines) if line.startswith("fallback: ")
+    )
+    warning_first = next(
+        index for index, line in enumerate(lines) if line.startswith("warning: ")
+    )
+    assert fallback_first < warning_first
+    assert sum(line.startswith("warning: ") for line in lines) == 19
+    assert sum(line.startswith("fallback: ") for line in lines) == 56
+
+
+def test_import_summary_with_no_fallbacks_or_warnings_states_it_plainly(
+    tmp_path: Path,
+) -> None:
+    from talaria.themes import ThemeSpec
+
+    report = ImportReport(
+        mapped_values={"talaria.canvas": "#000000"},
+        unsupported_entries=(),
+        fallback_tokens=(),
+        composites=(),
+        target_name="plain",
+        target_path=tmp_path / "plain.json",
+        theme=ThemeSpec(slug="plain", name="Plain", dark=True, tokens={}),
+    )
+
+    assert report.lines()[1] == (
+        "Appearance: every token renders as authored; nothing fell back "
+        "and nothing was ignored."
+    )
 
 
 def test_marketplace_network_oversize_and_malformed_rejections_carry_kinds(
@@ -1233,10 +1475,11 @@ async def test_theme_fetch_applies_valid_theme_live_without_persisting(
 
 
 @pytest.mark.asyncio
-async def test_theme_reload_reimports_edited_source_without_restart(
+async def test_theme_reload_refreshes_edited_stored_file_without_restart(
     tmp_path: Path,
 ) -> None:
-    config_dir, source = _imported_app_config(tmp_path)
+    config_dir, _source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
         [event("gateway.ready", {})],
@@ -1249,16 +1492,16 @@ async def test_theme_reload_reimports_edited_source_without_restart(
     async with app.run_test(size=(80, 24)) as pilot:
         assert app.theme == "solar-flare"
 
-        payload = json.loads(source.read_text(encoding="utf-8"))
-        payload["colors"]["editor.background"] = "#112233"
-        source.write_text(json.dumps(payload), encoding="utf-8")
+        payload = json.loads(stored.read_text(encoding="utf-8"))
+        payload["tokens"]["talaria.canvas"] = "#112233"
+        stored.write_text(json.dumps(payload), encoding="utf-8")
 
         await _submit_theme_command(app, pilot, "/theme reload")
 
         assert app.theme == "solar-flare"
         resolved = app.theme_registry.resolve("solar-flare")
         assert resolved.tokens["talaria.canvas"] == "#112233"
-        assert "reloaded" in screen_text(app)
+        assert "refreshed" in screen_text(app)
         # Reload is safe mid-turn: session state survives the re-resolve.
         assert tuple(entry.text for entry in app.state.transcript) == before_texts
         assert app.session_theme_slug == "solar-flare"
@@ -1275,7 +1518,8 @@ async def test_same_slug_reload_repaints_the_live_screen(
     without the explicit repaint the re-registered spec stays invisible even
     though the registry holds the new values.
     """
-    config_dir, source = _imported_app_config(tmp_path)
+    config_dir, _source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
         [event("gateway.ready", {})],
@@ -1287,9 +1531,9 @@ async def test_same_slug_reload_repaints_the_live_screen(
     async with app.run_test(size=(80, 24)) as pilot:
         before = app.screen.styles.background
 
-        payload = json.loads(source.read_text(encoding="utf-8"))
-        payload["colors"]["editor.background"] = "#445566"
-        source.write_text(json.dumps(payload), encoding="utf-8")
+        payload = json.loads(stored.read_text(encoding="utf-8"))
+        payload["tokens"]["talaria.canvas"] = "#445566"
+        stored.write_text(json.dumps(payload), encoding="utf-8")
 
         await _submit_theme_command(app, pilot, "/theme reload")
 
@@ -1335,9 +1579,8 @@ async def test_same_slug_reload_without_changes_repaints_nothing(
 async def test_theme_reload_of_invalid_source_preserves_theme_and_file(
     tmp_path: Path,
 ) -> None:
-    config_dir, source = _imported_app_config(tmp_path)
+    config_dir, _source = _imported_app_config(tmp_path)
     stored = config_dir / "themes" / "solar-flare.json"
-    before = stored.read_bytes()
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
         [event("gateway.ready", {})],
@@ -1347,11 +1590,11 @@ async def test_theme_reload_of_invalid_source_preserves_theme_and_file(
         launch_cwd=tmp_path,
     )
     async with app.run_test(size=(80, 24)) as pilot:
-        source.write_text("{oops", encoding="utf-8")
+        stored.write_text("{oops", encoding="utf-8")
         await _submit_theme_command(app, pilot, "/theme reload solar-flare")
 
         assert app.theme == "solar-flare"
-        assert stored.read_bytes() == before
+        assert stored.read_text(encoding="utf-8") == "{oops"
         assert app.theme_registry.resolve("solar-flare").tokens[
             "talaria.canvas"
         ] == "#102030"
@@ -1376,7 +1619,7 @@ async def test_theme_reload_without_recorded_source_preserves_theme(
         await _submit_theme_command(app, pilot, "/theme reload")
 
         assert app.theme == "refined-default"
-        assert "no recorded import source" in screen_text(app)
+        assert "built-in theme and has no stored file" in screen_text(app)
         await app.shutdown_sources()
 
 
@@ -1385,7 +1628,8 @@ async def test_edited_source_without_reload_changes_nothing_live(
     tmp_path: Path,
 ) -> None:
     """Without an explicit Reload, an edited source file changes nothing."""
-    config_dir, source = _imported_app_config(tmp_path)
+    config_dir, _source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
         [event("gateway.ready", {})],
@@ -1395,9 +1639,9 @@ async def test_edited_source_without_reload_changes_nothing_live(
         launch_cwd=tmp_path,
     )
     async with app.run_test(size=(80, 24)) as pilot:
-        payload = json.loads(source.read_text(encoding="utf-8"))
-        payload["colors"]["editor.background"] = "#112233"
-        source.write_text(json.dumps(payload), encoding="utf-8")
+        payload = json.loads(stored.read_text(encoding="utf-8"))
+        payload["tokens"]["talaria.canvas"] = "#112233"
+        stored.write_text(json.dumps(payload), encoding="utf-8")
 
         await app.settle_live()
         await pilot.pause()
@@ -1430,18 +1674,14 @@ def test_theme_reload_registers_no_filesystem_watcher() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_reloads_serialize(tmp_path: Path) -> None:
-    config_dir = tmp_path / "config"
-    entry = _marketplace_entry()
-    transport = _FakeMarketplaceTransport(
-        entries=(entry,), files={entry.source_id: SAMPLE_BYTES}
-    )
-    import_marketplace_theme(
-        entry, transport=transport, name="solar-flare", config_dir=config_dir
-    )
-    payload = json.loads(SAMPLE_BYTES)
-    payload["colors"]["editor.background"] = "#445566"
-    transport._files[entry.source_id] = json.dumps(payload).encode("utf-8")
+async def test_concurrent_reloads_serialize(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir, _source = _imported_app_config(tmp_path)
+    stored = config_dir / "themes" / "solar-flare.json"
+    payload = json.loads(stored.read_text(encoding="utf-8"))
+    payload["tokens"]["talaria.canvas"] = "#445566"
+    stored.write_text(json.dumps(payload), encoding="utf-8")
 
     registry = theme_registry_for_config(config_dir=config_dir)
     app, _ = paused_app(
@@ -1450,19 +1690,85 @@ async def test_concurrent_reloads_serialize(tmp_path: Path) -> None:
         theme_registry=registry,
         theme_config_dir=config_dir,
         launch_cwd=tmp_path,
+    )
+    async with app.run_test(size=(80, 24)):
+        import talaria.ui.app as app_module
+
+        load_entered = threading.Event()
+        load_gate = threading.Event()
+        load_calls: list[Path] = []
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        original_load = load_user_theme_spec
+
+        def gated_load(path: Path) -> ThemeSpec:
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                if active > max_active:
+                    max_active = active
+                load_calls.append(path)
+            load_entered.set()
+            load_gate.wait(timeout=5.0)
+            try:
+                return original_load(path)
+            finally:
+                with lock:
+                    active -= 1
+
+        monkeypatch.setattr(app_module, "load_user_theme_spec", gated_load)
+
+        first = asyncio.create_task(app._refresh_stored_theme("solar-flare"))
+        await asyncio.to_thread(load_entered.wait, 5.0)
+        second = asyncio.create_task(app._refresh_stored_theme("solar-flare"))
+        await asyncio.sleep(0)
+
+        # The second reload waits behind the lock instead of reading concurrently.
+        assert len(load_calls) == 1
+        assert max_active == 1
+
+        load_gate.set()
+        await asyncio.gather(first, second)
+
+        assert len(load_calls) == 2
+        assert max_active == 1
+        assert app.theme == "solar-flare"
+        assert app.theme_registry.resolve("solar-flare").tokens[
+            "talaria.canvas"
+        ] == "#445566"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_fetches_serialize(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    entry = _marketplace_entry()
+    transport = _FakeMarketplaceTransport(
+        entries=(entry,), files={entry.source_id: SAMPLE_BYTES}
+    )
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        theme_name="solar-flare",
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
         marketplace_transport=transport,
     )
     async with app.run_test(size=(80, 24)):
-        # The setup import above already fetched once; only Reloads count here.
         transport.fetch_calls.clear()
         transport.lookup_calls.clear()
         transport.fetch_gate = threading.Event()
-        first = asyncio.create_task(app._reload_imported_theme("solar-flare"))
-        await asyncio.sleep(0.3)
-        second = asyncio.create_task(app._reload_imported_theme("solar-flare"))
-        await asyncio.sleep(0.3)
+        transport.fetch_entered = threading.Event()
+        first = asyncio.create_task(
+            app._fetch_marketplace_theme(entry.source_id, "solar-flare")
+        )
+        await asyncio.to_thread(transport.fetch_entered.wait, 5.0)
+        second = asyncio.create_task(
+            app._fetch_marketplace_theme(entry.source_id, "solar-flare")
+        )
+        await asyncio.sleep(0)
 
-        # The second Reload waits behind the lock instead of fetching alongside.
+        # The second fetch waits behind the lock instead of fetching alongside.
         assert transport.fetch_calls == [entry.source_id]
 
         transport.fetch_gate.set()
@@ -1471,7 +1777,4 @@ async def test_concurrent_reloads_serialize(tmp_path: Path) -> None:
         assert transport.fetch_calls == [entry.source_id, entry.source_id]
         assert transport.max_active == 1
         assert app.theme == "solar-flare"
-        assert app.theme_registry.resolve("solar-flare").tokens[
-            "talaria.canvas"
-        ] == "#445566"
         await app.shutdown_sources()

@@ -12,6 +12,7 @@ from textual.theme import Theme
 
 from talaria.config import atomic_replace_bytes, global_config_dir
 from talaria.themes import (
+    INHERIT_BACKGROUND,
     THEME_TOKENS,
     TRANSCRIPT_CATEGORIES,
     TRANSCRIPT_CATEGORY_TOKENS,
@@ -86,6 +87,16 @@ TRANSCRIPT_TEXT_CONTRAST_FLOOR: Final[float] = 4.5
 #: marker/fill pairings against.
 TRANSCRIPT_MARKER_CONTRAST_FLOOR: Final[float] = 3.0
 
+#: The theme variable carrying the transcript bar state (issue #141). No CSS
+#: rule consumes it; it exists so the registered Textual Theme value is
+#: complete. Textual's ``theme`` reactive is silent on same-slug sets, and
+#: the app repaints a same-slug spec swap only when the Theme value actually
+#: differs — a bar-only reload must therefore register as a real change, or
+#: the mounted gutter stays stale while everything else repaints. The pane
+#: itself reads the live registry; this variable makes the change visible
+#: to the framework's own guard.
+TRANSCRIPT_BAR_VARIABLE: Final[str] = "talaria-transcript-bar-visible"
+
 
 def _hold_contrast_floor(
     foreground: str,
@@ -128,6 +139,10 @@ class ResolvedTheme:
     filled_tokens: tuple[str, ...] = ()
     notices: tuple[str, ...] = ()
     transcript_text: Mapping[str, str] = field(default_factory=dict)
+    #: The spec's bar-state rule (issue #141): whether the transcript's
+    #: left offset column paints. Carried through resolution so one read
+    #: of a resolved theme names every visible normalization it made.
+    transcript_bar_visible: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tokens", MappingProxyType(dict(self.tokens)))
@@ -199,6 +214,10 @@ def _category_group_roles(
             return
         if isinstance(value, str) and is_opaque_hex_color(value):
             usable[role] = value
+        elif role == "background" and value == INHERIT_BACKGROUND:
+            # The one non-color group value (D2): a representation, not a
+            # color, so it is only spelled on the role it represents.
+            usable[role] = INHERIT_BACKGROUND
         else:
             malformed.append(f"{category}.{key}")
 
@@ -247,6 +266,16 @@ class ThemeRegistry:
     def default(self) -> ThemeSpec:
         return self._by_slug[self._default_slug]
 
+    def transcript_bar_visible(self, slug: str) -> bool:
+        """Whether the named theme paints the transcript's left offset column.
+
+        Unknown slugs keep the column visible: the bar-state rule degrades
+        to the layout every theme has always had rather than hiding chrome
+        it cannot attribute to a theme.
+        """
+        spec = self._by_slug.get(slug)
+        return spec.transcript_bar_visible if spec is not None else True
+
     def resolve(
         self, requested: object, *, host_palette: object = None
     ) -> ResolvedTheme:
@@ -288,6 +317,7 @@ class ThemeRegistry:
             self._hold_host_readability(spec, tokens, adopted, notices)
 
         group_sourced: list[str] = []
+        inherit_sourced: list[str] = []
         malformed_groups: list[str] = []
         category_roles: dict[str, dict[str, str]] = {}
         for category in TRANSCRIPT_CATEGORIES:
@@ -295,11 +325,32 @@ class ThemeRegistry:
             category_roles[category] = usable
             malformed_groups.extend(malformed)
             roles = TRANSCRIPT_CATEGORY_TOKENS[category]
+            background_token = roles["background"]
+            background_inherited = usable.get("background") == INHERIT_BACKGROUND
+            if background_inherited:
+                # D2's no-fill representation: the category paints on the
+                # canvas, resolved here so the readability floors below
+                # measure against the canvas and a canvas change
+                # re-resolves the inheritance. This is the single explicit
+                # exception to the "the spec's own tokens always win"
+                # order — a background token value names a fill color, and
+                # `inherit` says there is none to paint. Stored themes must
+                # still define that token; its value is exactly what this
+                # supersedes.
+                tokens[background_token] = tokens["talaria.canvas"]
+                inherit_sourced.append(category)
             for role in ("marker", "background"):
                 token = roles[role]
+                if role == "background" and background_inherited:
+                    continue
                 if token not in spec.tokens and role in usable:
                     tokens[token] = usable[role]
                     group_sourced.append(token)
+        if inherit_sourced:
+            notices.append(
+                f"theme {spec.name!r} paints transcript categories on the canvas: "
+                + ", ".join(sorted(inherit_sourced))
+            )
         if group_sourced:
             notices.append(
                 f"theme {spec.name!r} styles transcript categories from its groups: "
@@ -311,12 +362,17 @@ class ThemeRegistry:
                 + ", ".join(sorted(malformed_groups))
             )
 
+        inherit_tokens = frozenset(
+            TRANSCRIPT_CATEGORY_TOKENS[category]["background"]
+            for category in inherit_sourced
+        )
         filled = tuple(
             token
             for token in THEME_TOKENS
             if token not in spec.tokens
             and token not in adopted
             and token not in group_sourced
+            and token not in inherit_tokens
         )
         if filled:
             notices.append(
@@ -333,6 +389,7 @@ class ThemeRegistry:
             filled_tokens=filled,
             notices=tuple(notices),
             transcript_text=transcript_text,
+            transcript_bar_visible=spec.transcript_bar_visible,
         )
 
     def _hold_host_readability(
@@ -433,7 +490,17 @@ class ThemeRegistry:
         return resolved
 
     def to_textual_theme(self, requested: object) -> Theme:
-        """Convert one resolved theme to Textual's registered theme shape."""
+        """Convert one resolved theme to Textual's registered theme shape.
+
+        The transcript's left offset column follows the active theme (#141),
+        so the bar state rides in the registered Theme value through
+        :data:`TRANSCRIPT_BAR_VARIABLE`. Textual's ``theme`` reactive is
+        silent on same-slug sets, and the app repaints a same-slug spec swap
+        only when the Theme value actually differs — without the variable a
+        bar-only reload compares equal, paints nothing, and the mounted
+        gutter stays stale. The pane reads the live registry; this makes the
+        change visible to the framework's own guard.
+        """
         resolved = requested if isinstance(requested, ResolvedTheme) else self.resolve(requested)
         tokens = resolved.tokens
         variables = {
@@ -446,6 +513,9 @@ class ThemeRegistry:
         for token, names in _COMPATIBILITY_VARIABLES.items():
             value = tokens[token]
             variables.update({name: value for name in names})
+        variables[TRANSCRIPT_BAR_VARIABLE] = (
+            "true" if resolved.transcript_bar_visible else "false"
+        )
 
         return Theme(
             name=resolved.slug,

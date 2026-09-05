@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from talaria import __version__
 from talaria import config as config_module
@@ -145,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     theme_parser = subparsers.add_parser(
         "theme",
-        help="manage restart-scoped Talaria themes",
+        help="manage stored and imported Talaria themes",
     )
     theme_subparsers = theme_parser.add_subparsers(
         dest="theme_command",
@@ -173,7 +174,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     theme_search_parser = theme_subparsers.add_parser(
         "search",
-        help="search the marketplace for importable color themes",
+        help=(
+            "search the marketplace (the Open VSX registry) "
+            "for importable color themes"
+        ),
     )
     theme_search_parser.add_argument(
         "query",
@@ -199,7 +203,11 @@ def build_parser() -> argparse.ArgumentParser:
     theme_fetch_parser.add_argument(
         "source",
         metavar="REF",
-        help="publisher/extension[/theme] reference or http(s) theme URL",
+        help=(
+            "publisher/extension[/theme] registry reference, direct http(s) "
+            "URL to a raw theme JSON file, GitHub file-page URL (converted "
+            "to the raw file automatically), or Open VSX extension page"
+        ),
     )
     theme_fetch_parser.add_argument(
         "--name",
@@ -313,11 +321,31 @@ def _exit_for_marketplace_kind(kind: str) -> int:
     return _exit_for_import_kind(kind)
 
 
+_IMPORT_URL_SCHEME_RE: Final[re.Pattern[str]] = re.compile(
+    r"^[A-Za-z][A-Za-z0-9+.-]*:/"
+)
+
+
 def run_theme_import_command(args: argparse.Namespace) -> int:
     """Import one bounded theme and route its settled report by severity."""
     import json
 
     from talaria.ui.theme_import import ThemeImportError, import_vscode_theme
+
+    if _IMPORT_URL_SCHEME_RE.match(str(args.source)) is not None:
+        # A URL is not a file: point at the fetch path instead of letting
+        # the file reader fail on it. ``Path`` collapses the double slash,
+        # so match the scheme loosely here and echo the original spelling.
+        message = (
+            f"{args.source} looks like a URL, not a local file: use "
+            "'talaria theme fetch REF' (or '/theme fetch REF' in the app) "
+            "for registry references and theme file URLs"
+        )
+        if args.json:
+            print(_theme_error_json("unreadable", message))
+        else:
+            print(defang(f"talaria: theme import failed: {message}"), file=sys.stderr)
+        return 2
 
     try:
         report = import_vscode_theme(

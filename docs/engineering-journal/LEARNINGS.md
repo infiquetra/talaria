@@ -4,6 +4,50 @@
 
 ## 2026-09-04
 
+### A seam nobody calls after mount can secretly be an initializer — wiring it live turns its side effects into behavior
+
+**Evidence.** Issue #141's bar-state rule drives `TranscriptPane.set_show_left_offset` from the
+active theme; before that, only the constructor ever called it. The method's body carried three
+first-time initializations (`peak_descendants = 0`, a fresh `_labelled_blocks` WeakSet,
+`_stable_anchor = None`) placed there because `__init__` always calls the method exactly once.
+Landing the theme wiring would have made every theme switch reset the descendant high-water mark,
+discard the labelled-block memo, and drop the stable scroll anchor — a behavior change no
+pre-wiring test could see, because the extra calls did not exist yet. The initializations moved
+to `__init__` in the same commit as the wiring, before the method's call count grew past one.
+
+**Mechanism.** A method called from exactly one place accumulates the caller's setup work
+because the two bodies run as one in practice. The invariant "runs once" lives in the call
+graph, not in the method, so nothing inside the method guards it — and a new caller converts
+first-time setup into per-call side effects.
+
+**Generalizable rule.** Before wiring an existing method into a new runtime path, read its whole
+body for side effects that were only ever meant to run once, and move first-time initializations
+into the constructor in the same commit as the new wiring — not after the first report of a
+reset counter or a lost anchor.
+
+### A page URL is not a big file: reject gallery pages before fetching, convert file pages before resolving (C3/#142)
+
+**Evidence.** The v0.6.1 C3 unit found the reported file-page failure mode's trigger in
+`resolve_marketplace_source` (`talaria/themes/marketplace.py`): every `http(s)` URL was
+treated as a direct raw-file URL, so a GitHub blob page fetched its HTML and died as
+`oversized` — telling the operator their small theme file was too big. The repair converts
+GitHub file pages to raw URLs and Open VSX extension pages to registry references as pure
+string rewrites (no new fetching, every bound intact), and rejects gallery hosts early with
+the supported-forms explanation — except `/api/` file paths, which still fetch directly.
+Pinned by `test_file_page_url_never_reports_a_small_theme_as_oversized` and
+`test_gallery_search_page_yields_supported_forms_not_a_size_error` in
+`tests/ui/test_theme_import.py`.
+
+**Mechanism.** Size and parse failures are downstream of a classification decision: once a
+page URL is misclassified as a file URL, no downstream message can be truthful, because the
+bytes genuinely are oversized HTML. The fix belongs at the classification point, not in the
+error prose — though the `oversized` notice still carries a page-vs-raw hint for hosts no
+rule recognizes.
+
+**Generalizable rule.** When a user-supplied locator can name either a thing or a page about
+the thing, classify page-vs-thing before any network use, and make the unconvertible case
+explain the supported inputs rather than downloading the page to discover it is one.
+
 ### Any edit under scripts/acceptance permanently reds the v0.5.0 receipt re-verification test on that branch
 
 **Evidence.** The version-agnostic release path (branch `work/060-release-path`) adds

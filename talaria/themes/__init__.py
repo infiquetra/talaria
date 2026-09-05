@@ -113,6 +113,16 @@ TRANSCRIPT_CATEGORY_TOKENS: Mapping[str, Mapping[str, str]] = MappingProxyType(
     }
 )
 
+#: The one non-color value a group entry may carry, and only on its
+#: ``background`` role (issue #141, design selection D2): the category's
+#: transcript text is painted on ``talaria.canvas`` with no distinct fill,
+#: resolved at theme resolution time so a canvas change re-resolves it.
+#: The value names a representation, not a color — it is the single
+#: explicit exception to the "the spec's own tokens always win" order,
+#: superseding the background token value it replaces, which stored themes
+#: must still define. Any other role spelling it is malformed and reported.
+INHERIT_BACKGROUND: str = "inherit"
+
 
 def is_transcript_category(name: object) -> bool:
     """True for one of the six known transcript category names."""
@@ -182,6 +192,17 @@ class ThemeSpec:
     #: entry can never break the rest of the theme. An importer (issue
     #: #124) targets this layer without reimplementing resolution.
     groups: Mapping[str, Mapping[str, str | None]] = field(default_factory=dict)
+    #: Whether the transcript's left offset column — the reserved padding
+    #: column plus the group gutter stripe — is painted (issue #141's
+    #: bar-state rule). Theme-level on purpose: visibility follows the
+    #: active theme, never a separate configuration switch, and a theme
+    #: that does not name the field keeps the column every prior theme
+    #: always had.
+    transcript_bar_visible: bool = True
+    #: One-line provenance or character note shown where the theme is
+    #: described (the ``/theme`` picker row). Empty for every theme that
+    #: carries no such note; built-ins other than Homebrew leave it empty.
+    description: str = ""
 
     def __post_init__(self) -> None:
         if not _SLUG_RE.fullmatch(self.slug):
@@ -201,6 +222,22 @@ class ThemeSpec:
         ):
             raise ValueError(
                 "theme display name must not contain control or format characters"
+            )
+        if not isinstance(self.description, str):
+            raise ValueError("theme description must be a string")
+        if len(self.description) > _THEME_NAME_MAX_LENGTH:
+            raise ValueError(
+                "theme description must be at most "
+                f"{_THEME_NAME_MAX_LENGTH} characters"
+            )
+        if any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or unicodedata.category(character) == "Cf"
+            for character in self.description
+        ):
+            raise ValueError(
+                "theme description must not contain control or format characters"
             )
 
         copied = dict(self.tokens)
@@ -228,9 +265,12 @@ class ThemeSpec:
         object.__setattr__(
             self, "groups", MappingProxyType(frozen_groups)
         )
+        if not isinstance(self.transcript_bar_visible, bool):
+            raise ValueError("theme transcript_bar_visible must be a boolean")
 
 
 __all__ = [
+    "INHERIT_BACKGROUND",
     "THEME_NAME_TYPE_FALLBACK_NOTICE",
     "THEME_TOKENS",
     "THEME_UNAVAILABLE_FALLBACK_NOTICE",

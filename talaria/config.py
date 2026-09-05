@@ -15,8 +15,9 @@ environment variable, a repo-local ``./.talaria/config.toml``, the global
 ``~/.talaria/config.toml`` (or its ``TALARIA_CONFIG_DIR`` redirection), and the
 built-in default. Consumers (U5's status runner, U6, U7's credential provider)
 call :func:`load_config` rather than touching the filesystem themselves.
-``theme.name`` deliberately has no environment or command-line override; its
-later session scope is in memory and only :func:`save_theme` persists it.
+``theme.name`` deliberately has no environment or command-line override; an
+explicit selection in the UI persists it to user scope immediately via :func:`save_theme`,
+while repository persistence is requested via explicit save.
 
 **Consumer contract.** The resolved snapshot is deeply immutable, which changes
 the types a caller gets back: every mapping is a ``MappingProxyType`` and every
@@ -733,9 +734,9 @@ def load_config(
     merged = _deep_merge(merged, _read_toml(cwd / ".talaria" / "config.toml"))
     merged = _deep_merge(merged, _env_overrides())
     if cli_overrides:
-        # ``theme.name`` deliberately has no command-line override. Session
-        # selection belongs to the running application and persists only when
-        # the operator explicitly invokes ``/theme save``.
+        # ``theme.name`` deliberately has no command-line override. Selection
+        # belongs to the running application and persists to user configuration
+        # automatically upon explicit selection in the UI.
         allowed_cli_overrides = dict(cli_overrides)
         allowed_cli_overrides.pop("theme", None)
         # Reduced motion is restart-to-apply configuration with no environment

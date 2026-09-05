@@ -144,6 +144,21 @@ def test_theme_import_prints_the_complete_success_report_and_exits_zero(
     assert (isolated_global_config_dir / "themes" / "cli-sample.json").is_file()
 
 
+def test_theme_import_redirects_a_url_to_fetch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["theme", "import", "https://example.invalid/solar.json"]) == 2
+    assert "talaria theme fetch REF" in capsys.readouterr().err
+
+    assert (
+        main(["theme", "import", "https://example.invalid/solar.json", "--json"])
+        == 2
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema_version"] == "talaria-theme-import-error-v1"
+    assert "talaria theme fetch REF" in payload["message"]
+
+
 def test_theme_import_warnings_use_stderr_without_turning_success_into_failure(
     isolated_global_config_dir: Path,
     capsys: pytest.CaptureFixture[str],
@@ -157,7 +172,10 @@ def test_theme_import_warnings_use_stderr_without_turning_success_into_failure(
         "Imported warnings-dark as user theme warnings-dark: "
         "2 source tokens, 56 fallbacks, 19 warnings."
     ) in printed.out
-    assert "warning:" not in printed.out
+    assert not any(
+        line.startswith("warning: ") for line in printed.out.splitlines()
+    )
+    assert "Appearance: 56 tokens use Refined Default values" in printed.out
     warnings = printed.err.splitlines()
     assert len(warnings) == 19
     assert all(line.startswith("warning: ") for line in warnings)

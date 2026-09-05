@@ -1,7 +1,7 @@
 # Themes
 
-Talaria has five built-in themes and a 58-token public color vocabulary. Theme
-preview is immediate, but persistence is always an explicit action.
+Talaria has five built-in themes and a 58-token public color vocabulary. An
+explicit theme selection applies live and persists to user configuration automatically.
 
 ## Built-in themes
 
@@ -24,7 +24,9 @@ find Dark Green Terminal's neon accents fatiguing. It is available everywhere a 
 — the `/theme` picker, `theme.name` configuration, and the theme registry — but it is never
 selected at startup: a fresh process without configuration still opens on Refined Default.
 
-Provenance: Homebrew was designed for Talaria v0.6.0, not sampled from any host terminal palette.
+Provenance: Homebrew was designed for Talaria v0.6.0, not sampled from any host terminal palette,
+and it is not the Homebrew package manager — the shared name is a coincidence, and the palette
+is Talaria-original. The same note rides the `/theme` picker row.
 Its canvas, surface, and status fills are near-black greens (`#050905`, `#0A120D`, `#030604`);
 body text is a soft green-grey (`#C9D9CE`); primary, accent, and transcript markers are muted
 sages (`#6FA287`, `#4E9A6A`, `#5FA86F`) rather than neon. The flat chrome families
@@ -48,8 +50,12 @@ implementation:
    inherited;
 3. groups: the specification's sparse per-category values, one transcript category at a time
    (`operator`, `assistant`, `reasoning`, `activity`, `session`, `fault`), each naming any of its
-   three roles by nickname (`text`, `marker`, `background`) or by canonical token name;
-4. overrides: the specification's own tokens, which always win.
+   three roles by nickname (`text`, `marker`, `background`) or by canonical token name. A
+   background role may also name the one non-color value, `inherit`, which paints that category on
+   the canvas instead of its own fill;
+4. overrides: the specification's own tokens, which always win — with one explicit exception,
+   named in the section below: a groups-layer background value of `inherit` is a representation
+   directive (no fill), not a color, and it supersedes the background token it names.
 
 Each layer is sparse: an empty group, an unknown category or token, a null value, or a malformed
 color falls through to the next layer instead of breaking the rest, and a malformed group color is
@@ -65,16 +71,66 @@ built-in mapping with a notice; explicit Talaria overrides are never reverted. A
 host palette (absent, misshapen, or empty) degrades to the built-in mapping with a notice, never a
 crash or a blank theme.
 
+## Transcript backgrounds without a fill
+
+A theme can paint any transcript category directly on the canvas instead of behind its own tinted
+box. Set the category's background role to `inherit` in the groups layer — the nickname and the
+canonical token spelling both work:
+
+```json
+{
+  "groups": {
+    "assistant": { "background": "inherit" },
+    "reasoning": { "talaria.transcript.reasoning.background": "inherit" }
+  }
+}
+```
+
+`inherit` is a representation, not a color: at resolution time the category's background resolves
+to `talaria.canvas`, so changing the canvas or switching themes re-resolves the inheritance. The
+category's body text and stripe marker hold their readability floors against the canvas — a stripe
+that matches the canvas is exactly the invisible-marker evasion the floor refuses. A stored theme
+still defines the category's canonical background token, and validation is unchanged; `inherit`
+supersedes that token's value — the single explicit exception to the inheritance order's
+"the specification's own tokens always win" rule, which exists because the token value names a
+fill color and `inherit` says there is none to paint. That is what removes the
+matching-black-fill workaround rather than loosening the rule around it. Categories the theme
+does not name keep their own fills, so one theme can mix filled and unfilled categories.
+`inherit` spelled on the text or marker role is malformed and is reported in the resolution
+notices.
+
+## Transcript bar visibility
+
+The left offset column beside transcript text — the reserved padding column plus the group gutter
+stripe — is theme-controlled. A theme hides the bar entirely with one optional top-level field in
+its stored document:
+
+```json
+{
+  "transcript_bar_visible": false
+}
+```
+
+Visibility follows the active theme: switching themes hides or restores the bar, and a theme that
+does not name the field keeps the column every theme has always had. The bar state rides in the
+theme value registered with the terminal framework, so a reload under the same slug counts as a
+real change too: reloading a theme whose only change is bar metadata repaints the mounted
+transcript instead of leaving a stale gutter. Hiding the bar returns its column to the content
+width, so wrapped rows reflow rather than clip, at every terminal width. Matching marker colors
+are not a hidden state — the 3.0 marker floor still refuses them — and a separate configuration
+switch is not a substitute: bar visibility is a theme decision, not a client setting.
+
 ## Preview and select a theme
 
-Enter `/theme` to open the theme picker. `Up` and `Down` preview the highlighted theme immediately.
-`Enter` accepts it for the current Talaria process and closes the picker. `Escape` closes the picker
-and restores the theme that was active when it opened. Browsing, previewing, accepting a session
-theme, and quitting do not write a file.
+Enter `/theme` to open the theme picker. `Up` and `Down` preview the highlighted theme immediately
+for the running session only; browsing and previewing do not write to configuration. `Escape` closes
+the picker and restores the persisted theme that was active when it opened. `Enter` accepts the highlighted
+theme, applies it live immediately, and automatically persists `theme.name` to the user configuration
+(`~/.talaria/config.toml` or the directory selected by `TALARIA_CONFIG_DIR`).
 
-`/theme select <name>` previews one installed theme immediately without opening the picker, for
-example `/theme select neutral-dark`. Like the picker, it accepts the theme for the current
-Talaria process only. An unknown name keeps the current theme and says so:
+`/theme select <name>` selects one installed or stored theme immediately, applies it live, and
+persists `theme.name` to the user configuration automatically (for example `/theme select neutral-dark`).
+An unknown name keeps the current theme and says so:
 
 ```text
 theme 'not-installed' is not available — keeping 'refined-default'
@@ -82,11 +138,11 @@ theme 'not-installed' is not available — keeping 'refined-default'
 
 A theme that cannot render also keeps the current theme with a notice naming the failure.
 
-Persistence is separate:
+Repository-scope persistence remains an explicit command:
 
-- `/theme save` saves the current theme in the user configuration. `/theme save user` is the
-  explicit form of the same command.
-- `/theme save repository` saves it in `./.talaria/config.toml` for the current repository.
+- `/theme save repository` saves the current theme in `./.talaria/config.toml` for the current
+  repository.
+- `/theme save` (or `/theme save user`) explicitly saves the current theme to the user configuration.
 
 Both commands change only the top-level `theme.name` setting, whether the existing TOML uses a
 `[theme]` table, a dotted key, or an inline table. They preserve every other configuration key and
@@ -98,11 +154,10 @@ The four theme scopes resolve in this order, from lowest to highest precedence:
 2. the user configuration at `~/.talaria/config.toml`, or the directory selected by
    `TALARIA_CONFIG_DIR`;
 3. the repository configuration at `./.talaria/config.toml`;
-4. the unsaved selection held by the running process.
+4. the session selection held in memory by the running process.
 
-A later scope replaces the earlier selection. Configuration files are read at startup. Talaria does
-not watch them, so an external edit or an explicit save affects the next process, while a picker
-selection affects only the current one.
+An explicit selection (`Enter` in `/theme` or `/theme select <name>`) writes to the user configuration
+scope (scope 2) immediately while applying to the running session (scope 4).
 
 ## Token vocabulary
 
@@ -162,9 +217,15 @@ talaria theme search QUERY [--limit N] [--json]
 talaria theme fetch REF [--name NAME] [--json]
 ```
 
-`REF` is a `publisher/extension[/theme]` reference or a direct `http(s)` URL to a raw theme
-JSON file. The user-selected source is accepted as given; there is no additional trust policy.
-Fetched bytes are parsed by the same strict entry point as local files and are never executed.
+`REF` is a `publisher/extension[/theme]` reference from the Open VSX registry, a direct
+`http(s)` URL to a raw theme JSON file, a GitHub file-page URL (converted to the raw file
+automatically), or an Open VSX extension page (resolved as its `publisher/extension`
+reference). A gallery search page or any other web page is not fetchable: run `/theme search`
+first and fetch the reference it lists. The user-selected source is accepted as given; there
+is no additional trust policy. Fetched bytes are parsed by the same strict entry point as
+local files and are never executed. Every bound still applies after conversion: payloads past
+the size bound fail as `oversized` even when they started as a page URL — a page URL fetches
+the page, so use the raw file when a page is refused.
 The same search, fetch, and reload steps are available inside the app as `/theme search <query>`,
 `/theme fetch <source> [--name <name>]`, and `/theme reload [name]`. A search lists bounded
 entries with the reference to fetch, for example:
@@ -197,23 +258,56 @@ Default. The normative mapping and warning rules are in
 [Visual Studio Code theme import format](formats/vscode-theme-import.md); they are not duplicated
 here.
 
-Imported themes become available to `/theme` only after a fresh process loads the stored theme
-library. Once a canonical theme document exists under `<TALARIA_CONFIG_DIR>/themes/` (or the default
-`~/.talaria/themes/`), its slug is accepted from `config.toml` at startup and can be persisted with
-the same explicit save commands as a built-in theme.
+Stored user themes live under `<TALARIA_CONFIG_DIR>/themes/<slug>.json` (or the default
+`~/.talaria/themes/<slug>.json`). A stored theme may be produced by `/theme fetch`, created by
+hand, or forked from an existing theme. Standalone stored theme files do not require an import-source
+registration: placing or editing a valid canonical theme file under `<config-dir>/themes/` makes it
+available to the running session.
 
-Every successful import records its source beside the library in
-`<config-dir>/theme-sources.json`, mapping each slug to its file path or marketplace reference.
-`/theme reload [name]` re-runs the import pipeline for that recorded source and applies the
-re-resolved theme live, with no restart:
+## Local refresh versus upstream reimport
 
-```text
-theme 'solar-flare' reloaded: 40 source tokens, 18 fallbacks, 0 warnings
-```
+Talaria strictly distinguishes refreshing saved local theme files from reimporting an upstream source:
 
-`reload` with no name re-imports the current session theme. A failed or invalid reload keeps
-rendering the current theme with a notice and never partially applies. There is no file watcher:
-editing a source file changes nothing until an explicit reload, and concurrent reloads serialize
-behind one lock. The mapping, warning, and report rules for both sources are in
-[Visual Studio Code theme import format](formats/vscode-theme-import.md); they are not duplicated
-here.
+- **Local refresh:** `/theme reload [name]` refreshes the theme directly from its stored file
+  (`<config-dir>/themes/<slug>.json`). It never requires an import source, applying saved local edits
+  live immediately without exiting:
+
+  ```text
+  theme 'my-theme' refreshed from stored file (applied live, no restart required)
+  ```
+
+  Running `/theme reload` with no argument refreshes the currently active theme. Built-in themes
+  (`refined-default`, `dark-green-terminal`, `neutral-dark`, `accessible-high-contrast`, `homebrew`)
+  are code constants and have no stored file on disk to refresh.
+  If a stored theme file is malformed or missing required tokens, reload fails with an actionable
+  validation error and keeps the last good appearance intact.
+
+- **Upstream reimport:** `/theme fetch <source> [--name <name>]` (or the CLI `talaria theme fetch`
+  and `talaria theme import`) fetches or re-fetches from an upstream VS Code source or marketplace
+  reference, compiles the colors into Talaria tokens, writes `<config-dir>/themes/<slug>.json`,
+  records the origin in `<config-dir>/theme-sources.json`, and applies the result live:
+
+  ```text
+  theme 'solar-flare' fetched: 40 source tokens, 18 fallbacks, 0 warnings (applied live, no restart required)
+  ```
+
+Concurrent reloads and fetches serialize behind one lock. There is no external file watcher:
+editing a stored theme file on disk changes nothing until an explicit `/theme reload [name]` or a
+restart.
+
+## Activation rules: live versus restart
+
+Talaria distinguishes settings that apply live from those requiring a process restart:
+
+- **Applied live (no restart required):**
+  - Selecting a theme via `/theme select <name>` or `Enter` in the `/theme` picker applies live and
+    persists `theme.name` to the user configuration immediately.
+  - Refreshing a stored theme via `/theme reload [name]` applies live immediately.
+  - Fetching an upstream theme via `/theme fetch <source>` applies live immediately.
+  - Bottom bar visibility toggles (`/bar`) apply live immediately.
+  Activation notices explicitly confirm that the change applied live with no restart required.
+
+- **Restart required:**
+  - External edits made directly to configuration files (`config.toml`) by text editor take effect
+    on the next process startup.
+  - Built-in theme code definitions are immutable at runtime.

@@ -57,6 +57,44 @@ _URL_SCHEME_RE: Final[re.Pattern[str]] = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)
 _EXTENSION_PART_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SLUG_RUN_RE: Final[re.Pattern[str]] = re.compile(r"[^a-z0-9]+")
 
+#: A GitHub file page names a theme file through a web page, not through
+#: the raw file: ``github.com/<owner>/<repo>/blob/<rev>/<path>`` (and the
+#: ``/raw/`` variant) converts to the ``raw.githubusercontent.com`` URL for
+#: the same revision and path. The converted URL fetches under the same
+#: size bound as any direct URL; the page itself is never fetched. Only the
+#: scheme and host match case-insensitively; the path shape stays exact.
+_GITHUB_PATH_RE: Final[re.Pattern[str]] = re.compile(
+    r"/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)/"
+    r"(?:blob|raw)/(?P<rev>[^/]+)/(?P<path>.+)"
+)
+
+#: An Open VSX extension page names the same ``publisher/extension`` the
+#: registry lookup takes: ``open-vsx.org/extension/<publisher>/<extension>``.
+#: Scheme and host match case-insensitively; the path shape stays exact.
+_OPEN_VSX_PATH_RE: Final[re.Pattern[str]] = re.compile(
+    r"/extension/(?P<publisher>[A-Za-z0-9_.-]+)/(?P<extension>[A-Za-z0-9_.-]+)/?"
+)
+
+#: Gallery hosts whose web pages are never raw theme files. Their
+#: ``/api/`` file paths still fetch directly; every other page on these
+#: hosts is explained instead of downloaded, so a search page can never
+#: come back as a size or parse failure.
+_GALLERY_HOSTS: Final[frozenset[str]] = frozenset(
+    {"open-vsx.org", "marketplace.visualstudio.com"}
+)
+
+#: The supported fetch inputs, repeated wherever the operator meets a
+#: rejection so no failure sends them guessing. Gallery search pages and
+#: other web pages are not convertible: search the registry first with
+#: ``/theme search`` (or ``talaria theme search``) and fetch the reference
+#: it lists.
+_SUPPORTED_FORMS: Final[str] = (
+    "supported sources are publisher/extension[/theme] registry references "
+    "(the Open VSX registry), direct http(s) URLs to raw theme JSON files, "
+    "GitHub file-page URLs (converted to the raw file automatically), and "
+    "Open VSX extension pages"
+)
+
 
 @dataclass(frozen=True)
 class MarketplaceEntry:
@@ -136,14 +174,51 @@ def search_marketplace(
     return tuple(entries[:bounded])
 
 
+def convert_page_url(ref: str) -> str | None:
+    """Convert one web-page URL to the supported reference behind it.
+
+    GitHub file pages convert to the raw file URL for the same revision
+    and path; Open VSX extension pages convert to the
+    ``publisher/extension`` reference the registry lookup takes. Anything
+    else — gallery search pages, other hosts, other paths — returns
+    ``None``: the page is explained, never guessed at. Conversion is a
+    string rewrite only; every bound still applies to what is fetched.
+    ``urlsplit`` lowercases the scheme and host, so those match
+    case-insensitively while the path shape stays exact.
+    """
+    try:
+        split = urllib.parse.urlsplit(ref.strip())
+    except ValueError:
+        return None
+    if split.scheme.lower() != "https":
+        return None
+    host = split.hostname or ""
+    if host.lower() == "github.com":
+        page = _GITHUB_PATH_RE.fullmatch(split.path)
+        if page is not None:
+            return (
+                "https://raw.githubusercontent.com/"
+                f"{page.group('owner')}/{page.group('repo')}/"
+                f"{page.group('rev')}/{page.group('path')}"
+            )
+        return None
+    if host.lower() == "open-vsx.org":
+        extension_page = _OPEN_VSX_PATH_RE.fullmatch(split.path)
+        if extension_page is not None:
+            return (
+                f"{extension_page.group('publisher')}"
+                f"/{extension_page.group('extension')}"
+            )
+    return None
+
+
 def _direct_entry(ref: str) -> MarketplaceEntry:
     match = _URL_SCHEME_RE.match(ref)
     if match is None:
         raise AssertionError("unreachable: non-URL ref in _direct_entry")
     if match.group(1).lower() not in {"http", "https"}:
         raise MarketplaceError(
-            f"marketplace source {ref!r} is unknown: "
-            "only http(s) URLs and publisher/extension references are supported",
+            f"marketplace source {ref!r} is unknown: {_SUPPORTED_FORMS}",
             kind="unknown-source",
         )
     return MarketplaceEntry(
@@ -215,19 +290,31 @@ def resolve_marketplace_source(
 
     Accepted forms are a direct ``http(s)`` URL to a raw theme JSON file
     or ``publisher/extension`` with an optional ``/theme`` selector (a
-    1-based index or the exact theme label). Anything else is an
-    unknown source, never a trust decision.
+    1-based index or the exact theme label). GitHub file pages convert to
+    the raw file URL and Open VSX extension pages convert to the
+    ``publisher/extension`` reference before anything is fetched. Anything
+    else is an unknown source, never a trust decision.
     """
     cleaned = ref.strip()
     if not cleaned:
         raise ValueError("marketplace source must not be empty")
+    converted = convert_page_url(cleaned)
+    if converted is not None:
+        cleaned = converted
     if _URL_SCHEME_RE.match(cleaned) is not None:
+        host = urllib.parse.urlsplit(cleaned).hostname or ""
+        path = urllib.parse.urlsplit(cleaned).path
+        if host.lower() in _GALLERY_HOSTS and not path.startswith("/api/"):
+            raise MarketplaceError(
+                f"marketplace source {ref!r} is a gallery web page, not a "
+                f"theme file: {_SUPPORTED_FORMS}",
+                kind="unknown-source",
+            )
         return _direct_entry(cleaned)
     parts = cleaned.split("/")
     if len(parts) not in (2, 3) or not all(parts[:2]):
         raise MarketplaceError(
-            f"marketplace source {ref!r} is unknown: "
-            "expected publisher/extension[/theme] or an http(s) URL",
+            f"marketplace source {ref!r} is unknown: {_SUPPORTED_FORMS}",
             kind="unknown-source",
         )
     publisher, extension = parts[0], parts[1]
@@ -273,7 +360,9 @@ def fetch_marketplace_bytes(
     if len(data) > max_bytes:
         raise MarketplaceError(
             f"marketplace source {entry.source_id!r} is {len(data)} bytes, "
-            f"past the {max_bytes}-byte bound",
+            f"past the {max_bytes}-byte bound; a web page URL fetches the "
+            "page, not the file, so use the raw theme file URL instead "
+            "(GitHub file pages convert automatically, other pages do not)",
             kind="oversized",
         )
     return bytes(data)
@@ -510,6 +599,7 @@ __all__ = [
     "MarketplaceTransport",
     "UrllibMarketplaceTransport",
     "clamp_limit",
+    "convert_page_url",
     "fetch_marketplace_bytes",
     "normalize_query",
     "resolve_marketplace_source",

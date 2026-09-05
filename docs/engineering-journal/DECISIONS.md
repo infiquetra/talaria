@@ -2904,6 +2904,14 @@ canonical stored user-theme slugs when it validates `theme.name`. Once an import
 exists under the user theme directory, saving its slug survives restart. The library is still read
 only once per process, consistent with the release's restart-to-apply decision.
 
+**Superseded decision (2026-09-04, issue #140 / C1).** The v0.5.0 explicit-save persistence requirement
+("`/theme` previews immediately, `Escape` restores, and `Enter` accepts only for the running process;
+persistence is a separate `/theme save [user|repository]` action") is superseded per the operator's
+2026-09-04 preference (operator design selection D1). An explicit theme selection (`/theme select <name>`
+or `Enter` in the `/theme` picker) persists `theme.name` to user configuration scope immediately.
+Picker navigation previews session-only, and `Escape` restores the persisted theme. Explicit save via
+`/theme save repository` remains for repository-scope persistence.
+
 **Evidence boundary.** These decisions record merged code and its tests. They do not claim the
 candidate wheel has passed issue #110's real-terminal acceptance run; installation and release notes
 remain evidence-bound until that run produces receipts.

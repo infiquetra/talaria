@@ -293,6 +293,10 @@ HOMEBREW = ThemeSpec(
     slug="homebrew",
     name="Homebrew",
     dark=True,
+    description=(
+        "Talaria-designed green-black palette (v0.6.0) — not sampled "
+        "from a host terminal, not the Homebrew package manager"
+    ),
     tokens={
         "talaria.canvas": "#050905",
         "talaria.surface": "#0A120D",

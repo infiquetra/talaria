@@ -230,8 +230,39 @@ class ImportReport:
     def unsupported_count(self) -> int:
         return len(self.unsupported_entries)
 
+    def appearance_lead(self) -> str:
+        """Lead with what changed visually; warnings are never dismissible."""
+        if self.fallback_count and self.unsupported_count:
+            return (
+                f"Appearance: {self.fallback_count} tokens use Refined Default "
+                "values (fallback: lines below) — these change what you see; "
+                f"{self.unsupported_count} source features were not imported "
+                "(warning: lines below) — check any you expected to see."
+            )
+        if self.fallback_count:
+            return (
+                f"Appearance: {self.fallback_count} tokens use Refined Default "
+                "values (fallback: lines below) — these change what you see."
+            )
+        if self.unsupported_count:
+            return (
+                "Appearance: every mapped token renders as authored; "
+                f"{self.unsupported_count} source features were not imported "
+                "(warning: lines below) — check any you expected to see."
+            )
+        return (
+            "Appearance: every token renders as authored; nothing fell back "
+            "and nothing was ignored."
+        )
+
     def records(self) -> tuple[ReportLine, ...]:
-        """Return report records whose severity is independent of prose."""
+        """Return report records whose severity is independent of prose.
+
+        The appearance-changing facts lead: the summary, then what the
+        fallbacks change visually, then the full detail with fallbacks and
+        composites before the ignored-feature warnings. Severity routing is
+        unchanged — warnings still ride standard error.
+        """
         summary = (
             f"Imported {self.target_name} as user theme {self.theme.slug}: "
             f"{self.mapped_count} source tokens, {self.fallback_count} fallbacks, "
@@ -257,7 +288,13 @@ class ImportReport:
             )
             for token in self.fallback_tokens
         )
-        return (ReportLine("info", summary), *warnings, *composites, *fallbacks)
+        return (
+            ReportLine("info", summary),
+            ReportLine("info", self.appearance_lead()),
+            *fallbacks,
+            *composites,
+            *warnings,
+        )
 
     def lines(self) -> tuple[str, ...]:
         """Return the stable prose report used by existing interactive callers."""
