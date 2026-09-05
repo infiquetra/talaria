@@ -206,6 +206,15 @@ class Inspector(VerticalScroll):
         color: $talaria-inspector-heading;
         text-style: bold;
     }
+    /* #144 Option B: a diagnostics row expands to its full text while it
+       holds focus, because the panel clips the provenance off every width
+       and focus is how the source and age become readable. Task and file
+       rows keep the shared one-line rule above, focused or not. */
+    Inspector .inspector--diag:focus {
+        height: auto;
+        text-wrap: wrap;
+        text-overflow: fold;
+    }
     Inspector .inspector--context,
     Inspector .inspector--operation {
         width: 1fr;

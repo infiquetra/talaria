@@ -797,6 +797,60 @@ async def test_a_stale_row_leads_with_a_marker_inside_the_panels_window(
 
 
 @pytest.mark.asyncio
+async def test_a_focused_diagnostics_row_expands_and_folds_back() -> None:
+    """#144 Option B, measured on the rendered row: the panel clips the
+    provenance off every width, so focus is how the source and age become
+    readable — and only diagnostics rows expand. Task and file rows keep the
+    shared one-line rule, focused or not, and the Context section Live 10
+    measured does not move when a diagnostics row takes focus."""
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.inspector.apply_diagnostics(_DIAG_LINES)
+        await pilot.pause()
+
+        (roster,) = (
+            row
+            for row in app.inspector.query(".inspector--diag").nodes
+            if isinstance(row, InspectorDiagRow) and "roster" in row.diag_line
+        )
+        assert roster.size.height == 1
+
+        context = app.inspector.query_one(".inspector--context", Static)
+        context_before = context.region
+
+        app.screen.set_focus(roster)
+        await pilot.pause()
+        assert roster.size.height > 1, "a focused diagnostics row must expand"
+        rendered = "\n".join(
+            roster.render_line(y).text for y in range(roster.size.height)
+        )
+        assert "0s ago" in rendered, "the clipped provenance must be readable while focused"
+
+        # Focus inside the scrolling panel does not move the Context section,
+        # on the expanded row or on the last row in the section.
+        assert context.region == context_before
+        last = app.inspector.query(".inspector--diag").nodes[-1]
+        app.screen.set_focus(last)
+        await pilot.pause()
+        assert context.region == context_before
+
+        app.screen.set_focus(None)
+        await pilot.pause()
+        assert roster.size.height == 1, "focus leaving folds the row back"
+
+        task = app.inspector.query(".inspector--task").nodes[0]
+        app.screen.set_focus(task)
+        await pilot.pause()
+        assert task.size.height == 1, "a focused task row stays one line"
+
+        file_row = app.inspector.query(".inspector--file").nodes[0]
+        app.screen.set_focus(file_row)
+        await pilot.pause()
+        assert file_row.size.height == 1, "a focused file row stays one line"
+
+
+@pytest.mark.asyncio
 async def test_diag_rows_join_up_down_keyboard_navigation() -> None:
     app = InspectorHarness(_seeded_view())
     async with app.run_test(size=(132, 30)) as pilot:
