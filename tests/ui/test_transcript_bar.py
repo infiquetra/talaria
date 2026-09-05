@@ -22,6 +22,7 @@ Two layers of cases:
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -33,9 +34,15 @@ from textual.widgets._markdown import MarkdownParagraph
 
 from talaria.themes import ThemeSpec
 from talaria.themes.builtins import REFINED_DEFAULT
+from talaria.themes.storage import load_user_theme_spec, serialize_user_theme
 from talaria.ui.blocks import EntryMarkdown
-from talaria.ui.theme import BUILTIN_THEME_REGISTRY, ThemeRegistry
-from talaria.ui.theme_import import ImportReport
+from talaria.ui.theme import (
+    BUILTIN_THEME_REGISTRY,
+    ThemeRegistry,
+    theme_registry_for_config,
+    user_theme_path,
+)
+from talaria.ui.theme_import import import_vscode_theme
 from talaria.ui.transcript import (
     TranscriptLine,
     TranscriptPane,
@@ -295,32 +302,61 @@ async def test_switching_themes_hides_and_restores_the_bar_without_clipping(
         await app.shutdown_sources()
 
 
-def _reload_report(spec: ThemeSpec, target_path: Path) -> ImportReport:
-    return ImportReport(
-        mapped_values={},
-        unsupported_entries=(),
-        fallback_tokens=(),
-        composites=(),
-        target_name=spec.name,
-        target_path=target_path,
-        theme=spec,
-    )
+def _flip_stored_bar(config_dir: Path, slug: str, *, visible: bool) -> None:
+    """The operator's lever: edit the stored theme's bar field on disk."""
+    path = user_theme_path(slug, config_dir=config_dir)
+    spec = replace(load_user_theme_spec(path), transcript_bar_visible=visible)
+    path.write_bytes(serialize_user_theme(spec))
+
+
+def _stored_bar(config_dir: Path, slug: str) -> bool:
+    return load_user_theme_spec(
+        user_theme_path(slug, config_dir=config_dir)
+    ).transcript_bar_visible
+
+
+async def _submit_theme_command(app: Any, pilot: Any, text: str) -> None:
+    app.composer.text = text
+    app.composer.text_area.focus()
+    await pilot.press("enter")
+    await app.settle_live()
+    await pilot.pause()
+
+
+#: The shared VS Code source fixture the import suite stages its reload
+#: themes from — a real source file, not a synthesized report.
+_SAMPLE_SOURCE = Path(__file__).parents[1] / "fixtures" / "vscode-themes" / "sample-dark.json"
 
 
 @pytest.mark.asyncio
-async def test_a_bar_only_same_slug_reload_moves_the_gutter(tmp_path: Path) -> None:
-    """P1 repair regression (#141 item 16 / Live 06): reloading a theme
-    under its own slug where only the bar metadata changed must still move
-    the mounted gutter. Textual's theme reactive is silent on same-slug
-    sets, and the app repaints a same-slug spec swap only when the
-    registered Theme value actually differs — the bar state rides in that
-    value (``talaria-transcript-bar-visible``) for exactly this reason.
-    The case drives the reload's own apply path and proves the gutter
-    moves, content reflows, and nothing clips — in both directions."""
-    app, controls = paused_app(_bar_frames())
+async def test_a_bar_only_stored_edit_moves_the_gutter_through_theme_reload(
+    tmp_path: Path,
+) -> None:
+    """P1 repair regression on the real reload path (#141 item 16 / Live
+    06): the operator edits the stored theme's bar field and submits
+    ``/theme reload`` — the composer command, the recorded source, the
+    re-import, the same-slug spec swap. The mounted gutter must move even
+    though the slug never changes and the re-import re-derives every
+    color from source: the source cannot express the bar, so the stored
+    choice survives the re-import, in both directions, and the reclaimed
+    column reflows wrapped rows instead of clipping them."""
+    config_dir = tmp_path / "config"
+    source = tmp_path / "bar-probe.json"
+    source.write_bytes(_SAMPLE_SOURCE.read_bytes())
+    import_vscode_theme(source, name="bar-probe", config_dir=config_dir)
+
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, controls = paused_app(
+        _bar_frames(),
+        theme_name="bar-probe",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
+    )
     async with app.run_test(size=(80, 24)) as pilot:
         await _drain(app, pilot, controls)
         pane = app.transcript
+        assert app.theme == "bar-probe"
         assert pane.show_left_offset is True
 
         probe = TranscriptLine("x" * 60, kind="assistant", first_in_entry=False)
@@ -328,41 +364,25 @@ async def test_a_bar_only_same_slug_reload_moves_the_gutter(tmp_path: Path) -> N
         await pilot.pause()
         width_visible = probe.content_size.width
 
-        hidden = ThemeSpec(
-            slug=REFINED_DEFAULT.slug,
-            name=REFINED_DEFAULT.name,
-            dark=REFINED_DEFAULT.dark,
-            tokens=dict(REFINED_DEFAULT.tokens),
-            transcript_bar_visible=False,
-        )
-        app._apply_import_report(
-            _reload_report(hidden, tmp_path / f"{hidden.slug}.json"),
-            action="reloaded",
-        )
-        await pilot.pause()
-        await pilot.pause()
+        _flip_stored_bar(config_dir, "bar-probe", visible=False)
+        await _submit_theme_command(app, pilot, "/theme reload")
+        assert app.theme == "bar-probe"
         assert pane.show_left_offset is False, (
-            "a bar-only same-slug reload left the mounted gutter stale"
+            "a bar-only stored edit submitted through /theme reload left "
+            "the mounted gutter stale"
         )
         assert probe.content_size.width == width_visible + 1
         assert _BAR_RESPONSE in _screen_words(app)
+        assert _stored_bar(config_dir, "bar-probe") is False, (
+            "the re-import clobbered the stored bar choice"
+        )
 
-        visible = ThemeSpec(
-            slug=REFINED_DEFAULT.slug,
-            name=REFINED_DEFAULT.name,
-            dark=REFINED_DEFAULT.dark,
-            tokens=dict(REFINED_DEFAULT.tokens),
-            transcript_bar_visible=True,
-        )
-        app._apply_import_report(
-            _reload_report(visible, tmp_path / f"{visible.slug}.json"),
-            action="reloaded",
-        )
-        await pilot.pause()
-        await pilot.pause()
+        _flip_stored_bar(config_dir, "bar-probe", visible=True)
+        await _submit_theme_command(app, pilot, "/theme reload")
         assert pane.show_left_offset is True
         assert probe.content_size.width == width_visible
         assert _BAR_RESPONSE in _screen_words(app)
+        assert _stored_bar(config_dir, "bar-probe") is True
 
         await probe.remove()
         await app.shutdown_sources()
