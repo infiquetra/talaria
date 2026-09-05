@@ -89,9 +89,9 @@ from talaria.domain.compat import (
     ProbeTrigger,
     SeamBoard,
     apply_probe_round,
+    board_lines,
     empty_board,
     seam_probe_due,
-    split_seam_lines,
 )
 from talaria.domain.composer_history import ComposerHistory
 from talaria.domain.composer_history import push as history_push
@@ -1435,15 +1435,12 @@ class TalariaApp(App[None]):
         #: connection with no entry yet answers a board of never-observed seams,
         #: which is the honest state before a probe has run — not an empty board,
         #: and not a board of absences.
-        #: The seam lines currently on screen, or ``None`` before the board has
-        #: ever been painted. The two are different facts and the difference is
-        #: load-bearing: ``None`` is what keeps the render tick from putting four
-        #: never-observed rows on screen in replay, where no probe runs at all.
-        self._seam_lines: tuple[str, ...] | None = None
         #: The diagnostics lines currently in the inspector, or ``None`` before
-        #: the first move. Tracked beside :attr:`_seam_lines` because the two
-        #: surfaces paint from one split and either half can move without the
-        #: other when a failed move falls back to leaving rows visible.
+        #: the board has ever been painted. The two are different facts and the
+        #: difference is load-bearing: ``None`` is what keeps the render tick
+        #: from putting four never-observed rows on screen in replay, where no
+        #: probe runs at all, and it is also what makes a refused move retry on
+        #: the next paint instead of being remembered as done.
         self._inspector_diag_lines: tuple[str, ...] | None = None
         #: How many ``paste.collapse`` round trips are outstanding. Non-zero
         #: means the composer still holds a literal body that is about to be
@@ -1883,10 +1880,15 @@ class TalariaApp(App[None]):
             transcript.restore_reading_anchor(anchor)
 
     def _sync_focus_indication(self) -> None:
-        """Repaint both caret cues without mounting or resizing anything."""
+        """Repaint both caret cues without mounting or resizing anything.
+
+        The standalone caret row lives in the inspector's context section since
+        #144 — the status region no longer carries it — and the composer's own
+        border cue is unchanged.
+        """
         region = focused_region(self.focused)
         try:
-            self.status_region.set_caret(region)
+            self.inspector.set_focus_region(region)
             self.composer.show_caret_location(region == "composer")
         except NoMatches:
             # The first focus event may arrive while compose is still mounting.
@@ -4554,11 +4556,14 @@ class TalariaApp(App[None]):
             health=self.admin_client if isinstance(self.admin_client, HealthProbe) else None,
         )
         self.compat = report
-        # The status region is the *only* surface a seam change writes to, and
-        # deliberately. It is a current-state surface, which is what a seam is;
-        # an absence also written into the append-only transcript would repeat
-        # every reconnect and would put "the roster is off" in the middle of a
-        # conversation, which is where R10 wants a named absence least.
+        # The inspector's diagnostics section is the *only* surface a seam
+        # change writes to, and deliberately. It is a current-state surface,
+        # which is what a seam is; an absence also written into the append-only
+        # transcript would repeat every reconnect and would put "the roster is
+        # off" in the middle of a conversation, which is where R10 wants a named
+        # absence least. The status region stopped being a seam surface in #144:
+        # the roster, approval-detail, and http-runner rows never render above
+        # the composer, stale or not.
         await self._render_seams()
         if report.blocking:
             for verdict in report.blocking:
@@ -4572,14 +4577,17 @@ class TalariaApp(App[None]):
         return report
 
     async def _render_seams(self) -> None:
-        """Push the seam board onto the inspector and the status region (#122).
+        """Push the seam board onto the inspector alone (#122, amended by #144).
 
-        One board snapshot feeds both surfaces through
-        :func:`~talaria.domain.compat.split_seam_lines`: the inspector holds
-        every seam row, and the region keeps only the actionable subset, so a
-        clean board leaves the region empty and a failing seam stays visible
-        there. Classifying once from one snapshot is what keeps a failure
-        arriving mid-move from racing the alert path.
+        One board snapshot feeds one surface. The inspector's diagnostics
+        section holds every seam row, and nothing else holds any: #122's second
+        surface — the status region's actionable subset — was retired by #144,
+        because a row kept there meant the roster, approval-detail, or
+        http-runner diagnostic duplicated above the composer, stale copies
+        included, which is the duplicate display that child exists to close.
+        The one remaining fallback path is no fallback: when the inspector
+        cannot take the rows the board renders nowhere until the next paint
+        retries, never back above the composer.
 
         The clock is ``state.last_observed_at`` — the frame clock, never a wall
         clock read at render time — so a replayed recording renders the same
@@ -4591,29 +4599,16 @@ class TalariaApp(App[None]):
 
         Nothing repaints when the text has not moved, which is what lets the
         render tick call this at its own frequency — see :meth:`_refresh_seam_ages`
-        for why it must. A move the inspector cannot take leaves the rows in
-        the region rather than dropping them.
+        for why it must.
         """
-        region_lines, inspector_lines = split_seam_lines(
-            self.seams, self.state.last_observed_at
-        )
-        if (
-            region_lines == self._seam_lines
-            and inspector_lines == self._inspector_diag_lines
-        ):
-            return
-        try:
-            region = self.status_region
-        except NoMatches:  # pragma: no cover - teardown race
+        inspector_lines = board_lines(self.seams, self.state.last_observed_at)
+        if inspector_lines == self._inspector_diag_lines:
             return
         anchor = self._capture_layout_anchor()
         try:
             moved = await self._render_inspector_diagnostics(inspector_lines)
-            shown = region_lines if moved else inspector_lines
-            await region.apply_seams(shown)
         finally:
             self._restore_layout_anchor(anchor)
-        self._seam_lines = shown
         if moved:
             self._inspector_diag_lines = inspector_lines
 
@@ -4621,8 +4616,9 @@ class TalariaApp(App[None]):
         """Move one board snapshot's rows into the inspector (#122).
 
         False when the inspector is gone — the teardown race :meth:`_render_seams`
-        already guards for the region — so the caller can leave the rows where
-        they stay visible instead.
+        already guards for. The caller drops the board rather than restoring the
+        retired region copy (#144): a screen that is coming down has no reader,
+        and leaving the cache unset is what makes the next paint retry.
         """
         try:
             inspector = self.inspector
@@ -4655,7 +4651,7 @@ class TalariaApp(App[None]):
         in replay, where no probe runs and there is nothing to be never-observed
         *about* yet.
         """
-        if self._seam_lines is None:
+        if self._inspector_diag_lines is None:
             return
         await self._render_seams()
 

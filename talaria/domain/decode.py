@@ -118,6 +118,11 @@ _OBSERVED_ON_A_LIVE_GATEWAY: frozenset[str] = frozenset(
         #: reading-derived sets because it was found by observation, the same
         #: provenance as the three above.
         "platforms.changed",
+        #: Found 2026-09-04 live in ordinary turns (issue #145 / I5 finding;
+        #: Hermes 63279301b tui_gateway/server.py:13125-13175, also :3004-3026) —
+        #: mid-turn ticker daemon emits ``session.usage`` with ``{"usage": {...}}``
+        #: periodically as token counters advance.
+        "session.usage",
     }
 )
 

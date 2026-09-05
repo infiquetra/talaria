@@ -2,6 +2,36 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-09-05
+
+### Diagnostics are inspector-only: the status region's seam surface and caret row are retired
+
+**Decision.** The seam board (roster, approval-detail, http-runner,
+kanban-dispatcher) renders in the inspector's Diagnostics section alone; the
+status region above the composer renders no seam rows, actionable or stale
+(#144). The standalone `caret: <region>` row moved from the status region into
+the inspector's Context section as its first row. `split_seam_lines` and
+`seam_row_stays_visible` (`talaria/domain/compat.py`) are deleted — the #122
+rule that kept actionable and stale rows above the composer had no remaining
+consumer once the region stopped being a seam surface.
+
+**Rationale.** #122's two-surface split meant every actionable or stale seam row
+rendered twice — once above the composer and once in the inspector — which is
+the duplicate display #144 exists to close. A refusal path that restored the
+region copy would rebuild the same duplicate, so a move the inspector cannot
+take now drops the board until the next paint retries it. Blocking
+compatibility verdicts still notice through the transcript, and a transport
+that is down still surfaces through the connection notices and the fleet rows,
+so no failure loses its only visible home.
+
+**Decided by.** Parent issue #139's child #144 (review wave W2, lane B),
+operator feedback items 9 and 10; the I4 trigger finding is bound to `dd4e87d`
+on the child before the repair commit.
+
+**Revisit when.** An operator asks for actionable seam rows back in the
+composer area — that is a new two-surface design and must not quietly
+resurrect the keep-visible rule this entry retires.
+
 ## 2026-09-04
 
 ### v0.5.0 receipt re-verification is retired (superseded)
@@ -444,6 +474,12 @@ seams — `roster`, `approval-detail`, `http-runner`, `kanban-dispatcher` — ea
 their absence disables, and the status region renders one line per seam with its source and the age
 of the observation behind it. A probe verdict about a *method* maps onto a seam classification;
 nothing renders a seam from an empty collection.
+
+**Superseded in part, 2026-09-05 (#144).** The render-location clause above — "the status region
+renders one line per seam" — no longer holds: #122 moved routine rows into an inspector
+Diagnostics section, and #144 retired the region's remaining actionable subset, making the
+inspector the board's only surface. The catalogue, the sentence-per-absence rule, and the
+no-invented-URL rule stand unchanged.
 
 **Rationale.** R10's failure mode is a surface that shows an empty board because its data source is
 gone and says "0 cards". The only structural defence is that the renderer never sees a count for a

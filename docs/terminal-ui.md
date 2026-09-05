@@ -8,7 +8,9 @@ gateway request, a filesystem scan, or a polling loop.
 
 The transcript body and optional inspector share the main area. Below them are the composer, the
 one-row help bar, and the bottom status bar. The older multi-row `StatusRegion` remains
-inside the body for plain-text command output and notices; it is not the bottom bar.
+inside the body for the status command's own rows and its failure marker; it is not the bottom
+bar. Since v0.6.1 it carries nothing else: the caret-location row and the seam rows moved into
+the inspector, so no diagnostic line duplicates above the composer.
 
 ## Bottom status bar
 
@@ -71,19 +73,35 @@ uses the saved width or terminal width minus two, whichever is smaller. Below 32
 terminal width. `Escape` closes the overlay and restores the prior focus. Widening back to 120
 restores a panel that was requested open; a manually closed panel stays closed.
 
-The four sections are always present:
+The five sections are always present:
 
 - Tasks
 - Context
 - Changed files
 - Operation details
+- Diagnostics
 
-They are derived from the current session's held transcript, queue, model/context, connection,
-session, and tool-change state. A section with no state says `[none available from this session]`
-instead of disappearing or inventing data. The empty-state row wraps to two rows at inspector widths
-28 and 36 and fits on one row at width 48, keeping the complete sentence visible at every supported
-width. `Up` and `Down` move among task and changed-file rows. `Enter` on a changed file opens its held
-diff.
+The first four are derived from the current session's held transcript, queue, model/context,
+connection, session, and tool-change state. A section with no state says
+`[none available from this session]` instead of disappearing or inventing data. The empty-state
+row wraps to two rows at inspector widths 28 and 36 and fits on one row at width 48, keeping the
+complete sentence visible at every supported width. `Up` and `Down` move among task,
+changed-file, and diagnostics rows. `Enter` on a changed file opens its held diff.
+
+The Context section also reports where the caret is. Its first row reads `caret <region>` and is
+repainted on every focus change; it is the relocated caret-location row, and the standalone
+`caret:` line that used to sit above the composer is gone. The composer's own border keeps its
+`caret here` / `caret elsewhere` title, which is part of the composer rather than a standalone
+label. An empty context section is one row taller than the other sections' empty states, because
+the caret row rides above the `[none available from this session]` sentence.
+
+The Diagnostics section is the seam board's only home. It carries one row per seam — roster,
+approval-detail, http-runner, and kanban-dispatcher — in catalogue order, with each row's age
+advancing on screen between probe rounds. A row naming a lost capability, or a verdict whose
+age has passed the staleness threshold, stays in this section and never returns above the
+composer; the status region renders no seam rows at all. Blocking compatibility findings still
+write their notice to the transcript, so a failure that needs action stays visible even with the
+inspector closed.
 
 Width, requested open/collapsed state, automatic narrow state, overlay state, current row, and file
 selection live only in the running process. Restart restores the default geometry. A full-screen

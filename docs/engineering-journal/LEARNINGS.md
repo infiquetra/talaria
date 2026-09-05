@@ -2,6 +2,75 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-05
+
+### Gateway event naming drift and token key aliases must be handled at the boundary, not defaulted to zero (C6/#145)
+
+**Evidence.** Live runs against Hermes Agent revealed `unknown event type: session.usage`
+interleaved in normal conversations, accompanied by inspector and status bar context meters
+reporting zero token usage. Investigation I5 and inspection of Hermes source (`63279301b`,
+`tui_gateway/server.py:13125-13175` and `:3004-3026`) showed the mid-turn ticker daemon emits
+`session.usage` carrying `{"usage": {"input": ..., "output": ...}}`. Because `session.usage`
+was unlisted in `talaria/domain/decode.py`, it was categorized as unknown noise; and because
+`Usage.merged_with` (`talaria/domain/models.py:153`) only looked for `"input_tokens"` and
+`"output_tokens"`, any payload using Hermes's standard `"input"`/`"output"` or `"prompt"`/`"completion"`
+keys defaulted to zero while asserting `observed=True`. Pinned by `tests/domain/test_session_usage.py`
+and `tests/fixtures/events/session_usage.json`.
+
+**Mechanism.** When a consumer expects long-form field names (`input_tokens`) but the provider
+standardizes on short keys (`input`), an unmapped dictionary lookup silently falls back to 0. If
+that fallback also latches the domain model's observation flag (`observed=True`), downstream
+projections cannot distinguish an unobserved metric from a measured zero, turning missing fields
+into confident false assertions on screen.
+
+**Generalizable rule.** In domain models bridging external protocol events, accept known provider key
+aliases explicitly and only assert a metric is observed when at least one valid measurement field is
+present in the wire payload.
+
+### A "keep it visible" rule becomes a duplicate-display defect once the information gains a second home
+
+**Evidence.** Issue #144's operator capture showed the roster, approval-detail, and http-runner
+diagnostic lines above the composer carrying stale-probe annotations while the same categories
+stayed visible in the inspector's Diagnostics section — a confirmed duplicate, not a movement
+between locations. The mechanism was #122's split (`seam_row_stays_visible`,
+`talaria/domain/compat.py`): rows classified actionable or stale "stayed" in the status region
+*and* lived in the inspector, and `_render_seams`' teardown fallback
+(`shown = region_lines if moved else inspector_lines`, `talaria/ui/app.py`) could push the full
+board back into the region. The repair deleted the second surface rather than re-classifying
+rows: the inspector is the board's only renderer, and the fallback drops the board until the
+next paint retries. Pinned by `test_actionable_seam_rows_never_return_above_the_composer` and
+`test_with_the_inspector_closed_an_actionable_board_renders_nowhere_inline` in
+`tests/ui/test_status_region.py`.
+
+**Mechanism.** A rule written to keep information visible ("actionable rows stay inline")
+predates the surface that later made the same information fully visible elsewhere. Once that
+second surface exists, the old rule produces two simultaneous copies of the same row, and every
+fallback that "restores" visibility recreates the duplicate on its edge path. Classification
+cannot fix a duplication problem — only removing one of the surfaces can.
+
+**Generalizable rule.** When information gains a second rendering surface, audit every
+keep-visible rule and restore-visibility fallback that targeted the first surface in the same
+commit — otherwise the safety rule itself becomes the next reported defect.
+
+### C4 needed no production code: verify behavior first, then write the setup path (#143)
+
+**Evidence.** The C4 status-bar setup unit (item 7 setup path, item 6 apply/restart rule)
+landed as docs, a starter script, and tests with zero production-byte changes: script-edits-live
+was already pinned (`test_script_edits_take_effect_on_the_next_tick_without_restart`, fresh
+exec per tick), every failure outcome already carried a categorical marker, and config
+restart-to-apply was already documented and constructed once at startup. The work was a
+starting point plus honest boundaries, not a repair.
+
+**Mechanism.** "Verify the existing behavior first" (the child contract's own words) decided
+the shape: reading the runner, the contract, and the existing tests before writing showed
+all three acceptance behaviors already held, so the unit's risk moved from implementation to
+documentation accuracy — the field table had to match the serializer exactly, and the starter
+had to render unavailable fields as labelled rather than fabricating them.
+
+**Generalizable rule.** When the contract says verify-first, treat "no code change" as a
+possible passing result and say so in the report: a docs-and-tests unit that proves the
+behavior holds is stronger than a gratuitous refactor that risks it.
+
 ## 2026-09-04
 
 ### A seam nobody calls after mount can secretly be an initializer — wiring it live turns its side effects into behavior
