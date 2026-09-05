@@ -319,16 +319,18 @@ async def test_a_stale_present_seam_grows_stale_in_the_inspector_only() -> None:
         await app._render_seams()
         await pilot.pause()
 
-        roster = next(line for line in app.inspector.diag_texts if "roster:" in line)
+        # A stale row's name carries the front marker (#144's Live 09 repair),
+        # so the name is matched without its colon.
+        roster = next(line for line in app.inspector.diag_texts if "roster" in line)
         assert "stale" in roster
-        assert screen_text(app).count("roster:") == 1
+        assert screen_text(app).count("roster") == 1
         assert _region_texts(app) == ""
 
         # The age refresh is a display transition on existing data (I4's
         # trigger bound): it repaints the inspector's row and nothing else.
         await app._refresh_seam_ages()
         await pilot.pause()
-        assert screen_text(app).count("roster:") == 1
+        assert screen_text(app).count("roster") == 1
         assert _region_texts(app) == ""
         await app.shutdown_sources()
 
