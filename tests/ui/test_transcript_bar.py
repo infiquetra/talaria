@@ -302,6 +302,22 @@ async def test_switching_themes_hides_and_restores_the_bar_without_clipping(
         await app.shutdown_sources()
 
 
+def _write_stored_bar_theme(config_dir: Path, slug: str, *, visible: bool) -> None:
+    """Write the canonical stored theme document directly — no import
+    machinery, because the stored-file refresh contract reads exactly this
+    file."""
+    spec = ThemeSpec(
+        slug=slug,
+        name="Bar Probe",
+        dark=True,
+        tokens=dict(REFINED_DEFAULT.tokens),
+        transcript_bar_visible=visible,
+    )
+    path = user_theme_path(slug, config_dir=config_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(serialize_user_theme(spec))
+
+
 def _flip_stored_bar(config_dir: Path, slug: str, *, visible: bool) -> None:
     """The operator's lever: edit the stored theme's bar field on disk."""
     path = user_theme_path(slug, config_dir=config_dir)
@@ -320,29 +336,38 @@ def _stored_bar(config_dir: Path, slug: str) -> bool:
 _SAMPLE_SOURCE = Path(__file__).parents[1] / "fixtures" / "vscode-themes" / "sample-dark.json"
 
 
+#: The gutter stripe's own glyph. It paints only while the transcript's left
+#: offset column is shown, so its presence on the exported screen is the
+#: rendered fact — ``show_left_offset`` alone is a widget attribute and would
+#: pass even if nothing repainted.
+_GUTTER_GLYPH = "█"
+
+
+async def _submit_theme_command(app: Any, pilot: Any, text: str) -> None:
+    """Run one slash command the way the operator does: through the composer."""
+    app.composer.text = text
+    app.composer.text_area.focus()
+    await pilot.press("enter")
+    await app.settle_live()
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
-async def test_a_bar_only_stored_edit_moves_the_gutter_on_stored_refresh(
+async def test_a_bar_only_stored_edit_moves_the_gutter_at_boot(
     tmp_path: Path,
 ) -> None:
-    """P1 repair regression on the direct stored refresh (#141 item 16 /
-    Live 06): the operator edits the stored theme's bar field on disk, and
-    the next time the app reads that stored document the mounted gutter
-    follows it — in both directions, with the reclaimed column reflowing
-    wrapped rows instead of clipping them.
-
-    This is a stored-file refresh, not a recorded-source re-import: the
-    app boots its registry from the stored theme, which is how an edited
-    stored document takes effect. ``/theme reload`` is deliberately not
-    this path — it re-derives colors from the recorded source, and a VS
-    Code source cannot express the bar."""
+    """The stored document governs the bar at boot (#141 item 16 / Live
+    06): the operator edits the stored theme's bar field on disk, and the
+    next time the app boots its registry from that document the mounted
+    gutter follows it — in both directions, with the reclaimed column
+    reflowing wrapped rows instead of clipping them. The live same-slug
+    case — an edited stored field submitted through ``/theme reload`` on a
+    mounted app — is covered by the companion regression below."""
     config_dir = tmp_path / "config"
-    source = tmp_path / "bar-probe.json"
-    source.write_bytes(_SAMPLE_SOURCE.read_bytes())
-    import_vscode_theme(source, name="bar-probe", config_dir=config_dir)
 
     measured: list[tuple[bool, int]] = []
     for visible in (True, False, True):
-        _flip_stored_bar(config_dir, "bar-probe", visible=visible)
+        _write_stored_bar_theme(config_dir, "bar-probe", visible=visible)
         registry = theme_registry_for_config(config_dir=config_dir)
         app, controls = paused_app(
             _bar_frames(),
@@ -372,6 +397,93 @@ async def test_a_bar_only_stored_edit_moves_the_gutter_on_stored_refresh(
         "hiding the bar did not return its column to the content"
     )
     assert measured[2][1] == visible_width
-    assert _stored_bar(config_dir, "bar-probe") is True, (
-        "a stored refresh rewrote the stored bar choice"
+
+
+@pytest.mark.asyncio
+async def test_a_bar_only_stored_edit_moves_the_gutter_through_theme_reload(
+    tmp_path: Path,
+) -> None:
+    """P1 repair regression on the live ``/theme reload`` path (#141 item 16
+    / Live 06): the operator edits the stored theme's bar field on disk and
+    submits ``/theme reload`` in the composer, and the mounted gutter must
+    follow in both directions without a restart.
+
+    ``/theme reload`` is a stored-file refresh. It routes to
+    :meth:`TalariaApp._refresh_stored_theme`, which loads the canonical
+    stored document at ``<config>/themes/<slug>.json`` and installs it under
+    the same slug; it is not a re-import and it does not re-read the recorded
+    VS Code source. That is what makes this the defect's own path: the slug
+    never changes, Textual's ``theme`` reactive is silent on a same-slug set,
+    and ``_repaint_theme_if_changed`` publishes nothing unless the registered
+    ``Theme`` value actually differs. A bar-only edit differs *only* in the
+    bar, so without the bar riding in that value the swap compares equal, no
+    repaint or change signal is published, and the mounted gutter stays stale
+    while the stored file says otherwise.
+
+    Delete the ``TRANSCRIPT_BAR_VARIABLE`` assignment in
+    :meth:`ThemeRegistry.to_textual_theme` and this test must go red.
+    """
+    config_dir = tmp_path / "config"
+    source = tmp_path / "bar-probe.json"
+    source.write_bytes(_SAMPLE_SOURCE.read_bytes())
+    import_vscode_theme(source, name="bar-probe", config_dir=config_dir)
+
+    registry = theme_registry_for_config(config_dir=config_dir)
+    app, controls = paused_app(
+        _bar_frames(),
+        theme_name="bar-probe",
+        theme_registry=registry,
+        theme_config_dir=config_dir,
+        launch_cwd=tmp_path,
     )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _drain(app, pilot, controls)
+        pane = app.transcript
+        assert app.theme == "bar-probe"
+        assert pane.show_left_offset is True
+        assert _GUTTER_GLYPH in screen_text(app), "the gutter never painted"
+
+        probe = TranscriptLine("x" * 60, kind="assistant", first_in_entry=False)
+        await pane.mount(probe)
+        await pilot.pause()
+        width_visible = probe.content_size.width
+
+        # Shown -> hidden, through the command the operator actually types.
+        _flip_stored_bar(config_dir, "bar-probe", visible=False)
+        await _submit_theme_command(app, pilot, "/theme reload")
+        assert app.theme == "bar-probe", "the reload changed the active theme"
+        assert pane.show_left_offset is False, (
+            "a bar-only stored edit submitted through /theme reload left the "
+            "mounted gutter stale — the same-slug swap published no repaint"
+        )
+        assert _GUTTER_GLYPH not in screen_text(app), (
+            "the gutter stripe is still painted after a reload that hid it"
+        )
+        assert probe.content_size.width == width_visible + 1, (
+            "hiding the bar did not return its column to the content"
+        )
+        assert _BAR_RESPONSE in _screen_words(app), "the reload lost content"
+        assert _stored_bar(config_dir, "bar-probe") is False, (
+            "the reload rewrote the stored bar choice"
+        )
+
+        # Hidden -> shown, the same way. Both directions or neither.
+        _flip_stored_bar(config_dir, "bar-probe", visible=True)
+        await _submit_theme_command(app, pilot, "/theme reload")
+        assert pane.show_left_offset is True, (
+            "a bar-only stored edit submitted through /theme reload did not "
+            "bring the mounted gutter back"
+        )
+        assert _GUTTER_GLYPH in screen_text(app), (
+            "the gutter stripe never repainted after a reload that showed it"
+        )
+        assert probe.content_size.width == width_visible, (
+            "showing the bar did not take its column back from the content"
+        )
+        assert _BAR_RESPONSE in _screen_words(app), "the reload lost content"
+        assert _stored_bar(config_dir, "bar-probe") is True, (
+            "the reload rewrote the stored bar choice"
+        )
+
+        await probe.remove()
+        await app.shutdown_sources()
