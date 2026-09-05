@@ -782,14 +782,25 @@ def seam_line(observation: SeamObservation, clock: float) -> str:
     source and the age — R20's two obligations. A never-observed seam carries
     neither, because it has neither, and says so with the feature named rather
     than with a number.
+
+    A stale row leads with a ``[stale]`` marker after the seam's name, and the
+    word stays in the trailing provenance too (#144's Live 09 repair). The
+    presentation clips this row to one line inside a panel bounded well below
+    the full line's width, and the provenance sits past every supported
+    panel's window — so the one fact that can change with no event behind it,
+    currency, is the one fact that must lead, or the transition to stale is
+    invisible on screen. Fresh and never-observed rows keep their text exactly
+    as it was, so two captures differ precisely when a freshness-to-staleness
+    transition happened and not otherwise.
     """
     seam = seam_for(observation.seam)
     if observation.status is None:
         return f"{seam.name}: not observed — {seam.unobserved_feature}"
 
+    stale = observation.observation(clock) == "stale"
     age = format_probe_age(clock - observation.observed_at)
     provenance = f"{observation.source}, {age} ago"
-    if observation.observation(clock) == "stale":
+    if stale:
         provenance = f"{observation.source}, last probed {age} ago, stale"
 
     if observation.status == "present":
@@ -808,7 +819,8 @@ def seam_line(observation: SeamObservation, clock: float) -> str:
     if observation.status != "present" and observation.confirmed_at is not None:
         was = format_probe_age(clock - observation.confirmed_at)
         body = f"{body}; last confirmed present {was} ago"
-    return f"{seam.name}: {body} ({provenance})"
+    name = f"{seam.name} [stale]" if stale else seam.name
+    return f"{name}: {body} ({provenance})"
 
 
 @dataclass(frozen=True)

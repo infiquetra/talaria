@@ -1048,8 +1048,10 @@ async def test_a_painted_seam_line_grows_older_and_eventually_says_stale() -> No
     from tests.transport.test_session_startup import live_app, sent, until
 
     def inspector_roster(app: TalariaApp) -> str:
+        # Matched on the bare name: a stale row reads "roster [stale]: ..."
+        # since #144's Live 09 repair moved the marker to the front.
         diag = app.inspector.diag_texts
-        return next(line for line in diag if line.strip().startswith("roster:"))
+        return next(line for line in diag if line.strip().startswith("roster"))
 
     def region_roster(region: StatusRegion) -> str | None:
         matches = [text for text in region.row_texts if text.startswith("roster:")]

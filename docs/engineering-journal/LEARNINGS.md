@@ -4,6 +4,31 @@
 
 ## 2026-09-05
 
+### Substring assertions on an un-clipped model string are blind to what a width-bounded panel renders
+
+**Evidence.** The Live 09 rejection for #144: the C5 move put the seam diagnostics rows inside
+the inspector panel, which clips every row to one line at widths up to 48 columns, while
+`seam_line` (`talaria/domain/compat.py`) puts the whole provenance — including the stale word —
+in a trailing parenthetical that starts past index 49. Fresh and stale rows were therefore
+pixel-identical in the diagnostics section of the captured frames, at every width. The whole
+suite stayed green through the change because every existing assertion checked the un-clipped
+model string (`diag_texts`, or `seam_line`'s return value) — the model was correct and the
+render was the defect. The repair moves the `[stale]` marker to the front of the row and adds
+`test_a_stale_row_leads_with_a_marker_inside_the_panels_window`
+(`tests/ui/test_inspector.py`), which drives the app at 120 by 40 and asserts on
+`render_line` at panel widths 36 and 48 — the rendered prefix, not the model string.
+
+**Mechanism.** A clipped widget renders a lossy projection of its content, so a test that
+asserts on the content before clipping proves nothing about the screen. Substring checks make
+this worse, not better: they hold at full length and at every width, so the suite reports
+coverage while the operator-facing surface shows a different sentence than the one tested.
+
+**Generalizable rule.** Whenever a row can be clipped — one-line height, ellipsis overflow, a
+bounded panel — test the rendered row (`render_line`) at a stated width, not the model string;
+a claim about what the operator can see must be measured where the clipping happens.
+
+## 2026-09-05
+
 ### Gateway event naming drift and token key aliases must be handled at the boundary, not defaulted to zero (C6/#145)
 
 **Evidence.** Live runs against Hermes Agent revealed `unknown event type: session.usage`
