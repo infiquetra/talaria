@@ -19,7 +19,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from talaria.domain.selection import Choice, Selection, Stage
-from talaria.ui.dialog import NO_MATCH, REFUSED_PREFIX, PickerDialog
+from talaria.ui.dialog import NO_MATCH, REFUSED_PREFIX, ConfirmDialog, PickerDialog
 
 # ── a source with two levels, one unselectable row, and a long list ───────
 
@@ -571,3 +571,53 @@ async def test_pagedown_moves_a_windowful_at_a_time() -> None:
         await pilot.press("pageup")
         await pilot.pause()
         assert picker(app).selection.active == 0
+
+
+# ── #146 double-dismiss protection ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_146_picker_dialog_duplicate_key_after_dismiss_is_safe() -> None:
+    """#146: PickerDialog ignores key events after selection has triggered dismissal."""
+    app = Host(FlatSource((Choice(key="a", label="alpha", payload="val_a"),)))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dialog = picker(app)
+        assert dialog is not None
+        assert not dialog._dismissed
+
+        await pilot.press("enter", "enter")
+        await pilot.pause()
+        assert dialog._dismissed
+        assert app.result == "val_a"
+
+
+class ConfirmHost(App[None]):
+    def __init__(self, dialog: ConfirmDialog) -> None:
+        super().__init__()
+        self._dialog = dialog
+        self.result: bool | None = None
+
+    def compose(self) -> ComposeResult:
+        yield Static("background")
+
+    def on_mount(self) -> None:
+        self.push_screen(self._dialog, self._store_result)
+
+    def _store_result(self, result: bool | None) -> None:
+        self.result = result
+
+
+@pytest.mark.asyncio
+async def test_146_confirm_dialog_duplicate_key_after_dismiss_is_safe() -> None:
+    """#146: ConfirmDialog ignores key events after selection has triggered dismissal."""
+    dialog = ConfirmDialog(title="proceed?", body=("are you sure?",))
+    app = ConfirmHost(dialog)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert not dialog._dismissed
+
+        await pilot.press("down", "enter", "enter")
+        await pilot.pause()
+        assert dialog._dismissed
+        assert app.result is True

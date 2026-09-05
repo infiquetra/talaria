@@ -33,6 +33,7 @@ or ordering.
 from __future__ import annotations
 
 import re
+import textwrap
 
 from textual import events
 from textual.app import ComposeResult
@@ -40,7 +41,11 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Static
 
-from talaria.domain.commands import CommandCatalog, CommandEntry
+from talaria.domain.commands import (
+    CommandCatalog,
+    CommandEntry,
+    filter_commands,
+)
 from talaria.themes import ThemeSpec
 from talaria.ui.literal import literal_text
 
@@ -117,6 +122,7 @@ def _local_entries_tuple() -> tuple[CommandEntry, ...]:
             ),
             category="Talaria",
             availability="talaria-local",
+            origin="",
         )
         for cmd in TALARIA_LOCAL_COMMANDS
     )
@@ -132,35 +138,8 @@ def _runnable_entries(catalog: CommandCatalog | None) -> tuple[CommandEntry, ...
 def _filtered_entries(
     catalog: CommandCatalog | None, prefix: str
 ) -> tuple[CommandEntry, ...]:
-    """Prefix-filtered runnable entries, case-insensitive, Talaria locals first.
-
-    The plan requires this surface to group the way the F3 browse listing does,
-    "so the two surfaces do not disagree about where ``/models`` lives". Browse
-    renders ``catalog.entries`` verbatim and ``build_catalog`` seeds that tuple
-    with ``_local_entries()``, so browse shows the Talaria locals first. A plain
-    ``(category, name)`` sort does not: ``Info`` and ``Session`` both sort before
-    ``Talaria``, which put the locals last and moved ``/models`` depending on
-    which surface the operator had opened. The explicit rank restores the
-    grouping; alphabetical order within a category keeps the listing stable.
-    """
-    entries = _runnable_entries(catalog)
-    if prefix == "":
-        filtered = entries
-    else:
-        lower = prefix.lower()
-        filtered = tuple(
-            e for e in entries if e.name.lower().removeprefix("/").startswith(lower)
-        )
-    return tuple(
-        sorted(
-            filtered,
-            key=lambda e: (
-                0 if e.category.lower() == "talaria" else 1,
-                e.category.lower(),
-                e.name.lower(),
-            ),
-        )
-    )
+    """Filtered runnable entries across name and description via domain filter."""
+    return filter_commands(catalog, prefix)
 
 
 def format_entry(entry: CommandEntry) -> str:
@@ -169,9 +148,45 @@ def format_entry(entry: CommandEntry) -> str:
     return f"{entry.name:<{_NAME_WIDTH}} {marker} {entry.description}".rstrip()
 
 
-def format_filtered_entry(entry: CommandEntry) -> str:
-    """One filtered row: name and description, no marker (every row is runnable)."""
-    return f"{entry.name:<{_NAME_WIDTH}} {entry.description}".rstrip()
+def format_filtered_entry(
+    entry: CommandEntry, *, active: bool = False, max_width: int = 80
+) -> str:
+    """One filtered row: name, optional truthful badge, and wrapped description.
+
+    When active (highlighted), the full description is expanded.
+    When inactive, the description wraps up to 2 lines, clipping with '…'
+    if it exceeds 2 lines. Continuation lines are indented 19 spaces
+    to align with the description column.
+    """
+    badge_prefix = f"[{entry.badge}] " if entry.badge else ""
+    full_desc = f"{badge_prefix}{entry.description}".strip()
+    desc_width = max(20, max_width - 19)
+
+    if not full_desc:
+        wrapped = [""]
+    else:
+        wrapped = textwrap.wrap(full_desc, width=desc_width)
+        if not wrapped:
+            wrapped = [""]
+
+    if active:
+        lines = wrapped
+    else:
+        if len(wrapped) <= 2:
+            lines = wrapped
+        else:
+            line2 = wrapped[1].rstrip()
+            if len(line2) + 1 > desc_width:
+                line2 = line2[: desc_width - 1] + "…"
+            else:
+                line2 = line2 + "…"
+            lines = [wrapped[0], line2]
+
+    first_line = f"{entry.name:<{_NAME_WIDTH}} {lines[0]}".rstrip()
+    if len(lines) == 1:
+        return first_line
+    continuation = [f"{' ' * 19}{line}".rstrip() for line in lines[1:]]
+    return "\n".join([first_line] + continuation)
 
 
 def header_line(catalog: CommandCatalog | None) -> str:
@@ -343,6 +358,16 @@ class PaletteRegion(Vertical):
             return self._filtered[self._selected]
         return None
 
+    def consume_selected(self) -> CommandEntry | None:
+        """Atomically return the selected entry and clear the selection.
+
+        Guarantees that a selected command entry can only be consumed once,
+        preventing duplicate dispatches from rapid key or click events.
+        """
+        entry = self.selected_entry
+        self._selected = None
+        return entry
+
     # ── rendering ────────────────────────────────────────────────────────
 
     async def apply(self, catalog: CommandCatalog | None) -> None:
@@ -402,10 +427,11 @@ class PaletteRegion(Vertical):
         if self._slash_prefix is not None:
             if self._filtered:
                 for idx, entry in enumerate(self._filtered):
+                    active = idx == self._selected
                     classes = "palette--row"
-                    if idx == self._selected:
+                    if active:
                         classes += " -active"
-                    text = literal_text(format_filtered_entry(entry))
+                    text = literal_text(format_filtered_entry(entry, active=active))
                     widget = Static(text, markup=False, classes=classes)
                     self._rows.append(widget)
                     await self.mount(widget)
@@ -626,10 +652,24 @@ class PaletteRegion(Vertical):
             new = len(self._filtered) - 1
         if new == current:
             return
+        old_idx = current
         self._selected = new
-        # Update row classes synchronously — no remount needed.
-        for idx, row in enumerate(self._rows):
-            row.set_class(idx == self._selected, "-active")
+        if 0 <= old_idx < len(self._filtered) and old_idx < len(self._rows):
+            old_row = self._rows[old_idx]
+            old_row.set_class(False, "-active")
+            old_row.update(
+                literal_text(
+                    format_filtered_entry(self._filtered[old_idx], active=False)
+                )
+            )
+        if 0 <= new < len(self._filtered) and new < len(self._rows):
+            new_row = self._rows[new]
+            new_row.set_class(True, "-active")
+            new_row.update(
+                literal_text(
+                    format_filtered_entry(self._filtered[new], active=True)
+                )
+            )
         # Scroll the selected row into view so arrow navigation does not
         # leave the highlight off-screen. The region is capped at 14 rows,
         # so with 20 matches the selected index 15 would otherwise be invisible.
@@ -691,7 +731,7 @@ class PaletteRegion(Vertical):
         from textual.app import ScreenStackError
         from textual.dom import NoScreen
 
-        entry = self.selected_entry
+        entry = self.consume_selected()
         if entry is None:
             return
         try:

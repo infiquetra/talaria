@@ -18,7 +18,12 @@ from typing import Any
 import pytest
 from textual.pilot import Pilot
 
-from talaria.domain.commands import CATALOG_METHOD, SLASH_EXEC_METHOD
+from talaria.domain.commands import (
+    CATALOG_METHOD,
+    SLASH_EXEC_METHOD,
+    CommandCatalog,
+    CommandEntry,
+)
 from talaria.domain.models_catalog import (
     ModelAssignmentResult,
     ModelProvider,
@@ -26,6 +31,7 @@ from talaria.domain.models_catalog import (
     ProfileEntry,
     ProviderCatalog,
 )
+from talaria.domain.selection import Stage
 from talaria.replay.controls import ReplayControls
 from talaria.replay.source import ReplaySource
 from talaria.transport.admin import AdminError
@@ -66,6 +72,7 @@ from talaria.ui.picker import (
     PROVIDER_WARNING_PREFIX,
     SWITCHED_NOTE,
     UNAUTHENTICATED_SUFFIX,
+    CommandPickerSource,
     flatten_profiles,
     flatten_selectable,
     format_profile_label,
@@ -1589,3 +1596,87 @@ async def test_the_composer_keeps_focus_through_a_default_write() -> None:
 
         assert app.focused is app.composer.text_area
         await app.shutdown_sources()
+
+
+# ── #146 CommandPickerSource ──────────────────────────────────────────────
+
+
+def test_146_command_picker_source_flat_mode() -> None:
+    """#146: CommandPickerSource in flat mode produces a single stage with all entries.
+    Unsupported entries are unselectable with refusal, and badged entries display badges.
+    """
+    entries = (
+        CommandEntry(
+            name="/deploy",
+            description="Ship it",
+            category="Skills",
+            availability="dispatch",
+            origin="local",
+        ),
+        CommandEntry(
+            name="/density",
+            description="Toggle density",
+            category="TUI",
+            availability="unsupported",
+        ),
+    )
+    catalog = CommandCatalog(entries=entries, canon={}, available=True)
+    source = CommandPickerSource(catalog, hierarchical=False)
+
+    root = source.root()
+    assert "commands" in root.title
+    choices = root.selection.items
+    assert len(choices) == 2
+
+    # Per D5 ruling: gateway categories (TUI) precede Skills
+    density_choice = choices[0]
+    assert density_choice.key == "/density"
+    assert density_choice.selectable is False
+    assert "handled inside Hermes's own terminal UI" in density_choice.refusal
+
+    deploy_choice = choices[1]
+    assert deploy_choice.key == "/deploy"
+    assert "[local]" in deploy_choice.label
+    assert deploy_choice.selectable is True
+    assert deploy_choice.refusal == ""
+    assert source.descend(0, deploy_choice) == "/deploy"
+
+
+def test_146_command_picker_source_hierarchical_mode() -> None:
+    """#146: CommandPickerSource in hierarchical mode lists categories first,
+    Talaria first, and descends into chosen category's commands.
+    """
+    entries = (
+        CommandEntry(
+            name="/models",
+            description="Pick model",
+            category="Talaria",
+            availability="talaria-local",
+        ),
+        CommandEntry(
+            name="/help",
+            description="Help text",
+            category="Info",
+            availability="dispatch",
+        ),
+    )
+    catalog = CommandCatalog(entries=entries, canon={}, available=True)
+    source = CommandPickerSource(catalog, hierarchical=True)
+
+    root = source.root()
+    assert "category" in root.title
+    cat_choices = root.selection.items
+    # Talaria category sorts first
+    assert cat_choices[0].key == "Talaria"
+    assert cat_choices[1].key == "Info"
+
+    # Descend into Info
+    stage = source.descend(0, cat_choices[1])
+    assert isinstance(stage, Stage)
+    info_choices = stage.selection.items
+    assert len(info_choices) == 1
+    assert info_choices[0].key == "/help"
+
+    # Descend from command level returns payload
+    payload = source.descend(1, info_choices[0])
+    assert payload == "/help"
