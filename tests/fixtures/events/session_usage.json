@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "method": "event",
+  "params": {
+    "type": "session.usage",
+    "session_id": "20260807_125539_42afdb",
+    "payload": {
+      "usage": {
+        "model": "gpt-5.6-sol",
+        "input": 1200,
+        "output": 350,
+        "total": 1550,
+        "calls": 2
+      }
+    }
+  }
+}

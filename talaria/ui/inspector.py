@@ -537,10 +537,12 @@ def _context_lines(view: InspectorView) -> tuple[str, ...]:
     if context.model:
         rows.append(("model", context.model))
     if context.input_tokens is not None or context.output_tokens is not None:
+        in_str = f"{context.input_tokens}" if context.input_tokens is not None else "0"
+        out_str = f"{context.output_tokens}" if context.output_tokens is not None else "0"
         rows.append(
             (
                 "usage",
-                f"{context.input_tokens or 0} input · {context.output_tokens or 0} output",
+                f"{in_str} input · {out_str} output",
             )
         )
     if not rows:
