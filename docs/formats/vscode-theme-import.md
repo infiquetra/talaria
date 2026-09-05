@@ -1,7 +1,8 @@
 # Visual Studio Code color-theme import
 
 Talaria imports one strict Visual Studio Code color-theme JSON file into one
-restart-scoped user theme. This document is the public allowlist. Nothing outside
+stored user theme loaded at startup, discovered by the theme picker, and
+reloadable live on demand. This document is the public allowlist. Nothing outside
 these tables is inferred, and the source file is never watched after import.
 
 The mapping and resolution rules below are copied verbatim from the v0.5.0 visual
@@ -216,8 +217,9 @@ offset column paints). The normative schema is
 are opaque uppercase `#RRGGBB`, and the file has exactly one trailing newline.
 A later import of the same slug atomically replaces that path. If the path is a
 symlink, Talaria replaces the link itself and never writes through to its target.
-Imported themes are read only when a new Talaria process constructs its theme registry;
-source-file changes are not watched.
+Imported themes are read at startup when constructing the theme registry,
+discovered when opening the theme picker, and refreshed live via
+`/theme reload [name]`; stored files and source files are not watched.
 
 During v0.5.0, the reader treats a stored theme without `schema_version` as
 version one. The field becomes required in v0.6.0. A file carrying any other
