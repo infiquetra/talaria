@@ -16,11 +16,15 @@ Failure is a first-class rendering, not a blank region. Every non-``ok`` tick
 carries a categorical marker and this widget shows it — a status region that
 goes empty when the command breaks is the failure mode R21's taxonomy exists to
 avoid.
+
+Since #144 this region carries only the status command's rows and its failure
+marker. The caret-location row moved to the inspector's context section, and
+the seam board that used to render here moved to the inspector's diagnostics
+section — the roster, approval-detail, and http-runner rows never duplicate
+above the composer.
 """
 
 from __future__ import annotations
-
-from collections.abc import Sequence
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -43,30 +47,15 @@ class StatusRegion(Vertical):
     StatusRegion > .status--marker {
         color: $warning;
     }
-    StatusRegion > .status--focus {
-        height: 1;
-        color: $talaria-focus;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
     """
 
     def __init__(self, *, initial_marker: str = "", **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._rows: list[Static] = []
-        self._seam_rows: list[Static] = []
         self._marker: Static | None = None
-        self._focus_marker: Static | None = None
         self._initial_marker = initial_marker
-        self._focus_region = "composer"
 
     def compose(self) -> ComposeResult:
-        self._focus_marker = Static(
-            literal_text(f"caret: {self._focus_region}"),
-            markup=False,
-            classes="status--focus",
-        )
-        yield self._focus_marker
         self._marker = Static(
             literal_text(_status_failure_marker(self._initial_marker)),
             markup=False,
@@ -79,62 +68,14 @@ class StatusRegion(Vertical):
         return tuple(str(row.content) for row in self._rows)
 
     @property
-    def seam_texts(self) -> tuple[str, ...]:
-        return tuple(str(row.content) for row in self._seam_rows)
-
-    @property
     def marker_text(self) -> str:
         return "" if self._marker is None else str(self._marker.content)
-
-    @property
-    def focus_text(self) -> str:
-        return "" if self._focus_marker is None else str(self._focus_marker.content)
-
-    def set_caret(self, region: str) -> None:
-        """Repaint the always-mounted caret row with no layout mutation."""
-        normalized = region.strip() or "none"
-        self._focus_region = normalized
-        if self._focus_marker is not None:
-            self._focus_marker.update(literal_text(f"caret: {normalized}"))
 
     def show_configuration_notice(self, message: str) -> None:
         """Keep a malformed optional status command visible without a runner."""
         self._initial_marker = message
         if self._marker is not None:
             self._marker.update(literal_text(_status_failure_marker(message)))
-
-    async def apply_seams(self, lines: Sequence[str]) -> None:
-        """Render one connection's seam board (v0.4 U5: R9, R10, R12, R24).
-
-        Seam rows sit below the status command's own rows and above the marker,
-        and they are a *separate* list rather than appended to ``rows`` for one
-        reason that matters: a status command's next tick replaces its rows, and
-        seam lines that shared that list would blink out and back on every tick
-        of an unrelated command.
-
-        Each line goes through :func:`~talaria.ui.literal.literal_text` like
-        every other untrusted string in this package (R23). Seam lines are
-        Talaria's own sentences with a bounded gateway-supplied diagnostic
-        embedded, and the diagnostic has already been de-credentialled by
-        :func:`~talaria.domain.compat.redact_probe_detail` — the defanging here
-        is the second half, neutralizing markup and control sequences at the
-        render boundary. Neither half is sufficient alone: the redactor does not
-        defang and ``literal_text`` does not withhold.
-
-        An empty ``lines`` removes every seam row. That is the honest rendering
-        of "there is no board", and it is not the same thing as a board whose
-        seams are never-observed — those have rows, and the rows say so.
-        """
-        while len(self._seam_rows) > len(lines):
-            await self._seam_rows.pop().remove()
-        for index, line in enumerate(lines):
-            text = literal_text(line)
-            if index < len(self._seam_rows):
-                self._seam_rows[index].update(text)
-            else:
-                widget = Static(text, markup=False, classes="status--seam")
-                self._seam_rows.append(widget)
-                await self.mount(widget, before=self._marker)
 
     async def apply(self, result: StatusTickResult) -> None:
         rows = list(result.rows)
@@ -150,12 +91,7 @@ class StatusRegion(Vertical):
             else:
                 widget = Static(text, markup=False)
                 self._rows.append(widget)
-                # Before the first seam row when there is one, so a status
-                # command that grows a row does not interleave itself into the
-                # seam board. With no seam rows this is the marker, exactly as
-                # before U5.
-                anchor = self._seam_rows[0] if self._seam_rows else self._marker
-                await self.mount(widget, before=anchor)
+                await self.mount(widget, before=self._marker)
 
         if self._marker is not None:
             marker = result.marker or ""

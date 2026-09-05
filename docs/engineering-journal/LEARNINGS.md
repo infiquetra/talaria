@@ -2,6 +2,33 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-05
+
+### A "keep it visible" rule becomes a duplicate-display defect once the information gains a second home
+
+**Evidence.** Issue #144's operator capture showed the roster, approval-detail, and http-runner
+diagnostic lines above the composer carrying stale-probe annotations while the same categories
+stayed visible in the inspector's Diagnostics section — a confirmed duplicate, not a movement
+between locations. The mechanism was #122's split (`seam_row_stays_visible`,
+`talaria/domain/compat.py`): rows classified actionable or stale "stayed" in the status region
+*and* lived in the inspector, and `_render_seams`' teardown fallback
+(`shown = region_lines if moved else inspector_lines`, `talaria/ui/app.py`) could push the full
+board back into the region. The repair deleted the second surface rather than re-classifying
+rows: the inspector is the board's only renderer, and the fallback drops the board until the
+next paint retries. Pinned by `test_actionable_seam_rows_never_return_above_the_composer` and
+`test_with_the_inspector_closed_an_actionable_board_renders_nowhere_inline` in
+`tests/ui/test_status_region.py`.
+
+**Mechanism.** A rule written to keep information visible ("actionable rows stay inline")
+predates the surface that later made the same information fully visible elsewhere. Once that
+second surface exists, the old rule produces two simultaneous copies of the same row, and every
+fallback that "restores" visibility recreates the duplicate on its edge path. Classification
+cannot fix a duplication problem — only removing one of the surfaces can.
+
+**Generalizable rule.** When information gains a second rendering surface, audit every
+keep-visible rule and restore-visibility fallback that targeted the first surface in the same
+commit — otherwise the safety rule itself becomes the next reported defect.
+
 ## 2026-09-04
 
 ### A seam nobody calls after mount can secretly be an initializer — wiring it live turns its side effects into behavior

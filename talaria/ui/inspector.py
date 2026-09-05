@@ -233,6 +233,12 @@ class Inspector(VerticalScroll):
         self._terminal_width = INSPECTOR_DOCK_BREAKPOINT
         self._previous_focus: Widget | None = None
         self._view: InspectorView | None = None
+        #: The region holding the caret, reported as the context section's first
+        #: row (#144). UI state, not projection state: it changes on every
+        #: focus event, so it is held here and repainted through
+        #: :meth:`set_focus_region` the way the probe board is held outside the
+        #: view and synced through :meth:`apply_diagnostics`.
+        self._focus_region: str = "composer"
         self._selected_file_key: str | None = None
         self._tasks: Vertical | None = None
         self._context_widget: Static | None = None
@@ -262,6 +268,10 @@ class Inspector(VerticalScroll):
 
     def on_mount(self) -> None:
         self.set_terminal_width(self.app.size.width)
+        # The caret row must be on screen before any projection arrives — the
+        # context section is view-driven, but its first row is UI state that
+        # exists the moment the widget does.
+        self._repaint_context()
 
     @property
     def is_docked(self) -> bool:
@@ -321,6 +331,29 @@ class Inspector(VerticalScroll):
     def diag_texts(self) -> tuple[str, ...]:
         return tuple(str(row.content) for row in self._diag_rows)
 
+    def set_focus_region(self, region: str) -> None:
+        """Repaint the context section's caret row, no layout mutation (#144).
+
+        The relocated standalone caret row from the status region. Updates the
+        one row in place rather than rebuilding the section, so a focus change
+        never remounts context rows or drops inspector focus.
+        """
+        normalized = region.strip() or "none"
+        self._focus_region = normalized
+        self._repaint_context()
+
+    def _repaint_context(self) -> None:
+        """Render the context section from the held view and caret region.
+
+        Safe before the first :meth:`apply` and before compose has run: the
+        row simply waits for whichever of the two lands first.
+        """
+        if self._context_widget is None:
+            return
+        self._context_widget.update(
+            literal_text("\n".join(_context_lines(self._view, self._focus_region)))
+        )
+
     async def apply_diagnostics(self, lines: Sequence[str]) -> bool:
         """Replace the diagnostics section from one probe-board snapshot.
 
@@ -364,7 +397,7 @@ class Inspector(VerticalScroll):
         else:
             await self._tasks.mount(_empty_row())
 
-        self._context_widget.update(literal_text("\n".join(_context_lines(view))))
+        self._repaint_context()
 
         await self._files.remove_children()
         self._file_rows = [InspectorFileRow(changed_file) for changed_file in view.changed_files]
@@ -525,27 +558,38 @@ def _diag_empty_row() -> Static:
     )
 
 
-def _context_lines(view: InspectorView) -> tuple[str, ...]:
-    context = view.context
+def _context_lines(view: InspectorView | None, focus_region: str) -> tuple[str, ...]:
+    """The context section's rows: the caret location, then session facts.
+
+    The caret row is first and always present — it is UI state that exists
+    before any projection does (#144), and putting it ahead of the session rows
+    keeps it clear of the usage block, whose lines are C6's to change. An empty
+    session context still says so: the caret row reports the interface, and the
+    empty-section sentence reports the session, and neither stands in for the
+    other.
+    """
+    caret = f"  {'caret':<8} {focus_region}"
+    context = None if view is None else view.context
     rows: list[tuple[str, str]] = []
-    if context.session_id:
-        rows.append(("session", context.session_id))
-    if context.profile:
-        rows.append(("profile", context.profile))
-    if context.endpoint:
-        rows.append(("endpoint", context.endpoint))
-    if context.model:
-        rows.append(("model", context.model))
-    if context.input_tokens is not None or context.output_tokens is not None:
-        rows.append(
-            (
-                "usage",
-                f"{context.input_tokens or 0} input · {context.output_tokens or 0} output",
+    if context is not None:
+        if context.session_id:
+            rows.append(("session", context.session_id))
+        if context.profile:
+            rows.append(("profile", context.profile))
+        if context.endpoint:
+            rows.append(("endpoint", context.endpoint))
+        if context.model:
+            rows.append(("model", context.model))
+        if context.input_tokens is not None or context.output_tokens is not None:
+            rows.append(
+                (
+                    "usage",
+                    f"{context.input_tokens or 0} input · {context.output_tokens or 0} output",
+                )
             )
-        )
     if not rows:
-        return (f"  {EMPTY_SECTION}",)
-    return tuple(f"  {label:<8} {value}" for label, value in rows)
+        return (caret, f"  {EMPTY_SECTION}")
+    return (caret, *(f"  {label:<8} {value}" for label, value in rows))
 
 
 def _operation_lines(view: InspectorView) -> tuple[str, ...]:
