@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final, Literal
@@ -25,7 +25,6 @@ from talaria.themes.sources import (
     ImportSourceKind,
     record_import_source,
 )
-from talaria.themes.storage import StoredThemeError, load_user_theme_spec
 from talaria.ui.theme import (
     BUILTIN_THEME_REGISTRY,
     ThemeRegistry,
@@ -979,33 +978,6 @@ def import_marketplace_theme(
     return report
 
 
-def _preserve_stored_bar_state(
-    report: ImportReport, *, slug: str, config_dir: Path | None
-) -> ImportReport:
-    """Carry the stored transcript-bar choice across a source re-import.
-
-    The bar state is a Talaria-side theme decision (issue #141): no VS Code
-    source expresses it, and a reload re-derives every color from source.
-    Dropping the stored choice on every reload would make the bar-state
-    rule unreachable for imported themes, so the existing stored value
-    rides into the rebuilt spec. A missing or unreadable stored theme
-    keeps the fresh default.
-    """
-    try:
-        stored = load_user_theme_spec(user_theme_path(slug, config_dir=config_dir))
-    except (OSError, StoredThemeError):
-        return report
-    if stored.transcript_bar_visible == report.theme.transcript_bar_visible:
-        return report
-    return replace(
-        report,
-        theme=replace(
-            report.theme,
-            transcript_bar_visible=stored.transcript_bar_visible,
-        ),
-    )
-
-
 def reload_imported_theme(
     *,
     slug: str,
@@ -1052,11 +1024,10 @@ def reload_imported_theme(
             f"recorded source kind {source.kind!r} is not supported",
             kind="wrong-root",
         )
-    report = prepare_vscode_theme_import_bytes(
-        data, source_label=label, name=slug, config_dir=config_dir
-    )
     return _write_report(
-        _preserve_stored_bar_state(report, slug=slug, config_dir=config_dir),
+        prepare_vscode_theme_import_bytes(
+            data, source_label=label, name=slug, config_dir=config_dir
+        ),
         config_dir=config_dir,
     )
 
