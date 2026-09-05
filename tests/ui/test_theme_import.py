@@ -936,9 +936,11 @@ async def test_theme_fetch_renders_appearance_lead_and_full_report(
     markers = {
         "confirmation": "theme 'warnings-dark' fetched:",
         "counts": "2 source tokens, 56 fallbacks,",
+        "parts": "(2 parts in transcript)",
         "lead": "Appearance: 56 tokens",
         "fallback": "fallback: talaria.surface",
         "warning": "warning: root.include",
+        "last_warning": "warning: tokenColors[5] is invalid",
     }
     async with app.run_test(size=(80, 24)) as pilot:
         await _submit_theme_command(
@@ -966,8 +968,21 @@ async def test_theme_fetch_renders_appearance_lead_and_full_report(
             <= seen["lead"]
             <= seen["fallback"]
             <= seen["warning"]
+            <= seen["last_warning"]
         ), seen
         await app.shutdown_sources()
+
+
+def test_chunk_report_lines_packs_without_splitting() -> None:
+    from talaria.ui.app import chunk_report_lines
+
+    lines = ["a" * 3000, "b" * 1500, "c"]
+    parts = chunk_report_lines(lines, bound=4000)
+    assert len(parts) == 2
+    assert all(len(part) <= 4000 for part in parts)
+    assert "\n".join(parts) == "\n".join(lines)
+    assert chunk_report_lines(["x"], bound=4000) == ("x",)
+    assert chunk_report_lines([], bound=4000) == ()
 
 
 def test_open_vsx_extension_page_resolves_as_its_registry_reference() -> None:

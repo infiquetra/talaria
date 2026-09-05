@@ -806,6 +806,30 @@ _DELIVERY_BY_REASON: Final[Mapping[str, DeliveryState]] = {
 }
 
 
+def chunk_report_lines(lines: list[str], *, bound: int) -> tuple[str, ...]:
+    """Pack report lines into transcript entries of at most ``bound`` chars.
+
+    Lines are never split: a chunk boundary always falls between lines, so
+    no truncation marker can strand mid-line. A report that fits stays one
+    entry byte-for-byte; longer reports become consecutive complete chunks.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    current_length = 0
+    for line in lines:
+        addition = len(line) + (1 if current else 0)
+        if current and current_length + addition > bound:
+            chunks.append("\n".join(current))
+            current = []
+            current_length = 0
+            addition = len(line)
+        current.append(line)
+        current_length += addition
+    if current:
+        chunks.append("\n".join(current))
+    return tuple(chunks)
+
+
 def delivery_of(outcome: RpcOutcome) -> DeliveryState:
     """Translate one call outcome into the delivery claim it earns.
 
@@ -5768,18 +5792,33 @@ class TalariaApp(App[None]):
         )
         # Item 4 holds in the app too, on the two surfaces that can hold it.
         # The composer notice is one ellipsized row, so it keeps the concise
-        # confirmation plus a pointer. The complete ordered report — lead,
-        # fallbacks, composites, warnings — goes into the scrollable
-        # transcript as a command result, bounded once at COMMAND_OUTPUT_CLIP
-        # with a marked truncation like every other slash-command output, so
-        # one import cannot displace the conversation around it.
-        detail = confirmation + "\n" + "\n".join(report.lines()[1:])
-        if len(detail) > COMMAND_OUTPUT_CLIP:
-            detail = detail[:COMMAND_OUTPUT_CLIP] + "…"
-        self.state = record_command_result(
-            self.state, detail, at=self.state.last_observed_at
-        )
-        self._notice(confirmation + " — full report in the transcript")
+        # confirmation plus an honest pointer. The complete ordered report —
+        # lead, fallbacks, composites, warnings — goes into the scrollable
+        # transcript as command-result entries, packed into bounded chunks so
+        # no tail is ever silently discarded; one import still cannot
+        # displace the conversation around it. Only the fetch path chunks:
+        # the reload path keeps its long-standing single entry byte for byte.
+        lines = [confirmation, *report.lines()[1:]]
+        if action == "fetched" and len("\n".join(lines)) > COMMAND_OUTPUT_CLIP:
+            parts = chunk_report_lines(lines, bound=COMMAND_OUTPUT_CLIP)
+            for part in parts:
+                self.state = record_command_result(
+                    self.state, part, at=self.state.last_observed_at
+                )
+            self._notice(
+                f"theme {slug!r} {action} ({len(parts)} parts in "
+                f"transcript): {report.mapped_count} source tokens, "
+                f"{report.fallback_count} fallbacks, "
+                f"{report.unsupported_count} warnings"
+            )
+        else:
+            detail = "\n".join(lines)
+            if len(detail) > COMMAND_OUTPUT_CLIP:
+                detail = detail[:COMMAND_OUTPUT_CLIP] + "…"
+            self.state = record_command_result(
+                self.state, detail, at=self.state.last_observed_at
+            )
+            self._notice(confirmation + " — full report in transcript")
         self._dirty = True
 
     def _perform_models(self, argument: str) -> None:
