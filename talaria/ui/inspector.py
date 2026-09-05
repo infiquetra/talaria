@@ -360,12 +360,13 @@ class Inspector(VerticalScroll):
         Deliberately outside :meth:`apply`: seam ages advance with no event
         behind them, so folding diagnostics into the view projection would
         rebuild every section (and drop inspector focus) each time an age
-        flips. This syncs the one section incrementally, the way
-        :meth:`~talaria.ui.status_region.StatusRegion.apply_seams` does.
+        flips. This syncs the one section incrementally, in place, without
+        rebuilding any view-driven section.
 
         An empty ``lines`` restores the honest empty row rather than a zero —
         a count here would read as data. Returns False when the section does
-        not exist yet, so the caller can leave the rows where they are visible.
+        not exist yet, so the caller can drop the board and retry on the next
+        paint rather than render it anywhere else (#144).
         """
         if self._diagnostics is None:
             return False
