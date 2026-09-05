@@ -149,7 +149,11 @@ def test_session_usage_cross_session_guard() -> None:
     assert after_bg.cross_session_events_ignored == 1
 
 
-def test_session_usage_sanitized_producer_fixture() -> None:
+def test_session_usage_composed_producer_fixture() -> None:
+    """Validate JSON-RPC 2.0 fixture composed from Hermes source reading (issue #145 / I5 finding;
+    Hermes 63279301b tui_gateway/server.py:13125-13175). A future Live 11 test capture can
+    replace this fixture with recorded frames when run.
+    """
     assert _USAGE_FIXTURE_PATH.is_file(), f"Fixture missing: {_USAGE_FIXTURE_PATH}"
     data = json.loads(_USAGE_FIXTURE_PATH.read_text(encoding="utf-8"))
     decoded = decode_frame(data, at=BASE_TIME, seq=1)

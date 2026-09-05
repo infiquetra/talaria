@@ -110,6 +110,14 @@ _OBSERVED_LIVE_FRAMES = (
         },
         session_id=None,
     ),
+)
+
+#: Composed from Hermes source reading (Hermes 63279301b tui_gateway/server.py:13125-13175,
+#: also :3004-3026; issue #145 / I5 finding), rather than transcribed from a gateway recording.
+#: The event type was observed live during ordinary turns, but zero session.usage frames
+#: exist in existing recordings; this fixture represents the wire payload shape emitted by
+#: the mid-turn ticker daemon until tester Live 11 produces a live capture.
+_COMPOSED_SOURCE_READ_FRAMES = (
     raw_event(
         "session.usage",
         {"usage": {"input": 1200, "output": 350, "total": 1550}},
@@ -128,6 +136,19 @@ def test_known_event_set_covers_what_a_live_gateway_actually_sends() -> None:
     past it.
     """
     for frame in _OBSERVED_LIVE_FRAMES:
+        event_type = frame["params"]["type"]
+        assert isinstance(_decode(frame), GatewayEvent), event_type
+
+
+def test_composed_source_read_frames_decode_cleanly() -> None:
+    """Event types whose payload shape was composed from Hermes source reading
+    (issue #145 / I5 finding; Hermes 63279301b tui_gateway/server.py:13125-13175).
+
+    The session.usage type was observed live, but zero recorded JSONL frames
+    exist yet in the repository; this frame preserves decode coverage using the
+    wire contract established from the producer source until a live capture is taken.
+    """
+    for frame in _COMPOSED_SOURCE_READ_FRAMES:
         event_type = frame["params"]["type"]
         assert isinstance(_decode(frame), GatewayEvent), event_type
 
