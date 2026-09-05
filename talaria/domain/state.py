@@ -2466,6 +2466,31 @@ def _on_session_info(state: SessionState, event: GatewayEvent) -> SessionState:
     return replace(state, session_title=title, usage=usage, session_key=session_key)
 
 
+def _on_session_usage(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Live usage tick while a turn runs (Hermes tui_gateway server.py:3004-3026).
+
+    Updates token accounting mid-turn so the inspector and status bar reflect
+    progress without waiting for message.complete. An absent or empty usage
+    payload leaves state unchanged so missing data remains unobserved.
+    """
+    usage_payload = event.payload.get("usage")
+    if isinstance(usage_payload, dict):
+        return replace(state, usage=state.usage.merged_with(usage_payload))
+    if isinstance(event.payload, dict) and any(
+        k in event.payload
+        for k in (
+            "input_tokens",
+            "output_tokens",
+            "input",
+            "output",
+            "prompt",
+            "completion",
+        )
+    ):
+        return replace(state, usage=state.usage.merged_with(event.payload))
+    return state
+
+
 def _on_gateway_ready(state: SessionState, event: GatewayEvent) -> SessionState:
     return set_connection(state, "connected")
 
@@ -2566,6 +2591,7 @@ _HANDLERS: Mapping[str, _Handler] = {
     "sudo.expire": _on_prompt_expire,
     "terminal.read.expire": _on_prompt_expire,
     "session.info": _on_session_info,
+    "session.usage": _on_session_usage,
     "gateway.ready": _on_gateway_ready,
     "gateway.protocol_error": _on_gateway_protocol_error,
     "status.update": _on_status_update,

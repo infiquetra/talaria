@@ -110,6 +110,11 @@ _OBSERVED_LIVE_FRAMES = (
         },
         session_id=None,
     ),
+    raw_event(
+        "session.usage",
+        {"usage": {"input": 1200, "output": 350, "total": 1550}},
+        session_id="20260804_120225_7487d0",
+    ),
 )
 
 

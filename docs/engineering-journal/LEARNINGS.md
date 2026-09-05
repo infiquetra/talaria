@@ -2,6 +2,31 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-05
+
+### Gateway event naming drift and token key aliases must be handled at the boundary, not defaulted to zero (C6/#145)
+
+**Evidence.** Live runs against Hermes Agent revealed `unknown event type: session.usage`
+interleaved in normal conversations, accompanied by inspector and status bar context meters
+reporting zero token usage. Investigation I5 and inspection of Hermes source (`63279301b`,
+`tui_gateway/server.py:13125-13175` and `:3004-3026`) showed the mid-turn ticker daemon emits
+`session.usage` carrying `{"usage": {"input": ..., "output": ...}}`. Because `session.usage`
+was unlisted in `talaria/domain/decode.py`, it was categorized as unknown noise; and because
+`Usage.merged_with` (`talaria/domain/models.py:153`) only looked for `"input_tokens"` and
+`"output_tokens"`, any payload using Hermes's standard `"input"`/`"output"` or `"prompt"`/`"completion"`
+keys defaulted to zero while asserting `observed=True`. Pinned by `tests/domain/test_session_usage.py`
+and `tests/fixtures/events/session_usage.json`.
+
+**Mechanism.** When a consumer expects long-form field names (`input_tokens`) but the provider
+standardizes on short keys (`input`), an unmapped dictionary lookup silently falls back to 0. If
+that fallback also latches the domain model's observation flag (`observed=True`), downstream
+projections cannot distinguish an unobserved metric from a measured zero, turning missing fields
+into confident false assertions on screen.
+
+**Generalizable rule.** In domain models bridging external protocol events, accept known provider key
+aliases explicitly and only assert a metric is observed when at least one valid measurement field is
+present in the wire payload.
+
 ## 2026-09-04
 
 ### A seam nobody calls after mount can secretly be an initializer — wiring it live turns its side effects into behavior

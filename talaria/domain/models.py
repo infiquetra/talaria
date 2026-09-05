@@ -151,12 +151,40 @@ class Usage:
     observed: bool = False
 
     def merged_with(self, other: Mapping[str, Any]) -> Usage:
-        input_tokens = _as_int(other.get("input_tokens"), self.input_tokens)
-        output_tokens = _as_int(other.get("output_tokens"), self.output_tokens)
+        raw_input = other.get("input_tokens")
+        if raw_input is None:
+            raw_input = other.get("input")
+        if raw_input is None:
+            raw_input = other.get("prompt")
+
+        raw_output = other.get("output_tokens")
+        if raw_output is None:
+            raw_output = other.get("output")
+        if raw_output is None:
+            raw_output = other.get("completion")
+
+        has_observed = (
+            raw_input is not None
+            or raw_output is not None
+            or any(
+                k in other
+                for k in (
+                    "input_tokens",
+                    "output_tokens",
+                    "input",
+                    "output",
+                    "prompt",
+                    "completion",
+                )
+            )
+        )
+
+        input_tokens = _as_int(raw_input, self.input_tokens)
+        output_tokens = _as_int(raw_output, self.output_tokens)
         return Usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            observed=True,
+            observed=self.observed or has_observed,
         )
 
 
