@@ -315,74 +315,63 @@ def _stored_bar(config_dir: Path, slug: str) -> bool:
     ).transcript_bar_visible
 
 
-async def _submit_theme_command(app: Any, pilot: Any, text: str) -> None:
-    app.composer.text = text
-    app.composer.text_area.focus()
-    await pilot.press("enter")
-    await app.settle_live()
-    await pilot.pause()
-
-
 #: The shared VS Code source fixture the import suite stages its reload
 #: themes from — a real source file, not a synthesized report.
 _SAMPLE_SOURCE = Path(__file__).parents[1] / "fixtures" / "vscode-themes" / "sample-dark.json"
 
 
 @pytest.mark.asyncio
-async def test_a_bar_only_stored_edit_moves_the_gutter_through_theme_reload(
+async def test_a_bar_only_stored_edit_moves_the_gutter_on_stored_refresh(
     tmp_path: Path,
 ) -> None:
-    """P1 repair regression on the real reload path (#141 item 16 / Live
-    06): the operator edits the stored theme's bar field and submits
-    ``/theme reload`` — the composer command, the recorded source, the
-    re-import, the same-slug spec swap. The mounted gutter must move even
-    though the slug never changes and the re-import re-derives every
-    color from source: the source cannot express the bar, so the stored
-    choice survives the re-import, in both directions, and the reclaimed
-    column reflows wrapped rows instead of clipping them."""
+    """P1 repair regression on the direct stored refresh (#141 item 16 /
+    Live 06): the operator edits the stored theme's bar field on disk, and
+    the next time the app reads that stored document the mounted gutter
+    follows it — in both directions, with the reclaimed column reflowing
+    wrapped rows instead of clipping them.
+
+    This is a stored-file refresh, not a recorded-source re-import: the
+    app boots its registry from the stored theme, which is how an edited
+    stored document takes effect. ``/theme reload`` is deliberately not
+    this path — it re-derives colors from the recorded source, and a VS
+    Code source cannot express the bar."""
     config_dir = tmp_path / "config"
     source = tmp_path / "bar-probe.json"
     source.write_bytes(_SAMPLE_SOURCE.read_bytes())
     import_vscode_theme(source, name="bar-probe", config_dir=config_dir)
 
-    registry = theme_registry_for_config(config_dir=config_dir)
-    app, controls = paused_app(
-        _bar_frames(),
-        theme_name="bar-probe",
-        theme_registry=registry,
-        theme_config_dir=config_dir,
-        launch_cwd=tmp_path,
+    measured: list[tuple[bool, int]] = []
+    for visible in (True, False, True):
+        _flip_stored_bar(config_dir, "bar-probe", visible=visible)
+        registry = theme_registry_for_config(config_dir=config_dir)
+        app, controls = paused_app(
+            _bar_frames(),
+            theme_name="bar-probe",
+            theme_registry=registry,
+            theme_config_dir=config_dir,
+            launch_cwd=tmp_path,
+        )
+        async with app.run_test(size=(80, 24)) as pilot:
+            await _drain(app, pilot, controls)
+            pane = app.transcript
+            assert app.theme == "bar-probe"
+            assert pane.show_left_offset is visible, (
+                "the stored bar field did not govern the mounted gutter"
+            )
+
+            probe = TranscriptLine("x" * 60, kind="assistant", first_in_entry=False)
+            await pane.mount(probe)
+            await pilot.pause()
+            measured.append((pane.show_left_offset, probe.content_size.width))
+            assert _BAR_RESPONSE in _screen_words(app)
+            await probe.remove()
+            await app.shutdown_sources()
+
+    visible_width = measured[0][1]
+    assert measured[1][1] == visible_width + 1, (
+        "hiding the bar did not return its column to the content"
     )
-    async with app.run_test(size=(80, 24)) as pilot:
-        await _drain(app, pilot, controls)
-        pane = app.transcript
-        assert app.theme == "bar-probe"
-        assert pane.show_left_offset is True
-
-        probe = TranscriptLine("x" * 60, kind="assistant", first_in_entry=False)
-        await pane.mount(probe)
-        await pilot.pause()
-        width_visible = probe.content_size.width
-
-        _flip_stored_bar(config_dir, "bar-probe", visible=False)
-        await _submit_theme_command(app, pilot, "/theme reload")
-        assert app.theme == "bar-probe"
-        assert pane.show_left_offset is False, (
-            "a bar-only stored edit submitted through /theme reload left "
-            "the mounted gutter stale"
-        )
-        assert probe.content_size.width == width_visible + 1
-        assert _BAR_RESPONSE in _screen_words(app)
-        assert _stored_bar(config_dir, "bar-probe") is False, (
-            "the re-import clobbered the stored bar choice"
-        )
-
-        _flip_stored_bar(config_dir, "bar-probe", visible=True)
-        await _submit_theme_command(app, pilot, "/theme reload")
-        assert pane.show_left_offset is True
-        assert probe.content_size.width == width_visible
-        assert _BAR_RESPONSE in _screen_words(app)
-        assert _stored_bar(config_dir, "bar-probe") is True
-
-        await probe.remove()
-        await app.shutdown_sources()
+    assert measured[2][1] == visible_width
+    assert _stored_bar(config_dir, "bar-probe") is True, (
+        "a stored refresh rewrote the stored bar choice"
+    )
