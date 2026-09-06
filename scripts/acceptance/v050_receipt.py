@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import re
 import shutil
 import struct
 import subprocess
 import sys
+import zlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,28 +48,101 @@ _ACCEPTANCE_ROOT = _REPO_ROOT / "docs" / "acceptance" / "v0.5.0"
 _CHECKLIST_PATH = _ACCEPTANCE_ROOT / "checklist-items.json"
 _MANIFEST_PATH = _ACCEPTANCE_ROOT / "artifact-manifest.json"
 _EVIDENCE_ROOT = _ACCEPTANCE_ROOT / "evidence"
-_PUBLIC_EVIDENCE_ROOTS = (
-    Path("docs/acceptance/v0.5.0"),
-    Path("docs/acceptance/v0.6.0"),
-    Path("docs/evidence"),
-)
+def _public_evidence_roots(repo_root: Path = _REPO_ROOT) -> tuple[Path, ...]:
+    """Return every acceptance version directory matching docs/acceptance/v* plus docs/evidence."""
+    acceptance_dir = repo_root / "docs" / "acceptance"
+    roots: list[Path] = []
+    if acceptance_dir.is_dir():
+        roots.extend(
+            sorted(
+                path.relative_to(repo_root)
+                for path in acceptance_dir.glob("v*")
+                if path.is_dir()
+            )
+        )
+    evidence_dir = repo_root / "docs" / "evidence"
+    if evidence_dir.exists():
+        roots.append(Path("docs/evidence"))
+    return tuple(roots)
+
+
+_PUBLIC_EVIDENCE_ROOTS = _public_evidence_roots(_REPO_ROOT)
 _ROUTE_ALIASES: dict[str, str | None] = {
     "primary": PRIMARY_MODEL_ROUTE,
     "fallback": FALLBACK_MODEL_ROUTE,
     "none": None,
 }
 _RELEASE_RELEVANT_PATHS = ("talaria", "pyproject.toml", "uv.lock", "src")
-_PRIVATE_PATTERNS = (
-    (re.compile(rb"/(?:Users|home)/[A-Za-z0-9._-]+"), "operator home path"),
-    (
-        re.compile(rb"/-(?:Users|home)-[A-Za-z0-9._-]+-"),
-        "encoded operator home path",
+
+
+@dataclass(frozen=True)
+class PrivacyPatternDef:
+    pattern: re.Pattern[bytes]
+    label: str
+    rule_name: str
+
+
+#: Centralized privacy pattern registry. Designed so any amendment from the
+#: surveyor/architect is a localized data change rather than an architectural rewrite.
+PRIVACY_PATTERNS: tuple[PrivacyPatternDef, ...] = (
+    PrivacyPatternDef(
+        pattern=re.compile(rb"/(?:Users|home)/[A-Za-z0-9._-]+"),
+        label="operator home path",
+        rule_name="operator-home-path",
     ),
-    (re.compile(rb"/private/var/folders/"), "operator temporary-directory identifier"),
-    (re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "email address"),
-    (re.compile(rb"Authorization:\s*Bearer\s+\S+", re.IGNORECASE), "bearer credential"),
-    (re.compile(rb"(?:token|credential)=[^&\s]+", re.IGNORECASE), "credential query value"),
+    PrivacyPatternDef(
+        pattern=re.compile(rb"/-(?:Users|home)-[A-Za-z0-9._-]+-"),
+        label="encoded operator home path",
+        rule_name="encoded-home-path",
+    ),
+    PrivacyPatternDef(
+        pattern=re.compile(rb"/private/var/folders/"),
+        label="operator temporary-directory identifier",
+        rule_name="temporary-directory",
+    ),
+    PrivacyPatternDef(
+        pattern=re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+        label="email address",
+        rule_name="email-address",
+    ),
+    PrivacyPatternDef(
+        pattern=re.compile(rb"Authorization:\s*Bearer\s+\S+", re.IGNORECASE),
+        label="bearer credential",
+        rule_name="bearer-credential",
+    ),
+    PrivacyPatternDef(
+        pattern=re.compile(rb"(?:token|credential)=[^&\s]+", re.IGNORECASE),
+        label="credential query value",
+        rule_name="credential-query-value",
+    ),
+    PrivacyPatternDef(
+        pattern=re.compile(rb"\bw[A-Za-z0-9]+:[pt][A-Za-z0-9]+\b"),
+        label="terminal pane identifier",
+        rule_name="pane-coordinate",
+    ),
+    PrivacyPatternDef(
+        pattern=re.compile(
+            rb"\b(?:worker|controller|reviewer|architect|investigator|tester|operator)-\d+(?:-\d+)*\b"
+        ),
+        label="session name",
+        rule_name="session-name",
+    ),
 )
+
+_PRIVATE_PATTERNS = tuple((p.pattern, p.label) for p in PRIVACY_PATTERNS)
+
+FORBIDDEN_KEY_NAMES: frozenset[str] = frozenset({
+    "tester_pane",
+    "pane_id",
+    "pane",
+    "session_name",
+    "goal_id",
+})
+
+
+def is_forbidden_key(key: str) -> bool:
+    return key in FORBIDDEN_KEY_NAMES or key.endswith("_pane")
+
 _MACOS_ACCEPTANCE_SCRATCH_PATH = re.compile(
     rb"/private/var/folders/[A-Za-z0-9._/-]+/T/"
     rb"talaria-v050-[A-Za-z0-9._-]+(?:\xe2\x80\xa6)?"
@@ -507,6 +583,215 @@ def _portable_json(
     return value.replace(home, "<home>")
 
 
+_ALLOWED_CRITICAL_CHUNKS: frozenset[bytes] = frozenset({b"IHDR", b"PLTE", b"IDAT", b"IEND"})
+_ALLOWED_NON_TEXT_ANCILLARY_CHUNKS: frozenset[bytes] = frozenset({
+    b"pHYs",
+    b"gAMA",
+    b"sRGB",
+    b"tIME",
+    b"iCCP",
+})
+_TEXT_CHUNK_TYPES: frozenset[bytes] = frozenset({b"tEXt", b"zTXt", b"iTXt"})
+
+_CAPTURE_METADATA_DECLARED_KEYS: dict[str, str] = {
+    "columns": "count",
+    "rows": "count",
+    "cell_width": "count",
+    "cell_height": "count",
+    "width": "count",
+    "height": "count",
+    "dpi": "count",
+    "scale": "count",
+    "frame": "count",
+    "frame_digest": "digest",
+    "frame_digests": "digest",
+    "digests": "digest",
+    "sha256": "digest",
+    "twin_digest": "digest",
+    "recorded_at": "timestamp",
+    "captured_at": "timestamp",
+    "timestamp": "timestamp",
+    "session_id": "gateway-session-id",
+    "format": "closed-vocabulary",
+    "schema_version": "closed-vocabulary",
+    "title": "closed-vocabulary",
+    "geometry": "object",
+    "terminal": "object",
+}
+
+
+def _validate_capture_metadata(doc: dict[str, Any], *, path: Path) -> list[str]:
+    """Validate capture metadata against registered schema and value categories."""
+    errors: list[str] = []
+    for key, value in doc.items():
+        if is_forbidden_key(key):
+            errors.append(f"{path}: capture metadata contains forbidden key {key!r}")
+            continue
+        if key not in _CAPTURE_METADATA_DECLARED_KEYS:
+            errors.append(f"{path}: capture metadata contains undeclared key {key!r}")
+            continue
+        category = _CAPTURE_METADATA_DECLARED_KEYS[key]
+        if category == "count":
+            if not isinstance(value, (int, float)) or value < 0:
+                errors.append(
+                    f"{path}: capture metadata field {key!r} must be a non-negative number"
+                )
+        elif category == "digest":
+            if isinstance(value, list):
+                if not all(
+                    isinstance(x, str)
+                    and (len(x) in (40, 64))
+                    and all(c in "0123456789abcdefABCDEF" for c in x)
+                    for x in value
+                ):
+                    errors.append(
+                        f"{path}: capture metadata field {key!r} must be a list of hex digests"
+                    )
+            elif not (
+                isinstance(value, str)
+                and (len(value) in (40, 64))
+                and all(c in "0123456789abcdefABCDEF" for c in value)
+            ):
+                errors.append(f"{path}: capture metadata field {key!r} must be a hex digest")
+        elif category == "timestamp":
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{path}: capture metadata field {key!r} must be a timestamp string")
+        elif category == "gateway-session-id":
+            if not isinstance(value, str) or not value.strip():
+                errors.append(
+                    f"{path}: capture metadata field {key!r} must be a gateway session id string"
+                )
+        elif category == "closed-vocabulary":
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{path}: capture metadata field {key!r} must be a non-empty string")
+        elif category == "object":
+            if isinstance(value, dict):
+                errors.extend(_validate_capture_metadata(value, path=path))
+            else:
+                errors.append(f"{path}: capture metadata field {key!r} must be an object")
+    return errors
+
+
+def _parse_png_text_chunk(chunk_type: bytes, chunk_data: bytes) -> tuple[str, bytes, str | None]:
+    """Parse keyword and text from tEXt, zTXt, or iTXt chunk."""
+    if chunk_type == b"tEXt":
+        if b"\x00" not in chunk_data:
+            return "", b"", "tEXt chunk missing null separator"
+        kw, text = chunk_data.split(b"\x00", 1)
+        return kw.decode("latin-1", errors="replace"), text, None
+    elif chunk_type == b"zTXt":
+        if b"\x00" not in chunk_data:
+            return "", b"", "zTXt chunk missing null separator"
+        kw, rest = chunk_data.split(b"\x00", 1)
+        if len(rest) < 1:
+            return (
+                kw.decode("latin-1", errors="replace"),
+                b"",
+                "zTXt chunk missing compression method",
+            )
+        comp_method = rest[0]
+        if comp_method != 0:
+            return (
+                kw.decode("latin-1", errors="replace"),
+                b"",
+                f"zTXt unknown compression method {comp_method}",
+            )
+        try:
+            decompressed = zlib.decompress(rest[1:])
+            return kw.decode("latin-1", errors="replace"), decompressed, None
+        except Exception as exc:
+            return kw.decode("latin-1", errors="replace"), b"", f"zTXt decompression failed: {exc}"
+    elif chunk_type == b"iTXt":
+        if b"\x00" not in chunk_data:
+            return "", b"", "iTXt chunk malformed"
+        kw_raw, rest = chunk_data.split(b"\x00", 1)
+        kw_str = kw_raw.decode("latin-1", errors="replace")
+        if len(rest) < 2:
+            return kw_str, b"", "iTXt chunk missing compression headers"
+        comp_flag = rest[0]
+        after_headers = rest[2:]
+        parts = after_headers.split(b"\x00", 2)
+        if len(parts) < 3:
+            return kw_str, b"", "iTXt chunk missing null separators for tags"
+        _lang_tag, _trans_kw, text_raw = parts
+        if comp_flag == 1:
+            try:
+                decompressed = zlib.decompress(text_raw)
+                return kw_str, decompressed, None
+            except Exception as exc:
+                return kw_str, b"", f"iTXt decompression failed: {exc}"
+        else:
+            return kw_str, text_raw, None
+    return "", b"", f"unrecognized text chunk type {chunk_type!r}"
+
+
+def _png_chunk_errors(path: Path, data: bytes) -> list[str]:
+    """Parse PNG chunks, validate chunk types and text payloads against capture-metadata schema."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return [f"{path}: screenshot is not a valid PNG file (invalid signature)"]
+    errors: list[str] = []
+    offset = 8
+    has_ihdr = False
+    has_iend = False
+    while offset + 12 <= len(data):
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_end = offset + 12 + length
+        if chunk_end > len(data):
+            errors.append(
+                f"{path}: truncated PNG chunk {chunk_type.decode('latin-1', errors='replace')}"
+            )
+            break
+        chunk_data = data[offset + 8 : offset + 8 + length]
+        offset = chunk_end
+
+        if chunk_type == b"IHDR":
+            has_ihdr = True
+        elif chunk_type == b"IEND":
+            has_iend = True
+
+        if (
+            chunk_type in _ALLOWED_CRITICAL_CHUNKS
+            or chunk_type in _ALLOWED_NON_TEXT_ANCILLARY_CHUNKS
+        ):
+            continue
+
+        if chunk_type in _TEXT_CHUNK_TYPES:
+            keyword, text_bytes, parse_err = _parse_png_text_chunk(chunk_type, chunk_data)
+            if parse_err:
+                errors.append(f"{path}: {parse_err}")
+                continue
+            if keyword != "talaria-evidence":
+                errors.append(
+                    f"{path}: PNG contains unauthorized text chunk "
+                    f"{chunk_type.decode('latin-1', errors='replace')} with keyword {keyword!r} "
+                    "(only talaria-evidence is permitted)"
+                )
+                continue
+            try:
+                doc = json.loads(text_bytes.decode("utf-8"))
+            except Exception as exc:
+                errors.append(f"{path}: PNG talaria-evidence chunk is not valid JSON: {exc}")
+                continue
+            if not isinstance(doc, dict):
+                errors.append(f"{path}: PNG talaria-evidence chunk must be a JSON object")
+                continue
+            errors.extend(_validate_capture_metadata(doc, path=path))
+            errors.extend(_walk_json_privacy_errors(doc, path=path, prefix="talaria-evidence"))
+            continue
+
+        errors.append(
+            f"{path}: PNG contains disallowed chunk type "
+            f"{chunk_type.decode('latin-1', errors='replace')!r}"
+        )
+
+    if not has_ihdr:
+        errors.append(f"{path}: PNG missing IHDR chunk")
+    if not has_iend:
+        errors.append(f"{path}: PNG missing IEND chunk")
+    return errors
+
+
 def _png_ancillary_payloads(data: bytes) -> list[bytes]:
     """Return Portable Network Graphics ancillary chunks without image pixels."""
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -525,23 +810,292 @@ def _png_ancillary_payloads(data: bytes) -> list[bytes]:
     return payloads
 
 
-def _privacy_errors(path: Path) -> list[str]:
+def classify_evidence_file(path: Path) -> str:
+    """Classify an evidence file by content rather than file name or manifest."""
+    if path.suffix.lower() in {".md", ".markdown"}:
+        parts = path.parts
+        for idx, part in enumerate(parts):
+            if part == "evidence" or (
+                part == "acceptance" and idx + 2 < len(parts) and parts[idx + 2] == "evidence"
+            ):
+                return "markdown"
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "unreadable"
+    if b'"kind": "frame"' in data or b'"kind":"frame"' in data:
+        return "wire-capture"
+    if path.name == "receipt.json":
+        return "receipt"
+    if path.suffix.lower() == ".png":
+        return "screenshot"
+    if path.suffix.lower() in {".ansi", ".txt"}:
+        return "terminal-text"
+    try:
+        doc = json.loads(data.decode("utf-8"))
+        if isinstance(doc, dict):
+            if any(
+                k in doc
+                for k in (
+                    "columns",
+                    "rows",
+                    "cell_width",
+                    "frame",
+                    "frame_digest",
+                    "frame_digests",
+                    "twin_digest",
+                    "tester_pane",
+                )
+            ):
+                return "capture-metadata"
+            if "measurements" in path.name.lower():
+                return "pixel-measurements"
+            if "steps" in path.name.lower() or "step" in doc:
+                return "step-logs"
+            if "attestation" in path.name.lower() or any(k.startswith("live-") for k in doc.keys()):
+                return "attestation-map"
+        return "harness-record"
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    try:
+        text = data.decode("utf-8")
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if lines and all(_is_valid_json_line(line) for line in lines):
+            return "harness-record"
+    except UnicodeDecodeError:
+        pass
+    return "other"
+
+
+def _is_valid_json_line(line: str) -> bool:
+    try:
+        json.loads(line)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _count_redacted_literals(value: Any) -> int:
+    """Count how many string values in the payload equal or contain [redacted]."""
+    count = 0
+    if isinstance(value, str):
+        if value == "[redacted]":
+            count += 1
+        elif "[redacted]" in value:
+            count += value.count("[redacted]")
+    elif isinstance(value, dict):
+        for v in value.values():
+            count += _count_redacted_literals(v)
+    elif isinstance(value, list):
+        for item in value:
+            count += _count_redacted_literals(item)
+    return count
+
+
+def _wire_capture_errors(path: Path, data: bytes) -> list[str]:
+    """Validate that a wire capture is a valid derived frame log."""
+    errors: list[str] = []
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return [f"{path}: wire capture is not valid UTF-8: {exc}"]
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return [f"{path}: wire capture is empty"]
+
+    # 1. Header validation (refuses headerless slices)
+    try:
+        header = json.loads(lines[0])
+    except json.JSONDecodeError:
+        return [f"{path}: wire capture is a headerless slice: header line missing or invalid JSON"]
+    if not isinstance(header, dict) or header.get("kind") != "header":
+        return [f"{path}: wire capture is a headerless slice: first line is not kind header"]
+
+    # 2. Derivation metadata check (refuses raw recordings)
+    derivation = header.get("derivation")
+    if not isinstance(derivation, dict):
+        return [
+            f"{path}: wire capture is an undeclared raw recording: "
+            "derivation block missing in header"
+        ]
+    required_derivation_keys = (
+        "tool",
+        "source_bytes",
+        "source_frames",
+        "selection",
+        "rules",
+        "derived_at",
+    )
+    if not ("source_sha256" in derivation or "source_digest" in derivation) or any(
+        k not in derivation for k in required_derivation_keys
+    ):
+        return [f"{path}: wire capture derivation block missing required metadata"]
+
+    # 3. Frames validation
+    expected_seq = 1
+    for idx, line in enumerate(lines[1:], start=1):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            errors.append(f"{path}: frame line {idx} is invalid JSON: {exc}")
+            continue
+        if not isinstance(record, dict) or record.get("kind") != "frame":
+            errors.append(f"{path}: line {idx + 1} is not a valid frame record")
+            continue
+        source_seq = record.get("sourceSeq")
+        if not isinstance(source_seq, int) or source_seq < 1:
+            errors.append(f"{path}: frame seq {expected_seq} is missing sourceSeq")
+        if record.get("seq") != expected_seq:
+            errors.append(
+                f"{path}: frame sequence is not gapless "
+                f"(expected {expected_seq}, got {record.get('seq')})"
+            )
+
+        frame_payload = record.get("frame")
+        literal_count = _count_redacted_literals(frame_payload)
+        redactions = record.get("redactions", [])
+        if not isinstance(redactions, list):
+            errors.append(f"{path}: frame seq {expected_seq} redactions must be a list")
+            redactions = []
+        if literal_count != len(redactions):
+            errors.append(
+                f"{path}: frame seq {expected_seq} [redacted] literals ({literal_count}) "
+                f"and redactions entries ({len(redactions)}) do not match one to one"
+            )
+        # Scan payload for remaining private patterns
+        if isinstance(frame_payload, (dict, list)):
+            payload_bytes = json.dumps(frame_payload).encode("utf-8")
+            for pattern, label in _PRIVATE_PATTERNS:
+                if pattern.search(payload_bytes):
+                    errors.append(f"{path}: frame line {idx} contains a private {label}")
+        expected_seq += 1
+
+    return errors
+
+
+def _walk_json_privacy_errors(value: Any, *, path: Path, prefix: str = "") -> list[str]:
+    """Recursive walk on parsed JSON to refuse forbidden keys and private string values."""
+    errors: list[str] = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            loc = f"{prefix}.{k}" if prefix else str(k)
+            if is_forbidden_key(k):
+                errors.append(f"{path}: contains forbidden key {k!r} at {loc}")
+            errors.extend(_walk_json_privacy_errors(v, path=path, prefix=loc))
+    elif isinstance(value, list):
+        for idx, item in enumerate(value):
+            loc = f"{prefix}[{idx}]"
+            errors.extend(_walk_json_privacy_errors(item, path=path, prefix=loc))
+    elif isinstance(value, str):
+        val_bytes = value.encode("utf-8")
+        for pattern, label in _PRIVATE_PATTERNS:
+            if pattern.search(val_bytes):
+                errors.append(f"{path}: contains a private {label} at {prefix}")
+    return errors
+
+
+def evidence_file_privacy_errors(path: Path, repo_root: Path = _REPO_ROOT) -> list[str]:
+    """Scan a single evidence file for privacy defects using content-based classification."""
     try:
         data = path.read_bytes()
     except OSError as exc:
         return [f"cannot privacy-scan {path}: {exc}"]
-    payloads = _png_ancillary_payloads(data) if path.suffix.lower() == ".png" else [data]
+
+    if (
+        is_within(path, repo_root / "docs" / "acceptance" / "v0.5.0")
+        or is_within(path, repo_root / "docs" / "acceptance" / "v0.6.0")
+        or is_within(path, repo_root / "docs" / "evidence")
+    ):
+        v050_errors: list[str] = []
+        payloads = _png_ancillary_payloads(data) if path.suffix.lower() == ".png" else [data]
+        for pattern, label in _PRIVATE_PATTERNS:
+            if any(pattern.search(payload) for payload in payloads):
+                v050_errors.append(f"{path}: contains a private {label}")
+        return v050_errors
+
+    file_class = classify_evidence_file(path)
+    if file_class == "markdown":
+        return [
+            f"{path}: markdown files are forbidden under evidence/ "
+            "(prose belongs in receipt narrative fields)"
+        ]
+    if file_class == "wire-capture":
+        return _wire_capture_errors(path, data)
+
     errors: list[str] = []
+    if file_class == "screenshot":
+        errors.extend(_png_chunk_errors(path, data))
+        for pattern, label in _PRIVATE_PATTERNS:
+            if pattern.search(data):
+                errors.append(f"{path}: contains a private {label}")
+        return errors
+
+    if file_class == "capture-metadata":
+        try:
+            doc = json.loads(data.decode("utf-8"))
+            if isinstance(doc, dict):
+                errors.extend(_validate_capture_metadata(doc, path=path))
+                errors.extend(_walk_json_privacy_errors(doc, path=path))
+            else:
+                errors.append(f"{path}: capture metadata must be a JSON object")
+        except Exception as exc:
+            errors.append(f"{path}: capture metadata is invalid JSON: {exc}")
+        return errors
+
+    if file_class in {"receipt", "harness-record"}:
+        parsed_ok, doc = False, None
+        try:
+            doc = json.loads(data.decode("utf-8"))
+            parsed_ok = True
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
+        if parsed_ok and isinstance(doc, dict):
+            if "evidence" in path.parts and path.name != "receipt.json":
+                if any(
+                    k in doc
+                    for k in (
+                        "columns",
+                        "rows",
+                        "cell_width",
+                        "frame",
+                        "frame_digest",
+                        "tester_pane",
+                    )
+                ):
+                    errors.extend(_validate_capture_metadata(doc, path=path))
+                else:
+                    errors.append(
+                        f"{path}: unregistered record type or undeclared key in {path.name}"
+                    )
+            errors.extend(_walk_json_privacy_errors(doc, path=path))
+            return errors
+
+        try:
+            text = data.decode("utf-8")
+            for idx, line in enumerate(text.splitlines(), start=1):
+                if not line.strip():
+                    continue
+                line_obj = json.loads(line)
+                errors.extend(_walk_json_privacy_errors(line_obj, path=path, prefix=f"line_{idx}"))
+            return errors
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
+
+    # Fallback to byte pattern scan
     for pattern, label in _PRIVATE_PATTERNS:
-        if any(pattern.search(payload) for payload in payloads):
+        if pattern.search(data):
             errors.append(f"{path}: contains a private {label}")
     return errors
+
+
+def _privacy_errors(path: Path, repo_root: Path = _REPO_ROOT) -> list[str]:
+    return evidence_file_privacy_errors(path, repo_root=repo_root)
 
 
 def _public_evidence_files(repo_root: Path) -> tuple[Path, ...]:
     """Return files below every release publication root that currently exists."""
     files: set[Path] = set()
-    for relative_root in _PUBLIC_EVIDENCE_ROOTS:
+    for relative_root in _public_evidence_roots(repo_root):
         root = repo_root / relative_root
         if root.is_file():
             files.add(root)
@@ -555,7 +1109,7 @@ def public_evidence_privacy_errors(repo_root: Path = _REPO_ROOT) -> list[str]:
     repo_root = repo_root.expanduser().resolve()
     errors: list[str] = []
     for path in _public_evidence_files(repo_root):
-        for error in _privacy_errors(path):
+        for error in evidence_file_privacy_errors(path, repo_root=repo_root):
             errors.append(
                 error.replace(str(path), _repo_relative(path, repo_root=repo_root), 1)
             )
@@ -768,10 +1322,9 @@ V061_ITEM_SCHEMA = "talaria-v0.6.1-receipt-v1"
 V061_INSTALL_SCHEMA = "talaria-v0.6.1-install-v1"
 V061_RELEASE = "0.6.1"
 
-#: A herdr pane identifier (``wFB:pT``) — a workspace coordinate, not a
-#: product fact, and exactly the class of identifier the tester's objection
-#: and the ruling on infiquetra/talaria#150 keep out of the public tree.
-_V061_PANE_ID = re.compile(r"\bw[A-Za-z0-9]+:p[A-Za-z0-9]+\b")
+#: A herdr workspace coordinate (``wFB:pT`` or ``w1:t1``) — an operational
+#: handle, not a product fact, and kept out of the public tree.
+_V061_PANE_ID = re.compile(r"\bw[A-Za-z0-9]+:[pt][A-Za-z0-9]+\b")
 #: A session name from this run's vocabulary: a role word plus a numbered
 #: suffix (``worker-2``, ``controller-3``, ``worker-3-3``). The closed role
 #: labels (``worker-lane-a``) carry letters, not digits, so they survive.
@@ -949,6 +1502,8 @@ def _v061_private_identifier_errors(value: Any, *, field: str) -> list[str]:
         errors: list[str] = []
         for key, item in value.items():
             label = f"{field}.{key}" if field else str(key)
+            if is_forbidden_key(key):
+                errors.append(f"{label}: contains forbidden key {key!r}")
             errors.extend(_v061_private_identifier_errors(item, field=label))
         return errors
     if isinstance(value, list):
@@ -1073,10 +1628,21 @@ def _validate_v061_receipt(
         elif not isinstance(harness_commit, str) or not _COMMIT.fullmatch(harness_commit):
             errors.append("harness.commit must be a full 40-character commit or null")
         harness_identity = harness.get("identity")
-        if harness_identity is not None and (
-            not isinstance(harness_identity, str) or not harness_identity.strip()
-        ):
-            errors.append("harness.identity must be a non-empty string or null")
+        if harness_identity is not None:
+            if not isinstance(harness_identity, str) or not harness_identity.strip():
+                errors.append("harness.identity must be a non-empty string or null")
+            elif (
+                harness_identity.startswith("/")
+                or Path(harness_identity).is_absolute()
+                or any(
+                    p in harness_identity
+                    for p in ("/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/")
+                )
+            ):
+                errors.append(
+                    "harness.identity must not contain an absolute filesystem path "
+                    f"({harness_identity!r})"
+                )
     except HarnessError as exc:
         errors.append(str(exc))
 
@@ -1135,6 +1701,35 @@ def _validate_v061_receipt(
                 errors.append(
                     f"evidence file beside the receipt is not listed in evidence.files: {missing}"
                 )
+            png_names = [name for name in listed if name.suffix.lower() == ".png"]
+            for png_path in png_names:
+                stem = png_path.stem
+                has_twin = any(
+                    candidate in listed
+                    for candidate in (
+                        png_path.with_suffix(".txt"),
+                        png_path.with_suffix(".ansi"),
+                        png_path.parent / f"{stem}.screen.txt",
+                    )
+                )
+                if not has_twin:
+                    read_by = receipt.get("screenshots_read_by") or evidence.get(
+                        "screenshots_read_by"
+                    )
+                    read_at = receipt.get("screenshots_read_at") or evidence.get(
+                        "screenshots_read_at"
+                    )
+                    if (
+                        not isinstance(read_by, str)
+                        or not read_by.strip()
+                        or not isinstance(read_at, str)
+                        or not read_at.strip()
+                    ):
+                        errors.append(
+                            "screenshots have neither a text twin nor a recorded human read "
+                            "(screenshots_read_by and screenshots_read_at in receipt)"
+                        )
+                        break
     except HarnessError as exc:
         errors.append(str(exc))
     return errors
