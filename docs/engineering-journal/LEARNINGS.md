@@ -4,6 +4,36 @@
 
 ## 2026-09-06
 
+### An async rebuild that mounts one row per await must be serialized against itself (#146)
+
+**Evidence.** The live rehearsal's recurrence of #146's F-1: the cross-tier model filter drew
+adjacent duplicated headings. Probing the tester's own captured catalogue through every one of
+1,044 command-name prefixes — and driving the app keystroke by keystroke — found zero duplicates:
+the shipped display grouping holds on the deterministic path. The actual mechanism was proven
+with two concurrent `apply` calls: `PaletteRegion.apply` mounts one row per `await`, so a
+keystroke-driven rebuild and a catalog-landing rebuild that interleave each mount their whole
+list into the same container — 21 rows on screen, 11 unique, every heading drawn twice, the
+row map out of lock-step. Two adjacent identical headings are one section whose rebuild
+happened twice, not a section drawn twice by one walk. The landed fix is both layers
+(`talaria/ui/palette.py`): `apply` is serialized by an `asyncio.Lock` — the same trade
+`TalariaApp.render_snapshot` documents for its own rebuild — and the heading draw is
+membership-tracked rather than adjacency-tracked, so any list order draws each section exactly
+once. Both are pinned in `tests/ui/test_slash_palette.py`: the concurrent-rebuild test and the
+non-contiguous-order test each fail against the pre-fix code.
+
+**Mechanism.** Textual does not serialize message handlers, so two rapid keystrokes are two
+`sync_slash` calls whose `apply` bodies interleave at the first `await self.mount(...)`. The
+rebuild's own "remove rows, then mount fresh" pattern is only atomic if nothing else can run
+between the removal and the mounts — which is exactly what an unheld lock permits.
+
+**Generalizable rule.** Any async rebuild that removes-then-mounts across awaits needs a lock
+before it needs a diff: the bug class is not "the wrong rows" but "the rows of two renders,
+interleaved". And when a repaired defect recurs, probe the shipped fix against the exact
+reproduction data before assuming the fix was wrong — here the fix held, and the recurrence
+was a different mechanism wearing the same symptom.
+
+## 2026-09-06
+
 ### A byte-preserving rewrite of a multi-line TOML value needs a span scanner, not a bigger regex (C11/#149)
 
 **Evidence.** Generalizing the theme writer's discipline to the `[status]` keys (issue #149, D8

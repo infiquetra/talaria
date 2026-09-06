@@ -34,6 +34,7 @@ or ordering.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import textwrap
 
@@ -329,6 +330,12 @@ class PaletteRegion(Vertical):
         #: :attr:`_rows` at every site that mounts or clears rows.
         self._row_entries: list[int | None] = []
         self._catalog: CommandCatalog | None = None
+        # One rebuild at a time (issue #146's recurrence). ``apply`` mounts one row per
+        # await, so two interleaved rebuilds each mount their whole list into
+        # the same container and the operator sees both — duplicated rows and
+        # duplicated headings. Contended only when callers race, which is the
+        # ordinary path exactly never; see ``apply``'s docstring.
+        self._apply_lock = asyncio.Lock()
         self._theme_specs: tuple[ThemeSpec, ...] = ()
         self._theme_selected: int | None = None
         self._theme_restore_slug = ""
@@ -445,7 +452,36 @@ class PaletteRegion(Vertical):
     # ── rendering ────────────────────────────────────────────────────────
 
     async def apply(self, catalog: CommandCatalog | None) -> None:
-        """Render the listing. Safe to call before anything has been fetched."""
+        """Render the listing. Safe to call before anything has been fetched.
+
+        **Serialized against itself** — the recurrence of #146's F-1 that the
+        live rehearsal witnessed. The rebuild below mounts one row per
+        await, so two rebuilds interleaving left both passes' rows mounted
+        at once — adjacent duplicated headings and duplicated rows, every
+        heading drawn twice a section whose rebuild happened twice. The
+        lock is uncontended in the ordinary path and costs nothing there,
+        the same trade ``TalariaApp.render_snapshot`` already documents for
+        its own rebuild.
+
+        **The two callers that can race, named so the lock's reason is
+        their concurrency and not any defect in either.** The composer's
+        typed-input path (:meth:`~talaria.ui.composer.ChatTextArea._on_key`
+        and its paste sibling, through :meth:`sync_slash`) re-filters on
+        every keystroke and paste; the app's catalog-fetch completion calls
+        this directly when the fetch lands, which it can while the menu is
+        open and the operator is typing — the exact pairing the rehearsal
+        caught. Both are legitimate: the live filter is the feature, and a
+        fetch that lands on an open menu must show its rows, so the lock
+        stands alone rather than standing in for a duplicate call. The
+        unchanged-prefix re-apply inside :meth:`sync_slash` exists to catch
+        that same fetch-landing-while-open case; it is redundant work when
+        no catalog changed, and harmless now that the rebuild is atomic.
+        """
+        async with self._apply_lock:
+            await self._apply_locked(catalog)
+
+    async def _apply_locked(self, catalog: CommandCatalog | None) -> None:
+        """The rebuild itself; every caller serializes through :meth:`apply`."""
         self._catalog = catalog
         if self.is_theme_active:
             self.set_class(True, "-showing")
@@ -506,21 +542,24 @@ class PaletteRegion(Vertical):
                 # Section labels come from the same function the filter's
                 # ordering uses (``catalog.section_for``), so the list and
                 # its labels cannot disagree about where a row lives (D5,
-                # #146). A heading is emitted when the section changes, so a
-                # section with no surviving row draws no heading, and
-                # Uncategorised appears only when non-empty — both fall out
-                # of the iteration rather than needing their own rules.
-                # Without a catalogue every filtered row is Talaria-local,
-                # which ``section_for`` answers on an empty catalog without
-                # consulting the wire.
+                # #146). A heading is drawn the first time its section is
+                # met in the walk — a function of the grouping, not of
+                # adjacency (#146's general statement) — so any list order,
+                # including one whose sections are not contiguous, draws
+                # each section exactly once. A section with no surviving row
+                # still draws no heading, and Uncategorised appears only
+                # when non-empty — both fall out of the iteration rather
+                # than needing their own rules. Without a catalogue every
+                # filtered row is Talaria-local, which ``section_for``
+                # answers on an empty catalog without consulting the wire.
                 section_catalog = catalog if catalog is not None else CommandCatalog()
                 width = _entry_text_width(self.size.width)
                 self._wrap_width = width
-                current_key: str | None = None
+                drawn_sections: set[str] = set()
                 for idx, entry in enumerate(self._filtered):
                     section = section_catalog.section_for(entry)
-                    if section.key != current_key:
-                        current_key = section.key
+                    if section.key not in drawn_sections:
+                        drawn_sections.add(section.key)
                         heading = Static(
                             literal_text(format_section_heading(section)),
                             markup=False,
