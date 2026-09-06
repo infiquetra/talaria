@@ -14,6 +14,7 @@ from textual.widgets import Static
 
 from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.models import MoaView
+from talaria.domain.normalize import MOA_FALLBACK_TEXT
 from talaria.domain.projection import (
     EntryScopedView,
     ProvisionalTail,
@@ -21,7 +22,6 @@ from talaria.domain.projection import (
     TranscriptView,
     entry_scoped_view,
 )
-from talaria.domain.normalize import MOA_FALLBACK_TEXT
 from talaria.ui.inspector import (
     Inspector,
     InspectorMoaRow,
@@ -288,3 +288,34 @@ async def test_transcript_pane_reconciles_moa_live_widget() -> None:
         await pane.apply(completed_view, esv_complete)
         assert pane.moa_live_text is None
         assert len(pane.query(".transcript--moa-live").nodes) == 0
+
+
+@pytest.mark.asyncio
+async def test_production_app_renders_moa_snapshot_and_inspector() -> None:
+    """Production TalariaApp renders MoA live progress and inspector section."""
+    from tests.ui.conftest import paused_app
+
+    app, _controls = paused_app(
+        [],
+        current_profile="default",
+        profile_endpoints={"default": "http://gateway.example"},
+    )
+    app.state = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 1, "refs_total": 3}),
+    ])
+
+    async with app.run_test(size=(132, 40)) as pilot:
+        await app.render_snapshot()
+        await pilot.pause()
+
+        assert app.transcript.moa_live_text == (
+            "Mixture of Agents: collecting 1/3 references · m1 finished"
+        )
+
+        assert len(app.inspector.moa_texts) == 3
+        assert app.inspector.moa_texts[0] == (
+            "  collecting 1/3 references · m1 finished"
+        )
+        assert app.inspector.moa_texts[1] == "  m1 · finished 1/3"
+        assert app.inspector.moa_texts[2] == "  2 pending"
