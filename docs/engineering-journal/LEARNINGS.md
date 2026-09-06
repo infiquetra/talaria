@@ -4,6 +4,7 @@
 
 ## 2026-09-06
 
+<<<<<<< HEAD
 ### An async rebuild that mounts one row per await must be serialized against itself (#146)
 
 **Evidence.** The live rehearsal's recurrence of #146's F-1: the cross-tier model filter drew
@@ -86,6 +87,29 @@ to equal a filename. Cancelling stages nothing, which is what makes a false dive
 **Generalizable rule.** When a flow both writes the composer and submits from it, test the
 composer's exact contents after the flow, not just the side effect: the side effect passing
 while the command line sits beside the chip is a green suite over a broken submit.
+
+### Text twin verification requires capture-time preimage binding, not post-hoc conjunction (#150)
+
+**Evidence.** Conjunction alone allowed a `.png` to be paired with any sibling `.txt` file listed
+in `evidence.files`, which proved only that a text file was present when the receipt was signed, not
+that it matched the screen cells at render time. Under finding F-3 and the amended privacy contract
+(`scripts/acceptance/v050_receipt.py`, `scripts/acceptance/v061_evidence.py`,
+`tests/docs/test_v061_lineage.py`), the validator and converter require each screenshot's text twin
+to be bound at capture time: the exact twin digest must be recorded in the screenshot PNG's
+`talaria-evidence` chunk or in a sibling capture metadata sidecar (`capture.json`,
+`<stem>.metadata.json`, `capture-metadata.json`) with preimage class `text-twin`. Cases lacking a
+twin remain acceptable only under the explicit compensating control of a recorded human read
+(`screenshots_read_by` and `screenshots_read_at`), while cases lacking both or carrying an unbound
+twin are refused.
+
+**Mechanism.** The capture-time binding raises after-the-fact twin assembly from writing one
+file to writing two consistent ones, and defeats an independent later editor of the twin; it does
+not constrain the harness, and the only controls that do are the recorded human read and the fact
+that the pixels can be read.
+
+**Generalizable rule.** A multi-modal evidence pair (e.g. image and text twin) cannot rely on
+post-hoc directory conjunction for authenticity; the primary artifact must cryptographically bind
+the twin's digest at capture time.
 
 ### Stopping a timer cannot recall an in-flight tick; every await is a handoff (#158)
 

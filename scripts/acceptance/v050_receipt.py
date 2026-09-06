@@ -262,6 +262,7 @@ class ValueCategory(StrEnum):
     HARNESS_LABEL = "harness-label"
     URL = "url"
     MAP = "map"
+    FRAME_LABEL = "frame-label"
 
 
 ALLOWED_PREIMAGE_CLASSES: frozenset[str] = frozenset({
@@ -276,6 +277,26 @@ ALLOWED_PREIMAGE_CLASSES: frozenset[str] = frozenset({
     "source-capture",
     "step-payload",
     "receipt",
+})
+
+ALLOWED_URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ws", "wss", "file"})
+ALLOWED_URL_HOSTS: frozenset[str] = frozenset({
+    "127.0.0.1",
+    "localhost",
+    "::1",
+    "[::1]",
+    "<gateway>",
+    "<candidate-root>",
+})
+ALLOWED_URL_PORTS: frozenset[int | None] = frozenset({None, 80, 443, 8000, 8080, 8765})
+
+REFUSED_CLASSES: frozenset[str] = frozenset({
+    "absolute-filesystem-path",
+    "pane-tab-workspace-coordinate",
+    "role-digit-session-name",
+    "non-loopback-host",
+    "operator-identity",
+    "non-default-profile-name",
 })
 
 
@@ -294,6 +315,7 @@ class RecordSchema:
     map_schemas: dict[str, tuple[str, ValueCategory]] = field(default_factory=dict)
     nullable_keys: frozenset[str] = field(default_factory=frozenset)
     digest_preimages: dict[str, str] = field(default_factory=dict)
+    vocabularies: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def _lookup_preimage(self, loc: str, key: str) -> str | None:
         candidates = [loc]
@@ -311,6 +333,22 @@ class RecordSchema:
                 return self.digest_preimages[cand]
         return None
 
+    def _lookup_vocabulary(self, loc: str, key: str) -> frozenset[str] | None:
+        candidates = [loc]
+        parts = loc.split(".")
+        for i in range(len(parts)):
+            candidates.append(".".join(parts[i:]))
+        name_parts = self.name.split(".")
+        for i in range(len(name_parts)):
+            prefix = ".".join(name_parts[i:])
+            candidates.append(f"{prefix}.{key}")
+            candidates.append(f"{prefix}.{loc}")
+        candidates.append(key)
+        for cand in candidates:
+            if cand in self.vocabularies:
+                return self.vocabularies[cand]
+        return None
+
     def __post_init__(self) -> None:
         for target, preimage_cls in self.digest_preimages.items():
             if preimage_cls not in ALLOWED_PREIMAGE_CLASSES:
@@ -325,6 +363,13 @@ class RecordSchema:
                     raise ValueError(
                         f"Schema {self.name!r}: digest field {k!r} has no declared preimage class"
                     )
+            elif cat == ValueCategory.CLOSED_VOCABULARY:
+                vocab = self._lookup_vocabulary(k, k)
+                if not vocab:
+                    raise ValueError(
+                        f"Schema {self.name!r}: closed-vocabulary field {k!r} "
+                        "has no declared vocabulary"
+                    )
         if "." not in self.name:
             for nk, n_keys in self.nested_schemas.items():
                 for field_name, cat in n_keys.items():
@@ -335,6 +380,14 @@ class RecordSchema:
                             raise ValueError(
                                 f"Schema {self.name!r}: nested digest field {loc!r} "
                                 "has no declared preimage class"
+                            )
+                    elif cat == ValueCategory.CLOSED_VOCABULARY:
+                        loc = f"{nk}.{field_name}"
+                        vocab = self._lookup_vocabulary(loc, field_name)
+                        if not vocab:
+                            raise ValueError(
+                                f"Schema {self.name!r}: nested closed-vocabulary field {loc!r} "
+                                "has no declared vocabulary"
                             )
             for mk, (_key_type, val_cat) in self.map_schemas.items():
                 if val_cat == ValueCategory.DIGEST:
@@ -403,9 +456,19 @@ class RecordSchema:
                         f"{path}: {self.name} field {loc!r} must be a gateway session id string"
                     )
             elif cat == ValueCategory.CLOSED_VOCABULARY:
+                vocab = self._lookup_vocabulary(loc, k)
                 if not isinstance(v, str) or not v.strip():
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must be a non-empty string"
+                    )
+                elif not vocab:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} has no registered closed vocabulary"
+                    )
+                elif v not in vocab:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} value {v!r} not in registered "
+                        f"closed vocabulary ({sorted(vocab)})"
                     )
             elif cat == ValueCategory.HARNESS_IDENTITY:
                 if v is not None:
@@ -451,6 +514,34 @@ class RecordSchema:
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must be a list"
                     )
+                elif k == "redactions":
+                    surf_w = (
+                        doc.get("width")
+                        if isinstance(doc, dict) and isinstance(doc.get("width"), int)
+                        else None
+                    )
+                    surf_h = (
+                        doc.get("height")
+                        if isinstance(doc, dict) and isinstance(doc.get("height"), int)
+                        else None
+                    )
+                    errors.extend(
+                        validate_redactions_list(
+                            v, path=path, prefix=loc, surface_width=surf_w, surface_height=surf_h
+                        )
+                    )
+                elif k in ("read_confirmations", "redaction_confirmations"):
+                    for c_idx, item in enumerate(v):
+                        if isinstance(item, dict):
+                            errors.extend(
+                                validate_read_confirmation_record(
+                                    item, path=path, prefix=f"{loc}[{c_idx}]"
+                                )
+                            )
+                        else:
+                            errors.append(
+                                f"{path}: {self.name} field {loc}[{c_idx}] must be an object"
+                            )
             elif cat == ValueCategory.BOOLEAN:
                 if not isinstance(v, bool):
                     errors.append(
@@ -458,7 +549,9 @@ class RecordSchema:
                     )
             elif cat == ValueCategory.OBJECT:
                 if isinstance(v, dict):
-                    if k in self.nested_schemas:
+                    if k == "read_confirmation":
+                        errors.extend(validate_read_confirmation_record(v, path=path, prefix=loc))
+                    elif k in self.nested_schemas:
                         sub_schema = RecordSchema(
                             f"{self.name}.{k}",
                             self.nested_schemas[k],
@@ -466,6 +559,7 @@ class RecordSchema:
                             map_schemas=self.map_schemas,
                             nullable_keys=self.nullable_keys,
                             digest_preimages=self.digest_preimages,
+                            vocabularies=self.vocabularies,
                         )
                         errors.extend(sub_schema.validate(v, path=path, prefix=loc))
                     elif k in self.map_schemas:
@@ -519,6 +613,60 @@ class RecordSchema:
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must be an object"
                     )
+            elif cat == ValueCategory.URL:
+                if not isinstance(v, str) or not v.strip():
+                    errors.append(f"{path}: {self.name} field {loc!r} must be a url string")
+                elif find_absolute_paths_in_text(v):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must not contain an absolute "
+                        f"filesystem path ({v!r})"
+                    )
+                elif v.startswith("<") and v.endswith(">"):
+                    if v not in ALLOWED_URL_HOSTS:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} has unapproved placeholder {v!r}"
+                        )
+                else:
+                    try:
+                        parsed = urllib.parse.urlsplit(v)
+                    except Exception as exc:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} is not a valid url: {exc}"
+                        )
+                        continue
+                    if not parsed.scheme or parsed.scheme not in ALLOWED_URL_SCHEMES:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} has unapproved url scheme "
+                            f"{parsed.scheme!r} ({sorted(ALLOWED_URL_SCHEMES)})"
+                        )
+                    elif parsed.username or parsed.password or ("@" in parsed.netloc):
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must not contain "
+                            "userinfo or credentials"
+                        )
+                    elif parsed.scheme == "file":
+                        clean_netloc = parsed.netloc.strip("/")
+                        if clean_netloc and clean_netloc not in ALLOWED_URL_HOSTS:
+                            errors.append(
+                                f"{path}: {self.name} file url {loc!r} has unapproved host "
+                                f"{parsed.netloc!r}"
+                            )
+                    else:
+                        host = parsed.hostname
+                        if not host or host not in ALLOWED_URL_HOSTS:
+                            approved_hosts = sorted(ALLOWED_URL_HOSTS)
+                            errors.append(
+                                f"{path}: {self.name} endpoint url {loc!r} has unapproved host "
+                                f"{host!r} (must be loopback or approved placeholder: "
+                                f"{approved_hosts})"
+                            )
+                        elif parsed.port not in ALLOWED_URL_PORTS:
+                            approved_ports = sorted(p for p in ALLOWED_URL_PORTS if p is not None)
+                            errors.append(
+                                f"{path}: {self.name} endpoint url {loc!r} has unapproved port "
+                                f"{parsed.port!r} (must be standard or gateway port: "
+                                f"{approved_ports})"
+                            )
             elif cat == ValueCategory.STRING:
                 if isinstance(v, list):
                     if not all(isinstance(x, str) for x in v):
@@ -529,7 +677,470 @@ class RecordSchema:
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must be a string"
                     )
+                elif loc == "self_check.expected_rejection" or k == "expected_rejection":
+                    masked_v = _SENTINEL_CANDIDATE_PATTERN.sub(
+                        lambda m: " " * len(m.group(0)), v
+                    )
+                    unmasked_paths = find_absolute_paths_in_text(masked_v)
+                    if unmasked_paths:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} contains absolute filesystem path "
+                            f"{unmasked_paths[0]!r} (must be sanitized or redacted)"
+                        )
+                    val_bytes = masked_v.encode("utf-8")
+                    for pattern, label in _PRIVATE_PATTERNS:
+                        if pattern.search(val_bytes):
+                            errors.append(
+                                f"{path}: {self.name} field {loc!r} contains a private {label} "
+                                "(must be sanitized or redacted)"
+                            )
+            elif cat == ValueCategory.FRAME_LABEL:
+                if isinstance(v, int):
+                    if v < 0:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must be a "
+                            "non-negative number or string label"
+                        )
+                elif isinstance(v, str):
+                    if not v.strip():
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must be a non-empty string label"
+                        )
+                    elif find_absolute_paths_in_text(v):
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must not contain an absolute "
+                            f"filesystem path ({v!r})"
+                        )
+                else:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a string label "
+                        "or non-negative number"
+                    )
         return errors
+
+
+REDACTION_ITEM_SCHEMA = RecordSchema(
+    name="redaction-item",
+    declared_keys={
+        "index": ValueCategory.COUNT,
+        "covered_class": ValueCategory.CLOSED_VOCABULARY,
+        "twin_span": ValueCategory.STRING,
+        "region": ValueCategory.OBJECT,
+    },
+    nested_schemas={
+        "region": {
+            "x": ValueCategory.COUNT,
+            "y": ValueCategory.COUNT,
+            "width": ValueCategory.COUNT,
+            "height": ValueCategory.COUNT,
+        },
+    },
+    vocabularies={
+        "covered_class": REFUSED_CLASSES,
+    },
+)
+
+REDACTION_CONFIRMATION_ITEM_SCHEMA = RecordSchema(
+    name="redaction-confirmation-item",
+    declared_keys={
+        "index": ValueCategory.COUNT,
+        "covered_class": ValueCategory.CLOSED_VOCABULARY,
+        "region_matches_twin_span": ValueCategory.BOOLEAN,
+    },
+    vocabularies={
+        "covered_class": REFUSED_CLASSES,
+    },
+)
+
+READ_CONFIRMATION_RECORD_SCHEMA = RecordSchema(
+    name="read-confirmation-record",
+    declared_keys={
+        "image": ValueCategory.STRING,
+        "read_by": ValueCategory.CLOSED_VOCABULARY,
+        "read_at": ValueCategory.TIMESTAMP,
+        "redactions_confirmed": ValueCategory.LIST,
+        "witnessed_element": ValueCategory.STRING,
+        "nothing_else_masked": ValueCategory.BOOLEAN,
+    },
+    vocabularies={
+        "read_by": frozenset(V061_ROLE_LABELS),
+    },
+)
+
+_SENTINEL_PATTERN = re.compile(r"\[redacted:([a-z0-9_-]+):(\d+)\]")
+_SENTINEL_CANDIDATE_PATTERN = re.compile(r"\[redacted:[^\]]*\]")
+
+
+def validate_redactions_list(
+    redactions: Any,
+    *,
+    path: Path,
+    prefix: str = "redactions",
+    surface_width: int | None = None,
+    surface_height: int | None = None,
+) -> list[str]:
+    """Validate a capture-metadata redactions list against the third amendment contract.
+
+    Enforces:
+    - Must be a list of objects.
+    - Each entry must conform to REDACTION_ITEM_SCHEMA.
+    - covered_class must be in REFUSED_CLASSES (an allowed class is refused).
+    - index must be a non-negative integer, unique within the image.
+    - twin_span must strictly match '[redacted:<covered_class>:<index>]'.
+    - region must specify non-negative integers x, y, width, height with width > 0, height > 0.
+    - blanket redactions covering entire surface are refused.
+    """
+    if not isinstance(redactions, list):
+        return [f"{path}: {prefix} must be a list"]
+    errors: list[str] = []
+    seen_indices: set[int] = set()
+    for idx, entry in enumerate(redactions):
+        loc = f"{prefix}[{idx}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{path}: {loc} must be an object")
+            continue
+        errors.extend(REDACTION_ITEM_SCHEMA.validate(entry, path=path, prefix=loc))
+        entry_idx = entry.get("index")
+        if isinstance(entry_idx, int) and entry_idx >= 0:
+            if entry_idx in seen_indices:
+                errors.append(f"{path}: duplicate redaction index {entry_idx} at {loc}")
+            seen_indices.add(entry_idx)
+        else:
+            errors.append(f"{path}: {loc}.index must be a non-negative integer")
+        covered_class = entry.get("covered_class")
+        if isinstance(covered_class, str):
+            if covered_class not in REFUSED_CLASSES:
+                errors.append(
+                    f"{path}: redaction at {loc} declared covered_class {covered_class!r} "
+                    "is not a refused class (allowed classes may not be masked)"
+                )
+            expected_span = f"[redacted:{covered_class}:{entry_idx}]"
+            actual_span = entry.get("twin_span")
+            if actual_span != expected_span:
+                errors.append(
+                    f"{path}: redaction at {loc} twin_span {actual_span!r} "
+                    f"must match expected sentinel {expected_span!r}"
+                )
+        region = entry.get("region")
+        if isinstance(region, dict):
+            for coord in ("x", "y", "width", "height"):
+                val = region.get(coord)
+                if not isinstance(val, (int, float)) or val < 0:
+                    errors.append(
+                        f"{path}: {loc}.region.{coord} must be a non-negative number"
+                    )
+            reg_w = region.get("width")
+            reg_h = region.get("height")
+            reg_x = region.get("x")
+            reg_y = region.get("y")
+            if isinstance(reg_w, (int, float)) and reg_w <= 0:
+                errors.append(f"{path}: {loc}.region.width must be positive")
+            if isinstance(reg_h, (int, float)) and reg_h <= 0:
+                errors.append(f"{path}: {loc}.region.height must be positive")
+            if (
+                surface_width is not None
+                and surface_height is not None
+                and isinstance(reg_x, (int, float))
+                and isinstance(reg_y, (int, float))
+                and isinstance(reg_w, (int, float))
+                and isinstance(reg_h, (int, float))
+                and reg_x == 0
+                and reg_y == 0
+                and reg_w >= surface_width
+                and reg_h >= surface_height
+            ):
+                errors.append(
+                    f"{path}: {loc}.region covers entire surface (blanket redactions are refused)"
+                )
+        else:
+            errors.append(f"{path}: {loc}.region must be an object")
+    return errors
+
+
+def validate_read_confirmation_record(
+    doc: dict[str, Any], *, path: Path, prefix: str = ""
+) -> list[str]:
+    """Validate a single read-confirmation record schema and field semantics."""
+    errors: list[str] = []
+    errors.extend(READ_CONFIRMATION_RECORD_SCHEMA.validate(doc, path=path, prefix=prefix))
+    if doc.get("nothing_else_masked") is not True:
+        loc = f"{prefix}.nothing_else_masked" if prefix else "nothing_else_masked"
+        errors.append(f"{path}: {loc} must be true")
+    rc_list = doc.get("redactions_confirmed")
+    if isinstance(rc_list, list):
+        for idx, rc in enumerate(rc_list):
+            r_loc = (
+                f"{prefix}.redactions_confirmed[{idx}]"
+                if prefix
+                else f"redactions_confirmed[{idx}]"
+            )
+            if isinstance(rc, dict):
+                errors.extend(
+                    REDACTION_CONFIRMATION_ITEM_SCHEMA.validate(rc, path=path, prefix=r_loc)
+                )
+                if not isinstance(rc.get("region_matches_twin_span"), bool):
+                    errors.append(f"{path}: {r_loc}.region_matches_twin_span must be a boolean")
+                c_class = rc.get("covered_class")
+                if isinstance(c_class, str) and c_class not in REFUSED_CLASSES:
+                    errors.append(
+                        f"{path}: {r_loc}.covered_class {c_class!r} is not a refused class"
+                    )
+            else:
+                errors.append(f"{path}: {r_loc} must be an object")
+    return errors
+
+
+def validate_twin_redactions(
+    twin_path: Path, twin_text: str, redactions: list[dict[str, Any]]
+) -> list[str]:
+    """Enforce the two-way sentinel match between text twin and capture metadata redactions.
+
+    Checks:
+    1. Every sentinel [redacted:<covered_class>:<index>] in twin matches an entry in redactions.
+    2. Every entry in redactions has its sentinel present in the twin.
+    3. Any malformed sentinel shape ([redacted:...]) is refused.
+    4. Sentinels in the twin must not duplicate the same index.
+    5. Sentinel covered_class must be in REFUSED_CLASSES.
+    """
+    errors: list[str] = []
+    all_candidates = _SENTINEL_CANDIDATE_PATTERN.findall(twin_text)
+    for cand in all_candidates:
+        if not _SENTINEL_PATTERN.fullmatch(cand):
+            errors.append(
+                f"{twin_path}: malformed redaction sentinel {cand!r} in text twin"
+            )
+
+    twin_matches: list[tuple[str, int]] = []
+    seen_twin_indices: set[int] = set()
+    for m in _SENTINEL_PATTERN.finditer(twin_text):
+        c_class, idx_str = m.group(1), m.group(2)
+        idx = int(idx_str)
+        if idx in seen_twin_indices:
+            errors.append(
+                f"{twin_path}: duplicate redaction sentinel for index {idx} in text twin"
+            )
+        seen_twin_indices.add(idx)
+        twin_matches.append((c_class, idx))
+
+    redaction_map: dict[int, dict[str, Any]] = {}
+    for r in redactions:
+        if isinstance(r, dict) and isinstance(r.get("index"), int):
+            redaction_map[r["index"]] = r
+
+    for c_class, idx in twin_matches:
+        if c_class not in REFUSED_CLASSES:
+            errors.append(
+                f"{twin_path}: redaction sentinel '[redacted:{c_class}:{idx}]' "
+                f"covered_class {c_class!r} is not a refused class"
+            )
+        if idx not in redaction_map:
+            errors.append(
+                f"{twin_path}: unmatched redaction sentinel '[redacted:{c_class}:{idx}]' "
+                "in twin has no matching entry in capture-metadata redactions"
+            )
+        else:
+            entry = redaction_map[idx]
+            if entry.get("covered_class") != c_class:
+                exp_class = entry.get("covered_class")
+                errors.append(
+                    f"{twin_path}: redaction sentinel '[redacted:{c_class}:{idx}]' "
+                    f"in twin has mismatched covered_class (expected {exp_class!r})"
+                )
+
+    for idx, entry in redaction_map.items():
+        expected_span = entry.get("twin_span") or f"[redacted:{entry.get('covered_class')}:{idx}]"
+        if idx not in seen_twin_indices or expected_span not in twin_text:
+            errors.append(
+                f"{twin_path}: capture-metadata redaction entry index {idx} "
+                f"({expected_span}) not found in text twin"
+            )
+
+    return errors
+
+
+def mask_matched_sentinels(text: str, redactions: list[dict[str, Any]]) -> str:
+    """Replace interior of matched redaction sentinels with spaces of equal length.
+
+    Preserves character offsets and line structure while preventing the masked span
+    from matching filesystem paths or private identifier patterns.
+    """
+    valid_spans: set[str] = set()
+    for r in redactions:
+        if isinstance(r, dict):
+            span = r.get("twin_span")
+            if isinstance(span, str):
+                valid_spans.add(span)
+            elif "covered_class" in r and "index" in r:
+                valid_spans.add(f"[redacted:{r['covered_class']}:{r['index']}]")
+
+    def _replace_sentinel(m: re.Match[str]) -> str:
+        sentinel = m.group(0)
+        if sentinel in valid_spans:
+            return " " * len(sentinel)
+        return sentinel
+
+    return _SENTINEL_PATTERN.sub(_replace_sentinel, text)
+
+
+def validate_image_read_confirmations(
+    png_name: str,
+    *,
+    twin_file: str | None,
+    twin_text: str | None,
+    redactions: list[dict[str, Any]],
+    confirmations: list[dict[str, Any]],
+    receipt_or_path: Path | str,
+) -> list[str]:
+    """Enforce Section 3 checkable read rules for a redacted image.
+
+    Checks:
+    1. A confirmation record must exist for this image ({image, read_by, read_at, ...}).
+    2. read_by must be in V061_ROLE_LABELS.
+    3. read_at must be an ISO 8601 timestamp.
+    4. nothing_else_masked must be True.
+    5. every redactions entry has a matching line in redactions_confirmed.
+    6. each confirmed covered_class must be in REFUSED_CLASSES (an allowed class is refused).
+    7. region_matches_twin_span must be True when twin is present, False when absent.
+    8. witnessed_element must appear in the twin outside every sentinel span.
+    """
+    errors: list[str] = []
+    matching_records = [
+        rec for rec in confirmations
+        if isinstance(rec, dict) and (
+            rec.get("image") in (png_name, Path(png_name).name)
+            or (
+                isinstance(rec.get("image"), str)
+                and Path(rec["image"]).name == Path(png_name).name
+            )
+        )
+    ]
+    if not redactions:
+        for rec in matching_records:
+            if rec.get("redactions_confirmed"):
+                errors.append(
+                    f"{receipt_or_path}: read confirmation for unredacted image '{png_name}' "
+                    "cannot declare redactions_confirmed"
+                )
+        return errors
+
+    if not matching_records:
+        errors.append(
+            f"{receipt_or_path}: redacted screenshot '{png_name}' "
+            "has no recorded read confirmation"
+        )
+        return errors
+
+    for rec in matching_records:
+        errors.extend(
+            validate_read_confirmation_record(rec, path=Path(str(receipt_or_path)))
+        )
+        read_by = rec.get("read_by")
+        if read_by not in V061_ROLE_LABELS:
+            errors.append(
+                f"{receipt_or_path}: read confirmation for '{png_name}' read_by {read_by!r} "
+                f"must be in V061_ROLE_LABELS ({', '.join(V061_ROLE_LABELS)})"
+            )
+        read_at = rec.get("read_at")
+        if not isinstance(read_at, str) or not read_at.strip():
+            errors.append(
+                f"{receipt_or_path}: read confirmation for '{png_name}' read_at "
+                "must be an ISO 8601 timestamp"
+            )
+        else:
+            try:
+                dt.datetime.fromisoformat(read_at)
+            except ValueError:
+                errors.append(
+                    f"{receipt_or_path}: read confirmation for '{png_name}' read_at "
+                    "must be an ISO 8601 timestamp"
+                )
+        if rec.get("nothing_else_masked") is not True:
+            errors.append(
+                f"{receipt_or_path}: read confirmation for '{png_name}' "
+                "nothing_else_masked must be true"
+            )
+
+        witnessed_element = rec.get("witnessed_element")
+        if not isinstance(witnessed_element, str) or not witnessed_element.strip():
+            errors.append(
+                f"{receipt_or_path}: read confirmation for '{png_name}' witnessed_element "
+                "must be a non-empty string"
+            )
+        elif twin_text is not None:
+            unmasked_twin = _SENTINEL_CANDIDATE_PATTERN.sub(
+                lambda m: " " * len(m.group(0)), twin_text
+            )
+            if witnessed_element not in unmasked_twin:
+                if witnessed_element in twin_text:
+                    errors.append(
+                        f"{receipt_or_path}: read confirmation for '{png_name}' witnessed_element "
+                        f"{witnessed_element!r} was found inside a mask "
+                        "(a mask may never cover what the case exists to witness)"
+                    )
+                else:
+                    errors.append(
+                        f"{receipt_or_path}: read confirmation for '{png_name}' witnessed_element "
+                        f"{witnessed_element!r} does not appear in text twin '{twin_file}'"
+                    )
+
+        rc_list = rec.get("redactions_confirmed")
+        if not isinstance(rc_list, list):
+            errors.append(
+                f"{receipt_or_path}: read confirmation for '{png_name}' "
+                "redactions_confirmed must be a list"
+            )
+            continue
+
+        confirmed_by_idx: dict[int, dict[str, Any]] = {}
+        for rc in rc_list:
+            if isinstance(rc, dict):
+                i = rc.get("index")
+                if isinstance(i, int):
+                    confirmed_by_idx[i] = rc
+                c_class = rc.get("covered_class")
+                if isinstance(c_class, str) and c_class not in REFUSED_CLASSES:
+                    errors.append(
+                        f"{receipt_or_path}: read confirmation for '{png_name}' index {i} "
+                        f"confirmed covered_class {c_class!r} is not a refused class"
+                    )
+                if twin_file is not None:
+                    if rc.get("region_matches_twin_span") is not True:
+                        errors.append(
+                            f"{receipt_or_path}: read confirmation for '{png_name}' index {i} "
+                            "region_matches_twin_span must be true"
+                        )
+                else:
+                    if rc.get("region_matches_twin_span") is not False:
+                        errors.append(
+                            f"{receipt_or_path}: read confirmation for '{png_name}' index {i} "
+                            "region_matches_twin_span must be false"
+                        )
+
+        for r_entry in redactions:
+            r_idx = r_entry.get("index")
+            if r_idx not in confirmed_by_idx:
+                errors.append(
+                    f"{receipt_or_path}: redacted screenshot '{png_name}' redaction span "
+                    f"index {r_idx} is unconfirmed (missing from redactions_confirmed)"
+                )
+            else:
+                conf_entry = confirmed_by_idx[r_idx]
+                if conf_entry.get("covered_class") != r_entry.get("covered_class"):
+                    errors.append(
+                        f"{receipt_or_path}: read confirmation for '{png_name}' index {r_idx} "
+                        f"covered_class {conf_entry.get('covered_class')!r} does not match "
+                        f"redaction {r_entry.get('covered_class')!r}"
+                    )
+
+        actual_indices = {r.get("index") for r in redactions if isinstance(r, dict)}
+        for c_i in confirmed_by_idx:
+            if c_i not in actual_indices:
+                errors.append(
+                    f"{receipt_or_path}: read confirmation for '{png_name}' confirms index {c_i} "
+                    "which does not exist in capture metadata redactions"
+                )
+
+    return errors
 
 
 RECEIPT_SCHEMA = RecordSchema(
@@ -557,6 +1168,11 @@ RECEIPT_SCHEMA = RecordSchema(
         "supersedes": ValueCategory.OBJECT,
         "screenshots_read_by": ValueCategory.CLOSED_VOCABULARY,
         "screenshots_read_at": ValueCategory.TIMESTAMP,
+        "twin_path": ValueCategory.PATH,
+        "twin_digest": ValueCategory.DIGEST,
+        "twin_sha256": ValueCategory.DIGEST,
+        "read_confirmations": ValueCategory.LIST,
+        "redaction_review": ValueCategory.CLOSED_VOCABULARY,
     },
     nested_schemas={
         "install": {
@@ -585,10 +1201,15 @@ RECEIPT_SCHEMA = RecordSchema(
             "wire": ValueCategory.OBJECT,
             "screenshot_path": ValueCategory.PATH,
             "screenshot_sha256": ValueCategory.DIGEST,
+            "twin_path": ValueCategory.PATH,
+            "twin_digest": ValueCategory.DIGEST,
+            "twin_sha256": ValueCategory.DIGEST,
             "pty_result_path": ValueCategory.PATH,
             "pty_result_sha256": ValueCategory.DIGEST,
             "source": ValueCategory.STRING,
             "observation": ValueCategory.STRING,
+            "read_confirmations": ValueCategory.LIST,
+            "redaction_review": ValueCategory.CLOSED_VOCABULARY,
         },
         "supersedes": {
             "receipt_sha256": ValueCategory.DIGEST,
@@ -642,11 +1263,40 @@ RECEIPT_SCHEMA = RecordSchema(
         "install.sha256": "wheel",
         "harness.commit": "git-commit",
         "evidence.screenshot_sha256": "rendered-frame",
+        "evidence.twin_digest": "text-twin",
+        "evidence.twin_sha256": "text-twin",
+        "twin_digest": "text-twin",
+        "twin_sha256": "text-twin",
         "evidence.pty_result_sha256": "step-payload",
         "evidence.files": "evidence-file",
         "files": "evidence-file",
         "supersedes.receipt_sha256": "receipt",
         "supersedes.candidate_commit_sha": "git-commit",
+    },
+    vocabularies={
+        "schema_version": frozenset({
+            V061_ITEM_SCHEMA,
+            "talaria-v0.5.0-receipt-v1",
+            "talaria-v0.6.0-receipt-v1",
+        }),
+        "release": frozenset({V061_RELEASE, "0.5.0", "0.6.0"}),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 22)),
+        "tester": frozenset(V061_ROLE_LABELS),
+        "verdict": frozenset(VERDICTS),
+        "install.kind": frozenset({"source-checkout", "wheel"}),
+        "install.version_reported": frozenset({V061_RELEASE, "0.5.0", "0.6.0"}),
+        "harness.kind": frozenset({"repository-tooling", "scratch-capture", "manual"}),
+        "evidence.screenshots_read_by": frozenset(V061_ROLE_LABELS),
+        "screenshots_read_by": frozenset(V061_ROLE_LABELS),
+        "evidence.redaction_review": frozenset({"passed", "withheld", "pending"}),
+        "redaction_review": frozenset({"passed", "withheld", "pending"}),
+        "narrative.kind": frozenset({
+            "prose",
+            "manual",
+            "reported-live-matrix",
+            "step-sequence",
+            "reported-live-dispatch",
+        }),
     },
 )
 
@@ -680,6 +1330,16 @@ INSTALL_RECEIPT_SCHEMA = RecordSchema(
         "candidate.wheel_sha256": "wheel",
         "install.sha256": "wheel",
     },
+    vocabularies={
+        "schema_version": frozenset({
+            V050_INSTALL_SCHEMA,
+            "talaria-v0.6.0-install-v1",
+            V061_INSTALL_SCHEMA,
+        }),
+        "tester": frozenset(V061_ROLE_LABELS) | frozenset(TESTERS),
+        "candidate.version": frozenset({V061_RELEASE, "0.6.0", "0.5.0"}),
+        "install.version_reported": frozenset({V061_RELEASE, "0.6.0", "0.5.0"}),
+    },
 )
 
 CAPTURE_METADATA_SCHEMA = RecordSchema(
@@ -693,25 +1353,48 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "height": ValueCategory.COUNT,
         "dpi": ValueCategory.COUNT,
         "scale": ValueCategory.COUNT,
-        "frame": ValueCategory.COUNT,
+        "frame": ValueCategory.FRAME_LABEL,
         "frame_digest": ValueCategory.DIGEST,
         "frame_digests": ValueCategory.DIGEST,
         "digests": ValueCategory.DIGEST,
         "sha256": ValueCategory.DIGEST,
         "twin_digest": ValueCategory.DIGEST,
+        "twin_sha256": ValueCategory.DIGEST,
+        "twin_path": ValueCategory.PATH,
         "recorded_at": ValueCategory.TIMESTAMP,
         "captured_at": ValueCategory.TIMESTAMP,
         "timestamp": ValueCategory.TIMESTAMP,
         "session_id": ValueCategory.GATEWAY_SESSION_ID,
         "format": ValueCategory.CLOSED_VOCABULARY,
         "schema_version": ValueCategory.CLOSED_VOCABULARY,
-        "title": ValueCategory.CLOSED_VOCABULARY,
+        "title": ValueCategory.STRING,
         "geometry": ValueCategory.OBJECT,
         "terminal": ValueCategory.OBJECT,
         "source_digest_sha256": ValueCategory.DIGEST,
         "source": ValueCategory.STRING,
         "view_id": ValueCategory.STRING,
         "capture_kind": ValueCategory.CLOSED_VOCABULARY,
+        "candidate": ValueCategory.OBJECT,
+        "case": ValueCategory.CLOSED_VOCABULARY,
+        "record_type": ValueCategory.CLOSED_VOCABULARY,
+        "schema": ValueCategory.CLOSED_VOCABULARY,
+        "purpose": ValueCategory.CLOSED_VOCABULARY,
+        "session": ValueCategory.OBJECT,
+        "first_ansi_offset": ValueCategory.COUNT,
+        "final_ansi_offset": ValueCategory.COUNT,
+        "frame_sha256": ValueCategory.DIGEST,
+        "first_frame_sha256": ValueCategory.DIGEST,
+        "png_sha256": ValueCategory.DIGEST,
+        "gateway": ValueCategory.URL,
+        "event_log": ValueCategory.PATH,
+        "tester": ValueCategory.CLOSED_VOCABULARY,
+        "scope": ValueCategory.STRING,
+        "settling": ValueCategory.OBJECT,
+        "self_check": ValueCategory.OBJECT,
+        "text_twin": ValueCategory.OBJECT,
+        "diagnostics_cells": ValueCategory.LIST,
+        "diagnostics_crop_error": ValueCategory.STRING,
+        "redactions": ValueCategory.LIST,
     },
     nested_schemas={
         "geometry": {
@@ -730,6 +1413,41 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "cell_width": ValueCategory.COUNT,
             "cell_height": ValueCategory.COUNT,
         },
+        "candidate": {
+            "commit_sha": ValueCategory.DIGEST,
+            "entry_point": ValueCategory.PATH,
+            "source_module": ValueCategory.PATH,
+            "binary_sha256": ValueCategory.DIGEST,
+        },
+        "session": {
+            "durable_id": ValueCategory.GATEWAY_SESSION_ID,
+            "runtime_id": ValueCategory.GATEWAY_SESSION_ID,
+            "request_id": ValueCategory.STRING,
+            "reply_seq": ValueCategory.COUNT,
+            "profile": ValueCategory.CLOSED_VOCABULARY,
+            "title": ValueCategory.STRING,
+            "mode": ValueCategory.STRING,
+        },
+        "settling": {
+            "quiet_seconds_per_window": ValueCategory.COUNT,
+            "timeout_seconds": ValueCategory.COUNT,
+            "windows": ValueCategory.COUNT,
+        },
+        "self_check": {
+            "algorithm": ValueCategory.CLOSED_VOCABULARY,
+            "expected_rejection": ValueCategory.STRING,
+            "stable_control": ValueCategory.CLOSED_VOCABULARY,
+            "status": ValueCategory.CLOSED_VOCABULARY,
+        },
+        "text_twin": {
+            "file": ValueCategory.PATH,
+            "path": ValueCategory.PATH,
+            "sha256": ValueCategory.DIGEST,
+            "twin_digest": ValueCategory.DIGEST,
+            "digest": ValueCategory.DIGEST,
+            "frame_sha256": ValueCategory.DIGEST,
+            "frame_digest": ValueCategory.DIGEST,
+        },
     },
     digest_preimages={
         "frame_digest": "rendered-frame",
@@ -737,7 +1455,93 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "digests": "rendered-frame",
         "sha256": "source-capture",
         "twin_digest": "text-twin",
+        "twin_sha256": "text-twin",
         "source_digest_sha256": "source-capture",
+        "frame_sha256": "rendered-frame",
+        "first_frame_sha256": "rendered-frame",
+        "png_sha256": "source-capture",
+        "candidate.commit_sha": "git-commit",
+        "candidate.binary_sha256": "artifact",
+        "commit_sha": "git-commit",
+        "binary_sha256": "artifact",
+        "text_twin.sha256": "text-twin",
+        "text_twin.twin_digest": "text-twin",
+        "text_twin.digest": "text-twin",
+        "text_twin.frame_sha256": "rendered-frame",
+        "text_twin.frame_digest": "rendered-frame",
+    },
+    vocabularies={
+        "format": frozenset({"ansi", "text", "png", "json", "jsonl", "svg", "binary"}),
+        "schema_version": frozenset({
+            "talaria-v0.6.1-capture-v1",
+            "talaria-capture-metadata-v1",
+            "talaria-v0.6.0-capture-v1",
+            "talaria-v0.5.0-capture-v1",
+        }),
+        "capture_kind": frozenset({
+            "screenshot",
+            "terminal-frame",
+            "wire-slice",
+            "pty-result",
+            "probe",
+            "trace",
+        }),
+        "case": frozenset(f"live-{i:02d}" for i in range(1, 22)) | frozenset({
+            "probe-1",
+            "probe-2",
+            "matrix",
+            "harness-self-check",
+        }),
+        "record_type": frozenset({
+            "v061-item",
+            "v060-item",
+            "v050-item",
+            "receipt",
+            "capture-metadata",
+            "pixel-measurements",
+        }),
+        "schema": frozenset({
+            "talaria-v0.6.1-capture-v1",
+            "talaria-capture-metadata-v1",
+            "talaria-v0.6.0-capture-v1",
+            "talaria-v0.5.0-capture-v1",
+        }),
+        "purpose": frozenset({
+            "acceptance",
+            "workflow-demonstration",
+            "visual-inspection",
+            "regression-check",
+            "timing-verification",
+            "probe",
+            "self-check",
+        }),
+        "tester": frozenset(V061_ROLE_LABELS),
+        "session.profile": frozenset({"default", "talaria", "hermes", "minimal", "debug"}),
+        "self_check.algorithm": frozenset({
+            "sha256",
+            "md5",
+            "exact-bytes",
+            "hash",
+            "cell-frame-equality-v1",
+            "cell-frame-equality",
+        }),
+        "self_check.stable_control": frozenset({
+            "ok",
+            "passed",
+            "pass",
+            "stable",
+            "verified",
+            "none",
+        }),
+        "self_check.status": frozenset({
+            "passed",
+            "pass",
+            "failed",
+            "refused",
+            "skipped",
+            "ok",
+        }),
+        "covered_class": REFUSED_CLASSES,
     },
 )
 
@@ -767,6 +1571,13 @@ PIXEL_MEASUREMENTS_SCHEMA = RecordSchema(
     },
     digest_preimages={
         "sha256": "rendered-frame",
+    },
+    vocabularies={
+        "schema_version": frozenset({
+            "talaria-v0.6.1-measurements-v1",
+            "talaria-pixel-measurements-v1",
+            "talaria-v0.6.0-measurements-v1",
+        }),
     },
 )
 
@@ -817,11 +1628,23 @@ ATTESTATION_ITEM_SCHEMA = RecordSchema(
         "notes": ValueCategory.STRING,
         "checklist_item": ValueCategory.CLOSED_VOCABULARY,
         "commit": ValueCategory.DIGEST,
+        "read_confirmations": ValueCategory.LIST,
+        "read_confirmation": ValueCategory.OBJECT,
+        "redaction_review": ValueCategory.CLOSED_VOCABULARY,
     },
     nullable_keys=frozenset({"harness_commit", "harness_identity"}),
     digest_preimages={
         "harness_commit": "git-commit",
         "commit": "git-commit",
+    },
+    vocabularies={
+        "tester": frozenset(V061_ROLE_LABELS),
+        "capturing_role": frozenset(V061_ROLE_LABELS),
+        "install_kind": frozenset({"source-checkout", "wheel"}),
+        "harness_kind": frozenset({"repository-tooling", "scratch-capture", "manual"}),
+        "screenshots_read_by": frozenset(V061_ROLE_LABELS),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 22)),
+        "redaction_review": frozenset({"passed", "withheld", "pending"}),
     },
 )
 
@@ -866,6 +1689,10 @@ class SchemaRegistry:
                 return INSTALL_RECEIPT_SCHEMA
             return RECEIPT_SCHEMA
         if isinstance(doc, dict):
+            if "redactions_confirmed" in doc and "witnessed_element" in doc:
+                return READ_CONFIRMATION_RECORD_SCHEMA
+            if "covered_class" in doc and "twin_span" in doc and "region" in doc:
+                return REDACTION_ITEM_SCHEMA
             if (
                 doc.get("schema_version") == V061_INSTALL_SCHEMA
                 or ("candidate" in doc and "install" in doc and "tester" in doc)
@@ -873,7 +1700,9 @@ class SchemaRegistry:
                 return INSTALL_RECEIPT_SCHEMA
             if "checklist_item" in doc and "verdict" in doc:
                 return RECEIPT_SCHEMA
-            if any(k in doc for k in ("frame_digest", "frame_digests", "twin_digest")) or (
+            if any(
+                k in doc for k in ("frame_digest", "frame_digests", "twin_digest", "redactions")
+            ) or (
                 {"columns", "rows", "cell_width"}.issubset(doc.keys())
                 and not ("measurements" in path.name.lower() or "measurements" in doc)
             ):
@@ -1412,6 +2241,172 @@ def _parse_png_text_chunk(chunk_type: bytes, chunk_data: bytes) -> tuple[str, by
     return "", b"", f"unrecognized text chunk type {chunk_type!r}"
 
 
+def _extract_png_capture_metadata(data: bytes) -> dict[str, Any] | None:
+    """Extract and parse the talaria-evidence JSON chunk from PNG data if present."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    offset = 8
+    while offset + 12 <= len(data):
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_end = offset + 12 + length
+        if chunk_end > len(data):
+            break
+        chunk_data = data[offset + 8 : offset + 8 + length]
+        offset = chunk_end
+        if chunk_type in _TEXT_CHUNK_TYPES:
+            keyword, text_bytes, parse_err = _parse_png_text_chunk(chunk_type, chunk_data)
+            if parse_err or keyword != "talaria-evidence":
+                continue
+            try:
+                doc = json.loads(text_bytes.decode("utf-8"))
+                if isinstance(doc, dict):
+                    return doc
+            except Exception:
+                continue
+    return None
+
+
+def _extract_twin_digest_from_doc(doc: dict[str, Any]) -> str | None:
+    digest = (
+        doc.get("twin_digest")
+        or doc.get("twin_sha256")
+        or (
+            doc.get("text_twin", {}).get("sha256")
+            if isinstance(doc.get("text_twin"), dict)
+            else None
+        )
+        or (
+            doc.get("text_twin", {}).get("twin_digest")
+            if isinstance(doc.get("text_twin"), dict)
+            else None
+        )
+    )
+    if isinstance(digest, str) and _V061_DIGEST.fullmatch(digest):
+        return digest
+    return None
+
+
+def _find_capture_time_twin_digest(
+    png_path: Path,
+    *,
+    receipt_dir: Path,
+    listed: dict[Path, str],
+) -> str | None:
+    """Find capture-time twin_digest for a screenshot PNG.
+
+    Checks:
+    1. Screenshot PNG's talaria-evidence chunk.
+    2. Per-screenshot capture metadata sidecars (<stem>.json, <stem>.metadata.json).
+    Returns the 64-character hex digest if found, or None.
+    """
+    stem = png_path.stem
+    # 1. Check PNG talaria-evidence chunk
+    png_file = receipt_dir / png_path
+    if png_file.is_file():
+        try:
+            doc = _extract_png_capture_metadata(png_file.read_bytes())
+            if doc:
+                digest = _extract_twin_digest_from_doc(doc)
+                if digest:
+                    return digest
+        except Exception:
+            pass
+
+    # 2. Check per-screenshot capture metadata sidecars
+    per_screenshot_sidecars = [
+        png_path.with_suffix(".json"),
+        png_path.parent / f"{stem}.metadata.json",
+    ]
+    for cand in per_screenshot_sidecars:
+        if cand in listed:
+            cand_file = receipt_dir / cand
+            if cand_file.is_file():
+                try:
+                    doc = json.loads(cand_file.read_text(encoding="utf-8"))
+                    if isinstance(doc, dict):
+                        digest = _extract_twin_digest_from_doc(doc)
+                        if digest:
+                            return digest
+                except Exception:
+                    pass
+
+    return None
+
+
+def _find_redactions_for_twin(twin_path: Path) -> list[dict[str, Any]]:
+    """Find capture-metadata redactions associated with a text twin file."""
+    stem = twin_path.stem
+    clean_stem = stem.replace(".screen", "")
+    sidecars = [
+        twin_path.with_suffix(".json"),
+        twin_path.parent / f"{stem}.metadata.json",
+        twin_path.parent / f"{clean_stem}.json",
+    ]
+    for cand in sidecars:
+        if cand.is_file():
+            try:
+                doc = json.loads(cand.read_text(encoding="utf-8"))
+                if isinstance(doc, dict) and isinstance(doc.get("redactions"), list):
+                    return [r for r in doc["redactions"] if isinstance(r, dict)]
+            except Exception:
+                pass
+
+    png_sidecars = [
+        twin_path.with_suffix(".png"),
+        twin_path.parent / f"{clean_stem}.png",
+    ]
+    for png_cand in png_sidecars:
+        if png_cand.is_file():
+            try:
+                doc = _extract_png_capture_metadata(png_cand.read_bytes())
+                if isinstance(doc, dict) and isinstance(doc.get("redactions"), list):
+                    return [r for r in doc["redactions"] if isinstance(r, dict)]
+            except Exception:
+                pass
+
+    return []
+
+
+def _find_redactions_for_image(
+    png_path: Path,
+    *,
+    receipt_dir: Path,
+    listed: dict[Path, str],
+) -> list[dict[str, Any]]:
+    """Find capture-time redactions list for a screenshot PNG."""
+    stem = png_path.stem
+    clean_stem = stem.replace(".screen", "")
+    # 1. Check PNG talaria-evidence chunk
+    png_file = receipt_dir / png_path
+    if png_file.is_file():
+        try:
+            doc = _extract_png_capture_metadata(png_file.read_bytes())
+            if doc and isinstance(doc.get("redactions"), list):
+                return [r for r in doc["redactions"] if isinstance(r, dict)]
+        except Exception:
+            pass
+
+    # 2. Check per-screenshot capture metadata sidecars
+    per_screenshot_sidecars = [
+        png_path.with_suffix(".json"),
+        png_path.parent / f"{stem}.metadata.json",
+        png_path.parent / f"{clean_stem}.json",
+    ]
+    for cand in per_screenshot_sidecars:
+        if cand in listed:
+            cand_file = receipt_dir / cand
+            if cand_file.is_file():
+                try:
+                    doc = json.loads(cand_file.read_text(encoding="utf-8"))
+                    if isinstance(doc, dict) and isinstance(doc.get("redactions"), list):
+                        return [r for r in doc["redactions"] if isinstance(r, dict)]
+                except Exception:
+                    pass
+
+    return []
+
+
 def _png_chunk_errors(path: Path, data: bytes) -> list[str]:
     """Parse PNG chunks, validate chunk types and text payloads against capture-metadata schema."""
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -1760,6 +2755,12 @@ def evidence_file_privacy_errors(path: Path, repo_root: Path = _REPO_ROOT) -> li
             return errors
 
         # Free text (e.g. terminal-text, notes outside evidence, or text probes)
+        redactions = _find_redactions_for_twin(path)
+        if redactions or _SENTINEL_CANDIDATE_PATTERN.search(text):
+            errors.extend(validate_twin_redactions(path, text, redactions))
+            text = mask_matched_sentinels(text, redactions)
+            data = text.encode("utf-8")
+
         for p in find_absolute_paths_in_text(text):
             errors.append(f"{path}: contains absolute filesystem path {p!r}")
         for pattern, label in _PRIVATE_PATTERNS:
@@ -2371,17 +3372,64 @@ def _validate_v061_receipt(
                     f"evidence file beside the receipt is not listed in evidence.files: {missing}"
                 )
             png_names = [name for name in listed if name.suffix.lower() == ".png"]
+            any_image_redacted = False
+            has_redaction_defects = False
             for png_path in png_names:
                 stem = png_path.stem
-                has_twin = any(
-                    candidate in listed
+                twin_candidates = [
+                    candidate
                     for candidate in (
                         png_path.with_suffix(".txt"),
                         png_path.with_suffix(".ansi"),
                         png_path.parent / f"{stem}.screen.txt",
                     )
-                )
-                if not has_twin:
+                    if candidate in listed
+                ]
+                if not twin_candidates and "twin_path" in evidence:
+                    explicit_twin = Path(evidence["twin_path"])
+                    if explicit_twin in listed:
+                        twin_candidates.append(explicit_twin)
+
+                twin_file: Path | None = None
+                twin_text: str | None = None
+                if twin_candidates:
+                    twin_file = twin_candidates[0]
+                    twin_target = receipt_dir / twin_file
+                    if twin_target.is_file():
+                        twin_text = twin_target.read_text(encoding="utf-8", errors="replace")
+                    twin_digest = listed[twin_file]
+
+                    declared_twin = evidence.get("twin_digest") or receipt.get("twin_digest")
+                    if declared_twin and declared_twin != twin_digest:
+                        errors.append(
+                            f"screenshot '{png_path}' text twin '{twin_file}' digest in "
+                            f"evidence.files ({twin_digest}) does not match declared "
+                            f"twin_digest ({declared_twin})"
+                        )
+                    declared_sha = evidence.get("twin_sha256") or receipt.get("twin_sha256")
+                    if declared_sha and declared_sha != twin_digest:
+                        errors.append(
+                            f"screenshot '{png_path}' text twin '{twin_file}' digest in "
+                            f"evidence.files ({twin_digest}) does not match declared "
+                            f"twin_sha256 ({declared_sha})"
+                        )
+
+                    capture_twin_digest = _find_capture_time_twin_digest(
+                        png_path, receipt_dir=receipt_dir, listed=listed
+                    )
+                    if capture_twin_digest is not None:
+                        if capture_twin_digest != twin_digest:
+                            errors.append(
+                                f"screenshot '{png_path}' text twin '{twin_file}' digest "
+                                f"({twin_digest}) does not match capture-time twin_digest "
+                                f"({capture_twin_digest})"
+                            )
+                    else:
+                        errors.append(
+                            f"screenshot '{png_path}' text twin '{twin_file}' is not bound by "
+                            "capture-time twin_digest (twin was not produced at capture time)"
+                        )
+                else:
                     read_by = receipt.get("screenshots_read_by") or evidence.get(
                         "screenshots_read_by"
                     )
@@ -2399,6 +3447,75 @@ def _validate_v061_receipt(
                             "(screenshots_read_by and screenshots_read_at in receipt)"
                         )
                         break
+                    if read_by not in V061_ROLE_LABELS:
+                        errors.append(
+                            f"screenshots_read_by must be a closed-set role label "
+                            f"({', '.join(V061_ROLE_LABELS[:-1])}, or {V061_ROLE_LABELS[-1]})"
+                        )
+                        break
+
+                redactions = _find_redactions_for_image(
+                    png_path, receipt_dir=receipt_dir, listed=listed
+                )
+                if redactions:
+                    any_image_redacted = True
+                    r_errs = validate_redactions_list(redactions, path=receipt_dir / png_path)
+                    if r_errs:
+                        has_redaction_defects = True
+                        errors.extend(r_errs)
+                    if twin_file is not None and twin_text is not None:
+                        tw_errs = validate_twin_redactions(
+                            receipt_dir / twin_file, twin_text, redactions
+                        )
+                        if tw_errs:
+                            has_redaction_defects = True
+                            errors.extend(tw_errs)
+
+                confirmations = (
+                    evidence.get("read_confirmations")
+                    or receipt.get("read_confirmations")
+                    or []
+                )
+                if not isinstance(confirmations, list):
+                    errors.append(f"{receipt_path}: read_confirmations must be a list")
+                    has_redaction_defects = True
+                else:
+                    c_errs = validate_image_read_confirmations(
+                        png_path.name,
+                        twin_file=str(twin_file) if twin_file is not None else None,
+                        twin_text=twin_text,
+                        redactions=redactions,
+                        confirmations=confirmations,
+                        receipt_or_path=receipt_path,
+                    )
+                    if c_errs:
+                        has_redaction_defects = True
+                        errors.extend(c_errs)
+
+            if any_image_redacted:
+                redaction_review = evidence.get("redaction_review") or receipt.get(
+                    "redaction_review"
+                )
+                if not redaction_review:
+                    errors.append(
+                        f"{receipt_path}: evidence has redacted images "
+                        "but no redaction_review field"
+                    )
+                elif redaction_review not in ("passed", "withheld", "pending"):
+                    errors.append(
+                        f"{receipt_path}: evidence.redaction_review must be passed, "
+                        f"withheld, or pending ({redaction_review!r})"
+                    )
+                elif receipt.get("verdict") == "pass" and redaction_review != "passed":
+                    errors.append(
+                        f"{receipt_path}: verdict is pass but evidence.redaction_review "
+                        f"is {redaction_review!r} (must be passed)"
+                    )
+                elif redaction_review == "passed" and has_redaction_defects:
+                    errors.append(
+                        f"{receipt_path}: evidence.redaction_review cannot be 'passed' "
+                        "while redaction defects exist"
+                    )
     except HarnessError as exc:
         errors.append(str(exc))
     if "supersedes" in receipt and receipt["supersedes"] is not None:
