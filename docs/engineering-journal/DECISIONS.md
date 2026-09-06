@@ -2,6 +2,42 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-09-05
+
+### The v0.6.1 acceptance lineage rides the version-agnostic workflow, not a parallel one
+
+**Decision.** Receipt routing in `scripts/acceptance/v050_receipt.py` names
+three shapes — v0.5.0, v0.6.0, v0.6.1 — and fails loudly on any unrecognized
+`schema_version` instead of falling through to the oldest rules; the fallthrough
+was the release-blocking defect (the run's thirteen filed receipts all failed on
+v0.5.0 fields). The v0.6.1 generator (`scripts/acceptance/v061_evidence.py`)
+imports the v0.6.0 install probe, digests, and exclusive writes rather than
+copying them, refuses to record before the version bump, requires a
+human-supplied `applies_to_candidate` sentence for every receipt filed on an
+earlier head, and takes the expected receipt count as a parameter. The gate
+identifier is `v0-6-1-daily-driver`, declared once in its own analysis document.
+
+**Rationale.** The release workflow is version-agnostic: it resolves the
+manifest, gate, and evidence root from the tag. A lineage that hooks into that
+path needs no workflow edits at release time and cannot drift from it. The
+`applies_to_candidate` attestation replaces the v0.5.0 harness-bytes-identity
+check for live receipts, because a live test rides the frozen head of the wave
+it ran on and the honest statement is a sentence naming what has not changed —
+enforced by the verifier, inspected by the reviewer. The no-waiver READY rule
+(pass 21, fail 0, blocked 0, reserved 0) is machine-enforced at both record and
+verify time; the tester field requires a bare role label because session and
+pane names are number-suffixed in this run, making a digit a reliable tell.
+
+**Rejected alternatives.** Conforming the filed receipts to the v0.6.0 shape
+(false release and tester values). A parallel workflow per release (drift).
+Re-running the generator over tester receipts (they are live products, not
+transcriptions). Widening the v0.5.0 harness-identity check to the v0.6.1
+heads (the attestation carries more information than a diff can).
+
+**Revisit when.** A v0.7.0 lineage lands (add the branch beside the others and
+retire nothing), or a live case legitimately needs a waiver path — which should
+be an explicit contract change, not a tooling edit.
+
 ## 2026-09-04
 
 ### v0.5.0 receipt re-verification is retired (superseded)

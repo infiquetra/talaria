@@ -209,3 +209,52 @@ This check drives the harness's small echo terminal. It does not run Talaria acc
 uv run pytest scripts/acceptance/test_v050_harness.py \
   tests/docs/test_v050_acceptance_records.py -q
 ```
+
+## The v0.6.1 acceptance lineage (issue #150's C12-T ruling)
+
+The v0.6.1 run files one live receipt per live test, and the machine checks each
+receipt as it is filed — never first at tag time, when a shape defect would
+force live re-capture on the final candidate. Two pieces carry it, both beside
+the frozen v0.5.0 and v0.6.0 flows rather than replacing them:
+
+- **The verifier branch** (`scripts/acceptance/v050_receipt.py`). Receipts
+  declaring `talaria-v0.6.1-receipt-v1` are judged by the v0.6.1 contract: a
+  `live-NN` checklist item unique across the run, a role-label tester (a bare
+  word — session and pane names are number-suffixed, so a digit reads as one),
+  a full 40-character `harness_commit`, and an evidence inventory binding every
+  file beside the receipt by SHA-256, with no file listed that is absent and no
+  file present that is unlisted. An unrecognized `schema_version` now fails
+  loudly as unknown; the fallthrough that judged new shapes by the v0.5.0 rules
+  was the release-blocking defect this branch removed. Check a receipt as it is
+  filed:
+
+  ```bash
+  uv run python -m scripts.acceptance.v050_receipt validate \
+    docs/acceptance/v0.6.1/evidence/live-NN/receipt.json
+  ```
+
+- **The generator** (`scripts/acceptance/v061_evidence.py`). It imports the
+  v0.6.0 install probe, digests, and exclusive writes; installs the candidate
+  wheel into two fresh scratch environments (`probe-1`, `probe-2`); validates
+  every filed receipt; and writes the manifest, `results.md`, and `notes.md`.
+  It refuses three mistakes by construction: recording before the version bump
+  (the manifest binds release-relevant bytes, so the package must already
+  report 0.6.1), recording a receipt from an earlier head without a
+  human-supplied `applies_to_candidate` sentence (`--applies-map`), and
+  recording anything less than every expected receipt passing
+  (`--expected-receipts`, a parameter, never a default). Run it only at C12-R's
+  record step, after the bump:
+
+  ```bash
+  uv run python -m scripts.acceptance.v061_evidence record \
+    --candidate-commit <40-char commit> --wheel <wheel path> \
+    --expected-receipts 21 --applies-map <map path>
+  ```
+
+The manifest (`talaria-v0.6.1-artifact-manifest-v1`, schema copy beside it)
+declares gate `v0-6-1-daily-driver`, carries each receipt's digest, harness
+commit, and attestation, and the release workflow's existing version-agnostic
+`verify-run` step resolves it from the tag. The readiness verdict itself lives
+in `docs/analysis/2026-09-05-v0-6-1-daily-driver-verdict.md`, flips to READY
+only when all twenty-one live rows clear, and has no waiver path: a blocked or
+reserved case keeps the gate NOT READY.
