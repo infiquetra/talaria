@@ -2,6 +2,30 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-06
+
+### Every attach route must account for the text it leaves in the composer (C9/#147)
+
+**Evidence.** The first cut of the `/attach` flow staged the bytes, placed the `@file:` chip — and
+left the issued `/attach <path>` line in the composer beside it, so the next submit would have
+sent the command text as prose with the reference. The drop route had the mirror defect from the
+other direction: a dropped path arrives as pasted text, so inserting it literally (the composer's
+floor for every paste) would stage the bytes and leave the path as prose beside them. Both are
+the same defect: the composer submits what it holds, so a route that puts something there owes
+an account of what remains. The repair is `_consume_issued_line` (`talaria/ui/app.py`): the
+issued command line is swapped for its outcome (chip for files, nothing for images), and a drop
+diverts before the literal insert, confirmed by `test_attach_stages_a_file_chips_the_composer_and_records`
+asserting the composer holds exactly `@file:notes.txt`.
+
+**Mechanism.** A terminal drop is indistinguishable from a paste at the framework level, so the
+divert rule is conservative by necessity — whole body, one line, names an existing file — and
+the confirm dialog ahead of every stage is the safety net for the pasted sentence that happens
+to equal a filename. Cancelling stages nothing, which is what makes a false divert cheap.
+
+**Generalizable rule.** When a flow both writes the composer and submits from it, test the
+composer's exact contents after the flow, not just the side effect: the side effect passing
+while the command line sits beside the chip is a green suite over a broken submit.
+
 ## 2026-09-05
 
 ### Substring assertions on an un-clipped model string are blind to what a width-bounded panel renders

@@ -215,11 +215,27 @@ aliases where the desktop delivers them.
 | `End` or `F5` | Follow the newest transcript line | live and replay |
 | `/models`; `F11` from every focus; `F6` only outside composer focus | Open models | live; gateway-changing actions are refused in replay |
 | `/profiles`; `F12` from every focus; `F7` only outside composer focus | Open profiles | live; gateway-changing actions are refused in replay |
+| `/attach [<path>]`, or drop a path onto the terminal | Stage a file for the agent | live; refused in replay |
 | `F8` | Pause/resume playback | replay only |
 | `F9` / `F10` | Slower / faster playback | replay only |
 
 `F1` has no Talaria action. The shipped help bar reports `F1` and `F2` as eaten on macOS before the
 application receives them; `Ctrl+G` is the primary subagent-row binding for that reason.
+
+## Attachments
+
+Two routes stage a file for the agent: `/attach <path>`, and dropping a path onto the terminal
+(a paste whose whole body is one existing file path diverts to attach instead of inserting).
+Accepted types are text files, code files, and images. Portable-document format is excluded:
+`/attach` on a PDF is refused before anything is sent.
+
+Nothing stages without a confirm dialog first. A staged text or code file appears as an
+`@file:` token in the composer — Talaria places that token itself, because the gateway does
+not inject it, and the submitted message carries it. Staged images place no token; the submit
+drains them into the turn on its own. Bare `/attach` offers the most recently staged
+attachment for removal (files unchip locally, images detach gateway-side). Every success
+notice says staged, never delivered: the reference proves the agent *can* read the content,
+not that it has.
 
 The inspector toggle and the turn-cancel chord are configurable because no single default
 survives every terminal multiplexer: see the `keys` table in [Configuration](configuration.md).

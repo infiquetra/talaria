@@ -1,11 +1,11 @@
 """Attachment records: what is staged to send, route-independently (C9).
 
 An attachment is a file or image the operator staged for the agent, however
-it arrived — a typed path, a dropped path, or any route the operator later
-selects (D6). This module deliberately records no route: the transport
-contract (I6) is identical for every route once a path exists, and naming
-one route here would hard-code D6's undecided choice into the substrate
-every future route has to carry.
+it arrived — D6's two routes are a typed ``/attach`` path and a dropped path.
+This module deliberately records no route: the transport contract (I6) is
+identical for every route once a path exists, and naming one route here
+would hard-code the input surface into the substrate every future route has
+to carry.
 
 State is a small explicit lifecycle. ``prepared`` means read and
 classified locally, nothing sent. ``attached`` means the gateway confirmed
@@ -16,9 +16,9 @@ that the agent read anything.
 
 :class:`AttachmentLedger` is the whole store: an immutable tuple of
 records with add/discard/replace semantics. It lives here rather than in
-:mod:`talaria.domain.state` because the composer surface that will own it
-lands after D6, and the substrate must be usable — and testable — before
-that surface exists.
+:mod:`talaria.domain.state` because the record lifecycle is closed over
+these three transitions and nothing else — the session state holds one
+ledger per focused session and advances it only through them.
 
 Nothing here reads a clock, opens a file, or touches a socket. Pure data
 and pure transitions, standard library only (ADR-0002).
@@ -39,9 +39,8 @@ __all__ = [
 ]
 
 #: What the gateway stages: a non-image file (``file.attach``) or an image
-#: (``image.attach_bytes``). PDFs are not named here: whether a PDF travels
-#: ``file.attach`` or the poppler-backed ``pdf.attach`` is a type-routing
-#: decision D6 has not made, and this module does not pre-empt it.
+#: (``image.attach_bytes``). Portable-document format is not named here: D6
+#: excludes it from v0.6.1, so no record ever carries a PDF kind.
 AttachmentKind = Literal["file", "image"]
 
 #: The record lifecycle. No ``sending`` state: the bytes-upload calls are
@@ -78,6 +77,13 @@ class AttachmentRecord:
     size_bytes: int | None = None
     #: The last outcome detail, human-readable. Empty until something happens.
     detail: str = ""
+    #: The session the bytes were staged for, when known. The gateway stages
+    #: into a per-session workspace, so a record belongs to exactly one
+    #: session; ``None`` means the record predates session scoping (or the
+    #: caller did not know it) and it is shown regardless of focus, the same
+    #: rule :func:`~talaria.domain.projection._focused_prompts` applies to
+    #: session-less prompts.
+    session_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.attachment_id:
