@@ -7,7 +7,7 @@
           "sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
         }
       },
-      "url": "file:///private/tmp/talaria-v050-candidate-r2/wheel/talaria-0.5.0-py3-none-any.whl"
+      "url": "file://<candidate-root>/talaria-0.5.0-py3-none-any.whl"
     },
     "distribution_root": "<scratch-root>/venv/lib/python3.12/site-packages",
     "executable": "<scratch-root>/venv/bin/talaria",
@@ -23,7 +23,7 @@
     "commit_short": "d9c82443f",
     "integration_tree": "<integration-tree>",
     "wheel_filename": "talaria-0.5.0-py3-none-any.whl",
-    "wheel_path": "/private/tmp/talaria-v050-candidate-r2/wheel/talaria-0.5.0-py3-none-any.whl",
+    "wheel_path": "<candidate-root>/talaria-0.5.0-py3-none-any.whl",
     "wheel_sha256": "839f7a26985267db5e0cc2fa52b46ac3924f7791cdfbc70fbadfdc0e7f6cdfda"
   },
   "config_dir": "<scratch-root>/config",
