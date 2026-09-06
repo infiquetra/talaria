@@ -8,7 +8,9 @@ widget the interface is built around.
 
 So this is a foldable region that stays out of the way until it is asked for: a
 header naming the counts by availability, then one line per command carrying
-its marker. Three markers, from :data:`~talaria.domain.commands.AVAILABILITY_MARKER`
+its marker — and, in the slash-command menu, one unselectable label row per
+section (D5, #146), so the flat scrolling list reads divided the way Jeff
+selected it. Three markers, from :data:`~talaria.domain.commands.AVAILABILITY_MARKER`
 — blank for a gateway command that dispatches, ``local`` for each of Talaria's
 own controls in :data:`~talaria.domain.commands.TALARIA_LOCAL_COMMANDS`
 (PC6 asks they be marked local in any listing), and ``unsupported`` for the
@@ -44,6 +46,7 @@ from textual.widgets import Static
 from talaria.domain.commands import (
     CommandCatalog,
     CommandEntry,
+    CommandSection,
     filter_commands,
 )
 from talaria.themes import ThemeSpec
@@ -138,8 +141,23 @@ def _runnable_entries(catalog: CommandCatalog | None) -> tuple[CommandEntry, ...
 def _filtered_entries(
     catalog: CommandCatalog | None, prefix: str
 ) -> tuple[CommandEntry, ...]:
-    """Filtered runnable entries across name and description via domain filter."""
-    return filter_commands(catalog, prefix)
+    """Filtered runnable entries across name and description via domain filter.
+
+    The domain ranks by relevance tier; the menu then stable-groups by
+    section for display (F-1, #146), so each section draws exactly one
+    heading and no row sits under a stale label. Within a section the
+    relevance order stands — ``sorted`` is stable — and the domain's own
+    return order is untouched: the grouping is presentation, in this layer,
+    which is what keeps the filter contract's ranking promise intact while
+    the operator sees each section once.
+    """
+    matched = filter_commands(catalog, prefix)
+    if catalog is None:
+        return matched
+    rank = {key: index for index, key in enumerate(catalog.by_section())}
+    return tuple(
+        sorted(matched, key=lambda e: rank.get(catalog.section_for(e), len(rank)))
+    )
 
 
 def format_entry(entry: CommandEntry) -> str:
@@ -187,6 +205,30 @@ def format_filtered_entry(
         return first_line
     continuation = [f"{' ' * 19}{line}".rstrip() for line in lines[1:]]
     return "\n".join([first_line] + continuation)
+
+
+def format_section_heading(section: CommandSection) -> str:
+    """One section label row for the slash-command menu (D5, #146).
+
+    The label is the section's own display name — a gateway category name,
+    ``Talaria``, ``Skills``, or ``Uncategorised`` — decided by
+    :meth:`~talaria.domain.commands.CommandCatalog.section_for`, never here.
+    No count: a count would have to say whether it covers the section or the
+    filtered view, and the ruling allows counts without requiring them.
+    """
+    return f"── {section.label} ──"
+
+
+def _entry_text_width(region_width: int) -> int:
+    """Width one filtered row may wrap to, from the region's own width.
+
+    The 80-cell default stands on narrow screens and before first layout,
+    so wrapping never narrows below what the existing tests pin; on a wider
+    screen the description column grows into the space instead of leaving it
+    unused (review observation on #146: at 100 columns the old fixed wrap
+    left 20 cells empty while clipping long descriptions early).
+    """
+    return max(80, region_width or 80)
 
 
 def header_line(catalog: CommandCatalog | None) -> str:
@@ -244,6 +286,10 @@ class PaletteRegion(Vertical):
         color: $text-muted;
         text-style: italic;
     }
+    PaletteRegion > .palette--row.-section {
+        color: $accent;
+        text-style: bold;
+    }
     """
 
     class ThemeSelected(Message):
@@ -269,7 +315,19 @@ class PaletteRegion(Vertical):
         self._selected: int | None = None
         self._header: Static | None = None
         self._degraded: Static | None = None
+        #: Wrap width the mounted slash rows were rendered at, so a resize
+        #: that changes nothing re-renders nothing (and keeps the scroll
+        #: position a rebuild would reset).
+        self._wrap_width: int | None = None
         self._rows: list[Static] = []
+        #: Entry index into :attr:`_filtered` per mounted row widget, in mount
+        #: order — ``None`` for heading, theme, and browse rows, which address
+        #: no slash-menu entry. Selection, dispatch, and click all resolve
+        #: through this map rather than through widget position, so section
+        #: headings (D5, #146) can sit between command rows without shifting
+        #: what a highlight, a click, or Enter means. Kept in lock-step with
+        #: :attr:`_rows` at every site that mounts or clears rows.
+        self._row_entries: list[int | None] = []
         self._catalog: CommandCatalog | None = None
         self._theme_specs: tuple[ThemeSpec, ...] = ()
         self._theme_selected: int | None = None
@@ -347,6 +405,22 @@ class PaletteRegion(Vertical):
         return self._filtered
 
     @property
+    def visible_chrome_rows(self) -> int:
+        """Header and degraded rows currently taking space (F-4, #146).
+
+        The header mounts in every slash-mode render; the degraded row mounts
+        always but shows only while a catalogue warning is active. A page
+        that assumes one chrome row skips an entry per page while a warning
+        shows — count what is shown instead.
+        """
+        rows = 0
+        if self._header is not None and self._header.display:
+            rows += 1
+        if self._degraded is not None and self._degraded.display:
+            rows += 1
+        return rows
+
+    @property
     def selected_index(self) -> int | None:
         return self._selected
 
@@ -392,6 +466,9 @@ class PaletteRegion(Vertical):
                     classes=classes,
                 )
                 self._rows.append(widget)
+                # Theme rows address no slash-menu entry; the map stays
+                # lock-step so positional theme logic never drifts from it.
+                self._row_entries.append(None)
                 await self.mount(widget)
             return
 
@@ -426,34 +503,72 @@ class PaletteRegion(Vertical):
 
         if self._slash_prefix is not None:
             if self._filtered:
+                # Section labels come from the same function the filter's
+                # ordering uses (``catalog.section_for``), so the list and
+                # its labels cannot disagree about where a row lives (D5,
+                # #146). A heading is emitted when the section changes, so a
+                # section with no surviving row draws no heading, and
+                # Uncategorised appears only when non-empty — both fall out
+                # of the iteration rather than needing their own rules.
+                # Without a catalogue every filtered row is Talaria-local,
+                # which ``section_for`` answers on an empty catalog without
+                # consulting the wire.
+                section_catalog = catalog if catalog is not None else CommandCatalog()
+                width = _entry_text_width(self.size.width)
+                self._wrap_width = width
+                current_key: str | None = None
                 for idx, entry in enumerate(self._filtered):
+                    section = section_catalog.section_for(entry)
+                    if section.key != current_key:
+                        current_key = section.key
+                        heading = Static(
+                            literal_text(format_section_heading(section)),
+                            markup=False,
+                            classes="palette--row -section",
+                        )
+                        self._rows.append(heading)
+                        self._row_entries.append(None)
+                        await self.mount(heading)
                     active = idx == self._selected
                     classes = "palette--row"
                     if active:
                         classes += " -active"
-                    text = literal_text(format_filtered_entry(entry, active=active))
+                    text = literal_text(
+                        format_filtered_entry(entry, active=active, max_width=width)
+                    )
                     widget = Static(text, markup=False, classes=classes)
                     self._rows.append(widget)
+                    self._row_entries.append(idx)
                     await self.mount(widget)
             else:
                 widget = Static(
                     literal_text(NO_MATCHING), markup=False, classes="palette--row -muted"
                 )
                 self._rows.append(widget)
+                # The no-match row addresses no entry either: without this
+                # the map falls one behind the widgets and any positional
+                # read of it raises IndexError (F-2, #146). Safe today only
+                # because the click bound returns early on it — safe by
+                # accident, which is what this line retires.
+                self._row_entries.append(None)
                 await self.mount(widget)
             return
 
+        # The F3 browse listing is deliberately unsectioned (architect ruling
+        # on #146): headings render in the slash-command menu only.
         wanted = list(catalog.entries) if (self._browse_showing and catalog is not None) else []
         for entry in wanted:
             text = literal_text(format_entry(entry))
             widget = Static(text, markup=False, classes="palette--row")
             self._rows.append(widget)
+            self._row_entries.append(None)
             await self.mount(widget)
 
     async def _remove_rows(self) -> None:
         for row in self._rows:
             await row.remove()
         self._rows = []
+        self._row_entries = []
 
     @staticmethod
     def _format_theme_row(spec: ThemeSpec, *, active: bool) -> str:
@@ -640,8 +755,29 @@ class PaletteRegion(Vertical):
             if self._slash_prefix is not None:
                 await self.hide_slash()
 
+    def _widget_for_entry(self, entry_index: int) -> Static | None:
+        """The mounted command row for one filtered entry, if it is mounted.
+
+        Headings sit between command rows, so widget position is not entry
+        position: this resolves through :attr:`_row_entries` instead. A
+        heading has no entry and is never returned — the highlight cannot
+        land on a label, and neither Down nor Up ever stops on one.
+        """
+        try:
+            position = self._row_entries.index(entry_index)
+        except ValueError:
+            return None
+        if 0 <= position < len(self._rows):
+            return self._rows[position]
+        return None
+
     def move_selection(self, delta: int) -> None:
-        """Move the highlight inside the filtered palette, clamped."""
+        """Move the highlight inside the filtered palette, clamped.
+
+        Moves in entry space, so section headings are skipped structurally
+        rather than by inspection: there is no entry index that names a
+        heading, and therefore no delta that can land on one.
+        """
         if self._slash_prefix is None or not self._filtered:
             return
         current = self._selected if self._selected is not None else 0
@@ -654,29 +790,54 @@ class PaletteRegion(Vertical):
             return
         old_idx = current
         self._selected = new
-        if 0 <= old_idx < len(self._filtered) and old_idx < len(self._rows):
-            old_row = self._rows[old_idx]
+        width = _entry_text_width(self.size.width)
+        self._wrap_width = width
+        old_row = self._widget_for_entry(old_idx)
+        if old_row is not None and 0 <= old_idx < len(self._filtered):
             old_row.set_class(False, "-active")
             old_row.update(
                 literal_text(
-                    format_filtered_entry(self._filtered[old_idx], active=False)
+                    format_filtered_entry(
+                        self._filtered[old_idx], active=False, max_width=width
+                    )
                 )
             )
-        if 0 <= new < len(self._filtered) and new < len(self._rows):
-            new_row = self._rows[new]
+        new_row = self._widget_for_entry(new)
+        if new_row is not None and 0 <= new < len(self._filtered):
             new_row.set_class(True, "-active")
             new_row.update(
                 literal_text(
-                    format_filtered_entry(self._filtered[new], active=True)
+                    format_filtered_entry(
+                        self._filtered[new], active=True, max_width=width
+                    )
                 )
             )
         # Scroll the selected row into view so arrow navigation does not
         # leave the highlight off-screen. The region is capped at 14 rows,
         # so with 20 matches the selected index 15 would otherwise be invisible.
-        try:
-            self.scroll_to_widget(self._rows[new], animate=False)
-        except (AttributeError, ValueError):
-            pass
+        if new_row is not None:
+            try:
+                self.scroll_to_widget(new_row, animate=False)
+            except (AttributeError, ValueError):
+                pass
+
+    async def on_resize(self, event: events.Resize) -> None:
+        """Re-wrap slash rows after a width change (review observation #146).
+
+        Rows pre-wrap descriptions at render time, but the open-time render
+        runs before first layout, when the region still reports width 0 and
+        the 80-cell fallback stands in — so without this a wide screen keeps
+        the narrow wrap. Re-apply rebuilds rows at the real width; the
+        selection survives (apply preserves a valid ``_selected``). Resizes
+        that change nothing skip the rebuild, because rebuilding resets the
+        scroll position the operator is reading at.
+        """
+        if self._slash_prefix is None or self.is_theme_active:
+            return
+        width = _entry_text_width(self.size.width)
+        if width == self._wrap_width:
+            return
+        await self.apply(self._catalog)
 
     # ── click ────────────────────────────────────────────────────────────
 
@@ -697,9 +858,9 @@ class PaletteRegion(Vertical):
         # header Static, not a row. Click.chain is an integer (click count), not
         # an ancestry chain.
         target = event.widget
-        idx: int | None = None
+        position: int | None = None
         if isinstance(target, Static) and target in self._rows:
-            idx = self._rows.index(target)
+            position = self._rows.index(target)
         else:
             # Check if target is inside a row (e.g., if rows had children)
             # No try/except here on purpose. ``ancestors`` is a list of widgets
@@ -712,15 +873,23 @@ class PaletteRegion(Vertical):
             # same mutation turns it red.
             for row in self._rows:
                 if target is not None and row in getattr(target, "ancestors", []):
-                    idx = self._rows.index(row)
+                    position = self._rows.index(row)
                     break
-        if idx is None:
+        if position is None:
             # Click was not on a row (e.g., header or empty area) — do not
             # insert and do not crash. Previously this used `row in chain`
             # where chain is an int, raising TypeError: argument of type 'int'
             # is not iterable.
             return
-        if not (0 <= idx < len(self._filtered)):
+        # Widget position is not entry position: headings sit between command
+        # rows, so resolve through the map. A heading (or any row addressing
+        # no entry) ends here — clicking a label inserts nothing, and since
+        # the selection never names a heading, Enter after such a click
+        # cannot dispatch one either.
+        if not (0 <= position < len(self._row_entries)):
+            return
+        idx = self._row_entries[position]
+        if idx is None or not (0 <= idx < len(self._filtered)):
             return
         event.stop()
         self._selected = idx
