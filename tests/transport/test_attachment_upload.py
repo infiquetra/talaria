@@ -228,10 +228,36 @@ async def test_image_attach_uploads_base64_and_returns_the_staged_path(
     assert len(seen) == 1
     method, params = seen[0]
     assert method == "image.attach_bytes"
-    # Corrected contract: {session_id, content_base64} and nothing else —
-    # the gateway sniffs the type itself.
+    # Corrected contract: {session_id, content_base64} — the gateway sniffs
+    # the type itself. ``filename`` travels only when the caller passes it.
     assert set(params) == {"content_base64"}
     assert base64.b64decode(params["content_base64"]).decode() == CANARY_TEXT + "\n"
+
+
+@pytest.mark.asyncio
+async def test_image_attach_carries_the_filename_when_given(
+    attachment_gateway: tuple[StubGateway, list[tuple[str, dict[str, Any]]]], tmp_path: Path
+) -> None:
+    """The turn contract's optional field (I6 addendum on #147): the route
+    layer passes the base name so gateway errors can name the file. Absent
+    by default, present when asked — never invented from the path."""
+    gateway, seen = attachment_gateway
+    target = write_canary_file(tmp_path)
+    source = live_source(gateway)
+    await source.start()
+    try:
+        await until(lambda: source.state == "connected")
+        outcome = await attachments.attach_image_file(
+            source, target, filename="canary.png"
+        )
+    finally:
+        await source.close()
+
+    assert outcome.status == "ok"
+    assert len(seen) == 1
+    _, params = seen[0]
+    assert params["filename"] == "canary.png"
+    assert set(params) == {"content_base64", "filename"}
 
 
 @pytest.mark.asyncio

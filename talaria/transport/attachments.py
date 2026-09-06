@@ -432,18 +432,21 @@ async def attach_image_file(
     dispatcher: AttachmentDispatcher,
     path: str | Path,
     *,
+    filename: str | None = None,
     session_id: str | None = None,
     timeout: float | None = ATTACH_TIMEOUT_SECONDS,
 ) -> ImageAttachOutcome:
     """Stage one image via ``image.attach_bytes`` (base64 upload).
 
-    Sends ``{session_id, content_base64}`` and nothing else: the gateway
-    sniffs the type from magic bytes and enforces its own size cap, and
-    its 4016/4018 answers are the type and size policy — this module
-    performs no sniffing, no capping, and no client-side refusal, so a
-    gateway 4016 always reaches the caller honestly mapped. ``prompt_text``
-    is always ``None``: no ``@file:`` reference goes in the prompt —
-    ``prompt.submit`` drains the staged-image queue itself.
+    Sends ``{session_id, content_base64}`` plus the file's base name when
+    the caller passes ``filename`` (the turn contract's optional field,
+    I6 addendum on #147): the gateway sniffs the type from magic bytes and
+    enforces its own size cap, and its 4016/4018 answers are the type and
+    size policy — this module performs no sniffing, no capping, and no
+    client-side refusal, so a gateway 4016 always reaches the caller
+    honestly mapped. ``prompt_text`` is always ``None``: no ``@file:``
+    reference goes in the prompt — ``prompt.submit`` drains the
+    staged-image queue itself.
     """
     method = "image.attach_bytes"
     local = Path(path)
@@ -458,6 +461,8 @@ async def attach_image_file(
     params: dict[str, Any] = {
         "content_base64": base64.b64encode(read).decode("ascii"),
     }
+    if filename is not None:
+        params["filename"] = filename
     if session_id is not None:
         params["session_id"] = session_id
     outcome = await dispatcher.call(method, params, timeout=timeout)

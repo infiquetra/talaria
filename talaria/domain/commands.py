@@ -611,6 +611,7 @@ def _is_client_local(name: str, category: str) -> bool:
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
 LocalAction = Literal[
+    "attach",
     "quit",
     "pause",
     "resume",
@@ -644,6 +645,24 @@ class LocalCommand:
 
 TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand("/quit", "quit", "Leave Talaria; the gateway session keeps running"),
+    # C9/D6. The control here, beside ``/models``, that crosses the socket
+    # after a local gesture: the path resolves and stages locally, then
+    # ``file.attach`` (text/code) or ``image.attach_bytes`` (images) carries
+    # the bytes. D6 defines ``/attach`` as Talaria's route; it resolves
+    # local-first like every row in this table, so a future gateway command
+    # of the same name would be shadowed — the ``/needs`` hazard, stated
+    # here so it is not silent. With no argument it offers the staged set
+    # for removal instead of staging. Portable-document format is refused
+    # Talaria-side, never sent.
+    LocalCommand(
+        "/attach",
+        "attach",
+        (
+            "Stage a text, code or image file for the agent "
+            "(or drop its path; no PDFs)"
+        ),
+        argument_hint="[<path>]",
+    ),
     LocalCommand("/pause", "pause", "Hold the replay clock (F8)", replay_only=True),
     LocalCommand("/resume", "resume", "Release the replay clock (F8)", replay_only=True),
     LocalCommand(

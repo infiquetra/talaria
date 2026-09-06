@@ -29,6 +29,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal
 
+from talaria.domain.attachments import (
+    AttachmentLedger,
+    AttachmentRecord,
+)
 from talaria.domain.compat import SeamBoard
 from talaria.domain.decode import (
     CONNECTION_BROADCAST_EVENT_TYPES,
@@ -202,6 +206,16 @@ class SessionState:
     #: something to name and what makes ``flushed_prompt_ids`` reachable in the
     #: case :func:`restore_prompt` documents.
     answering: tuple[PendingPrompt, ...] = ()
+    #: Files and images staged for the agent, across D6's routes (C9).
+    #:
+    #: Retained across a session switch, not cleared with the other
+    #: per-session buffers: the gateway stages into a per-session workspace
+    #: and never re-announces what it holds, so clearing here would orphan
+    #: the record the same way clearing ``prompts`` used to orphan the
+    #: control. Safe to keep only because every reader filters to the
+    #: focused session — see :func:`focus_session` and
+    #: :func:`~talaria.domain.projection.attachment_view`.
+    attachments: AttachmentLedger = field(default_factory=AttachmentLedger)
     usage: Usage = field(default_factory=Usage)
 
     #: Unknown event types seen, in first-seen order, deduplicated.
@@ -472,9 +486,9 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
     a caller that needs to tell "refused" from "already there" asks
     :func:`switch_refusal` first.
 
-    **Three things deliberately survive the switch: ``prompts``,
-    ``flushed_prompt_ids`` and ``approvals_seen``.** ``withdrawn_approvals``
-    does not — see the end of this docstring for why.
+    **Four things deliberately survive the switch: ``prompts``,
+    ``flushed_prompt_ids``, ``approvals_seen`` and ``attachments``.**
+    ``withdrawn_approvals`` does not — see the end of this docstring for why.
 
     ``prompts`` is kept. The gateway does not re-announce an outstanding
     bridge across a switch — it started blocking on ``.request`` and has no
@@ -501,6 +515,16 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
     second time and the retained tombstone from the first visit would swallow
     the new prompt. A counter that only ever climbs cannot collide with its own
     past.
+
+    ``attachments`` is kept, and only because every reader filters it to the
+    focused session (``session_id`` on the record,
+    :func:`~talaria.domain.projection.attachment_view`). The gateway stages
+    into a per-session workspace and never re-announces what it holds, so
+    clearing the ledger here would orphan the record the way clearing
+    ``prompts`` used to orphan the control: switching away and back would
+    find no record of a file the gateway still holds staged, with no second
+    attach ever coming to restore it — and a staged image would then drain
+    into a turn with nothing on screen saying it was there.
 
     ``withdrawn_approvals`` does **not** survive: it is a count of approvals
     *this* session had withdrawn from under it, and carrying it into the next
@@ -870,6 +894,75 @@ def record_submission(
     if note is not None:
         next_state = _append(next_state, "system", note)
     return replace(next_state, last_observed_at=max(state.last_observed_at, at))
+
+
+def stage_attachment(state: SessionState, record: AttachmentRecord) -> SessionState:
+    """File one attachment record into the session state (C9).
+
+    Thin over :meth:`~talaria.domain.attachments.AttachmentLedger.add`: the
+    ledger owns identity and lifecycle, this owns the state's copy. A
+    duplicate id raises rather than replacing, for the ledger's reason — a
+    retry that silently became the original would lie about what was staged
+    when.
+    """
+    return replace(state, attachments=state.attachments.add(record))
+
+
+def advance_attachment(state: SessionState, record: AttachmentRecord) -> SessionState:
+    """Write back one attachment record after its state moved (C9).
+
+    Upserts through :meth:`~talaria.domain.attachments.AttachmentLedger.replace`,
+    so the route layer can stage the outcome and the record in either order
+    without a separate add step.
+    """
+    return replace(state, attachments=state.attachments.replace(record))
+
+
+def drop_attachment(state: SessionState, attachment_id: str) -> SessionState:
+    """Forget one attachment record (C9).
+
+    Removing an absent id is a no-op — remove-then-remove-again is an
+    ordinary operator gesture, not an error — which is also what makes this
+    safe to call for a record the gateway already detached.
+    """
+    return replace(state, attachments=state.attachments.discard(attachment_id))
+
+
+def reconcile_submitted_attachments(state: SessionState, text: str) -> SessionState:
+    """Drop the file chips the submitted text no longer carries (C9).
+
+    There is no ``file.detach``: the turn contract (I6 addendum on #147)
+    drops a staged file by omitting its ``@file:`` token from the text
+    ``prompt.submit`` sends. An operator who deletes the token from the
+    composer before submitting has therefore un-staged the file, and a
+    ledger that still calls it attached would lie on the next screen. So
+    every attached file record whose reference is absent from the submitted
+    text moves to ``detached`` here — client-side, with no gateway call,
+    because there is nothing gateway-side to call.
+
+    Images are untouched: they ride the staged-image queue, not the text,
+    and ``prompt.submit`` drains that queue itself. A submitted image stays
+    ``attached`` — staged, consumed into the turn, still never delivered.
+    """
+    ledger = state.attachments
+    for record in ledger:
+        if (
+            record.kind == "file"
+            and record.state == "attached"
+            and record.gateway_ref
+            and record.gateway_ref not in text
+        ):
+            ledger = ledger.replace(
+                replace(
+                    record,
+                    state="detached",
+                    detail=(
+                        "the @file: token was not in the submitted text; "
+                        "dropped by omission — staged, never delivered"
+                    ),
+                )
+            )
+    return replace(state, attachments=ledger)
 
 
 #: The gateway method a composed message is sent with
@@ -4510,12 +4603,14 @@ __all__ = [
     "activation_hydration_events",
     "apply_active_list",
     "age_out_approvals",
+    "advance_attachment",
     "apply_frame",
     "apply_frames",
     "attach_confirm_row",
     "attach_residue_notice",
     "begin_fleet_answer",
     "cancel_turn",
+    "drop_attachment",
     "end_fleet_answer",
     "fleet_answer_key",
     "fleet_switch_refusal",
@@ -4532,10 +4627,12 @@ __all__ = [
     "seed_from_listing",
     "latch_resolved_prompts",
     "prompt_registration_line",
+    "reconcile_submitted_attachments",
     "record_local_note",
     "record_replayed_submission",
     "record_submission",
     "replayed_submission_text",
+    "stage_attachment",
     "respond_to_all_approvals",
     "respond_to_prompt",
     "restore_prompt",
