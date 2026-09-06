@@ -2,7 +2,9 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
-## 2026-09-06 — A default gate id makes a release check the wrong release's gate
+## 2026-09-06
+
+### A default gate id makes a release check the wrong release's gate
 
 **Evidence**: `.github/workflows/release.yml`, the "Resolve the acceptance manifest and
 gate for this version" step. Before this change it read
@@ -22,8 +24,6 @@ project got, the more misleading the default became.
 have chosen it. A default that names one specific member of a versioned series is a lie
 for every other member, and it lies most convincingly when the thing it names still
 exists and still passes.
-
-## 2026-09-06
 
 ### A queued terminal cause plus a teardown that trusts it was delivered loses the buffer it was going to commit
 
