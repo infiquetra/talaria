@@ -25,6 +25,44 @@ exists and still passes.
 
 ## 2026-09-06
 
+### A queued terminal cause plus a teardown that trusts it was delivered loses the buffer it was going to commit
+
+**Evidence.** ``test_auth_failed_mid_stream_commits_the_partial_reply`` failed on one CI leg of a
+Python-free pull request, and the investigator found a data-loss bug, not a flake. The path: a
+mid-stream credential death routes through the reconnect dial, and ``_dial(terminal=False)``
+published ``auth_failed`` **without** its typed cause — a terminal state with nothing committed
+and nothing yet queued to commit it. The reconnect loop's own stop was the one notice that
+attached the cause, and it is *queued* (FIFO behind frames) whenever something is iterating the
+source. ``LiveSource.close()`` then skipped its typed-cause delivery on the reasoning that "the
+domain already committed on whichever typed cause put the source in ``auth_failed``" — true only
+when that queued notice had drained first. ``shutdown_sources`` cancels the consumer task
+*before* calling ``close()``, so a quit landing in the gap found the cause undelivered,
+``_commit_partial_streams`` never ran, and the partial reply the operator had already received
+was dropped (R6). The repair pair in ``talaria/transport/source.py``: the non-terminal dial
+never publishes a terminal state — the loop decides, on ``failure_kind``, and delivers
+``auth_failed`` with its cause once — and ``close()`` now re-delivers the typed cause inline in
+the ``auth_failed`` state too, safe because ``set_connection`` commits on a terminal cause
+unconditionally and no-ops once the buffers are empty. Pinned both ways in
+``tests/transport/test_source.py``: against the pre-fix code the gap test fails with the defect
+rendered verbatim — ``('auth_failed', '…401', None)`` delivered, no typed cause ever — and the
+re-settled original test now waits for the commit (buffer cleared plus terminal state) rather
+than the pre-commit terminal state it used to race on.
+
+**Mechanism.** Two orderings that are each correct alone compose into a hole: typed causes are
+queued for FIFO safety against frame content, and teardown cancels the queue's consumer before
+running the close that would flush it. Any "already delivered" belief held across that
+cancellation is a belief about a channel that no longer exists. The domain's commit is the
+mitigation's safety net: idempotent by buffer emptiness, so re-delivering a terminal cause is
+free when it is redundant and is the only thing that saves the buffer when it is not.
+
+**Generalizable rule.** Teardown must never assume an in-flight queued notification was
+delivered — the delivery mechanism dies before the code that would act on the assumption, so
+the assumption must be checked at delivery time (re-deliver; make the consumer of the
+notification idempotent) rather than skipped on. And a settle that waits on the state *before*
+the effect it asserts is a check that passes the exact thing it exists to catch: wait for the
+effect — the cleared buffer, the committed entry — not the flag that merely precedes it.
+
+
 ### An async rebuild that mounts one row per await must be serialized against itself (#146)
 
 **Evidence.** The live rehearsal's recurrence of #146's F-1: the cross-tier model filter drew
@@ -53,7 +91,6 @@ interleaved". And when a repaired defect recurs, probe the shipped fix against t
 reproduction data before assuming the fix was wrong — here the fix held, and the recurrence
 was a different mechanism wearing the same symptom.
 
-## 2026-09-06
 
 ### A byte-preserving rewrite of a multi-line TOML value needs a span scanner, not a bigger regex (C11/#149)
 
@@ -84,7 +121,6 @@ with a quote-aware scanner and make the *comment* the thing you refuse on, not t
 reformat — the refusal is a designed outcome, and the parse-verify net turns every
 unanticipated shape into that outcome instead of into a corrupted file.
 
-## 2026-09-06
 
 ### Every attach route must account for the text it leaves in the composer (C9/#147)
 
@@ -107,6 +143,29 @@ to equal a filename. Cancelling stages nothing, which is what makes a false dive
 **Generalizable rule.** When a flow both writes the composer and submits from it, test the
 composer's exact contents after the flow, not just the side effect: the side effect passing
 while the command line sits beside the chip is a green suite over a broken submit.
+
+### Text twin verification requires capture-time preimage binding, not post-hoc conjunction (#150)
+
+**Evidence.** Conjunction alone allowed a `.png` to be paired with any sibling `.txt` file listed
+in `evidence.files`, which proved only that a text file was present when the receipt was signed, not
+that it matched the screen cells at render time. Under finding F-3 and the amended privacy contract
+(`scripts/acceptance/v050_receipt.py`, `scripts/acceptance/v061_evidence.py`,
+`tests/docs/test_v061_lineage.py`), the validator and converter require each screenshot's text twin
+to be bound at capture time: the exact twin digest must be recorded in the screenshot PNG's
+`talaria-evidence` chunk or in a sibling capture metadata sidecar (`capture.json`,
+`<stem>.metadata.json`, `capture-metadata.json`) with preimage class `text-twin`. Cases lacking a
+twin remain acceptable only under the explicit compensating control of a recorded human read
+(`screenshots_read_by` and `screenshots_read_at`), while cases lacking both or carrying an unbound
+twin are refused.
+
+**Mechanism.** The capture-time binding raises after-the-fact twin assembly from writing one
+file to writing two consistent ones, and defeats an independent later editor of the twin; it does
+not constrain the harness, and the only controls that do are the recorded human read and the fact
+that the pixels can be read.
+
+**Generalizable rule.** A multi-modal evidence pair (e.g. image and text twin) cannot rely on
+post-hoc directory conjunction for authenticity; the primary artifact must cryptographically bind
+the twin's digest at capture time.
 
 ### Stopping a timer cannot recall an in-flight tick; every await is a handoff (#158)
 
