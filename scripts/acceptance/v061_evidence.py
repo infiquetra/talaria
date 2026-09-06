@@ -36,11 +36,15 @@ mutating a receipt.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +54,11 @@ from scripts.acceptance.v050_receipt import (
     V061_ROLE_LABELS,
     _v061_private_identifier_errors,
     _validate_v061_receipt,
+    classify_evidence_file,
+    evidence_file_privacy_errors,
+    find_absolute_paths_in_text,
+    is_forbidden_key,
+    public_evidence_privacy_errors,
 )
 from scripts.acceptance.v060_evidence import (
     _package_version,
@@ -308,6 +317,12 @@ def record(
             "carry private identifiers — move them out before the manifest is built:"
             "\n  " + "\n  ".join(identifier_errors)
         )
+    privacy_errors = public_evidence_privacy_errors(repo_root)
+    if privacy_errors:
+        raise SystemExit(
+            "refusing to record: evidence files carry private identifiers:\n  "
+            + "\n  ".join(privacy_errors)
+        )
 
     verdicts = Counter(
         str(_read_json(path).get("verdict")) for path, _rel in receipts.values()
@@ -500,8 +515,436 @@ def _converted_receipt(
             for key in ("kind", "method", "observation", "source")
             if key in source_evidence
         }
+    if "screenshots_read_by" in attestation:
+        evidence["screenshots_read_by"] = attestation["screenshots_read_by"]
+    elif "screenshots_read_by" in filed.get("evidence", {}):
+        evidence["screenshots_read_by"] = filed["evidence"]["screenshots_read_by"]
+    elif "screenshots_read_by" in filed:
+        evidence["screenshots_read_by"] = filed["screenshots_read_by"]
+
+    if "screenshots_read_at" in attestation:
+        evidence["screenshots_read_at"] = attestation["screenshots_read_at"]
+    elif "screenshots_read_at" in filed.get("evidence", {}):
+        evidence["screenshots_read_at"] = filed["evidence"]["screenshots_read_at"]
+    elif "screenshots_read_at" in filed:
+        evidence["screenshots_read_at"] = filed["screenshots_read_at"]
+
     converted["evidence"] = evidence
     return converted
+
+
+_DEFAULT_WITHHOLDING_RULES = (
+    "skills-roster",
+    "operator-home-path",
+    "pane-coordinate",
+    "session-name",
+    "email-address",
+    "bearer-credential",
+    "temporary-directory",
+)
+
+
+def _is_path_kept(path: str, keep_set: set[str]) -> bool:
+    if not keep_set:
+        return False
+    if path in keep_set or "*" in keep_set:
+        return True
+    norm = "/" + path.strip("/").replace(".", "/")
+    for k in keep_set:
+        k_norm = "/" + k.strip("/").replace(".", "/")
+        if k_norm == norm or (k_norm.endswith("/*") and norm.startswith(k_norm[:-1])):
+            return True
+        if norm.endswith(k_norm) or k_norm.endswith(norm):
+            return True
+    return False
+
+
+def _redact_payload(
+    payload: Any,
+    rules: set[str],
+    keep_list: set[str],
+    redactions: list[dict[str, Any]],
+    path: str = "/frame",
+) -> Any:
+    if isinstance(payload, dict):
+        new_dict: dict[str, Any] = {}
+        for k, v in payload.items():
+            loc = f"{path}/{k}" if path else f"/{k}"
+            if "skills-roster" in rules and k in (
+                "skills",
+                "integrations",
+                "connected_integrations",
+            ) and not _is_path_kept(loc, keep_list):
+                new_dict[k] = "[redacted]"
+                redactions.append({"rule": "skills-roster", "field": loc})
+            else:
+                new_dict[k] = _redact_payload(v, rules, keep_list, redactions, loc)
+        return new_dict
+    if isinstance(payload, list):
+        return [
+            _redact_payload(item, rules, keep_list, redactions, f"{path}/{i}")
+            for i, item in enumerate(payload)
+        ]
+    if isinstance(payload, str):
+        if keep_list and not _is_path_kept(path, keep_list):
+            redactions.append({"rule": "withheld-by-default", "field": path})
+            return "[redacted]"
+
+        val = payload
+        if "operator-home-path" in rules:
+            def _sub_home(m: re.Match[str]) -> str:
+                redactions.append({"rule": "operator-home-path", "field": path})
+                return "[redacted]"
+            val = re.sub(r"/(?:Users|home)/[A-Za-z0-9._-]+", _sub_home, val)
+        if "pane-coordinate" in rules:
+            def _sub_pane(m: re.Match[str]) -> str:
+                redactions.append({"rule": "pane-coordinate", "field": path})
+                return "[redacted]"
+            val = re.sub(r"\bw[A-Za-z0-9]+:[pt][A-Za-z0-9]+\b", _sub_pane, val)
+        if "session-name" in rules:
+            def _sub_session(m: re.Match[str]) -> str:
+                redactions.append({"rule": "session-name", "field": path})
+                return "[redacted]"
+            val = re.sub(
+                r"\b(?:worker|controller|reviewer|architect|investigator|tester|operator)-\d+(?:-\d+)*\b",
+                _sub_session,
+                val,
+            )
+        if "email-address" in rules:
+            def _sub_email(m: re.Match[str]) -> str:
+                redactions.append({"rule": "email-address", "field": path})
+                return "[redacted]"
+            val = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", _sub_email, val)
+        if "bearer-credential" in rules:
+            def _sub_bearer(m: re.Match[str]) -> str:
+                redactions.append({"rule": "bearer-credential", "field": path})
+                return "[redacted]"
+            val = re.sub(r"Authorization:\s*Bearer\s+\S+", _sub_bearer, val, flags=re.IGNORECASE)
+        if "temporary-directory" in rules:
+            def _sub_tmp(m: re.Match[str]) -> str:
+                redactions.append({"rule": "temporary-directory", "field": path})
+                return "[redacted]"
+            val = re.sub(r"/private/var/folders/[^\s\"\'\\]+", _sub_tmp, val)
+        return val
+    return payload
+
+
+def derive_capture(
+    *,
+    input_path: Path,
+    output_path: Path,
+    frame_types: tuple[str, ...] = (),
+    start_seq: int | None = None,
+    end_seq: int | None = None,
+    rules: tuple[str, ...] = (),
+    keep_list: tuple[str, ...] = (),
+    tool: str = "scripts/acceptance/v061_evidence.py derive-capture",
+    derived_at: str | None = None,
+    repo_root: Path = REPO_ROOT,
+) -> Path:
+    """Derive a conforming, privacy-clean wire capture from a raw frame recording."""
+    input_path = input_path.expanduser().resolve()
+    if not input_path.is_file():
+        raise SystemExit(f"input capture file does not exist: {input_path}")
+    source_bytes = input_path.read_bytes()
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+
+    try:
+        text = source_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(f"{input_path}: source file is not valid UTF-8: {exc}") from exc
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise SystemExit(f"{input_path}: source file is empty")
+
+    try:
+        source_header = json.loads(lines[0])
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{input_path}: invalid header JSON: {exc}") from exc
+
+    if not isinstance(source_header, dict) or source_header.get("kind") != "header":
+        raise SystemExit(f"{input_path}: first record must be kind: header")
+
+    all_frames: list[dict[str, Any]] = []
+    for line_idx, line in enumerate(lines[1:], start=2):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"{input_path}: line {line_idx} is invalid JSON: {exc}") from exc
+        if not isinstance(record, dict) or record.get("kind") != "frame":
+            raise SystemExit(f"{input_path}: line {line_idx} is not a frame record")
+        all_frames.append(record)
+
+    source_frame_count = len(all_frames)
+    active_rules = set(rules) if rules else set(_DEFAULT_WITHHOLDING_RULES)
+    keep_set = set(keep_list)
+
+    # 1. Selection filter
+    kept_frames: list[dict[str, Any]] = []
+    for frame_record in all_frames:
+        src_seq = frame_record.get("seq")
+        if not isinstance(src_seq, int):
+            continue
+        if start_seq is not None and src_seq < start_seq:
+            continue
+        if end_seq is not None and src_seq > end_seq:
+            continue
+        if frame_types:
+            inner = frame_record.get("frame", {})
+            f_type = inner.get("type") or inner.get("method")
+            params = inner.get("params")
+            if isinstance(params, dict):
+                f_type = params.get("type") or params.get("method") or f_type
+            if f_type not in frame_types:
+                continue
+        kept_frames.append(frame_record)
+
+    # 2. Named withholdings, gapless seq, sourceSeq retention
+    for out_seq, frame_record in enumerate(kept_frames, start=1):
+        redactions: list[dict[str, Any]] = list(frame_record.get("redactions", []))
+        if "frame" in frame_record:
+            frame_record["frame"] = _redact_payload(
+                frame_record["frame"], active_rules, keep_set, redactions
+            )
+        frame_record["sourceSeq"] = frame_record["seq"]
+        frame_record["seq"] = out_seq
+        frame_record["redactions"] = redactions
+
+    # 3. Derivation header
+    derivation = {
+        "tool": tool,
+        "source_sha256": source_sha256,
+        "source_bytes": len(source_bytes),
+        "source_frames": source_frame_count,
+        "selection": {
+            "frame_types": list(frame_types) if frame_types else None,
+            "start_seq": start_seq,
+            "end_seq": end_seq,
+        },
+        "rules": sorted(active_rules),
+        "keep_list": sorted(keep_list),
+        "derived_at": _utc_now(derived_at),
+    }
+    header = {
+        "kind": "header",
+        "version": source_header.get("version", 1),
+        "startedAt": source_header.get("startedAt", ""),
+        "endpoint": source_header.get("endpoint", ""),
+        "derivation": derivation,
+    }
+
+    # 4. Self-scan and atomic write
+    output_lines = [json.dumps(header)]
+    for frame_record in kept_frames:
+        output_lines.append(json.dumps(frame_record))
+    output_content = "\n".join(output_lines) + "\n"
+
+    output_path = output_path.expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_output = output_path.with_suffix(f".tmp.{os.getpid()}")
+    temp_output.write_text(output_content, encoding="utf-8")
+
+    errors = evidence_file_privacy_errors(temp_output, repo_root=repo_root)
+    if errors:
+        temp_output.unlink(missing_ok=True)
+        raise SystemExit(
+            "refusing to write derived capture: output carries privacy defects:\n  "
+            + "\n  ".join(errors)
+        )
+
+    temp_output.replace(output_path)
+    return output_path
+
+
+@dataclass(frozen=True)
+class SourceInventoryEntry:
+    case_item: str
+    file_path: Path
+    file_class: str
+    finding: str
+    disposition: str  # "kept", "withheld", "refused"
+    rule_or_reason: str
+
+
+def inventory_source_evidence(
+    source_dir: Path,
+    item: str,
+    attestation: dict[str, Any] | None,
+    repo_root: Path,
+) -> list[SourceInventoryEntry]:
+    """Scan all source files for an evidence item and return the inventory with dispositions."""
+    entries: list[SourceInventoryEntry] = []
+    receipt_file = source_dir / "receipt.json"
+    if receipt_file.is_file():
+        receipt_had_findings = False
+        try:
+            filed = json.loads(receipt_file.read_text(encoding="utf-8"))
+            if isinstance(filed, dict):
+                tester = filed.get("tester")
+                if isinstance(tester, str) and tester not in V061_ROLE_LABELS:
+                    receipt_had_findings = True
+                    if attestation and attestation.get("tester") in V061_ROLE_LABELS:
+                        entries.append(
+                            SourceInventoryEntry(
+                                case_item=item,
+                                file_path=receipt_file,
+                                file_class="receipt",
+                                finding="role-digit tester session name",
+                                disposition="withheld",
+                                rule_or_reason="role-label-substitution",
+                            )
+                        )
+                    else:
+                        entries.append(
+                            SourceInventoryEntry(
+                                case_item=item,
+                                file_path=receipt_file,
+                                file_class="receipt",
+                                finding="unattested role-digit tester session name",
+                                disposition="refused",
+                                rule_or_reason="role-digit session name requires attestation",
+                            )
+                        )
+                for k in filed.keys():
+                    if is_forbidden_key(k):
+                        receipt_had_findings = True
+                        entries.append(
+                            SourceInventoryEntry(
+                                case_item=item,
+                                file_path=receipt_file,
+                                file_class="receipt",
+                                finding=f"{k} key present in receipt",
+                                disposition="refused",
+                                rule_or_reason="forbidden operational key must be fixed at source",
+                            )
+                        )
+                harness = filed.get("harness")
+                if isinstance(harness, dict):
+                    h_id = harness.get("identity")
+                    if isinstance(h_id, str) and bool(find_absolute_paths_in_text(h_id)):
+                        receipt_had_findings = True
+                        entries.append(
+                            SourceInventoryEntry(
+                                case_item=item,
+                                file_path=receipt_file,
+                                file_class="receipt",
+                                finding="absolute path in harness.identity",
+                                disposition="refused",
+                                rule_or_reason=(
+                                    "absolute path in harness.identity must be fixed at source"
+                                ),
+                            )
+                        )
+        except Exception:
+            pass
+        if not receipt_had_findings:
+            entries.append(
+                SourceInventoryEntry(
+                    case_item=item,
+                    file_path=receipt_file,
+                    file_class="receipt",
+                    finding="clean",
+                    disposition="kept",
+                    rule_or_reason="valid filed receipt",
+                )
+            )
+
+    for path in sorted(source_dir.rglob("*")):
+        if not path.is_file() or path.name == "receipt.json":
+            continue
+        file_class = classify_evidence_file(path)
+        if file_class == "markdown":
+            entries.append(
+                SourceInventoryEntry(
+                    case_item=item,
+                    file_path=path,
+                    file_class="markdown",
+                    finding="markdown file under evidence/",
+                    disposition="refused",
+                    rule_or_reason="markdown files forbidden under evidence",
+                )
+            )
+            continue
+        errors = evidence_file_privacy_errors(path, repo_root=repo_root)
+        if errors:
+            for err in errors:
+                entries.append(
+                    SourceInventoryEntry(
+                        case_item=item,
+                        file_path=path,
+                        file_class=file_class,
+                        finding=err,
+                        disposition="refused",
+                        rule_or_reason="source file carries privacy defects",
+                    )
+                )
+        else:
+            entries.append(
+                SourceInventoryEntry(
+                    case_item=item,
+                    file_path=path,
+                    file_class=file_class,
+                    finding="clean",
+                    disposition="kept",
+                    rule_or_reason="clean evidence file",
+                )
+            )
+    return entries
+
+
+def _conversion_notes_document(
+    *,
+    converted_items: list[str],
+    excluded_items: list[str],
+    inventory_entries: list[SourceInventoryEntry],
+    listed_at: str,
+) -> str:
+    lines = [
+        "# Talaria v0.6.1 acceptance evidence conversion notes",
+        "",
+        f"Converted at: {listed_at}",
+        "",
+        "## Summary",
+        "",
+        (
+            f"- Converted cases ({len(converted_items)}): "
+            f"{', '.join(sorted(converted_items)) if converted_items else 'none'}"
+        ),
+        (
+            f"- Excluded cases ({len(excluded_items)}): "
+            f"{', '.join(sorted(excluded_items)) if excluded_items else 'none'}"
+        ),
+        "",
+        "## Source Evidence Inventory and Reconciliation",
+        "",
+        (
+            "Every filed evidence item was scanned against the v0.6.1 privacy contract "
+            "before conversion."
+        ),
+        (
+            "Identified non-conforming items were reconciled under named withholding "
+            "rules or attested substitutions."
+        ),
+        "",
+        "| Case | File | Class | Finding | Disposition | Rule / Reason |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    if inventory_entries:
+        for e in sorted(
+            inventory_entries,
+            key=lambda x: (x.case_item, x.file_path.name, x.disposition, x.finding),
+        ):
+            rel_name = e.file_path.name
+            lines.append(
+                f"| {e.case_item} | `{rel_name}` | {e.file_class} | "
+                f"`{e.finding}` | {e.disposition} | {e.rule_or_reason} |"
+            )
+    else:
+        lines.append("| - | - | - | `none` | kept | no inventory entries |")
+    lines.append("")
+    return "\n".join(lines)
+
 
 
 def convert(
@@ -528,6 +971,7 @@ def convert(
     if not receipts:
         raise SystemExit(f"no filed receipts under {repo_root / _EVIDENCE_REL}")
     refusals: list[str] = []
+    all_inventory: list[SourceInventoryEntry] = []
     plans: list[tuple[str, Path, dict[str, Any], dict[str, Path]]] = []
     for item, (path, _rel) in sorted(receipts.items()):
         if item in exclude:
@@ -588,6 +1032,13 @@ def convert(
                     "attestation.harness_commit must be absent unless the harness is "
                     "repository tooling"
                 )
+            harness_identity = attestation.get("harness_identity")
+            if harness_identity is not None and isinstance(harness_identity, str):
+                if find_absolute_paths_in_text(harness_identity):
+                    item_refusals.append(
+                        "attestation.harness_identity must not contain an absolute "
+                        f"filesystem path ({harness_identity!r})"
+                    )
             rich = "candidate_commit_sha" in filed
             if not rich and not (
                 isinstance(attestation.get("expected"), str)
@@ -601,11 +1052,57 @@ def convert(
             refusals.extend(f"{item}: {refusal}" for refusal in item_refusals)
             continue
         source_dir = path.parent
+        inventory = inventory_source_evidence(
+            source_dir, item, attestation, repo_root=repo_root
+        )
+        all_inventory.extend(inventory)
+        for entry in inventory:
+            if entry.disposition == "refused":
+                item_refusals.append(
+                    f"{entry.file_path.name}: {entry.finding} ({entry.rule_or_reason})"
+                )
         files: dict[str, Path] = {
             evidence_path.relative_to(source_dir).as_posix(): evidence_path
             for evidence_path in sorted(source_dir.rglob("*"))
             if evidence_path.is_file() and evidence_path.name != "receipt.json"
         }
+        png_names = [f for f in files if f.lower().endswith(".png")]
+        for png_name in png_names:
+            png_p = Path(png_name)
+            stem = png_p.stem
+            has_twin = any(
+                cand in files
+                for cand in (
+                    str(png_p.with_suffix(".txt")),
+                    str(png_p.with_suffix(".ansi")),
+                    str(png_p.parent / f"{stem}.screen.txt"),
+                )
+            )
+            if not has_twin:
+                read_by = attestation.get("screenshots_read_by") if attestation else None
+                read_at = attestation.get("screenshots_read_at") if attestation else None
+                if not read_by or not read_at:
+                    ev_dict = filed.get("evidence", {})
+                    read_by = filed.get("screenshots_read_by") or ev_dict.get(
+                        "screenshots_read_by"
+                    )
+                    read_at = filed.get("screenshots_read_at") or ev_dict.get(
+                        "screenshots_read_at"
+                    )
+                if not (
+                    isinstance(read_by, str)
+                    and read_by.strip()
+                    and isinstance(read_at, str)
+                    and read_at.strip()
+                ):
+                    item_refusals.append(
+                        "screenshots have neither a text twin nor a recorded human read "
+                        "(attestation.screenshots_read_by and attestation.screenshots_read_at)"
+                    )
+                    break
+        if item_refusals:
+            refusals.extend(f"{item}: {refusal}" for refusal in item_refusals)
+            continue
         digests = {name: _sha256_file(file_path) for name, file_path in files.items()}
         converted = _converted_receipt(
             item,
@@ -634,6 +1131,12 @@ def convert(
                     )
                 shutil.copyfile(source, destination)
                 written.append(destination)
+                file_errors = evidence_file_privacy_errors(destination, repo_root=repo_root)
+                if file_errors:
+                    raise SystemExit(
+                        f"{item}: converted evidence file {name} carries privacy defects:\n  "
+                        + "\n  ".join(file_errors)
+                    )
             receipt_path = item_dir / "receipt.json"
             if receipt_path.exists():
                 raise SystemExit(
@@ -653,6 +1156,26 @@ def convert(
                 encoding="utf-8",
             )
             written.append(receipt_path)
+            receipt_errors = evidence_file_privacy_errors(receipt_path, repo_root=repo_root)
+            if receipt_errors:
+                raise SystemExit(
+                    f"{item}: converted receipt carries privacy defects:\n  "
+                    + "\n  ".join(receipt_errors)
+                )
+        conversion_notes_path = output_root / "conversion-notes.md"
+        conversion_notes_content = _conversion_notes_document(
+            converted_items=[item for item, _, _, _ in plans],
+            excluded_items=list(exclude),
+            inventory_entries=all_inventory,
+            listed_at=listed_at,
+        )
+        conversion_notes_path.write_text(conversion_notes_content, encoding="utf-8")
+        written.append(conversion_notes_path)
+        notes_errors = evidence_file_privacy_errors(conversion_notes_path, repo_root=repo_root)
+        if notes_errors:
+            raise SystemExit(
+                "conversion-notes.md carries privacy defects:\n  " + "\n  ".join(notes_errors)
+            )
     except BaseException:
         for path in written:
             path.unlink(missing_ok=True)
@@ -707,11 +1230,86 @@ def _parser() -> argparse.ArgumentParser:
         help="a live case the controller has ruled out of this conversion (repeatable)",
     )
     convert_cmd.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    derive_cmd = subparsers.add_parser(
+        "derive-capture", help="derive a clean public wire capture from raw recording"
+    )
+    derive_cmd.add_argument(
+        "--input", type=Path, required=True, help="source raw recording"
+    )
+    derive_cmd.add_argument(
+        "--output", type=Path, required=True, help="path to write derived capture"
+    )
+    derive_cmd.add_argument(
+        "--frame-types",
+        action="append",
+        default=[],
+        help="filter to specific frame types (repeatable)",
+    )
+    derive_cmd.add_argument("--start-seq", type=int, default=None, help="start source seq")
+    derive_cmd.add_argument("--end-seq", type=int, default=None, help="end source seq")
+    derive_cmd.add_argument(
+        "--rule",
+        dest="rules",
+        action="append",
+        default=[],
+        help="named withholding rule to apply (repeatable)",
+    )
+    derive_cmd.add_argument(
+        "--keep",
+        dest="keep_list",
+        action="append",
+        default=[],
+        help="JSON pointer path to keep unredacted (repeatable)",
+    )
+    derive_cmd.add_argument(
+        "--keep-list",
+        dest="keep_list_file",
+        type=Path,
+        default=None,
+        help="path to file containing JSON pointer paths to keep (one per line or JSON list)",
+    )
+    derive_cmd.add_argument(
+        "--tool",
+        default="scripts/acceptance/v061_evidence.py derive-capture",
+        help="tool attribution stamp",
+    )
+    derive_cmd.add_argument("--derived-at", default=None, help="derivation timestamp")
+    derive_cmd.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "derive-capture":
+        keep_list: list[str] = list(args.keep_list or [])
+        if args.keep_list_file is not None:
+            raw_text = args.keep_list_file.read_text(encoding="utf-8").strip()
+            if raw_text.startswith("["):
+                try:
+                    parsed = json.loads(raw_text)
+                    if isinstance(parsed, list):
+                        keep_list.extend(str(x) for x in parsed)
+                except json.JSONDecodeError:
+                    pass
+            else:
+                for line in raw_text.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        keep_list.append(line)
+        derived_path = derive_capture(
+            input_path=args.input,
+            output_path=args.output,
+            frame_types=tuple(args.frame_types),
+            start_seq=args.start_seq,
+            end_seq=args.end_seq,
+            rules=tuple(args.rules),
+            keep_list=tuple(keep_list),
+            tool=args.tool,
+            derived_at=args.derived_at,
+            repo_root=args.repo_root,
+        )
+        print(f"wrote derived capture to {derived_path}")
+        return 0
     if args.command == "convert":
         raw_attestations = json.loads(args.attestations.read_text(encoding="utf-8"))
         if not isinstance(raw_attestations, dict):

@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 import subprocess
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +26,26 @@ import pytest
 
 from scripts.acceptance import v061_evidence
 from scripts.acceptance.v050_receipt import (
+    ALLOWED_PREIMAGE_CLASSES,
+    ATTESTATION_MAP_SCHEMA,
+    CAPTURE_METADATA_SCHEMA,
+    INSTALL_RECEIPT_SCHEMA,
+    PIXEL_MEASUREMENTS_SCHEMA,
+    RECEIPT_SCHEMA,
+    STEP_LOG_SCHEMA,
     V061_ITEM_SCHEMA,
     V061_ROLE_LABELS,
+    RecordSchema,
+    SchemaRegistry,
+    ValueCategory,
+    _png_chunk_errors,
+    _public_evidence_roots,
     _validate_v061_install,
     _validate_v061_receipt,
+    evidence_file_privacy_errors,
+    find_absolute_paths_in_text,
+    is_absolute_filesystem_path,
+    is_forbidden_key,
     verify_run,
 )
 
@@ -38,7 +56,12 @@ _V061_RECEIPT_SCHEMA = (
 
 _COMMIT = "a" * 40
 _OTHER_COMMIT = "b" * 40
-_FRAME_ONE = b"\x89PNG fake frame one"
+_FRAME_ONE = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06"
+    b"\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0bIDATx\x9cc`\x00\x02\x00\x00\x05"
+    b"\x00\x01z^\xab?\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
 
 
 def _sha256(path: Path) -> str:
@@ -94,6 +117,8 @@ def _conforming_receipt(
                 "live-01-01-selected.png": _sha256(receipt_dir / "live-01-01-selected.png")
             },
             "files_listed_at": "2026-09-06",
+            "screenshots_read_by": "reviewer",
+            "screenshots_read_at": "2026-09-06",
         },
     }
     path = receipt_dir / "receipt.json"
@@ -778,6 +803,8 @@ def _attestation(**overrides: Any) -> dict[str, Any]:
         "expected": "the derived theme applies live and persists",
         "install_kind": "source-checkout",
         "harness_kind": "scratch-capture",
+        "screenshots_read_by": "reviewer",
+        "screenshots_read_at": "2026-09-06",
     }
     attestation.update(overrides)
     return attestation
@@ -1015,3 +1042,893 @@ def test_convert_refuses_when_identifiers_survive_the_filed_text(tmp_path: Path)
     assert "does not validate" in str(caught.value)
     assert "terminal pane identifier" in str(caught.value)
     assert not list(output.rglob("receipt.json")) if output.exists() else True
+
+
+# ── derive-capture: declared derivation, withholdings, gapless seq ─────────
+
+
+def test_derive_capture_produces_valid_derived_wire_capture(tmp_path: Path) -> None:
+    raw_path = tmp_path / "raw_capture.jsonl"
+    derived_path = tmp_path / "derived_capture.jsonl"
+    lines = [
+        json.dumps({
+            "kind": "header",
+            "version": 1,
+            "startedAt": "2026-09-06T00:00:00Z",
+            "endpoint": "ws://127.0.0.1:8765/api/ws",
+        }),
+        json.dumps({
+            "kind": "frame",
+            "seq": 1,
+            "at": "2026-09-06T00:00:01Z",
+            "dir": "in",
+            "frame": {
+                "type": "gateway.ready",
+                "params": {"home": "/Users/operator/workspace", "pane": "wFB:pT"},
+            },
+        }),
+        json.dumps({
+            "kind": "frame",
+            "seq": 2,
+            "at": "2026-09-06T00:00:02Z",
+            "dir": "in",
+            "frame": {
+                "type": "skills.roster",
+                "params": {"skills": ["bash", "edit"], "session": "worker-2"},
+            },
+        }),
+    ]
+    raw_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    out = v061_evidence.derive_capture(
+        input_path=raw_path,
+        output_path=derived_path,
+        tool="test-harness derive-capture",
+        derived_at="2026-09-06T01:00:00Z",
+    )
+    assert out == derived_path
+    assert derived_path.is_file()
+
+    out_lines = derived_path.read_text(encoding="utf-8").splitlines()
+    header = json.loads(out_lines[0])
+    assert header["kind"] == "header"
+    assert "derivation" in header
+    deriv = header["derivation"]
+    assert deriv["tool"] == "test-harness derive-capture"
+    assert deriv["source_frames"] == 2
+    assert deriv["derived_at"] == "2026-09-06T01:00:00Z"
+    assert "source_sha256" in deriv
+    assert deriv["source_bytes"] == len(raw_path.read_bytes())
+
+    f1 = json.loads(out_lines[1])
+    assert f1["seq"] == 1
+    assert f1["sourceSeq"] == 1
+    assert f1["frame"]["params"]["home"] == "[redacted]/workspace"
+    assert f1["frame"]["params"]["pane"] == "[redacted]"
+    assert len(f1["redactions"]) == 2
+
+    f2 = json.loads(out_lines[2])
+    assert f2["seq"] == 2
+    assert f2["sourceSeq"] == 2
+    assert f2["frame"]["params"]["skills"] == "[redacted]"
+    assert f2["frame"]["params"]["session"] == "[redacted]"
+    assert len(f2["redactions"]) == 2
+
+    # Derived capture passes content-based privacy scan cleanly
+    from scripts.acceptance.v050_receipt import evidence_file_privacy_errors
+    assert evidence_file_privacy_errors(derived_path) == []
+
+
+def test_derive_capture_filters_frames_by_seq_and_type(tmp_path: Path) -> None:
+    raw_path = tmp_path / "raw_capture.jsonl"
+    derived_path = tmp_path / "derived_filtered.jsonl"
+    lines = [
+        json.dumps({"kind": "header", "version": 1, "endpoint": "ws://127.0.0.1:8765"}),
+        json.dumps({"kind": "frame", "seq": 10, "frame": {"type": "typeA"}}),
+        json.dumps({"kind": "frame", "seq": 20, "frame": {"type": "typeB"}}),
+        json.dumps({"kind": "frame", "seq": 30, "frame": {"type": "typeA"}}),
+        json.dumps({"kind": "frame", "seq": 40, "frame": {"type": "typeC"}}),
+    ]
+    raw_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    v061_evidence.derive_capture(
+        input_path=raw_path,
+        output_path=derived_path,
+        frame_types=("typeA",),
+        start_seq=15,
+    )
+    out_lines = derived_path.read_text(encoding="utf-8").splitlines()
+    assert len(out_lines) == 2  # header + 1 frame (seq 30)
+    frame = json.loads(out_lines[1])
+    assert frame["seq"] == 1  # gapless renumbered
+    assert frame["sourceSeq"] == 30  # original sequence retained
+    assert frame["frame"]["type"] == "typeA"
+
+
+def test_derive_capture_refuses_to_write_when_private_pattern_remains(tmp_path: Path) -> None:
+    raw_path = tmp_path / "raw_capture.jsonl"
+    derived_path = tmp_path / "derived_fail.jsonl"
+    lines = [
+        json.dumps({"kind": "header", "version": 1, "endpoint": "ws://127.0.0.1:8765"}),
+        json.dumps({
+            "kind": "frame",
+            "seq": 1,
+            "frame": {"type": "event", "owner": "/Users/private-operator/code"},
+        }),
+    ]
+    raw_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # If withholding rules do NOT include operator-home-path, the self-scan must catch it
+    with pytest.raises(SystemExit) as caught:
+        v061_evidence.derive_capture(
+            input_path=raw_path,
+            output_path=derived_path,
+            rules=("skills-roster",),  # intentionally omit operator-home-path
+        )
+    assert "refusing to write derived capture" in str(caught.value)
+    assert not derived_path.exists()
+
+
+# ── screenshot twin vs human read attestation ─────────────────────────────
+
+
+def test_screenshot_twin_or_human_read_validation(tmp_path: Path) -> None:
+    case_dir = tmp_path / "live-01"
+    case_dir.mkdir(parents=True)
+    png_file = case_dir / "capture.png"
+    png_file.write_bytes(_FRAME_ONE)
+
+    evidence: dict[str, Any] = {
+        "files": {"capture.png": _sha256(png_file)},
+        "files_listed_at": "2026-09-06",
+    }
+    receipt: dict[str, Any] = {
+        "schema_version": V061_ITEM_SCHEMA,
+        "release": "0.6.1",
+        "checklist_item": "live-01",
+        "title": "Live 01: Theme",
+        "issue": "https://github.com/infiquetra/talaria/issues/140",
+        "tester": "dedicated-tester",
+        "verdict": "pass",
+        "candidate_commit_sha": _COMMIT,
+        "recorded_at": "2026-09-05T05:21:00+00:00",
+        "install": {"kind": "source-checkout", "commit": _COMMIT, "basis": "attested"},
+        "harness": {"kind": "scratch-capture", "commit": None, "identity": "harness"},
+        "evidence": evidence,
+    }
+    receipt_path = case_dir / "receipt.json"
+
+    # 1. Refused: no twin and no read_by / read_at
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert any(
+        "screenshots have neither a text twin nor a recorded human read" in e
+        for e in errors
+    )
+
+    # 2. Accepted with text twin
+    twin = case_dir / "capture.txt"
+    twin.write_text("screen text", encoding="utf-8")
+    files_map: dict[str, str] = evidence["files"]
+    files_map["capture.txt"] = _sha256(twin)
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert errors == []
+
+    # 3. Accepted with human read attestation even without text twin
+    del files_map["capture.txt"]
+    twin.unlink()
+    evidence["screenshots_read_by"] = "dedicated-tester"
+    evidence["screenshots_read_at"] = "2026-09-06"
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert errors == []
+
+
+# ── Gate 4: convert file scanning and clean abort ─────────────────────────
+
+
+def test_convert_refuses_when_copied_file_has_private_identifier(tmp_path: Path) -> None:
+    repo, _early, _candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01"
+    _filed_thin_receipt(evidence)
+    # Put a private identifier into a sibling file
+    (evidence / "captured_notes.txt").write_text("operator at /Users/secret-user/path\n")
+
+    output = tmp_path / "converted"
+    with pytest.raises(SystemExit) as caught:
+        v061_evidence.convert(
+            attestations={"live-01": _attestation()},
+            output_root=output,
+            listed_at="2026-09-06",
+            repo_root=repo,
+        )
+    assert "carries privacy defects" in str(caught.value)
+    assert "operator home path" in str(caught.value)
+    # Atomic clean-up: output directory has no leftover files
+    assert not list(output.rglob("*")) if output.exists() else True
+
+
+def test_convert_refuses_when_screenshot_has_no_twin_and_no_read_attestation(
+    tmp_path: Path,
+) -> None:
+    repo, _early, _candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01"
+    _filed_thin_receipt(evidence)
+
+    output = tmp_path / "converted"
+    attestation = _attestation()
+    # Remove screenshot read attestation
+    del attestation["screenshots_read_by"]
+    del attestation["screenshots_read_at"]
+
+    with pytest.raises(SystemExit) as caught:
+        v061_evidence.convert(
+            attestations={"live-01": attestation},
+            output_root=output,
+            listed_at="2026-09-06",
+            repo_root=repo,
+        )
+    assert "screenshots have neither a text twin nor a recorded human read" in str(caught.value)
+
+
+# ── Dynamic Roots ─────────────────────────────────────────────────────────
+
+
+def test_public_evidence_roots_enumerates_all_version_trees(tmp_path: Path) -> None:
+    from scripts.acceptance.v050_receipt import _public_evidence_roots
+    (tmp_path / "docs" / "acceptance" / "v0.5.0").mkdir(parents=True)
+    (tmp_path / "docs" / "acceptance" / "v0.6.0").mkdir(parents=True)
+    (tmp_path / "docs" / "acceptance" / "v0.6.1").mkdir(parents=True)
+    (tmp_path / "docs" / "evidence").mkdir(parents=True)
+
+    roots = _public_evidence_roots(tmp_path)
+    root_strs = [r.as_posix() for r in roots]
+    assert "docs/acceptance/v0.5.0" in root_strs
+    assert "docs/acceptance/v0.6.0" in root_strs
+    assert "docs/acceptance/v0.6.1" in root_strs
+    assert "docs/evidence" in root_strs
+
+
+# ── Gate 3: record privacy scan ──────────────────────────────────────────
+
+
+def test_record_refuses_when_public_evidence_carries_privacy_defects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, early, candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
+    _conforming_receipt(evidence / "live-01", candidate_commit_sha=_COMMIT)
+
+    # Put a private identifier into public evidence
+    leaked = repo / "docs" / "evidence" / "notes.txt"
+    leaked.parent.mkdir(parents=True, exist_ok=True)
+    leaked.write_text("operator home: /Users/private-operator/code\n", encoding="utf-8")
+
+    def _fake_probe(
+        wheel: Path, *, candidate: dict[str, str], recorded_at: str
+    ) -> tuple[dict[str, Any], Path]:
+        return {"schema_version": "talaria-v0.6.0-install-v1"}, tmp_path / "scratch"
+
+    monkeypatch.setattr(v061_evidence, "_package_version", lambda: "0.6.1")
+    monkeypatch.setattr(v061_evidence, "_probe_install", _fake_probe)
+    wheel = tmp_path / "talaria-0.6.1-py3-none-any.whl"
+    wheel.write_bytes(b"wheel bytes")
+
+    with pytest.raises(SystemExit) as caught:
+        v061_evidence.record(
+            candidate_commit=_COMMIT,
+            wheel=wheel,
+            expected_receipts=1,
+            applies_map={},
+            repo_root=repo,
+        )
+    assert "refusing to record: evidence files carry private identifiers" in str(caught.value)
+
+
+# ── Amended privacy contract tests: PNG chunks, capture-metadata, markdown, keep-list ──
+
+
+def _make_png(chunks: list[tuple[bytes, bytes]]) -> bytes:
+    """Build a PNG byte stream from a list of (chunk_type_4bytes, chunk_data)."""
+    header = b"\x89PNG\r\n\x1a\n"
+    out = bytearray(header)
+    for ctype, cdata in chunks:
+        out.extend(struct.pack(">I", len(cdata)))
+        out.extend(ctype)
+        out.extend(cdata)
+        crc = zlib.crc32(ctype + cdata)
+        out.extend(struct.pack(">I", crc))
+    return bytes(out)
+
+
+def _base_png_chunks() -> list[tuple[bytes, bytes]]:
+    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    idat_data = zlib.compress(b"\x00\x00\x00\x00\x00")
+    return [
+        (b"IHDR", ihdr_data),
+        (b"IDAT", idat_data),
+        (b"IEND", b""),
+    ]
+
+
+def test_png_chunk_allowlist_and_text_metadata() -> None:
+    p = Path("screenshot.png")
+    # Base PNG is clean
+    base_png = _make_png(_base_png_chunks())
+    assert _png_chunk_errors(p, base_png) == []
+
+    # Allowed ancillary chunks (pHYs, gAMA, sRGB, tIME)
+    phys_chunk = (b"pHYs", struct.pack(">IIB", 2835, 2835, 1))
+    gama_chunk = (b"gAMA", struct.pack(">I", 45455))
+    srgb_chunk = (b"sRGB", b"\x00")
+    chunks_with_allowed = [
+        _base_png_chunks()[0],
+        phys_chunk,
+        gama_chunk,
+        srgb_chunk,
+        _base_png_chunks()[1],
+        _base_png_chunks()[2],
+    ]
+    assert _png_chunk_errors(p, _make_png(chunks_with_allowed)) == []
+
+    # Disallowed chunk (e.g. bKGD)
+    bkgd_chunk = (b"bKGD", b"\x00\x00\x00\x00\x00\x00")
+    base = _base_png_chunks()
+    disallowed_chunks = [base[0], bkgd_chunk, base[1], base[2]]
+    errors = _png_chunk_errors(p, _make_png(disallowed_chunks))
+    assert any("PNG contains disallowed chunk type 'bKGD'" in e for e in errors)
+
+    # Disallowed text keyword in tEXt chunk
+    bad_text = (b"tEXt", b"Software\x00Talaria")
+    errors = _png_chunk_errors(p, _make_png([base[0], bad_text, base[1], base[2]]))
+    assert any("unauthorized text chunk tEXt with keyword 'Software'" in e for e in errors)
+
+    # Authorized talaria-evidence keyword with valid schema in tEXt
+    valid_doc = {
+        "frame": 1,
+        "columns": 80,
+        "rows": 24,
+        "cell_width": 10,
+        "cell_height": 20,
+        "frame_digest": "0" * 64,
+        "session_id": "ses-123",
+        "captured_at": "2026-09-06T00:00:00Z",
+    }
+    good_text = (b"tEXt", b"talaria-evidence\x00" + json.dumps(valid_doc).encode("utf-8"))
+    assert _png_chunk_errors(p, _make_png([base[0], good_text, base[1], base[2]])) == []
+
+    # Authorized talaria-evidence keyword with forbidden key (tester_pane)
+    forbidden_doc = dict(valid_doc, tester_pane="pane-coord")
+    bad_meta_text = (b"tEXt", b"talaria-evidence\x00" + json.dumps(forbidden_doc).encode("utf-8"))
+    errors = _png_chunk_errors(p, _make_png([base[0], bad_meta_text, base[1], base[2]]))
+    assert any("tester_pane" in e for e in errors)
+
+    # Authorized talaria-evidence keyword with undeclared key
+    undeclared_doc = dict(valid_doc, undeclared_field="custom")
+    undec_meta_text = (
+        b"tEXt",
+        b"talaria-evidence\x00" + json.dumps(undeclared_doc).encode("utf-8"),
+    )
+    errors = _png_chunk_errors(p, _make_png([base[0], undec_meta_text, base[1], base[2]]))
+    assert any("undeclared key 'undeclared_field'" in e for e in errors)
+
+    # Compressed zTXt chunk with valid talaria-evidence
+    compressed_data = zlib.compress(json.dumps(valid_doc).encode("utf-8"))
+    ztxt_chunk = (b"zTXt", b"talaria-evidence\x00\x00" + compressed_data)
+    assert _png_chunk_errors(p, _make_png([base[0], ztxt_chunk, base[1], base[2]])) == []
+
+    # Compressed iTXt chunk with valid talaria-evidence
+    itxt_comp = (b"iTXt", b"talaria-evidence\x00\x01\x00\x00\x00" + compressed_data)
+    assert _png_chunk_errors(p, _make_png([base[0], itxt_comp, base[1], base[2]])) == []
+
+    # Uncompressed iTXt chunk with valid talaria-evidence
+    itxt_uncomp = (
+        b"iTXt",
+        b"talaria-evidence\x00\x00\x00\x00\x00" + json.dumps(valid_doc).encode("utf-8"),
+    )
+    assert _png_chunk_errors(p, _make_png([base[0], itxt_uncomp, base[1], base[2]])) == []
+
+
+def test_capture_metadata_file_validation(tmp_path: Path) -> None:
+    meta_file = tmp_path / "metadata.json"
+    valid_doc = {
+        "frame": 2,
+        "columns": 100,
+        "rows": 30,
+        "cell_width": 8,
+        "cell_height": 16,
+        "twin_digest": "1" * 64,
+        "captured_at": "2026-09-06T00:00:00Z",
+    }
+    meta_file.write_text(json.dumps(valid_doc), encoding="utf-8")
+    assert evidence_file_privacy_errors(meta_file) == []
+
+    # Undeclared key
+    invalid_doc = dict(valid_doc, arbitrary_metric=42)
+    meta_file.write_text(json.dumps(invalid_doc), encoding="utf-8")
+    errors = evidence_file_privacy_errors(meta_file)
+    assert any("undeclared key 'arbitrary_metric'" in e for e in errors)
+
+    # Invalid type for declared category
+    wrong_type = dict(valid_doc, frame="not-an-int")
+    meta_file.write_text(json.dumps(wrong_type), encoding="utf-8")
+    errors = evidence_file_privacy_errors(meta_file)
+    assert any("must be a non-negative number" in e for e in errors)
+
+
+def test_markdown_files_forbidden_under_evidence(tmp_path: Path) -> None:
+    repo, _early, _candidate = _git_repo(tmp_path)
+    ev_notes = repo / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01" / "notes.md"
+    ev_notes.parent.mkdir(parents=True, exist_ok=True)
+    ev_notes.write_text("# Live 01 Notes\nSome clean observation\n", encoding="utf-8")
+    errors = evidence_file_privacy_errors(ev_notes, repo_root=repo)
+    assert any("markdown files are forbidden under evidence/" in e for e in errors)
+
+    # Root document (conversion-notes.md) outside evidence/ is permitted if clean
+    conv_notes = repo / "docs" / "acceptance" / "v0.6.1" / "conversion-notes.md"
+    conv_notes.write_text("# Conversion Notes\nSummary of conversion\n", encoding="utf-8")
+    assert evidence_file_privacy_errors(conv_notes, repo_root=repo) == []
+
+
+def test_harness_identity_absolute_path_refused(tmp_path: Path) -> None:
+    receipt_dir = tmp_path / "live-01"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path, receipt = _conforming_receipt(
+        receipt_dir,
+        harness_kind="repository-tooling",
+        harness_commit=_COMMIT,
+        harness_identity="/Users/tester/tools/run.py",
+    )
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert any("must not contain an absolute filesystem path" in e for e in errors)
+
+    # Valid script-name-and-digest passes
+    receipt["harness"]["identity"] = "scripts/run.py:a1b2c3d4"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    assert _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True) == []
+
+    # Attestation refusal during convert
+    repo, _early, _candidate = _git_repo(tmp_path / "repo")
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
+    _filed_thin_receipt(evidence / "live-01")
+    output = tmp_path / "converted"
+    with pytest.raises(SystemExit) as caught:
+        v061_evidence.convert(
+            attestations={"live-01": _attestation(harness_identity="/tmp/run.sh")},
+            output_root=output,
+            listed_at="2026-09-06",
+            repo_root=repo,
+        )
+    assert "must not contain an absolute filesystem path" in str(caught.value)
+
+
+def test_derive_capture_with_keep_list(tmp_path: Path) -> None:
+    raw = tmp_path / "raw.jsonl"
+    lines = [
+        json.dumps({
+            "kind": "header",
+            "version": 1,
+            "startedAt": "2026-09-06T00:00:00Z",
+            "endpoint": "ws://127.0.0.1:8000/events",
+        }),
+        json.dumps({
+            "kind": "frame",
+            "seq": 10,
+            "redactions": [],
+            "frame": {
+                "type": "event",
+                "session_id": "session-12345",
+                "method": "inspect",
+                "data": {"user_id": "usr-1", "note": "keep-me-not"},
+            },
+        }),
+        json.dumps({
+            "kind": "frame",
+            "seq": 20,
+            "redactions": [],
+            "frame": {
+                "type": "event",
+                "session_id": "session-67890",
+                "method": "inspect",
+                "data": {"user_id": "usr-2", "note": "keep-me-not"},
+            },
+        }),
+    ]
+    raw.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out = tmp_path / "derived.jsonl"
+
+    v061_evidence.derive_capture(
+        input_path=raw,
+        output_path=out,
+        keep_list=("/frame/type", "/frame/method"),
+        rules=(),
+    )
+
+    out_lines = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    header = out_lines[0]
+    assert header["derivation"]["keep_list"] == ["/frame/method", "/frame/type"]
+    assert header["derivation"]["source_frames"] == 2
+
+    frame1 = out_lines[1]
+    assert frame1["seq"] == 1
+    assert frame1["sourceSeq"] == 10
+    assert frame1["frame"]["type"] == "event"
+    assert frame1["frame"]["method"] == "inspect"
+    assert frame1["frame"]["session_id"] == "[redacted]"
+    assert frame1["frame"]["data"]["user_id"] == "[redacted]"
+    assert frame1["frame"]["data"]["note"] == "[redacted]"
+
+    frame2 = out_lines[2]
+    assert frame2["seq"] == 2
+    assert frame2["sourceSeq"] == 20
+
+
+def test_convert_source_inventory_reconciliation_and_notes(tmp_path: Path) -> None:
+    repo, _early, _candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
+    _filed_thin_receipt(evidence / "live-01", tester="worker-1")
+
+    output = tmp_path / "converted"
+    written = v061_evidence.convert(
+        attestations={"live-01": _attestation(tester="dedicated-tester")},
+        output_root=output,
+        listed_at="2026-09-06",
+        repo_root=repo,
+    )
+    notes_path = output / "conversion-notes.md"
+    assert notes_path in written
+    assert notes_path.is_file()
+    notes_content = notes_path.read_text(encoding="utf-8")
+    assert "# Talaria v0.6.1 acceptance evidence conversion notes" in notes_content
+    assert "role-label-substitution" in notes_content
+    assert "live-01" in notes_content
+    assert "withheld" in notes_content
+
+    # Uncorrected defect in source inventory causes clean refusal
+    (evidence / "live-01" / "notes.md").write_text("# Markdown notes\n", encoding="utf-8")
+    second_output = tmp_path / "converted-second"
+    with pytest.raises(SystemExit) as caught:
+        v061_evidence.convert(
+            attestations={"live-01": _attestation(tester="dedicated-tester")},
+            output_root=second_output,
+            listed_at="2026-09-06",
+            repo_root=repo,
+        )
+    assert "refusing to convert" in str(caught.value)
+    assert "markdown files forbidden under evidence" in str(caught.value)
+
+
+# ── F-1, F-2, F-4: Structural Path Checks & Schema Registry Allowlist ──────
+
+
+def test_structural_path_check_all_probe_shapes() -> None:
+    """F-1: All absolute filesystem path probe shapes are refused."""
+    positive_probes = [
+        "/tmp/talaria-v061-live/driver.py",
+        "/private/tmp/talaria-v061-live/driver.py",
+        "/var/folders/ky/n5fq/T/pytest-of-jefcox/x",
+        "/opt/scratch/talaria-run",
+        "/Users/someone/.codex/worktrees/v061-w2",
+        "/Users/operator/workspace",
+        "file:///tmp/talaria-v061-live/driver.py",
+        "~/driver.py",
+        "~alice/driver.py",
+        "talaria at /tmp/talaria-v061-live/driver.py, commit 94b2aaa",
+        "`/tmp/talaria-v061-live/driver.py`",
+        "--workdir=/opt/scratch/talaria-run",
+        "identity=/tmp/talaria-v061-live/driver.py",
+    ]
+    for probe in positive_probes:
+        found = find_absolute_paths_in_text(probe)
+        assert len(found) >= 1, f"Expected probe to be refused: {probe!r}"
+    assert is_absolute_filesystem_path("/tmp/talaria-v061-live/driver.py")
+    assert is_absolute_filesystem_path("~/driver.py")
+    assert is_absolute_filesystem_path("~alice/driver.py")
+
+
+def test_structural_path_check_exemptions() -> None:
+    """F-1: Declared placeholders, URLs, device nodes, and slash commands are permitted."""
+    negative_probes = [
+        "<candidate-root>/dist/wheel.whl",
+        "file://<candidate-root>/dist/wheel.whl",
+        "<scratch-root>/evidence/live-01",
+        "file://<scratch-root>/evidence/live-01",
+        "<integration-tree>/test",
+        "/dev/null",
+        "/dev/ptmx",
+        "/dev/tty",
+        "/theme",
+        "/diffs",
+        "live-01.png",
+        "https://github.com/infiquetra/talaria",
+        "http://localhost:8000/v1/sessions",
+        "/v1/sessions",
+        "/api/v1/stream",
+        "./artifact-manifest.schema.json",
+        "../relative/path.txt",
+    ]
+    for probe in negative_probes:
+        found = find_absolute_paths_in_text(probe)
+        assert found == [], f"Expected exemption to pass: {probe!r}, got {found}"
+
+
+def test_converted_receipt_with_tmp_path_in_identity_refused(tmp_path: Path) -> None:
+    """F-1: harness.identity carrying /tmp paths is refused by receipt validation and scan."""
+    receipt_dir = tmp_path / "evidence" / "live-01"
+    receipt_dir.mkdir(parents=True)
+    receipt_path, receipt = _conforming_receipt(
+        receipt_dir,
+        harness_identity="talaria at /tmp/talaria-v061-live/driver.py, commit 94b2aaa",
+    )
+    # Receipt validator rejects /tmp path in harness.identity
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert any("must not contain an absolute filesystem path" in e for e in errors)
+
+    # Privacy scanner on the receipt file rejects it structurally
+    file_errors = evidence_file_privacy_errors(receipt_path)
+    assert any("/tmp/talaria-v061-live/driver.py" in e for e in file_errors)
+
+
+def test_schema_registry_covers_all_authored_record_types() -> None:
+    """F-2: SchemaRegistry resolves every authored record type without key sniffing."""
+    # 1. receipt
+    r_schema = SchemaRegistry.lookup(
+        Path("receipt.json"),
+        {"checklist_item": "live-01", "verdict": "pass"},
+    )
+    assert r_schema is RECEIPT_SCHEMA
+
+    # 2. install-receipt
+    ir_schema = SchemaRegistry.lookup(
+        Path("install-receipt.json"),
+        {"candidate": {}, "install": {}, "tester": "dedicated-tester"},
+    )
+    assert ir_schema is INSTALL_RECEIPT_SCHEMA
+
+    # 3. capture-metadata
+    cm_schema = SchemaRegistry.lookup(
+        Path("capture-metadata.json"),
+        {"frame_digest": "0" * 64, "columns": 80, "rows": 24},
+    )
+    assert cm_schema is CAPTURE_METADATA_SCHEMA
+
+    # 4. pixel-measurements
+    pm_schema = SchemaRegistry.lookup(
+        Path("measurements.json"),
+        {"measurements": {}, "columns": 80, "rows": 24},
+    )
+    assert pm_schema is PIXEL_MEASUREMENTS_SCHEMA
+
+    # 5. step-log
+    sl_schema = SchemaRegistry.lookup(
+        Path("step-log.json"),
+        {"step": 1, "action": "focus"},
+    )
+    assert sl_schema is STEP_LOG_SCHEMA
+
+    # 6. attestation-map
+    am_schema = SchemaRegistry.lookup(
+        Path("attestations.json"),
+        {"live-01": {"tester": "dedicated-tester"}},
+    )
+    assert am_schema is ATTESTATION_MAP_SCHEMA
+
+
+def test_schema_registry_enforces_allowlist_and_refuses_undeclared_or_unregistered(
+    tmp_path: Path,
+) -> None:
+    """F-2: Unregistered record types or undeclared keys in evidence/ are refused."""
+    ev_dir = tmp_path / "evidence" / "live-01"
+    ev_dir.mkdir(parents=True)
+
+    # Undeclared key in receipt.json
+    receipt_file = ev_dir / "receipt.json"
+    bad_receipt = {
+        "schema_version": V061_ITEM_SCHEMA,
+        "release": "0.6.1",
+        "checklist_item": "live-01",
+        "verdict": "pass",
+        "tester": "dedicated-tester",
+        "undeclared_private_field": "some-value",
+    }
+    receipt_file.write_text(json.dumps(bad_receipt), encoding="utf-8")
+    errors = evidence_file_privacy_errors(receipt_file)
+    assert any("undeclared key 'undeclared_private_field'" in e for e in errors)
+
+    # Forbidden key in receipt.json
+    forbidden_receipt = dict(bad_receipt)
+    del forbidden_receipt["undeclared_private_field"]
+    forbidden_receipt["tester_pane"] = "w1:p1"
+    receipt_file.write_text(json.dumps(forbidden_receipt), encoding="utf-8")
+    errors = evidence_file_privacy_errors(receipt_file)
+    assert any("forbidden key 'tester_pane'" in e for e in errors)
+
+    # Unregistered JSON record type under evidence/
+    unknown_file = ev_dir / "arbitrary_custom_record.json"
+    unknown_file.write_text(json.dumps({"arbitrary_payload": 123}), encoding="utf-8")
+    errors = evidence_file_privacy_errors(unknown_file)
+    assert any("unregistered record type or undeclared key" in e for e in errors)
+
+
+def test_dead_constant_removed_and_dynamic_roots_functional(tmp_path: Path) -> None:
+    """F-4: _PUBLIC_EVIDENCE_ROOTS dead constant is deleted and dynamic discovery works."""
+    from scripts.acceptance import v050_receipt
+
+    assert not hasattr(v050_receipt, "_PUBLIC_EVIDENCE_ROOTS")
+
+    # Dynamic roots discover version directories correctly
+    v_root = tmp_path / "docs" / "acceptance" / "v0.6.1"
+    v_root.mkdir(parents=True)
+    roots = _public_evidence_roots(tmp_path)
+    assert "docs/acceptance/v0.6.1" in [r.as_posix() for r in roots]
+
+
+# ── Second Amendment: Refused Value Derivations & Preimage Binding ────────
+
+
+def test_reversible_transformations_and_abbreviations_refused() -> None:
+    """Amendment 2, Sec 1: URL-encoded, escaped, encoded, and abbreviated paths are refused."""
+    refused_probes = [
+        # URL-encoded paths
+        "%2FUsers%2Foperator%2Ftalaria",
+        "%2ftmp%2flive-script.py",
+        "%2fprivate%2ftmp%2fworker",
+        "%2Fvar%2Ffolders%2Fky%2Ftest",
+        "%2e%2e%2e%2ftalaria",
+        "file://%2FUsers%2Foperator",
+        # Escaped path separators
+        r"\/Users\/operator\/talaria",
+        r"\/tmp\/script.py",
+        r"\\tmp\\driver.py",
+        r"\\Users\\operator\\work",
+        # Encoded path prefixes
+        "/-Users-jefcox-workspace-infiquetra-talaria",
+        "/-tmp-scratch-dir",
+        "/-private-tmp-run",
+        # Windows absolute paths
+        r"C:\Users\operator\project",
+        r"c:\tmp\run.py",
+        # Abbreviated paths
+        ".../talaria",
+        "…/talaria",
+        ".../scratch",
+        "…/live-09",
+    ]
+    for probe in refused_probes:
+        assert is_absolute_filesystem_path(probe), f"Expected probe to be refused: {probe!r}"
+        found = find_absolute_paths_in_text(f"value at {probe}")
+        assert len(found) >= 1, f"Expected text scan to refuse: {probe!r}"
+
+
+def test_path_category_refuses_abbreviations_and_absolute_paths() -> None:
+    """Amendment 2, Sec 1: ValueCategory.PATH requires relative or placeholder."""
+    schema = RecordSchema(
+        name="test-path",
+        declared_keys={"target": ValueCategory.PATH},
+    )
+
+    # Valid relative paths and approved placeholders pass
+    valid_paths = [
+        "dist/wheel.whl",
+        "evidence/live-01/file.txt",
+        "<candidate-root>/dist/wheel.whl",
+        "<scratch-root>/output.json",
+        "<integration-tree>/evidence",
+    ]
+    for p in valid_paths:
+        errors = schema.validate({"target": p}, path=Path("test.json"))
+        assert errors == [], f"Expected valid path to pass: {p!r}, got {errors}"
+
+    # Refused: abbreviated paths (... and …)
+    for p in [".../talaria", "…/talaria", "path/.../file", "path/…/file"]:
+        errors = schema.validate({"target": p}, path=Path("test.json"))
+        assert any(
+            "must not be an abbreviated path" in e for e in errors
+        ), f"Expected abbreviation error: {p!r}"
+
+    # Refused: absolute paths
+    for p in ["/tmp/file.txt", "/Users/operator/file", "~/file.txt"]:
+        errors = schema.validate({"target": p}, path=Path("test.json"))
+        assert any(
+            "must not be an absolute filesystem path" in e for e in errors
+        ), f"Expected absolute path error: {p!r}"
+
+
+def test_harness_label_category_enforces_placeholder_vocabulary() -> None:
+    """Amendment 2, Sec 1: ValueCategory.HARNESS_LABEL requires bracketed placeholder format."""
+    schema = RecordSchema(
+        name="test-label",
+        declared_keys={"label": ValueCategory.HARNESS_LABEL},
+    )
+
+    # Valid placeholder labels pass
+    for valid in ["<project-a>", "<project-b>", "<run-1>"]:
+        errors = schema.validate({"label": valid}, path=Path("test.json"))
+        assert errors == [], f"Expected label to pass: {valid!r}, got {errors}"
+
+    # Unbracketed or raw strings fail
+    for invalid in ["project-a", "my-secret-task", "", "<>"]:
+        errors = schema.validate({"label": invalid}, path=Path("test.json"))
+        assert len(errors) >= 1, f"Expected invalid label to fail: {invalid!r}"
+
+
+def test_digest_preimage_registration_enforcement() -> None:
+    """Amendment 2, Sec 1: Schema registration fails without declared or valid preimage class."""
+    assert "git-commit" in ALLOWED_PREIMAGE_CLASSES
+
+    # 1. Registration fails if digest field has no declared preimage
+    with pytest.raises(ValueError) as exc:
+        RecordSchema(
+            name="missing-preimage",
+            declared_keys={"artifact_hash": ValueCategory.DIGEST},
+        )
+    assert "digest field 'artifact_hash' has no declared preimage class" in str(exc.value)
+
+    # 2. Registration fails if nested digest field has no declared preimage
+    with pytest.raises(ValueError) as exc:
+        RecordSchema(
+            name="missing-nested-preimage",
+            declared_keys={"sub": ValueCategory.OBJECT},
+            nested_schemas={"sub": {"item_digest": ValueCategory.DIGEST}},
+        )
+    assert "nested digest field 'sub.item_digest' has no declared preimage class" in str(exc.value)
+
+    # 3. Registration fails if preimage class is not allowed (e.g. working-directory)
+    with pytest.raises(ValueError) as exc:
+        RecordSchema(
+            name="disallowed-preimage",
+            declared_keys={"workdir_sha": ValueCategory.DIGEST},
+            digest_preimages={"workdir_sha": "working-directory"},
+        )
+    assert "is not an allowed preimage class" in str(exc.value)
+
+    # 4. Valid registration with allowed preimage class succeeds
+    schema = RecordSchema(
+        name="valid-schema",
+        declared_keys={"commit_sha": ValueCategory.DIGEST},
+        digest_preimages={"commit_sha": "git-commit"},
+    )
+    assert schema.validate({"commit_sha": _COMMIT}, path=Path("test.json")) == []
+
+
+def test_forbidden_workdir_hash_keys_refused() -> None:
+    """Amendment 2, Sec 1: Workdir/path hash keys are strictly forbidden."""
+    forbidden_keys = [
+        "workdir_hash",
+        "working_directory_hash",
+        "cwd_hash",
+        "workdir_sha256",
+        "working_directory_sha256",
+        "path_hash",
+        "custom_workdir_hash",
+        "run_cwd_hash",
+    ]
+    for key in forbidden_keys:
+        assert is_forbidden_key(key), f"Expected key to be forbidden: {key!r}"
+
+
+def test_receipt_supersedes_schema_support(tmp_path: Path) -> None:
+    """Amendment 2, Sec 3: RECEIPT_SCHEMA supports supersedes object with valid digests."""
+    receipt_dir = tmp_path / "evidence" / "live-01"
+    receipt_dir.mkdir(parents=True)
+    receipt_path, receipt = _conforming_receipt(receipt_dir)
+
+    # Add valid supersedes block
+    receipt["supersedes"] = {
+        "receipt_sha256": "c" * 64,
+        "candidate_commit_sha": _COMMIT,
+    }
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    # Both _validate_v061_receipt and schema validation pass
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert errors == [], f"Expected supersedes to pass validation: {errors}"
+    scan_errors = evidence_file_privacy_errors(receipt_path)
+    assert scan_errors == [], f"Expected clean scan: {scan_errors}"
+
+    # Invalid supersedes digest fails
+    receipt["supersedes"]["receipt_sha256"] = "not-a-sha256"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert any(
+        "supersedes.receipt_sha256 must be a 64-character SHA-256 digest" in e
+        for e in errors
+    )
