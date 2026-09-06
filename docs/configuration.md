@@ -24,8 +24,9 @@ theme selected in the running picker applies live and persists to the user confi
 External configuration edits are restart-to-apply. Talaria does not watch configuration files and does
 not reload external file edits at runtime. In the running application, explicit theme selection
 (`/theme select <name>` or `Enter` in the picker) applies live and persists `theme.name` to user scope
-immediately, `/theme reload [name]` refreshes local stored theme files live, and `/bar` changes the
-status-bar segment set immediately for the running process.
+immediately, `/theme reload [name]` refreshes local stored theme files live, `/bar` changes the
+status-bar segment set immediately for the running process, and `/config` opens the configuration
+view described below.
 
 ## Complete default shape
 
@@ -152,6 +153,42 @@ needs a restart. Configuration resolves once at startup and Talaria does not wat
 - This section promises nothing beyond status behavior: whether other configuration reloads live
 is shared with the configuration views and decided there.
 
+## The `/config` view
+
+The `/config` command opens the configuration view: one screen showing exactly four settings —
+the allowlist — each with its effective value and the precedence layer that supplied it
+(default, user file, repository file, environment, or session). No credential, connection
+setting, environment allowlist, column limit, or Hermes agent identity appears there, and none
+can be written from it.
+
+| Row | Control | Mode |
+| --- | --- | --- |
+| `theme.name` | opens the theme picker — no second picker or editor | live: applies and persists through the theme flow |
+| `status.command` | text; empty is allowed and labelled "no status script" | restart |
+| `status.interval_seconds` | integer, the 1–3600 bound shown; invalid input is rejected inline and nothing is written | restart |
+| `status.segments` | ordered multi-select over the seven known names (space toggles, shift+↑↓ reorders) | restart |
+
+**Apply** writes only the changed keys to the user configuration file, through the same
+byte-preserving targeted rewrite theme selection uses, generalized to whole status assignments
+including the multi-line `segments` array. A second explicit action, **save to repository**,
+writes the changed keys to the repository scope, mirroring `/theme save repository`. Cancel and
+Escape write nothing. Where a hand-formatted file defeats the targeted rewrite — an inline
+`status` table, a comment inside a replaced value, a dotted-and-table mix — the view refuses
+and says to edit the file by hand rather than reformatting it.
+
+A row whose value comes from the repository file is read-only for a user-scope apply, with that
+reason shown: the repository file beats the user file, so a user-file write would be shadowed.
+A row whose value comes from a `TALARIA_*` environment variable is read-only entirely, for the
+same reason one level up. An empty `status.command` saves as the explicit `command = ""` — the
+documented contract disables the region for an empty value, and one mechanism for that outcome
+is enough.
+
+After a save, each written row reads "saved: X · effective now: Y · takes effect on restart":
+the status keys resolve once at startup, so the saved value differs from the effective one until
+the next start. The segments row's effective value is the running bar's set — startup resolution
+plus any `/bar` session toggles — and its source reads `session` while the two differ; `/bar`
+remains session-only and is never written unless applied here.
+
 ## Validation and compatibility
 
 Talaria deep-merges each configured table onto the defaults, so files written before 0.5.0 do not
@@ -172,15 +209,22 @@ is different: it is a launch error that names the offending file.
 
 ## What Talaria writes
 
-Talaria writes only the top-level `theme.name` setting. It persists `theme.name` to the user
-configuration immediately upon explicit theme selection (`/theme select <name>` or `Enter` in the
-`/theme` picker) or explicit save (`/theme save [user]`), and to repository configuration upon
-`/theme save repository`. The narrow writer supports an existing `[theme]` table, dotted
-key, or inline table; it leaves every other key and comment untouched, verifies the parsed document
-changed in exactly that way, and replaces the file atomically. It is not a general configuration
-serializer.
+Talaria writes two surfaces, both through the same narrow, byte-preserving targeted rewrite:
+the top-level `theme.name` setting, and — through the `/config` view's apply action — the
+`status.command`, `status.interval_seconds`, and `status.segments` keys. Nothing else.
 
-No command writes the status, user-interface, environment, composer, keybinding, or
+`theme.name` persists to the user configuration immediately upon explicit theme selection
+(`/theme select <name>` or `Enter` in the `/theme` picker) or explicit save (`/theme save [user]`),
+and to repository configuration upon `/theme save repository`. The status keys persist when the
+`/config` view's apply action writes the changed keys to the user file, or its save-to-repository
+action writes them to the repository scope. The writer supports an existing `[theme]` table or
+`[status]` table (dotted keys included, a whole assignment replaced in place including the
+multi-line `segments` array, a missing key appended); it leaves every other key and comment
+untouched, verifies the parsed document changed in exactly the requested way, and replaces the
+file atomically. It is not a general configuration serializer, and a file whose hand formatting
+defeats the targeted rewrite is refused rather than reformatted.
+
+No command writes the user-interface, environment, composer, keybinding, or
 profile tables. `/bar` toggles a known segment in memory for the running process and never
 writes. Inspector width and open state, and diff mode/navigation state, are also process-local
 and have no configuration rows.

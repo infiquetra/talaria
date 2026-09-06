@@ -384,7 +384,7 @@ def test_status_save_never_writes_a_key_outside_the_view_allowlist(
     path.write_bytes(b'[status]\ncommand = "old"\n')
 
     with pytest.raises(ConfigError, match="the configuration view writes only"):
-        save_status_settings(changes, config_dir=tmp_path)  # type: ignore[arg-type]
+        save_status_settings(changes, config_dir=tmp_path)
 
     assert path.read_bytes() == b'[status]\ncommand = "old"\n'
 
@@ -421,7 +421,7 @@ def test_status_save_refuses_values_the_contract_would_not_accept(
     path.write_bytes(b'[status]\ncommand = "old"\n')
 
     with pytest.raises(ConfigError, match=message):
-        save_status_settings(changes, config_dir=tmp_path)  # type: ignore[arg-type]
+        save_status_settings(changes, config_dir=tmp_path)
 
     assert path.read_bytes() == b'[status]\ncommand = "old"\n'
 
