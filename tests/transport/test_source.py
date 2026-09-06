@@ -368,3 +368,4 @@ async def test_a_queued_frame_keeps_the_epoch_of_the_socket_it_arrived_on(
 
         assert source.arrival_epoch == arrived_on
         assert source.epoch == replaced_by
+        await app.shutdown_sources()
