@@ -519,13 +519,21 @@ class RecordSchema:
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must be an object"
                     )
+            elif cat == ValueCategory.URL:
+                if not isinstance(v, str) or not v.strip():
+                    errors.append(f"{path}: {self.name} field {loc!r} must be a url string")
+                elif find_absolute_paths_in_text(v):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must not contain an absolute "
+                        f"filesystem path ({v!r})"
+                    )
             elif cat == ValueCategory.STRING:
                 if isinstance(v, list):
                     if not all(isinstance(x, str) for x in v):
                         errors.append(
                             f"{path}: {self.name} field {loc!r} must be a string or list of strings"
                         )
-                elif not isinstance(v, str):
+                elif not isinstance(v, (str, int)):
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must be a string"
                     )
@@ -557,6 +565,9 @@ RECEIPT_SCHEMA = RecordSchema(
         "supersedes": ValueCategory.OBJECT,
         "screenshots_read_by": ValueCategory.CLOSED_VOCABULARY,
         "screenshots_read_at": ValueCategory.TIMESTAMP,
+        "twin_path": ValueCategory.PATH,
+        "twin_digest": ValueCategory.DIGEST,
+        "twin_sha256": ValueCategory.DIGEST,
     },
     nested_schemas={
         "install": {
@@ -585,6 +596,9 @@ RECEIPT_SCHEMA = RecordSchema(
             "wire": ValueCategory.OBJECT,
             "screenshot_path": ValueCategory.PATH,
             "screenshot_sha256": ValueCategory.DIGEST,
+            "twin_path": ValueCategory.PATH,
+            "twin_digest": ValueCategory.DIGEST,
+            "twin_sha256": ValueCategory.DIGEST,
             "pty_result_path": ValueCategory.PATH,
             "pty_result_sha256": ValueCategory.DIGEST,
             "source": ValueCategory.STRING,
@@ -642,6 +656,10 @@ RECEIPT_SCHEMA = RecordSchema(
         "install.sha256": "wheel",
         "harness.commit": "git-commit",
         "evidence.screenshot_sha256": "rendered-frame",
+        "evidence.twin_digest": "text-twin",
+        "evidence.twin_sha256": "text-twin",
+        "twin_digest": "text-twin",
+        "twin_sha256": "text-twin",
         "evidence.pty_result_sha256": "step-payload",
         "evidence.files": "evidence-file",
         "files": "evidence-file",
@@ -693,12 +711,14 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "height": ValueCategory.COUNT,
         "dpi": ValueCategory.COUNT,
         "scale": ValueCategory.COUNT,
-        "frame": ValueCategory.COUNT,
+        "frame": ValueCategory.STRING,
         "frame_digest": ValueCategory.DIGEST,
         "frame_digests": ValueCategory.DIGEST,
         "digests": ValueCategory.DIGEST,
         "sha256": ValueCategory.DIGEST,
         "twin_digest": ValueCategory.DIGEST,
+        "twin_sha256": ValueCategory.DIGEST,
+        "twin_path": ValueCategory.PATH,
         "recorded_at": ValueCategory.TIMESTAMP,
         "captured_at": ValueCategory.TIMESTAMP,
         "timestamp": ValueCategory.TIMESTAMP,
@@ -712,6 +732,25 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "source": ValueCategory.STRING,
         "view_id": ValueCategory.STRING,
         "capture_kind": ValueCategory.CLOSED_VOCABULARY,
+        "candidate": ValueCategory.OBJECT,
+        "case": ValueCategory.CLOSED_VOCABULARY,
+        "schema": ValueCategory.CLOSED_VOCABULARY,
+        "purpose": ValueCategory.CLOSED_VOCABULARY,
+        "session": ValueCategory.OBJECT,
+        "first_ansi_offset": ValueCategory.COUNT,
+        "final_ansi_offset": ValueCategory.COUNT,
+        "frame_sha256": ValueCategory.DIGEST,
+        "first_frame_sha256": ValueCategory.DIGEST,
+        "png_sha256": ValueCategory.DIGEST,
+        "gateway": ValueCategory.URL,
+        "event_log": ValueCategory.PATH,
+        "tester": ValueCategory.CLOSED_VOCABULARY,
+        "scope": ValueCategory.STRING,
+        "settling": ValueCategory.OBJECT,
+        "self_check": ValueCategory.OBJECT,
+        "text_twin": ValueCategory.OBJECT,
+        "diagnostics_cells": ValueCategory.LIST,
+        "diagnostics_crop_error": ValueCategory.STRING,
     },
     nested_schemas={
         "geometry": {
@@ -730,6 +769,41 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "cell_width": ValueCategory.COUNT,
             "cell_height": ValueCategory.COUNT,
         },
+        "candidate": {
+            "commit_sha": ValueCategory.DIGEST,
+            "entry_point": ValueCategory.PATH,
+            "source_module": ValueCategory.PATH,
+            "binary_sha256": ValueCategory.DIGEST,
+        },
+        "session": {
+            "durable_id": ValueCategory.GATEWAY_SESSION_ID,
+            "runtime_id": ValueCategory.GATEWAY_SESSION_ID,
+            "request_id": ValueCategory.STRING,
+            "reply_seq": ValueCategory.COUNT,
+            "profile": ValueCategory.CLOSED_VOCABULARY,
+            "title": ValueCategory.STRING,
+            "mode": ValueCategory.STRING,
+        },
+        "settling": {
+            "quiet_seconds_per_window": ValueCategory.COUNT,
+            "timeout_seconds": ValueCategory.COUNT,
+            "windows": ValueCategory.COUNT,
+        },
+        "self_check": {
+            "algorithm": ValueCategory.CLOSED_VOCABULARY,
+            "expected_rejection": ValueCategory.STRING,
+            "stable_control": ValueCategory.CLOSED_VOCABULARY,
+            "status": ValueCategory.CLOSED_VOCABULARY,
+        },
+        "text_twin": {
+            "file": ValueCategory.PATH,
+            "path": ValueCategory.PATH,
+            "sha256": ValueCategory.DIGEST,
+            "twin_digest": ValueCategory.DIGEST,
+            "digest": ValueCategory.DIGEST,
+            "frame_sha256": ValueCategory.DIGEST,
+            "frame_digest": ValueCategory.DIGEST,
+        },
     },
     digest_preimages={
         "frame_digest": "rendered-frame",
@@ -737,7 +811,20 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "digests": "rendered-frame",
         "sha256": "source-capture",
         "twin_digest": "text-twin",
+        "twin_sha256": "text-twin",
         "source_digest_sha256": "source-capture",
+        "frame_sha256": "rendered-frame",
+        "first_frame_sha256": "rendered-frame",
+        "png_sha256": "source-capture",
+        "candidate.commit_sha": "git-commit",
+        "candidate.binary_sha256": "artifact",
+        "commit_sha": "git-commit",
+        "binary_sha256": "artifact",
+        "text_twin.sha256": "text-twin",
+        "text_twin.twin_digest": "text-twin",
+        "text_twin.digest": "text-twin",
+        "text_twin.frame_sha256": "rendered-frame",
+        "text_twin.frame_digest": "rendered-frame",
     },
 )
 
@@ -1410,6 +1497,105 @@ def _parse_png_text_chunk(chunk_type: bytes, chunk_data: bytes) -> tuple[str, by
         else:
             return kw_str, text_raw, None
     return "", b"", f"unrecognized text chunk type {chunk_type!r}"
+
+
+def _extract_png_capture_metadata(data: bytes) -> dict[str, Any] | None:
+    """Extract and parse the talaria-evidence JSON chunk from PNG data if present."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    offset = 8
+    while offset + 12 <= len(data):
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_end = offset + 12 + length
+        if chunk_end > len(data):
+            break
+        chunk_data = data[offset + 8 : offset + 8 + length]
+        offset = chunk_end
+        if chunk_type in _TEXT_CHUNK_TYPES:
+            keyword, text_bytes, parse_err = _parse_png_text_chunk(chunk_type, chunk_data)
+            if parse_err or keyword != "talaria-evidence":
+                continue
+            try:
+                doc = json.loads(text_bytes.decode("utf-8"))
+                if isinstance(doc, dict):
+                    return doc
+            except Exception:
+                continue
+    return None
+
+
+def _find_capture_time_twin_digest(
+    png_path: Path,
+    *,
+    receipt_dir: Path,
+    listed: dict[Path, str],
+) -> str | None:
+    """Find capture-time twin_digest for a screenshot PNG.
+
+    Checks:
+    1. Screenshot PNG's talaria-evidence chunk.
+    2. Sibling capture metadata sidecars (<stem>.json, <stem>.metadata.json, capture-metadata.json).
+    Returns the 64-character hex digest if found, or None.
+    """
+    stem = png_path.stem
+    # 1. Check PNG talaria-evidence chunk
+    png_file = receipt_dir / png_path
+    if png_file.is_file():
+        try:
+            doc = _extract_png_capture_metadata(png_file.read_bytes())
+            if doc:
+                digest = (
+                    doc.get("twin_digest")
+                    or doc.get("twin_sha256")
+                    or (
+                        doc.get("text_twin", {}).get("sha256")
+                        if isinstance(doc.get("text_twin"), dict)
+                        else None
+                    )
+                    or (
+                        doc.get("text_twin", {}).get("twin_digest")
+                        if isinstance(doc.get("text_twin"), dict)
+                        else None
+                    )
+                )
+                if isinstance(digest, str) and _V061_DIGEST.fullmatch(digest):
+                    return digest
+        except Exception:
+            pass
+
+    # 2. Check sibling capture metadata sidecars
+    sidecar_candidates = [
+        png_path.with_suffix(".json"),
+        png_path.parent / f"{stem}.metadata.json",
+        png_path.parent / "capture-metadata.json",
+    ]
+    for cand in sidecar_candidates:
+        if cand in listed:
+            cand_file = receipt_dir / cand
+            if cand_file.is_file():
+                try:
+                    doc = json.loads(cand_file.read_text(encoding="utf-8"))
+                    if isinstance(doc, dict):
+                        digest = (
+                            doc.get("twin_digest")
+                            or doc.get("twin_sha256")
+                            or (
+                                doc.get("text_twin", {}).get("sha256")
+                                if isinstance(doc.get("text_twin"), dict)
+                                else None
+                            )
+                            or (
+                                doc.get("text_twin", {}).get("twin_digest")
+                                if isinstance(doc.get("text_twin"), dict)
+                                else None
+                            )
+                        )
+                        if isinstance(digest, str) and _V061_DIGEST.fullmatch(digest):
+                            return digest
+                except Exception:
+                    pass
+    return None
 
 
 def _png_chunk_errors(path: Path, data: bytes) -> list[str]:
@@ -2373,15 +2559,55 @@ def _validate_v061_receipt(
             png_names = [name for name in listed if name.suffix.lower() == ".png"]
             for png_path in png_names:
                 stem = png_path.stem
-                has_twin = any(
-                    candidate in listed
+                twin_candidates = [
+                    candidate
                     for candidate in (
                         png_path.with_suffix(".txt"),
                         png_path.with_suffix(".ansi"),
                         png_path.parent / f"{stem}.screen.txt",
                     )
-                )
-                if not has_twin:
+                    if candidate in listed
+                ]
+                if not twin_candidates and "twin_path" in evidence:
+                    explicit_twin = Path(evidence["twin_path"])
+                    if explicit_twin in listed:
+                        twin_candidates.append(explicit_twin)
+
+                if twin_candidates:
+                    twin_file = twin_candidates[0]
+                    twin_digest = listed[twin_file]
+
+                    declared_twin = evidence.get("twin_digest") or receipt.get("twin_digest")
+                    if declared_twin and declared_twin != twin_digest:
+                        errors.append(
+                            f"screenshot '{png_path}' text twin '{twin_file}' digest in "
+                            f"evidence.files ({twin_digest}) does not match declared "
+                            f"twin_digest ({declared_twin})"
+                        )
+                    declared_sha = evidence.get("twin_sha256") or receipt.get("twin_sha256")
+                    if declared_sha and declared_sha != twin_digest:
+                        errors.append(
+                            f"screenshot '{png_path}' text twin '{twin_file}' digest in "
+                            f"evidence.files ({twin_digest}) does not match declared "
+                            f"twin_sha256 ({declared_sha})"
+                        )
+
+                    capture_twin_digest = _find_capture_time_twin_digest(
+                        png_path, receipt_dir=receipt_dir, listed=listed
+                    )
+                    if capture_twin_digest is not None:
+                        if capture_twin_digest != twin_digest:
+                            errors.append(
+                                f"screenshot '{png_path}' text twin '{twin_file}' digest "
+                                f"({twin_digest}) does not match capture-time twin_digest "
+                                f"({capture_twin_digest})"
+                            )
+                    else:
+                        errors.append(
+                            f"screenshot '{png_path}' text twin '{twin_file}' is not bound by "
+                            "capture-time twin_digest (twin was not produced at capture time)"
+                        )
+                else:
                     read_by = receipt.get("screenshots_read_by") or evidence.get(
                         "screenshots_read_by"
                     )

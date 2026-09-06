@@ -1205,15 +1205,47 @@ def test_screenshot_twin_or_human_read_validation(tmp_path: Path) -> None:
         for e in errors
     )
 
-    # 2. Accepted with text twin
+    # 2. Refused: text twin present but not bound at capture time
     twin = case_dir / "capture.txt"
     twin.write_text("screen text", encoding="utf-8")
+    twin_sha = _sha256(twin)
     files_map: dict[str, str] = evidence["files"]
-    files_map["capture.txt"] = _sha256(twin)
+    files_map["capture.txt"] = twin_sha
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert any(
+        "is not bound by capture-time twin_digest (twin was not produced at capture time)" in e
+        for e in errors
+    )
+
+    # 3. Refused: capture-time binding mismatches text twin digest
+    sidecar = case_dir / "capture.json"
+    sidecar.write_text(json.dumps({"twin_digest": "0" * 64}), encoding="utf-8")
+    files_map["capture.json"] = _sha256(sidecar)
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert any(
+        "does not match capture-time twin_digest" in e
+        for e in errors
+    )
+
+    # 4. Accepted: text twin bound by capture-time twin_digest in sidecar
+    sidecar.write_text(json.dumps({"twin_digest": twin_sha}), encoding="utf-8")
+    files_map["capture.json"] = _sha256(sidecar)
     errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
     assert errors == []
 
-    # 3. Accepted with human read attestation even without text twin
+    # 5. Accepted: text twin bound by capture-time twin_digest in PNG chunk
+    del files_map["capture.json"]
+    sidecar.unlink()
+    meta_payload = {"twin_digest": twin_sha}
+    text_chunk = (b"tEXt", b"talaria-evidence\x00" + json.dumps(meta_payload).encode("utf-8"))
+    base_chunks = _base_png_chunks()
+    png_with_meta = _make_png([base_chunks[0], text_chunk, base_chunks[1], base_chunks[2]])
+    png_file.write_bytes(png_with_meta)
+    files_map["capture.png"] = _sha256(png_file)
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert errors == []
+
+    # 6. Accepted with human read attestation even without text twin
     del files_map["capture.txt"]
     twin.unlink()
     evidence["screenshots_read_by"] = "dedicated-tester"
@@ -1267,6 +1299,63 @@ def test_convert_refuses_when_screenshot_has_no_twin_and_no_read_attestation(
             repo_root=repo,
         )
     assert "screenshots have neither a text twin nor a recorded human read" in str(caught.value)
+
+
+def test_convert_refuses_when_screenshot_twin_has_no_capture_binding(
+    tmp_path: Path,
+) -> None:
+    repo, _early, _candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01"
+    _filed_thin_receipt(evidence)
+    # Add a text twin without capture-time binding in sidecar or PNG
+    (evidence / "live-01-01-selected.txt").write_text("screen text\n", encoding="utf-8")
+
+    output = tmp_path / "converted"
+    attestation = _attestation()
+    del attestation["screenshots_read_by"]
+    del attestation["screenshots_read_at"]
+
+    with pytest.raises(SystemExit) as caught:
+        v061_evidence.convert(
+            attestations={"live-01": attestation},
+            output_root=output,
+            listed_at="2026-09-06",
+            repo_root=repo,
+        )
+    expected_msg = (
+        "is not bound by capture-time twin_digest (twin was not produced at capture time)"
+    )
+    assert expected_msg in str(caught.value)
+
+
+def test_convert_accepts_when_screenshot_twin_is_bound_at_capture(
+    tmp_path: Path,
+) -> None:
+    repo, _early, _candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01"
+    _filed_thin_receipt(evidence)
+    twin_path = evidence / "live-01-01-selected.txt"
+    twin_path.write_text("screen text\n", encoding="utf-8")
+    twin_sha = _sha256(twin_path)
+    (evidence / "live-01-01-selected.json").write_text(
+        json.dumps({"twin_digest": twin_sha}), encoding="utf-8"
+    )
+
+    output = tmp_path / "converted"
+    attestation = _attestation()
+    del attestation["screenshots_read_by"]
+    del attestation["screenshots_read_at"]
+
+    v061_evidence.convert(
+        attestations={"live-01": attestation},
+        output_root=output,
+        listed_at="2026-09-06",
+        repo_root=repo,
+    )
+    converted_receipt = json.loads(
+        (output / "live-01" / "receipt.json").read_text(encoding="utf-8")
+    )
+    assert "live-01-01-selected.txt" in converted_receipt["evidence"]["files"]
 
 
 # ── Dynamic Roots ─────────────────────────────────────────────────────────
@@ -1441,17 +1530,76 @@ def test_capture_metadata_file_validation(tmp_path: Path) -> None:
     meta_file.write_text(json.dumps(valid_doc), encoding="utf-8")
     assert evidence_file_privacy_errors(meta_file) == []
 
+    # String frame name is accepted (e.g. "instrument-01")
+    string_frame_doc = dict(valid_doc, frame="instrument-01")
+    meta_file.write_text(json.dumps(string_frame_doc), encoding="utf-8")
+    assert evidence_file_privacy_errors(meta_file) == []
+
     # Undeclared key
     invalid_doc = dict(valid_doc, arbitrary_metric=42)
     meta_file.write_text(json.dumps(invalid_doc), encoding="utf-8")
     errors = evidence_file_privacy_errors(meta_file)
     assert any("undeclared key 'arbitrary_metric'" in e for e in errors)
 
-    # Invalid type for declared category
-    wrong_type = dict(valid_doc, frame="not-an-int")
+    # Invalid type for declared category (columns must be a count)
+    wrong_type = dict(valid_doc, columns="not-an-int")
     meta_file.write_text(json.dumps(wrong_type), encoding="utf-8")
     errors = evidence_file_privacy_errors(meta_file)
     assert any("must be a non-negative number" in e for e in errors)
+
+    # Candidate and session provenance, text twin object, settling, and self check pass
+    rich_doc = dict(
+        valid_doc,
+        case="live-01",
+        schema="v061-item",
+        purpose="workflow-demonstration",
+        scope="session-lifetime",
+        tester="dedicated-tester",
+        gateway="http://127.0.0.1:8000",
+        event_log="wire.jsonl",
+        first_ansi_offset=1024,
+        final_ansi_offset=4096,
+        frame_sha256="2" * 64,
+        first_frame_sha256="3" * 64,
+        png_sha256="4" * 64,
+        candidate={
+            "commit_sha": "a" * 40,
+            "entry_point": "src/main.py",
+            "source_module": "talaria/app.py",
+            "binary_sha256": "5" * 64,
+        },
+        session={
+            "durable_id": "ses-durable-123",
+            "runtime_id": "ses-runtime-456",
+            "request_id": "req-789",
+            "reply_seq": 1,
+            "profile": "default",
+            "title": "Main Session",
+            "mode": "normal",
+        },
+        settling={
+            "quiet_seconds_per_window": 1,
+            "timeout_seconds": 10,
+            "windows": 2,
+        },
+        self_check={
+            "algorithm": "sha256",
+            "expected_rejection": "none",
+            "stable_control": "ok",
+            "status": "passed",
+        },
+        text_twin={
+            "file": "capture.txt",
+            "path": "capture.txt",
+            "sha256": "1" * 64,
+            "twin_digest": "1" * 64,
+            "frame_sha256": "2" * 64,
+        },
+        diagnostics_cells=["cell1", "cell2"],
+        diagnostics_crop_error="none",
+    )
+    meta_file.write_text(json.dumps(rich_doc), encoding="utf-8")
+    assert evidence_file_privacy_errors(meta_file) == []
 
 
 def test_markdown_files_forbidden_under_evidence(tmp_path: Path) -> None:

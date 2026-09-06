@@ -52,6 +52,7 @@ from scripts.acceptance.v050_receipt import (
     V061_ITEM_SCHEMA,
     V061_RELEASE,
     V061_ROLE_LABELS,
+    _find_capture_time_twin_digest,
     _v061_private_identifier_errors,
     _validate_v061_receipt,
     classify_evidence_file,
@@ -1070,15 +1071,16 @@ def convert(
         for png_name in png_names:
             png_p = Path(png_name)
             stem = png_p.stem
-            has_twin = any(
-                cand in files
+            twin_candidates = [
+                cand
                 for cand in (
                     str(png_p.with_suffix(".txt")),
                     str(png_p.with_suffix(".ansi")),
                     str(png_p.parent / f"{stem}.screen.txt"),
                 )
-            )
-            if not has_twin:
+                if cand in files
+            ]
+            if not twin_candidates:
                 read_by = attestation.get("screenshots_read_by") if attestation else None
                 read_at = attestation.get("screenshots_read_at") if attestation else None
                 if not read_by or not read_at:
@@ -1100,6 +1102,25 @@ def convert(
                         "(attestation.screenshots_read_by and attestation.screenshots_read_at)"
                     )
                     break
+            else:
+                twin_file = twin_candidates[0]
+                twin_digest = _sha256_file(files[twin_file])
+                source_listed = {Path(p): _sha256_file(f) for p, f in files.items()}
+                capture_twin_digest = _find_capture_time_twin_digest(
+                    png_p, receipt_dir=source_dir, listed=source_listed
+                )
+                if capture_twin_digest is not None:
+                    if capture_twin_digest != twin_digest:
+                        item_refusals.append(
+                            f"screenshot '{png_name}' text twin '{twin_file}' digest "
+                            f"({twin_digest}) does not match capture-time twin_digest "
+                            f"({capture_twin_digest})"
+                        )
+                else:
+                    item_refusals.append(
+                        f"screenshot '{png_name}' text twin '{twin_file}' is not bound by "
+                        "capture-time twin_digest (twin was not produced at capture time)"
+                    )
         if item_refusals:
             refusals.extend(f"{item}: {refusal}" for refusal in item_refusals)
             continue
