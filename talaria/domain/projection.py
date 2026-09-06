@@ -19,11 +19,13 @@ elapsed seconds are a function of the corpus rather than of when the test ran.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from talaria.domain.models import (
     ConnectionStatus,
+    MoaRun,
+    MoaView,
     PendingPrompt,
     PromptKind,
     QueuePrompt,
@@ -32,6 +34,11 @@ from talaria.domain.models import (
     TranscriptEntry,
     TranscriptKind,
     TurnStatus,
+)
+from talaria.domain.normalize import (
+    format_moa_committed_line,
+    format_moa_inspector_rows,
+    format_moa_live_line,
 )
 from talaria.domain.queue import approval_block_reason, prompt_feed_rows
 from talaria.domain.state import SessionState
@@ -169,6 +176,25 @@ class ProvisionalTail:
         return not self.raw_text
 
 
+def moa_view(moa: MoaRun | None) -> MoaView:
+    """Project a MoaRun record into an immutable MoaView (D7, issue #148)."""
+    if moa is None:
+        return MoaView()
+    if moa.is_terminal:
+        return MoaView(
+            live_text=None,
+            committed_text=format_moa_committed_line(moa),
+            inspector_rows=format_moa_inspector_rows(moa),
+            is_active=False,
+        )
+    return MoaView(
+        live_text=format_moa_live_line(moa),
+        committed_text=None,
+        inspector_rows=format_moa_inspector_rows(moa),
+        is_active=True,
+    )
+
+
 @dataclass(frozen=True)
 class EntryScopedView:
     """The transcript as entry-scoped records plus both provisional tails
@@ -186,6 +212,7 @@ class EntryScopedView:
     entries: tuple[TranscriptEntryRecord, ...]
     assistant_tail: ProvisionalTail
     reasoning_tail: ProvisionalTail
+    moa: MoaView = field(default_factory=MoaView)
 
 
 def entry_scoped_view(state: SessionState) -> EntryScopedView:
@@ -224,6 +251,7 @@ def entry_scoped_view(state: SessionState) -> EntryScopedView:
             raw_text=state.reasoning_text,
             generation=state.reasoning_stream_generation,
         ),
+        moa=moa_view(state.moa),
     )
 
 
@@ -431,13 +459,14 @@ class Snapshot:
     prompts: PromptView
     attachments: AttachmentView
     status: StatusPayload
-    changed: frozenset[str]
+    moa: MoaView = field(default_factory=MoaView)
+    changed: frozenset[str] = frozenset()
 
 
 #: The regions ``changed`` can name. A UI keyed off a typo would silently never
 #: re-render, so the set is published and asserted against.
 SNAPSHOT_REGIONS: frozenset[str] = frozenset(
-    {"transcript", "subagents", "prompts", "attachments", "status"}
+    {"transcript", "subagents", "prompts", "attachments", "status", "moa"}
 )
 
 
@@ -730,6 +759,7 @@ def project(
     prompts = prompt_view(state)
     attachments = attachment_view(state)
     status = status_payload(state, mode=mode)
+    moa = moa_view(state.moa)
 
     if previous is None:
         changed = frozenset(SNAPSHOT_REGIONS)
@@ -742,6 +772,7 @@ def project(
                 ("prompts", prompts, previous.prompts),
                 ("attachments", attachments, previous.attachments),
                 ("status", status, previous.status),
+                ("moa", moa, previous.moa),
             )
             if current != before
         )
@@ -752,6 +783,7 @@ def project(
         prompts=prompts,
         attachments=attachments,
         status=status,
+        moa=moa,
         changed=changed,
     )
 

@@ -21,9 +21,13 @@ from typing import Any
 
 from talaria.domain.decode import DecodedFrame, decode_frame
 from talaria.domain.models import (
+    KNOWN_MOA_PHASES,
     KNOWN_SUBAGENT_STATUSES,
+    TERMINAL_MOA_PHASES,
     TERMINAL_SUBAGENT_STATUSES,
     GatewayEvent,
+    MoaPhase,
+    MoaRun,
     SubagentStatus,
 )
 
@@ -47,14 +51,11 @@ SYSTEM_LINE_EVENTS: frozenset[str] = frozenset(
 
 #: Known event types Talaria decodes and deliberately does not render in v0.1.
 #: Each is out of scope for the prototype's surface (pet reactions, voice, skins,
-#: mixture-of-agents phase chatter, billing device-flow links) and each is listed
-#: rather than defaulted, so "we ignore this" stays a recorded decision.
+#: billing device-flow links) and each is listed rather than defaulted, so
+#: "we ignore this" stays a recorded decision.
 AMBIENT_IGNORED_EVENTS: frozenset[str] = frozenset(
     {
         "billing.step_up.verification",
-        "moa.aggregating",
-        "moa.phase",
-        "moa.progress",
         "notification.clear",
         "platforms.changed",
         "reaction",
@@ -217,6 +218,166 @@ def preserved(value: Any, previous: Any) -> Any:
     keep its prior value rather than be overwritten with ``None``.
     """
     return previous if value is None else value
+
+
+# ── Rule: Mixture-of-Agents phase normalization and terminal protection ─
+
+#: The fallback text when no MoA progress events have been observed on a route (D7, issue #148).
+MOA_FALLBACK_TEXT: str = "no progress events observed"
+
+_MOA_PHASE_ALIASES: Mapping[str, MoaPhase] = {
+    "aggregator": "aggregating",
+    "aggregating": "aggregating",
+    "reference": "references",
+    "references": "references",
+    "advisors": "references",
+    "complete": "complete",
+    "completed": "complete",
+    "cancelled": "cancelled",
+    "interrupted": "cancelled",
+    "failed": "failed",
+    "error": "failed",
+    "lost": "lost",
+}
+
+
+def normalize_moa_phase(value: Any, fallback: MoaPhase = "references") -> MoaPhase:
+    """Coerce a wire phase string into the frozen MoaPhase enum.
+
+    Handles upstream Hermes variations ('aggregator' -> 'aggregating',
+    'reference' -> 'references').
+    """
+    if not isinstance(value, str):
+        return fallback
+    normalized = value.strip().lower()
+    if normalized in _MOA_PHASE_ALIASES:
+        return _MOA_PHASE_ALIASES[normalized]
+    if normalized in KNOWN_MOA_PHASES:
+        return normalized  # type: ignore[return-value]
+    return fallback
+
+
+def is_terminal_moa_phase(phase: str) -> bool:
+    """Whether an MoA phase is terminal (complete, cancelled, failed)."""
+    return phase in TERMINAL_MOA_PHASES
+
+
+def keep_terminal_moa_phase(current: MoaPhase, proposed: MoaPhase) -> MoaPhase:
+    """Terminal wins over any later proposal.
+
+    Guarantees no permanently running progress or fabricated completion
+    is left behind after a supported cancellation or failure (Live 19).
+    """
+    return current if is_terminal_moa_phase(current) else proposed
+
+
+def format_moa_live_line(run: MoaRun) -> str:
+    """Format one live transcript line while the run is non-terminal (D7, issue #148).
+
+    Branch order is the taxonomy addendum's precedence rule (issue #148,
+    F-3): most advanced state first — aggregating, then an unrecognised
+    wire phase, then references — so the unrecognised-phase line renders
+    only while ``phase == "references"``: an unknown ``moa.phase`` followed
+    by ``moa.aggregating`` shows the aggregating line, while ``wire_phase``
+    keeps the unknown string for the record and the inspector.
+    """
+    k = str(run.refs_done) if run.refs_done is not None else "?"
+    n = str(run.refs_total) if run.refs_total is not None else "?"
+
+    if run.phase == "aggregating":
+        if run.aggregator:
+            return f"Mixture of Agents: aggregating {k}/{n} references · {run.aggregator}"
+        return f"Mixture of Agents: aggregating {k}/{n} references"
+
+    if run.phase == "references" and run.wire_phase and run.wire_phase != "aggregator":
+        return f'Mixture of Agents: phase "{run.wire_phase}" · {k}/{n} references'
+
+    # references phase
+    if run.finished:
+        label = run.finished[-1]
+        return f"Mixture of Agents: collecting {k}/{n} references · {label} finished"
+    return f"Mixture of Agents: collecting 0/{n} references"
+
+
+def format_moa_committed_line(run: MoaRun) -> str:
+    """Format one committed transcript line when the run becomes terminal (D7, issue #148)."""
+    k = str(run.refs_done) if run.refs_done is not None else "?"
+    n = str(run.refs_total) if run.refs_total is not None else "?"
+    # F-1 of the C10 review, ruled Shape B (taxonomy addendum on #148): the
+    # terminal "… while aggregating" strings read the monotonic domain claim
+    # and nothing else. Either aggregator event sets it, no later phase
+    # string can un-reach it, and wire_phase stays verbatim.
+    was_aggregating = run.reached_aggregating
+
+    if run.phase == "complete":
+        if run.aggregator:
+            return f"Mixture of Agents: {k}/{n} references · aggregated by {run.aggregator}"
+        return f"Mixture of Agents: {k}/{n} references · no aggregation phase observed"
+
+    if run.phase == "cancelled":
+        if was_aggregating:
+            if run.aggregator:
+                return f"Mixture of Agents: interrupted while aggregating · {run.aggregator}"
+            return "Mixture of Agents: interrupted while aggregating"
+        return f"Mixture of Agents: interrupted at {k}/{n} references"
+
+    if run.phase == "failed":
+        if was_aggregating:
+            if run.aggregator:
+                return f"Mixture of Agents: failed while aggregating · {run.aggregator}"
+            return "Mixture of Agents: failed while aggregating"
+        return f"Mixture of Agents: failed at {k}/{n} references"
+
+    if run.phase == "lost":
+        if was_aggregating:
+            if run.aggregator:
+                return f"Mixture of Agents: connection lost while aggregating · {run.aggregator}"
+            return "Mixture of Agents: connection lost while aggregating"
+        return f"Mixture of Agents: connection lost at {k}/{n} references"
+
+    return format_moa_live_line(run)
+
+
+def format_moa_inspector_rows(run: MoaRun | None) -> tuple[str, ...]:
+    """Format inspector rows for the MIXTURE OF AGENTS section (D7, issue #148)."""
+    if run is None:
+        return (MOA_FALLBACK_TEXT,)
+
+    # 1. First row: the same phase text as the transcript line, without "Mixture of Agents: "
+    if run.is_terminal:
+        transcript_line = format_moa_committed_line(run)
+    else:
+        transcript_line = format_moa_live_line(run)
+    first_row = transcript_line.removeprefix("Mixture of Agents: ")
+
+    rows: list[str] = [first_row]
+    n = str(run.refs_total) if run.refs_total is not None else "?"
+
+    # 2. One row per finished advisor, in finished order. F-4 of the C10
+    # review, from the ruling's two events: only ``moa.progress`` makes an
+    # advisor finished, and its row *becomes* referenced once the advisor's
+    # ``moa.reference`` arrives. A reference whose label is not in
+    # ``finished`` therefore has no row yet — showing one would call an
+    # advisor finished that has not finished, with an ordinal ``finished``
+    # does not contain. Its text waits for the advisor's own progress event.
+    for i, label in enumerate(run.finished, start=1):
+        ref_match = next((r for r in run.references if r.label == label), None)
+        if ref_match is not None and ref_match.first_line:
+            rows.append(f"{label} · finished {i}/{n} · {ref_match.first_line}")
+        else:
+            rows.append(f"{label} · finished {i}/{n}")
+
+    # 3. One row for remainder while any are outstanding: <n minus k> pending.
+    # F-6 of the C10 review: "outstanding" ends with the run — a terminal
+    # turn abandoned its remainder, and a row saying advisors are still
+    # pending would tell the operator work is running on a turn that ended.
+    if not run.is_terminal and run.refs_total is not None:
+        k_val = run.refs_done if run.refs_done is not None else len(run.finished)
+        rem = run.refs_total - k_val
+        if rem > 0:
+            rows.append(f"{rem} pending")
+
+    return tuple(rows)
 
 
 # ── Text hygiene ─────────────────────────────────────────────────────────

@@ -2393,7 +2393,7 @@ class TalariaApp(App[None]):
         self.snapshot = snapshot
         entries = entry_scoped_view(self.state)
 
-        if "transcript" in snapshot.changed:
+        if {"transcript", "moa"} & snapshot.changed:
             # KTD6: the pane needs entry identity and raw (unwelded) bodies
             # that TranscriptView's flattened line buffer does not carry, so
             # U4 computes the entry-scoped surface here rather than growing
@@ -2422,6 +2422,7 @@ class TalariaApp(App[None]):
             endpoint=self.profile_endpoints.get(profile, "") if profile else "",
             model=self._inspector_model(),
             usage=self.state.usage,
+            moa=snapshot.moa,
         )
         if inspector_projection != self._inspector_view:
             self._inspector_view = inspector_projection

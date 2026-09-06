@@ -40,11 +40,18 @@ from talaria.domain.decode import (
     NonEventFrame,
     ProtocolErrorFrame,
     UnknownEventFrame,
+    decode_moa_aggregating,
+    decode_moa_phase,
+    decode_moa_progress,
+    decode_moa_reference,
 )
 from talaria.domain.history import decode_history, element_count
 from talaria.domain.models import (
     ConnectionStatus,
     GatewayEvent,
+    MoaPhase,
+    MoaReferenceRecord,
+    MoaRun,
     PendingPrompt,
     PromptKind,
     SubagentState,
@@ -63,6 +70,7 @@ from talaria.domain.normalize import (
     clip_transcript_line,
     coerce_text,
     coerce_text_exact,
+    format_moa_committed_line,
     is_terminal_status,
     keep_terminal_else,
     normalize_subagent_status,
@@ -182,6 +190,7 @@ class SessionState:
 
     transcript: tuple[TranscriptEntry, ...] = ()
     subagents: tuple[SubagentState, ...] = ()
+    moa: MoaRun | None = None
     prompts: tuple[PendingPrompt, ...] = ()
     #: Prompts whose answer is on the wire right now.
     #:
@@ -731,6 +740,12 @@ def set_connection(
     next_state = state
     if cause is not None:
         next_state = _commit_partial_streams(next_state)
+        if next_state.moa is not None and not next_state.moa.is_terminal:
+            stamp = at if at is not None else next_state.last_observed_at
+            moa_lost = replace(next_state.moa, phase="lost", updated_at=stamp)
+            summary_line = format_moa_committed_line(moa_lost)
+            next_state = _append(next_state, "system", summary_line)
+            next_state = replace(next_state, moa=moa_lost)
         next_state = replace(
             next_state,
             turn="idle" if next_state.turn == "streaming" else next_state.turn,
@@ -781,6 +796,12 @@ def cancel_turn(state: SessionState, *, at: float) -> SessionState:
     next_state = state
     if state.reasoning_text:
         next_state = _append(next_state, "reasoning", state.reasoning_text)
+
+    if state.moa is not None and not state.moa.is_terminal:
+        moa_cancelled = replace(state.moa, phase="cancelled", updated_at=at)
+        summary_line = format_moa_committed_line(moa_cancelled)
+        next_state = _append(next_state, "system", summary_line)
+        next_state = replace(next_state, moa=moa_cancelled)
 
     if state.streaming_text:
         next_state = _append(
@@ -1759,6 +1780,7 @@ def _on_message_start(state: SessionState, event: GatewayEvent) -> SessionState:
         segments=(),
         interim_boundary=0,
         subagents=(),
+        moa=None,
         assistant_stream_generation=state.assistant_stream_generation + 1,
         reasoning_stream_generation=state.reasoning_stream_generation + 1,
     )
@@ -1877,6 +1899,11 @@ def _on_message_complete(state: SessionState, event: GatewayEvent) -> SessionSta
     next_state = state
     if state.reasoning_text:
         next_state = _append(next_state, "reasoning", state.reasoning_text)
+    if state.moa is not None and not state.moa.is_terminal:
+        moa_completed = replace(state.moa, phase="complete", updated_at=event.at)
+        summary_line = format_moa_committed_line(moa_completed)
+        next_state = _append(next_state, "system", summary_line)
+        next_state = replace(next_state, moa=moa_completed)
     if final:
         next_state = _append(next_state, "assistant", final)
 
@@ -2016,6 +2043,11 @@ def _on_error(state: SessionState, event: GatewayEvent) -> SessionState:
     """
     message = coerce_text(event.payload.get("message")) or "unknown error"
     next_state = _commit_partial_streams(state)
+    if state.moa is not None and not state.moa.is_terminal:
+        moa_failed = replace(state.moa, phase="failed", updated_at=event.at)
+        summary_line = format_moa_committed_line(moa_failed)
+        next_state = _append(next_state, "system", summary_line)
+        next_state = replace(next_state, moa=moa_failed)
     next_state = _append(next_state, "error", f"error: {clip_transcript_line(message)}")
     if state.turn == "cancelled":
         return next_state
@@ -2623,6 +2655,38 @@ def _apply_system_line(state: SessionState, event: GatewayEvent) -> SessionState
     return _append(state, "system", clip_transcript_line(text))
 
 
+def _on_moa_progress(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Record progress from one finished advisor in a mixture-of-agents fan-out."""
+    if state.turn == "cancelled" or (state.moa is not None and state.moa.is_terminal):
+        return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    decoded = decode_moa_progress(event.payload)
+    if decoded is None:
+        return state
+    current = state.moa
+    if current is None:
+        finished: tuple[str, ...] = (decoded.label,) if decoded.label else ()
+        run = MoaRun(
+            phase="references",
+            refs_done=decoded.refs_done,
+            refs_total=decoded.refs_total,
+            finished=finished,
+            updated_at=event.at,
+        )
+    else:
+        finished = current.finished
+        if decoded.label and decoded.label not in finished:
+            finished = (*finished, decoded.label)
+        run = replace(
+            current,
+            phase="references",
+            refs_done=decoded.refs_done,
+            refs_total=decoded.refs_total,
+            finished=finished,
+            updated_at=event.at,
+        )
+    return replace(state, moa=run)
+
+
 def _on_moa_reference(state: SessionState, event: GatewayEvent) -> SessionState:
     """Commit one mixture-of-agents reference model's output.
 
@@ -2632,13 +2696,115 @@ def _on_moa_reference(state: SessionState, event: GatewayEvent) -> SessionState:
     the operator opted into by selecting a mixture-of-agents preset; Talaria
     keeps that reasoning — the content is committed, the styling is not.
     """
-    if state.turn == "cancelled":
+    if state.turn == "cancelled" or (state.moa is not None and state.moa.is_terminal):
         return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    decoded = decode_moa_reference(event.payload)
     label = coerce_text(event.payload.get("label")) or "reference"
     text = coerce_text(event.payload.get("text"))
+
+    # Update MoA run record
+    first_line = text.splitlines()[0] if text else ""
+    rec = MoaReferenceRecord(label=label, first_line=first_line, chars=len(text) if text else 0)
+    count = decoded.count if decoded is not None else None
+    current = state.moa
+    if current is None:
+        run = MoaRun(
+            phase="references",
+            refs_total=count,
+            references=(rec,),
+            updated_at=event.at,
+        )
+    else:
+        refs_total = current.refs_total if current.refs_total is not None else count
+        run = replace(
+            current,
+            references=(*current.references, rec),
+            refs_total=refs_total,
+            updated_at=event.at,
+        )
+    next_state = replace(state, moa=run)
+
     if not text:
+        return next_state
+    return _append(next_state, "reasoning", f"◇ Reference — {label}\n{text}")
+
+
+def _on_moa_phase(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Record an MoA phase change event."""
+    if state.turn == "cancelled" or (state.moa is not None and state.moa.is_terminal):
+        return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    decoded = decode_moa_phase(event.payload)
+    if decoded is None:
         return state
-    return _append(state, "reasoning", f"◇ Reference — {label}\n{text}")
+    current = state.moa
+    is_aggregator = decoded.phase == "aggregator"
+    if current is None:
+        phase: MoaPhase = "aggregating" if is_aggregator else "references"
+        wire_phase = decoded.phase
+        aggregator = decoded.aggregator or ""
+        run = MoaRun(
+            phase=phase,
+            refs_done=decoded.refs_done,
+            refs_total=decoded.refs_total,
+            aggregator=aggregator,
+            wire_phase=wire_phase,
+            # Taxonomy addendum (F-1, Shape B): the recognized aggregator
+            # phase is one of the two events that reach aggregating.
+            reached_aggregating=is_aggregator,
+            updated_at=event.at,
+        )
+    else:
+        phase = "aggregating" if is_aggregator else current.phase
+        wire_phase = decoded.phase
+        refs_done = decoded.refs_done if decoded.refs_done is not None else current.refs_done
+        refs_total = decoded.refs_total if decoded.refs_total is not None else current.refs_total
+        aggregator = decoded.aggregator or current.aggregator
+        run = replace(
+            current,
+            phase=phase,
+            wire_phase=wire_phase,
+            refs_done=refs_done,
+            refs_total=refs_total,
+            aggregator=aggregator,
+            # Monotonic (taxonomy addendum): a later phase string cannot
+            # un-reach an aggregation that happened.
+            reached_aggregating=current.reached_aggregating or is_aggregator,
+            updated_at=event.at,
+        )
+    return replace(state, moa=run)
+
+
+def _on_moa_aggregating(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Record an MoA aggregator announcement event."""
+    if state.turn == "cancelled" or (state.moa is not None and state.moa.is_terminal):
+        return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    decoded = decode_moa_aggregating(event.payload)
+    if decoded is None:
+        return state
+    current = state.moa
+    if current is None:
+        run = MoaRun(
+            phase="aggregating",
+            aggregator=decoded.aggregator,
+            # Taxonomy addendum (F-1, Shape B): either aggregator event
+            # alone reaches aggregating; wire_phase stays verbatim.
+            reached_aggregating=True,
+            updated_at=event.at,
+        )
+    else:
+        aggregator = current.aggregator or decoded.aggregator
+        run = replace(
+            current,
+            phase="aggregating",
+            aggregator=aggregator,
+            # Monotonic (taxonomy addendum): this event reaches
+            # aggregating, and nothing invented goes into wire_phase — the
+            # stale-phase release is a rendering precedence in
+            # format_moa_live_line, not a field change.
+            reached_aggregating=True,
+            updated_at=event.at,
+        )
+    return replace(state, moa=run)
 
 
 def _ignore(state: SessionState, event: GatewayEvent) -> SessionState:
@@ -2662,7 +2828,10 @@ _HANDLERS: Mapping[str, _Handler] = {
     "thinking.delta": _on_thinking_delta,
     "reasoning.delta": _on_reasoning_delta,
     "reasoning.available": _on_reasoning_available,
+    "moa.progress": _on_moa_progress,
     "moa.reference": _on_moa_reference,
+    "moa.phase": _on_moa_phase,
+    "moa.aggregating": _on_moa_aggregating,
     "error": _on_error,
     "tool.start": _on_tool_start,
     "tool.complete": _on_tool_complete,
