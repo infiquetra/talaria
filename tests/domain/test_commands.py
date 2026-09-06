@@ -247,6 +247,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
         "/bar",
         "/inspector",
         "/diffs",
+        "/config",
     }
 
 
@@ -550,6 +551,7 @@ def test_the_local_set_includes_the_theme_picker_and_explicit_save_surface() -> 
         "/bar",
         "/inspector",
         "/diffs",
+        "/config",
     }
 
 
@@ -578,6 +580,17 @@ def test_diffs_always_resolves_locally() -> None:
 
     assert isinstance(invocation, LocalInvocation)
     assert invocation.command.action == "diffs"
+    assert invocation.argument == ""
+
+
+def test_config_always_resolves_locally() -> None:
+    """The configuration view's control (C11): resolvable the moment the
+    catalogue carries it, because the mounting seam in ``talaria/ui/app.py``
+    lands under that file's custody and may follow."""
+    invocation = resolve_command("/config", None)
+
+    assert isinstance(invocation, LocalInvocation)
+    assert invocation.command.action == "config"
     assert invocation.argument == ""
 
 

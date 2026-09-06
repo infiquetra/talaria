@@ -625,6 +625,7 @@ LocalAction = Literal[
     "bar",
     "inspector",
     "diffs",
+    "config",
 ]
 
 
@@ -779,6 +780,17 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "/diffs",
         "diffs",
         "Open the session's read-only diff viewer",
+    ),
+    # C11 (issue #149, D8 recorded): the configuration view. The one local
+    # command whose handler is the Wave Four mounting seam in
+    # ``talaria/ui/app.py`` — the catalogue entry ships first so the control
+    # lands in the Talaria section beside the others, and the wiring mounts
+    # ``talaria/ui/config_view.py`` onto this action. Shadows nothing: the
+    # gateway's registry holds no ``/config``.
+    LocalCommand(
+        "/config",
+        "config",
+        "Open the configuration view (effective values, sources, save)",
     ),
 )
 

@@ -150,7 +150,7 @@ Typing `/` in the composer opens the command palette with live prefix and substr
 Commands are presented in a sectioned list (decision D5) ordered by origin and taxonomy:
 
 1. **Talaria controls:** Local client actions (`/models`, `/profiles`, `/sessions`, `/needs`,
-   `/agents`, `/theme`, `/bar`, `/inspector`, `/diffs`, `/quit`, `/pause`, `/resume`, and pacing
+   `/agents`, `/theme`, `/bar`, `/inspector`, `/diffs`, `/config`, `/quit`, `/pause`, `/resume`, and pacing
    controls). These appear first and resolve immediately in the client without contacting the gateway.
 2. **Gateway categories:** Contributed command rows grouped under the gateway's own wire categories
    (`Session`, `Configuration`, `Info`, `Tools and Skills`, `Exit`, `TUI`, etc.) in the order the
@@ -216,6 +216,7 @@ aliases where the desktop delivers them.
 | `/models`; `F11` from every focus; `F6` only outside composer focus | Open models | live; gateway-changing actions are refused in replay |
 | `/profiles`; `F12` from every focus; `F7` only outside composer focus | Open profiles | live; gateway-changing actions are refused in replay |
 | `/attach [<path>]`, or drop a path onto the terminal | Stage a file for the agent | live; refused in replay |
+| `/config` | Open the configuration view | live and replay |
 | `F8` | Pause/resume playback | replay only |
 | `F9` / `F10` | Slower / faster playback | replay only |
 
@@ -242,6 +243,39 @@ survives every terminal multiplexer: see the `keys` table in [Configuration](con
 The help footer always labels cancel-turn beside quit-client, so the two can never be mistaken
 for one another. `Ctrl+C` left the interrupt action; pressed out of habit it reaches the text
 area's copy binding or the framework's quit hint, never the turn and never the exit.
+
+## Configuration view
+
+`/config` opens the configuration view (issue #149): a modal screen in the theme-picker family
+that shows what is in effect, where each value came from, and the narrow write that changes it.
+Exactly four settings appear — `theme.name`, `status.command`, `status.interval_seconds`,
+`status.segments` — with each row's effective value and source scope (default, user file,
+repository file, environment, or session) and a mode label. Nothing else is displayed or edited
+there: no credentials, connection settings, environment allowlist, column limits, or Hermes
+agent identity ever reaches this view.
+
+- **Theme row.** Shows the effective theme and its source, labelled `live`. The only edit path
+  is the existing theme picker, which the row opens by closing this view first — the picker is
+  the palette's theme mode, not a screen the modal could stack; selection applies and persists
+  through the theme flow, never through a second picker or editor.
+- **Status rows.** Labelled `restart`: the status keys resolve once at startup. Command edits as
+  text (empty is allowed and labelled "no status script"); interval as an integer with the
+  1–3600 bound shown — an invalid value is rejected inline and nothing is written; segments as
+  an ordered multi-select over the seven known names — `space` toggles, `shift+↑`/`shift+↓`
+  reorders. The segments row's effective value is the running bar's set, and its source reads
+  `session` while a `/bar` toggle has diverged it; `/bar` stays session-only and is never
+  written unless applied here.
+- **Apply and save.** `apply` writes only the changed keys to the user configuration file;
+  `save to repository` writes them to the repository scope, mirroring `/theme save repository`.
+  Both go through the byte-preserving targeted rewrite, and a hand-formatted file that rewrite
+  cannot match safely is refused with "edit the file by hand" rather than reformatted. After a
+  save, each written row reads "saved: X · effective now: Y · takes effect on restart".
+- **Read-only rows.** A row whose value comes from the repository file is read-only for a
+  user-scope apply, with that reason shown — the repository file beats the user file, so a
+  user-file write would be shadowed. A row whose value comes from a `TALARIA_*` environment
+  variable is read-only entirely.
+- **Escape and cancel** write nothing and close the view. The modal owns the keyboard: chords
+  bound beneath it (the inspector toggle, the turn cancel) do not act while it is open.
 
 ## Focus, motion, and scroll
 
