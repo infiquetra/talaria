@@ -275,6 +275,14 @@ class MoaRun:
     references: tuple[MoaReferenceRecord, ...] = ()
     aggregator: str = ""
     wire_phase: str = ""
+    #: The taxonomy addendum on issue #148 (F-1, ruled Shape B): a domain
+    #: claim, not a storage choice — the run *was ever* aggregating, which
+    #: neither ``phase`` (current state, overwritten by a terminal
+    #: transition) nor ``wire_phase`` (only what ``moa.phase`` said) can
+    #: express. Monotonic: set true by either aggregator event, never
+    #: cleared except by ``message.start`` clearing the whole record. The
+    #: terminal "… while aggregating" strings read it and nothing else.
+    reached_aggregating: bool = False
     updated_at: float = 0.0
 
     @property

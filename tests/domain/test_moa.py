@@ -617,18 +617,40 @@ def test_format_moa_lines_edge_cases() -> None:
     run_agg_no_name = MoaRun(phase="aggregating", refs_done=3, refs_total=3)
     assert format_moa_live_line(run_agg_no_name) == "Mixture of Agents: aggregating 3/3 references"
 
-    # Interrupted while aggregating without aggregator
-    run_interrupted = MoaRun(phase="cancelled", refs_done=3, refs_total=3, wire_phase="aggregator")
+    # Interrupted while aggregating without aggregator. The taxonomy addendum
+    # (F-1, Shape B) makes reached_aggregating the claim the terminal strings
+    # read; a record with the aggregator wire string but without the flag is
+    # state no event sequence can produce, so the constructed records carry
+    # both — exactly what the reducer emits for moa.phase "aggregator".
+    run_interrupted = MoaRun(
+        phase="cancelled",
+        refs_done=3,
+        refs_total=3,
+        wire_phase="aggregator",
+        reached_aggregating=True,
+    )
     assert format_moa_committed_line(run_interrupted) == (
         "Mixture of Agents: interrupted while aggregating"
     )
 
     # Failed while aggregating without aggregator
-    run_failed = MoaRun(phase="failed", refs_done=3, refs_total=3, wire_phase="aggregator")
+    run_failed = MoaRun(
+        phase="failed",
+        refs_done=3,
+        refs_total=3,
+        wire_phase="aggregator",
+        reached_aggregating=True,
+    )
     assert format_moa_committed_line(run_failed) == "Mixture of Agents: failed while aggregating"
 
     # Lost while aggregating without aggregator
-    run_lost = MoaRun(phase="lost", refs_done=3, refs_total=3, wire_phase="aggregator")
+    run_lost = MoaRun(
+        phase="lost",
+        refs_done=3,
+        refs_total=3,
+        wire_phase="aggregator",
+        reached_aggregating=True,
+    )
     assert format_moa_committed_line(run_lost) == (
         "Mixture of Agents: connection lost while aggregating"
     )
@@ -661,9 +683,11 @@ def test_moa_projection_and_changes() -> None:
 
 
 def test_moa_unrecognised_wire_phase_is_released_by_aggregating() -> None:
-    """F-3 of the C10 review: a recognized aggregation announcement supersedes
-    an unrecognized phase string still in force, so a stale phase stops winning
-    forever — while a *fresh* unrecognized string still renders verbatim."""
+    """F-3 of the C10 review, as the taxonomy addendum closed it: the release
+    is a rendering precedence, not a field change. Most advanced state wins —
+    aggregating beats an unrecognised wire phase in either arrival order —
+    and ``wire_phase`` keeps the unrecognised string verbatim for the record
+    (it renders again only if the run is still in ``references``)."""
     released = replay([
         raw_event("message.start"),
         raw_event("moa.phase", {"phase": "deliberating", "refs_done": 1, "refs_total": 4}),
@@ -671,13 +695,14 @@ def test_moa_unrecognised_wire_phase_is_released_by_aggregating() -> None:
     ])
     assert released.moa is not None
     assert released.moa.phase == "aggregating"
-    assert released.moa.wire_phase == ""
+    assert released.moa.wire_phase == "deliberating"
     assert format_moa_live_line(released.moa) == (
         "Mixture of Agents: aggregating 1/4 references · claude"
     )
 
-    # The reverse order keeps the ruling's verbatim rule (section 2): an
-    # unrecognized phase arriving after the aggregator renders, not swallowed.
+    # The reverse order, same precedence: an unrecognized phase arriving
+    # after the aggregator keeps its string on the record but cannot
+    # displace the aggregating line — and cannot un-reach aggregation.
     restated = replay([
         raw_event("message.start"),
         raw_event("moa.phase", {"phase": "aggregator", "refs_done": 4, "refs_total": 4}),
@@ -686,8 +711,117 @@ def test_moa_unrecognised_wire_phase_is_released_by_aggregating() -> None:
     ])
     assert restated.moa is not None
     assert restated.moa.wire_phase == "voting"
+    assert restated.moa.reached_aggregating is True
     assert format_moa_live_line(restated.moa) == (
-        'Mixture of Agents: phase "voting" · 4/4 references'
+        "Mixture of Agents: aggregating 4/4 references · claude"
+    )
+
+    # While the run is still in references, an unrecognized phase renders.
+    still_references = replay([
+        raw_event("message.start"),
+        raw_event("moa.phase", {"phase": "deliberating", "refs_done": 3, "refs_total": 5}),
+    ])
+    assert still_references.moa is not None
+    assert format_moa_live_line(still_references.moa) == (
+        'Mixture of Agents: phase "deliberating" · 3/5 references'
+    )
+
+
+# ── C10 F-1, ruled Shape B (taxonomy addendum on #148) ───────────────────
+
+
+def test_either_aggregator_event_alone_reaches_aggregating_for_all_three_terminal_lines() -> None:
+    """F-1 of the C10 review: the bare ``moa.aggregating`` — the shape section
+    2 promises will suffice and the observed fixture never exercises — now
+    carries into every terminal "… while aggregating" string."""
+    collecting = [
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "gemini", "refs_done": 3, "refs_total": 5}),
+    ]
+    aggregating_alone = replay([raw_event("moa.aggregating", {})], replay(collecting))
+    assert aggregating_alone.moa is not None
+    assert aggregating_alone.moa.reached_aggregating is True
+    assert aggregating_alone.moa.aggregator == ""
+    assert format_moa_live_line(aggregating_alone.moa) == (
+        "Mixture of Agents: aggregating 3/5 references"
+    )
+
+    cancelled = cancel_turn(aggregating_alone, at=BASE_TIME + 10)
+    assert cancelled.moa is not None
+    assert format_moa_committed_line(cancelled.moa) == (
+        "Mixture of Agents: interrupted while aggregating"
+    )
+
+    failed = replay(
+        [raw_event("error", {"message": "turn failed"})],
+        replay(collecting + [raw_event("moa.aggregating", {})]),
+    )
+    assert failed.moa is not None
+    assert format_moa_committed_line(failed.moa) == (
+        "Mixture of Agents: failed while aggregating"
+    )
+
+    lost = set_connection(
+        replay(collecting + [raw_event("moa.aggregating", {})]),
+        "disconnected",
+        cause="orderly_close",
+        at=BASE_TIME + 10,
+    )
+    assert lost.moa is not None
+    assert format_moa_committed_line(lost.moa) == (
+        "Mixture of Agents: connection lost while aggregating"
+    )
+
+
+def test_moa_phase_with_aggregator_alone_also_reaches_aggregating() -> None:
+    """The second of the two events section 2 promises suffices on its own."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 2, "refs_total": 5}),
+        raw_event("moa.phase", {"phase": "aggregator", "refs_done": 5, "refs_total": 5}),
+    ])
+    assert state.moa is not None
+    assert state.moa.reached_aggregating is True
+    cancelled = cancel_turn(state, at=BASE_TIME + 10)
+    assert cancelled.moa is not None
+    assert format_moa_committed_line(cancelled.moa) == (
+        "Mixture of Agents: interrupted while aggregating"
+    )
+
+
+def test_reached_aggregating_is_monotonic_under_a_later_unknown_phase() -> None:
+    """The case the reviewer simulated breaking Shape A: a later
+    ``moa.phase`` string cannot un-reach an aggregation that happened, so
+    the terminal line does not revert to the references string."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 3, "refs_total": 5}),
+        raw_event("moa.aggregating", {"aggregator": "claude"}),
+        raw_event("moa.phase", {"phase": "voting"}),
+    ])
+    assert state.moa is not None
+    assert state.moa.wire_phase == "voting"
+    assert state.moa.reached_aggregating is True
+    cancelled = cancel_turn(state, at=BASE_TIME + 10)
+    assert cancelled.moa is not None
+    assert format_moa_committed_line(cancelled.moa) == (
+        "Mixture of Agents: interrupted while aggregating · claude"
+    )
+
+
+def test_a_run_that_never_aggregated_keeps_the_references_terminal_strings() -> None:
+    """The flag is a domain claim, not a default: without either aggregator
+    event the terminal strings stay the references form."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 2, "refs_total": 5}),
+    ])
+    assert state.moa is not None
+    assert state.moa.reached_aggregating is False
+    cancelled = cancel_turn(state, at=BASE_TIME + 10)
+    assert cancelled.moa is not None
+    assert format_moa_committed_line(cancelled.moa) == (
+        "Mixture of Agents: interrupted at 2/5 references"
     )
 
 

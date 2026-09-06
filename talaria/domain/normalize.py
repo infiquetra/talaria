@@ -272,17 +272,25 @@ def keep_terminal_moa_phase(current: MoaPhase, proposed: MoaPhase) -> MoaPhase:
 
 
 def format_moa_live_line(run: MoaRun) -> str:
-    """Format one live transcript line while the run is non-terminal (D7, issue #148)."""
+    """Format one live transcript line while the run is non-terminal (D7, issue #148).
+
+    Branch order is the taxonomy addendum's precedence rule (issue #148,
+    F-3): most advanced state first — aggregating, then an unrecognised
+    wire phase, then references — so the unrecognised-phase line renders
+    only while ``phase == "references"``: an unknown ``moa.phase`` followed
+    by ``moa.aggregating`` shows the aggregating line, while ``wire_phase``
+    keeps the unknown string for the record and the inspector.
+    """
     k = str(run.refs_done) if run.refs_done is not None else "?"
     n = str(run.refs_total) if run.refs_total is not None else "?"
-
-    if run.wire_phase and run.wire_phase != "aggregator":
-        return f'Mixture of Agents: phase "{run.wire_phase}" · {k}/{n} references'
 
     if run.phase == "aggregating":
         if run.aggregator:
             return f"Mixture of Agents: aggregating {k}/{n} references · {run.aggregator}"
         return f"Mixture of Agents: aggregating {k}/{n} references"
+
+    if run.phase == "references" and run.wire_phase and run.wire_phase != "aggregator":
+        return f'Mixture of Agents: phase "{run.wire_phase}" · {k}/{n} references'
 
     # references phase
     if run.finished:
@@ -295,9 +303,11 @@ def format_moa_committed_line(run: MoaRun) -> str:
     """Format one committed transcript line when the run becomes terminal (D7, issue #148)."""
     k = str(run.refs_done) if run.refs_done is not None else "?"
     n = str(run.refs_total) if run.refs_total is not None else "?"
-    was_aggregating = (
-        run.wire_phase == "aggregator" or bool(run.aggregator) or run.phase == "aggregating"
-    )
+    # F-1 of the C10 review, ruled Shape B (taxonomy addendum on #148): the
+    # terminal "… while aggregating" strings read the monotonic domain claim
+    # and nothing else. Either aggregator event sets it, no later phase
+    # string can un-reach it, and wire_phase stays verbatim.
+    was_aggregating = run.reached_aggregating
 
     if run.phase == "complete":
         if run.aggregator:

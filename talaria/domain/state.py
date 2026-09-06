@@ -2655,6 +2655,9 @@ def _on_moa_phase(state: SessionState, event: GatewayEvent) -> SessionState:
             refs_total=decoded.refs_total,
             aggregator=aggregator,
             wire_phase=wire_phase,
+            # Taxonomy addendum (F-1, Shape B): the recognized aggregator
+            # phase is one of the two events that reach aggregating.
+            reached_aggregating=is_aggregator,
             updated_at=event.at,
         )
     else:
@@ -2670,6 +2673,9 @@ def _on_moa_phase(state: SessionState, event: GatewayEvent) -> SessionState:
             refs_done=refs_done,
             refs_total=refs_total,
             aggregator=aggregator,
+            # Monotonic (taxonomy addendum): a later phase string cannot
+            # un-reach an aggregation that happened.
+            reached_aggregating=current.reached_aggregating or is_aggregator,
             updated_at=event.at,
         )
     return replace(state, moa=run)
@@ -2687,6 +2693,9 @@ def _on_moa_aggregating(state: SessionState, event: GatewayEvent) -> SessionStat
         run = MoaRun(
             phase="aggregating",
             aggregator=decoded.aggregator,
+            # Taxonomy addendum (F-1, Shape B): either aggregator event
+            # alone reaches aggregating; wire_phase stays verbatim.
+            reached_aggregating=True,
             updated_at=event.at,
         )
     else:
@@ -2695,13 +2704,11 @@ def _on_moa_aggregating(state: SessionState, event: GatewayEvent) -> SessionStat
             current,
             phase="aggregating",
             aggregator=aggregator,
-            # F-3 of the C10 review: a recognized aggregation announcement
-            # supersedes any unrecognized ``moa.phase`` string still in force,
-            # so the run stops rendering a phase the gateway moved past.
-            # The field returns to its documented empty state — nothing is
-            # invented into it (contrast the F-1 Shape A the architect is
-            # ruling on, which would write ``"aggregator"`` here instead).
-            wire_phase="",
+            # Monotonic (taxonomy addendum): this event reaches
+            # aggregating, and nothing invented goes into wire_phase — the
+            # stale-phase release is a rendering precedence in
+            # format_moa_live_line, not a field change.
+            reached_aggregating=True,
             updated_at=event.at,
         )
     return replace(state, moa=run)
