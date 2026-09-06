@@ -151,7 +151,24 @@ def test_decode_moa_aggregating_valid() -> None:
 
 
 def test_moa_turn_fixture_decodes_and_matches_wire_inventory() -> None:
-    """Validate the sanitized live-captured MoA route turn fixture."""
+    """Validate the live-captured MoA route turn fixture.
+
+    Provenance (ruling section 7, F-2 of the C10 review): derived from the
+    tester's route-qualification capture on candidate commit
+    ``9091bd1fe47d83b943a6b98d94f9f4d5f1278006``, observed at
+    ``2026-09-06T02:58:06.069456+00:00``. What it holds is the observed
+    turn's four Mixture-of-Agents event frames — five ``moa.progress``,
+    five ``moa.reference``, one ``moa.phase``, one ``moa.aggregating`` —
+    followed by the turn's ``message.complete``, in wire order, one
+    JSON-RPC frame per line, no frame added, reordered, or invented. The
+    wire ``seq`` numbers are the capture's own (6 through 23, not
+    contiguous: the frames between them were the turn's content, which this
+    fixture is not about). The capture's ``message.start`` is likewise not
+    part of the file; the replay tests open the turn themselves. Substituted
+    from the capture: every ``session_id`` is the fixture value
+    ``moa-fixture`` (the real session identifier never enters the tree), and
+    each reference ``text`` is truncated to its first line.
+    """
     assert _MOA_TURN_FIXTURE_PATH.is_file(), f"Missing fixture: {_MOA_TURN_FIXTURE_PATH}"
     lines = [
         json.loads(line)
@@ -638,3 +655,100 @@ def test_moa_projection_and_changes() -> None:
     assert insp.moa.inspector_rows[0] == "collecting 1/3 references · m1 finished"
     assert insp.moa.inspector_rows[1] == "m1 · finished 1/3"
     assert insp.moa.inspector_rows[2] == "2 pending"
+
+
+# ── C10 review findings: F-3, F-4, F-6 ──────────────────────────────────
+
+
+def test_moa_unrecognised_wire_phase_is_released_by_aggregating() -> None:
+    """F-3 of the C10 review: a recognized aggregation announcement supersedes
+    an unrecognized phase string still in force, so a stale phase stops winning
+    forever — while a *fresh* unrecognized string still renders verbatim."""
+    released = replay([
+        raw_event("message.start"),
+        raw_event("moa.phase", {"phase": "deliberating", "refs_done": 1, "refs_total": 4}),
+        raw_event("moa.aggregating", {"aggregator": "claude"}),
+    ])
+    assert released.moa is not None
+    assert released.moa.phase == "aggregating"
+    assert released.moa.wire_phase == ""
+    assert format_moa_live_line(released.moa) == (
+        "Mixture of Agents: aggregating 1/4 references · claude"
+    )
+
+    # The reverse order keeps the ruling's verbatim rule (section 2): an
+    # unrecognized phase arriving after the aggregator renders, not swallowed.
+    restated = replay([
+        raw_event("message.start"),
+        raw_event("moa.phase", {"phase": "aggregator", "refs_done": 4, "refs_total": 4}),
+        raw_event("moa.aggregating", {"aggregator": "claude"}),
+        raw_event("moa.phase", {"phase": "voting"}),
+    ])
+    assert restated.moa is not None
+    assert restated.moa.wire_phase == "voting"
+    assert format_moa_live_line(restated.moa) == (
+        'Mixture of Agents: phase "voting" · 4/4 references'
+    )
+
+
+def test_moa_reference_before_progress_waits_for_the_finish_event() -> None:
+    """F-4 of the C10 review, from the ruling's two events: a row exists
+    because the advisor finished (``moa.progress``) and only *becomes*
+    referenced once its ``moa.reference`` arrives. A reference for an advisor
+    that has not finished waits — it never invents a finish or an ordinal the
+    ``finished`` roster does not contain."""
+    before_progress = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "gemini", "refs_done": 1, "refs_total": 5}),
+        raw_event("moa.reference", {"label": "zeta", "text": "z line"}),
+    ])
+    assert before_progress.moa is not None
+    assert format_moa_inspector_rows(before_progress.moa) == (
+        "collecting 1/5 references · gemini finished",
+        "gemini · finished 1/5",
+        "4 pending",
+    )
+
+    after_progress = replay(
+        [raw_event("moa.progress", {"label": "zeta", "refs_done": 2, "refs_total": 5})],
+        before_progress,
+    )
+    assert after_progress.moa is not None
+    assert format_moa_inspector_rows(after_progress.moa) == (
+        "collecting 2/5 references · zeta finished",
+        "gemini · finished 1/5",
+        "zeta · finished 2/5 · z line",
+        "3 pending",
+    )
+
+
+def test_moa_terminal_run_leaves_no_pending_row() -> None:
+    """F-6 of the C10 review: the remainder row is "while any are
+    outstanding", and outstanding ends with the run. A terminal turn
+    abandoned its remainder — a pending row would tell the operator advisors
+    are still working on a turn that ended."""
+    completed = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 1, "refs_total": 3}),
+        raw_event("moa.progress", {"label": "m2", "refs_done": 2, "refs_total": 3}),
+        raw_event("message.complete", {"text": "done"}),
+    ])
+    assert completed.moa is not None
+    assert completed.moa.is_terminal
+    assert format_moa_inspector_rows(completed.moa) == (
+        "2/3 references · no aggregation phase observed",
+        "m1 · finished 1/3",
+        "m2 · finished 2/3",
+    )
+
+    interrupted = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 3, "refs_total": 5}),
+    ])
+    cancelled = cancel_turn(interrupted, at=BASE_TIME + 10)
+    assert cancelled.moa is not None
+    assert cancelled.moa.is_terminal
+    assert format_moa_inspector_rows(cancelled.moa) == (
+        "interrupted at 3/5 references",
+        "m1 · finished 1/5",
+    )

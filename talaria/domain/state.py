@@ -2695,6 +2695,13 @@ def _on_moa_aggregating(state: SessionState, event: GatewayEvent) -> SessionStat
             current,
             phase="aggregating",
             aggregator=aggregator,
+            # F-3 of the C10 review: a recognized aggregation announcement
+            # supersedes any unrecognized ``moa.phase`` string still in force,
+            # so the run stops rendering a phase the gateway moved past.
+            # The field returns to its documented empty state — nothing is
+            # invented into it (contrast the F-1 Shape A the architect is
+            # ruling on, which would write ``"aggregator"`` here instead).
+            wire_phase="",
             updated_at=event.at,
         )
     return replace(state, moa=run)

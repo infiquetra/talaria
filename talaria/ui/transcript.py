@@ -1047,7 +1047,9 @@ class TranscriptPane(VerticalScroll):
         try:
             await self._reset_if_history_changed(entries.entries)
             await self._reconcile_committed(entries.entries)
-            await self._reconcile_moa_live(getattr(entries, "moa", None))
+            # F-5 of the C10 review: a declared field, read directly — the
+            # ``getattr`` fallback it replaces could not fail, only go quiet.
+            await self._reconcile_moa_live(entries.moa)
             await self._reconcile_tail("reasoning", entries.reasoning_tail)
             await self._reconcile_tail("assistant", entries.assistant_tail)
             await self._condense(entries.entries, total_lines=len(view.lines))

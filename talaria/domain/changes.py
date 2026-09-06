@@ -147,7 +147,13 @@ def inspector_view(
         operations[-1] if operations else None,
     )
     observed_usage = usage if usage is not None and usage.observed else None
-    moa_val = moa if moa is not None else getattr(entries, "moa", MoaView())
+    # F-5 of the C10 review: ``moa`` is a declared ``EntryScopedView`` field,
+    # so the direct read is mypy-checked and always present. The ``getattr``
+    # fallback it replaces was the one line of this change the reviewer
+    # called opportunistic — and a rename would have silently routed the
+    # inspector into its "no progress events observed" fallback instead of
+    # failing. The only honest route into that fallback is no run recorded.
+    moa_val = moa if moa is not None else entries.moa
     return InspectorView(
         tasks=_task_views(queue or NeedsYouQueue(), agents),
         context=InspectorContextView(

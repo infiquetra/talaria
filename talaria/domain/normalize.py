@@ -343,22 +343,26 @@ def format_moa_inspector_rows(run: MoaRun | None) -> tuple[str, ...]:
     rows: list[str] = [first_row]
     n = str(run.refs_total) if run.refs_total is not None else "?"
 
-    # 2. One row per finished advisor, in finished order:
-    finished_roster = list(run.finished)
-    for ref in run.references:
-        if ref.label and ref.label not in finished_roster:
-            finished_roster.append(ref.label)
-
-    for i, label in enumerate(finished_roster, start=1):
+    # 2. One row per finished advisor, in finished order. F-4 of the C10
+    # review, from the ruling's two events: only ``moa.progress`` makes an
+    # advisor finished, and its row *becomes* referenced once the advisor's
+    # ``moa.reference`` arrives. A reference whose label is not in
+    # ``finished`` therefore has no row yet — showing one would call an
+    # advisor finished that has not finished, with an ordinal ``finished``
+    # does not contain. Its text waits for the advisor's own progress event.
+    for i, label in enumerate(run.finished, start=1):
         ref_match = next((r for r in run.references if r.label == label), None)
         if ref_match is not None and ref_match.first_line:
             rows.append(f"{label} · finished {i}/{n} · {ref_match.first_line}")
         else:
             rows.append(f"{label} · finished {i}/{n}")
 
-    # 3. One row for remainder while any are outstanding: <n minus k> pending
-    if run.refs_total is not None:
-        k_val = run.refs_done if run.refs_done is not None else len(finished_roster)
+    # 3. One row for remainder while any are outstanding: <n minus k> pending.
+    # F-6 of the C10 review: "outstanding" ends with the run — a terminal
+    # turn abandoned its remainder, and a row saying advisors are still
+    # pending would tell the operator work is running on a turn that ended.
+    if not run.is_terminal and run.refs_total is not None:
+        k_val = run.refs_done if run.refs_done is not None else len(run.finished)
         rem = run.refs_total - k_val
         if rem > 0:
             rows.append(f"{rem} pending")
