@@ -31,7 +31,11 @@ from scripts.acceptance.v050_receipt import (
     CAPTURE_METADATA_SCHEMA,
     INSTALL_RECEIPT_SCHEMA,
     PIXEL_MEASUREMENTS_SCHEMA,
+    READ_CONFIRMATION_RECORD_SCHEMA,
     RECEIPT_SCHEMA,
+    REDACTION_CONFIRMATION_ITEM_SCHEMA,
+    REDACTION_ITEM_SCHEMA,
+    REFUSED_CLASSES,
     STEP_LOG_SCHEMA,
     V061_ITEM_SCHEMA,
     V061_ROLE_LABELS,
@@ -47,6 +51,11 @@ from scripts.acceptance.v050_receipt import (
     find_absolute_paths_in_text,
     is_absolute_filesystem_path,
     is_forbidden_key,
+    mask_matched_sentinels,
+    validate_image_read_confirmations,
+    validate_read_confirmation_record,
+    validate_redactions_list,
+    validate_twin_redactions,
     verify_run,
 )
 
@@ -1601,7 +1610,8 @@ def test_capture_metadata_file_validation(tmp_path: Path) -> None:
     rich_doc = dict(
         valid_doc,
         case="live-01",
-        schema="v061-item",
+        record_type="v061-item",
+        schema="talaria-v0.6.1-capture-v1",
         purpose="workflow-demonstration",
         scope="session-lifetime",
         tester="dedicated-tester",
@@ -2348,7 +2358,8 @@ def test_capture_metadata_schema_category_enforcement() -> None:
             "binary_sha256": "f" * 64,
         },
         "case": "live-01",
-        "schema": "v061-item",
+        "record_type": "v061-item",
+        "schema": "talaria-v0.6.1-capture-v1",
         "purpose": "workflow-demonstration",
         "session": {
             "durable_id": "ses-durable",
@@ -2516,3 +2527,676 @@ def test_capture_metadata_schema_category_enforcement() -> None:
     bad["text_twin"]["sha256"] = "invalid"
     errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
     assert any("must be a hex digest" in e for e in errs)
+
+
+def test_third_amendment_refused_classes_vocabulary() -> None:
+    expected_classes = {
+        "absolute-filesystem-path",
+        "pane-tab-workspace-coordinate",
+        "role-digit-session-name",
+        "non-loopback-host",
+        "operator-identity",
+        "non-default-profile-name",
+    }
+    assert REFUSED_CLASSES == expected_classes
+
+    dummy_path = Path("fake/metadata.json")
+    for valid_class in expected_classes:
+        item = {
+            "index": 0,
+            "covered_class": valid_class,
+            "twin_span": f"[redacted:{valid_class}:0]",
+            "region": {"x": 10, "y": 20, "width": 100, "height": 30},
+        }
+        assert REDACTION_ITEM_SCHEMA.validate(item, path=dummy_path) == []
+        conf = {
+            "index": 0,
+            "covered_class": valid_class,
+            "region_matches_twin_span": True,
+        }
+        assert REDACTION_CONFIRMATION_ITEM_SCHEMA.validate(conf, path=dummy_path) == []
+
+    # Allowed classes and unknown classes must be refused
+    disallowed = [
+        "bearer-credential",
+        "session-name",
+        "temporary-directory",
+        "email-address",
+        "random-class",
+    ]
+    for bad_class in disallowed:
+        item = {
+            "index": 0,
+            "covered_class": bad_class,
+            "twin_span": f"[redacted:{bad_class}:0]",
+            "region": {"x": 10, "y": 20, "width": 100, "height": 30},
+        }
+        errs = REDACTION_ITEM_SCHEMA.validate(item, path=dummy_path)
+        assert any("not in registered closed vocabulary" in e for e in errs)
+
+        conf = {
+            "index": 0,
+            "covered_class": bad_class,
+            "region_matches_twin_span": True,
+        }
+        errs = REDACTION_CONFIRMATION_ITEM_SCHEMA.validate(conf, path=dummy_path)
+        assert any("not in registered closed vocabulary" in e for e in errs)
+
+
+def test_third_amendment_two_way_sentinel_match() -> None:
+    twin_path = Path("frame.txt")
+    twin_text = (
+        "Hermes online: [redacted:role-digit-session-name:0] at "
+        "[redacted:non-loopback-host:1]"
+    )
+    redactions = [
+        {
+            "index": 0,
+            "covered_class": "role-digit-session-name",
+            "twin_span": "[redacted:role-digit-session-name:0]",
+            "region": {"x": 0, "y": 0, "width": 50, "height": 20},
+        },
+        {
+            "index": 1,
+            "covered_class": "non-loopback-host",
+            "twin_span": "[redacted:non-loopback-host:1]",
+            "region": {"x": 60, "y": 0, "width": 80, "height": 20},
+        },
+    ]
+    assert validate_twin_redactions(twin_path, twin_text, redactions) == []
+
+    # 1. Unmatched sentinel in twin
+    extra_sentinel_twin = twin_text + " [redacted:operator-identity:2]"
+    errs = validate_twin_redactions(twin_path, extra_sentinel_twin, redactions)
+    assert any("unmatched redaction sentinel" in e for e in errs)
+
+    # 2. Missing sentinel in twin for declared redaction
+    missing_sentinel_twin = (
+        "Hermes online: [redacted:role-digit-session-name:0] at normal-host"
+    )
+    errs = validate_twin_redactions(twin_path, missing_sentinel_twin, redactions)
+    assert any("not found in text twin" in e for e in errs)
+
+    # 3. Class mismatch between twin sentinel and metadata entry
+    mismatched_twin = (
+        "Hermes online: [redacted:absolute-filesystem-path:0] at "
+        "[redacted:non-loopback-host:1]"
+    )
+    errs = validate_twin_redactions(twin_path, mismatched_twin, redactions)
+    assert any("mismatched covered_class" in e for e in errs)
+
+    # 4. Duplicate index in twin
+    dup_twin = (
+        "Hermes: [redacted:role-digit-session-name:0] and "
+        "[redacted:role-digit-session-name:0]"
+    )
+    errs = validate_twin_redactions(twin_path, dup_twin, redactions[:1])
+    assert any("duplicate redaction sentinel" in e for e in errs)
+
+    # 5. Malformed sentinel in twin
+    malformed_twin = "Hermes online: [redacted:broken] at [redacted:non-loopback-host:1]"
+    errs = validate_twin_redactions(twin_path, malformed_twin, redactions)
+    assert any("malformed redaction sentinel" in e for e in errs)
+
+    # 6. Refused class in twin sentinel
+    bad_sentinel_twin = "Hermes: [redacted:bearer-credential:0]"
+    bad_redactions = [
+        {
+            "index": 0,
+            "covered_class": "bearer-credential",
+            "twin_span": "[redacted:bearer-credential:0]",
+            "region": {"x": 0, "y": 0, "width": 10, "height": 10},
+        }
+    ]
+    errs = validate_twin_redactions(twin_path, bad_sentinel_twin, bad_redactions)
+    assert any("is not a refused class" in e for e in errs)
+
+
+def test_third_amendment_span_aware_privacy_carve_out(tmp_path: Path) -> None:
+    # 1. mask_matched_sentinels replaces only matched sentinels with spaces of equal length
+    raw = "prefix [redacted:absolute-filesystem-path:0] suffix [redacted:unknown:1]"
+    redactions = [
+        {
+            "index": 0,
+            "covered_class": "absolute-filesystem-path",
+            "twin_span": "[redacted:absolute-filesystem-path:0]",
+        }
+    ]
+    masked = mask_matched_sentinels(raw, redactions)
+    assert len(masked) == len(raw)
+    assert "[redacted:absolute-filesystem-path:0]" not in masked
+    assert "[redacted:unknown:1]" in masked
+    assert masked.startswith("prefix ")
+    assert masked.endswith(" suffix [redacted:unknown:1]")
+
+    # 2. evidence_file_privacy_errors with valid sidecar and sentinel
+    twin_file = tmp_path / "frame-01.txt"
+    sidecar_file = tmp_path / "frame-01.json"
+    sidecar_file.write_text(
+        json.dumps({
+            "schema_version": "talaria-v0.6.1-capture-v1",
+            "columns": 80,
+            "rows": 24,
+            "cell_width": 10,
+            "cell_height": 20,
+            "width": 800,
+            "height": 480,
+            "dpi": 96,
+            "scale": 1,
+            "redactions": [
+                {
+                    "index": 0,
+                    "covered_class": "absolute-filesystem-path",
+                    "twin_span": "[redacted:absolute-filesystem-path:0]",
+                    "region": {"x": 10, "y": 10, "width": 200, "height": 20},
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+    twin_file.write_text(
+        "Working directory: [redacted:absolute-filesystem-path:0]\n",
+        encoding="utf-8",
+    )
+    assert evidence_file_privacy_errors(twin_file) == []
+
+    # 3. Unmasked path outside sentinel is flagged
+    leak_file = tmp_path / "frame-02.txt"
+    leak_sidecar = tmp_path / "frame-02.json"
+    leak_sidecar.write_text(
+        json.dumps({
+            "columns": 80,
+            "rows": 24,
+            "cell_width": 10,
+            "redactions": [
+                {
+                    "index": 0,
+                    "covered_class": "absolute-filesystem-path",
+                    "twin_span": "[redacted:absolute-filesystem-path:0]",
+                    "region": {"x": 10, "y": 10, "width": 200, "height": 20},
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+    leak_file.write_text(
+        "Masked: [redacted:absolute-filesystem-path:0] but leaked /Users/jefcox/secret\n",
+        encoding="utf-8",
+    )
+    errs = evidence_file_privacy_errors(leak_file)
+    assert any("contains absolute filesystem path" in e for e in errs)
+
+
+def test_third_amendment_checkable_read_confirmations() -> None:
+    png = "screenshot-01.png"
+    receipt_p = Path("receipt.json")
+    redactions = [
+        {
+            "index": 0,
+            "covered_class": "role-digit-session-name",
+            "twin_span": "[redacted:role-digit-session-name:0]",
+            "region": {"x": 10, "y": 10, "width": 80, "height": 20},
+        }
+    ]
+    twin_file = "screenshot-01.txt"
+    twin_text = "Session [redacted:role-digit-session-name:0] is connected."
+
+    valid_confirmation = {
+        "image": png,
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T19:00:00+00:00",
+        "redactions_confirmed": [
+            {
+                "index": 0,
+                "covered_class": "role-digit-session-name",
+                "region_matches_twin_span": True,
+            }
+        ],
+        "witnessed_element": "is connected",
+        "nothing_else_masked": True,
+    }
+
+    # Clean confirmation passes
+    assert (
+        SchemaRegistry.lookup(Path("read-confirmation.json"), valid_confirmation)
+        is READ_CONFIRMATION_RECORD_SCHEMA
+    )
+    assert validate_read_confirmation_record(valid_confirmation, path=receipt_p) == []
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[valid_confirmation],
+        receipt_or_path=receipt_p,
+    )
+    assert errs == []
+
+    # 1. Missing confirmation record for redacted image
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[],
+        receipt_or_path=receipt_p,
+    )
+    assert any("has no recorded read confirmation" in e for e in errs)
+
+    # 2. Check 1 (completeness): unconfirmed redaction span
+    bad_conf = json.loads(json.dumps(valid_confirmation))
+    bad_conf["redactions_confirmed"] = []
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[bad_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("is unconfirmed" in e for e in errs)
+
+    # 3. Check 1 (completeness): confirms phantom index
+    bad_conf = json.loads(json.dumps(valid_confirmation))
+    bad_conf["redactions_confirmed"].append({
+        "index": 99,
+        "covered_class": "role-digit-session-name",
+        "region_matches_twin_span": True,
+    })
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[bad_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("which does not exist in capture metadata" in e for e in errs)
+
+    # 4. Check 2 (honest class): confirms allowed class
+    bad_conf = json.loads(json.dumps(valid_confirmation))
+    bad_conf["redactions_confirmed"][0]["covered_class"] = "bearer-credential"
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[bad_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("is not a refused class" in e for e in errs)
+
+    # 5. Check 3 (witnessed element present outside mask)
+    # Witnessed element is inside mask (matches sentinel)
+    bad_conf = json.loads(json.dumps(valid_confirmation))
+    bad_conf["witnessed_element"] = "[redacted:role-digit-session-name:0]"
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[bad_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("was found inside a mask" in e for e in errs)
+
+    # Witnessed element does not appear in twin
+    bad_conf = json.loads(json.dumps(valid_confirmation))
+    bad_conf["witnessed_element"] = "phantom text not in twin"
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[bad_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("does not appear in text twin" in e for e in errs)
+
+    # 6. nothing_else_masked must be True
+    bad_conf = json.loads(json.dumps(valid_confirmation))
+    bad_conf["nothing_else_masked"] = False
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[bad_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("nothing_else_masked must be true" in e for e in errs)
+
+    # 7. read_by must be in V061_ROLE_LABELS
+    bad_conf = json.loads(json.dumps(valid_confirmation))
+    bad_conf["read_by"] = "unapproved-role"
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[bad_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("must be in V061_ROLE_LABELS" in e for e in errs)
+
+    # 8. Pure screenshot (no twin) requires region_matches_twin_span == False
+    pure_conf = json.loads(json.dumps(valid_confirmation))
+    pure_conf["redactions_confirmed"][0]["region_matches_twin_span"] = False
+    assert (
+        validate_image_read_confirmations(
+            png,
+            twin_file=None,
+            twin_text=None,
+            redactions=redactions,
+            confirmations=[pure_conf],
+            receipt_or_path=receipt_p,
+        )
+        == []
+    )
+
+    bad_pure_conf = json.loads(json.dumps(valid_confirmation))
+    bad_pure_conf["redactions_confirmed"][0]["region_matches_twin_span"] = True
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=None,
+        twin_text=None,
+        redactions=redactions,
+        confirmations=[bad_pure_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("region_matches_twin_span must be false" in e for e in errs)
+
+    # 9. Image with twin requires region_matches_twin_span == True
+    bad_twin_conf = json.loads(json.dumps(valid_confirmation))
+    bad_twin_conf["redactions_confirmed"][0]["region_matches_twin_span"] = False
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=redactions,
+        confirmations=[bad_twin_conf],
+        receipt_or_path=receipt_p,
+    )
+    assert any("region_matches_twin_span must be true" in e for e in errs)
+
+    # 10. Unredacted image cannot declare redactions_confirmed
+    errs = validate_image_read_confirmations(
+        png,
+        twin_file=twin_file,
+        twin_text=twin_text,
+        redactions=[],
+        confirmations=[valid_confirmation],
+        receipt_or_path=receipt_p,
+    )
+    assert any("cannot declare redactions_confirmed" in e for e in errs)
+
+
+def test_third_amendment_redaction_review_gate(tmp_path: Path) -> None:
+    receipt_dir = tmp_path / "live-01"
+    receipt_p, receipt = _conforming_receipt(receipt_dir)
+
+    twin_path = receipt_dir / "live-01-01-selected.txt"
+    sidecar_path = receipt_dir / "live-01-01-selected.json"
+
+    twin_path.write_text("Result: [redacted:operator-identity:0]\n", encoding="utf-8")
+    sidecar_path.write_text(
+        json.dumps({
+            "columns": 80,
+            "rows": 24,
+            "cell_width": 10,
+            "cell_height": 20,
+            "twin_digest": _sha256(twin_path),
+            "redactions": [
+                {
+                    "index": 0,
+                    "covered_class": "operator-identity",
+                    "twin_span": "[redacted:operator-identity:0]",
+                    "region": {"x": 5, "y": 5, "width": 50, "height": 15},
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+    receipt["evidence"]["files"]["live-01-01-selected.txt"] = _sha256(twin_path)
+    receipt["evidence"]["files"]["live-01-01-selected.json"] = _sha256(sidecar_path)
+
+    # 1. Missing redaction_review field
+    receipt["verdict"] = "pass"
+    errs = _validate_v061_receipt(receipt, receipt_path=receipt_p)
+    assert any("no redaction_review field" in e for e in errs)
+
+    # 2. redaction_review is pending with verdict: pass
+    receipt["evidence"]["redaction_review"] = "pending"
+    receipt["evidence"]["read_confirmations"] = [
+        {
+            "image": "live-01-01-selected.png",
+            "read_by": "dedicated-tester",
+            "read_at": "2026-09-06T19:00:00+00:00",
+            "redactions_confirmed": [
+                {
+                    "index": 0,
+                    "covered_class": "operator-identity",
+                    "region_matches_twin_span": True,
+                }
+            ],
+            "witnessed_element": "Result:",
+            "nothing_else_masked": True,
+        }
+    ]
+    errs = _validate_v061_receipt(receipt, receipt_path=receipt_p)
+    assert any(
+        "verdict is pass but evidence.redaction_review is 'pending'" in e for e in errs
+    )
+
+    # 3. redaction_review is passed, verdict: pass, read confirmation clean -> PASSES
+    receipt["evidence"]["redaction_review"] = "passed"
+    assert _validate_v061_receipt(receipt, receipt_path=receipt_p) == []
+
+    # 4. redaction_review is passed, but confirmation is defective (unconfirmed index)
+    receipt["evidence"]["read_confirmations"][0]["redactions_confirmed"] = []
+    errs = _validate_v061_receipt(receipt, receipt_path=receipt_p)
+    assert any(
+        "evidence.redaction_review cannot be 'passed' while redaction defects exist" in e
+        for e in errs
+    )
+
+
+def test_third_amendment_blanket_redaction_refused() -> None:
+    dummy_path = Path("fake/metadata.json")
+    redactions = [
+        {
+            "index": 0,
+            "covered_class": "pane-tab-workspace-coordinate",
+            "twin_span": "[redacted:pane-tab-workspace-coordinate:0]",
+            "region": {"x": 0, "y": 0, "width": 800, "height": 600},
+        }
+    ]
+    errs = validate_redactions_list(
+        redactions, path=dummy_path, surface_width=800, surface_height=600
+    )
+    assert any("blanket redactions are refused" in e for e in errs)
+
+
+def test_third_amendment_v061_evidence_convert_with_redactions(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    case_dir = source_root / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01"
+    case_dir.mkdir(parents=True, exist_ok=True)
+
+    png_path = case_dir / "live-01-01-selected.png"
+    png_path.write_bytes(_FRAME_ONE)
+
+    twin_path = case_dir / "live-01-01-selected.txt"
+    twin_path.write_text(
+        "Status: [redacted:non-default-profile-name:0] ready\n", encoding="utf-8"
+    )
+
+    sidecar_path = case_dir / "live-01-01-selected.json"
+    sidecar_path.write_text(
+        json.dumps({
+            "columns": 80,
+            "rows": 24,
+            "cell_width": 10,
+            "cell_height": 20,
+            "twin_digest": _sha256(twin_path),
+            "redactions": [
+                {
+                    "index": 0,
+                    "covered_class": "non-default-profile-name",
+                    "twin_span": "[redacted:non-default-profile-name:0]",
+                    "region": {"x": 10, "y": 10, "width": 100, "height": 20},
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    receipt_doc = {
+        "schema_version": V061_ITEM_SCHEMA,
+        "release": "0.6.1",
+        "checklist_item": "live-01",
+        "title": "live-01 title",
+        "issue": "https://github.com/infiquetra/talaria/issues/140",
+        "tester": "dedicated-tester",
+        "verdict": "pass",
+        "candidate_commit_sha": _COMMIT,
+        "recorded_at": "2026-09-06T19:00:00+00:00",
+        "evidence": {
+            "files": {
+                "live-01-01-selected.png": _sha256(png_path),
+                "live-01-01-selected.txt": _sha256(twin_path),
+                "live-01-01-selected.json": _sha256(sidecar_path),
+            },
+        },
+    }
+    (case_dir / "receipt.json").write_text(json.dumps(receipt_doc), encoding="utf-8")
+
+    # 1. Conversion with defective attestation (missing confirmation) fails and writes nothing
+    bad_attestations = {
+        "live-01": {
+            "attested_by": "dedicated-tester",
+            "tester": "dedicated-tester",
+            "capturing_role": "dedicated-tester",
+            "attested_at": "2026-09-06T19:00:00+00:00",
+            "install_kind": "source-checkout",
+            "harness_kind": "scratch-capture",
+            "harness_identity": "<scratch-harness-id>",
+            "expected": "expected behavior",
+            "redaction_review": "passed",
+            "read_confirmations": [],
+        }
+    }
+    output_bad = tmp_path / "output_bad"
+    with pytest.raises(SystemExit) as exc_info:
+        v061_evidence.convert(
+            attestations=bad_attestations,
+            output_root=output_bad,
+            listed_at="2026-09-06T19:00:00+00:00",
+            repo_root=source_root,
+        )
+    assert "refusing to convert — nothing was written" in str(exc_info.value)
+    assert not output_bad.exists() or not any(output_bad.iterdir())
+
+    # 2. Conversion with valid attestation succeeds and produces valid converted receipt
+    good_attestations = {
+        "live-01": {
+            "attested_by": "dedicated-tester",
+            "tester": "dedicated-tester",
+            "capturing_role": "dedicated-tester",
+            "attested_at": "2026-09-06T19:00:00+00:00",
+            "install_kind": "source-checkout",
+            "harness_kind": "scratch-capture",
+            "harness_identity": "<scratch-harness-id>",
+            "expected": "expected behavior",
+            "redaction_review": "passed",
+            "read_confirmations": [
+                {
+                    "image": "live-01-01-selected.png",
+                    "read_by": "dedicated-tester",
+                    "read_at": "2026-09-06T19:00:00+00:00",
+                    "redactions_confirmed": [
+                        {
+                            "index": 0,
+                            "covered_class": "non-default-profile-name",
+                            "region_matches_twin_span": True,
+                        }
+                    ],
+                    "witnessed_element": "ready",
+                    "nothing_else_masked": True,
+                }
+            ],
+        }
+    }
+    output_good = tmp_path / "output_good"
+    written = v061_evidence.convert(
+        attestations=good_attestations,
+        output_root=output_good,
+        listed_at="2026-09-06T19:00:00+00:00",
+        repo_root=source_root,
+    )
+    assert len(written) > 0
+    converted_receipt_path = output_good / "live-01" / "receipt.json"
+    assert converted_receipt_path.is_file()
+    converted_doc = json.loads(converted_receipt_path.read_text(encoding="utf-8"))
+    assert converted_doc["evidence"]["redaction_review"] == "passed"
+    assert len(converted_doc["evidence"]["read_confirmations"]) == 1
+    assert _validate_v061_receipt(converted_doc, receipt_path=converted_receipt_path) == []
+
+
+def test_seven_value_collision_and_expected_rejection_privacy() -> None:
+    meta_path = Path("capture.json")
+    base_meta = {
+        "columns": 80,
+        "rows": 24,
+        "cell_width": 10,
+        "cell_height": 20,
+        "twin_digest": "a" * 64,
+        "schema": "talaria-v0.6.1-capture-v1",
+        "record_type": "v061-item",
+        "purpose": "acceptance",
+        "case": "live-01",
+        "tester": "dedicated-tester",
+        "self_check": {
+            "algorithm": "cell-frame-equality-v1",
+            "stable_control": "pass",
+            "status": "pass",
+            "expected_rejection": "refusal on frame boundary",
+        },
+    }
+
+    # 1. Widened values pass
+    assert CAPTURE_METADATA_SCHEMA.validate(base_meta, path=meta_path) == []
+
+    # 2. Refusals remain closed
+    bad_case = json.loads(json.dumps(base_meta))
+    bad_case["case"] = "live-09-recapture"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_case, path=meta_path)
+    assert any("not in registered closed vocabulary" in e for e in errs)
+
+    bad_tester = json.loads(json.dumps(base_meta))
+    bad_tester["tester"] = "external-tester"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_tester, path=meta_path)
+    assert any("not in registered closed vocabulary" in e for e in errs)
+
+    # 3. expected_rejection structural privacy enforcement
+    # Leaked absolute path in error text is refused
+    leaked_path_meta = json.loads(json.dumps(base_meta))
+    leaked_path_meta["self_check"]["expected_rejection"] = (
+        "error loading /Users/jefcox/secret/key.pem"
+    )
+    errs = CAPTURE_METADATA_SCHEMA.validate(leaked_path_meta, path=meta_path)
+    assert any("contains absolute filesystem path" in e for e in errs)
+
+    # Leaked private pattern in error text is refused
+    leaked_session_meta = json.loads(json.dumps(base_meta))
+    leaked_session_meta["self_check"]["expected_rejection"] = (
+        "connection refused from session worker-1"
+    )
+    errs = CAPTURE_METADATA_SCHEMA.validate(leaked_session_meta, path=meta_path)
+    assert any("contains a private" in e for e in errs)
+
+    # Honestly redacted sentinel in expected_rejection passes
+    redacted_meta = json.loads(json.dumps(base_meta))
+    redacted_meta["self_check"]["expected_rejection"] = (
+        "error loading [redacted:absolute-filesystem-path:0]"
+    )
+    assert CAPTURE_METADATA_SCHEMA.validate(redacted_meta, path=meta_path) == []

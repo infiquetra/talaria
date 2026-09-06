@@ -53,6 +53,7 @@ from scripts.acceptance.v050_receipt import (
     V061_RELEASE,
     V061_ROLE_LABELS,
     _find_capture_time_twin_digest,
+    _find_redactions_for_image,
     _v061_private_identifier_errors,
     _validate_v061_receipt,
     classify_evidence_file,
@@ -60,6 +61,9 @@ from scripts.acceptance.v050_receipt import (
     find_absolute_paths_in_text,
     is_forbidden_key,
     public_evidence_privacy_errors,
+    validate_image_read_confirmations,
+    validate_redactions_list,
+    validate_twin_redactions,
 )
 from scripts.acceptance.v060_evidence import (
     _package_version,
@@ -529,6 +533,22 @@ def _converted_receipt(
         evidence["screenshots_read_at"] = filed["evidence"]["screenshots_read_at"]
     elif "screenshots_read_at" in filed:
         evidence["screenshots_read_at"] = filed["screenshots_read_at"]
+
+    read_confs = (
+        attestation.get("read_confirmations")
+        or filed.get("evidence", {}).get("read_confirmations")
+        or filed.get("read_confirmations")
+    )
+    if read_confs is not None:
+        evidence["read_confirmations"] = read_confs
+
+    redaction_rev = (
+        attestation.get("redaction_review")
+        or filed.get("evidence", {}).get("redaction_review")
+        or filed.get("redaction_review")
+    )
+    if redaction_rev is not None:
+        evidence["redaction_review"] = redaction_rev
 
     converted["evidence"] = evidence
     return converted
@@ -1068,6 +1088,8 @@ def convert(
             if evidence_path.is_file() and evidence_path.name != "receipt.json"
         }
         png_names = [f for f in files if f.lower().endswith(".png")]
+        any_item_image_redacted = False
+        source_listed = {Path(p): _sha256_file(f) for p, f in files.items()}
         for png_name in png_names:
             png_p = Path(png_name)
             stem = png_p.stem
@@ -1080,6 +1102,8 @@ def convert(
                 )
                 if cand in files
             ]
+            twin_file: str | None = None
+            twin_text: str | None = None
             if not twin_candidates:
                 read_by = attestation.get("screenshots_read_by") if attestation else None
                 read_at = attestation.get("screenshots_read_at") if attestation else None
@@ -1110,8 +1134,9 @@ def convert(
                     break
             else:
                 twin_file = twin_candidates[0]
-                twin_digest = _sha256_file(files[twin_file])
-                source_listed = {Path(p): _sha256_file(f) for p, f in files.items()}
+                twin_path = files[twin_file]
+                twin_text = twin_path.read_text(encoding="utf-8", errors="replace")
+                twin_digest = _sha256_file(twin_path)
                 capture_twin_digest = _find_capture_time_twin_digest(
                     png_p, receipt_dir=source_dir, listed=source_listed
                 )
@@ -1127,6 +1152,64 @@ def convert(
                         f"screenshot '{png_name}' text twin '{twin_file}' is not bound by "
                         "capture-time twin_digest (twin was not produced at capture time)"
                     )
+
+            redactions = _find_redactions_for_image(
+                png_p, receipt_dir=source_dir, listed=source_listed
+            )
+            if redactions:
+                any_item_image_redacted = True
+                r_errs = validate_redactions_list(redactions, path=files[png_name])
+                if r_errs:
+                    item_refusals.extend(r_errs)
+                if twin_file is not None and twin_text is not None:
+                    tw_errs = validate_twin_redactions(
+                        files[twin_file], twin_text, redactions
+                    )
+                    if tw_errs:
+                        item_refusals.extend(tw_errs)
+
+            confirmations = (
+                attestation.get("read_confirmations")
+                or filed.get("evidence", {}).get("read_confirmations")
+                or filed.get("read_confirmations")
+                or []
+            )
+            if not isinstance(confirmations, list):
+                item_refusals.append(
+                    f"screenshot '{png_name}' read_confirmations must be a list"
+                )
+            else:
+                c_errs = validate_image_read_confirmations(
+                    png_name,
+                    twin_file=twin_file,
+                    twin_text=twin_text,
+                    redactions=redactions,
+                    confirmations=confirmations,
+                    receipt_or_path=path,
+                )
+                if c_errs:
+                    item_refusals.extend(c_errs)
+
+        if any_item_image_redacted:
+            redaction_rev = (
+                attestation.get("redaction_review")
+                or filed.get("evidence", {}).get("redaction_review")
+                or filed.get("redaction_review")
+            )
+            if not redaction_rev:
+                item_refusals.append(
+                    "evidence has redacted images but no redaction_review field "
+                    "(attestation.redaction_review)"
+                )
+            elif redaction_rev not in ("passed", "withheld", "pending"):
+                item_refusals.append(
+                    "attestation.redaction_review must be passed, withheld, "
+                    f"or pending ({redaction_rev!r})"
+                )
+            elif filed.get("verdict") == "pass" and redaction_rev != "passed":
+                item_refusals.append(
+                    f"verdict is pass but redaction_review is {redaction_rev!r} (must be passed)"
+                )
         if item_refusals:
             refusals.extend(f"{item}: {refusal}" for refusal in item_refusals)
             continue
