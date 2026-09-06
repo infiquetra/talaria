@@ -78,7 +78,13 @@ async def test_focus_cues_change_text_and_colour_without_any_geometry_delta() ->
             region = focused_region(app.focused)
 
             assert region == expected
-            assert app.status_region.focus_text == f"caret: {expected}"
+            # #144: the standalone caret row lives in the inspector's context
+            # section now — first row, repainted on every focus change — and
+            # the status region above the composer carries no caret label.
+            assert f"caret    {expected}" in app.inspector.context_text
+            assert "caret" not in "\n".join(
+                (*app.status_region.row_texts, app.status_region.marker_text)
+            )
             assert app.composer.border_title == (
                 "compose [*] caret here"
                 if expected == "composer"
@@ -95,8 +101,14 @@ async def test_focus_cues_change_text_and_colour_without_any_geometry_delta() ->
                 else tokens["talaria.border.muted"]
             )
             assert app.composer.styles.border_top[1] == Color.parse(expected_border)
-            focus_row = app.status_region.query_one(".status--focus", Static)
-            assert focus_row.styles.color == Color.parse(tokens["talaria.focus"])
+
+        # A re-projection must keep the caret row's current reading: the last
+        # focused region survives the next view-driven repaint of the section.
+        app.transcript.focus()
+        await pilot.pause()
+        feed(app, event("message.delta", {"text": "still focused"}), seq=103)
+        await settle(app, pilot)
+        assert "caret    transcript" in app.inspector.context_text
 
         await app.shutdown_sources()
 

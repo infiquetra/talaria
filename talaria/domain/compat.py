@@ -782,14 +782,25 @@ def seam_line(observation: SeamObservation, clock: float) -> str:
     source and the age — R20's two obligations. A never-observed seam carries
     neither, because it has neither, and says so with the feature named rather
     than with a number.
+
+    A stale row leads with a ``[stale]`` marker after the seam's name, and the
+    word stays in the trailing provenance too (#144's Live 09 repair). The
+    presentation clips this row to one line inside a panel bounded well below
+    the full line's width, and the provenance sits past every supported
+    panel's window — so the one fact that can change with no event behind it,
+    currency, is the one fact that must lead, or the transition to stale is
+    invisible on screen. Fresh and never-observed rows keep their text exactly
+    as it was, so two captures differ precisely when a freshness-to-staleness
+    transition happened and not otherwise.
     """
     seam = seam_for(observation.seam)
     if observation.status is None:
         return f"{seam.name}: not observed — {seam.unobserved_feature}"
 
+    stale = observation.observation(clock) == "stale"
     age = format_probe_age(clock - observation.observed_at)
     provenance = f"{observation.source}, {age} ago"
-    if observation.observation(clock) == "stale":
+    if stale:
         provenance = f"{observation.source}, last probed {age} ago, stale"
 
     if observation.status == "present":
@@ -808,7 +819,8 @@ def seam_line(observation: SeamObservation, clock: float) -> str:
     if observation.status != "present" and observation.confirmed_at is not None:
         was = format_probe_age(clock - observation.confirmed_at)
         body = f"{body}; last confirmed present {was} ago"
-    return f"{seam.name}: {body} ({provenance})"
+    name = f"{seam.name} [stale]" if stale else seam.name
+    return f"{name}: {body} ({provenance})"
 
 
 @dataclass(frozen=True)
@@ -921,62 +933,23 @@ def seam_probe_due(board: SeamBoard, clock: float, trigger: ProbeTrigger) -> boo
 
 
 def board_lines(board: SeamBoard, clock: float) -> tuple[str, ...]:
-    """Every seam's row, catalogue order, ready for literal rendering."""
+    """Every seam's row, catalogue order, ready for literal rendering.
+
+    The board's one rendering surface is the inspector's diagnostics section
+    (#122 moved the rows there; #144 retired the status-region copy, and with
+    it the split that decided which rows the region kept). This function is
+    the whole board now, with no half to keep back.
+    """
     return tuple(seam_line(observation, clock) for observation in board.observations)
 
 
-def seam_row_stays_visible(observation: SeamObservation, clock: float) -> bool:
-    """Whether one seam's row stays in the status region after the #122 move.
-
-    U1's operator-action-required rule (infiquetra/talaria#122), decided row by
-    row — origin alone never keeps a row, because origin does not predict
-    actionability. The inspector always holds every row; this answers only what
-    the region keeps.
-
-    Classification (verdict, and the operator action it does or does not need):
-
-    * live ``present`` → MOVE. Informational steady state; nothing to act on.
-    * ``absent`` / ``incompatible`` / ``degraded`` / ``parameter-invalid`` →
-      STAY. Each names a lost or unproved capability the operator must stop
-      relying on, reconfigure, or investigate.
-    * ``present`` but ``stale`` → STAY. The age makes the verdict's currency
-      ambiguous, and the safe direction is visible. Reviewer: confirm that a
-      stale-present row should keep surfacing rather than ageing quietly in
-      the inspector.
-    * never-observed (any seam) → MOVE. The line carries no source and no age,
-      so there is nothing to act on yet; ``kanban-dispatcher`` is permanently
-      in this state by construction. A transport that is actually down still
-      surfaces through the connection notice, the fleet rows, and the queue's
-      per-connection lines — and a seam that was ever known degrades rather
-      than returning here. Reviewer: confirm that a probeable seam the rounds
-      could never settle should stay moved while those backstops carry it.
-    """
-    if observation.status is None:
-        return False
-    if observation.observation(clock) == "stale":
-        return True
-    return observation.status != "present"
-
-
-def split_seam_lines(
-    board: SeamBoard, clock: float
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Split one board snapshot into ``(region_lines, inspector_lines)`` (#122).
-
-    Both surfaces derive from this single snapshot, so a failure arriving while
-    its row data is mid-move is classified once and reaches both surfaces
-    together — the move never races the alert path. The inspector half is
-    :func:`board_lines` unchanged, so the move relocates rows without
-    rewording them; the region half keeps only the rows
-    :func:`seam_row_stays_visible` names, in catalogue order.
-    """
-    inspector = board_lines(board, clock)
-    region = tuple(
-        line
-        for observation, line in zip(board.observations, inspector, strict=True)
-        if seam_row_stays_visible(observation, clock)
-    )
-    return region, inspector
+# The #122 split retired by #144. ``seam_row_stays_visible`` and
+# ``split_seam_lines`` decided which seam rows the status region kept beside
+# the inspector's copy — actionable and stale rows stayed above the composer.
+# Issue #144 closed that door: the roster, approval-detail, and http-runner
+# diagnostics render in the inspector only, so there is no region half to
+# compute and no rule left to apply. Nothing replaced them; the blocking
+# backstop was never here (blocking verdicts notice through the transcript).
 
 
 # ══ Replay: seam observations rebuilt from a recording, no socket ════════

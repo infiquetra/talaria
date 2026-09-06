@@ -18,11 +18,19 @@ from textual.widgets import Static
 
 import talaria.ui.app as app_module
 from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
+from talaria.domain.compat import (
+    SeamObservation,
+    SeamStatus,
+    apply_probe_round,
+    empty_board,
+)
 from talaria.domain.models import QueueItem, SubagentRow, Usage
 from talaria.domain.projection import SubagentView, entry_scoped_view
 from talaria.domain.queue import NeedsYouQueue
 from talaria.ui.inspector import (
+    DEFAULT_INSPECTOR_WIDTH,
     EMPTY_SECTION,
+    INSPECTOR_WIDTH_STEP,
     MAX_INSPECTOR_WIDTH,
     MIN_INSPECTOR_WIDTH,
     Inspector,
@@ -30,7 +38,7 @@ from talaria.ui.inspector import (
 )
 from talaria.ui.picker import SessionModel
 from tests.domain.conftest import raw_event, replay
-from tests.ui.conftest import RecordingDispatcher, live_app, paused_app
+from tests.ui.conftest import RecordingDispatcher, event, live_app, paused_app
 
 
 class FocusTarget(Static):
@@ -459,16 +467,25 @@ async def test_empty_rows_paint_the_complete_sentence_at_every_panel_width(
         assert app.inspector.region.width == panel_width
         empty_rows = [
             *app.inspector.query(".inspector--empty").nodes,
-            app.inspector.query_one(".inspector--context", Static),
             app.inspector.query_one(".inspector--operation", Static),
         ]
-        assert len(empty_rows) == 4
+        assert len(empty_rows) == 3
         for row in empty_rows:
             painted = " ".join(
                 row.render_line(y).text.strip() for y in range(row.size.height)
             )
             assert EMPTY_SECTION in " ".join(painted.split())
             assert row.size.height == (2 if panel_width in (28, 36) else 1)
+
+        # #144: the context section carries its caret row above the sentence,
+        # so it paints one row taller at every width, sentence complete.
+        context = app.inspector.query_one(".inspector--context", Static)
+        context_painted = " ".join(
+            context.render_line(y).text.strip() for y in range(context.size.height)
+        )
+        assert "caret" in context_painted
+        assert EMPTY_SECTION in " ".join(context_painted.split())
+        assert context.size.height == (3 if panel_width in (28, 36) else 2)
 
 
 def test_empty_sentence_matches_both_inspector_documents() -> None:
@@ -679,6 +696,160 @@ async def test_a_view_reprojection_preserves_diagnostics() -> None:
         assert app.inspector.diag_texts == before
 
 
+def _paint_probe(
+    app: app_module.TalariaApp, *, seam: str, status: str, at: float
+) -> None:
+    """Fold one fabricated probe result into the focused board at ``at``.
+
+    Deliberately through the app's own render path: the row must go through
+    ``_render_seams`` and the inspector's real mounting, not a direct
+    ``apply_diagnostics`` call, because the defect this guards against lived
+    in what the panel paints, not in what the model string says.
+    """
+    from typing import cast
+
+    board = apply_probe_round(
+        empty_board(app.fleet_profile),
+        (
+            SeamObservation(
+                seam=seam,
+                status=cast(SeamStatus, status),
+                source=f"probe {seam}",
+                trigger="attach",
+            ),
+        ),
+        at=at,
+    )
+    app.fleet = replace(app.fleet, seam_boards={app.fleet_profile: board})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "panel_width", [DEFAULT_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH]
+)
+async def test_a_stale_row_leads_with_a_marker_inside_the_panels_window(
+    panel_width: int,
+) -> None:
+    """#144's Live 09 repair, measured on what the panel paints.
+
+    The diagnostics rows are hard-clipped to one line inside a bounded panel,
+    and the trailing provenance — where the stale word used to live — falls
+    past every supported width's window, which is why the rejected capture's
+    fresh and stale frames differed by zero pixels in the diagnostics section.
+    The marker must sit inside the rendered prefix at both the default and the
+    widest panel, and the fresh and stale renders of the same seam must
+    differ. This asserts ``render_line``, not ``diag_texts``: the model
+    string is not what the operator sees.
+    """
+    # The 50ms render tick stays armed in ``paused_app`` unless it is parked,
+    # and an armed tick races this test's direct ``_render_seams`` calls into an
+    # interleaved duplicate mount — the same bet ``live_app`` refuses to make.
+    app, _ = paused_app([event("gateway.ready", {})], coalesce_interval=3600.0)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # Let the first layout land before touching focus: ``set_focus``
+        # silently refuses a widget with no region yet, and a refused focus
+        # makes the resize guard refuse in turn — the resize actions are
+        # called directly because the resize itself is not under test here.
+        await app.render_snapshot()
+        await pilot.pause()
+        # ``Widget.focus`` lands via ``call_later`` in this Textual version,
+        # which races the direct resize calls below; ``set_focus`` is the same
+        # call focus() would make, made synchronously, so the resize guard
+        # reads a state that already holds.
+        app.screen.set_focus(app.inspector)
+        widen = panel_width > DEFAULT_INSPECTOR_WIDTH
+        for _ in range(
+            abs(panel_width - DEFAULT_INSPECTOR_WIDTH) // INSPECTOR_WIDTH_STEP
+        ):
+            app.inspector.action_widen() if widen else app.inspector.action_shrink()
+        await pilot.pause()
+        assert app.inspector.panel_width == panel_width
+
+        def rendered_roster() -> str:
+            (row,) = (
+                row
+                for row in app.inspector.query(".inspector--diag").nodes
+                if isinstance(row, InspectorDiagRow) and "roster" in row.diag_line
+            )
+            return " ".join(
+                row.render_line(y).text.strip() for y in range(row.size.height)
+            )
+
+        clock = app.state.last_observed_at
+        _paint_probe(app, seam="roster", status="present", at=clock)
+        await app._render_seams()
+        await app.render_snapshot()
+        await pilot.pause()
+        fresh = rendered_roster()
+        assert "present" in fresh
+
+        _paint_probe(app, seam="roster", status="present", at=clock - 400.0)
+        await app._render_seams()
+        await app.render_snapshot()
+        await pilot.pause()
+        stale = rendered_roster()
+
+        assert "[stale]" in stale, "the marker must be inside the visible prefix"
+        assert "[stale]" not in fresh
+        assert fresh != stale, "the transition must be visible on screen"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_focused_diagnostics_row_expands_and_folds_back() -> None:
+    """#144 Option B, measured on the rendered row: the panel clips the
+    provenance off every width, so focus is how the source and age become
+    readable — and only diagnostics rows expand. Task and file rows keep the
+    shared one-line rule, focused or not, and the Context section Live 10
+    measured does not move when a diagnostics row takes focus."""
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.inspector.apply_diagnostics(_DIAG_LINES)
+        await pilot.pause()
+
+        (roster,) = (
+            row
+            for row in app.inspector.query(".inspector--diag").nodes
+            if isinstance(row, InspectorDiagRow) and "roster" in row.diag_line
+        )
+        assert roster.size.height == 1
+
+        context = app.inspector.query_one(".inspector--context", Static)
+        context_before = context.region
+
+        app.screen.set_focus(roster)
+        await pilot.pause()
+        assert roster.size.height > 1, "a focused diagnostics row must expand"
+        rendered = "\n".join(
+            roster.render_line(y).text for y in range(roster.size.height)
+        )
+        assert "0s ago" in rendered, "the clipped provenance must be readable while focused"
+
+        # Focus inside the scrolling panel does not move the Context section,
+        # on the expanded row or on the last row in the section.
+        assert context.region == context_before
+        last = app.inspector.query(".inspector--diag").nodes[-1]
+        app.screen.set_focus(last)
+        await pilot.pause()
+        assert context.region == context_before
+
+        app.screen.set_focus(None)
+        await pilot.pause()
+        assert roster.size.height == 1, "focus leaving folds the row back"
+
+        task = app.inspector.query(".inspector--task").nodes[0]
+        app.screen.set_focus(task)
+        await pilot.pause()
+        assert task.size.height == 1, "a focused task row stays one line"
+
+        file_row = app.inspector.query(".inspector--file").nodes[0]
+        app.screen.set_focus(file_row)
+        await pilot.pause()
+        assert file_row.size.height == 1, "a focused file row stays one line"
+
+
 @pytest.mark.asyncio
 async def test_diag_rows_join_up_down_keyboard_navigation() -> None:
     app = InspectorHarness(_seeded_view())
@@ -693,3 +864,87 @@ async def test_diag_rows_join_up_down_keyboard_navigation() -> None:
             app.inspector.action_next_row()
             await pilot.pause()
         assert isinstance(app.focused, InspectorDiagRow)
+
+
+# ── #144: the caret-location row lives in the context section ─────────
+
+
+@pytest.mark.asyncio
+async def test_the_caret_row_renders_before_any_projection_arrives() -> None:
+    """The row is UI state: it exists the moment the inspector does, ahead of
+    any view, and an empty session context still says so beside it."""
+
+    class Bare(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.register_theme(
+                Theme(
+                    name="inspector-test",
+                    primary="#0969DA",
+                    foreground="#1F2328",
+                    background="#F6F8FA",
+                    surface="#FFFFFF",
+                    variables={
+                        "talaria-inspector-background": "#FFFFFF",
+                        "talaria-inspector-border": "#6E7781",
+                        "talaria-inspector-heading": "#0969DA",
+                    },
+                )
+            )
+            self.theme = "inspector-test"
+
+        def compose(self) -> ComposeResult:
+            yield Inspector(id="inspector")
+
+        @property
+        def inspector(self) -> Inspector:
+            return self.query_one("#inspector", Inspector)
+
+    app = Bare()
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        lines = app.inspector.context_text.splitlines()
+        assert lines[0] == "  caret    composer"
+        assert lines[1] == f"  {EMPTY_SECTION}"
+
+
+@pytest.mark.asyncio
+async def test_the_caret_row_leads_the_context_rows_and_tracks_focus() -> None:
+    """First row, repainted in place on every region change, with the seeded
+    session rows surviving the repaint. The app-level wiring that calls this
+    on every focus event is pinned separately, in test_focus_indication."""
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        lines = app.inspector.context_text.splitlines()
+        assert lines[0] == "  caret    composer"
+        assert "session  session-7" in app.inspector.context_text
+
+        app.inspector.set_focus_region("main")
+        await pilot.pause()
+        assert "caret    main" in app.inspector.context_text
+        # Repaint, not remount: the session rows survive the region change.
+        assert "session  session-7" in app.inspector.context_text
+
+        app.inspector.set_focus_region("inspector")
+        await pilot.pause()
+        assert "caret    inspector" in app.inspector.context_text
+        assert "session  session-7" in app.inspector.context_text
+
+
+@pytest.mark.asyncio
+async def test_a_view_reprojection_keeps_the_caret_row_reading_the_live_region() -> (
+    None
+):
+    """apply() rebuilds the section from the projection; the caret row it
+    re-renders must carry the region reported *now*, not the one at mount."""
+    app = InspectorHarness(_seeded_view())
+    async with app.run_test(size=(132, 30)) as pilot:
+        await pilot.pause()
+        app.inspector.set_focus_region("main")
+        await pilot.pause()
+
+        await app.inspector.apply(_seeded_view())
+        await pilot.pause()
+        assert "caret    main" in app.inspector.context_text
+        assert "session  session-7" in app.inspector.context_text
