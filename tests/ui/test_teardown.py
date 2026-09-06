@@ -38,13 +38,16 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from talaria.domain.projection import status_payload
+from talaria.domain.models import TurnStatus
+from talaria.domain.projection import PromptView, SubagentView, status_payload
 from talaria.domain.startup import resolve_startup
 from talaria.status.contract import ProcessLimits
 from talaria.status.runner import StatusRunner
 from talaria.transport.attach import AttachTarget
 from talaria.transport.source import FrameRecord, LiveSource
+from talaria.ui.agents import AgentRows
 from talaria.ui.app import STREAM_FAILED, STREAM_FAILURE_EXIT_CODE, TalariaApp
+from talaria.ui.prompts import PromptRegion
 from tests.transport.conftest import READY_FRAME, STUB_TOKEN, StubGateway, event
 from tests.transport.test_compat_baseline import StubProvider
 
@@ -740,3 +743,84 @@ def test_the_pty_driver_dials_nothing_and_carries_no_credential() -> None:
         assert constructed not in driver, f"the pty driver reaches for {constructed}"
     assert STUB_TOKEN not in driver
     assert "ReplaySource.from_path" in driver, "the driver stopped replaying a corpus"
+
+
+# ── issue #158: a render tick that lands after the screen is emptied ─────
+
+
+@pytest.mark.asyncio
+async def test_a_render_tick_after_the_widgets_are_gone_is_teardown_not_a_crash(
+    gateway: StubGateway,
+) -> None:
+    """The production guard for issue #158, exercised directly.
+
+    An in-flight tick that has already passed the checks in
+    ``_render_tick`` can still reach the widget queries after shutdown has
+    emptied the screen — every sibling path in ``shutdown_sources`` stops the
+    timer first, but stopping the timer cannot recall a callback already
+    running. This test removes every region the render queries, then drives
+    one render with all regions changed, which reaches every query. Without
+    the guard that raises ``NoMatches``; with it, the render is counted and
+    the tick returns as teardown. No retry and no sleep: the next state is
+    rendered by the next run, not a tearing-down process.
+    """
+    app, _source = live_app(gateway)
+
+    async with app.run_test():
+        ticks_before = app.render_ticks
+
+        # The screen emptied underneath an in-flight tick: every region the
+        # render path queries is gone before it lands.
+        for region in ("#transcript", "#agents", "#prompts", "#inspector"):
+            await app.query_one(region).remove()
+        # A None previous forces project() to report every region changed,
+        # so the tick reaches every widget query, not just a dirty one.
+        app.snapshot = None
+        await app.render_snapshot()
+
+        assert app.render_ticks == ticks_before + 1
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_render_tick_bails_when_teardown_begins_during_an_await(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard's second half: the re-check after every await.
+
+    The queries are only half the window. An await inside the render hands
+    control back to the task tearing down, so teardown can begin *between*
+    two regions — the re-checks bail out before the next widget is touched.
+    The agents region's apply is made to start the teardown itself, and the
+    prompts region below it records whether it was ever reached.
+    """
+    app, _source = live_app(gateway)
+
+    async with app.run_test() as pilot:
+        agents_pane = app.query_one("#agents", AgentRows)
+        prompts_pane = app.query_one("#prompts", PromptRegion)
+        original_agents_apply = agents_pane.apply
+        original_prompts_apply = prompts_pane.apply
+        reached: list[str] = []
+
+        async def agents_apply_then_teardown(view: SubagentView) -> None:
+            app._teardown_started = True
+            await original_agents_apply(view)
+
+        async def prompts_apply_and_record(
+            view: PromptView, turn: TurnStatus, *, focus_new: bool
+        ) -> None:
+            reached.append("prompts")
+            await original_prompts_apply(  # pragma: no cover - never runs
+                view, turn, focus_new=focus_new
+            )
+
+        monkeypatch.setattr(agents_pane, "apply", agents_apply_then_teardown)
+        monkeypatch.setattr(prompts_pane, "apply", prompts_apply_and_record)
+
+        app.snapshot = None
+        await app.render_snapshot()
+        await pilot.pause()
+
+        assert reached == []
+        await app.shutdown_sources()
