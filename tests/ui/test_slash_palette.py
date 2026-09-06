@@ -1457,10 +1457,23 @@ def test_146_format_filtered_entry_truthful_wire_badge() -> None:
         category="Skills",
         availability="dispatch",
         origin="local",
+        is_skill=True,
     )
     formatted_skill = format_filtered_entry(skill_entry, active=False, max_width=80)
     assert "/deploy" in formatted_skill
     assert "[local] Ship the release" in formatted_skill
+
+    # Defense-in-depth (F-4): non-skill row with origin set does NOT render badge
+    rogue_reg = CommandEntry(
+        name="/status",
+        description="Show status",
+        category="Session",
+        availability="dispatch",
+        origin="local",
+        is_skill=False,
+    )
+    formatted_rogue = format_filtered_entry(rogue_reg, active=False, max_width=80)
+    assert "[local]" not in formatted_rogue
 
     registry_entry = CommandEntry(
         name="/help",
@@ -1499,6 +1512,42 @@ async def test_146_consume_selected_is_atomic_and_single_dispatch() -> None:
 
         # Second consumption returns None
         second = app.palette.consume_selected()
+        assert second is None
+
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_146_app_slash_palette_open_and_select_wiring() -> None:
+    """#146: TalariaApp open_slash_palette and select_slash_command wiring."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/status", "Gateway status", "Info", "dispatch")])
+    await app.render_catalog()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert not app.palette.is_slash_active
+
+        # open_slash_palette opens filtered palette
+        await app.open_slash_palette("sta")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/status"
+
+        # select_slash_command consumes and dispatches
+        selected = await app.select_slash_command()
+        assert selected is not None
+        assert selected.name == "/status"
+        await settle(app, pilot)
+
+        slash_calls = [call for call in disp.calls if call[0] == "slash.exec"]
+        assert len(slash_calls) == 1
+        assert slash_calls[0][1]["command"] == "status"
+        assert not app.palette.is_slash_active
+
+        # Second call returns None (single dispatch)
+        second = await app.select_slash_command()
         assert second is None
 
         await app.shutdown_sources()

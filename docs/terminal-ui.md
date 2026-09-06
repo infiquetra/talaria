@@ -140,6 +140,64 @@ state only. They are not written to configuration.
 | `u` | Prefer unified mode |
 | `Escape` | Close the viewer |
 
+## Slash command discovery and menu layout
+
+Typing `/` in the composer opens the command palette with live prefix and substring filtering.
+`F3` toggles the full browse listing.
+
+### Sectioned list structure
+
+Commands are presented in a sectioned list (decision D5) ordered by origin and taxonomy:
+
+1. **Talaria controls:** Local client actions (`/models`, `/profiles`, `/sessions`, `/needs`,
+   `/agents`, `/theme`, `/bar`, `/inspector`, `/diffs`, `/quit`, `/pause`, `/resume`, and pacing
+   controls). These appear first and resolve immediately in the client without contacting the gateway.
+2. **Gateway categories:** Contributed command rows grouped under the gateway's own wire categories
+   (`Session`, `Configuration`, `Info`, `Tools and Skills`, `Exit`, `TUI`, etc.) in the order the
+   gateway delivers them.
+3. **Skills:** Contributed agent skills, placed in their own section at the bottom, sorted
+   alphabetically by slash command name.
+4. **Uncategorised:** Any command carrying neither a gateway category nor skill membership is
+   placed here. This section renders only when populated.
+
+Empty categories or buckets (such as currently empty User or Plugin lists) are omitted entirely
+rather than rendered empty. If a command appears in both a category and the skill inventory, it
+renders once under its gateway category and retains its provenance badge.
+
+### Provenance badges
+
+Badges are derived strictly from the wire payload (`commands.catalog` result `skills[name].origin`)
+and are never guessed from command names or synthetically inferred:
+
+- **Skill rows** display their exact wire origin verbatim in brackets: `[bundled]`, `[hub]`, or
+  `[local]`. Any unexpected wire value is also displayed verbatim. Older gateway skills lacking an
+  origin field are displayed unbadged.
+- **Registry and local rows** carry no origin badge; their section header communicates their scope.
+
+### Filter-as-you-type and search ranking
+
+Typing narrows the inventory across command names, descriptions, section headings, and origin badge
+text (for example, typing `local` or `hub` isolates skills by origin). Matches are ranked in three
+tiers:
+
+- **Tier 0:** Exact command name prefix match.
+- **Tier 1:** Substring match within the command name.
+- **Tier 2:** Match within description, badge text, or section name.
+
+Within each tier, the structural section order is preserved.
+
+### Description wrapping and single dispatch
+
+- **Adaptive wrapping:** Inactive rows wrap descriptions to at most two lines, clipped with an
+  ellipsis (`…`) on overflow. When a row is highlighted, it expands fully to show its complete
+  description. Continuation lines are indented 19 spaces to preserve the command name column.
+- **Single dispatch:** Pressing `Enter` on a selected command executes it exactly once. The selection
+  is atomically consumed, the composer cleared, and the palette closed before dispatch, preventing
+  accidental double submissions from rapid keystrokes.
+- **Click to insert:** Clicking an entry inserts `/<command> ` into the composer with trailing space
+  for argument entry without auto-submitting.
+- **Escape:** Closes the palette and preserves the composer's draft text.
+
 ## Global bindings
 
 These are the bindings shipped by the application. Slash commands are the reliable primary route

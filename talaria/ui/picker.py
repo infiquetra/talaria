@@ -52,11 +52,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from talaria.domain.commands import (
-    CLIENT_LOCAL_REASON,
-    CommandCatalog,
-    CommandEntry,
-)
 from talaria.domain.models_catalog import (
     ModelProvider,
     ProfileDirectory,
@@ -748,78 +743,3 @@ class SessionPickerSource:
 
     def descend(self, depth: int, choice: Choice) -> Stage | str:
         return choice.payload
-
-
-class CommandPickerSource:
-    """A PickerSource for slash commands, supporting flat or category-staged navigation.
-
-    In flat mode (default), all catalogue commands are listed in a single stage,
-    with unselectable unsupported commands clearly labelled.
-    In hierarchical mode, categories are listed first, and selecting a category
-    descends into that category's commands.
-    """
-
-    def __init__(
-        self,
-        catalog: CommandCatalog,
-        *,
-        hierarchical: bool = False,
-        title: str = "",
-    ) -> None:
-        self._catalog = catalog
-        self._hierarchical = hierarchical
-        self._title = title or (
-            "commands — choose a category"
-            if hierarchical
-            else "commands — choose a command"
-        )
-
-    def root(self) -> Stage:
-        sections = self._catalog.by_section()
-        if self._hierarchical:
-            choices_list = []
-            for sec_name, sec_entries in sections.items():
-                count = len(sec_entries)
-                suffix = "" if count == 1 else "s"
-                choices_list.append(
-                    Choice(
-                        key=sec_name,
-                        label=sec_name,
-                        detail=f"({count} command{suffix})",
-                        payload=sec_name,
-                        selectable=bool(count),
-                    )
-                )
-            return Stage(title=self._title, selection=Selection.opened(tuple(choices_list)))
-
-        choices = tuple(
-            self._choice_for_entry(entry)
-            for sec_entries in sections.values()
-            for entry in sec_entries
-        )
-        return Stage(title=self._title, selection=Selection.opened(choices))
-
-    def descend(self, depth: int, choice: Choice) -> Stage | str:
-        if not self._hierarchical or depth > 0:
-            return choice.payload
-
-        # Hierarchical depth 0: choice.key is section name
-        sections = self._catalog.by_section()
-        entries = sections.get(choice.key, ())
-        choices = tuple(self._choice_for_entry(e) for e in entries)
-        title = f"commands — {choice.label}"
-        return Stage(title=title, selection=Selection.opened(choices))
-
-    @staticmethod
-    def _choice_for_entry(entry: CommandEntry) -> Choice:
-        badge_suffix = f" [{entry.badge}]" if entry.badge else ""
-        label = f"{entry.name}{badge_suffix}"
-        unsupported = entry.availability == "unsupported"
-        return Choice(
-            key=entry.name,
-            label=label,
-            detail=entry.description,
-            payload=entry.name,
-            selectable=not unsupported,
-            refusal=CLIENT_LOCAL_REASON if unsupported else "",
-        )

@@ -188,7 +188,24 @@ class CommandEntry:
     @property
     def badge(self) -> str:
         """Truthful provenance badge. Legal ONLY on skill rows carrying wire origin."""
-        return self.origin
+        return self.origin if self.is_skill else ""
+
+
+@dataclass(frozen=True)
+class CommandSection:
+    """A labelled section in the slash-command menu (D5).
+
+    The sentinel ``key`` distinguishes Talaria-local controls, gateway
+    categories, skills, and uncategorised remainder rows even if a gateway
+    category shares a name with a Talaria label (e.g. wire category 'Talaria'
+    or 'Skills') — issue #146, finding F-2.
+    """
+
+    key: str
+    label: str
+
+    def __str__(self) -> str:
+        return self.label
 
 
 @dataclass(frozen=True)
@@ -229,19 +246,24 @@ class CommandCatalog:
     def local_entries(self) -> tuple[CommandEntry, ...]:
         return tuple(e for e in self.entries if e.availability == "talaria-local")
 
-    def section_for(self, entry: CommandEntry) -> str:
-        """Return the section name for an entry under the D5 placement ruling.
+    def section_for(self, entry: CommandEntry) -> CommandSection:
+        """Return the CommandSection for an entry under the D5 placement ruling.
 
         Rules:
-        - Talaria-local controls -> 'Talaria'
-        - If the entry has an explicit gateway category -> that category
-        - If the entry is a skill -> 'Skills'
-        - Otherwise -> 'Uncategorised'
+        - Talaria-local controls -> CommandSection(key=":talaria:", label="Talaria")
+          Gated strictly on ``availability == 'talaria-local'`` so a wire category
+          named 'Talaria' never lands inside Talaria's own controls (F-2).
+        - If the entry has an explicit gateway category ->
+          CommandSection(key=f":category:{entry.category}", label=entry.category)
+        - If the entry is a skill ->
+          CommandSection(key=":skills:", label="Skills")
+        - Otherwise ->
+          CommandSection(key=":uncategorised:", label="Uncategorised")
         """
-        if entry.category.lower() == "talaria" or entry.availability == "talaria-local":
-            return "Talaria"
+        if entry.availability == "talaria-local":
+            return CommandSection(key=":talaria:", label="Talaria")
         if entry.category:
-            return entry.category
+            return CommandSection(key=f":category:{entry.category}", label=entry.category)
         lowered = entry.name.lower()
         bare = lowered.lstrip("/")
         slash = f"/{bare}"
@@ -251,71 +273,61 @@ class CommandCatalog:
             or bare in self.skills
             or lowered in self.skills
         ):
-            return "Skills"
-        return "Uncategorised"
+            return CommandSection(key=":skills:", label="Skills")
+        return CommandSection(key=":uncategorised:", label="Uncategorised")
 
-    def by_section(self) -> dict[str, tuple[CommandEntry, ...]]:
+    def by_section(self) -> dict[CommandSection, tuple[CommandEntry, ...]]:
         """Group entries into labelled sections per the D5 placement ruling.
 
         Section order:
-        1. Talaria controls
-        2. Gateway categories in wire delivery order (categories_order)
-        3. Any remaining categories
-        4. Skills (sorted alphabetically by slash name)
-        5. Uncategorised (rendered ONLY when non-empty)
+        1. Talaria controls (:talaria:)
+        2. Gateway categories in wire delivery order (:category:<name>)
+        3. Any additional categories
+        4. Skills (:skills:, sorted alphabetically by slash name)
+        5. Uncategorised (:uncategorised:, rendered ONLY when non-empty)
 
         Empty sections are never returned.
         """
-        grouped: dict[str, list[CommandEntry]] = {}
+        grouped: dict[CommandSection, list[CommandEntry]] = {}
         for entry in self.entries:
             section = self.section_for(entry)
             grouped.setdefault(section, []).append(entry)
 
-        result: dict[str, tuple[CommandEntry, ...]] = {}
+        result: dict[CommandSection, tuple[CommandEntry, ...]] = {}
 
-        # 1. Talaria
-        if "Talaria" in grouped and grouped["Talaria"]:
-            result["Talaria"] = tuple(grouped["Talaria"])
+        # 1. Talaria controls
+        talaria_sec = CommandSection(key=":talaria:", label="Talaria")
+        if talaria_sec in grouped and grouped[talaria_sec]:
+            result[talaria_sec] = tuple(grouped[talaria_sec])
 
         # 2. Gateway categories in wire order
-        seen_cats = {"talaria", "skills", "uncategorised"}
+        seen_keys = {talaria_sec.key, ":skills:", ":uncategorised:"}
         for cat in self.categories_order:
-            if cat in grouped and grouped[cat]:
-                result[cat] = tuple(grouped[cat])
-                seen_cats.add(cat.lower())
+            sec = CommandSection(key=f":category:{cat}", label=cat)
+            if sec in grouped and grouped[sec]:
+                result[sec] = tuple(grouped[sec])
+                seen_keys.add(sec.key)
 
         # 3. Any additional categories
-        for cat, entries in grouped.items():
-            if cat.lower() not in seen_cats:
+        for sec, entries in grouped.items():
+            if sec.key not in seen_keys:
                 if entries:
-                    result[cat] = tuple(entries)
-                    seen_cats.add(cat.lower())
+                    result[sec] = tuple(entries)
+                    seen_keys.add(sec.key)
 
         # 4. Skills (sorted alphabetically by slash name)
-        if "Skills" in grouped and grouped["Skills"]:
-            result["Skills"] = tuple(
-                sorted(grouped["Skills"], key=lambda e: e.name.lower())
+        skills_sec = CommandSection(key=":skills:", label="Skills")
+        if skills_sec in grouped and grouped[skills_sec]:
+            result[skills_sec] = tuple(
+                sorted(grouped[skills_sec], key=lambda e: e.name.lower())
             )
 
         # 5. Uncategorised (rendered ONLY when non-empty)
-        if "Uncategorised" in grouped and grouped["Uncategorised"]:
-            result["Uncategorised"] = tuple(grouped["Uncategorised"])
+        uncat_sec = CommandSection(key=":uncategorised:", label="Uncategorised")
+        if uncat_sec in grouped and grouped[uncat_sec]:
+            result[uncat_sec] = tuple(grouped[uncat_sec])
 
         return result
-
-    def by_category(self) -> dict[str, tuple[CommandEntry, ...]]:
-        """Group entries by their category string."""
-        groups: dict[str, list[CommandEntry]] = {}
-        for entry in self.entries:
-            groups.setdefault(entry.category, []).append(entry)
-        return {cat: tuple(entries) for cat, entries in groups.items()}
-
-    def by_origin(self) -> dict[str, tuple[CommandEntry, ...]]:
-        """Group entries by their truthful provenance badge."""
-        groups: dict[str, list[CommandEntry]] = {}
-        for entry in self.entries:
-            groups.setdefault(entry.badge, []).append(entry)
-        return {badge: tuple(entries) for badge, entries in groups.items()}
 
 
     def canonical(self, name: str) -> str:
@@ -545,17 +557,21 @@ def filter_commands(
         if catalog is None:
             return (0, "", e.name.lower())
         sec = catalog.section_for(e)
-        if sec.lower() == "talaria":
+        if sec.key == ":talaria:":
             sec_rank = 0
-        elif sec in catalog.categories_order:
-            sec_rank = 1 + catalog.categories_order.index(sec)
-        elif sec.lower() == "skills":
+        elif sec.key.startswith(":category:"):
+            cat_name = sec.label
+            if cat_name in catalog.categories_order:
+                sec_rank = 1 + catalog.categories_order.index(cat_name)
+            else:
+                sec_rank = 500
+        elif sec.key == ":skills:":
             sec_rank = 1000
-        elif sec.lower() == "uncategorised":
+        elif sec.key == ":uncategorised:":
             sec_rank = 2000
         else:
             sec_rank = 500
-        return (sec_rank, sec.lower(), e.name.lower())
+        return (sec_rank, sec.label.lower(), e.name.lower())
 
     clean_query = query.lower().removeprefix("/").strip()
     if not clean_query:
@@ -566,7 +582,9 @@ def filter_commands(
         name_clean = entry.name.lower().removeprefix("/")
         desc_clean = entry.description.lower()
         badge_clean = entry.badge.lower()
-        section_clean = (catalog.section_for(entry).lower() if catalog else "talaria")
+        section_clean = (
+            catalog.section_for(entry).label.lower() if catalog else "talaria"
+        )
 
         if name_clean.startswith(clean_query):
             tier = 0
