@@ -21,9 +21,12 @@ from typing import Any
 
 from talaria.domain.decode import DecodedFrame, decode_frame
 from talaria.domain.models import (
+    KNOWN_MOA_PHASES,
     KNOWN_SUBAGENT_STATUSES,
+    TERMINAL_MOA_PHASES,
     TERMINAL_SUBAGENT_STATUSES,
     GatewayEvent,
+    MoaPhase,
     SubagentStatus,
 )
 
@@ -47,14 +50,11 @@ SYSTEM_LINE_EVENTS: frozenset[str] = frozenset(
 
 #: Known event types Talaria decodes and deliberately does not render in v0.1.
 #: Each is out of scope for the prototype's surface (pet reactions, voice, skins,
-#: mixture-of-agents phase chatter, billing device-flow links) and each is listed
-#: rather than defaulted, so "we ignore this" stays a recorded decision.
+#: billing device-flow links) and each is listed rather than defaulted, so
+#: "we ignore this" stays a recorded decision.
 AMBIENT_IGNORED_EVENTS: frozenset[str] = frozenset(
     {
         "billing.step_up.verification",
-        "moa.aggregating",
-        "moa.phase",
-        "moa.progress",
         "notification.clear",
         "platforms.changed",
         "reaction",
@@ -217,6 +217,57 @@ def preserved(value: Any, previous: Any) -> Any:
     keep its prior value rather than be overwritten with ``None``.
     """
     return previous if value is None else value
+
+
+# ── Rule: Mixture-of-Agents phase normalization and terminal protection ─
+
+#: The fallback text when no MoA progress events have been observed on a route (D7, issue #148).
+MOA_FALLBACK_TEXT: str = "no progress events observed"
+
+_MOA_PHASE_ALIASES: Mapping[str, MoaPhase] = {
+    "aggregator": "aggregating",
+    "aggregating": "aggregating",
+    "reference": "references",
+    "references": "references",
+    "advisors": "references",
+    "complete": "complete",
+    "completed": "complete",
+    "cancelled": "cancelled",
+    "interrupted": "cancelled",
+    "failed": "failed",
+    "error": "failed",
+    "lost": "lost",
+}
+
+
+def normalize_moa_phase(value: Any, fallback: MoaPhase = "references") -> MoaPhase:
+    """Coerce a wire phase string into the frozen MoaPhase enum.
+
+    Handles upstream Hermes variations ('aggregator' -> 'aggregating',
+    'reference' -> 'references').
+    """
+    if not isinstance(value, str):
+        return fallback
+    normalized = value.strip().lower()
+    if normalized in _MOA_PHASE_ALIASES:
+        return _MOA_PHASE_ALIASES[normalized]
+    if normalized in KNOWN_MOA_PHASES:
+        return normalized  # type: ignore[return-value]
+    return fallback
+
+
+def is_terminal_moa_phase(phase: str) -> bool:
+    """Whether an MoA phase is terminal (complete, cancelled, failed)."""
+    return phase in TERMINAL_MOA_PHASES
+
+
+def keep_terminal_moa_phase(current: MoaPhase, proposed: MoaPhase) -> MoaPhase:
+    """Terminal wins over any later proposal.
+
+    Guarantees no permanently running progress or fabricated completion
+    is left behind after a supported cancellation or failure (Live 19).
+    """
+    return current if is_terminal_moa_phase(current) else proposed
 
 
 # ── Text hygiene ─────────────────────────────────────────────────────────

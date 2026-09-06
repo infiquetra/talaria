@@ -49,6 +49,24 @@ TERMINAL_SUBAGENT_STATUSES: frozenset[str] = frozenset(
     {"completed", "error", "failed", "interrupted", "timeout"}
 )
 
+#: Mixture-of-Agents phase lifecycle (D7, issue #148).
+MoaPhase = Literal[
+    "references",
+    "aggregating",
+    "complete",
+    "cancelled",
+    "failed",
+    "lost",
+]
+
+KNOWN_MOA_PHASES: frozenset[str] = frozenset(
+    {"references", "aggregating", "complete", "cancelled", "failed", "lost"}
+)
+
+TERMINAL_MOA_PHASES: frozenset[str] = frozenset(
+    {"complete", "cancelled", "failed", "lost"}
+)
+
 #: The turn's own lifecycle. ``waiting`` is deliberately absent: waiting on a
 #: human is a property of the prompt registry, not of the turn, and deriving it
 #: in the projection keeps one source of truth. :data:`TurnStatus` below is the
@@ -235,6 +253,43 @@ class SubagentRow:
     @property
     def is_terminal(self) -> bool:
         return self.status in TERMINAL_SUBAGENT_STATUSES
+
+
+@dataclass(frozen=True)
+class MoaReferenceRecord:
+    """One committed reference record on MoaRun (D7, issue #148)."""
+
+    label: str
+    first_line: str
+    chars: int
+
+
+@dataclass(frozen=True)
+class MoaRun:
+    """One Mixture-of-Agents run record on SessionState (D7, issue #148)."""
+
+    phase: MoaPhase
+    refs_done: int | None = None
+    refs_total: int | None = None
+    finished: tuple[str, ...] = ()
+    references: tuple[MoaReferenceRecord, ...] = ()
+    aggregator: str = ""
+    wire_phase: str = ""
+    updated_at: float = 0.0
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.phase in TERMINAL_MOA_PHASES
+
+
+@dataclass(frozen=True)
+class MoaView:
+    """Mixture-of-Agents presentation projection (D7, issue #148)."""
+
+    live_text: str | None = None
+    committed_text: str | None = None
+    inspector_rows: tuple[str, ...] = ("no progress events observed",)
+    is_active: bool = False
 
 
 @dataclass(frozen=True)
