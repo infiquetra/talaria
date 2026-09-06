@@ -141,8 +141,23 @@ def _runnable_entries(catalog: CommandCatalog | None) -> tuple[CommandEntry, ...
 def _filtered_entries(
     catalog: CommandCatalog | None, prefix: str
 ) -> tuple[CommandEntry, ...]:
-    """Filtered runnable entries across name and description via domain filter."""
-    return filter_commands(catalog, prefix)
+    """Filtered runnable entries across name and description via domain filter.
+
+    The domain ranks by relevance tier; the menu then stable-groups by
+    section for display (F-1, #146), so each section draws exactly one
+    heading and no row sits under a stale label. Within a section the
+    relevance order stands — ``sorted`` is stable — and the domain's own
+    return order is untouched: the grouping is presentation, in this layer,
+    which is what keeps the filter contract's ranking promise intact while
+    the operator sees each section once.
+    """
+    matched = filter_commands(catalog, prefix)
+    if catalog is None:
+        return matched
+    rank = {key: index for index, key in enumerate(catalog.by_section())}
+    return tuple(
+        sorted(matched, key=lambda e: rank.get(catalog.section_for(e), len(rank)))
+    )
 
 
 def format_entry(entry: CommandEntry) -> str:
@@ -390,6 +405,22 @@ class PaletteRegion(Vertical):
         return self._filtered
 
     @property
+    def visible_chrome_rows(self) -> int:
+        """Header and degraded rows currently taking space (F-4, #146).
+
+        The header mounts in every slash-mode render; the degraded row mounts
+        always but shows only while a catalogue warning is active. A page
+        that assumes one chrome row skips an entry per page while a warning
+        shows — count what is shown instead.
+        """
+        rows = 0
+        if self._header is not None and self._header.display:
+            rows += 1
+        if self._degraded is not None and self._degraded.display:
+            rows += 1
+        return rows
+
+    @property
     def selected_index(self) -> int | None:
         return self._selected
 
@@ -514,6 +545,12 @@ class PaletteRegion(Vertical):
                     literal_text(NO_MATCHING), markup=False, classes="palette--row -muted"
                 )
                 self._rows.append(widget)
+                # The no-match row addresses no entry either: without this
+                # the map falls one behind the widgets and any positional
+                # read of it raises IndexError (F-2, #146). Safe today only
+                # because the click bound returns early on it — safe by
+                # accident, which is what this line retires.
+                self._row_entries.append(None)
                 await self.mount(widget)
             return
 

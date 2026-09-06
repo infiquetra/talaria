@@ -163,12 +163,12 @@ class ChatTextArea(TextArea):
         # TalariaApp.on_key. One handler site, one ordered predicate — grep
         # for _on_key must show a single site. The palette (C2) claims
         # Up/Down/Enter/Esc/Tab while its filtered mode is active, plus
-        # PageUp/PageDown (C7, #146): paging is browsing, and letting a page
-        # key fall through to caret handling closes the very menu being
-        # browsed. History (C1) is inert while the palette is open. The
-        # palette opens on typed input, never on programmatic writes to
-        # composer.text (ruling 3), so history recall's direct text
-        # assignment must not open it.
+        # PageUp/PageDown/Home/End (C7, #146): paging and jumping are
+        # browsing, and letting any of them fall through to caret handling
+        # closes the very menu being browsed. History (C1) is inert while
+        # the palette is open. The palette opens on typed input, never on
+        # programmatic writes to composer.text (ruling 3), so history
+        # recall's direct text assignment must not open it.
         # The palette's active state lives in PaletteRegion (is_slash_active),
         # driven only by typed-input paths that compute the predicted text.
         if self._is_slash_palette_open() and event.key in (
@@ -176,6 +176,8 @@ class ChatTextArea(TextArea):
             "down",
             "pageup",
             "pagedown",
+            "home",
+            "end",
             "enter",
             "escape",
             "tab",
@@ -202,6 +204,20 @@ class ChatTextArea(TextArea):
                 return
             if event.key in ("pageup", "pagedown"):
                 palette.move_selection(self._page_delta(palette, event.key))
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key in ("home", "end"):
+                # First and last entry, not swallowed (F-3, #146): one menu,
+                # one personality — clamping arrows and paging page keys with
+                # dead Home/End would be three personalities in one list.
+                # Claiming suppresses the transcript's follow-bottom action
+                # for End, but only while the menu is open, which is the
+                # point: the keypress belongs to the menu being browsed.
+                # Routing through move_selection with more than the list
+                # holds clamps to the end, exactly where arrows clamp.
+                count = len(palette.filtered_entries)
+                palette.move_selection(-count if event.key == "home" else count)
                 event.stop()
                 event.prevent_default()
                 return
@@ -532,27 +548,38 @@ class ChatTextArea(TextArea):
     def _page_delta(palette: PaletteRegion, key: str) -> int:
         """One page of slash-menu rows, signed by the key (C7, #146).
 
-        The count is knowable, not a constant: the region is laid out by the
-        time an operator presses a key, so its height names the visible rows
-        and one row of that is the always-mounted header. Clamping at the
+        The region carries ``max-height: 14`` in its own stylesheet, so its
+        height is a cap, not a viewport (F-6): at row 2 of a 12-row terminal
+        it reports 14 while running off the bottom. The page is therefore
+        clamped to what is actually on screen — the smaller of the region
+        height and the rows from the region's top to the screen's bottom —
+        minus the chrome rows actually shown (F-4: the header, plus the
+        degraded row while a catalogue warning shows it). Clamping at the
         ends comes free from :meth:`PaletteRegion.move_selection`, which is
         what makes PageUp/PageDown share Down/Up's personality instead of
         wrapping where arrows clamp. Before first layout (or off-screen) the
-        height reads 0 and the page is a single row — the only honest answer
+        sizes read 0 and the page is a single row — the only honest answer
         when nothing is visible yet.
         """
-        page = max(1, palette.size.height - 1)
+        cap = palette.size.height
+        try:
+            on_screen = palette.screen.size.height - palette.region.y
+        except (NoScreen, ScreenStackError, AttributeError):
+            on_screen = cap
+        visible = max(0, min(cap, on_screen))
+        page = max(1, visible - palette.visible_chrome_rows)
         return -page if key == "pageup" else page
 
     def _is_slash_palette_open(self) -> bool:
         """Whether C2's slash-command palette claims its keys.
 
         While the filtered palette is active it claims Up/Down/Enter/Esc/Tab
-        plus PageUp/PageDown (C7, #146) and history is inert. Not keyed to the
-        F3 browse listing (PaletteRegion showing as browse), which claims none
-        of those keys. The active flag lives in PaletteRegion and is driven
-        only by typed input via sync_slash, so programmatic writes (history
-        recall, paste-collapse) never open it — ruling 3.
+        plus PageUp/PageDown/Home/End (C7, #146) and history is inert. Not
+        keyed to the F3 browse listing (PaletteRegion showing as browse),
+        which claims none of those keys. The active flag lives in
+        PaletteRegion and is driven only by typed input via sync_slash, so
+        programmatic writes (history recall, paste-collapse) never open
+        it — ruling 3.
         """
         try:
             app = self.app

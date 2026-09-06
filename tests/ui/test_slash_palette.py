@@ -24,7 +24,9 @@ from talaria.domain.commands import (
 from talaria.domain.composer_history import ComposerHistory
 from talaria.themes.builtins import BUILTIN_THEMES
 from talaria.transport.rpc import RpcOutcome
-from talaria.ui.palette import format_filtered_entry
+from talaria.ui.app import TalariaApp
+from talaria.ui.composer import ChatTextArea
+from talaria.ui.palette import PaletteRegion, format_filtered_entry
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from tests.ui.conftest import event, live_app, paused_app, settle
 
@@ -614,10 +616,12 @@ async def test_ae7_dismiss_keeps_draft() -> None:
             await pilot.press(ch)
             await pilot.pause()
         assert app.palette.is_slash_active
-        # Press Home to go to beginning (caret move closes palette), then Delete "/"
-        await pilot.press("home")
-        await pilot.pause()
-        # Home is caret move, so palette should have closed
+        # Walk the caret to the start with Left, then Delete "/". Left is
+        # still caret movement (it closes the palette per KTD2); Home is a
+        # menu key now (F-3, #146) and would jump the selection instead.
+        for _ in range(len("/models")):
+            await pilot.press("left")
+            await pilot.pause()
         assert not app.palette.is_slash_active
         await pilot.press("delete")
         await pilot.pause()
@@ -863,7 +867,8 @@ async def test_ae10_browse_listing_unchanged() -> None:
 
 @pytest.mark.asyncio
 async def test_caret_movement_closes_palette() -> None:
-    """P1-A: moving the caret (Left/Right/Home/End) closes the palette."""
+    """P1-A: moving the caret (Left/Right) closes the palette. Home/End are
+    menu keys (F-3, #146): they jump the selection and leave it open."""
     disp = RecordingDispatcher()
     app = live_app(disp)
     async with app.run_test() as pilot:
@@ -892,9 +897,10 @@ async def test_caret_movement_closes_palette() -> None:
         assert app.palette.is_slash_active
         await pilot.press("home")
         await pilot.pause()
-        assert not app.palette.is_slash_active
+        assert app.palette.is_slash_active
+        assert app.palette.selected_index == 0
         assert app.composer.text == "/models"
-        # Also Right, End should close if palette were open
+        # Also Right should close if palette were open (End jumps instead)
         app.composer.text = ""
         await pilot.pause()
         if app.palette.is_slash_active:
@@ -1960,3 +1966,129 @@ async def test_page_keys_clamp_like_arrows_at_both_ends() -> None:
         await pilot.pause()
         assert app.palette.selected_index == len(entries) - 1 - page
         await app.shutdown_sources()
+
+
+# ── Combined-review findings (C7, #146) ───────────────────────────────────
+
+
+def _review_catalog() -> CommandCatalog:
+    """Talaria's real local set plus one ordinary gateway category."""
+    locals_ = tuple(
+        CommandEntry(
+            name=command.name,
+            description=command.description,
+            category="Talaria",
+            availability="talaria-local",
+        )
+        for command in TALARIA_LOCAL_COMMANDS
+    )
+    gateway = tuple(
+        CommandEntry(
+            name=f"/session{i:02d}",
+            description=f"gateway session command {i}",
+            category="Session",
+            availability="dispatch",
+        )
+        for i in range(3)
+    )
+    return CommandCatalog(
+        entries=locals_ + gateway,
+        canon={},
+        available=True,
+        categories_order=("Session",),
+    )
+
+
+def _headings(app: TalariaApp) -> list[str]:
+    return [
+        text
+        for position, text in enumerate(app.palette.row_texts)
+        if app.palette._row_entries[position] is None
+        and text != "no matching commands"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cross_tier_query_draws_each_heading_once() -> None:
+    """F-1: grouping is by section at render, so a section that owns rows
+    in more than one relevance tier still draws one heading. ``/bar``
+    matches ``/s`` at tier 2 by description, below the tier-0 Session
+    rows in filter order — it must render in the Talaria block, not drag
+    a second Talaria heading onto the screen."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _review_catalog()
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.press("s")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+
+        headings = _headings(app)
+        assert headings == ["── Talaria ──", "── Session ──"], headings
+        texts = app.palette.row_texts
+        bar_at = next(
+            index for index, text in enumerate(texts) if text.split()[0] == "/bar"
+        )
+        session_at = texts.index("── Session ──")
+        assert bar_at < session_at
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_no_match_keeps_the_row_map_in_lock_step() -> None:
+    """F-2: the no-match row addresses no entry, and the map says so."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _review_catalog()
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        for character in "/zzz-nope":
+            await pilot.press(character)
+            await pilot.pause()
+
+        assert app.palette.row_texts == ("no matching commands",)
+        assert len(app.palette._rows) == len(app.palette._row_entries) == 1
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_home_and_end_jump_without_closing_the_menu() -> None:
+    """F-3: first and last entry, not swallowed — one menu, one personality."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    entries = [(f"/cmd{i:02d}", f"desc {i}", "Info", "dispatch") for i in range(20)]
+    app.catalog = _catalog_with(entries)
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+        assert app.palette.selected_index == 0
+
+        await pilot.press("end")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert app.palette.selected_index == len(entries) - 1
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/cmd19"
+        assert app.composer.text == "/"
+
+        await pilot.press("home")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert app.palette.selected_index == 0
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/cmd00"
+        await app.shutdown_sources()
+
+
+def test_page_delta_floor_on_an_unmounted_region() -> None:
+    """F-5: the max(1, …) floor holds where height is genuinely zero, and a
+    test pins it so it cannot be silently removed later."""
+    region = PaletteRegion()
+    assert ChatTextArea._page_delta(region, "pagedown") == 1
+    assert ChatTextArea._page_delta(region, "pageup") == -1
