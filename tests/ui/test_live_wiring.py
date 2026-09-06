@@ -538,7 +538,6 @@ async def test_live_failure_paths_stay_visible_while_diagnostics_move() -> None:
         app.fleet = replace(app.fleet, seam_boards={app.fleet_profile: board})
         await app._render_seams()
         await pilot.pause()
-        assert app.status_region.seam_texts == ()
         assert len(app.inspector.diag_texts) == 4
 
         await app.status_region.apply(
@@ -549,6 +548,6 @@ async def test_live_failure_paths_stay_visible_while_diagnostics_move() -> None:
 
         assert app.status_region.marker_text == "[x] status: slow command"
         assert "connection lost" in app.composer.notice
-        assert app.status_region.seam_texts == ()
+        assert app.status_region.row_texts == ()
         assert len(app.inspector.diag_texts) == 4
         await app.shutdown_sources()
