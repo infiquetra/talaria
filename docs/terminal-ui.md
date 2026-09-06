@@ -100,10 +100,12 @@ directory Talaria started from — the value sent as `cwd` on `session.create`, 
 string the status bar's `cwd` segment shows. `agent <directory>` is the directory the gateway
 actually reports for the session: `<directory> (session's own)` under a resumed session, and
 `not reported` where no reply or event has named one yet. A gateway that ignores or replaces
-the request is shown, not hidden — `<directory> (launch directory not adopted)` — and an agent
-that moves itself afterwards reads `<directory> (moved by the agent)`, with one `system` line
-on the transcript at each first mismatch. Adoption itself is silent, because it is the expected
-state. Creation sends the directory once; resume and reconnect send nothing, and Talaria never
+the request is shown, not hidden: the agent row keeps the reported path, and the annotation
+rides on its own row beneath it — `(launch directory not adopted)` — because a 36-cell dock
+cannot hold a path and a 30-cell note on one line, and clipping the note away would read as an
+adoption. An agent that moves itself afterwards reads the new path with `(moved by the agent)`
+beneath it, with one `system` line on the transcript at each entry into a mismatch. Adoption
+itself is silent, because it is the expected state. Creation sends the directory once; resume and reconnect send nothing, and Talaria never
 asks the agent to change directory: no switch, no retry, no `session.cwd.set`, and no permission
 claim, because this gateway exposes no directory permission model on any route.
 

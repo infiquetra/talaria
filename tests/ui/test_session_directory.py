@@ -8,12 +8,14 @@ launch, agent, and status the state folds, rendered by :func:`_context_lines`
 from __future__ import annotations
 
 import pytest
+from rich.cells import cell_len
 
 from talaria.domain.changes import inspector_view
 from talaria.domain.projection import entry_scoped_view
 from talaria.domain.state import SessionState
 from talaria.domain.workdir import DirectoryStatus
 from talaria.ui.inspector import _context_lines
+from tests.ui.conftest import event, paused_app
 
 LAUNCH = "/talaria"
 ELSEWHERE = "/var/gateway"
@@ -105,18 +107,69 @@ def test_long_paths_clip_to_one_screen_line_each() -> None:
     assert "not reported" in lines[-1]
 
 
-def test_clipping_yields_budget_to_the_mismatch_annotation() -> None:
-    """Clipping the annotation away would read as an adoption — the original
-    complaint reproduced. The path shortens first; the note stays whole."""
+def test_mismatch_note_rides_on_its_own_row_whole() -> None:
+    """The ruled shape: the clipped path keeps every cell the panel allows
+    and the annotation rides beneath it, verbatim, never budgeted and never
+    clipped. A note rejoined onto the path row — or a reservation shrinking
+    the path for it — fails the exact strings below."""
     long_agent = "/var/gateway/sessions/persisted-conversation-directory"
-    lines = _wide_lines(LAUNCH, long_agent, "not-adopted", 48)
+    lines = _wide_lines(LAUNCH, long_agent, "not-adopted", 32)
     agent_lines = [line for line in lines if "agent " in line]
-    assert len(agent_lines) == 1
-    assert agent_lines[0].endswith("(launch directory not adopted)")
-    assert "…" in agent_lines[0]
+    assert agent_lines == ["  agent    /var/gateway/session…"]
+    note_lines = [line for line in lines if "launch directory not adopted" in line]
+    assert note_lines == ["  (launch directory not adopted)"]
+
+
+def test_directory_rows_hold_the_panel_budget() -> None:
+    """The binding assertion: every labelled row's total cell width against
+    the panel budget, so a long path wraps over nothing below it."""
+    long_path = "/var/gateway/sessions/persisted-conversation-directory"
+    for width in range(12, 63):
+        lines = _wide_lines(long_path, long_path, "adopted", width)
+        for line in lines:
+            if line.strip().startswith(("launch", "agent")):
+                assert cell_len(line) <= width, (width, line)
+
+
+def test_note_row_is_never_clipped() -> None:
+    """The note's survival is structural — it never passes through the
+    clipper — so at any panel wide enough to hold it whole, it reads whole."""
+    long_agent = "/var/gateway/sessions/persisted-conversation-directory"
+    for width in (30, 32, 36, 48):
+        lines = _wide_lines(LAUNCH, long_agent, "not-adopted", width)
+        assert "  (launch directory not adopted)" in lines
 
 
 def test_short_values_pass_through_untouched() -> None:
     lines = _wide_lines(LAUNCH, LAUNCH, "adopted", 48)
     assert "  launch   /talaria" in lines
     assert "  agent    /talaria" in lines
+
+
+@pytest.mark.asyncio
+async def test_a_width_change_reclips_the_directory_rows() -> None:
+    """The clip follows the panel, not the first paint: widening re-clips
+    longer, narrowing re-clips shorter. Without the repaint in
+    ``set_terminal_width`` the rows would stick at whatever width they were
+    first painted for."""
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=(132, 40)) as pilot:
+        await pilot.pause()
+        narrow = app.inspector.context_text
+        app.inspector.panel_width = 48
+        app.inspector.set_terminal_width(132)
+        await pilot.pause()
+        wide = app.inspector.context_text
+        assert wide != narrow
+        launch_wide = next(
+            line for line in wide.splitlines() if line.strip().startswith("launch")
+        )
+        launch_narrow = next(
+            line for line in narrow.splitlines() if line.strip().startswith("launch")
+        )
+        assert len(launch_wide) > len(launch_narrow)
+        app.inspector.panel_width = 36
+        app.inspector.set_terminal_width(132)
+        await pilot.pause()
+        assert app.inspector.context_text == narrow
+        await app.shutdown_sources()

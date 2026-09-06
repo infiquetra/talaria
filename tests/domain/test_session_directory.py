@@ -110,6 +110,23 @@ def test_a_move_back_to_the_launch_directory_reads_adopted() -> None:
     assert _system_lines(moved) == [f"agent directory changed to {ELSEWHERE}"]
 
 
+def test_a_flap_speaks_on_every_entry() -> None:
+    """Away, back, and away again produce two lines: each entry into `moved`
+    is a new becoming, and the silent return between them is recorded nowhere
+    else. Repeats of an unchanged state stay silent."""
+    base = _created()
+    moved_once = fold_reported_cwd(base, ELSEWHERE)
+    back = fold_reported_cwd(moved_once, LAUNCH)
+    assert back.directory == "adopted"
+    assert _system_lines(back) == [f"agent directory changed to {ELSEWHERE}"]
+    moved_twice = fold_reported_cwd(back, "/var/other")
+    assert moved_twice.directory == "moved"
+    assert _system_lines(moved_twice) == [
+        f"agent directory changed to {ELSEWHERE}",
+        "agent directory changed to /var/other",
+    ]
+
+
 def test_a_first_report_that_differs_stays_not_adopted() -> None:
     """The stored first report is what makes this honest.
 

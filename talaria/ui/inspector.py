@@ -729,9 +729,11 @@ def _context_lines(
     other.
 
     ``width`` is the content width in cells, when the caller knows it: the two
-    C13 directory rows clip their values to it so each renders on exactly one
-    screen line instead of wrapping a long path over the diagnostics below.
-    None keeps every value whole — the shape the row-text tests pin.
+    C13 directory rows clip their paths to it so each renders on exactly one
+    screen line instead of wrapping a long path over the diagnostics below,
+    and a mismatch annotation rides on its own row beneath the path. None
+    keeps the contract-literal single row per status — the shape the row-text
+    tests pin.
     """
     caret = f"  {'caret':<8} {focus_region}"
     context = None if view is None else view.context
@@ -750,19 +752,35 @@ def _context_lines(
         # Gated like every sibling row, so a view from before any session
         # still renders the empty state rather than blank labels.
         launch, agent = context.launch, context.agent
+        note = ""
         if width is not None and (launch or agent):
-            # The annotation is the operative word on a mismatch row — a
+            # The annotation survives because it never passes through the
+            # clipper at all: it rides on its own row beneath the path, so no
+            # budget reservation exists to get wrong — and none is kept, so
+            # the path it annotates keeps every cell the panel allows. A
             # clipped-away "(launch directory not adopted)" would read as an
-            # adoption, which is the original complaint reproduced. So the
-            # path yields its budget to the note, never the reverse.
+            # adoption, which is the original complaint reproduced; this
+            # structure is what forbids it, at every width.
             budget = width - _ROW_PREFIX_CELLS
-            note = _agent_note(context.status) if agent else ""
-            agent = _clip_row_value(agent, budget - cell_len(note))
             launch = _clip_row_value(launch, budget)
+            agent = _clip_row_value(agent, budget)
+            if agent:
+                note = _agent_note(context.status)
         if launch:
             rows.append(("launch", launch))
         if launch or agent:
-            rows.append(("agent", _agent_row_value(context.status, agent)))
+            if width is None or not note:
+                rows.append(("agent", _agent_row_value(context.status, agent)))
+            else:
+                # A 36-cell dock cannot hold a path and a 30-cell note on one
+                # line. The note rides beneath the path it annotates rather
+                # than beside it: the row already spends two screen lines at
+                # the real width, so the explicit second row costs nothing
+                # vertically and keeps the path — the actionable half —
+                # readable. The note keeps its leading separator stripped:
+                # the row is two spaces, the note whole, never clipped.
+                rows.append(("agent", agent))
+                rows.append(("", note.strip()))
         if context.input_tokens is not None or context.output_tokens is not None:
             rows.append(
                 (
@@ -772,7 +790,12 @@ def _context_lines(
             )
     if not rows:
         return (caret, f"  {EMPTY_SECTION}")
-    return (caret, *(f"  {label:<8} {value}" for label, value in rows))
+    # A labelless row is a mismatch annotation riding beneath its path: two
+    # spaces, the note whole, never clipped.
+    return (
+        caret,
+        *(f"  {value}" if not label else f"  {label:<8} {value}" for label, value in rows),
+    )
 
 
 def _operation_lines(view: InspectorView) -> tuple[str, ...]:

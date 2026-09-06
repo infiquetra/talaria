@@ -714,10 +714,12 @@ def fold_reported_cwd(state: SessionState, reported: str | None) -> SessionState
     ``not-adopted``, because the stored first report already makes a later
     coincidence read honestly.
 
-    One ``system`` line per session, and only at the moment the status first
-    becomes ``not-adopted`` or ``moved``. Adoption is silent — it is the
-    expected state — and repeats are silent, because the line already spoken
-    still stands. A mismatch that never reaches the transcript is the
+    One ``system`` line per transition into ``not-adopted`` or ``moved``.
+    Adoption is silent — it is the expected state — and a report that changes
+    nothing stays silent, because the line already spoken still stands. But a
+    flap speaks on every entry: away, back, and away again produce two lines,
+    because each entry is a new becoming and the silent return between them is
+    recorded nowhere else. A mismatch that never reaches the transcript is the
     complaint that created item 12.
     """
     cwd = coerce_text(reported)
