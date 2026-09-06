@@ -22,7 +22,9 @@ from typing import Any, get_args
 
 import pytest
 
+from talaria.domain.models import ConnectionStatus
 from talaria.domain.models import TerminalCause as DomainTerminalCause
+from talaria.domain.state import SessionState, set_connection
 from talaria.transport.attach import AttachTarget
 from talaria.transport.credentials import Credential
 from talaria.transport.source import LiveSource
@@ -112,7 +114,16 @@ async def test_auth_failed_mid_stream_commits_the_partial_reply(gateway: StubGat
 
         await gateway.hang_up()
 
-        await settle(lambda: app.state.connection == "auth_failed")
+        # Settling on the connection state alone was settling on a
+        # coincidence: the terminal state is published before the typed
+        # cause's queued notice is drained, and the commit rides the notice.
+        # The thing actually asserted is the commit — the buffer cleared by
+        # it, together with the terminal state — so that is what this waits
+        # for. Nothing about the settle's length changed; its target did.
+        await settle(
+            lambda: app.state.connection == "auth_failed"
+            and app.state.streaming_text == ""
+        )
         assert [e.text for e in app.state.transcript if e.kind == "assistant"] == [
             "partial reply"
         ], "the typed auth_failed cause did not reach the domain commit"
@@ -369,3 +380,96 @@ async def test_a_queued_frame_keeps_the_epoch_of_the_socket_it_arrived_on(
         assert source.arrival_epoch == arrived_on
         assert source.epoch == replaced_by
         await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_close_still_delivers_the_commit_when_teardown_lands_in_the_auth_gap(
+    gateway: StubGateway,
+) -> None:
+    """The loss path the investigator reproduced, driven deterministically.
+
+    A mid-stream credential death routes through the reconnect dial: the
+    refused dial's typed cause is queued behind frames the consumer task
+    would drain, and a teardown cancels that consumer before it does —
+    ``close()`` then runs as the only delivery left. It used to skip on the
+    belief that the domain had already committed on whichever typed cause
+    put the source into ``auth_failed``; in this gap nothing had, and the
+    partial reply was dropped (R6). Close now re-delivers the source's own
+    typed cause inline — a no-op when the queued notice really did drain
+    first, because the domain's commit is guarded by its own buffer
+    emptiness, and the one thing that saves the partial when it did not.
+
+    The consumer here parks mid-iteration after the greeting, which holds
+    the gap open: the cause stays queued, undrained, exactly as a
+    cancelled pump would leave it.
+    """
+    provider = ScriptedProvider([STUB_TOKEN, "no-longer-valid"])
+    source = live_source(gateway, provider)
+    delivered: list[tuple[str, str, TransportTerminalCause | None]] = []
+    # The domain side of the real wiring: ``cli.py`` binds
+    # ``note_connection_state``, whose connection half is exactly this
+    # ``set_connection`` call. The state starts mid-stream — the partial
+    # the operator already received — so the test asserts the partial
+    # itself survives, not merely that a cause-shaped call arrived.
+    state_box: dict[str, SessionState] = {
+        "state": SessionState(turn="streaming", streaming_text="partial reply")
+    }
+
+    def on_connection(
+        state: ConnectionStatus, detail: str, cause: TransportTerminalCause | None
+    ) -> None:
+        delivered.append((state, detail, cause))
+        state_box["state"] = set_connection(state_box["state"], state, cause=cause)
+
+    source.bind(on_connection=on_connection)
+
+    async def parked_consumer() -> None:
+        async for item in source:
+            del item
+            # Park mid-iteration: the greeting is consumed, nothing else is,
+            # and ``_iterating`` stays true so the typed cause queues.
+            await asyncio.sleep(3600)
+
+    consumer_task = asyncio.create_task(parked_consumer())
+    try:
+        await gateway.wait_for_attach()
+        await settle(lambda: len(delivered) >= 1)  # the connected greeting
+
+        # A plain drop (1001), not an auth close: the reconnect loop runs,
+        # the next dial presents the dead credential, the gateway refuses
+        # it, and the loop stops on it — publishing auth_failed with its
+        # typed cause, which queues behind the parked consumer.
+        await gateway.hang_up()
+        await settle(lambda: source._state == "auth_failed")
+
+        # Teardown's exact order: the consumer is cancelled first, then the
+        # source closes. The queued cause is now undrainable.
+        consumer_task.cancel()
+        try:
+            await consumer_task
+        except asyncio.CancelledError:
+            pass
+        await source.close()
+
+        # The commit's trigger reached the domain anyway: a typed
+        # auth_failed cause is in the delivered list. Against the pre-fix
+        # code the only auth_failed delivery was cause-less (the dial's
+        # premature terminal state) and close skipped, so this fails.
+        typed = [entry for entry in delivered if entry[2] == "auth_failed"]
+        assert typed, f"no typed auth_failed cause was ever delivered: {delivered}"
+        assert typed[-1][0] == "auth_failed"
+        # And the partial survived: the close-time delivery committed it as
+        # an assistant entry through the real reducer, exactly as the live
+        # wiring would have.
+        domain_state = state_box["state"]
+        assert [
+            entry.text for entry in domain_state.transcript if entry.kind == "assistant"
+        ] == ["partial reply"], "the partial reply was dropped by teardown"
+        assert domain_state.streaming_text == ""
+    finally:
+        if not consumer_task.done():
+            consumer_task.cancel()
+        try:
+            await consumer_task
+        except asyncio.CancelledError:
+            pass

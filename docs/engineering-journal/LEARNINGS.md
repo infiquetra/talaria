@@ -4,6 +4,45 @@
 
 ## 2026-09-06
 
+### A queued terminal cause plus a teardown that trusts it was delivered loses the buffer it was going to commit
+
+**Evidence.** ``test_auth_failed_mid_stream_commits_the_partial_reply`` failed on one CI leg of a
+Python-free pull request, and the investigator found a data-loss bug, not a flake. The path: a
+mid-stream credential death routes through the reconnect dial, and ``_dial(terminal=False)``
+published ``auth_failed`` **without** its typed cause — a terminal state with nothing committed
+and nothing yet queued to commit it. The reconnect loop's own stop was the one notice that
+attached the cause, and it is *queued* (FIFO behind frames) whenever something is iterating the
+source. ``LiveSource.close()`` then skipped its typed-cause delivery on the reasoning that "the
+domain already committed on whichever typed cause put the source in ``auth_failed``" — true only
+when that queued notice had drained first. ``shutdown_sources`` cancels the consumer task
+*before* calling ``close()``, so a quit landing in the gap found the cause undelivered,
+``_commit_partial_streams`` never ran, and the partial reply the operator had already received
+was dropped (R6). The repair pair in ``talaria/transport/source.py``: the non-terminal dial
+never publishes a terminal state — the loop decides, on ``failure_kind``, and delivers
+``auth_failed`` with its cause once — and ``close()`` now re-delivers the typed cause inline in
+the ``auth_failed`` state too, safe because ``set_connection`` commits on a terminal cause
+unconditionally and no-ops once the buffers are empty. Pinned both ways in
+``tests/transport/test_source.py``: against the pre-fix code the gap test fails with the defect
+rendered verbatim — ``('auth_failed', '…401', None)`` delivered, no typed cause ever — and the
+re-settled original test now waits for the commit (buffer cleared plus terminal state) rather
+than the pre-commit terminal state it used to race on.
+
+**Mechanism.** Two orderings that are each correct alone compose into a hole: typed causes are
+queued for FIFO safety against frame content, and teardown cancels the queue's consumer before
+running the close that would flush it. Any "already delivered" belief held across that
+cancellation is a belief about a channel that no longer exists. The domain's commit is the
+mitigation's safety net: idempotent by buffer emptiness, so re-delivering a terminal cause is
+free when it is redundant and is the only thing that saves the buffer when it is not.
+
+**Generalizable rule.** Teardown must never assume an in-flight queued notification was
+delivered — the delivery mechanism dies before the code that would act on the assumption, so
+the assumption must be checked at delivery time (re-deliver; make the consumer of the
+notification idempotent) rather than skipped on. And a settle that waits on the state *before*
+the effect it asserts is a check that passes the exact thing it exists to catch: wait for the
+effect — the cleared buffer, the committed entry — not the flag that merely precedes it.
+
+## 2026-09-06
+
 ### An async rebuild that mounts one row per await must be serialized against itself (#146)
 
 **Evidence.** The live rehearsal's recurrence of #146's F-1: the cross-tier model filter drew

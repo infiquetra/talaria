@@ -579,14 +579,27 @@ class LiveSource:
         self.failure_kind = outcome.kind
         # ``connect_failed`` has no state of its own; it is ``disconnected``
         # plus a named cause, so the frozen KTD5 enum stays frozen.
-        cause: TerminalCause | None = None
         if terminal:
-            cause = "auth_failed" if outcome.kind == "auth_failed" else "dial_failed"
-        self._set_state(
-            "auth_failed" if outcome.kind == "auth_failed" else "disconnected",
-            outcome.detail,
-            cause=cause,
-        )
+            self._set_state(
+                "auth_failed" if outcome.kind == "auth_failed" else "disconnected",
+                outcome.detail,
+                cause="auth_failed" if outcome.kind == "auth_failed" else "dial_failed",
+            )
+        else:
+            # A non-terminal dial never publishes a terminal state (the
+            # auth-cause gap): publishing ``auth_failed`` here, without the
+            # typed cause, put the domain into a terminal connection while
+            # the partial reply was still only in ``streaming_text`` and the
+            # one notice that would commit it — the reconnect loop's own
+            # stop, which attaches the cause — was still only queued. A
+            # teardown landing in that gap found ``close()`` believing the
+            # domain had already committed, and the partial was dropped
+            # (R6). The loop decides terminality: it stops on
+            # ``failure_kind`` below and delivers ``auth_failed`` with its
+            # cause, once. The operator still learns the dial failed — the
+            # detail line says so — but the domain stays ``disconnected``,
+            # which is the truth until the loop gives up.
+            self._set_state("disconnected", outcome.detail)
         return False
 
     async def start(self) -> LiveConnectionState:
@@ -662,14 +675,30 @@ class LiveSource:
             reader.cancel()
 
         await self._drop_connection()
-        # ``auth_failed`` survives the close. Both are true afterwards — the
-        # socket is shut and the credential was refused — but only one of them
-        # tells the operator what to fix, and every consumer tears the source
-        # down after a failed attach, so overwriting here would erase the reason
-        # on the way out every single time. The domain already committed on
-        # whichever typed cause put the source in ``auth_failed`` to begin
-        # with, so this close needs no ``orderly_close`` of its own.
-        if self._state != "auth_failed":
+        # ``auth_failed`` survives the close, and it still gets its typed
+        # cause — because "the domain already committed on whichever typed
+        # cause put the source in ``auth_failed``" turned out to be true
+        # only when that cause's notice had drained before teardown landed.
+        # It is queued, not delivered, while something is iterating, and
+        # this method runs after the consumer task is cancelled — so a quit
+        # landing in that gap found the cause still queued with nobody left
+        # to drain it, and the partial reply was dropped (R6). The domain's
+        # commit is guarded by its own buffer emptiness —
+        # ``set_connection`` commits on a terminal cause unconditionally
+        # and no-ops once the buffers are already empty — so re-delivering
+        # the source's own reason is safe in the already-committed case and
+        # is the one thing that saves the partial in the gap.
+        if self._state == "auth_failed":
+            # ``self.last_failure`` rather than ``""``: repeating the
+            # operator-facing reason beats blanking it with a generic line,
+            # the same reasoning the branch below carries.
+            self._set_state(
+                "auth_failed",
+                self.last_failure,
+                cause="auth_failed",
+                deliver_inline=True,
+            )
+        else:
             # ``self.last_failure`` rather than ``""``: this call is often a
             # no-op re-announcement (``_pump``'s own teardown ``finally``
             # calls ``close()`` after a dial that already failed and already
@@ -929,18 +958,30 @@ class LiveSource:
                 if self._on_reconnect is not None:
                     self._on_reconnect(self.correlator.epoch)
                 return True
-            if self._state == "auth_failed" or self.failure_kind == "credential_unavailable":
+            if self.failure_kind == "auth_failed" or (
+                self.failure_kind == "credential_unavailable"
+            ):
                 # A credential the gateway rejected will not become acceptable by
                 # being presented again on a timer, and a credential this machine
                 # cannot produce will not appear on one either — the second case
                 # would additionally re-run the interactive prompt once per retry
                 # slot. Stop, and say why — and, now that this is genuinely
                 # terminal, say the typed cause the un-terminal dial above did
-                # not attach.
+                # not attach. ``failure_kind`` is the signal, not the published
+                # state: since the dial stopped publishing ``auth_failed``
+                # without its cause, the state here is still the honest
+                # ``disconnected``, and the terminal state is this loop's to
+                # declare — once, with the cause.
                 cause: TerminalCause = (
-                    "auth_failed" if self._state == "auth_failed" else "dial_failed"
+                    "auth_failed"
+                    if self.failure_kind == "auth_failed"
+                    else "dial_failed"
                 )
-                self._set_state(self._state, self.last_failure, cause=cause)
+                self._set_state(
+                    "auth_failed" if cause == "auth_failed" else "disconnected",
+                    self.last_failure,
+                    cause=cause,
+                )
                 self._end()
                 return False
 
@@ -1036,7 +1077,17 @@ class LiveSource:
             reason: SwitchReason
             if self.failure_kind == "credential_unavailable":
                 reason = "credential_unavailable"
-            elif self.failure_kind == "auth_failed" or self._state == "auth_failed":
+            elif self.failure_kind == "auth_failed":
+                # The switch is its own decider — one dial, no retry loop to
+                # defer terminality to — and the old connection was already
+                # dropped for the switch, so a refused credential is
+                # terminal for this stream. Publish the terminal state WITH
+                # its typed cause, the same shape the reconnect loop's own
+                # stop takes; a teardown landing before the queued cause
+                # drains is covered by ``close()``'s re-delivery.
+                self._set_state(
+                    "auth_failed", self.last_failure, cause="auth_failed"
+                )
                 reason = "auth_failed"
             else:
                 reason = "connect_failed"
