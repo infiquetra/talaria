@@ -1636,7 +1636,10 @@ def _validate_v061_receipt(
                 or Path(harness_identity).is_absolute()
                 or any(
                     p in harness_identity
-                    for p in ("/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/")
+                    # Denylist prefixes the contract refuses, not opened paths:
+                    for p in (  # nosec B108
+                        "/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/"
+                    )
                 )
             ):
                 errors.append(

@@ -826,7 +826,10 @@ def inventory_source_evidence(
                         or Path(h_id).is_absolute()
                         or any(
                             p in h_id
-                            for p in ("/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/")
+                            # Denylist prefixes the contract refuses, not opened paths:
+                            for p in (  # nosec B108
+                                "/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/"
+                            )
                         )
                     ):
                         receipt_had_findings = True
@@ -1045,7 +1048,10 @@ def convert(
                     or Path(harness_identity).is_absolute()
                     or any(
                         p in harness_identity
-                        for p in ("/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/")
+                        # Denylist prefixes the contract refuses, not opened paths:
+                        for p in (  # nosec B108
+                            "/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/"
+                        )
                     )
                 ):
                     item_refusals.append(

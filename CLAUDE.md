@@ -21,6 +21,7 @@ uv run ruff check .
 uv run mypy
 uv run pytest
 uv run bandit -r talaria -q
+uv run bandit -r scripts -q -ll
 git diff --check
 ```
 
