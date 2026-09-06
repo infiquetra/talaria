@@ -5562,6 +5562,15 @@ class TalariaApp(App[None]):
         owns what actually spawns, and the join is its faithful rendering —
         the operator's original spacing survives in the file because an
         unedited apply writes nothing.
+
+        F-1 of the C11 review (#149): ``load_config`` *tolerates* a malformed
+        configuration file — the application boots on a broken file with a
+        startup notice — so a running application with a broken configuration
+        is exactly the state an operator reaches for this view in. The scope
+        walk is the only file read on this path, and it raises; the exception
+        is caught here rather than dying inside a discarded task, because
+        silence would leave the operator unable to tell a broken file from a
+        broken command. The refusal names the file and the parse error.
         """
         runner = self.status_runner
         status_command = ""
@@ -5571,13 +5580,21 @@ class TalariaApp(App[None]):
             # on StatusRunner would be a one-line runner.py change outside
             # this custody window.
             status_command = shlex.join(tuple(runner._argv or ()))
+        try:
+            scopes = setting_scopes(cwd=self.launch_cwd)
+        except ConfigError as exc:
+            # The notice row is one line with an ellipsis by design
+            # (``composer.py``'s own constraint), so the message leads with
+            # its operative clause: the command, the file, the parse error.
+            self._notice(f"/config: {exc}")
+            return
         self.push_screen(
             ConfigViewScreen(
                 theme_name=self.theme,
                 status_command=status_command,
                 status_interval_seconds=int(self.status_interval),
                 status_segments=tuple(self.status_bar_settings.segments),
-                scopes=setting_scopes(cwd=self.launch_cwd),
+                scopes=scopes,
                 segments_now=tuple(self.bottom_status_bar.settings.segments),
             ),
             self._config_view_closed,

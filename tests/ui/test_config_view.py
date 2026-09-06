@@ -618,3 +618,33 @@ async def test_an_apply_through_the_real_app_writes_the_user_file(
             await pilot.pause()
         assert not isinstance(app.screen, ConfigViewScreen)
         assert "saved to user configuration" in screen_text(app)
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_configuration_file_is_named_rather_than_swallowed(
+    isolated_global_config_dir: Path,
+) -> None:
+    """F-1 of the C11 review (#149): ``load_config`` tolerates a malformed
+    file at launch, so a running application on a broken configuration is
+    exactly the state an operator reaches for /config in. The refusal must
+    name the file and the parse error — silence would leave the operator
+    unable to tell a broken file from a broken command."""
+    (isolated_global_config_dir / "config.toml").write_text("[status\n", encoding="utf-8")
+    app, _ = paused_app([event("gateway.ready", {})])
+    async with app.run_test(size=SIZE) as pilot:
+        invocation = resolve_command("/config", None)
+        assert isinstance(invocation, LocalInvocation)
+        assert app.perform_local_command(invocation) is True
+        for _ in range(3):
+            await pilot.pause()
+
+        assert not isinstance(app.screen, ConfigViewScreen)
+        # The refusal is rendered — the one-row notice carries at least its
+        # leading clause on screen — and the delivered message names the
+        # command, the file, and the parse error. The row ellipsizes past its
+        # width by design (``composer.py``), so the full text is asserted on
+        # the composer's notice, the same surface the composer suite uses.
+        assert "/config:" in screen_text(app)
+        assert app.composer.notice.startswith("/config:")
+        assert "is not valid TOML" in app.composer.notice
+        assert "config.toml" in app.composer.notice
