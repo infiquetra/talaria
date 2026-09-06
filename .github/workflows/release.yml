@@ -162,7 +162,15 @@ jobs:
             echo "::error::No acceptance manifest at $manifest for tag $TAG. A release needs its version's evidence tree."
             exit 1
           fi
-          gate_id="$(uv run python -c 'import json,sys; print(json.load(open(sys.argv[1])).get("gate_id", "v0-1-daily-driver"))' "$manifest")"
+          # No default. A manifest without a gate_id used to fall back to
+          # v0-1-daily-driver, which reads a real and probably green gating
+          # document belonging to a different release — so the release passed a
+          # gate that had never looked at it, silently and with a healthy log.
+          # An absent gate_id is a broken manifest, and it says so here.
+          gate_id="$(uv run python -c 'import json,sys; m=json.load(open(sys.argv[1])); g=m.get("gate_id"); sys.exit("no gate_id in manifest") if not g else print(g)' "$manifest")" || {
+            echo "::error::$manifest declares no gate_id. A release must name the gating document that cleared it; there is no default, because defaulting would check some other version's gate."
+            exit 1
+          }
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
           echo "gate_id=$gate_id" >> "$GITHUB_OUTPUT"

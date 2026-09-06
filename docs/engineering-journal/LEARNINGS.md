@@ -4,6 +4,27 @@
 
 ## 2026-09-06
 
+### A default gate id makes a release check the wrong release's gate
+
+**Evidence**: `.github/workflows/release.yml`, the "Resolve the acceptance manifest and
+gate for this version" step. Before this change it read
+`json.load(...).get("gate_id", "v0-1-daily-driver")`.
+
+**Mechanism**: the release workflow is otherwise version-agnostic — it derives the
+manifest path from the tag, and takes the gate id from that manifest — so a release
+carries its own gating document with it. The one exception was the fallback. A manifest
+that omitted `gate_id` did not fail; it silently resolved to `v0-1-daily-driver`, a real
+gating document for a shipped release, which by then read READY and had been reviewed by
+nobody for the version being released. The failure mode is the dangerous shape: the gate
+step passes, the log says a gate was read, and the gate named belongs to a different
+release. Every subsequent version would have inherited the same fallback, so the older the
+project got, the more misleading the default became.
+
+**Generalizable rule**: a default value is only safe where every possible caller would
+have chosen it. A default that names one specific member of a versioned series is a lie
+for every other member, and it lies most convincingly when the thing it names still
+exists and still passes.
+
 ### A queued terminal cause plus a teardown that trusts it was delivered loses the buffer it was going to commit
 
 **Evidence.** ``test_auth_failed_mid_stream_commits_the_partial_reply`` failed on one CI leg of a
