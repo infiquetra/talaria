@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -58,7 +59,9 @@ from talaria.config import (
     global_config_dir,
     resolve_keybindings,
     save_theme,
+    setting_scopes,
 )
+from talaria.domain.attachments import AttachmentRecord
 from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
 from talaria.domain.commands import (
     CATALOG_METHOD,
@@ -69,6 +72,7 @@ from talaria.domain.commands import (
     SLASH_EXEC_METHOD,
     SUBAGENT_INTERRUPT_METHOD,
     CommandCatalog,
+    CommandEntry,
     GatewayInvocation,
     LocalInvocation,
     PasteThreshold,
@@ -155,6 +159,7 @@ from talaria.domain.state import (
     attach_confirm_row,
     begin_fleet_answer,
     cancel_turn,
+    drop_attachment,
     end_fleet_answer,
     fleet_connection_lost,
     fleet_connection_restored,
@@ -168,6 +173,7 @@ from talaria.domain.state import (
     latch_unservable_prompt,
     listing_failed,
     mark_we_drive,
+    reconcile_submitted_attachments,
     record_command_result,
     record_local_note,
     record_replayed_submission,
@@ -184,6 +190,7 @@ from talaria.domain.state import (
     set_connection,
     settle_prompt,
     settle_queue_item,
+    stage_attachment,
 )
 from talaria.domain.state import (
     SUBMIT_METHOD as SUBMIT_METHOD,
@@ -209,6 +216,7 @@ from talaria.themes.storage import (
 )
 from talaria.transport.admin import AdminError
 from talaria.transport.attach import scrub_urls
+from talaria.transport.attachments import attach_file, attach_image_file, detach_image
 from talaria.transport.compat_check import CompatReport, HealthProbe, probe_seams
 from talaria.transport.connection_set import (
     # Aliased: ``talaria.domain.models`` already exports a ``ConnectionStatus``
@@ -231,8 +239,16 @@ from talaria.transport.rpc import (
 )
 from talaria.transport.source import FrameRecord, FrameSource, SwitchReport
 from talaria.ui.agents import AgentRow, AgentRows
+from talaria.ui.attach import (
+    clean_path_text,
+    new_attachment_id,
+    place_ref_chip,
+    remove_ref_chip,
+    stat_for_confirm,
+)
 from talaria.ui.composer import ChatTextArea, Composer
-from talaria.ui.dialog import ConfirmDialog, PickerDialog
+from talaria.ui.config_view import ConfigViewResult, ConfigViewScreen
+from talaria.ui.dialog import ConfirmDialog, PickerDialog, attachment_dialog_copy
 from talaria.ui.diff_viewer import DiffViewer, adapt_diff_document
 from talaria.ui.focus import CaretReleased, focused_region
 from talaria.ui.inspector import Inspector
@@ -351,6 +367,32 @@ PASTE_COLLAPSE_IN_FLIGHT: Final[str] = (
 PASTE_NO_LONGER_PRESENT: Final[str] = (
     "the pasted text is no longer in the composer, so nothing was replaced; "
     "the gateway saved it at"
+)
+
+#: Said when ``/attach`` arrives with no argument and nothing is staged for
+#: the focused session. Names the working command so the empty invocation
+#: teaches the staged one.
+ATTACH_NOTHING_STAGED: Final[str] = (
+    "nothing is staged for this session — give /attach a path to stage one"
+)
+
+#: Said when the connection changed, or the focus moved, between the attach
+#: dialog opening and its answer landing. Staging against the moment of the
+#: question rather than the moment of the answer would put one session's
+#: bytes into another session's workspace, so the answer is discarded and
+#: the operator re-issues it — the same hazard the session switcher guards
+#: with ``SESSIONS_STALE_EPOCH``, restated for attachments.
+ATTACH_STALE_CONTEXT: Final[str] = (
+    "the session changed while the attach dialog was open — nothing was "
+    "staged; try /attach again"
+)
+
+#: Said when the socket is gone between the detach dialog and the detach
+#: call. The staged copy is still gateway-side, and the record is kept, so
+#: the operator can retry the removal once reconnected.
+ATTACH_DETACH_OFFLINE: Final[str] = (
+    "lost the connection before the detach went out — the staged copy is "
+    "still gateway-side; retry once reconnected"
 )
 
 #: How the transcript names an interrupt the gateway accepted, and one it says
@@ -2364,7 +2406,7 @@ class TalariaApp(App[None]):
         # longer hold. No retry and no sleep: a tearing-down process renders
         # nothing further, and the next state belongs to the next run.
         try:
-            if "transcript" in snapshot.changed:
+            if {"transcript", "moa"} & snapshot.changed:
                 # KTD6: the pane needs entry identity and raw (unwelded) bodies
                 # that TranscriptView's flattened line buffer does not carry, so
                 # U4 computes the entry-scoped surface here rather than growing
@@ -2399,6 +2441,7 @@ class TalariaApp(App[None]):
                 endpoint=self.profile_endpoints.get(profile, "") if profile else "",
                 model=self._inspector_model(),
                 usage=self.state.usage,
+                moa=snapshot.moa,
             )
             if inspector_projection != self._inspector_view:
                 self._inspector_view = inspector_projection
@@ -2884,6 +2927,12 @@ class TalariaApp(App[None]):
         else:
             self.composer.clear()
             self.composer.show_notice(outcome.notice)
+            # C9: a submit that left the client drops the file chips the text
+            # no longer carries — there is no file.detach, omission is the
+            # detach. Never-sent submits skip this: the text (tokens
+            # included) is still in the composer, and the gateway still holds
+            # whatever was staged. Refused submits never reach here.
+            self.state = reconcile_submitted_attachments(self.state, body)
         self._dirty = True
         return outcome
 
@@ -4176,6 +4225,30 @@ class TalariaApp(App[None]):
     async def action_toggle_palette(self) -> None:
         await self.palette.toggle()
 
+    async def open_slash_palette(self, prefix: str = "") -> None:
+        """Open the slash-command palette filtered by ``prefix`` (#146)."""
+        await self.palette.show_slash(self.catalog, prefix)
+
+    async def select_slash_command(
+        self, entry: CommandEntry | None = None
+    ) -> CommandEntry | None:
+        """Consume and dispatch the selected slash command once (#146).
+
+        Guarantees single dispatch: consumes the entry via ``consume_selected``
+        (or uses the explicitly provided entry), closes the slash palette,
+        clears the composer, and dispatches through the single Submitted funnel.
+        """
+        picked = entry or self.palette.consume_selected()
+        if picked is None:
+            return None
+        await self.palette.hide_slash()
+        self.composer.text = ""
+        name = picked.name if picked.name.startswith("/") else f"/{picked.name}"
+        self.on_chat_text_area_submitted(
+            ChatTextArea.Submitted(self.composer.text_area, name)
+        )
+        return picked
+
     async def open_theme_picker(self) -> None:
         """Open theme mode at the currently applied session selection."""
         self._theme_preview_anchor = self._capture_layout_anchor()
@@ -5438,6 +5511,17 @@ class TalariaApp(App[None]):
             self.composer.clear()
             self._spawn_live(self._toggle_agents_and_discard())
             return True
+        if command.action == "attach":
+            # Scheduled for the same reason ``models`` is: the confirm dialog
+            # renders instantly, but staging crosses the socket, and this
+            # method cannot be ``async``. In replay (or with no gateway at
+            # all) it is refused like every other gateway-needing control —
+            # staging nothing is the only honest answer there.
+            if self.mode == "replay" or self.dispatcher is None:
+                self._refuse_mutation(COMMAND_DISPATCH_CONTROL)
+                return False
+            self._perform_attach(invocation.argument)
+            return True
         if command.action == "theme":
             self._perform_theme(invocation.argument)
             return True
@@ -5451,6 +5535,13 @@ class TalariaApp(App[None]):
         if command.action == "diffs":
             self.composer.clear()
             self._open_diffs()
+            return True
+        if command.action == "config":
+            # C11 (#149): scheduled like every screen-opening control — the
+            # screen's own reading of state and painting is async, and this
+            # method cannot be.
+            self.composer.clear()
+            self._spawn_live(self._open_config_view())
             return True
         if command.action == "pause":
             self.controls.pause()
@@ -5469,6 +5560,373 @@ class TalariaApp(App[None]):
         self.composer.clear()
         self._notice(self._pacing_notice())
         return True
+
+    # ── C11: the /config mounting seam (#149, D8 recorded) ───────────
+    #
+    # The view's own contract — rows, readonly rules, chooser, and the
+    # byte-preserving write — lives in ``talaria/ui/config_view.py`` and is
+    # tested there against a minimal host. What lives here is the mounting:
+    # the control's row in :meth:`perform_local_command` above, the state the
+    # screen is fed, and what the app does with the result the screen
+    # dismisses with.
+
+    async def _open_config_view(self) -> None:
+        """Mount the configuration view over the transcript.
+
+        Every value the screen is fed comes from this process's own state,
+        because restart-to-apply is the contract the rows display: a fresh
+        file read here would show what the files say *now* while the process
+        still runs what it loaded at startup, and the row's "effective value"
+        would be a lie. Only the source scopes are walked fresh
+        (:func:`setting_scopes`), since nothing retained them at launch — so a
+        hand-edited file mid-session can move a row's *scope* label before the
+        restart that applies it, and the row's value still says what runs.
+
+        The command re-joins the runner's parsed argument vector: the runner
+        owns what actually spawns, and the join is its faithful rendering —
+        the operator's original spacing survives in the file because an
+        unedited apply writes nothing.
+
+        F-1 of the C11 review (#149): ``load_config`` *tolerates* a malformed
+        configuration file — the application boots on a broken file with a
+        startup notice — so a running application with a broken configuration
+        is exactly the state an operator reaches for this view in. The scope
+        walk is the only file read on this path, and it raises; the exception
+        is caught here rather than dying inside a discarded task, because
+        silence would leave the operator unable to tell a broken file from a
+        broken command. The refusal names the file and the parse error.
+        """
+        runner = self.status_runner
+        status_command = ""
+        if runner is not None and runner.enabled:
+            # ``_argv`` is the runner's private vector; reading it here is the
+            # one cross-module private read in this seam. A public accessor
+            # on StatusRunner would be a one-line runner.py change outside
+            # this custody window.
+            status_command = shlex.join(tuple(runner._argv or ()))
+        try:
+            scopes = setting_scopes(cwd=self.launch_cwd)
+        except ConfigError as exc:
+            # The notice row is one line with an ellipsis by design
+            # (``composer.py``'s own constraint), so the message leads with
+            # its operative clause: the command, the file, the parse error.
+            self._notice(f"/config: {exc}")
+            return
+        self.push_screen(
+            ConfigViewScreen(
+                theme_name=self.theme,
+                status_command=status_command,
+                status_interval_seconds=int(self.status_interval),
+                status_segments=tuple(self.status_bar_settings.segments),
+                scopes=scopes,
+                segments_now=tuple(self.bottom_status_bar.settings.segments),
+            ),
+            self._config_view_closed,
+        )
+
+    def _config_view_closed(self, result: ConfigViewResult | None) -> None:
+        """Surface the view's message, and open the picker when it asked."""
+        if result is None:
+            return
+        if result.notice:
+            self._notice(result.notice)
+        if result.open_theme_picker:
+            # The picker is the palette's theme mode, so the view closed
+            # itself first and the picker opens over the transcript — the
+            # existing W1 path, unchanged (D8: no second picker).
+            self._spawn_live(self.open_theme_picker())
+
+    # ── C9: attachments (D6, #147) ───────────────────────────────────
+    #
+    # Two input routes, one path: ``/attach <path>`` arrives through
+    # :meth:`perform_local_command`, a dropped path through
+    # :meth:`on_chat_text_area_dropped_path`, and both funnel into
+    # :meth:`_perform_attach`. Nothing stages without passing the confirm
+    # dialog first, and removal of a staged attachment passes the same
+    # dialog in remove mode — C7's :class:`ConfirmDialog`, fed by
+    # :func:`~talaria.ui.dialog.attachment_dialog_copy`, beside C7's own
+    # wiring rather than reworked.
+    #
+    # The turn contract underneath (I6 addendum on #147): the client places
+    # the ``@file:`` reference into the composer string ``prompt.submit``
+    # sends — the gateway never injects it — while images take no reference
+    # at all and drain from the staged-image queue on submit. Every success
+    # notice says staged, never delivered.
+
+    def on_chat_text_area_dropped_path(
+        self, message: ChatTextArea.DroppedPath
+    ) -> None:
+        """A paste body resolved to a dropped file path: attach, don't insert."""
+        message.stop()
+        if self.mode == "replay" or self.dispatcher is None:
+            self._refuse_mutation(COMMAND_DISPATCH_CONTROL)
+            return
+        self._perform_attach(message.path)
+
+    def _perform_attach(self, argument: str) -> None:
+        """Open the confirm dialog for one path, or the removal dialog.
+
+        An empty argument means removal: the most recently staged attachment
+        for the focused session is offered, or the operator learns nothing
+        is staged. A path that stats to nothing is refused here with its own
+        notice and no dialog — a confirm dialog for an unstaggable file
+        would ask a question with no working answer.
+        """
+        path = clean_path_text(argument)
+        if not path:
+            self._offer_removal()
+            return
+        statted = stat_for_confirm(path)
+        if statted is None:
+            self._notice(
+                f"cannot stage {path!r}: no readable file there — nothing was sent"
+            )
+            return
+        kind, size = statted
+        self._confirm_stage(path, kind, size, issued=argument)
+
+    def _confirm_stage(self, path: str, kind: str, size: int, issued: str) -> None:
+        """Ask before any byte moves; stage only on an explicit attach."""
+        session_id = self.state.focused_session_id
+        epoch = self._connection_epoch
+        kind_word = "image" if kind == "image" else "text or code file"
+        title, body, proceed, cancel = attachment_dialog_copy(
+            "confirm", Path(path).name, f"{kind_word} · {size} bytes", ""
+        )
+        dialog = ConfirmDialog(
+            title=title, body=body, proceed_label=proceed, cancel_label=cancel
+        )
+
+        def answered(confirmed: bool | None) -> None:
+            self.composer.focus()
+            if not confirmed:
+                return
+            if (
+                epoch != self._connection_epoch
+                or session_id != self.state.focused_session_id
+            ):
+                self._notice(ATTACH_STALE_CONTEXT)
+                return
+            self._spawn_live(
+                self._stage_and_discard(path, kind, size, session_id, issued)
+            )
+
+        self.push_screen(dialog, answered)
+
+    def _consume_issued_line(self, issued: str, replacement: str) -> None:
+        """Swap the staged command line for its outcome, or leave it alone.
+
+        ``issued`` is the command's argument as the funnel parsed it; the
+        composer holds the whole ``/attach <path>`` line, so the swap
+        replaces the path part and then drops a leading ``/attach`` prefix
+        when one remains — otherwise the submit would carry the command
+        text as prose beside the chip. The prefix strip is anchored at the
+        line start because a command only resolves there
+        (``_COMMAND_LINE``), so prose the operator typed after it is never
+        mistaken for the command.
+
+        The round trip spans a dialog and an RPC, during which the operator
+        may have typed past the line or deleted it. When the issued path is
+        still present it is replaced — with the ``@file:`` chip for files,
+        with nothing for images. When the operator edited it away, a chip
+        still appends to whatever is there (files) rather than vanishing
+        with the line it came from; an image then leaves the text untouched,
+        because there is nothing that must be in it.
+        """
+        current = self.composer.text
+        if issued and issued in current:
+            swapped = current.replace(issued, replacement, 1)
+            if swapped.startswith("/attach"):
+                rest = swapped[len("/attach"):]
+                if rest and rest[0].isspace():
+                    swapped = rest.lstrip()
+            self.composer.text = swapped if swapped.strip() else ""
+        elif replacement:
+            self.composer.text = place_ref_chip(current, replacement)
+
+    async def _stage_and_discard(
+        self, path: str, kind: str, size: int, session_id: str | None, issued: str
+    ) -> None:
+        """Stage one confirmed path, record it, and chip the composer.
+
+        Only a confirmed staging writes a ledger record: an error or an
+        unknown outcome leaves no record, and the notice is the record of
+        the attempt — the unknown detail warns a retry may stage twice.
+        Files swap the issued command line for their ``@file:`` token here,
+        at stage time, so the token ``prompt.submit`` sends is the one the
+        gateway confirmed. Images consume the command line and place
+        nothing: submit drains the staged-image queue itself.
+        """
+        dispatcher = self.dispatcher
+        if dispatcher is None:  # pragma: no cover - guarded at every entry
+            return
+        if kind == "image":
+            image_outcome = await attach_image_file(
+                dispatcher,
+                path,
+                filename=Path(path).name,
+                session_id=session_id,
+            )
+            if image_outcome.status != "ok":
+                self._notice(image_outcome.detail)
+                return
+            outcome_detail = image_outcome.detail
+            ref = image_outcome.gateway_ref
+        else:
+            file_outcome = await attach_file(dispatcher, path, session_id=session_id)
+            if file_outcome.status != "ok":
+                self._notice(file_outcome.detail)
+                return
+            outcome_detail = file_outcome.detail
+            ref = file_outcome.prompt_text
+        if ref is None:
+            # The gateway confirmed staging but returned no reference. For a
+            # file there is then no token to place and nothing to reconcile
+            # later, so no record is written; for an image the queue still
+            # drains on submit, so the record stands without one.
+            if kind == "image":
+                self.state = stage_attachment(
+                    self.state,
+                    AttachmentRecord(
+                        attachment_id=new_attachment_id(),
+                        kind="image",
+                        source_path=path,
+                        state="attached",
+                        display_name=Path(path).name,
+                        size_bytes=size,
+                        detail=outcome_detail,
+                        session_id=session_id,
+                    ),
+                )
+            self._notice(
+                f"staged {Path(path).name} but the gateway returned no "
+                "reference — staged, not delivered"
+            )
+            return
+        self.state = stage_attachment(
+            self.state,
+            AttachmentRecord(
+                attachment_id=new_attachment_id(),
+                kind="image" if kind == "image" else "file",
+                source_path=path,
+                state="attached",
+                display_name=Path(path).name,
+                gateway_ref=ref,
+                size_bytes=size,
+                detail=outcome_detail,
+                session_id=session_id,
+            ),
+        )
+        self._consume_issued_line(issued, ref if kind == "file" else "")
+        self._notice(outcome_detail)
+        self._dirty = True
+
+    def _offer_removal(self) -> None:
+        """Offer the most recently staged attachment for removal (C9).
+
+        The dialog names one record and counts the rest: removal acts on
+        exactly that record, and the count is what stops "remove this one"
+        reading as "remove them all".
+        """
+        focused = self.state.focused_session_id
+        staged = [
+            record
+            for record in self.state.attachments
+            if record.state == "attached"
+            and (record.session_id is None or record.session_id == focused)
+        ]
+        if not staged:
+            self._notice(ATTACH_NOTHING_STAGED)
+            return
+        record = staged[-1]
+        session_id = record.session_id
+        epoch = self._connection_epoch
+        size_word = (
+            f"{record.size_bytes} bytes"
+            if record.size_bytes is not None
+            else "size unknown"
+        )
+        kind_word = "image" if record.kind == "image" else "text or code file"
+        title, body, proceed, cancel = attachment_dialog_copy(
+            "remove",
+            record.display_name,
+            "",
+            f"{kind_word} · {size_word} · staged",
+            other_count=len(staged) - 1,
+        )
+        dialog = ConfirmDialog(
+            title=title, body=body, proceed_label=proceed, cancel_label=cancel
+        )
+
+        def answered(confirmed: bool | None) -> None:
+            self.composer.focus()
+            if not confirmed:
+                return
+            # Parenthesised on purpose: a session-less record is shown
+            # regardless of focus, so a focus move cannot stale its removal
+            # — detaching with no session id is valid on any focus.
+            session_moved = (
+                record.session_id is not None
+                and session_id != self.state.focused_session_id
+            )
+            if epoch != self._connection_epoch or session_moved:
+                self._notice(ATTACH_STALE_CONTEXT)
+                return
+            if record.kind == "image":
+                self._spawn_live(
+                    self._detach_image_and_discard(record, epoch, session_id)
+                )
+                return
+            self.composer.text = remove_ref_chip(
+                self.composer.text, record.gateway_ref or ""
+            )
+            self.state = drop_attachment(self.state, record.attachment_id)
+            self._notice(
+                f"removed {record.display_name} — the token is out of the "
+                "composer; staged, never delivered"
+            )
+            self._dirty = True
+
+        self.push_screen(dialog, answered)
+
+    async def _detach_image_and_discard(
+        self,
+        record: AttachmentRecord,
+        epoch: int,
+        session_id: str | None,
+    ) -> None:
+        """Detach one staged image gateway-side, then forget it locally.
+
+        The local record drops only on a confirmed detach — including the
+        idempotent "was not attached" answer, which means the record is
+        stale rather than the removal failed. An error or an unknown keeps
+        the record: the gateway may still hold the copy, and forgetting it
+        would orphan exactly the state the focus-switch retention exists
+        to keep.
+        """
+        if epoch != self._connection_epoch:
+            self._notice(ATTACH_STALE_CONTEXT)
+            return
+        dispatcher = self.dispatcher
+        if dispatcher is None:
+            self._notice(ATTACH_DETACH_OFFLINE)
+            return
+        if record.gateway_ref is None:
+            self.state = drop_attachment(self.state, record.attachment_id)
+            self._notice(
+                f"removed {record.display_name} — the gateway never confirmed "
+                "a staged copy, so nothing was detached"
+            )
+            return
+        outcome = await detach_image(
+            dispatcher, record.gateway_ref, session_id=session_id
+        )
+        if outcome.status != "ok":
+            self._notice(outcome.detail)
+            return
+        self.state = drop_attachment(self.state, record.attachment_id)
+        self._notice(f"removed {record.display_name} — {outcome.detail}")
+        self._dirty = True
 
     def _perform_bar(self, argument: str) -> None:
         """Show or toggle the session-only status-bar segment set."""

@@ -17,12 +17,14 @@ import pytest
 
 from talaria import config as config_module
 from talaria.config import (
+    CONFIG_VIEW_KEYS,
     DEFAULTS,
     ConfigError,
     credentials_path,
     load_config,
     recordings_dir,
     save_theme,
+    setting_scopes,
 )
 from talaria.themes import ThemeSpec
 from talaria.themes.builtins import REFINED_DEFAULT
@@ -882,3 +884,83 @@ def test_configuration_guide_distinguishes_malformed_allowlist_behaviors() -> No
         "falls back to the empty default with no notice: it never raises "
         "and never forwards character fragments"
     ) in guide
+
+
+# ── the configuration view's provenance walk (issue #149, D8 recorded) ────
+
+
+def test_setting_scopes_defaults_with_nothing_configured(tmp_path: Path) -> None:
+    scopes = setting_scopes(cwd=tmp_path)
+
+    assert scopes == {key: "default" for key in CONFIG_VIEW_KEYS}
+
+
+def test_setting_scopes_names_the_user_file_for_its_keys(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[status]\ncommand = "user-status"\ninterval_seconds = 30\n'
+    )
+
+    scopes = setting_scopes(cwd=tmp_path)
+
+    assert scopes[("status", "command")] == "user"
+    assert scopes[("status", "interval_seconds")] == "user"
+    # A table that omits a key claims nothing: the key stays at its default.
+    assert scopes[("status", "segments")] == "default"
+    assert scopes[("theme", "name")] == "default"
+
+
+def test_setting_scopes_names_the_repository_file_when_it_wins(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[status]\ncommand = "user-status"\n'
+    )
+    repo_local = tmp_path / ".talaria"
+    repo_local.mkdir()
+    (repo_local / "config.toml").write_text('[status]\ncommand = "repo-status"\n')
+
+    scopes = setting_scopes(cwd=tmp_path)
+
+    assert scopes[("status", "command")] == "repository"
+
+
+def test_setting_scopes_names_the_environment_when_it_wins(
+    isolated_global_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TALARIA_STATUS_INTERVAL_SECONDS", "30")
+
+    scopes = setting_scopes(cwd=tmp_path)
+
+    assert scopes[("status", "interval_seconds")] == "environment"
+    # theme.name has no environment alias, so no TALARIA_* name can claim it.
+    assert scopes[("theme", "name")] == "default"
+
+
+def test_setting_scopes_names_a_cli_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TALARIA_STATUS_COMMAND", raising=False)
+
+    scopes = setting_scopes({"status": {"command": "cli-status"}}, cwd=tmp_path)
+
+    assert scopes[("status", "command")] == "command line"
+
+
+def test_setting_scopes_still_names_the_layer_that_supplied_an_invalid_value(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    """An invalid interval falls back to 5, but it still came from the user file.
+
+    The view pairs this scope with the fallback notice ``load_config``
+    produced, so the row reads "invalid, using default" and still says where
+    the bad value came from rather than hiding it behind the default.
+    """
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[status]\ninterval_seconds = 0\n'
+    )
+
+    scopes = setting_scopes(cwd=tmp_path)
+
+    assert scopes[("status", "interval_seconds")] == "user"

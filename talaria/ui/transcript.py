@@ -83,7 +83,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 from textual.widgets.markdown import MarkdownBlock
 
-from talaria.domain.models import TranscriptKind
+from talaria.domain.models import MoaView, TranscriptKind
 from talaria.domain.projection import (
     EntryScopedView,
     ProvisionalTail,
@@ -774,6 +774,14 @@ class TranscriptPane(VerticalScroll):
     TranscriptPane.transcript--no-offset TranscriptLine {{
         padding-left: 0;
     }}
+    TranscriptPane > .transcript--moa-live {{
+        color: $text-muted;
+        height: auto;
+        padding-left: 1;
+    }}
+    TranscriptPane.transcript--no-offset > .transcript--moa-live {{
+        padding-left: 0;
+    }}
     {_GROUP_CSS_RULES}
     """
 
@@ -828,6 +836,7 @@ class TranscriptPane(VerticalScroll):
             "reasoning": None,
         }
         self._tail_generation: dict[TranscriptKind, int] = {"assistant": 0, "reasoning": 0}
+        self._moa_live_widget: Static | None = None
         #: The entries snapshot the most recent :meth:`apply` reconciled —
         #: what the gate's mid-stream ownership sampler proves the mounted
         #: window against at a quiescent instant. The live domain state is
@@ -942,6 +951,13 @@ class TranscriptPane(VerticalScroll):
         """
         return self._reconstruct(lambda widget: widget.source)
 
+    @property
+    def moa_live_text(self) -> str | None:
+        """The currently mounted live Mixture of Agents progress line, or None."""
+        if self._moa_live_widget is None:
+            return None
+        return str(self._moa_live_widget.content)
+
     def _reconstruct(self, line_of: Callable[[TranscriptLine], str]) -> tuple[str, ...]:
         out: list[str] = []
         for entry_id in self._entry_order:
@@ -1031,6 +1047,9 @@ class TranscriptPane(VerticalScroll):
         try:
             await self._reset_if_history_changed(entries.entries)
             await self._reconcile_committed(entries.entries)
+            # F-5 of the C10 review: a declared field, read directly — the
+            # ``getattr`` fallback it replaces could not fail, only go quiet.
+            await self._reconcile_moa_live(entries.moa)
             await self._reconcile_tail("reasoning", entries.reasoning_tail)
             await self._reconcile_tail("assistant", entries.assistant_tail)
             await self._condense(entries.entries, total_lines=len(view.lines))
@@ -1121,6 +1140,9 @@ class TranscriptPane(VerticalScroll):
                     for widget in unit.widgets():
                         await self._safe_remove(widget)
                     self._tails[kind] = None
+            if self._moa_live_widget is not None:
+                await self._safe_remove(self._moa_live_widget)
+                self._moa_live_widget = None
             self._top = 0
             self._tail_top = 0
             self._tail_recycled_height = 0
@@ -1467,11 +1489,34 @@ class TranscriptPane(VerticalScroll):
         if not widgets:
             return
         if before_tails:
-            anchor = self._first_tail_widget()
+            anchor = self._moa_live_widget or self._first_tail_widget()
             if anchor is not None:
                 await self.mount_all(widgets, before=anchor)
                 return
         await self.mount_all(widgets)
+
+    async def _reconcile_moa_live(self, moa_view: MoaView | None) -> None:
+        """Mount, update, or unmount the compact live MoA progress line (D7, issue #148)."""
+        live_text = moa_view.live_text if moa_view is not None else None
+        if not live_text:
+            if self._moa_live_widget is not None:
+                await self._safe_remove(self._moa_live_widget)
+                self._moa_live_widget = None
+            return
+
+        if self._moa_live_widget is None:
+            self._moa_live_widget = Static(
+                literal_text(live_text),
+                markup=False,
+                classes="transcript--moa-live",
+            )
+            anchor = self._first_tail_widget()
+            if anchor is not None:
+                await self.mount(self._moa_live_widget, before=anchor)
+            else:
+                await self.mount(self._moa_live_widget)
+        else:
+            self._moa_live_widget.update(literal_text(live_text))
 
     def _first_tail_widget(self) -> Widget | None:
         for kind in _TAIL_KINDS:

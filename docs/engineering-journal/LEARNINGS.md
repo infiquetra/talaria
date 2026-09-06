@@ -4,6 +4,59 @@
 
 ## 2026-09-06
 
+### A byte-preserving rewrite of a multi-line TOML value needs a span scanner, not a bigger regex (C11/#149)
+
+**Evidence.** Generalizing the theme writer's discipline to the `[status]` keys (issue #149, D8
+recorded) hit the case the theme writer never met: `segments` is a multi-line array, so the
+"a whole `key = value` assignment" the D8 names spans lines, and the single-line regexes
+`_rewrite_theme_name` relies on cannot bind it. The landed writer
+(`talaria/config.py`, `_status_value_span` + `_rewrite_status_settings`) finds the assignment
+line with a regex and then scans quote-aware from the value's first byte for the closing
+bracket, across as many lines as the brackets stay open; a trailing comment after the value
+stays outside the span and survives, and an unquoted `#` *inside* the span is refused —
+"edit the file by hand" — rather than silently eaten, which is what keeps D8's
+"comments and every neighboring byte survive" absolute. `tests/test_config_write.py` pins the
+multi-line replace, the comment cases, the interior-comment refusal, and the CRLF conversion
+(`test_status_save_preserves_crlf_line_endings`). One defect survived to the tests: the semantic
+diff guard compared a caller's `("cwd", "version")` tuple against TOML's parsed `["cwd",
+"version"]` list and refused its own correct rewrite — fixed by normalizing the expected side.
+
+**Mechanism.** The safety of the whole write comes from the parse-verify-replace sandwich
+(parse before, rewrite, parse after, require `after == before + exactly the requested keys`,
+then atomic replace), so any span the scanner mis-measures fails closed as a refusal. That is
+why a conservative scanner plus an absolute interior-comment refusal is enough: exotic shapes
+(triple-quoted strings, inline status tables) never produce a wrong write, only the designed
+"edit the file by hand" outcome.
+
+**Generalizable rule.** For a targeted rewrite over operator-authored files, measure the span
+with a quote-aware scanner and make the *comment* the thing you refuse on, not the shape you
+reformat — the refusal is a designed outcome, and the parse-verify net turns every
+unanticipated shape into that outcome instead of into a corrupted file.
+
+## 2026-09-06
+
+### Every attach route must account for the text it leaves in the composer (C9/#147)
+
+**Evidence.** The first cut of the `/attach` flow staged the bytes, placed the `@file:` chip — and
+left the issued `/attach <path>` line in the composer beside it, so the next submit would have
+sent the command text as prose with the reference. The drop route had the mirror defect from the
+other direction: a dropped path arrives as pasted text, so inserting it literally (the composer's
+floor for every paste) would stage the bytes and leave the path as prose beside them. Both are
+the same defect: the composer submits what it holds, so a route that puts something there owes
+an account of what remains. The repair is `_consume_issued_line` (`talaria/ui/app.py`): the
+issued command line is swapped for its outcome (chip for files, nothing for images), and a drop
+diverts before the literal insert, confirmed by `test_attach_stages_a_file_chips_the_composer_and_records`
+asserting the composer holds exactly `@file:notes.txt`.
+
+**Mechanism.** A terminal drop is indistinguishable from a paste at the framework level, so the
+divert rule is conservative by necessity — whole body, one line, names an existing file — and
+the confirm dialog ahead of every stage is the safety net for the pasted sentence that happens
+to equal a filename. Cancelling stages nothing, which is what makes a false divert cheap.
+
+**Generalizable rule.** When a flow both writes the composer and submits from it, test the
+composer's exact contents after the flow, not just the side effect: the side effect passing
+while the command line sits beside the chip is a green suite over a broken submit.
+
 ### Stopping a timer cannot recall an in-flight tick; every await is a handoff (#158)
 
 **Evidence.** The render timer ticked into teardown and raised `NoMatches` on `#transcript`
@@ -127,6 +180,14 @@ had to render unavailable fields as labelled rather than fabricating them.
 **Generalizable rule.** When the contract says verify-first, treat "no code change" as a
 possible passing result and say so in the report: a docs-and-tests unit that proves the
 behavior holds is stronger than a gratuitous refactor that risks it.
+
+### AST introspection guards break when overriding framework lifecycle methods instead of handling events at the boundary (C7/#146)
+
+**Evidence.** Unit C7 implemented single-dispatch and duplicate-dismissal protection for modal dialogs (`talaria/ui/dialog.py`). An initial implementation overrode Textual's `ModalScreen.dismiss()` to return `AwaitComplete.nothing()` when already dismissed. While runtime behavior passed, `test_read_only_boundary_is_proved_by_ast_keymap_and_command_introspection` (`tests/ui/test_diff_viewer.py:990`) failed: the test's strict AST checks assert that direct imports and function calls match expected frozensets, flagging `nothing` as an unauthorized call and `AwaitComplete` as an unauthorized import. The repair moved the re-entrance guard to the user-input boundary (`on_key`, `_choose`, `_back`) using internal boolean state (`_dismissed`), leaving Textual's standard `dismiss()` untouched.
+
+**Mechanism.** Overriding framework lifecycle methods often pulls in internal framework types (`AwaitComplete`) and framework helper calls (`nothing()`). When AST static analysis enforces an explicit call-graph allowlist for architectural boundaries, adding framework shims fails AST assertions even if the runtime behavior is valid. Guarding re-entrance at the user-input layer (`on_key`) prevents double-invocation while preserving the exact framework call set and import tree.
+
+**Generalizable rule.** When guarding a screen or widget against duplicate event dispatch, guard at the event-handling boundary using internal state rather than overriding framework lifecycle methods that introduce new framework dependencies or call names.
 
 ## 2026-09-04
 

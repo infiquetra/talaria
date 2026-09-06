@@ -29,6 +29,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal
 
+from talaria.domain.attachments import (
+    AttachmentLedger,
+    AttachmentRecord,
+)
 from talaria.domain.compat import SeamBoard
 from talaria.domain.decode import (
     CONNECTION_BROADCAST_EVENT_TYPES,
@@ -36,11 +40,18 @@ from talaria.domain.decode import (
     NonEventFrame,
     ProtocolErrorFrame,
     UnknownEventFrame,
+    decode_moa_aggregating,
+    decode_moa_phase,
+    decode_moa_progress,
+    decode_moa_reference,
 )
 from talaria.domain.history import decode_history, element_count
 from talaria.domain.models import (
     ConnectionStatus,
     GatewayEvent,
+    MoaPhase,
+    MoaReferenceRecord,
+    MoaRun,
     PendingPrompt,
     PromptKind,
     SubagentState,
@@ -59,6 +70,7 @@ from talaria.domain.normalize import (
     clip_transcript_line,
     coerce_text,
     coerce_text_exact,
+    format_moa_committed_line,
     is_terminal_status,
     keep_terminal_else,
     normalize_subagent_status,
@@ -178,6 +190,7 @@ class SessionState:
 
     transcript: tuple[TranscriptEntry, ...] = ()
     subagents: tuple[SubagentState, ...] = ()
+    moa: MoaRun | None = None
     prompts: tuple[PendingPrompt, ...] = ()
     #: Prompts whose answer is on the wire right now.
     #:
@@ -193,6 +206,16 @@ class SessionState:
     #: something to name and what makes ``flushed_prompt_ids`` reachable in the
     #: case :func:`restore_prompt` documents.
     answering: tuple[PendingPrompt, ...] = ()
+    #: Files and images staged for the agent, across D6's routes (C9).
+    #:
+    #: Retained across a session switch, not cleared with the other
+    #: per-session buffers: the gateway stages into a per-session workspace
+    #: and never re-announces what it holds, so clearing here would orphan
+    #: the record the same way clearing ``prompts`` used to orphan the
+    #: control. Safe to keep only because every reader filters to the
+    #: focused session — see :func:`focus_session` and
+    #: :func:`~talaria.domain.projection.attachment_view`.
+    attachments: AttachmentLedger = field(default_factory=AttachmentLedger)
     usage: Usage = field(default_factory=Usage)
 
     #: Unknown event types seen, in first-seen order, deduplicated.
@@ -463,9 +486,9 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
     a caller that needs to tell "refused" from "already there" asks
     :func:`switch_refusal` first.
 
-    **Three things deliberately survive the switch: ``prompts``,
-    ``flushed_prompt_ids`` and ``approvals_seen``.** ``withdrawn_approvals``
-    does not — see the end of this docstring for why.
+    **Four things deliberately survive the switch: ``prompts``,
+    ``flushed_prompt_ids``, ``approvals_seen`` and ``attachments``.**
+    ``withdrawn_approvals`` does not — see the end of this docstring for why.
 
     ``prompts`` is kept. The gateway does not re-announce an outstanding
     bridge across a switch — it started blocking on ``.request`` and has no
@@ -492,6 +515,16 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
     second time and the retained tombstone from the first visit would swallow
     the new prompt. A counter that only ever climbs cannot collide with its own
     past.
+
+    ``attachments`` is kept, and only because every reader filters it to the
+    focused session (``session_id`` on the record,
+    :func:`~talaria.domain.projection.attachment_view`). The gateway stages
+    into a per-session workspace and never re-announces what it holds, so
+    clearing the ledger here would orphan the record the way clearing
+    ``prompts`` used to orphan the control: switching away and back would
+    find no record of a file the gateway still holds staged, with no second
+    attach ever coming to restore it — and a staged image would then drain
+    into a turn with nothing on screen saying it was there.
 
     ``withdrawn_approvals`` does **not** survive: it is a count of approvals
     *this* session had withdrawn from under it, and carrying it into the next
@@ -707,6 +740,12 @@ def set_connection(
     next_state = state
     if cause is not None:
         next_state = _commit_partial_streams(next_state)
+        if next_state.moa is not None and not next_state.moa.is_terminal:
+            stamp = at if at is not None else next_state.last_observed_at
+            moa_lost = replace(next_state.moa, phase="lost", updated_at=stamp)
+            summary_line = format_moa_committed_line(moa_lost)
+            next_state = _append(next_state, "system", summary_line)
+            next_state = replace(next_state, moa=moa_lost)
         next_state = replace(
             next_state,
             turn="idle" if next_state.turn == "streaming" else next_state.turn,
@@ -757,6 +796,12 @@ def cancel_turn(state: SessionState, *, at: float) -> SessionState:
     next_state = state
     if state.reasoning_text:
         next_state = _append(next_state, "reasoning", state.reasoning_text)
+
+    if state.moa is not None and not state.moa.is_terminal:
+        moa_cancelled = replace(state.moa, phase="cancelled", updated_at=at)
+        summary_line = format_moa_committed_line(moa_cancelled)
+        next_state = _append(next_state, "system", summary_line)
+        next_state = replace(next_state, moa=moa_cancelled)
 
     if state.streaming_text:
         next_state = _append(
@@ -849,6 +894,75 @@ def record_submission(
     if note is not None:
         next_state = _append(next_state, "system", note)
     return replace(next_state, last_observed_at=max(state.last_observed_at, at))
+
+
+def stage_attachment(state: SessionState, record: AttachmentRecord) -> SessionState:
+    """File one attachment record into the session state (C9).
+
+    Thin over :meth:`~talaria.domain.attachments.AttachmentLedger.add`: the
+    ledger owns identity and lifecycle, this owns the state's copy. A
+    duplicate id raises rather than replacing, for the ledger's reason — a
+    retry that silently became the original would lie about what was staged
+    when.
+    """
+    return replace(state, attachments=state.attachments.add(record))
+
+
+def advance_attachment(state: SessionState, record: AttachmentRecord) -> SessionState:
+    """Write back one attachment record after its state moved (C9).
+
+    Upserts through :meth:`~talaria.domain.attachments.AttachmentLedger.replace`,
+    so the route layer can stage the outcome and the record in either order
+    without a separate add step.
+    """
+    return replace(state, attachments=state.attachments.replace(record))
+
+
+def drop_attachment(state: SessionState, attachment_id: str) -> SessionState:
+    """Forget one attachment record (C9).
+
+    Removing an absent id is a no-op — remove-then-remove-again is an
+    ordinary operator gesture, not an error — which is also what makes this
+    safe to call for a record the gateway already detached.
+    """
+    return replace(state, attachments=state.attachments.discard(attachment_id))
+
+
+def reconcile_submitted_attachments(state: SessionState, text: str) -> SessionState:
+    """Drop the file chips the submitted text no longer carries (C9).
+
+    There is no ``file.detach``: the turn contract (I6 addendum on #147)
+    drops a staged file by omitting its ``@file:`` token from the text
+    ``prompt.submit`` sends. An operator who deletes the token from the
+    composer before submitting has therefore un-staged the file, and a
+    ledger that still calls it attached would lie on the next screen. So
+    every attached file record whose reference is absent from the submitted
+    text moves to ``detached`` here — client-side, with no gateway call,
+    because there is nothing gateway-side to call.
+
+    Images are untouched: they ride the staged-image queue, not the text,
+    and ``prompt.submit`` drains that queue itself. A submitted image stays
+    ``attached`` — staged, consumed into the turn, still never delivered.
+    """
+    ledger = state.attachments
+    for record in ledger:
+        if (
+            record.kind == "file"
+            and record.state == "attached"
+            and record.gateway_ref
+            and record.gateway_ref not in text
+        ):
+            ledger = ledger.replace(
+                replace(
+                    record,
+                    state="detached",
+                    detail=(
+                        "the @file: token was not in the submitted text; "
+                        "dropped by omission — staged, never delivered"
+                    ),
+                )
+            )
+    return replace(state, attachments=ledger)
 
 
 #: The gateway method a composed message is sent with
@@ -1666,6 +1780,7 @@ def _on_message_start(state: SessionState, event: GatewayEvent) -> SessionState:
         segments=(),
         interim_boundary=0,
         subagents=(),
+        moa=None,
         assistant_stream_generation=state.assistant_stream_generation + 1,
         reasoning_stream_generation=state.reasoning_stream_generation + 1,
     )
@@ -1784,6 +1899,11 @@ def _on_message_complete(state: SessionState, event: GatewayEvent) -> SessionSta
     next_state = state
     if state.reasoning_text:
         next_state = _append(next_state, "reasoning", state.reasoning_text)
+    if state.moa is not None and not state.moa.is_terminal:
+        moa_completed = replace(state.moa, phase="complete", updated_at=event.at)
+        summary_line = format_moa_committed_line(moa_completed)
+        next_state = _append(next_state, "system", summary_line)
+        next_state = replace(next_state, moa=moa_completed)
     if final:
         next_state = _append(next_state, "assistant", final)
 
@@ -1923,6 +2043,11 @@ def _on_error(state: SessionState, event: GatewayEvent) -> SessionState:
     """
     message = coerce_text(event.payload.get("message")) or "unknown error"
     next_state = _commit_partial_streams(state)
+    if state.moa is not None and not state.moa.is_terminal:
+        moa_failed = replace(state.moa, phase="failed", updated_at=event.at)
+        summary_line = format_moa_committed_line(moa_failed)
+        next_state = _append(next_state, "system", summary_line)
+        next_state = replace(next_state, moa=moa_failed)
     next_state = _append(next_state, "error", f"error: {clip_transcript_line(message)}")
     if state.turn == "cancelled":
         return next_state
@@ -2530,6 +2655,38 @@ def _apply_system_line(state: SessionState, event: GatewayEvent) -> SessionState
     return _append(state, "system", clip_transcript_line(text))
 
 
+def _on_moa_progress(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Record progress from one finished advisor in a mixture-of-agents fan-out."""
+    if state.turn == "cancelled" or (state.moa is not None and state.moa.is_terminal):
+        return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    decoded = decode_moa_progress(event.payload)
+    if decoded is None:
+        return state
+    current = state.moa
+    if current is None:
+        finished: tuple[str, ...] = (decoded.label,) if decoded.label else ()
+        run = MoaRun(
+            phase="references",
+            refs_done=decoded.refs_done,
+            refs_total=decoded.refs_total,
+            finished=finished,
+            updated_at=event.at,
+        )
+    else:
+        finished = current.finished
+        if decoded.label and decoded.label not in finished:
+            finished = (*finished, decoded.label)
+        run = replace(
+            current,
+            phase="references",
+            refs_done=decoded.refs_done,
+            refs_total=decoded.refs_total,
+            finished=finished,
+            updated_at=event.at,
+        )
+    return replace(state, moa=run)
+
+
 def _on_moa_reference(state: SessionState, event: GatewayEvent) -> SessionState:
     """Commit one mixture-of-agents reference model's output.
 
@@ -2539,13 +2696,115 @@ def _on_moa_reference(state: SessionState, event: GatewayEvent) -> SessionState:
     the operator opted into by selecting a mixture-of-agents preset; Talaria
     keeps that reasoning — the content is committed, the styling is not.
     """
-    if state.turn == "cancelled":
+    if state.turn == "cancelled" or (state.moa is not None and state.moa.is_terminal):
         return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    decoded = decode_moa_reference(event.payload)
     label = coerce_text(event.payload.get("label")) or "reference"
     text = coerce_text(event.payload.get("text"))
+
+    # Update MoA run record
+    first_line = text.splitlines()[0] if text else ""
+    rec = MoaReferenceRecord(label=label, first_line=first_line, chars=len(text) if text else 0)
+    count = decoded.count if decoded is not None else None
+    current = state.moa
+    if current is None:
+        run = MoaRun(
+            phase="references",
+            refs_total=count,
+            references=(rec,),
+            updated_at=event.at,
+        )
+    else:
+        refs_total = current.refs_total if current.refs_total is not None else count
+        run = replace(
+            current,
+            references=(*current.references, rec),
+            refs_total=refs_total,
+            updated_at=event.at,
+        )
+    next_state = replace(state, moa=run)
+
     if not text:
+        return next_state
+    return _append(next_state, "reasoning", f"◇ Reference — {label}\n{text}")
+
+
+def _on_moa_phase(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Record an MoA phase change event."""
+    if state.turn == "cancelled" or (state.moa is not None and state.moa.is_terminal):
+        return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    decoded = decode_moa_phase(event.payload)
+    if decoded is None:
         return state
-    return _append(state, "reasoning", f"◇ Reference — {label}\n{text}")
+    current = state.moa
+    is_aggregator = decoded.phase == "aggregator"
+    if current is None:
+        phase: MoaPhase = "aggregating" if is_aggregator else "references"
+        wire_phase = decoded.phase
+        aggregator = decoded.aggregator or ""
+        run = MoaRun(
+            phase=phase,
+            refs_done=decoded.refs_done,
+            refs_total=decoded.refs_total,
+            aggregator=aggregator,
+            wire_phase=wire_phase,
+            # Taxonomy addendum (F-1, Shape B): the recognized aggregator
+            # phase is one of the two events that reach aggregating.
+            reached_aggregating=is_aggregator,
+            updated_at=event.at,
+        )
+    else:
+        phase = "aggregating" if is_aggregator else current.phase
+        wire_phase = decoded.phase
+        refs_done = decoded.refs_done if decoded.refs_done is not None else current.refs_done
+        refs_total = decoded.refs_total if decoded.refs_total is not None else current.refs_total
+        aggregator = decoded.aggregator or current.aggregator
+        run = replace(
+            current,
+            phase=phase,
+            wire_phase=wire_phase,
+            refs_done=refs_done,
+            refs_total=refs_total,
+            aggregator=aggregator,
+            # Monotonic (taxonomy addendum): a later phase string cannot
+            # un-reach an aggregation that happened.
+            reached_aggregating=current.reached_aggregating or is_aggregator,
+            updated_at=event.at,
+        )
+    return replace(state, moa=run)
+
+
+def _on_moa_aggregating(state: SessionState, event: GatewayEvent) -> SessionState:
+    """Record an MoA aggregator announcement event."""
+    if state.turn == "cancelled" or (state.moa is not None and state.moa.is_terminal):
+        return replace(state, late_events_ignored=state.late_events_ignored + 1)
+    decoded = decode_moa_aggregating(event.payload)
+    if decoded is None:
+        return state
+    current = state.moa
+    if current is None:
+        run = MoaRun(
+            phase="aggregating",
+            aggregator=decoded.aggregator,
+            # Taxonomy addendum (F-1, Shape B): either aggregator event
+            # alone reaches aggregating; wire_phase stays verbatim.
+            reached_aggregating=True,
+            updated_at=event.at,
+        )
+    else:
+        aggregator = current.aggregator or decoded.aggregator
+        run = replace(
+            current,
+            phase="aggregating",
+            aggregator=aggregator,
+            # Monotonic (taxonomy addendum): this event reaches
+            # aggregating, and nothing invented goes into wire_phase — the
+            # stale-phase release is a rendering precedence in
+            # format_moa_live_line, not a field change.
+            reached_aggregating=True,
+            updated_at=event.at,
+        )
+    return replace(state, moa=run)
 
 
 def _ignore(state: SessionState, event: GatewayEvent) -> SessionState:
@@ -2569,7 +2828,10 @@ _HANDLERS: Mapping[str, _Handler] = {
     "thinking.delta": _on_thinking_delta,
     "reasoning.delta": _on_reasoning_delta,
     "reasoning.available": _on_reasoning_available,
+    "moa.progress": _on_moa_progress,
     "moa.reference": _on_moa_reference,
+    "moa.phase": _on_moa_phase,
+    "moa.aggregating": _on_moa_aggregating,
     "error": _on_error,
     "tool.start": _on_tool_start,
     "tool.complete": _on_tool_complete,
@@ -4341,12 +4603,14 @@ __all__ = [
     "activation_hydration_events",
     "apply_active_list",
     "age_out_approvals",
+    "advance_attachment",
     "apply_frame",
     "apply_frames",
     "attach_confirm_row",
     "attach_residue_notice",
     "begin_fleet_answer",
     "cancel_turn",
+    "drop_attachment",
     "end_fleet_answer",
     "fleet_answer_key",
     "fleet_switch_refusal",
@@ -4363,10 +4627,12 @@ __all__ = [
     "seed_from_listing",
     "latch_resolved_prompts",
     "prompt_registration_line",
+    "reconcile_submitted_attachments",
     "record_local_note",
     "record_replayed_submission",
     "record_submission",
     "replayed_submission_text",
+    "stage_attachment",
     "respond_to_all_approvals",
     "respond_to_prompt",
     "restore_prompt",

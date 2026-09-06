@@ -432,3 +432,97 @@ def _text(value: Any) -> str:
     display path is how a dict's ``repr`` ends up rendered as if it were text.
     """
     return value if isinstance(value, str) else ""
+
+
+# ── Mixture-of-Agents event payloads (D7, issue #148) ───────────────────
+
+
+@dataclass(frozen=True)
+class MoaProgressPayload:
+    """Decoded payload of a ``moa.progress`` event."""
+
+    label: str
+    refs_done: int
+    refs_total: int
+
+
+@dataclass(frozen=True)
+class MoaReferencePayload:
+    """Decoded payload of a ``moa.reference`` event."""
+
+    label: str
+    text: str
+    index: int | None = None
+    count: int | None = None
+
+
+@dataclass(frozen=True)
+class MoaPhasePayload:
+    """Decoded payload of a ``moa.phase`` event."""
+
+    phase: str
+    refs_done: int | None = None
+    refs_total: int | None = None
+    aggregator: str | None = None
+
+
+@dataclass(frozen=True)
+class MoaAggregatingPayload:
+    """Decoded payload of a ``moa.aggregating`` event."""
+
+    aggregator: str
+
+
+def decode_moa_progress(payload: Mapping[str, Any]) -> MoaProgressPayload | None:
+    """Decode a ``moa.progress`` event payload.
+
+    Both ``refs_done`` and ``refs_total`` are required integers (re-encoding Hermes's
+    ``tui_gateway/tool_progress.py:274-282`` which requires both counters for
+    deterministic rendering).
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    raw_done = payload.get("refs_done")
+    raw_total = payload.get("refs_total")
+    if not isinstance(raw_done, int) or isinstance(raw_done, bool):
+        return None
+    if not isinstance(raw_total, int) or isinstance(raw_total, bool):
+        return None
+    label = _text(payload.get("label"))
+    return MoaProgressPayload(label=label, refs_done=raw_done, refs_total=raw_total)
+
+
+def decode_moa_reference(payload: Mapping[str, Any]) -> MoaReferencePayload | None:
+    """Decode a ``moa.reference`` event payload."""
+    if not isinstance(payload, Mapping):
+        return None
+    label = _text(payload.get("label")) or "reference"
+    text = _text(payload.get("text"))
+    raw_index = payload.get("index")
+    raw_count = payload.get("count")
+    index = raw_index if isinstance(raw_index, int) and not isinstance(raw_index, bool) else None
+    count = raw_count if isinstance(raw_count, int) and not isinstance(raw_count, bool) else None
+    return MoaReferencePayload(label=label, text=text, index=index, count=count)
+
+
+def decode_moa_phase(payload: Mapping[str, Any]) -> MoaPhasePayload | None:
+    """Decode a ``moa.phase`` event payload."""
+    if not isinstance(payload, Mapping):
+        return None
+    phase = _text(payload.get("phase"))
+    if not phase:
+        return None
+    raw_done = payload.get("refs_done")
+    raw_total = payload.get("refs_total")
+    done = raw_done if isinstance(raw_done, int) and not isinstance(raw_done, bool) else None
+    total = raw_total if isinstance(raw_total, int) and not isinstance(raw_total, bool) else None
+    aggregator = _text(payload.get("aggregator")) or None
+    return MoaPhasePayload(phase=phase, refs_done=done, refs_total=total, aggregator=aggregator)
+
+
+def decode_moa_aggregating(payload: Mapping[str, Any]) -> MoaAggregatingPayload | None:
+    """Decode a ``moa.aggregating`` event payload."""
+    if not isinstance(payload, Mapping):
+        return None
+    aggregator = _text(payload.get("aggregator"))
+    return MoaAggregatingPayload(aggregator=aggregator)

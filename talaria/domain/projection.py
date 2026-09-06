@@ -19,11 +19,13 @@ elapsed seconds are a function of the corpus rather than of when the test ran.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from talaria.domain.models import (
     ConnectionStatus,
+    MoaRun,
+    MoaView,
     PendingPrompt,
     PromptKind,
     QueuePrompt,
@@ -32,6 +34,11 @@ from talaria.domain.models import (
     TranscriptEntry,
     TranscriptKind,
     TurnStatus,
+)
+from talaria.domain.normalize import (
+    format_moa_committed_line,
+    format_moa_inspector_rows,
+    format_moa_live_line,
 )
 from talaria.domain.queue import approval_block_reason, prompt_feed_rows
 from talaria.domain.state import SessionState
@@ -169,6 +176,25 @@ class ProvisionalTail:
         return not self.raw_text
 
 
+def moa_view(moa: MoaRun | None) -> MoaView:
+    """Project a MoaRun record into an immutable MoaView (D7, issue #148)."""
+    if moa is None:
+        return MoaView()
+    if moa.is_terminal:
+        return MoaView(
+            live_text=None,
+            committed_text=format_moa_committed_line(moa),
+            inspector_rows=format_moa_inspector_rows(moa),
+            is_active=False,
+        )
+    return MoaView(
+        live_text=format_moa_live_line(moa),
+        committed_text=None,
+        inspector_rows=format_moa_inspector_rows(moa),
+        is_active=True,
+    )
+
+
 @dataclass(frozen=True)
 class EntryScopedView:
     """The transcript as entry-scoped records plus both provisional tails
@@ -186,6 +212,7 @@ class EntryScopedView:
     entries: tuple[TranscriptEntryRecord, ...]
     assistant_tail: ProvisionalTail
     reasoning_tail: ProvisionalTail
+    moa: MoaView = field(default_factory=MoaView)
 
 
 def entry_scoped_view(state: SessionState) -> EntryScopedView:
@@ -224,6 +251,7 @@ def entry_scoped_view(state: SessionState) -> EntryScopedView:
             raw_text=state.reasoning_text,
             generation=state.reasoning_stream_generation,
         ),
+        moa=moa_view(state.moa),
     )
 
 
@@ -315,6 +343,69 @@ class PromptView:
 
 
 @dataclass(frozen=True)
+class AttachmentChip:
+    """One staged attachment, as the composer-adjacent surface needs it.
+
+    Display only: ``display_name`` is the file name, never the operator-local
+    path, and ``gateway_ref`` is the ``@file:`` token for files or the
+    staged image path — both safe to record, both safe to render. ``state``
+    is the ledger lifecycle word (``prepared``/``attached``/``failed``/
+    ``detached``), never a delivery claim: the reference proves staging,
+    not that the agent read anything.
+    """
+
+    attachment_id: str
+    kind: str
+    display_name: str
+    state: str
+    gateway_ref: str | None = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class AttachmentView:
+    """The staged-attachment set for the focused session (C9).
+
+    Projected, not read off the ledger, so a record staged for a session
+    that is no longer focused cannot make *this* screen claim an attachment
+    it does not have — the same reason :func:`prompt_view` filters to the
+    focused session. Records that name no session predate session scoping
+    and are shown regardless of focus, the replay case included.
+
+    This region lands before C10's Mixture of Agents projection on purpose:
+    both are additive regions on :class:`Snapshot`, and the first addition
+    sets the pattern (view type, focus filter, change comparison) the second
+    follows rather than inventing.
+    """
+
+    chips: tuple[AttachmentChip, ...] = ()
+
+    @property
+    def pending_count(self) -> int:
+        return len(self.chips)
+
+
+def attachment_view(state: SessionState) -> AttachmentView:
+    """Project the attachment ledger for the focused session (C9)."""
+    return AttachmentView(
+        chips=tuple(
+            AttachmentChip(
+                attachment_id=record.attachment_id,
+                kind=record.kind,
+                display_name=record.display_name,
+                state=record.state,
+                gateway_ref=record.gateway_ref,
+                detail=record.detail,
+            )
+            for record in state.attachments
+            if state.focused_session_id is None
+            or record.session_id is None
+            or record.session_id == state.focused_session_id
+        )
+    )
+
+
+@dataclass(frozen=True)
 class StatusPayload:
     """KTD5's frozen v1 status document.
 
@@ -366,14 +457,16 @@ class Snapshot:
     transcript: TranscriptView
     subagents: SubagentView
     prompts: PromptView
+    attachments: AttachmentView
     status: StatusPayload
-    changed: frozenset[str]
+    moa: MoaView = field(default_factory=MoaView)
+    changed: frozenset[str] = frozenset()
 
 
 #: The regions ``changed`` can name. A UI keyed off a typo would silently never
 #: re-render, so the set is published and asserted against.
 SNAPSHOT_REGIONS: frozenset[str] = frozenset(
-    {"transcript", "subagents", "prompts", "status"}
+    {"transcript", "subagents", "prompts", "attachments", "status", "moa"}
 )
 
 
@@ -664,7 +757,9 @@ def project(
     transcript = transcript_view(state)
     subagents = subagent_view(state, now=now)
     prompts = prompt_view(state)
+    attachments = attachment_view(state)
     status = status_payload(state, mode=mode)
+    moa = moa_view(state.moa)
 
     if previous is None:
         changed = frozenset(SNAPSHOT_REGIONS)
@@ -675,7 +770,9 @@ def project(
                 ("transcript", transcript, previous.transcript),
                 ("subagents", subagents, previous.subagents),
                 ("prompts", prompts, previous.prompts),
+                ("attachments", attachments, previous.attachments),
                 ("status", status, previous.status),
+                ("moa", moa, previous.moa),
             )
             if current != before
         )
@@ -684,7 +781,9 @@ def project(
         transcript=transcript,
         subagents=subagents,
         prompts=prompts,
+        attachments=attachments,
         status=status,
+        moa=moa,
         changed=changed,
     )
 

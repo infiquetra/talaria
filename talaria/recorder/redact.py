@@ -155,6 +155,7 @@ from urllib.parse import parse_qsl, urlsplit
 # ``from talaria.recorder.redact import ...`` call site is unchanged, including
 # the TypeScript-equivalence harness.
 from talaria.domain.redaction import (
+    ATTACHMENT_PARAM_DENY,
     REDACTED,
     SENSITIVE_KEY_PATTERNS,
     URL_ONLY_DENIED_QUERY_KEYS,
@@ -181,6 +182,14 @@ __all__ = [
 #: Derived by reading the gateway's ``_respond`` dispatch rather than by
 #: guessing at names (R27).
 _DENY_BY_METHOD: dict[str, tuple[str, ...]] = {
+    # Attachment content and operator-local paths (C9). The key sets live
+    # in :mod:`talaria.domain.redaction` as the single policy; the frame
+    # format stays here. Converted to tuples because the walk only tests
+    # membership.
+    **{
+        method: tuple(keys)
+        for method, keys in ATTACHMENT_PARAM_DENY.items()
+    },
     "sudo.respond": ("password",),
     "secret.respond": ("value",),
     # The serialized terminal buffer is arbitrary captured screen content and

@@ -45,7 +45,9 @@ from textual.widgets import Static, TextArea
 
 from talaria.domain.commands import PasteThreshold
 from talaria.domain.composer_history import abandon, move_down, move_up
+from talaria.ui.attach import detect_dropped_path
 from talaria.ui.literal import literal_text
+from talaria.ui.palette import PaletteRegion
 
 #: Shown in the empty composer. Carries both bindings because R12 asks that
 #: "submit versus newline" be discoverable without documentation.
@@ -83,6 +85,21 @@ class ChatTextArea(TextArea):
             self.composer = composer
             self.text = text
 
+    class DroppedPath(Message):
+        """A paste body that is a dropped file path, never inserted (C9/D6).
+
+        Carries the path the drop resolves to. Unlike :class:`LargePaste`
+        the text is *not* in the editor: inserting a path the operator
+        dropped to attach would stage the bytes and leave the path as prose
+        beside them, and the operator would submit both. The app confirms
+        and stages from this message instead.
+        """
+
+        def __init__(self, composer: ChatTextArea, path: str) -> None:
+            super().__init__()
+            self.composer = composer
+            self.path = path
+
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
         #: KTD16's bounds. Replaced by :class:`Composer` from configuration.
@@ -110,6 +127,16 @@ class ChatTextArea(TextArea):
         ordinary keys and ``TextArea._on_paste`` never does.
         """
         event.prevent_default()
+        # D6's second route diverts before the literal insert: a paste body
+        # that is a dropped file path is never inserted (see DroppedPath),
+        # and the check runs first because after super() the text is already
+        # in the document. Only a body naming an existing file diverts — a
+        # path naming nothing stays text, which is what keeps a pasted
+        # sentence that merely looks like a path out of the attach flow.
+        dropped = detect_dropped_path(event.text or "")
+        if dropped is not None:
+            self.post_message(self.DroppedPath(self, dropped))
+            return
         await super()._on_paste(event)
         # After the literal insert, sync the slash palette for a user paste.
         # Collapse-placeholder replacement is programmatic via Composer.text
@@ -135,15 +162,22 @@ class ChatTextArea(TextArea):
         # Both units claim keys in ChatTextArea._on_key, not in
         # TalariaApp.on_key. One handler site, one ordered predicate — grep
         # for _on_key must show a single site. The palette (C2) claims
-        # Up/Down/Enter/Esc/Tab while its filtered mode is active; history
-        # (C1) is inert while the palette is open. The palette opens on
-        # typed input, never on programmatic writes to composer.text (ruling
-        # 3), so history recall's direct text assignment must not open it.
+        # Up/Down/Enter/Esc/Tab while its filtered mode is active, plus
+        # PageUp/PageDown/Home/End (C7, #146): paging and jumping are
+        # browsing, and letting any of them fall through to caret handling
+        # closes the very menu being browsed. History (C1) is inert while
+        # the palette is open. The palette opens on typed input, never on
+        # programmatic writes to composer.text (ruling 3), so history
+        # recall's direct text assignment must not open it.
         # The palette's active state lives in PaletteRegion (is_slash_active),
         # driven only by typed-input paths that compute the predicted text.
         if self._is_slash_palette_open() and event.key in (
             "up",
             "down",
+            "pageup",
+            "pagedown",
+            "home",
+            "end",
             "enter",
             "escape",
             "tab",
@@ -165,6 +199,25 @@ class ChatTextArea(TextArea):
                 return
             if event.key == "down":
                 palette.move_selection(1)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key in ("pageup", "pagedown"):
+                palette.move_selection(self._page_delta(palette, event.key))
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key in ("home", "end"):
+                # First and last entry, not swallowed (F-3, #146): one menu,
+                # one personality — clamping arrows and paging page keys with
+                # dead Home/End would be three personalities in one list.
+                # Claiming suppresses the transcript's follow-bottom action
+                # for End, but only while the menu is open, which is the
+                # point: the keypress belongs to the menu being browsed.
+                # Routing through move_selection with more than the list
+                # holds clamps to the end, exactly where arrows clamp.
+                count = len(palette.filtered_entries)
+                palette.move_selection(-count if event.key == "home" else count)
                 event.stop()
                 event.prevent_default()
                 return
@@ -491,15 +544,42 @@ class ChatTextArea(TextArea):
                 ancestor.show_caret_location(True)
                 break
 
-    def _is_slash_palette_open(self) -> bool:
-        """Whether C2's slash-command palette claims Up/Down/Enter/Esc/Tab.
+    @staticmethod
+    def _page_delta(palette: PaletteRegion, key: str) -> int:
+        """One page of slash-menu rows, signed by the key (C7, #146).
 
-        While the filtered palette is active it claims those five keys and
-        history is inert. Not keyed to the F3 browse listing (PaletteRegion
-        showing as browse), which claims none of those keys. The active flag
-        lives in PaletteRegion and is driven only by typed input via
-        sync_slash, so programmatic writes (history recall, paste-collapse)
-        never open it — ruling 3.
+        The region carries ``max-height: 14`` in its own stylesheet, so its
+        height is a cap, not a viewport (F-6): at row 2 of a 12-row terminal
+        it reports 14 while running off the bottom. The page is therefore
+        clamped to what is actually on screen — the smaller of the region
+        height and the rows from the region's top to the screen's bottom —
+        minus the chrome rows actually shown (F-4: the header, plus the
+        degraded row while a catalogue warning shows it). Clamping at the
+        ends comes free from :meth:`PaletteRegion.move_selection`, which is
+        what makes PageUp/PageDown share Down/Up's personality instead of
+        wrapping where arrows clamp. Before first layout (or off-screen) the
+        sizes read 0 and the page is a single row — the only honest answer
+        when nothing is visible yet.
+        """
+        cap = palette.size.height
+        try:
+            on_screen = palette.screen.size.height - palette.region.y
+        except (NoScreen, ScreenStackError, AttributeError):
+            on_screen = cap
+        visible = max(0, min(cap, on_screen))
+        page = max(1, visible - palette.visible_chrome_rows)
+        return -page if key == "pageup" else page
+
+    def _is_slash_palette_open(self) -> bool:
+        """Whether C2's slash-command palette claims its keys.
+
+        While the filtered palette is active it claims Up/Down/Enter/Esc/Tab
+        plus PageUp/PageDown/Home/End (C7, #146) and history is inert. Not
+        keyed to the F3 browse listing (PaletteRegion showing as browse),
+        which claims none of those keys. The active flag lives in
+        PaletteRegion and is driven only by typed input via sync_slash, so
+        programmatic writes (history recall, paste-collapse) never open
+        it — ruling 3.
         """
         try:
             app = self.app

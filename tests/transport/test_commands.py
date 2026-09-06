@@ -685,12 +685,23 @@ async def test_the_client_local_entry_is_listed_unsupported_and_never_dispatched
 
         await pilot.press("f3")
         await pilot.pause()
+        # Read off the row model, not the visible screenful. The F3 listing
+        # scrolls and shows 10 of 27 rows at this 100x30 geometry, so every
+        # added command moves the fold: ``/attach`` at row 01 put
+        # ``/density`` at row 10, the first row below it. The AE9 claim is
+        # that the entry is listed and marked, not that it shares a
+        # screenful with ``/git`` — a screen assertion here would pin the
+        # row count rather than the claim, and any added command, local or
+        # gateway, would move it again.
+        assert any(
+            row.split()[0] == "/density" and "unsupported" in row
+            for row in app.palette.row_texts
+        )
         screen = screen_text(app)
-        assert "/density" in screen
-        assert "unsupported" in screen
-        # A dispatchable neighbour on the same screen, so "unsupported" is not
-        # being read off a listing that failed to render its other rows.
-        assert "/git" in screen
+        # The listing itself rendered: ``/attach`` sits at row 01, above
+        # the fold at this geometry, so the row-model read above is backed
+        # by a visible listing and not merely a present model.
+        assert "/attach" in screen
 
         await run_command(app, pilot, "/density on")
         assert sent(command_gateway, DISPATCH_METHOD) == []

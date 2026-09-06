@@ -126,6 +126,7 @@ class PickerDialog(ModalScreen[str | None]):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._source = source
         self._stack: list[Stage] = [source.root()]
+        self._dismissed = False
         self._refusal = ""
         self._title: Static | None = None
         self._filter: Static | None = None
@@ -303,6 +304,9 @@ class PickerDialog(ModalScreen[str | None]):
         grows one, ``left``/``right`` are the first two keys that collide, and
         this paragraph is where to start reading.
         """
+        if self._dismissed:
+            event.stop()
+            return
         key = event.key
         selection = self.selection
 
@@ -384,6 +388,7 @@ class PickerDialog(ModalScreen[str | None]):
             self._stack.pop()
             await self._repaint()
             return
+        self._dismissed = True
         self.dismiss(None)
 
     async def _choose(self) -> None:
@@ -397,6 +402,7 @@ class PickerDialog(ModalScreen[str | None]):
             return
         outcome = self._source.descend(self.depth, choice)
         if isinstance(outcome, str):
+            self._dismissed = True
             self.dismiss(outcome)
             return
         self._refusal = ""
@@ -488,6 +494,7 @@ class ConfirmDialog(ModalScreen[bool]):
         self._labels = (cancel_label, proceed_label)
         #: 0 is cancel and it is where the dialog opens — see the row constants.
         self._active = 0
+        self._dismissed = False
         self._title: Static | None = None
         self._hint: Static | None = None
         self._rows: list[Static] = []
@@ -553,9 +560,13 @@ class ConfirmDialog(ModalScreen[bool]):
         pressing enter. Every other key leaves the dialog exactly as it was
         rather than doing something adjacent.
         """
+        if self._dismissed:
+            event.stop()
+            return
         key = event.key
         if key == "escape":
             event.stop()
+            self._dismissed = True
             self.dismiss(False)
             return
         if key in ("up", "down"):
@@ -566,5 +577,70 @@ class ConfirmDialog(ModalScreen[bool]):
             return
         if key == "enter":
             event.stop()
+            self._dismissed = True
             self.dismiss(self._active == 1)
             return
+
+
+# ── C9's attachment confirm/remove copy (D6, #147) ────────────────────────
+
+#: Proceed row for the pre-stage confirm: nothing has been sent yet, so the
+#: verb is the staging itself.
+ATTACH_CONFIRM_PROCEED_ROW = "attach this file — upload the bytes now"
+#: Cancel row for the pre-stage confirm: escape lands here semantically, and
+#: nothing staged means nothing to undo.
+ATTACH_CONFIRM_CANCEL_ROW = "cancel — stage nothing"
+#: Proceed row for removing a staged attachment: the destructive act, one
+#: deliberate keypress from the default like every proceed row in this file.
+ATTACH_REMOVE_PROCEED_ROW = "remove this attachment"
+#: Cancel row for removal: keeping is the default and the escape answer,
+#: because removal is the one act here that destroys staged work.
+ATTACH_REMOVE_CANCEL_ROW = "keep it"
+
+
+def attachment_dialog_copy(
+    mode: str,
+    display_name: str,
+    kind_line: str,
+    state_line: str,
+    other_count: int = 0,
+) -> tuple[str, tuple[str, ...], str, str]:
+    """Title, body, proceed row and cancel row for the attachment dialog.
+
+    Pure copy, so the wording is asserted without a screen, and the app
+    reaches for :class:`ConfirmDialog` rather than a third modal class: the
+    two modes differ in what the rows say, not in what keys they answer.
+    ``display_name`` is the file name only, never the operator-local path,
+    and every line still passes through ``literal_text`` at render because
+    the caller hands these strings to the dialog unmodified.
+
+    ``mode`` is ``"confirm"`` before anything is staged or ``"remove"``
+    after. Any other value raises: a dialog that cannot name which act it
+    confirms must not open. Escape (``None`` from the dialog) means cancel
+    in confirm mode and keep in remove mode — both are the non-destructive
+    answer, which is the whole of the safety argument.
+    """
+    if mode == "confirm":
+        title = "Attach this file?"
+        body = (
+            display_name,
+            kind_line,
+            "Staging uploads the bytes; the agent reads them from this turn.",
+        )
+        return (title, body, ATTACH_CONFIRM_PROCEED_ROW, ATTACH_CONFIRM_CANCEL_ROW)
+    if mode == "remove":
+        title = "Remove this attachment?"
+        lines = [display_name, state_line]
+        if other_count > 0:
+            lines.append(
+                f"{other_count} other attachment{'s' if other_count != 1 else ''} "
+                "staged — this removes only this one"
+            )
+        lines.append("Staged, never delivered: removing unstages, nothing was read.")
+        return (
+            title,
+            tuple(lines),
+            ATTACH_REMOVE_PROCEED_ROW,
+            ATTACH_REMOVE_CANCEL_ROW,
+        )
+    raise ValueError(f"unknown attachment dialog mode: {mode!r}")

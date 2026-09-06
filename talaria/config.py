@@ -1,7 +1,8 @@
 """talaria/config.py — KTD15's configuration precedence chain.
 
 The only module in this repository that reads settings from the filesystem,
-and the owner of Talaria's narrow explicit theme-setting write.
+and the owner of Talaria's narrow explicit writes: the theme selection and the
+configuration view's status keys (issue #149, D8 recorded).
 Contents live under ``~/.talaria/`` (relocatable for tests via
 ``TALARIA_CONFIG_DIR``): ``config.toml`` for settings, ``credentials`` for the
 attach credential, and ``recordings/`` for frame logs.
@@ -36,7 +37,7 @@ import re
 import stat
 import tempfile
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,7 @@ from talaria.status.contract import (
     DEFAULT_CWD_MAX_COLUMNS,
     DEFAULT_GIT_BRANCH_MAX_COLUMNS,
     DEFAULT_STATUS_SEGMENTS,
+    KNOWN_STATUS_SEGMENTS,
     normalize_status_settings,
     parse_command,
 )
@@ -244,7 +246,25 @@ _ENV_KEY_MAP: dict[str, tuple[str, str]] = {
 _TRUE_LITERALS = frozenset({"1", "true", "yes", "on"})
 _FALSE_LITERALS = frozenset({"0", "false", "no", "off"})
 
-ThemeSaveScope = Literal["user", "repository"]
+#: The two file scopes an explicit save may target.
+ConfigSaveScope = Literal["user", "repository"]
+#: The theme-specific spelling of :data:`ConfigSaveScope`, kept for the
+#: existing ``save_theme``/``theme_config_path`` signatures.
+ThemeSaveScope = ConfigSaveScope
+
+#: The configuration-view allowlist (issue #149, D8 recorded 2026-09-05):
+#: the only settings the view displays, and — for the three status rows —
+#: the only keys its apply path writes. ``theme.name`` is displayed but never
+#: view-writable: an explicit selection already persists through the theme
+#: picker, and a second writer would be a second editor, which D8 rules out.
+#: No credential, connection setting, environment allowlist, column limit, or
+#: Hermes agent identity appears here, so none can reach the write path.
+CONFIG_VIEW_KEYS: tuple[tuple[str, str], ...] = (
+    ("theme", "name"),
+    ("status", "command"),
+    ("status", "interval_seconds"),
+    ("status", "segments"),
+)
 
 _BUILTIN_THEME_SLUGS = frozenset(theme.slug for theme in BUILTIN_THEMES)
 _THEME_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -268,6 +288,21 @@ _INLINE_THEME_NAME_RE = re.compile(
     rb"(?:\{|,)[ \t]*(?:name|\"name\"|'name')[ \t]*=[ \t]*"
     rb"(?P<value>\"(?:\\.|[^\"\\\r\n])*\"|'[^'\r\n]*')"
 )
+_STATUS_HEADER_RE = re.compile(
+    rb"(?m)^[ \t]*\[status\][ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)"
+)
+#: A top-level inline ``status = { ... }`` table. Deliberately not supported by
+#: the status writer: a multi-key inline table is a shape whose every neighbor
+#: is load-bearing, so it is refused with the edit-by-hand message rather than
+#: risked — the refusal is a designed outcome, not a failure (D8).
+_INLINE_STATUS_RE = re.compile(
+    rb"(?m)^[ \t]*(?:status|\"status\"|'status')[ \t]*=[ \t]*"
+    rb"\{[^\r\n]*\}[ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)"
+)
+#: Any top-level dotted ``status.<key>`` assignment, used to detect the mixed
+#: shape (some status keys dotted, some needing an append) that TOML cannot
+#: express safely and the writer refuses.
+_ANY_DOTTED_STATUS_RE = re.compile(rb"(?m)^[ \t]*status[ \t]*\.")
 
 
 def global_config_dir() -> Path:
@@ -709,6 +744,367 @@ def save_theme(
     return path
 
 
+# ── the configuration view's status write (issue #149, D8 recorded) ──────
+#
+# The same byte-preserving discipline ``save_theme`` uses, generalized to whole
+# ``[status]`` assignments including a multi-line ``segments`` array: a matched
+# assignment's *value* is replaced (its ``key = `` prefix and spacing stay as
+# the operator wrote them), a missing assignment is appended, and a hand-
+# formatted file the rewriter cannot match safely is refused — "edit the file
+# by hand" — rather than reformatted (D8). ``theme.name`` never passes through
+# here: selection already persists through the theme picker, and this writer
+# must not become a second theme editor.
+
+#: The only keys :func:`save_status_settings` writes, in the fixed order a
+#: missing-key append uses. Anything else — a credential-like key, the
+#: environment allowlist, a profile endpoint — is refused by name.
+STATUS_WRITE_KEYS: tuple[str, ...] = ("command", "interval_seconds", "segments")
+
+_STATUS_INTERVAL_BOUNDS = (1, 3600)
+
+
+def _toml_basic_string(value: str) -> str:
+    """Render ``value`` as a TOML basic string with real escaping.
+
+    ``save_theme`` could rely on the theme-slug shape to skip escaping; a
+    status command is arbitrary operator text, so every character TOML requires
+    an escape for is escaped, and the remaining control characters become
+    ``\\uXXXX`` rather than bytes TOML cannot carry.
+    """
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\b", "\\b")
+        .replace("\t", "\\t")
+        .replace("\n", "\\n")
+        .replace("\f", "\\f")
+        .replace("\r", "\\r")
+    )
+    escaped = "".join(
+        character if ord(character) >= 0x20 else f"\\u{ord(character):04x}"
+        for character in escaped
+    )
+    return f'"{escaped}"'
+
+
+def _render_status_value(key: str, value: Any) -> bytes:
+    """One status setting's TOML value in the shape ``docs/configuration.md``
+    documents: scalars on one line, ``segments`` as the multi-line array with
+    every name on its own indented line."""
+    if key == "command":
+        return _toml_basic_string(value).encode()
+    if key == "interval_seconds":
+        return str(value).encode()
+    names = tuple(value)
+    if not names:
+        return b"[]"
+    lines = [b"["]
+    lines.extend(b"  " + _toml_basic_string(name).encode() + b"," for name in names)
+    lines.append(b"]")
+    return b"\n".join(lines)
+
+
+def _status_key_pattern(key: str) -> re.Pattern[bytes]:
+    raw = re.escape(key.encode("ascii"))
+    return re.compile(
+        rb"(?m)^[ \t]*(?:" + raw + rb"|\"" + raw + rb"\"|'" + raw + rb"')[ \t]*="
+    )
+
+
+def _dotted_status_key_pattern(key: str) -> re.Pattern[bytes]:
+    raw = re.escape(key.encode("ascii"))
+    section = re.escape(b"status")
+    return re.compile(
+        rb"(?m)^[ \t]*(?:" + section + rb"|\"" + section + rb"\"|'" + section + rb"')"
+        rb"[ \t]*\.[ \t]*(?:" + raw + rb"|\"" + raw + rb"\"|'" + raw + rb"')[ \t]*="
+    )
+
+
+def _scalar_value_end(content: bytes, value_start: int, limit: int) -> int:
+    """Trim trailing blanks and a carriage return off a scalar value span."""
+    end = limit
+    while end > value_start and content[end - 1] in (0x20, 0x09, 0x0D):
+        end -= 1
+    return end
+
+
+def _status_value_span(content: bytes, assignment: re.Match[bytes]) -> tuple[int, int]:
+    """The byte span of one assignment's *value*, starting after its ``=``.
+
+    A scalar ends at its line end; an array ends after its closing bracket,
+    across as many lines as the brackets stay open. A comment *inside* a value
+    this rewrite would replace is refused here rather than silently eaten
+    ("comments and every neighboring byte survive", D8) — a trailing comment
+    after the value stays outside the span and survives untouched.
+    """
+    index = assignment.end()
+    while index < len(content) and content[index] in (0x20, 0x09):
+        index += 1
+    value_start = index
+    depth = 0
+    quote: int | None = None
+    escaped = False
+    position = value_start
+    while position < len(content):
+        byte = content[position]
+        if quote == ord('"'):
+            if escaped:
+                escaped = False
+            elif byte == ord("\\"):
+                escaped = True
+            elif byte == quote:
+                quote = None
+            position += 1
+            continue
+        if quote == ord("'"):
+            if byte == quote:
+                quote = None
+            position += 1
+            continue
+        if byte in (ord('"'), ord("'")):
+            quote = byte
+        elif byte == ord("["):
+            depth += 1
+        elif byte == ord("]"):
+            depth -= 1
+            if depth <= 0:
+                return value_start, position + 1
+        elif byte == ord("#"):
+            if depth > 0:
+                raise ConfigError(
+                    "the status value carries a comment inside it; "
+                    "edit the file by hand"
+                )
+            return value_start, _scalar_value_end(content, value_start, position)
+        elif byte == ord("\n") and depth == 0:
+            return value_start, _scalar_value_end(content, value_start, position)
+        position += 1
+    if depth > 0:
+        raise ConfigError("the status value never closes; edit the file by hand")
+    return value_start, _scalar_value_end(content, value_start, len(content))
+
+
+def _status_replacement(content: bytes, span: tuple[int, int], value_bytes: bytes) -> bytes:
+    """The value to splice, in the line-ending style the replaced span used."""
+    start, end = span
+    if b"\r\n" in content[start:end]:
+        return value_bytes.replace(b"\n", b"\r\n")
+    return value_bytes
+
+
+def _rewrite_dotted_or_append_block(
+    content: bytes, rendered: Mapping[str, bytes]
+) -> bytes:
+    """The no-``[status]``-table case: rewrite dotted assignments, or append
+    the documented block. Refuses the mixed shape TOML cannot express."""
+    dotted = {
+        key: _dotted_status_key_pattern(key).search(content) for key in rendered
+    }
+    missing = [key for key, match in dotted.items() if match is None]
+    if missing:
+        if any(match is not None for match in dotted.values()) or (
+            _ANY_DOTTED_STATUS_RE.search(content) is not None
+        ):
+            # Appending is unsafe in both directions: a ``[status]`` block or a
+            # new dotted line would have to land beside a dotted status
+            # assignment TOML has already defined, and wherever it lands is
+            # either a redeclaration or a move into another table's region.
+            raise ConfigError(
+                "this file's status settings mix dotted assignments with keys "
+                "that would have to be appended; edit the file by hand"
+            )
+        # No status shape at all: append the block the way the theme writer
+        # appends its table — separator, blank line, then the table.
+        separator = b"" if not content or content.endswith((b"\n", b"\r")) else b"\n"
+        blank = b"" if not content or content.endswith((b"\n\n", b"\r\n\r\n")) else b"\n"
+        block = b"[status]\n" + b"".join(
+            key.encode("ascii") + b" = " + rendered[key] + b"\n" for key in rendered
+        )
+        return content + separator + blank + block
+
+    replacements: list[tuple[int, int, bytes]] = []
+    for key, match in dotted.items():
+        if match is None:
+            # Unreachable past the missing-branch return above; kept so the
+            # refusal stands on its own if that branch ever moves.
+            raise ConfigError(
+                "this file's status settings mix dotted assignments with keys "
+                "that would have to be appended; edit the file by hand"
+            )
+        span = _status_value_span(content, match)
+        replacements.append(
+            (*span, _status_replacement(content, span, rendered[key]))
+        )
+    for start, end, replacement in sorted(replacements, reverse=True):
+        content = content[:start] + replacement + content[end:]
+    return content
+
+
+def _rewrite_status_settings(
+    content: bytes, rendered: Mapping[str, bytes]
+) -> bytes:
+    """Replace exactly the rendered status values, preserving every other byte.
+
+    A key missing from the existing ``[status]`` table is appended at the
+    table's end; a file with no ``[status]`` table at all gains the documented
+    block. Appends are computed *before* in-place replacements so every
+    replacement span — all of which precede the insertion point — keeps its
+    original position.
+    """
+    if not rendered:
+        return content
+    if _INLINE_STATUS_RE.search(content):
+        raise ConfigError(
+            "status is written as an inline table; Talaria will not reformat "
+            "it — edit the file by hand"
+        )
+
+    header = _STATUS_HEADER_RE.search(content)
+    if header is None:
+        return _rewrite_dotted_or_append_block(content, rendered)
+
+    next_header = _TABLE_HEADER_RE.search(content, header.end())
+    table_end = next_header.start() if next_header is not None else len(content)
+    replacements: list[tuple[int, int, bytes]] = []
+    appends: list[tuple[str, bytes]] = []
+    for key in rendered:
+        match = _status_key_pattern(key).search(content, header.end(), table_end)
+        if match is None:
+            appends.append((key, rendered[key]))
+            continue
+        span = _status_value_span(content, match)
+        replacements.append((*span, _status_replacement(content, span, rendered[key])))
+
+    if appends:
+        newline = b"\r\n" if b"\r\n" in content[header.end() : table_end] else b"\n"
+        prefix = content[:table_end]
+        if prefix and not prefix.endswith((b"\n", b"\r")):
+            prefix += newline
+        block = b"".join(
+            key.encode("ascii") + b" = " + value_bytes + newline
+            for key, value_bytes in appends
+        )
+        content = prefix + block + content[table_end:]
+
+    for start, end, replacement in sorted(replacements, reverse=True):
+        content = content[:start] + replacement + content[end:]
+    return content
+
+
+def _validate_status_change(key: str, value: Any) -> None:
+    """Refuse a value the documented status contract would not accept."""
+    if key == "command":
+        # An empty command is allowed and is the honest "no status script"
+        # state: the documented contract disables the region for an empty
+        # value, and the write persists `command = ""` rather than deleting
+        # the assignment (D8 recorded — one mechanism, not two).
+        if not isinstance(value, str):
+            raise ConfigError(f"status.command must be a string; refusing {value!r}")
+        return
+    if key == "interval_seconds":
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ConfigError(
+                f"status.interval_seconds must be an integer; refusing {value!r}"
+            )
+        low, high = _STATUS_INTERVAL_BOUNDS
+        if not low <= value <= high:
+            raise ConfigError(
+                f"status.interval_seconds must be between {low} and {high}; "
+                f"refusing {value}"
+            )
+        return
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ConfigError(
+            f"status.segments must be a list of segment names; refusing {value!r}"
+        )
+    seen: set[str] = set()
+    for name in value:
+        if not isinstance(name, str) or name not in KNOWN_STATUS_SEGMENTS:
+            raise ConfigError(
+                f"status.segments names an unknown segment; refusing {name!r}"
+            )
+        if name in seen:
+            raise ConfigError(
+                f"status.segments lists {name!r} twice; refusing the duplicate"
+            )
+        seen.add(name)
+
+
+def save_status_settings(
+    changes: Mapping[str, Any],
+    scope: ConfigSaveScope = "user",
+    *,
+    config_dir: Path | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    """Persist only the changed ``[status]`` keys to the selected scope.
+
+    The configuration view's apply path (issue #149, D8 recorded): the same
+    narrow, byte-preserving write :func:`save_theme` uses, generalized to whole
+    status assignments including the multi-line ``segments`` array. The parsed
+    document is verified to differ from the original in exactly the requested
+    keys before anything is written, so a rewrite that touched one neighbor
+    byte too many refuses instead of persisting.
+    """
+    if not changes:
+        raise ConfigError("save_status_settings needs at least one changed key")
+    unknown = [key for key in changes if key not in STATUS_WRITE_KEYS]
+    if unknown:
+        raise ConfigError(
+            "the configuration view writes only "
+            "status.command, status.interval_seconds, and status.segments; "
+            f"refusing {', '.join(repr(key) for key in unknown)}"
+        )
+    for key, value in changes.items():
+        _validate_status_change(key, value)
+    rendered = {
+        key: _render_status_value(key, changes[key])
+        for key in STATUS_WRITE_KEYS
+        if key in changes
+    }
+
+    path = theme_config_path(scope, config_dir=config_dir, cwd=cwd)
+    try:
+        before_bytes = path.read_bytes() if path.is_file() else b""
+    except OSError as exc:
+        raise ConfigError(f"{path} could not be read: {exc}") from exc
+    before = _parse_toml_bytes(path, before_bytes)
+    existing_status = before.get("status")
+    if existing_status is not None and not isinstance(existing_status, Mapping):
+        raise ConfigError(f"{path} status must be a table before it can be saved")
+
+    try:
+        after_bytes = _rewrite_status_settings(before_bytes, rendered)
+    except ConfigError as exc:
+        raise ConfigError(f"{path}: {exc}") from exc
+    try:
+        after = _parse_toml_bytes(path, after_bytes)
+    except ConfigError as exc:
+        raise ConfigError(
+            f"Talaria cannot safely rewrite the [status] keys in this form: {path}; "
+            "edit the file by hand — no changes were written"
+        ) from exc
+    expected = deepcopy(before)
+    expected_status = expected.setdefault("status", {})
+    if not isinstance(expected_status, dict):  # guarded above; keeps the proof local
+        raise ConfigError(f"{path} status must be a table before it can be saved")
+    # TOML parses an array back as a list, so the expected document must carry
+    # one too — a caller's tuple would compare unequal to its own reflection.
+    expected_status.update(
+        {key: list(value) if key == "segments" else value for key, value in changes.items()}
+    )
+    if after != expected:
+        raise ConfigError(
+            f"refusing to write {path}: the edit changed more than the requested keys"
+        )
+
+    try:
+        atomic_replace_bytes(path, after_bytes, follow_symlinks=True)
+    except OSError as exc:
+        raise ConfigError(f"{path} could not be written: {exc}") from exc
+    return path
+
+
 def load_config(
     cli_overrides: Mapping[str, Any] | None = None,
     cwd: Path | None = None,
@@ -758,3 +1154,48 @@ def load_config(
         config_dir=config_dir,
         notices=(*notices, *user_theme_notices),
     )
+
+
+# ── which layer supplied each configuration-view key (issue #149) ────────
+
+#: The provenance labels the configuration view displays. ``session`` is not
+#: here because it is not a file layer: it is the view's own label for a
+#: value the running process changed in memory — a ``/bar`` segment toggle —
+#: and the view computes it by comparing the running set against this walk.
+SettingScope = Literal["default", "user", "repository", "environment", "command line"]
+
+
+def setting_scopes(
+    cli_overrides: Mapping[str, Any] | None = None,
+    *,
+    cwd: Path | None = None,
+    config_dir: Path | None = None,
+) -> dict[tuple[str, str], str]:
+    """Which precedence layer supplied each :data:`CONFIG_VIEW_KEYS` entry.
+
+    Walks the same levels :func:`load_config` merges, in the same order, and
+    records the last layer that carries each key. A key whose configured value
+    was *invalid* still names the layer that supplied it: the view pairs that
+    scope with the fallback notice ``load_config`` already produced, so the row
+    reads as "invalid, using default" from the layer that caused it rather
+    than hiding where the bad value came from.
+    """
+    cwd = cwd if cwd is not None else Path.cwd()
+    root = config_dir if config_dir is not None else global_config_dir()
+    scopes: dict[tuple[str, str], str] = {key: "default" for key in CONFIG_VIEW_KEYS}
+    layers: list[tuple[str, Mapping[str, Any]]] = [
+        ("user", _read_toml(root / "config.toml")),
+        ("repository", _read_toml(cwd / ".talaria" / "config.toml")),
+        ("environment", _env_overrides()),
+    ]
+    if cli_overrides:
+        allowed = dict(cli_overrides)
+        allowed.pop("theme", None)
+        allowed.pop("ui", None)
+        layers.append(("command line", allowed))
+    for label, layer in layers:
+        for section, key in CONFIG_VIEW_KEYS:
+            node = layer.get(section)
+            if isinstance(node, Mapping) and key in node:
+                scopes[(section, key)] = label
+    return scopes

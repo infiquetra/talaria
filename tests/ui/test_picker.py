@@ -18,7 +18,10 @@ from typing import Any
 import pytest
 from textual.pilot import Pilot
 
-from talaria.domain.commands import CATALOG_METHOD, SLASH_EXEC_METHOD
+from talaria.domain.commands import (
+    CATALOG_METHOD,
+    SLASH_EXEC_METHOD,
+)
 from talaria.domain.models_catalog import (
     ModelAssignmentResult,
     ModelProvider,

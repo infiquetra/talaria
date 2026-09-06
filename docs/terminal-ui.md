@@ -140,6 +140,64 @@ state only. They are not written to configuration.
 | `u` | Prefer unified mode |
 | `Escape` | Close the viewer |
 
+## Slash command discovery and menu layout
+
+Typing `/` in the composer opens the command palette with live prefix and substring filtering.
+`F3` toggles the full browse listing.
+
+### Sectioned list structure
+
+Commands are presented in a sectioned list (decision D5) ordered by origin and taxonomy:
+
+1. **Talaria controls:** Local client actions (`/models`, `/profiles`, `/sessions`, `/needs`,
+   `/agents`, `/theme`, `/bar`, `/inspector`, `/diffs`, `/config`, `/quit`, `/pause`, `/resume`, and pacing
+   controls). These appear first and resolve immediately in the client without contacting the gateway.
+2. **Gateway categories:** Contributed command rows grouped under the gateway's own wire categories
+   (`Session`, `Configuration`, `Info`, `Tools and Skills`, `Exit`, `TUI`, etc.) in the order the
+   gateway delivers them.
+3. **Skills:** Contributed agent skills, placed in their own section at the bottom, sorted
+   alphabetically by slash command name.
+4. **Uncategorised:** Any command carrying neither a gateway category nor skill membership is
+   placed here. This section renders only when populated.
+
+Empty categories or buckets (such as currently empty User or Plugin lists) are omitted entirely
+rather than rendered empty. If a command appears in both a category and the skill inventory, it
+renders once under its gateway category and retains its provenance badge.
+
+### Provenance badges
+
+Badges are derived strictly from the wire payload (`commands.catalog` result `skills[name].origin`)
+and are never guessed from command names or synthetically inferred:
+
+- **Skill rows** display their exact wire origin verbatim in brackets: `[bundled]`, `[hub]`, or
+  `[local]`. Any unexpected wire value is also displayed verbatim. Older gateway skills lacking an
+  origin field are displayed unbadged.
+- **Registry and local rows** carry no origin badge; their section header communicates their scope.
+
+### Filter-as-you-type and search ranking
+
+Typing narrows the inventory across command names, descriptions, section headings, and origin badge
+text (for example, typing `local` or `hub` isolates skills by origin). Matches are ranked in three
+tiers:
+
+- **Tier 0:** Exact command name prefix match.
+- **Tier 1:** Substring match within the command name.
+- **Tier 2:** Match within description, badge text, or section name.
+
+Within each tier, the structural section order is preserved.
+
+### Description wrapping and single dispatch
+
+- **Adaptive wrapping:** Inactive rows wrap descriptions to at most two lines, clipped with an
+  ellipsis (`…`) on overflow. When a row is highlighted, it expands fully to show its complete
+  description. Continuation lines are indented 19 spaces to preserve the command name column.
+- **Single dispatch:** Pressing `Enter` on a selected command executes it exactly once. The selection
+  is atomically consumed, the composer cleared, and the palette closed before dispatch, preventing
+  accidental double submissions from rapid keystrokes.
+- **Click to insert:** Clicking an entry inserts `/<command> ` into the composer with trailing space
+  for argument entry without auto-submitting.
+- **Escape:** Closes the palette and preserves the composer's draft text.
+
 ## Global bindings
 
 These are the bindings shipped by the application. Slash commands are the reliable primary route
@@ -157,17 +215,67 @@ aliases where the desktop delivers them.
 | `End` or `F5` | Follow the newest transcript line | live and replay |
 | `/models`; `F11` from every focus; `F6` only outside composer focus | Open models | live; gateway-changing actions are refused in replay |
 | `/profiles`; `F12` from every focus; `F7` only outside composer focus | Open profiles | live; gateway-changing actions are refused in replay |
+| `/attach [<path>]`, or drop a path onto the terminal | Stage a file for the agent | live; refused in replay |
+| `/config` | Open the configuration view | live and replay |
 | `F8` | Pause/resume playback | replay only |
 | `F9` / `F10` | Slower / faster playback | replay only |
 
 `F1` has no Talaria action. The shipped help bar reports `F1` and `F2` as eaten on macOS before the
 application receives them; `Ctrl+G` is the primary subagent-row binding for that reason.
 
+## Attachments
+
+Two routes stage a file for the agent: `/attach <path>`, and dropping a path onto the terminal
+(a paste whose whole body is one existing file path diverts to attach instead of inserting).
+Accepted types are text files, code files, and images. Portable-document format is excluded:
+`/attach` on a PDF is refused before anything is sent.
+
+Nothing stages without a confirm dialog first. A staged text or code file appears as an
+`@file:` token in the composer — Talaria places that token itself, because the gateway does
+not inject it, and the submitted message carries it. Staged images place no token; the submit
+drains them into the turn on its own. Bare `/attach` offers the most recently staged
+attachment for removal (files unchip locally, images detach gateway-side). Every success
+notice says staged, never delivered: the reference proves the agent *can* read the content,
+not that it has.
+
 The inspector toggle and the turn-cancel chord are configurable because no single default
 survives every terminal multiplexer: see the `keys` table in [Configuration](configuration.md).
 The help footer always labels cancel-turn beside quit-client, so the two can never be mistaken
 for one another. `Ctrl+C` left the interrupt action; pressed out of habit it reaches the text
 area's copy binding or the framework's quit hint, never the turn and never the exit.
+
+## Configuration view
+
+`/config` opens the configuration view (issue #149): a modal screen in the theme-picker family
+that shows what is in effect, where each value came from, and the narrow write that changes it.
+Exactly four settings appear — `theme.name`, `status.command`, `status.interval_seconds`,
+`status.segments` — with each row's effective value and source scope (default, user file,
+repository file, environment, or session) and a mode label. Nothing else is displayed or edited
+there: no credentials, connection settings, environment allowlist, column limits, or Hermes
+agent identity ever reaches this view.
+
+- **Theme row.** Shows the effective theme and its source, labelled `live`. The only edit path
+  is the existing theme picker, which the row opens by closing this view first — the picker is
+  the palette's theme mode, not a screen the modal could stack; selection applies and persists
+  through the theme flow, never through a second picker or editor.
+- **Status rows.** Labelled `restart`: the status keys resolve once at startup. Command edits as
+  text (empty is allowed and labelled "no status script"); interval as an integer with the
+  1–3600 bound shown — an invalid value is rejected inline and nothing is written; segments as
+  an ordered multi-select over the seven known names — `space` toggles, `shift+↑`/`shift+↓`
+  reorders. The segments row's effective value is the running bar's set, and its source reads
+  `session` while a `/bar` toggle has diverged it; `/bar` stays session-only and is never
+  written unless applied here.
+- **Apply and save.** `apply` writes only the changed keys to the user configuration file;
+  `save to repository` writes them to the repository scope, mirroring `/theme save repository`.
+  Both go through the byte-preserving targeted rewrite, and a hand-formatted file that rewrite
+  cannot match safely is refused with "edit the file by hand" rather than reformatted. After a
+  save, each written row reads "saved: X · effective now: Y · takes effect on restart".
+- **Read-only rows.** A row whose value comes from the repository file is read-only for a
+  user-scope apply, with that reason shown — the repository file beats the user file, so a
+  user-file write would be shadowed. A row whose value comes from a `TALARIA_*` environment
+  variable is read-only entirely.
+- **Escape and cancel** write nothing and close the view. The modal owns the keyboard: chords
+  bound beneath it (the inspector toggle, the turn cancel) do not act while it is open.
 
 ## Focus, motion, and scroll
 

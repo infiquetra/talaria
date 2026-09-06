@@ -99,6 +99,31 @@ on the child before the repair commit.
 composer area — that is a new two-surface design and must not quietly
 resurrect the keep-visible rule this entry retires.
 
+### The slash-command menu is a sectioned list with wire-derived badges (D5/#146)
+
+**Decision.** The slash-command palette is structured as one flat scrolling list
+divided into labelled sections: Talaria's own controls first, then the
+gateway's categories in wire delivery order, and a dedicated Skills section
+last. A remainder Uncategorised section renders only when non-empty. Badges
+appear strictly on skill rows and carry the wire `origin` field verbatim in
+lowercase (`[bundled]`, `[hub]`, `[local]`, or unexpected wire strings).
+Registry rows carry no origin badge. Empty sections (including currently empty
+User and Plugin buckets) are omitted entirely.
+
+**Rationale.** Operator selection (Jeff, 2026-09-05) on issue #146. A two-level
+menu was rejected because it hid commands one level down where filter-as-you-type
+had to reach across stages. A flat list with badges only was rejected because it
+produced an undifferentiated wall of ~140 commands. Provenance is strictly
+un-synthesized: only the `skills` map carries an `origin` field on the wire
+(re-probed on Hermes `71f8c60f` superseding I10 for skills); registry rows
+possess only gateway category taxonomy.
+
+**Decided by.** Operator selection recorded on issue #146, with architect
+placement ruling for the updated wire contract.
+
+**Revisit when.** The gateway populates the User or Plugin command buckets or
+publishes an origin field on registry rows.
+
 ## 2026-09-04
 
 ### v0.5.0 receipt re-verification is retired (superseded)

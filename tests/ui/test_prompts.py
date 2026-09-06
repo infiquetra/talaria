@@ -194,9 +194,16 @@ def test_the_field_talaria_sends_is_the_field_the_recorder_withholds() -> None:
     four names, derived independently from the gateway's own source, and a
     disagreement means Talaria writes a plaintext credential to the frame log
     while every redaction test still passes."""
-    for method, denied in _DENY_BY_METHOD.items():
-        kind = next(k for k, m in RESPOND_METHODS.items() if m == method)
-        assert RESPOND_VALUE_FIELDS[kind] in denied, method
+    # Iterated from the sender side so deny entries that are not answers
+    # (attachment content/paths, C9) cannot break the invariant: every
+    # bridge whose answer is sensitive must have its value field denied.
+    # Approval is the deliberate exception — its choice names a
+    # gateway-supplied option, so it carries no deny entry by design.
+    # Attachment entries prove themselves in their own canary tests.
+    for kind, method in RESPOND_METHODS.items():
+        if kind == "approval":
+            continue
+        assert RESPOND_VALUE_FIELDS[kind] in _DENY_BY_METHOD[method], method
 
 
 def test_approval_answers_by_session_because_it_has_no_request_id() -> None:

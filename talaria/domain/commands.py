@@ -178,10 +178,34 @@ class CommandEntry:
     description: str
     category: str = ""
     availability: Availability = "dispatch"
+    origin: str = ""
+    is_skill: bool = False
 
     @property
     def marker(self) -> str:
         return AVAILABILITY_MARKER[self.availability]
+
+    @property
+    def badge(self) -> str:
+        """Truthful provenance badge. Legal ONLY on skill rows carrying wire origin."""
+        return self.origin if self.is_skill else ""
+
+
+@dataclass(frozen=True)
+class CommandSection:
+    """A labelled section in the slash-command menu (D5).
+
+    The sentinel ``key`` distinguishes Talaria-local controls, gateway
+    categories, skills, and uncategorised remainder rows even if a gateway
+    category shares a name with a Talaria label (e.g. wire category 'Talaria'
+    or 'Skills') — issue #146, finding F-2.
+    """
+
+    key: str
+    label: str
+
+    def __str__(self) -> str:
+        return self.label
 
 
 @dataclass(frozen=True)
@@ -205,6 +229,10 @@ class CommandCatalog:
     #: than merged into it: nothing here is dispatchable, and nothing downstream
     #: reads it for routing. Only string-valued rows survive the decode.
     commands_meta: Mapping[str, str] = field(default_factory=dict)
+    #: The gateway's ``skills`` map, carrying installed skills.
+    skills: Mapping[str, Any] = field(default_factory=dict)
+    #: The order of gateway categories as delivered on the wire.
+    categories_order: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def gateway_entries(self) -> tuple[CommandEntry, ...]:
@@ -217,6 +245,90 @@ class CommandCatalog:
     @property
     def local_entries(self) -> tuple[CommandEntry, ...]:
         return tuple(e for e in self.entries if e.availability == "talaria-local")
+
+    def section_for(self, entry: CommandEntry) -> CommandSection:
+        """Return the CommandSection for an entry under the D5 placement ruling.
+
+        Rules:
+        - Talaria-local controls -> CommandSection(key=":talaria:", label="Talaria")
+          Gated strictly on ``availability == 'talaria-local'`` so a wire category
+          named 'Talaria' never lands inside Talaria's own controls (F-2).
+        - If the entry has an explicit gateway category ->
+          CommandSection(key=f":category:{entry.category}", label=entry.category)
+        - If the entry is a skill ->
+          CommandSection(key=":skills:", label="Skills")
+        - Otherwise ->
+          CommandSection(key=":uncategorised:", label="Uncategorised")
+        """
+        if entry.availability == "talaria-local":
+            return CommandSection(key=":talaria:", label="Talaria")
+        if entry.category:
+            return CommandSection(key=f":category:{entry.category}", label=entry.category)
+        lowered = entry.name.lower()
+        bare = lowered.lstrip("/")
+        slash = f"/{bare}"
+        if (
+            entry.is_skill
+            or slash in self.skills
+            or bare in self.skills
+            or lowered in self.skills
+        ):
+            return CommandSection(key=":skills:", label="Skills")
+        return CommandSection(key=":uncategorised:", label="Uncategorised")
+
+    def by_section(self) -> dict[CommandSection, tuple[CommandEntry, ...]]:
+        """Group entries into labelled sections per the D5 placement ruling.
+
+        Section order:
+        1. Talaria controls (:talaria:)
+        2. Gateway categories in wire delivery order (:category:<name>)
+        3. Any additional categories
+        4. Skills (:skills:, sorted alphabetically by slash name)
+        5. Uncategorised (:uncategorised:, rendered ONLY when non-empty)
+
+        Empty sections are never returned.
+        """
+        grouped: dict[CommandSection, list[CommandEntry]] = {}
+        for entry in self.entries:
+            section = self.section_for(entry)
+            grouped.setdefault(section, []).append(entry)
+
+        result: dict[CommandSection, tuple[CommandEntry, ...]] = {}
+
+        # 1. Talaria controls
+        talaria_sec = CommandSection(key=":talaria:", label="Talaria")
+        if talaria_sec in grouped and grouped[talaria_sec]:
+            result[talaria_sec] = tuple(grouped[talaria_sec])
+
+        # 2. Gateway categories in wire order
+        seen_keys = {talaria_sec.key, ":skills:", ":uncategorised:"}
+        for cat in self.categories_order:
+            sec = CommandSection(key=f":category:{cat}", label=cat)
+            if sec in grouped and grouped[sec]:
+                result[sec] = tuple(grouped[sec])
+                seen_keys.add(sec.key)
+
+        # 3. Any additional categories
+        for sec, entries in grouped.items():
+            if sec.key not in seen_keys:
+                if entries:
+                    result[sec] = tuple(entries)
+                    seen_keys.add(sec.key)
+
+        # 4. Skills (sorted alphabetically by slash name)
+        skills_sec = CommandSection(key=":skills:", label="Skills")
+        if skills_sec in grouped and grouped[skills_sec]:
+            result[skills_sec] = tuple(
+                sorted(grouped[skills_sec], key=lambda e: e.name.lower())
+            )
+
+        # 5. Uncategorised (rendered ONLY when non-empty)
+        uncat_sec = CommandSection(key=":uncategorised:", label="Uncategorised")
+        if uncat_sec in grouped and grouped[uncat_sec]:
+            result[uncat_sec] = tuple(grouped[uncat_sec])
+
+        return result
+
 
     def canonical(self, name: str) -> str:
         """Resolve an alias through the gateway's own ``canon`` map.
@@ -315,6 +427,21 @@ def decode_catalog(result: Any) -> CommandCatalog:
         return unavailable_catalog(f"{CATALOG_UNAVAILABLE}: it carried no command list")
 
     categories = _category_index(result.get("categories"))
+    raw_categories = result.get("categories")
+    categories_order: tuple[str, ...] = ()
+    if isinstance(raw_categories, list):
+        categories_order = tuple(
+            str(cat_dict.get("name"))
+            for cat_dict in raw_categories
+            if isinstance(cat_dict, Mapping) and isinstance(cat_dict.get("name"), str)
+        )
+
+    raw_skills = result.get("skills")
+    skills: dict[str, Any] = {}
+    if isinstance(raw_skills, Mapping):
+        skills = {
+            str(k): v for k, v in raw_skills.items() if isinstance(k, str)
+        }
     local_entries = _local_entries()
     # Preserve the existing browse order and its first-screen unsupported
     # evidence as local controls are added. ``/theme``, ``/bar``, and
@@ -348,6 +475,23 @@ def decode_catalog(result: Any) -> CommandCatalog:
             continue
         seen.add(lowered)
         category = categories.get(lowered, "")
+        origin = ""
+        bare_name = lowered.lstrip("/")
+        slash_name = f"/{bare_name}"
+        is_skill = (
+            slash_name in skills or bare_name in skills or lowered in skills
+        )
+        if is_skill:
+            skill_payload = (
+                skills.get(slash_name)
+                or skills.get(bare_name)
+                or skills.get(lowered)
+            )
+            if isinstance(skill_payload, Mapping):
+                raw_origin = skill_payload.get("origin")
+                if isinstance(raw_origin, str) and raw_origin.strip():
+                    origin = raw_origin.strip().lower()
+
         entries.append(
             CommandEntry(
                 name=name,
@@ -356,6 +500,8 @@ def decode_catalog(result: Any) -> CommandCatalog:
                 availability=(
                     "unsupported" if _is_client_local(name, category) else "dispatch"
                 ),
+                origin=origin,
+                is_skill=is_skill,
             )
         )
 
@@ -373,6 +519,8 @@ def decode_catalog(result: Any) -> CommandCatalog:
         warning=warning if isinstance(warning, str) else "",
         available=True,
         commands_meta=_commands_meta(result.get("commands")),
+        skills=skills,
+        categories_order=categories_order,
     )
 
 
@@ -383,6 +531,79 @@ def unavailable_catalog(reason: str) -> CommandCatalog:
     )
 
 
+def filter_commands(
+    catalog: CommandCatalog | None, query: str
+) -> tuple[CommandEntry, ...]:
+    """Filter runnable catalogue entries across name, description, badge, and section.
+
+    Matches case-insensitively and ranks results in three tiers:
+    - Tier 0: query matches the start of the command name (prefix match)
+    - Tier 1: query matches a substring of the command name
+    - Tier 2: query matches description, origin badge, or section name
+
+    Within each tier, entries are ordered following the D5 section order:
+    Talaria-local controls first, then gateway categories in wire order,
+    then Skills (alphabetical by slash name), then Uncategorised.
+    Unsupported entries are omitted as in all slash filtering.
+    """
+    if catalog is None:
+        entries = _local_entries()
+    else:
+        entries = tuple(
+            e for e in catalog.entries if e.availability in ("dispatch", "talaria-local")
+        )
+
+    def entry_sort_key(e: CommandEntry) -> tuple[int, str, str]:
+        if catalog is None:
+            return (0, "", e.name.lower())
+        sec = catalog.section_for(e)
+        if sec.key == ":talaria:":
+            sec_rank = 0
+        elif sec.key.startswith(":category:"):
+            cat_name = sec.label
+            if cat_name in catalog.categories_order:
+                sec_rank = 1 + catalog.categories_order.index(cat_name)
+            else:
+                sec_rank = 500
+        elif sec.key == ":skills:":
+            sec_rank = 1000
+        elif sec.key == ":uncategorised:":
+            sec_rank = 2000
+        else:
+            sec_rank = 500
+        return (sec_rank, sec.label.lower(), e.name.lower())
+
+    clean_query = query.lower().removeprefix("/").strip()
+    if not clean_query:
+        return tuple(sorted(entries, key=entry_sort_key))
+
+    matched: list[tuple[int, tuple[int, str, str], CommandEntry]] = []
+    for entry in entries:
+        name_clean = entry.name.lower().removeprefix("/")
+        desc_clean = entry.description.lower()
+        badge_clean = entry.badge.lower()
+        section_clean = (
+            catalog.section_for(entry).label.lower() if catalog else "talaria"
+        )
+
+        if name_clean.startswith(clean_query):
+            tier = 0
+        elif clean_query in name_clean:
+            tier = 1
+        elif (
+            clean_query in desc_clean
+            or (badge_clean and (clean_query == badge_clean or clean_query in badge_clean))
+            or (section_clean and clean_query in section_clean)
+        ):
+            tier = 2
+        else:
+            continue
+        matched.append((tier, entry_sort_key(entry), entry))
+
+    matched.sort(key=lambda item: (item[0], item[1]))
+    return tuple(entry for _, _, entry in matched)
+
+
 def _is_client_local(name: str, category: str) -> bool:
     return name.lower() in CLIENT_LOCAL_NAMES and category == CLIENT_LOCAL_CATEGORY
 
@@ -390,6 +611,7 @@ def _is_client_local(name: str, category: str) -> bool:
 # ── the Talaria-local control set (PC6) ──────────────────────────────────
 
 LocalAction = Literal[
+    "attach",
     "quit",
     "pause",
     "resume",
@@ -403,6 +625,7 @@ LocalAction = Literal[
     "bar",
     "inspector",
     "diffs",
+    "config",
 ]
 
 
@@ -423,6 +646,24 @@ class LocalCommand:
 
 TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
     LocalCommand("/quit", "quit", "Leave Talaria; the gateway session keeps running"),
+    # C9/D6. The control here, beside ``/models``, that crosses the socket
+    # after a local gesture: the path resolves and stages locally, then
+    # ``file.attach`` (text/code) or ``image.attach_bytes`` (images) carries
+    # the bytes. D6 defines ``/attach`` as Talaria's route; it resolves
+    # local-first like every row in this table, so a future gateway command
+    # of the same name would be shadowed — the ``/needs`` hazard, stated
+    # here so it is not silent. With no argument it offers the staged set
+    # for removal instead of staging. Portable-document format is refused
+    # Talaria-side, never sent.
+    LocalCommand(
+        "/attach",
+        "attach",
+        (
+            "Stage a text, code or image file for the agent "
+            "(or drop its path; no PDFs)"
+        ),
+        argument_hint="[<path>]",
+    ),
     LocalCommand("/pause", "pause", "Hold the replay clock (F8)", replay_only=True),
     LocalCommand("/resume", "resume", "Release the replay clock (F8)", replay_only=True),
     LocalCommand(
@@ -540,6 +781,17 @@ TALARIA_LOCAL_COMMANDS: tuple[LocalCommand, ...] = (
         "diffs",
         "Open the session's read-only diff viewer",
     ),
+    # C11 (issue #149, D8 recorded): the configuration view. The one local
+    # command whose handler is the Wave Four mounting seam in
+    # ``talaria/ui/app.py`` — the catalogue entry ships first so the control
+    # lands in the Talaria section beside the others, and the wiring mounts
+    # ``talaria/ui/config_view.py`` onto this action. Shadows nothing: the
+    # gateway's registry holds no ``/config``.
+    LocalCommand(
+        "/config",
+        "config",
+        "Open the configuration view (effective values, sources, save)",
+    ),
 )
 
 #: Said when a pacing control is used against a live session.
@@ -562,6 +814,7 @@ def _local_entries() -> tuple[CommandEntry, ...]:
             ),
             category="Talaria",
             availability="talaria-local",
+            origin="",
         )
         for command in TALARIA_LOCAL_COMMANDS
     )

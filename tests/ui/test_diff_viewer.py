@@ -880,6 +880,7 @@ _EXPECTED_CALLS = {
     "talaria.ui.dialog": frozenset(
         {
             "Static",
+            "ValueError",
             "Vertical",
             "__init__",
             "_back",
