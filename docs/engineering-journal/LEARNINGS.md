@@ -4,6 +4,37 @@
 
 ## 2026-09-06
 
+### A byte-preserving rewrite of a multi-line TOML value needs a span scanner, not a bigger regex (C11/#149)
+
+**Evidence.** Generalizing the theme writer's discipline to the `[status]` keys (issue #149, D8
+recorded) hit the case the theme writer never met: `segments` is a multi-line array, so the
+"a whole `key = value` assignment" the D8 names spans lines, and the single-line regexes
+`_rewrite_theme_name` relies on cannot bind it. The landed writer
+(`talaria/config.py`, `_status_value_span` + `_rewrite_status_settings`) finds the assignment
+line with a regex and then scans quote-aware from the value's first byte for the closing
+bracket, across as many lines as the brackets stay open; a trailing comment after the value
+stays outside the span and survives, and an unquoted `#` *inside* the span is refused —
+"edit the file by hand" — rather than silently eaten, which is what keeps D8's
+"comments and every neighboring byte survive" absolute. `tests/test_config_write.py` pins the
+multi-line replace, the comment cases, the interior-comment refusal, and the CRLF conversion
+(`test_status_save_preserves_crlf_line_endings`). One defect survived to the tests: the semantic
+diff guard compared a caller's `("cwd", "version")` tuple against TOML's parsed `["cwd",
+"version"]` list and refused its own correct rewrite — fixed by normalizing the expected side.
+
+**Mechanism.** The safety of the whole write comes from the parse-verify-replace sandwich
+(parse before, rewrite, parse after, require `after == before + exactly the requested keys`,
+then atomic replace), so any span the scanner mis-measures fails closed as a refusal. That is
+why a conservative scanner plus an absolute interior-comment refusal is enough: exotic shapes
+(triple-quoted strings, inline status tables) never produce a wrong write, only the designed
+"edit the file by hand" outcome.
+
+**Generalizable rule.** For a targeted rewrite over operator-authored files, measure the span
+with a quote-aware scanner and make the *comment* the thing you refuse on, not the shape you
+reformat — the refusal is a designed outcome, and the parse-verify net turns every
+unanticipated shape into that outcome instead of into a corrupted file.
+
+## 2026-09-06
+
 ### Every attach route must account for the text it leaves in the composer (C9/#147)
 
 **Evidence.** The first cut of the `/attach` flow staged the bytes, placed the `@file:` chip — and
