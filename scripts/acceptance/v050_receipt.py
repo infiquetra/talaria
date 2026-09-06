@@ -262,6 +262,7 @@ class ValueCategory(StrEnum):
     HARNESS_LABEL = "harness-label"
     URL = "url"
     MAP = "map"
+    FRAME_LABEL = "frame-label"
 
 
 ALLOWED_PREIMAGE_CLASSES: frozenset[str] = frozenset({
@@ -277,6 +278,17 @@ ALLOWED_PREIMAGE_CLASSES: frozenset[str] = frozenset({
     "step-payload",
     "receipt",
 })
+
+ALLOWED_URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ws", "wss", "file"})
+ALLOWED_URL_HOSTS: frozenset[str] = frozenset({
+    "127.0.0.1",
+    "localhost",
+    "::1",
+    "[::1]",
+    "<gateway>",
+    "<candidate-root>",
+})
+ALLOWED_URL_PORTS: frozenset[int | None] = frozenset({None, 80, 443, 8000, 8080, 8765})
 
 
 V050_INSTALL_SCHEMA = "talaria-v0.5.0-install-v1"
@@ -294,6 +306,7 @@ class RecordSchema:
     map_schemas: dict[str, tuple[str, ValueCategory]] = field(default_factory=dict)
     nullable_keys: frozenset[str] = field(default_factory=frozenset)
     digest_preimages: dict[str, str] = field(default_factory=dict)
+    vocabularies: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def _lookup_preimage(self, loc: str, key: str) -> str | None:
         candidates = [loc]
@@ -311,6 +324,22 @@ class RecordSchema:
                 return self.digest_preimages[cand]
         return None
 
+    def _lookup_vocabulary(self, loc: str, key: str) -> frozenset[str] | None:
+        candidates = [loc]
+        parts = loc.split(".")
+        for i in range(len(parts)):
+            candidates.append(".".join(parts[i:]))
+        name_parts = self.name.split(".")
+        for i in range(len(name_parts)):
+            prefix = ".".join(name_parts[i:])
+            candidates.append(f"{prefix}.{key}")
+            candidates.append(f"{prefix}.{loc}")
+        candidates.append(key)
+        for cand in candidates:
+            if cand in self.vocabularies:
+                return self.vocabularies[cand]
+        return None
+
     def __post_init__(self) -> None:
         for target, preimage_cls in self.digest_preimages.items():
             if preimage_cls not in ALLOWED_PREIMAGE_CLASSES:
@@ -325,6 +354,13 @@ class RecordSchema:
                     raise ValueError(
                         f"Schema {self.name!r}: digest field {k!r} has no declared preimage class"
                     )
+            elif cat == ValueCategory.CLOSED_VOCABULARY:
+                vocab = self._lookup_vocabulary(k, k)
+                if not vocab:
+                    raise ValueError(
+                        f"Schema {self.name!r}: closed-vocabulary field {k!r} "
+                        "has no declared vocabulary"
+                    )
         if "." not in self.name:
             for nk, n_keys in self.nested_schemas.items():
                 for field_name, cat in n_keys.items():
@@ -335,6 +371,14 @@ class RecordSchema:
                             raise ValueError(
                                 f"Schema {self.name!r}: nested digest field {loc!r} "
                                 "has no declared preimage class"
+                            )
+                    elif cat == ValueCategory.CLOSED_VOCABULARY:
+                        loc = f"{nk}.{field_name}"
+                        vocab = self._lookup_vocabulary(loc, field_name)
+                        if not vocab:
+                            raise ValueError(
+                                f"Schema {self.name!r}: nested closed-vocabulary field {loc!r} "
+                                "has no declared vocabulary"
                             )
             for mk, (_key_type, val_cat) in self.map_schemas.items():
                 if val_cat == ValueCategory.DIGEST:
@@ -403,9 +447,19 @@ class RecordSchema:
                         f"{path}: {self.name} field {loc!r} must be a gateway session id string"
                     )
             elif cat == ValueCategory.CLOSED_VOCABULARY:
+                vocab = self._lookup_vocabulary(loc, k)
                 if not isinstance(v, str) or not v.strip():
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must be a non-empty string"
+                    )
+                elif not vocab:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} has no registered closed vocabulary"
+                    )
+                elif v not in vocab:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} value {v!r} not in registered "
+                        f"closed vocabulary ({sorted(vocab)})"
                     )
             elif cat == ValueCategory.HARNESS_IDENTITY:
                 if v is not None:
@@ -466,6 +520,7 @@ class RecordSchema:
                             map_schemas=self.map_schemas,
                             nullable_keys=self.nullable_keys,
                             digest_preimages=self.digest_preimages,
+                            vocabularies=self.vocabularies,
                         )
                         errors.extend(sub_schema.validate(v, path=path, prefix=loc))
                     elif k in self.map_schemas:
@@ -527,15 +582,83 @@ class RecordSchema:
                         f"{path}: {self.name} field {loc!r} must not contain an absolute "
                         f"filesystem path ({v!r})"
                     )
+                elif v.startswith("<") and v.endswith(">"):
+                    if v not in ALLOWED_URL_HOSTS:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} has unapproved placeholder {v!r}"
+                        )
+                else:
+                    try:
+                        parsed = urllib.parse.urlsplit(v)
+                    except Exception as exc:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} is not a valid url: {exc}"
+                        )
+                        continue
+                    if not parsed.scheme or parsed.scheme not in ALLOWED_URL_SCHEMES:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} has unapproved url scheme "
+                            f"{parsed.scheme!r} ({sorted(ALLOWED_URL_SCHEMES)})"
+                        )
+                    elif parsed.username or parsed.password or ("@" in parsed.netloc):
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must not contain "
+                            "userinfo or credentials"
+                        )
+                    elif parsed.scheme == "file":
+                        clean_netloc = parsed.netloc.strip("/")
+                        if clean_netloc and clean_netloc not in ALLOWED_URL_HOSTS:
+                            errors.append(
+                                f"{path}: {self.name} file url {loc!r} has unapproved host "
+                                f"{parsed.netloc!r}"
+                            )
+                    else:
+                        host = parsed.hostname
+                        if not host or host not in ALLOWED_URL_HOSTS:
+                            approved_hosts = sorted(ALLOWED_URL_HOSTS)
+                            errors.append(
+                                f"{path}: {self.name} endpoint url {loc!r} has unapproved host "
+                                f"{host!r} (must be loopback or approved placeholder: "
+                                f"{approved_hosts})"
+                            )
+                        elif parsed.port not in ALLOWED_URL_PORTS:
+                            approved_ports = sorted(p for p in ALLOWED_URL_PORTS if p is not None)
+                            errors.append(
+                                f"{path}: {self.name} endpoint url {loc!r} has unapproved port "
+                                f"{parsed.port!r} (must be standard or gateway port: "
+                                f"{approved_ports})"
+                            )
             elif cat == ValueCategory.STRING:
                 if isinstance(v, list):
                     if not all(isinstance(x, str) for x in v):
                         errors.append(
                             f"{path}: {self.name} field {loc!r} must be a string or list of strings"
                         )
-                elif not isinstance(v, (str, int)):
+                elif not isinstance(v, str):
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must be a string"
+                    )
+            elif cat == ValueCategory.FRAME_LABEL:
+                if isinstance(v, int):
+                    if v < 0:
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must be a "
+                            "non-negative number or string label"
+                        )
+                elif isinstance(v, str):
+                    if not v.strip():
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must be a non-empty string label"
+                        )
+                    elif find_absolute_paths_in_text(v):
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must not contain an absolute "
+                            f"filesystem path ({v!r})"
+                        )
+                else:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a string label "
+                        "or non-negative number"
                     )
         return errors
 
@@ -666,6 +789,29 @@ RECEIPT_SCHEMA = RecordSchema(
         "supersedes.receipt_sha256": "receipt",
         "supersedes.candidate_commit_sha": "git-commit",
     },
+    vocabularies={
+        "schema_version": frozenset({
+            V061_ITEM_SCHEMA,
+            "talaria-v0.5.0-receipt-v1",
+            "talaria-v0.6.0-receipt-v1",
+        }),
+        "release": frozenset({V061_RELEASE, "0.5.0", "0.6.0"}),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 22)),
+        "tester": frozenset(V061_ROLE_LABELS),
+        "verdict": frozenset(VERDICTS),
+        "install.kind": frozenset({"source-checkout", "wheel"}),
+        "install.version_reported": frozenset({V061_RELEASE, "0.5.0", "0.6.0"}),
+        "harness.kind": frozenset({"repository-tooling", "scratch-capture", "manual"}),
+        "evidence.screenshots_read_by": frozenset(V061_ROLE_LABELS),
+        "screenshots_read_by": frozenset(V061_ROLE_LABELS),
+        "narrative.kind": frozenset({
+            "prose",
+            "manual",
+            "reported-live-matrix",
+            "step-sequence",
+            "reported-live-dispatch",
+        }),
+    },
 )
 
 INSTALL_RECEIPT_SCHEMA = RecordSchema(
@@ -698,6 +844,16 @@ INSTALL_RECEIPT_SCHEMA = RecordSchema(
         "candidate.wheel_sha256": "wheel",
         "install.sha256": "wheel",
     },
+    vocabularies={
+        "schema_version": frozenset({
+            V050_INSTALL_SCHEMA,
+            "talaria-v0.6.0-install-v1",
+            V061_INSTALL_SCHEMA,
+        }),
+        "tester": frozenset(V061_ROLE_LABELS) | frozenset(TESTERS),
+        "candidate.version": frozenset({V061_RELEASE, "0.6.0", "0.5.0"}),
+        "install.version_reported": frozenset({V061_RELEASE, "0.6.0", "0.5.0"}),
+    },
 )
 
 CAPTURE_METADATA_SCHEMA = RecordSchema(
@@ -711,7 +867,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "height": ValueCategory.COUNT,
         "dpi": ValueCategory.COUNT,
         "scale": ValueCategory.COUNT,
-        "frame": ValueCategory.STRING,
+        "frame": ValueCategory.FRAME_LABEL,
         "frame_digest": ValueCategory.DIGEST,
         "frame_digests": ValueCategory.DIGEST,
         "digests": ValueCategory.DIGEST,
@@ -725,7 +881,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "session_id": ValueCategory.GATEWAY_SESSION_ID,
         "format": ValueCategory.CLOSED_VOCABULARY,
         "schema_version": ValueCategory.CLOSED_VOCABULARY,
-        "title": ValueCategory.CLOSED_VOCABULARY,
+        "title": ValueCategory.STRING,
         "geometry": ValueCategory.OBJECT,
         "terminal": ValueCategory.OBJECT,
         "source_digest_sha256": ValueCategory.DIGEST,
@@ -826,6 +982,50 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "text_twin.frame_sha256": "rendered-frame",
         "text_twin.frame_digest": "rendered-frame",
     },
+    vocabularies={
+        "format": frozenset({"ansi", "text", "png", "json", "jsonl", "svg", "binary"}),
+        "schema_version": frozenset({
+            "talaria-v0.6.1-capture-v1",
+            "talaria-capture-metadata-v1",
+            "talaria-v0.6.0-capture-v1",
+            "talaria-v0.5.0-capture-v1",
+        }),
+        "capture_kind": frozenset({
+            "screenshot",
+            "terminal-frame",
+            "wire-slice",
+            "pty-result",
+            "probe",
+            "trace",
+        }),
+        "case": frozenset(f"live-{i:02d}" for i in range(1, 22)) | frozenset({
+            "probe-1",
+            "probe-2",
+            "matrix",
+            "harness-self-check",
+        }),
+        "schema": frozenset({
+            "v061-item",
+            "v060-item",
+            "v050-item",
+            "receipt",
+            "capture-metadata",
+            "pixel-measurements",
+        }),
+        "purpose": frozenset({
+            "workflow-demonstration",
+            "visual-inspection",
+            "regression-check",
+            "timing-verification",
+            "probe",
+            "self-check",
+        }),
+        "tester": frozenset(V061_ROLE_LABELS),
+        "session.profile": frozenset({"default", "talaria", "hermes", "minimal", "debug"}),
+        "self_check.algorithm": frozenset({"sha256", "md5", "exact-bytes", "hash"}),
+        "self_check.stable_control": frozenset({"ok", "passed", "stable", "verified", "none"}),
+        "self_check.status": frozenset({"passed", "failed", "refused", "skipped", "ok"}),
+    },
 )
 
 PIXEL_MEASUREMENTS_SCHEMA = RecordSchema(
@@ -854,6 +1054,13 @@ PIXEL_MEASUREMENTS_SCHEMA = RecordSchema(
     },
     digest_preimages={
         "sha256": "rendered-frame",
+    },
+    vocabularies={
+        "schema_version": frozenset({
+            "talaria-v0.6.1-measurements-v1",
+            "talaria-pixel-measurements-v1",
+            "talaria-v0.6.0-measurements-v1",
+        }),
     },
 )
 
@@ -909,6 +1116,14 @@ ATTESTATION_ITEM_SCHEMA = RecordSchema(
     digest_preimages={
         "harness_commit": "git-commit",
         "commit": "git-commit",
+    },
+    vocabularies={
+        "tester": frozenset(V061_ROLE_LABELS),
+        "capturing_role": frozenset(V061_ROLE_LABELS),
+        "install_kind": frozenset({"source-checkout", "wheel"}),
+        "harness_kind": frozenset({"repository-tooling", "scratch-capture", "manual"}),
+        "screenshots_read_by": frozenset(V061_ROLE_LABELS),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 22)),
     },
 )
 
@@ -1525,6 +1740,26 @@ def _extract_png_capture_metadata(data: bytes) -> dict[str, Any] | None:
     return None
 
 
+def _extract_twin_digest_from_doc(doc: dict[str, Any]) -> str | None:
+    digest = (
+        doc.get("twin_digest")
+        or doc.get("twin_sha256")
+        or (
+            doc.get("text_twin", {}).get("sha256")
+            if isinstance(doc.get("text_twin"), dict)
+            else None
+        )
+        or (
+            doc.get("text_twin", {}).get("twin_digest")
+            if isinstance(doc.get("text_twin"), dict)
+            else None
+        )
+    )
+    if isinstance(digest, str) and _V061_DIGEST.fullmatch(digest):
+        return digest
+    return None
+
+
 def _find_capture_time_twin_digest(
     png_path: Path,
     *,
@@ -1535,7 +1770,7 @@ def _find_capture_time_twin_digest(
 
     Checks:
     1. Screenshot PNG's talaria-evidence chunk.
-    2. Sibling capture metadata sidecars (<stem>.json, <stem>.metadata.json, capture-metadata.json).
+    2. Per-screenshot capture metadata sidecars (<stem>.json, <stem>.metadata.json).
     Returns the 64-character hex digest if found, or None.
     """
     stem = png_path.stem
@@ -1545,56 +1780,30 @@ def _find_capture_time_twin_digest(
         try:
             doc = _extract_png_capture_metadata(png_file.read_bytes())
             if doc:
-                digest = (
-                    doc.get("twin_digest")
-                    or doc.get("twin_sha256")
-                    or (
-                        doc.get("text_twin", {}).get("sha256")
-                        if isinstance(doc.get("text_twin"), dict)
-                        else None
-                    )
-                    or (
-                        doc.get("text_twin", {}).get("twin_digest")
-                        if isinstance(doc.get("text_twin"), dict)
-                        else None
-                    )
-                )
-                if isinstance(digest, str) and _V061_DIGEST.fullmatch(digest):
+                digest = _extract_twin_digest_from_doc(doc)
+                if digest:
                     return digest
         except Exception:
             pass
 
-    # 2. Check sibling capture metadata sidecars
-    sidecar_candidates = [
+    # 2. Check per-screenshot capture metadata sidecars
+    per_screenshot_sidecars = [
         png_path.with_suffix(".json"),
         png_path.parent / f"{stem}.metadata.json",
-        png_path.parent / "capture-metadata.json",
     ]
-    for cand in sidecar_candidates:
+    for cand in per_screenshot_sidecars:
         if cand in listed:
             cand_file = receipt_dir / cand
             if cand_file.is_file():
                 try:
                     doc = json.loads(cand_file.read_text(encoding="utf-8"))
                     if isinstance(doc, dict):
-                        digest = (
-                            doc.get("twin_digest")
-                            or doc.get("twin_sha256")
-                            or (
-                                doc.get("text_twin", {}).get("sha256")
-                                if isinstance(doc.get("text_twin"), dict)
-                                else None
-                            )
-                            or (
-                                doc.get("text_twin", {}).get("twin_digest")
-                                if isinstance(doc.get("text_twin"), dict)
-                                else None
-                            )
-                        )
-                        if isinstance(digest, str) and _V061_DIGEST.fullmatch(digest):
+                        digest = _extract_twin_digest_from_doc(doc)
+                        if digest:
                             return digest
                 except Exception:
                     pass
+
     return None
 
 
@@ -2623,6 +2832,12 @@ def _validate_v061_receipt(
                         errors.append(
                             "screenshots have neither a text twin nor a recorded human read "
                             "(screenshots_read_by and screenshots_read_at in receipt)"
+                        )
+                        break
+                    if read_by not in V061_ROLE_LABELS:
+                        errors.append(
+                            f"screenshots_read_by must be a closed-set role label "
+                            f"({', '.join(V061_ROLE_LABELS[:-1])}, or {V061_ROLE_LABELS[-1]})"
                         )
                         break
     except HarnessError as exc:

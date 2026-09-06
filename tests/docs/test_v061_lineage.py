@@ -38,6 +38,7 @@ from scripts.acceptance.v050_receipt import (
     RecordSchema,
     SchemaRegistry,
     ValueCategory,
+    _find_capture_time_twin_digest,
     _png_chunk_errors,
     _public_evidence_roots,
     _validate_v061_install,
@@ -117,7 +118,7 @@ def _conforming_receipt(
                 "live-01-01-selected.png": _sha256(receipt_dir / "live-01-01-selected.png")
             },
             "files_listed_at": "2026-09-06",
-            "screenshots_read_by": "reviewer",
+            "screenshots_read_by": "controller",
             "screenshots_read_at": "2026-09-06",
         },
     }
@@ -803,7 +804,7 @@ def _attestation(**overrides: Any) -> dict[str, Any]:
         "expected": "the derived theme applies live and persists",
         "install_kind": "source-checkout",
         "harness_kind": "scratch-capture",
-        "screenshots_read_by": "reviewer",
+        "screenshots_read_by": "controller",
         "screenshots_read_at": "2026-09-06",
     }
     attestation.update(overrides)
@@ -1253,6 +1254,30 @@ def test_screenshot_twin_or_human_read_validation(tmp_path: Path) -> None:
     errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
     assert errors == []
 
+    # 6a. Human read attestation missing timestamp is refused
+    receipt_missing_ts = json.loads(json.dumps(receipt))
+    del receipt_missing_ts["evidence"]["screenshots_read_at"]
+    errs = _validate_v061_receipt(
+        receipt_missing_ts, receipt_path=receipt_path, verify_files=True
+    )
+    assert any("screenshots have neither a text twin nor a recorded human read" in e for e in errs)
+
+    # 6b. Human read attestation missing reader is refused
+    receipt_missing_reader = json.loads(json.dumps(receipt))
+    del receipt_missing_reader["evidence"]["screenshots_read_by"]
+    errs = _validate_v061_receipt(
+        receipt_missing_reader, receipt_path=receipt_path, verify_files=True
+    )
+    assert any("screenshots have neither a text twin nor a recorded human read" in e for e in errs)
+
+    # 6c. Invalid role label for reader is refused
+    receipt_invalid_role = json.loads(json.dumps(receipt))
+    receipt_invalid_role["evidence"]["screenshots_read_by"] = "unapproved-reader"
+    errs = _validate_v061_receipt(
+        receipt_invalid_role, receipt_path=receipt_path, verify_files=True
+    )
+    assert any("screenshots_read_by must be a closed-set role label" in e for e in errs)
+
 
 # ── Gate 4: convert file scanning and clean abort ─────────────────────────
 
@@ -1322,10 +1347,35 @@ def test_convert_refuses_when_screenshot_twin_has_no_capture_binding(
             listed_at="2026-09-06",
             repo_root=repo,
         )
+    assert "refusing to convert — nothing was written" in str(caught.value)
     expected_msg = (
         "is not bound by capture-time twin_digest (twin was not produced at capture time)"
     )
     assert expected_msg in str(caught.value)
+    # Refusal happens before anything is copied or written to output
+    assert not output.exists() or not list(output.iterdir())
+
+
+def test_convert_refuses_invalid_screenshots_read_by_role(tmp_path: Path) -> None:
+    repo, _early, _candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01"
+    _filed_thin_receipt(evidence)
+
+    output = tmp_path / "converted"
+    attestation = _attestation()
+    attestation["screenshots_read_by"] = "not-a-valid-role"
+    attestation["screenshots_read_at"] = "2026-09-06"
+
+    with pytest.raises(SystemExit) as caught:
+        v061_evidence.convert(
+            attestations={"live-01": attestation},
+            output_root=output,
+            listed_at="2026-09-06",
+            repo_root=repo,
+        )
+    assert "refusing to convert — nothing was written" in str(caught.value)
+    assert "screenshots_read_by must be a closed-set role label" in str(caught.value)
+    assert not output.exists() or not list(output.iterdir())
 
 
 def test_convert_accepts_when_screenshot_twin_is_bound_at_capture(
@@ -2080,3 +2130,389 @@ def test_receipt_supersedes_schema_support(tmp_path: Path) -> None:
         "supersedes.receipt_sha256 must be a 64-character SHA-256 digest" in e
         for e in errors
     )
+
+
+def test_record_schema_requires_vocabulary_for_closed_vocabulary_fields() -> None:
+    """F-2: RecordSchema must fail construction if CLOSED_VOCABULARY field lacks vocabulary."""
+    with pytest.raises(ValueError) as exc:
+        RecordSchema(
+            name="test-unregistered",
+            declared_keys={"status": ValueCategory.CLOSED_VOCABULARY},
+        )
+    assert "closed-vocabulary field 'status' has no declared vocabulary" in str(exc.value)
+
+    with pytest.raises(ValueError) as exc:
+        RecordSchema(
+            name="test-nested-unregistered",
+            declared_keys={"sub": ValueCategory.OBJECT},
+            nested_schemas={"sub": {"role": ValueCategory.CLOSED_VOCABULARY}},
+        )
+    assert "nested closed-vocabulary field 'sub.role' has no declared vocabulary" in str(exc.value)
+
+
+def test_url_category_allowlist_enforcement() -> None:
+    """F-1: ValueCategory.URL enforces allowed schemes, approved loopback hosts, and no userinfo."""
+    schema = RecordSchema(
+        name="test-url",
+        declared_keys={"endpoint": ValueCategory.URL},
+    )
+    p = Path("test.json")
+
+    # Approved URL shapes
+    assert schema.validate({"endpoint": "ws://127.0.0.1:8765/api/ws"}, path=p) == []
+    assert schema.validate({"endpoint": "http://localhost:8000/v1"}, path=p) == []
+    assert schema.validate({"endpoint": "http://127.0.0.1:8080/"}, path=p) == []
+    assert schema.validate({"endpoint": "<gateway>"}, path=p) == []
+    assert schema.validate({"endpoint": "file://<candidate-root>/bin"}, path=p) == []
+
+    # Unapproved host
+    errs = schema.validate({"endpoint": "http://jeffs-macbook.local:9119/v1"}, path=p)
+    assert any("unapproved host" in e for e in errs)
+
+    # Userinfo / credentials
+    errs = schema.validate({"endpoint": "https://jeff:hunter2@10.0.1.44:9119/"}, path=p)
+    assert any("must not contain userinfo or credentials" in e for e in errs)
+
+    # Free text / non-URL
+    errs = schema.validate({"endpoint": "hello world"}, path=p)
+    assert any("unapproved url scheme" in e or "is not a valid url" in e for e in errs)
+
+    # Absolute filesystem path
+    errs = schema.validate({"endpoint": "/Users/jefcox/gw.sock"}, path=p)
+    assert any("must not contain an absolute filesystem path" in e for e in errs)
+
+    # Unapproved scheme
+    errs = schema.validate({"endpoint": "ftp://127.0.0.1:8000/resource"}, path=p)
+    assert any("unapproved url scheme" in e for e in errs)
+
+    # Unapproved port
+    errs = schema.validate({"endpoint": "http://127.0.0.1:9119/"}, path=p)
+    assert any("unapproved port" in e for e in errs)
+
+
+def test_frame_label_category_and_string_category() -> None:
+    """F-10: ValueCategory.STRING strictly accepts str/list[str].
+
+    FRAME_LABEL accepts non-negative int or string label.
+    """
+    schema = RecordSchema(
+        name="test-frame-string",
+        declared_keys={
+            "text": ValueCategory.STRING,
+            "frame": ValueCategory.FRAME_LABEL,
+        },
+    )
+    p = Path("test.json")
+
+    # STRING rejects int
+    errs = schema.validate({"text": 42, "frame": 0}, path=p)
+    assert any("field 'text' must be a string" in e for e in errs)
+
+    # STRING accepts str
+    assert schema.validate({"text": "hello", "frame": 0}, path=p) == []
+
+    # FRAME_LABEL accepts non-negative int or clean string
+    assert schema.validate({"text": "hello", "frame": 10}, path=p) == []
+    assert schema.validate({"text": "hello", "frame": "frame-10"}, path=p) == []
+
+    # FRAME_LABEL rejects negative int, empty string, or absolute path
+    errs = schema.validate({"text": "hello", "frame": -1}, path=p)
+    assert any("must be a non-negative number or string label" in e for e in errs)
+
+    errs = schema.validate({"text": "hello", "frame": ""}, path=p)
+    assert any("must be a non-empty string label" in e for e in errs)
+
+    errs = schema.validate({"text": "hello", "frame": "/tmp/frame"}, path=p)
+    assert any("must not contain an absolute filesystem path" in e for e in errs)
+
+
+def test_shared_sidecar_does_not_falsely_bind_other_screenshots_in_multi_screenshot_case(
+    tmp_path: Path,
+) -> None:
+    """F-4: Shared sidecar in multi-screenshot case does not falsely bind other PNGs."""
+    repo, _early, _candidate = _git_repo(tmp_path)
+    receipt_dir = repo / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    # Write two distinct screenshots
+    (receipt_dir / "a.png").write_bytes(_FRAME_ONE)
+    (receipt_dir / "b.png").write_bytes(_FRAME_ONE + b"\x00")
+    # Write twins for both
+    (receipt_dir / "a.txt").write_text("text a\n", encoding="utf-8")
+    (receipt_dir / "b.txt").write_text("text b\n", encoding="utf-8")
+    twin_a_sha = _sha256(receipt_dir / "a.txt")
+    twin_b_sha = _sha256(receipt_dir / "b.txt")
+
+    # Shared directory-level capture-metadata.json is ignored (no directory-level fallback)
+    meta_doc = {
+        "frame": 1,
+        "columns": 80,
+        "rows": 24,
+        "cell_width": 8,
+        "cell_height": 16,
+        "twin_digest": twin_a_sha,
+        "png_sha256": _sha256(receipt_dir / "a.png"),
+        "text_twin": {"file": "a.txt", "sha256": twin_a_sha},
+    }
+    (receipt_dir / "capture-metadata.json").write_text(json.dumps(meta_doc), encoding="utf-8")
+
+    listed = {
+        Path("a.png"): _sha256(receipt_dir / "a.png"),
+        Path("b.png"): _sha256(receipt_dir / "b.png"),
+        Path("a.txt"): twin_a_sha,
+        Path("b.txt"): twin_b_sha,
+        Path("capture-metadata.json"): _sha256(receipt_dir / "capture-metadata.json"),
+    }
+    # Directory-level capture-metadata.json binds neither screenshot
+    assert (
+        _find_capture_time_twin_digest(Path("a.png"), receipt_dir=receipt_dir, listed=listed)
+        is None
+    )
+    assert (
+        _find_capture_time_twin_digest(Path("b.png"), receipt_dir=receipt_dir, listed=listed)
+        is None
+    )
+
+    # Per-screenshot sidecar for a.png binds only a.png
+    a_meta = {
+        "frame": 1,
+        "columns": 80,
+        "rows": 24,
+        "cell_width": 8,
+        "cell_height": 16,
+        "twin_digest": twin_a_sha,
+    }
+    (receipt_dir / "a.json").write_text(json.dumps(a_meta), encoding="utf-8")
+    listed[Path("a.json")] = _sha256(receipt_dir / "a.json")
+    assert (
+        _find_capture_time_twin_digest(Path("a.png"), receipt_dir=receipt_dir, listed=listed)
+        == twin_a_sha
+    )
+    assert (
+        _find_capture_time_twin_digest(Path("b.png"), receipt_dir=receipt_dir, listed=listed)
+        is None
+    )
+
+    # Per-screenshot sidecar for b.png binds b.png
+    b_meta = {
+        "frame": 2,
+        "columns": 80,
+        "rows": 24,
+        "cell_width": 8,
+        "cell_height": 16,
+        "twin_digest": twin_b_sha,
+    }
+    (receipt_dir / "b.json").write_text(json.dumps(b_meta), encoding="utf-8")
+    listed[Path("b.json")] = _sha256(receipt_dir / "b.json")
+    assert (
+        _find_capture_time_twin_digest(Path("b.png"), receipt_dir=receipt_dir, listed=listed)
+        == twin_b_sha
+    )
+
+
+def test_capture_metadata_schema_category_enforcement() -> None:
+    """F-5: Verify each category in CAPTURE_METADATA_SCHEMA is strictly enforced."""
+    base_doc = {
+        "columns": 80,
+        "rows": 24,
+        "cell_width": 8,
+        "cell_height": 16,
+        "width": 640,
+        "height": 384,
+        "dpi": 72,
+        "scale": 1,
+        "frame": "frame-01",
+        "frame_digest": "a" * 64,
+        "frame_digests": ["a" * 64],
+        "digests": ["a" * 64],
+        "sha256": "b" * 64,
+        "twin_digest": "c" * 64,
+        "twin_sha256": "c" * 64,
+        "twin_path": "twin.txt",
+        "recorded_at": "2026-09-06T00:00:00Z",
+        "captured_at": "2026-09-06T00:00:00Z",
+        "timestamp": "2026-09-06T00:00:00Z",
+        "session_id": "ses-12345",
+        "format": "png",
+        "schema_version": "talaria-v0.6.1-capture-v1",
+        "title": "Clean capture title",
+        "geometry": {"columns": 80, "rows": 24, "cell_width": 8, "cell_height": 16},
+        "terminal": {"columns": 80, "rows": 24, "cell_width": 8, "cell_height": 16},
+        "source_digest_sha256": "d" * 64,
+        "source": "terminal",
+        "view_id": "view-1",
+        "capture_kind": "screenshot",
+        "candidate": {
+            "commit_sha": "e" * 40,
+            "entry_point": "src/main.py",
+            "source_module": "talaria/app.py",
+            "binary_sha256": "f" * 64,
+        },
+        "case": "live-01",
+        "schema": "v061-item",
+        "purpose": "workflow-demonstration",
+        "session": {
+            "durable_id": "ses-durable",
+            "runtime_id": "ses-runtime",
+            "request_id": "req-1",
+            "reply_seq": 1,
+            "profile": "default",
+            "title": "Session title",
+            "mode": "normal",
+        },
+        "first_ansi_offset": 0,
+        "final_ansi_offset": 100,
+        "frame_sha256": "1" * 64,
+        "first_frame_sha256": "1" * 64,
+        "png_sha256": "2" * 64,
+        "gateway": "ws://127.0.0.1:8765/api/ws",
+        "event_log": "events.jsonl",
+        "tester": "dedicated-tester",
+        "scope": "run",
+        "settling": {"quiet_seconds_per_window": 1, "timeout_seconds": 10, "windows": 2},
+        "self_check": {
+            "algorithm": "sha256",
+            "expected_rejection": "none",
+            "stable_control": "ok",
+            "status": "passed",
+        },
+        "text_twin": {
+            "file": "twin.txt",
+            "path": "twin.txt",
+            "sha256": "3" * 64,
+            "twin_digest": "3" * 64,
+            "digest": "3" * 64,
+            "frame_sha256": "4" * 64,
+            "frame_digest": "4" * 64,
+        },
+        "diagnostics_cells": ["a", "b"],
+        "diagnostics_crop_error": "none",
+    }
+    dummy_path = Path("docs/acceptance/v0.6.1/evidence/live-01/meta.json")
+    assert CAPTURE_METADATA_SCHEMA.validate(base_doc, path=dummy_path) == []
+
+    # Verify reviewer's 5 mutants specifically:
+    # 1. candidate.entry_point PATH: rejects absolute path
+    bad = json.loads(json.dumps(base_doc))
+    bad["candidate"]["entry_point"] = "/tmp/entry.py"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must not be an absolute filesystem path" in e for e in errs)
+
+    # 2. candidate.source_module PATH: rejects absolute path
+    bad = json.loads(json.dumps(base_doc))
+    bad["candidate"]["source_module"] = "/tmp/source.py"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must not be an absolute filesystem path" in e for e in errs)
+
+    # 3. event_log PATH: rejects absolute path
+    bad = json.loads(json.dumps(base_doc))
+    bad["event_log"] = "/tmp/event.log"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must not be an absolute filesystem path" in e for e in errs)
+
+    # 4. gateway URL: rejects external host, credentials, non-url
+    bad = json.loads(json.dumps(base_doc))
+    bad["gateway"] = "http://jeffs-macbook.local:9119/v1"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("unapproved host" in e for e in errs)
+
+    bad["gateway"] = "https://jeff:hunter2@10.0.1.44:9119/"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must not contain userinfo or credentials" in e for e in errs)
+
+    bad["gateway"] = "hello world"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("unapproved url scheme" in e or "is not a valid url" in e for e in errs)
+
+    # 5. candidate.commit_sha DIGEST: rejects non-digest string
+    bad = json.loads(json.dumps(base_doc))
+    bad["candidate"]["commit_sha"] = "not-a-commit-digest"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # Additional category checks to bind all declared assignments:
+    # 6. twin_path PATH: rejects absolute path
+    bad = json.loads(json.dumps(base_doc))
+    bad["twin_path"] = "/tmp/twin.txt"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must not be an absolute filesystem path" in e for e in errs)
+
+    # 7. text_twin.file PATH: rejects absolute path
+    bad = json.loads(json.dumps(base_doc))
+    bad["text_twin"]["file"] = "/tmp/twin.txt"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must not be an absolute filesystem path" in e for e in errs)
+
+    # 8. frame_digest DIGEST: rejects non-digest
+    bad = json.loads(json.dumps(base_doc))
+    bad["frame_digest"] = "invalid-hex"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # 9. twin_digest DIGEST: rejects non-digest
+    bad = json.loads(json.dumps(base_doc))
+    bad["twin_digest"] = "invalid-hex"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # 10. columns COUNT: rejects string
+    bad = json.loads(json.dumps(base_doc))
+    bad["columns"] = "eighty"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must be a non-negative number" in e for e in errs)
+
+    # 11. rows COUNT: rejects negative number
+    bad = json.loads(json.dumps(base_doc))
+    bad["rows"] = -5
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must be a non-negative number" in e for e in errs)
+
+    # 12. frame FRAME_LABEL: rejects absolute path or negative int
+    bad = json.loads(json.dumps(base_doc))
+    bad["frame"] = "/tmp/frame"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must not contain an absolute filesystem path" in e for e in errs)
+
+    bad["frame"] = -1
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must be a non-negative number or string label" in e for e in errs)
+
+    # Non-negative int frame accepted
+    good = json.loads(json.dumps(base_doc))
+    good["frame"] = 0
+    assert CAPTURE_METADATA_SCHEMA.validate(good, path=dummy_path) == []
+
+    # 13. tester CLOSED_VOCABULARY: rejects unapproved tester
+    bad = json.loads(json.dumps(base_doc))
+    bad["tester"] = "jefcox"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("not in registered closed vocabulary" in e for e in errs)
+
+    # 14. case CLOSED_VOCABULARY: rejects unapproved case
+    bad = json.loads(json.dumps(base_doc))
+    bad["case"] = "unapproved-case"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("not in registered closed vocabulary" in e for e in errs)
+
+    # 15. session.profile CLOSED_VOCABULARY: rejects unapproved profile
+    bad = json.loads(json.dumps(base_doc))
+    bad["session"]["profile"] = "unapproved-profile"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("not in registered closed vocabulary" in e for e in errs)
+
+    # 16. self_check.status CLOSED_VOCABULARY: rejects unapproved status
+    bad = json.loads(json.dumps(base_doc))
+    bad["self_check"]["status"] = "unapproved-status"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("not in registered closed vocabulary" in e for e in errs)
+
+    # 17. candidate.binary_sha256 DIGEST: rejects non-digest
+    bad = json.loads(json.dumps(base_doc))
+    bad["candidate"]["binary_sha256"] = "invalid"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # 18. text_twin.sha256 DIGEST: rejects non-digest
+    bad = json.loads(json.dumps(base_doc))
+    bad["text_twin"]["sha256"] = "invalid"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)

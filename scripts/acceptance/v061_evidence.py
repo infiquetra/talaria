@@ -1102,6 +1102,12 @@ def convert(
                         "(attestation.screenshots_read_by and attestation.screenshots_read_at)"
                     )
                     break
+                if read_by not in V061_ROLE_LABELS:
+                    item_refusals.append(
+                        f"attestation.screenshots_read_by must be a closed-set role label "
+                        f"({', '.join(V061_ROLE_LABELS)})"
+                    )
+                    break
             else:
                 twin_file = twin_candidates[0]
                 twin_digest = _sha256_file(files[twin_file])

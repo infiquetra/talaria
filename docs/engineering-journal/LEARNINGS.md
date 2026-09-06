@@ -102,11 +102,10 @@ twin remain acceptable only under the explicit compensating control of a recorde
 (`screenshots_read_by` and `screenshots_read_at`), while cases lacking both or carrying an unbound
 twin are refused.
 
-**Mechanism.** Conjunction without capture-time binding creates a false sense of auditability: an
-assembled-later text file satisfies directory-level checks even if it was reconstructed from pixels,
-transcribed with omissions, or generated from a different run. Binding the twin's SHA-256 digest
-into the capture metadata at render time guarantees that the twin was produced from the exact same
-cell snapshot as the rendered frame.
+**Mechanism.** The capture-time binding raises after-the-fact twin assembly from writing one
+file to writing two consistent ones, and defeats an independent later editor of the twin; it does
+not constrain the harness, and the only controls that do are the recorded human read and the fact
+that the pixels can be read.
 
 **Generalizable rule.** A multi-modal evidence pair (e.g. image and text twin) cannot rely on
 post-hoc directory conjunction for authenticity; the primary artifact must cryptographically bind
