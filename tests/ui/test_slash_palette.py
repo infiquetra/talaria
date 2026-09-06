@@ -24,6 +24,7 @@ from talaria.domain.commands import (
 from talaria.domain.composer_history import ComposerHistory
 from talaria.themes.builtins import BUILTIN_THEMES
 from talaria.transport.rpc import RpcOutcome
+from talaria.ui.palette import format_filtered_entry
 from talaria.ui.theme import BUILTIN_THEME_REGISTRY
 from tests.ui.conftest import event, live_app, paused_app, settle
 
@@ -33,7 +34,7 @@ _PICKER_COMMANDS = ("/models", "/profiles")
 
 def _picker_key_contract(text: str) -> tuple[str, str | None]:
     """Return the every-focus key and optional outside-composer alias."""
-    text = text.replace("`", "")
+    text = " ".join(text.replace("`", "").split())
     keys = tuple(dict.fromkeys(re.findall(r"\bF\d+\b", text)))
     outside_match = re.search(
         r"\b(F\d+) only outside composer focus\b",
@@ -77,16 +78,19 @@ async def test_picker_keys_match_command_rows_docs_and_launch_behavior(
 ) -> None:
     listing_app, _ = paused_app([event("gateway.ready", {})])
     async with listing_app.run_test() as pilot:
-        await pilot.press("slash")
-        await pilot.pause()
-        rendered_rows = {
-            command: next(
+        rendered_rows = {}
+        for command in _PICKER_COMMANDS:
+            for ch in command:
+                await pilot.press(ch)
+            await pilot.pause()
+            rendered_rows[command] = next(
                 row
                 for row in listing_app.palette.row_texts
                 if row.startswith(command)
             )
-            for command in _PICKER_COMMANDS
-        }
+            for _ in command:
+                await pilot.press("backspace")
+            await pilot.pause()
         await listing_app.shutdown_sources()
 
     guide = (_REPOSITORY_ROOT / "docs" / "terminal-ui.md").read_text(
@@ -264,13 +268,15 @@ async def test_ae2_filtering_is_prefix_only_case_insensitive() -> None:
         for ch in "/mod":
             await pilot.press(ch)
             await pilot.pause()
-        # Should be prefix "mod" -> /model, /models (case-insensitive)
+        # Prefix matches rank in Tier 0 before substring/description matches
         names = [e.name for e in app.palette.filtered_entries]
         assert "/model" in names
         assert "/models" in names
         assert "/status" not in names
-        # Prefix-only: "/amod" contains "mod" as substring at position 1 but not as prefix
-        assert "/amod" not in names
+        # Tiered ranking: prefix matches (/models, /model) rank before substring (/amod)
+        assert "/amod" in names
+        assert names.index("/models") < names.index("/amod")
+        assert names.index("/model") < names.index("/amod")
         # Cross-case
         app.composer.text = ""
         await pilot.pause()
@@ -1402,4 +1408,97 @@ async def test_121_stale_unsupported_pick_is_refused_never_dispatched() -> None:
         assert "/status" in notice
         assert "unsupported" in notice
         assert not app.palette.is_slash_active
+        await app.shutdown_sources()
+
+
+# ── #146 formatting, wrapping, badges, and single-dispatch ─────────────────
+
+
+def test_146_format_filtered_entry_inactive_wraps_at_most_two_lines() -> None:
+    """#146: Inactive entries wrap to at most 2 lines, clipped with '…' if longer.
+    Continuation lines are indented 19 spaces to preserve name column alignment.
+    """
+    long_desc = (
+        "This is a very long command description that is intended to span multiple "
+        "lines when rendered at an eighty column terminal width, clearly exceeding "
+        "two full lines so that inactive truncation can be verified."
+    )
+    entry = CommandEntry(
+        name="/longcmd",
+        description=long_desc,
+        category="Test",
+        availability="dispatch",
+    )
+
+    # Inactive: max 2 lines, clipped
+    formatted_inactive = format_filtered_entry(entry, active=False, max_width=80)
+    lines_inactive = formatted_inactive.split("\n")
+    assert len(lines_inactive) == 2
+    assert lines_inactive[0].startswith("/longcmd")
+    assert lines_inactive[1].startswith(" " * 19)
+    assert lines_inactive[1].endswith("…")
+
+    # Active: all lines expanded without clipping
+    formatted_active = format_filtered_entry(entry, active=True, max_width=80)
+    lines_active = formatted_active.split("\n")
+    assert len(lines_active) > 2
+    assert lines_active[0].startswith("/longcmd")
+    assert all(line.startswith(" " * 19) for line in lines_active[1:])
+    assert not lines_active[1].endswith("…")
+
+
+def test_146_format_filtered_entry_truthful_wire_badge() -> None:
+    """#146: Skills carrying a wire origin render [origin] before their description.
+    Rows without origin render no badge prefix.
+    """
+    skill_entry = CommandEntry(
+        name="/deploy",
+        description="Ship the release",
+        category="Skills",
+        availability="dispatch",
+        origin="local",
+    )
+    formatted_skill = format_filtered_entry(skill_entry, active=False, max_width=80)
+    assert "/deploy" in formatted_skill
+    assert "[local] Ship the release" in formatted_skill
+
+    registry_entry = CommandEntry(
+        name="/help",
+        description="Show help text",
+        category="Info",
+        availability="dispatch",
+        origin="",
+    )
+    formatted_reg = format_filtered_entry(registry_entry, active=False, max_width=80)
+    assert "[local]" not in formatted_reg
+    assert "[bundled]" not in formatted_reg
+    assert "[hub]" not in formatted_reg
+    assert "Show help text" in formatted_reg
+
+
+@pytest.mark.asyncio
+async def test_146_consume_selected_is_atomic_and_single_dispatch() -> None:
+    """#146: consume_selected returns the selected entry once and clears selection,
+    preventing duplicate execution on rapid user events.
+    """
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _catalog_with([("/status", "Gateway status", "Info", "dispatch")])
+    await app.render_catalog()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _type_filter(pilot, app, "/sta")
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/status"
+
+        # First consumption succeeds
+        first = app.palette.consume_selected()
+        assert first is not None
+        assert first.name == "/status"
+        assert app.palette.selected_entry is None
+
+        # Second consumption returns None
+        second = app.palette.consume_selected()
+        assert second is None
+
         await app.shutdown_sources()

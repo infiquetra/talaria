@@ -33,6 +33,7 @@ from talaria.domain.commands import (
     decode_catalog,
     decode_collapsed_paste,
     decode_slash_exec,
+    filter_commands,
     local_command,
     parse_command_line,
     parse_speed,
@@ -990,3 +991,234 @@ def test_121_a_local_pick_resolves_before_the_catalogue() -> None:
     assert isinstance(resolution, LocalInvocation)
     assert resolution.command.action == "bar"
     assert resolution.argument == ""
+
+
+# ── #146 skill origin provenance and tiered filtering ──────────────────────
+
+
+def test_146_skill_origin_decoding_and_badge_truthfulness() -> None:
+    """#146: Skills carry wire origin (bundled/hub/local). Badges are legal ONLY
+    on skill rows carrying that wire field. Tests cover:
+    - all three wire values: bundled, hub, local
+    - absence of the field: origin='', badge=''
+    - unexpected value: carried verbatim (e.g. 'forge')
+    - registry and local rows: origin='', badge=''
+    """
+    reply = catalog_reply(
+        pairs=[
+            ["/help", "Show help"],
+            ["/deploy", "Ship it"],
+            ["/review", "Code review"],
+            ["/research", "Deep research"],
+            ["/custom", "Unexpected origin skill"],
+            ["/legacy", "Skill without origin field"],
+        ],
+        skills={
+            "/deploy": {"origin": "local"},
+            "/review": {"origin": "bundled"},
+            "research": {"origin": "hub"},  # without leading slash in skills dict
+            "/custom": {"origin": "forge"},  # unexpected value carried verbatim
+            "/legacy": {"usage": 1},  # absence of origin field
+        },
+    )
+    catalog = decode_catalog(reply)
+
+    # Local skill
+    deploy = catalog.entry_for("/deploy")
+    assert deploy is not None
+    assert deploy.origin == "local"
+    assert deploy.badge == "local"
+
+    # Bundled skill
+    review = catalog.entry_for("/review")
+    assert review is not None
+    assert review.origin == "bundled"
+    assert review.badge == "bundled"
+
+    # Hub skill (keyed without slash in dictionary)
+    research = catalog.entry_for("/research")
+    assert research is not None
+    assert research.origin == "hub"
+    assert research.badge == "hub"
+
+    # Unexpected value is carried verbatim rather than dropped
+    custom = catalog.entry_for("/custom")
+    assert custom is not None
+    assert custom.origin == "forge"
+    assert custom.badge == "forge"
+
+    # Absence of origin field yields empty origin and empty badge
+    legacy = catalog.entry_for("/legacy")
+    assert legacy is not None
+    assert legacy.origin == ""
+    assert legacy.badge == ""
+
+    # Registry row has NO origin and NO badge
+    help_entry = catalog.entry_for("/help")
+    assert help_entry is not None
+    assert help_entry.origin == ""
+    assert help_entry.badge == ""
+
+    # Talaria-local controls have NO origin and NO badge
+    models_entry = catalog.entry_for("/models")
+    assert models_entry is not None
+    assert models_entry.origin == ""
+    assert models_entry.badge == ""
+
+
+def test_146_section_ordering_overlap_and_remainder() -> None:
+    """#146: Section order:
+    1. Talaria controls
+    2. Gateway categories in wire delivery order
+    3. Skills (alphabetical by slash name)
+    4. Uncategorised (rendered ONLY when non-empty)
+
+    Overlap: A key in both a category and skills renders once, in its category
+    section, carrying its origin badge.
+    Remainder: A pair with neither category nor skill membership goes to
+    Uncategorised, unbadged.
+    Empty sections are never returned.
+    """
+    reply = {
+        "pairs": [
+            ["/help", "Show help"],
+            ["/model", "Pick a model"],
+            ["/moa", "Mixture of agents"],
+            ["/deploy", "Deploy release"],
+            ["/build", "Build project"],
+            ["/orphan", "Command with no category and no skill"],
+        ],
+        "categories": [
+            {"name": "Info", "pairs": [["/help", "Show help"]]},
+            {
+                "name": "Session",
+                "pairs": [
+                    ["/model", "Pick a model"],
+                    ["/moa", "Mixture of agents"],
+                ],
+            },
+            {"name": "EmptyCategory", "pairs": []},
+        ],
+        "skills": {
+            "/moa": {"origin": "hub"},  # overlap: in Session category AND in skills
+            "/deploy": {"origin": "local"},
+            "/build": {"origin": "bundled"},
+        },
+    }
+    catalog = decode_catalog(reply)
+    sections = catalog.by_section()
+
+    # Section keys and ordering: Talaria, Info, Session, Skills, Uncategorised
+    # EmptyCategory must NOT be present
+    assert "EmptyCategory" not in sections
+    section_names = list(sections.keys())
+    assert section_names == ["Talaria", "Info", "Session", "Skills", "Uncategorised"]
+
+    # Overlap: /moa is in Session category section (not Skills), carrying origin badge "hub"
+    session_cmds = [e.name for e in sections["Session"]]
+    assert "/moa" in session_cmds
+    moa_entry = next(e for e in sections["Session"] if e.name == "/moa")
+    assert moa_entry.badge == "hub"
+
+    # Skills section: /build and /deploy (sorted alphabetically by slash name)
+    skills_cmds = [e.name for e in sections["Skills"]]
+    assert skills_cmds == ["/build", "/deploy"]
+    assert sections["Skills"][0].badge == "bundled"
+    assert sections["Skills"][1].badge == "local"
+
+    # Remainder: /orphan is in Uncategorised, unbadged
+    uncategorised_cmds = [e.name for e in sections["Uncategorised"]]
+    assert uncategorised_cmds == ["/orphan"]
+    assert sections["Uncategorised"][0].badge == ""
+
+
+def test_146_filter_commands_matches_badge_and_section() -> None:
+    """#146: filter-as-you-type matches section names and badge text as well as
+    names and descriptions, so typing 'hub' or 'local' narrows to that origin
+    on demand without fragmenting the list into three sections.
+    """
+    reply = {
+        "pairs": [
+            ["/help", "Show help"],
+            ["/agent-launcher", "Launch agents"],
+            ["/researcher", "Literature search"],
+        ],
+        "categories": [
+            {"name": "Info", "pairs": [["/help", "Show help"]]},
+        ],
+        "skills": {
+            "/agent-launcher": {"origin": "local"},
+            "/researcher": {"origin": "hub"},
+        },
+    }
+    catalog = decode_catalog(reply)
+
+    # Filter by badge "local"
+    local_results = filter_commands(catalog, "local")
+    local_names = [e.name for e in local_results]
+    assert "/agent-launcher" in local_names
+    assert "/researcher" not in local_names
+
+    # Filter by badge "hub"
+    hub_results = filter_commands(catalog, "hub")
+    hub_names = [e.name for e in hub_results]
+    assert "/researcher" in hub_names
+    assert "/agent-launcher" not in hub_names
+
+    # Filter by section "skills"
+    skills_results = filter_commands(catalog, "skills")
+    skills_names = [e.name for e in skills_results]
+    assert "/agent-launcher" in skills_names
+    assert "/researcher" in skills_names
+    assert "/help" not in skills_names
+
+
+def test_146_filter_commands_three_tiers_and_sorting() -> None:
+    """#146: filter_commands implements 3-tier ranking:
+    - Tier 0: name prefix match
+    - Tier 1: name substring match
+    - Tier 2: description, badge, or section match
+    Unsupported entries are omitted. Within tiers, Talaria-local controls
+    sort first, then gateway categories, then skills.
+    """
+    reply = catalog_reply(
+        pairs=[
+            ["/model", "Pick a model"],
+            ["/amod", "Another command containing mod"],
+            ["/status", "Check status for model"],
+            ["/density", "Toggle compact display mode"],  # unsupported
+            ["/other", "Completely unrelated"],
+        ],
+    )
+    catalog = decode_catalog(reply)
+
+    results = filter_commands(catalog, "mod")
+    names = [e.name for e in results]
+
+    # /density is unsupported so it must be omitted
+    assert "/density" not in names
+    # /other does not match "mod" so it must be omitted
+    assert "/other" not in names
+
+    # Tier 0 (name prefix): /models (Talaria local) and /model (gateway)
+    # Tier 1 (name substring): /amod
+    # Tier 2 (description match): /status ("Check status for model")
+    assert names.index("/models") < names.index("/amod")
+    assert names.index("/model") < names.index("/amod")
+    assert names.index("/amod") < names.index("/status")
+
+    # Within Tier 0: /models is Talaria-local, so it sorts before /model (Configuration)
+    assert names.index("/models") < names.index("/model")
+
+
+def test_146_filter_commands_empty_query_returns_all_runnable() -> None:
+    """#146: An empty query returns all runnable entries sorted with Talaria first."""
+    reply = catalog_reply()
+    catalog = decode_catalog(reply)
+
+    results = filter_commands(catalog, "")
+    assert len(results) > 0
+    # First entries should be Talaria category
+    assert results[0].category == "Talaria"
+    # Unsupported entries omitted
+    assert not any(e.availability == "unsupported" for e in results)

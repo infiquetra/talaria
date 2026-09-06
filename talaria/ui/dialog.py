@@ -126,6 +126,7 @@ class PickerDialog(ModalScreen[str | None]):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._source = source
         self._stack: list[Stage] = [source.root()]
+        self._dismissed = False
         self._refusal = ""
         self._title: Static | None = None
         self._filter: Static | None = None
@@ -303,6 +304,9 @@ class PickerDialog(ModalScreen[str | None]):
         grows one, ``left``/``right`` are the first two keys that collide, and
         this paragraph is where to start reading.
         """
+        if self._dismissed:
+            event.stop()
+            return
         key = event.key
         selection = self.selection
 
@@ -384,6 +388,7 @@ class PickerDialog(ModalScreen[str | None]):
             self._stack.pop()
             await self._repaint()
             return
+        self._dismissed = True
         self.dismiss(None)
 
     async def _choose(self) -> None:
@@ -397,6 +402,7 @@ class PickerDialog(ModalScreen[str | None]):
             return
         outcome = self._source.descend(self.depth, choice)
         if isinstance(outcome, str):
+            self._dismissed = True
             self.dismiss(outcome)
             return
         self._refusal = ""
@@ -488,6 +494,7 @@ class ConfirmDialog(ModalScreen[bool]):
         self._labels = (cancel_label, proceed_label)
         #: 0 is cancel and it is where the dialog opens — see the row constants.
         self._active = 0
+        self._dismissed = False
         self._title: Static | None = None
         self._hint: Static | None = None
         self._rows: list[Static] = []
@@ -553,9 +560,13 @@ class ConfirmDialog(ModalScreen[bool]):
         pressing enter. Every other key leaves the dialog exactly as it was
         rather than doing something adjacent.
         """
+        if self._dismissed:
+            event.stop()
+            return
         key = event.key
         if key == "escape":
             event.stop()
+            self._dismissed = True
             self.dismiss(False)
             return
         if key in ("up", "down"):
@@ -566,5 +577,6 @@ class ConfirmDialog(ModalScreen[bool]):
             return
         if key == "enter":
             event.stop()
+            self._dismissed = True
             self.dismiss(self._active == 1)
             return

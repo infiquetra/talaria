@@ -178,10 +178,17 @@ class CommandEntry:
     description: str
     category: str = ""
     availability: Availability = "dispatch"
+    origin: str = ""
+    is_skill: bool = False
 
     @property
     def marker(self) -> str:
         return AVAILABILITY_MARKER[self.availability]
+
+    @property
+    def badge(self) -> str:
+        """Truthful provenance badge. Legal ONLY on skill rows carrying wire origin."""
+        return self.origin
 
 
 @dataclass(frozen=True)
@@ -205,6 +212,10 @@ class CommandCatalog:
     #: than merged into it: nothing here is dispatchable, and nothing downstream
     #: reads it for routing. Only string-valued rows survive the decode.
     commands_meta: Mapping[str, str] = field(default_factory=dict)
+    #: The gateway's ``skills`` map, carrying installed skills.
+    skills: Mapping[str, Any] = field(default_factory=dict)
+    #: The order of gateway categories as delivered on the wire.
+    categories_order: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def gateway_entries(self) -> tuple[CommandEntry, ...]:
@@ -217,6 +228,95 @@ class CommandCatalog:
     @property
     def local_entries(self) -> tuple[CommandEntry, ...]:
         return tuple(e for e in self.entries if e.availability == "talaria-local")
+
+    def section_for(self, entry: CommandEntry) -> str:
+        """Return the section name for an entry under the D5 placement ruling.
+
+        Rules:
+        - Talaria-local controls -> 'Talaria'
+        - If the entry has an explicit gateway category -> that category
+        - If the entry is a skill -> 'Skills'
+        - Otherwise -> 'Uncategorised'
+        """
+        if entry.category.lower() == "talaria" or entry.availability == "talaria-local":
+            return "Talaria"
+        if entry.category:
+            return entry.category
+        lowered = entry.name.lower()
+        bare = lowered.lstrip("/")
+        slash = f"/{bare}"
+        if (
+            entry.is_skill
+            or slash in self.skills
+            or bare in self.skills
+            or lowered in self.skills
+        ):
+            return "Skills"
+        return "Uncategorised"
+
+    def by_section(self) -> dict[str, tuple[CommandEntry, ...]]:
+        """Group entries into labelled sections per the D5 placement ruling.
+
+        Section order:
+        1. Talaria controls
+        2. Gateway categories in wire delivery order (categories_order)
+        3. Any remaining categories
+        4. Skills (sorted alphabetically by slash name)
+        5. Uncategorised (rendered ONLY when non-empty)
+
+        Empty sections are never returned.
+        """
+        grouped: dict[str, list[CommandEntry]] = {}
+        for entry in self.entries:
+            section = self.section_for(entry)
+            grouped.setdefault(section, []).append(entry)
+
+        result: dict[str, tuple[CommandEntry, ...]] = {}
+
+        # 1. Talaria
+        if "Talaria" in grouped and grouped["Talaria"]:
+            result["Talaria"] = tuple(grouped["Talaria"])
+
+        # 2. Gateway categories in wire order
+        seen_cats = {"talaria", "skills", "uncategorised"}
+        for cat in self.categories_order:
+            if cat in grouped and grouped[cat]:
+                result[cat] = tuple(grouped[cat])
+                seen_cats.add(cat.lower())
+
+        # 3. Any additional categories
+        for cat, entries in grouped.items():
+            if cat.lower() not in seen_cats:
+                if entries:
+                    result[cat] = tuple(entries)
+                    seen_cats.add(cat.lower())
+
+        # 4. Skills (sorted alphabetically by slash name)
+        if "Skills" in grouped and grouped["Skills"]:
+            result["Skills"] = tuple(
+                sorted(grouped["Skills"], key=lambda e: e.name.lower())
+            )
+
+        # 5. Uncategorised (rendered ONLY when non-empty)
+        if "Uncategorised" in grouped and grouped["Uncategorised"]:
+            result["Uncategorised"] = tuple(grouped["Uncategorised"])
+
+        return result
+
+    def by_category(self) -> dict[str, tuple[CommandEntry, ...]]:
+        """Group entries by their category string."""
+        groups: dict[str, list[CommandEntry]] = {}
+        for entry in self.entries:
+            groups.setdefault(entry.category, []).append(entry)
+        return {cat: tuple(entries) for cat, entries in groups.items()}
+
+    def by_origin(self) -> dict[str, tuple[CommandEntry, ...]]:
+        """Group entries by their truthful provenance badge."""
+        groups: dict[str, list[CommandEntry]] = {}
+        for entry in self.entries:
+            groups.setdefault(entry.badge, []).append(entry)
+        return {badge: tuple(entries) for badge, entries in groups.items()}
+
 
     def canonical(self, name: str) -> str:
         """Resolve an alias through the gateway's own ``canon`` map.
@@ -315,6 +415,21 @@ def decode_catalog(result: Any) -> CommandCatalog:
         return unavailable_catalog(f"{CATALOG_UNAVAILABLE}: it carried no command list")
 
     categories = _category_index(result.get("categories"))
+    raw_categories = result.get("categories")
+    categories_order: tuple[str, ...] = ()
+    if isinstance(raw_categories, list):
+        categories_order = tuple(
+            str(cat_dict.get("name"))
+            for cat_dict in raw_categories
+            if isinstance(cat_dict, Mapping) and isinstance(cat_dict.get("name"), str)
+        )
+
+    raw_skills = result.get("skills")
+    skills: dict[str, Any] = {}
+    if isinstance(raw_skills, Mapping):
+        skills = {
+            str(k): v for k, v in raw_skills.items() if isinstance(k, str)
+        }
     local_entries = _local_entries()
     # Preserve the existing browse order and its first-screen unsupported
     # evidence as local controls are added. ``/theme``, ``/bar``, and
@@ -348,6 +463,23 @@ def decode_catalog(result: Any) -> CommandCatalog:
             continue
         seen.add(lowered)
         category = categories.get(lowered, "")
+        origin = ""
+        bare_name = lowered.lstrip("/")
+        slash_name = f"/{bare_name}"
+        is_skill = (
+            slash_name in skills or bare_name in skills or lowered in skills
+        )
+        if is_skill:
+            skill_payload = (
+                skills.get(slash_name)
+                or skills.get(bare_name)
+                or skills.get(lowered)
+            )
+            if isinstance(skill_payload, Mapping):
+                raw_origin = skill_payload.get("origin")
+                if isinstance(raw_origin, str) and raw_origin.strip():
+                    origin = raw_origin.strip().lower()
+
         entries.append(
             CommandEntry(
                 name=name,
@@ -356,6 +488,8 @@ def decode_catalog(result: Any) -> CommandCatalog:
                 availability=(
                     "unsupported" if _is_client_local(name, category) else "dispatch"
                 ),
+                origin=origin,
+                is_skill=is_skill,
             )
         )
 
@@ -373,6 +507,8 @@ def decode_catalog(result: Any) -> CommandCatalog:
         warning=warning if isinstance(warning, str) else "",
         available=True,
         commands_meta=_commands_meta(result.get("commands")),
+        skills=skills,
+        categories_order=categories_order,
     )
 
 
@@ -381,6 +517,73 @@ def unavailable_catalog(reason: str) -> CommandCatalog:
     return CommandCatalog(
         entries=_local_entries(), canon={}, available=False, failure=reason
     )
+
+
+def filter_commands(
+    catalog: CommandCatalog | None, query: str
+) -> tuple[CommandEntry, ...]:
+    """Filter runnable catalogue entries across name, description, badge, and section.
+
+    Matches case-insensitively and ranks results in three tiers:
+    - Tier 0: query matches the start of the command name (prefix match)
+    - Tier 1: query matches a substring of the command name
+    - Tier 2: query matches description, origin badge, or section name
+
+    Within each tier, entries are ordered following the D5 section order:
+    Talaria-local controls first, then gateway categories in wire order,
+    then Skills (alphabetical by slash name), then Uncategorised.
+    Unsupported entries are omitted as in all slash filtering.
+    """
+    if catalog is None:
+        entries = _local_entries()
+    else:
+        entries = tuple(
+            e for e in catalog.entries if e.availability in ("dispatch", "talaria-local")
+        )
+
+    def entry_sort_key(e: CommandEntry) -> tuple[int, str, str]:
+        if catalog is None:
+            return (0, "", e.name.lower())
+        sec = catalog.section_for(e)
+        if sec.lower() == "talaria":
+            sec_rank = 0
+        elif sec in catalog.categories_order:
+            sec_rank = 1 + catalog.categories_order.index(sec)
+        elif sec.lower() == "skills":
+            sec_rank = 1000
+        elif sec.lower() == "uncategorised":
+            sec_rank = 2000
+        else:
+            sec_rank = 500
+        return (sec_rank, sec.lower(), e.name.lower())
+
+    clean_query = query.lower().removeprefix("/").strip()
+    if not clean_query:
+        return tuple(sorted(entries, key=entry_sort_key))
+
+    matched: list[tuple[int, tuple[int, str, str], CommandEntry]] = []
+    for entry in entries:
+        name_clean = entry.name.lower().removeprefix("/")
+        desc_clean = entry.description.lower()
+        badge_clean = entry.badge.lower()
+        section_clean = (catalog.section_for(entry).lower() if catalog else "talaria")
+
+        if name_clean.startswith(clean_query):
+            tier = 0
+        elif clean_query in name_clean:
+            tier = 1
+        elif (
+            clean_query in desc_clean
+            or (badge_clean and (clean_query == badge_clean or clean_query in badge_clean))
+            or (section_clean and clean_query in section_clean)
+        ):
+            tier = 2
+        else:
+            continue
+        matched.append((tier, entry_sort_key(entry), entry))
+
+    matched.sort(key=lambda item: (item[0], item[1]))
+    return tuple(entry for _, _, entry in matched)
 
 
 def _is_client_local(name: str, category: str) -> bool:
@@ -562,6 +765,7 @@ def _local_entries() -> tuple[CommandEntry, ...]:
             ),
             category="Talaria",
             availability="talaria-local",
+            origin="",
         )
         for command in TALARIA_LOCAL_COMMANDS
     )
