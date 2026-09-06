@@ -2,6 +2,75 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-09-06
+
+### Receipt identity is split by key, and conversion never back-fills (#150's second ruling)
+
+**Decision.** A v0.6.1 receipt carries three identities, each its own key:
+`candidate_commit_sha` (the Talaria commit whose code ran), `install` (how the
+product was installed — a source checkout at that commit, or a wheel with its
+filename and digest), and `harness` (what wrote the receipt, its commit
+required only when that harness is this repository's own tooling). The retired
+`harness_commit` key is rejected outright, so no reader ever has to guess which
+artefact a commit refers to. The tester field is a closed set of role labels
+supplied by the controller's attested session-to-role map; the literal
+`not recorded` is permitted only on gateway, session, terminal, and
+harness.identity; private identifiers (pane coordinates, session names) are
+refused wherever a string can hide; and `v061_evidence.py convert` turns the
+filed receipts into the ruled shape from three admissible sources in order —
+what the receipt says, what is on disk, an attestation recorded with its date —
+with nothing back-filled and no attestation defaulted.
+
+**Rationale.** The tester's three objections were consumer findings against the
+first contract: one key held two facts (the frozen target under test and,
+sometimes, nothing at all about the harness), two receipts had already grown a
+richer shape than the schema allowed, and a pane identifier had already reached
+a public tree. Splitting by key makes every identity checkable independently;
+the attestation rule makes provenance an argument rather than a guess; and the
+all-or-nothing convert refuses the one thing the ruling names unforgivable —
+inventing a value no source can support.
+
+**Revisit when.** A future lineage needs a fourth identity key (add it beside
+the three and retire nothing), or a live case genuinely captures neither the
+receipt's nor the disk's story — which is a re-capture, not a conversion
+loosening.
+
+## 2026-09-05
+
+### The v0.6.1 acceptance lineage rides the version-agnostic workflow, not a parallel one
+
+**Decision.** Receipt routing in `scripts/acceptance/v050_receipt.py` names
+three shapes — v0.5.0, v0.6.0, v0.6.1 — and fails loudly on any unrecognized
+`schema_version` instead of falling through to the oldest rules; the fallthrough
+was the release-blocking defect (the run's thirteen filed receipts all failed on
+v0.5.0 fields). The v0.6.1 generator (`scripts/acceptance/v061_evidence.py`)
+imports the v0.6.0 install probe, digests, and exclusive writes rather than
+copying them, refuses to record before the version bump, requires a
+human-supplied `applies_to_candidate` sentence for every receipt filed on an
+earlier head, and takes the expected receipt count as a parameter. The gate
+identifier is `v0-6-1-daily-driver`, declared once in its own analysis document.
+
+**Rationale.** The release workflow is version-agnostic: it resolves the
+manifest, gate, and evidence root from the tag. A lineage that hooks into that
+path needs no workflow edits at release time and cannot drift from it. The
+`applies_to_candidate` attestation replaces the v0.5.0 harness-bytes-identity
+check for live receipts, because a live test rides the frozen head of the wave
+it ran on and the honest statement is a sentence naming what has not changed —
+enforced by the verifier, inspected by the reviewer. The no-waiver READY rule
+(pass 21, fail 0, blocked 0, reserved 0) is machine-enforced at both record and
+verify time; the tester field requires a bare role label because session and
+pane names are number-suffixed in this run, making a digit a reliable tell.
+
+**Rejected alternatives.** Conforming the filed receipts to the v0.6.0 shape
+(false release and tester values). A parallel workflow per release (drift).
+Re-running the generator over tester receipts (they are live products, not
+transcriptions). Widening the v0.5.0 harness-identity check to the v0.6.1
+heads (the attestation carries more information than a diff can).
+
+**Revisit when.** A v0.7.0 lineage lands (add the branch beside the others and
+retire nothing), or a live case legitimately needs a waiver path — which should
+be an explicit contract change, not a tooling edit.
+
 ## 2026-09-04
 
 ### v0.5.0 receipt re-verification is retired (superseded)

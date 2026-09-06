@@ -27,6 +27,7 @@ two would let a moved file read as a failed gate, which is the wrong diagnosis.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import re
 import sys
 from pathlib import Path
@@ -83,6 +84,50 @@ def find_verdict(identifier: str, docs: Path = _DOCS) -> str:
     return found[0][1]
 
 
+def horizons(
+    docs: Path = _DOCS, *, today: dt.date | None = None
+) -> list[tuple[str, str, dt.date]]:
+    """Every declared gate with its review-by date, in identifier order.
+
+    The horizon test in ``tests/docs/test_gating_documents.py`` fires the day a
+    gate expires, on every pull request, with no line of anyone's diff pointing
+    at the document — a cliff with no countdown. This walks the same blocks the
+    verdict reader walks and returns the dates, so a caller can print how many
+    days each gate has left and the cliff becomes visible a month early.
+
+    Raises :class:`LookupError` for a duplicate gate id or a block whose
+    ``review-by`` is not an ISO date — the same ambiguity and shape rules the
+    verdict path enforces.
+    """
+    if today is None:
+        today = dt.date.today()
+    found: dict[str, tuple[str, str, dt.date]] = {}
+    for path in sorted(docs.rglob("*.md")):
+        for match in _GATE_BLOCK.finditer(path.read_text(encoding="utf-8")):
+            fields = _fields(match.group(1))
+            identifier = fields.get("id")
+            verdict = fields.get("verdict")
+            raw_date = fields.get("review-by")
+            if identifier is None or verdict is None or raw_date is None:
+                raise LookupError(
+                    f"{path}: a gate block is missing id, verdict, or review-by"
+                )
+            try:
+                review_by = dt.date.fromisoformat(raw_date)
+            except ValueError as error:
+                raise LookupError(
+                    f"{path}: gate {identifier!r} declares review-by {raw_date!r}, "
+                    f"which is not an ISO date"
+                ) from error
+            if identifier in found:
+                raise LookupError(f"gate id {identifier!r} is declared more than once")
+            found[identifier] = (verdict, str(path), review_by)
+    return [
+        (identifier, verdict, review_by)
+        for identifier, (verdict, _path, review_by) in sorted(found.items())
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="gate_verdict.py",
@@ -91,7 +136,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--id",
         dest="identifier",
-        required=True,
         metavar="GATE-ID",
         help="the `id` declared in the document's fenced gate block",
     )
@@ -100,7 +144,31 @@ def main(argv: list[str] | None = None) -> int:
         metavar="VERDICT",
         help="exit 1 unless the declared verdict is exactly this",
     )
+    parser.add_argument(
+        "--horizons",
+        action="store_true",
+        help="print every gate's verdict and days remaining on its review-by, "
+        "turning an expiring horizon into a countdown",
+    )
     args = parser.parse_args(argv)
+
+    if args.horizons:
+        if args.identifier is not None or args.expect is not None:
+            parser.error("--horizons takes no --id or --expect")
+        try:
+            rows = horizons()
+        except LookupError as error:
+            print(f"gate_verdict: {error}", file=sys.stderr)
+            return 2
+        today = dt.date.today()
+        for identifier, verdict, review_by in rows:
+            print(
+                f"{identifier} verdict={verdict} review-by={review_by.isoformat()} "
+                f"days-remaining={(review_by - today).days}"
+            )
+        return 0
+    if args.identifier is None:
+        parser.error("either --id or --horizons is required")
 
     try:
         verdict = find_verdict(args.identifier)

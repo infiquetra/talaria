@@ -762,6 +762,44 @@ V060_ITEM_SCHEMA = "talaria-v0.6.0-receipt-v1"
 V060_INSTALL_SCHEMA = "talaria-v0.6.0-install-v1"
 V060_RELEASE = "0.6.0"
 
+V050_ITEM_SCHEMA = "talaria-v0.5.0-receipt-v1"
+V050_INSTALL_SCHEMA = "talaria-v0.5.0-install-v1"
+V061_ITEM_SCHEMA = "talaria-v0.6.1-receipt-v1"
+V061_INSTALL_SCHEMA = "talaria-v0.6.1-install-v1"
+V061_RELEASE = "0.6.1"
+
+#: A herdr pane identifier (``wFB:pT``) — a workspace coordinate, not a
+#: product fact, and exactly the class of identifier the tester's objection
+#: and the ruling on infiquetra/talaria#150 keep out of the public tree.
+_V061_PANE_ID = re.compile(r"\bw[A-Za-z0-9]+:p[A-Za-z0-9]+\b")
+#: A session name from this run's vocabulary: a role word plus a numbered
+#: suffix (``worker-2``, ``controller-3``, ``worker-3-3``). The closed role
+#: labels (``worker-lane-a``) carry letters, not digits, so they survive.
+_V061_SESSION_NAME = re.compile(
+    r"\b(?:worker|controller|reviewer|architect|investigator|tester|operator)"
+    r"-\d+(?:-\d+)*\b"
+)
+#: The literal a conversion may write only where the ruling allows it; the
+#: never-fields reject it by their own type rules, and the error below names
+#: the clause rather than leaving it to look like a typo.
+_V061_NOT_RECORDED = "not recorded"
+#: The live-case inventory the v0.6.1 run owes. A pattern, never a literal in
+#: code: the manifest declares ``counts.expected_receipts`` and the verifier
+#: reads it from there (the architect ruling on infiquetra/talaria#150).
+_V061_ITEM = re.compile(r"^live-(0[1-9]|1[0-9]|2[0-1])$")
+#: The closed role-label set from the ruling on infiquetra/talaria#150. A
+#: session or pane name never belongs here: the labels name roles, and the
+#: controller supplies the session-to-role map as attestations rather than
+#: letting a session name stand in for one.
+V061_ROLE_LABELS = ("dedicated-tester", "worker-lane-a", "worker-lane-b", "controller")
+#: Kept for the not-recorded and identifier rules above; the tester field
+#: itself is judged by membership in :data:`V061_ROLE_LABELS`.
+_V061_TESTER = re.compile(r"^[A-Za-z][A-Za-z-]*$")
+_V061_ISSUE = re.compile(
+    r"^(?:(?P<number>\d+)|https://github\.com/infiquetra/talaria/issues/(?P<url_number>\d+))$"
+)
+_V061_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
 
 def _validate_v060_receipt(
     receipt: dict[str, Any],
@@ -850,6 +888,315 @@ def _validate_v060_install(
     return errors
 
 
+def _v061_not_recorded_allowlist_errors(value: Any, *, path: str) -> list[str]:
+    """Refuse the `not recorded` literal everywhere the ruling does not permit it.
+
+    Written as an allowlist, not a denylist, because a denylist cannot cover a
+    field that does not exist yet: every string is walked, the literal is
+    permitted only under gateway, session, terminal, or at harness.identity,
+    and it is refused at every other path — today's prose fields and every
+    future one included (F-3: the never-list was an approximation of the
+    rule, and a pass receipt with an unrecorded observation slipped through).
+    """
+    if isinstance(value, str):
+        if value != _V061_NOT_RECORDED:
+            return []
+        head = path.partition(".")[0]
+        if head in ("gateway", "session", "terminal") or path == "harness.identity":
+            return []
+        where = path or "the receipt root"
+        return [
+            f"{where}: the literal 'not recorded' is permitted only on gateway, "
+            "session, terminal, or harness.identity"
+        ]
+    if isinstance(value, dict):
+        errors: list[str] = []
+        for key, item in value.items():
+            child = f"{path}.{key}" if path else str(key)
+            errors.extend(_v061_not_recorded_allowlist_errors(item, path=child))
+        return errors
+    if isinstance(value, list):
+        errors = []
+        for index, item in enumerate(value):
+            errors.extend(
+                _v061_not_recorded_allowlist_errors(item, path=f"{path}[{index}]")
+            )
+        return errors
+    return []
+
+
+def _v061_private_identifier_errors(value: Any, *, field: str) -> list[str]:
+    """Every known-shape private identifier nested inside a receipt.
+
+    A high-value FILTER for the shapes this run mints, not a boundary that
+    makes reading receipts unnecessary: two patterns — herdr pane
+    coordinates and role-word-plus-digit session names — scanned wherever a
+    string can hide, because a pane coordinate in a ``method`` sentence is as
+    private as one in a dedicated field (one filed receipt proved the
+    sentence is where it landed). ``_contains_home_path`` covers other
+    common leaks separately, and "private" is not a regex-expressible
+    property, so a receipt still gets read; this catches the known shapes so
+    the reading starts from a cleaner page (#150's F-5 framing).
+    """
+    if isinstance(value, str):
+        found: list[str] = []
+        if _V061_PANE_ID.search(value):
+            found.append("a terminal pane identifier")
+        if _V061_SESSION_NAME.search(value):
+            found.append("a session name")
+        return [f"{field} contains {label}" for label in found]
+    if isinstance(value, dict):
+        errors: list[str] = []
+        for key, item in value.items():
+            label = f"{field}.{key}" if field else str(key)
+            errors.extend(_v061_private_identifier_errors(item, field=label))
+        return errors
+    if isinstance(value, list):
+        errors = []
+        for index, item in enumerate(value):
+            errors.extend(
+                _v061_private_identifier_errors(item, field=f"{field}[{index}]")
+            )
+        return errors
+    return []
+
+
+def _validate_v061_receipt(
+    receipt: dict[str, Any],
+    *,
+    receipt_path: Path,
+    verify_files: bool = True,
+) -> list[str]:
+    """Return every defect in a v0.6.1 live-case receipt (#150's rulings).
+
+    Identity is split by key, not by convention: ``candidate_commit_sha``
+    names the Talaria commit whose code ran, ``install`` says how the product
+    was installed (a source checkout at that commit, or a wheel with its
+    filename and digest), and ``harness`` names what wrote the receipt — its
+    commit required only when the harness is this repository's own tooling,
+    because a scratch harness under a temporary directory has no commit and
+    says so with a null and an identity string. The retired ``harness_commit``
+    key is rejected outright, so no reader ever has to guess which artefact a
+    commit refers to.
+
+    The literal ``not recorded`` is permitted only where the ruling allows
+    it — gateway, session, terminal, harness.identity — and the fields the
+    ruling forbids it on carry a named error alongside their type rules.
+    Private identifiers (pane coordinates, session names) are refused the way
+    home paths are. Unknown extra keys are allowed, so the rich receipts keep
+    their detail; the two forbidden things are the retired key and private
+    identifiers.
+    """
+    errors: list[str] = []
+    if _contains_home_path(receipt):
+        errors.append("receipt contains the current user's home path")
+    errors.extend(_v061_private_identifier_errors(receipt, field="receipt"))
+    if receipt.get("schema_version") != V061_ITEM_SCHEMA:
+        errors.append(f"schema_version is not {V061_ITEM_SCHEMA}")
+    if receipt.get("release") != V061_RELEASE:
+        errors.append(f"release is not {V061_RELEASE}")
+    if "harness_commit" in receipt:
+        errors.append(
+            "harness_commit is retired: candidate_commit_sha, install, and harness "
+            "split the identities by key so no reader has to guess which "
+            "artefact a commit refers to"
+        )
+    item = receipt.get("checklist_item")
+    if not isinstance(item, str) or not _V061_ITEM.fullmatch(item):
+        errors.append("checklist_item must be a live-NN string with NN from 01 through 21")
+    title = receipt.get("title")
+    if not isinstance(title, str) or not title.strip():
+        errors.append("title must be a non-empty string")
+    issue = receipt.get("issue")
+    if not isinstance(issue, str) or not _V061_ISSUE.fullmatch(issue):
+        errors.append("issue must be the owning child's number or its talaria issue URL")
+    tester = receipt.get("tester")
+    if tester not in V061_ROLE_LABELS:
+        labels = ", ".join(V061_ROLE_LABELS[:-1]) + f", or {V061_ROLE_LABELS[-1]}"
+        errors.append(f"tester must be a closed-set role label ({labels})")
+    if receipt.get("verdict") not in VERDICTS:
+        errors.append("verdict must be pass, fail, blocked, or reserved")
+    candidate_commit = receipt.get("candidate_commit_sha")
+    if not isinstance(candidate_commit, str) or not _COMMIT.fullmatch(candidate_commit):
+        errors.append(
+            "candidate_commit_sha must be a full lowercase 40-character Git commit"
+        )
+    recorded_at = receipt.get("recorded_at")
+    if not isinstance(recorded_at, str):
+        errors.append("recorded_at must be an ISO-8601 timestamp")
+    else:
+        try:
+            dt.datetime.fromisoformat(recorded_at)
+        except ValueError:
+            errors.append("recorded_at must be an ISO-8601 timestamp")
+    # The allowlist walk subsumes the old never-list: the mandatory fields
+    # refuse the literal through their own type rules and through this walk,
+    # and no future prose field can inherit acceptance silently.
+    errors.extend(_v061_not_recorded_allowlist_errors(receipt, path=""))
+
+    try:
+        install = _object(receipt.get("install"), field="install")
+        install_kind = install.get("kind")
+        if install_kind not in ("source-checkout", "wheel"):
+            errors.append(
+                "install.kind must be source-checkout or wheel; the literal "
+                "'not recorded' is not one of them"
+            )
+        elif install_kind == "source-checkout":
+            install_commit = install.get("commit")
+            if install_commit != candidate_commit:
+                errors.append(
+                    "install.commit must be the receipt's candidate_commit_sha for a "
+                    "source-checkout install"
+                )
+        else:
+            filename = install.get("filename")
+            if not isinstance(filename, str) or not filename.strip():
+                errors.append("install.filename must be a non-empty string for a wheel")
+            install_sha = install.get("sha256")
+            if not isinstance(install_sha, str) or not _V061_DIGEST.fullmatch(install_sha):
+                errors.append("install.sha256 must be the wheel's SHA-256 digest")
+    except HarnessError as exc:
+        errors.append(str(exc))
+
+    try:
+        harness = _object(receipt.get("harness"), field="harness")
+        harness_kind = harness.get("kind")
+        if harness_kind not in ("repository-tooling", "scratch-capture", "manual"):
+            errors.append("harness.kind must be repository-tooling, scratch-capture, or manual")
+        harness_commit = harness.get("commit")
+        if harness_commit is None:
+            if harness_kind == "repository-tooling":
+                errors.append(
+                    "a repository-tooling harness must name its own commit in harness.commit"
+                )
+        elif not isinstance(harness_commit, str) or not _COMMIT.fullmatch(harness_commit):
+            errors.append("harness.commit must be a full 40-character commit or null")
+        harness_identity = harness.get("identity")
+        if harness_identity is not None and (
+            not isinstance(harness_identity, str) or not harness_identity.strip()
+        ):
+            errors.append("harness.identity must be a non-empty string or null")
+    except HarnessError as exc:
+        errors.append(str(exc))
+
+    try:
+        evidence = _object(receipt.get("evidence"), field="evidence")
+        narrative = evidence.get("narrative")
+        if narrative is not None:
+            if not isinstance(narrative, dict):
+                errors.append("evidence.narrative must be an object when present")
+            else:
+                for prose_field in ("method", "observation"):
+                    value = narrative.get(prose_field)
+                    if not isinstance(value, str) or not value.strip():
+                        errors.append(
+                            f"evidence.narrative.{prose_field} must be a non-empty string"
+                        )
+        files = evidence.get("files")
+        if not isinstance(files, dict) or not files:
+            errors.append("evidence.files must name every evidence file with its digest")
+            files = {}
+        receipt_dir = receipt_path.parent
+        listed: dict[Path, str] = {}
+        for raw_name, raw_digest in files.items():
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                errors.append("evidence.files keys must be non-empty relative paths")
+                continue
+            if not isinstance(raw_digest, str) or not _V061_DIGEST.fullmatch(raw_digest):
+                errors.append(f"evidence.files['{raw_name}'] must carry a SHA-256 digest")
+                continue
+            name = Path(raw_name)
+            if name.is_absolute() or raw_name.startswith("~") or ".." in name.parts:
+                errors.append(
+                    f"evidence.files['{raw_name}'] must stay inside the receipt's directory"
+                )
+                continue
+            listed[name] = raw_digest
+        if verify_files:
+            for name, digest in sorted(listed.items()):
+                target = (receipt_dir / name).resolve()
+                if not is_within(target, receipt_dir):
+                    errors.append(
+                        f"evidence.files['{name}'] resolves outside the receipt's directory"
+                    )
+                    continue
+                if not target.is_file():
+                    errors.append(f"evidence file is missing: {receipt_dir / name}")
+                    continue
+                if sha256_file(target) != digest:
+                    errors.append(f"evidence file does not match its digest: {receipt_dir / name}")
+            on_disk = {
+                path.relative_to(receipt_dir)
+                for path in receipt_dir.rglob("*")
+                if path.is_file() and path.name != "receipt.json"
+            }
+            for missing in sorted(on_disk - set(listed)):
+                errors.append(
+                    f"evidence file beside the receipt is not listed in evidence.files: {missing}"
+                )
+    except HarnessError as exc:
+        errors.append(str(exc))
+    return errors
+
+
+def _validate_v061_install(
+    install: dict[str, Any],
+    *,
+    expected_commit: str | None = None,
+    expected_wheel: str | None = None,
+) -> list[str]:
+    """Return every defect in a v0.6.1 install-probe receipt."""
+    errors: list[str] = []
+    if install.get("schema_version") != V061_INSTALL_SCHEMA:
+        errors.append(f"schema_version is not {V061_INSTALL_SCHEMA}")
+    if install.get("tester") != "operator":
+        errors.append("tester is not operator")
+    try:
+        candidate = _object(install.get("candidate"), field="candidate")
+        if expected_commit is not None and candidate.get("commit") != expected_commit:
+            errors.append("candidate.commit does not match the release candidate")
+        if expected_wheel is not None and candidate.get("wheel_sha256") != expected_wheel:
+            errors.append("candidate.wheel_sha256 does not match the release candidate")
+        if candidate.get("version") != V061_RELEASE:
+            errors.append(f"candidate.version is not {V061_RELEASE}")
+    except HarnessError as exc:
+        errors.append(str(exc))
+    try:
+        result = _object(install.get("install"), field="install")
+        if result.get("version_reported") != V061_RELEASE:
+            errors.append(f"install.version_reported is not {V061_RELEASE}")
+        if result.get("help_ok") is not True:
+            errors.append("install.help_ok is not true")
+    except HarnessError as exc:
+        errors.append(str(exc))
+    return errors
+
+
+def _commit_resolves(commit: str, *, repo_root: Path) -> bool:
+    """Whether ``commit`` names an object that exists in this repository."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _is_ancestor(commit: str, descendant: str, *, repo_root: Path) -> bool:
+    """Whether ``commit`` is an ancestor of ``descendant`` in this repository."""
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, descendant],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def _manifest_candidate(manifest: dict[str, Any]) -> dict[str, Any] | None:
     candidate = manifest.get("current_candidate", manifest.get("candidate"))
     if candidate is None:
@@ -934,6 +1281,17 @@ def verify_run(
             install_entries[raw_entry["receipt_path"]] = raw_entry
 
     active_receipt_names: set[str] = set()
+    v061_items: list[tuple[str, str]] = []
+    v061_expected = None
+    counts_block = manifest.get("counts")
+    if isinstance(counts_block, dict):
+        raw_expected = counts_block.get("expected_receipts")
+        if (
+            not isinstance(raw_expected, bool)
+            and isinstance(raw_expected, int)
+            and raw_expected >= 1
+        ):
+            v061_expected = raw_expected
     for path in current_receipt_paths:
         relative = _repo_relative(path, repo_root=repo_root)
         active_receipt_names.add(relative)
@@ -944,23 +1302,73 @@ def verify_run(
                 f"{relative}: active receipt has superseded evidence origin "
                 f"{_repo_relative(origin, repo_root=repo_root)}"
             )
-        if receipt.get("schema_version") == V060_ITEM_SCHEMA:
+        schema_version = receipt.get("schema_version")
+        if schema_version == V060_ITEM_SCHEMA:
             validator = _validate_v060_receipt(
                 receipt,
                 expected_commit=expected_commit,
                 expected_wheel=expected_wheel,
             )
-        else:
+        elif schema_version == V061_ITEM_SCHEMA:
+            validator = _validate_v061_receipt(
+                receipt, receipt_path=path, verify_files=True
+            )
+        elif schema_version == V050_ITEM_SCHEMA:
             validator = validate_receipt(
                 receipt,
                 verify_files=True,
                 expected_commit=expected_commit,
                 repo_root=repo_root,
             )
+        else:
+            # The routing this branch replaces: any unrecognized schema used
+            # to fall through to the v0.5.0 rules, so a receipt declaring a
+            # newer shape failed on every v0.5.0 field instead of being named
+            # unknown. Loud and specific is the fix the reviewer proved
+            # needed — with the v0.5.0 shape named above so the oldest
+            # receipts keep their own validator rather than reading unknown.
+            errors.append(
+                f"{relative}: unknown receipt schema_version {schema_version!r}; expected one of "
+                f"{V050_ITEM_SCHEMA}, {V060_ITEM_SCHEMA}, or {V061_ITEM_SCHEMA}"
+            )
+            continue
         for error in validator:
             errors.append(f"{relative}: {error}")
         harness_commit = receipt.get("harness_commit")
-        if (
+        if schema_version == V061_ITEM_SCHEMA:
+            # The v0.6.1 lineage replaces harness-identity with the manifest's
+            # per-receipt attestation: live receipts ride frozen wave heads,
+            # and `applies_to_candidate` says why each still applies. The
+            # v0.5.0 harness-bytes check below does not run for them — which
+            # is exactly why the candidate floor here is mechanical and
+            # fail-closed: the receipt's named commit must resolve in this
+            # repository and be an ancestor of what the manifest binds, or
+            # the old skip would leave nothing under the candidate at all
+            # (F-1: it failed toward accepting, and now it cannot).
+            item = receipt.get("checklist_item")
+            verdict = receipt.get("verdict")
+            receipt_commit = receipt.get("candidate_commit_sha")
+            if isinstance(receipt_commit, str) and _COMMIT.fullmatch(receipt_commit):
+                if not _commit_resolves(receipt_commit, repo_root=repo_root):
+                    errors.append(
+                        f"{relative}: candidate_commit_sha {receipt_commit[:12]} does not "
+                        f"resolve in this repository — a receipt may not name a commit "
+                        f"that exists nowhere"
+                    )
+                elif not _is_ancestor(
+                    receipt_commit, expected_commit, repo_root=repo_root
+                ):
+                    errors.append(
+                        f"{relative}: candidate_commit_sha {receipt_commit[:12]} is not an "
+                        f"ancestor of the manifest's candidate {expected_commit[:12]} — "
+                        f"the attestation sentence must explain a real lineage, not an "
+                        f"invented one"
+                    )
+            if isinstance(item, str):
+                if any(item == seen for seen, _ in v061_items):
+                    errors.append(f"checklist_item {item} is declared by more than one receipt")
+                v061_items.append((item, verdict if isinstance(verdict, str) else ""))
+        elif (
             current_harness_commit is not None
             and isinstance(harness_commit, str)
             and _COMMIT.fullmatch(harness_commit)
@@ -986,6 +1394,37 @@ def verify_run(
             ):
                 if entry.get(manifest_field) != receipt.get(receipt_field):
                     errors.append(f"manifest {manifest_field} does not match: {relative}")
+            if schema_version == V061_ITEM_SCHEMA:
+                receipt_commit = receipt.get("candidate_commit_sha")
+                if entry.get("candidate_commit_sha") != receipt_commit:
+                    errors.append(f"manifest candidate_commit_sha does not match: {relative}")
+                applies = entry.get("applies_to_candidate")
+                if receipt_commit == expected_commit:
+                    if applies != "same":
+                        errors.append(
+                            "applies_to_candidate must be 'same' when the receipt's "
+                            f"candidate_commit_sha equals the candidate's: {relative}"
+                        )
+                elif not isinstance(applies, str) or not applies.strip() or applies == "same":
+                    errors.append(
+                        f"applies_to_candidate must be a non-empty sentence naming the "
+                        f"unchanged surfaces since the receipt's commit: {relative}"
+                    )
+    if v061_expected is not None and v061_items:
+        # The no-waiver READY rule, machine-enforced: the manifest declares how
+        # many live receipts the run owes (a parameter read from the manifest,
+        # never a literal here), and every one of them must read pass.
+        if len(v061_items) != v061_expected:
+            errors.append(
+                f"{len(v061_items)} live receipts on disk, but counts.expected_receipts "
+                f"declares {v061_expected}"
+            )
+        non_pass = sorted(item for item, verdict in v061_items if verdict != "pass")
+        if non_pass:
+            errors.append(
+                "the READY rule has no waiver path: every live receipt must read pass, "
+                "got a non-pass verdict for " + ", ".join(non_pass)
+            )
 
     for relative in sorted(set(receipt_entries) - active_receipt_names):
         errors.append(f"manifest names an absent receipt: {relative}")
@@ -997,13 +1436,25 @@ def verify_run(
         install = read_json_object(path)
         if _contains_home_path(install):
             errors.append(f"{relative}: install receipt contains the current user's home path")
-        if install.get("schema_version") == V060_INSTALL_SCHEMA:
+        install_schema = install.get("schema_version")
+        if install_schema == V060_INSTALL_SCHEMA:
             for error in _validate_v060_install(
                 install,
                 expected_commit=expected_commit,
                 expected_wheel=expected_wheel,
             ):
                 errors.append(f"{relative}: {error}")
+        elif install_schema == V061_INSTALL_SCHEMA:
+            for error in _validate_v061_install(
+                install,
+                expected_commit=expected_commit,
+                expected_wheel=expected_wheel,
+            ):
+                errors.append(f"{relative}: {error}")
+        elif install_schema != V050_INSTALL_SCHEMA:
+            errors.append(
+                f"{relative}: unknown install receipt schema_version {install_schema!r}"
+            )
         try:
             install_candidate = _object(
                 install.get("candidate"), field=f"{relative}: candidate"
@@ -1142,11 +1593,25 @@ def _main(argv: list[str] | None = None) -> int:
             expected_commit = _string(
                 manifest_candidate.get("commit"), field="manifest.candidate.commit"
             )
-        errors = validate_receipt(
-            read_json_object(args.receipt),
-            verify_files=not args.skip_file_checks,
-            expected_commit=expected_commit,
-        )
+        receipt = read_json_object(args.receipt)
+        verify_files = not args.skip_file_checks
+        schema_version = receipt.get("schema_version")
+        if schema_version == V060_ITEM_SCHEMA:
+            errors = _validate_v060_receipt(receipt, expected_commit=expected_commit)
+        elif schema_version == V061_ITEM_SCHEMA:
+            # Machine-check a receipt as it is filed, before any manifest
+            # exists: the evidence inventory is verifiable from the receipt's
+            # own directory alone.
+            errors = _validate_v061_receipt(
+                receipt, receipt_path=args.receipt, verify_files=verify_files
+            )
+        else:
+            errors = validate_receipt(
+                receipt,
+                verify_files=verify_files,
+                expected_commit=expected_commit,
+                repo_root=_REPO_ROOT,
+            )
     elif args.command == "validate-matrix":
         errors = validate_matrix(args.directory)
     else:
