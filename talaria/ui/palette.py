@@ -158,7 +158,7 @@ def format_filtered_entry(
     if it exceeds 2 lines. Continuation lines are indented 19 spaces
     to align with the description column.
     """
-    badge_prefix = f"[{entry.badge}] " if entry.badge else ""
+    badge_prefix = f"[{entry.badge}] " if (entry.is_skill and entry.badge) else ""
     full_desc = f"{badge_prefix}{entry.description}".strip()
     desc_width = max(20, max_width - 19)
 

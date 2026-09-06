@@ -25,6 +25,7 @@ from talaria.domain.commands import (
     UNKNOWN_RESULT_NOTICE,
     CollapsedPaste,
     CommandCatalog,
+    CommandSection,
     GatewayInvocation,
     LocalInvocation,
     PasteThreshold,
@@ -1110,26 +1111,74 @@ def test_146_section_ordering_overlap_and_remainder() -> None:
 
     # Section keys and ordering: Talaria, Info, Session, Skills, Uncategorised
     # EmptyCategory must NOT be present
-    assert "EmptyCategory" not in sections
-    section_names = list(sections.keys())
-    assert section_names == ["Talaria", "Info", "Session", "Skills", "Uncategorised"]
+    assert "EmptyCategory" not in [s.label for s in sections]
+    section_labels = [s.label for s in sections]
+    assert section_labels == ["Talaria", "Info", "Session", "Skills", "Uncategorised"]
+    section_keys = [s.key for s in sections]
+    assert section_keys == [
+        ":talaria:",
+        ":category:Info",
+        ":category:Session",
+        ":skills:",
+        ":uncategorised:",
+    ]
+
+    by_label = {s.label: entries for s, entries in sections.items()}
 
     # Overlap: /moa is in Session category section (not Skills), carrying origin badge "hub"
-    session_cmds = [e.name for e in sections["Session"]]
+    session_cmds = [e.name for e in by_label["Session"]]
     assert "/moa" in session_cmds
-    moa_entry = next(e for e in sections["Session"] if e.name == "/moa")
+    moa_entry = next(e for e in by_label["Session"] if e.name == "/moa")
     assert moa_entry.badge == "hub"
 
     # Skills section: /build and /deploy (sorted alphabetically by slash name)
-    skills_cmds = [e.name for e in sections["Skills"]]
+    skills_cmds = [e.name for e in by_label["Skills"]]
     assert skills_cmds == ["/build", "/deploy"]
-    assert sections["Skills"][0].badge == "bundled"
-    assert sections["Skills"][1].badge == "local"
+    assert by_label["Skills"][0].badge == "bundled"
+    assert by_label["Skills"][1].badge == "local"
 
     # Remainder: /orphan is in Uncategorised, unbadged
-    uncategorised_cmds = [e.name for e in sections["Uncategorised"]]
+    uncategorised_cmds = [e.name for e in by_label["Uncategorised"]]
     assert uncategorised_cmds == ["/orphan"]
-    assert sections["Uncategorised"][0].badge == ""
+    assert by_label["Uncategorised"][0].badge == ""
+
+
+def test_146_section_collision_prevention() -> None:
+    """#146 (F-2): Wire categories named 'Talaria', 'Skills', or 'Uncategorised'
+    must not collide with Talaria internal sections or corrupt section grouping.
+    """
+    reply = {
+        "pairs": [
+            ["/audit", "Audit things"],
+            ["/inspect-wire", "Inspect things"],
+        ],
+        "categories": [
+            {"name": "Talaria", "pairs": [["/audit", "Audit things"]]},
+            {"name": "Skills", "pairs": [["/inspect-wire", "Inspect things"]]},
+        ],
+    }
+    catalog = decode_catalog(reply)
+    sections = catalog.by_section()
+
+    talaria_local_sec = CommandSection(key=":talaria:", label="Talaria")
+    wire_talaria_sec = CommandSection(key=":category:Talaria", label="Talaria")
+    wire_skills_sec = CommandSection(key=":category:Skills", label="Skills")
+
+    # Talaria-local section contains only local controls, NOT /audit
+    assert talaria_local_sec in sections
+    talaria_names = [e.name for e in sections[talaria_local_sec]]
+    assert "/audit" not in talaria_names
+    assert "/quit" in talaria_names
+
+    # Wire category 'Talaria' has its own section with sentinel key ':category:Talaria'
+    assert wire_talaria_sec in sections
+    wire_names = [e.name for e in sections[wire_talaria_sec]]
+    assert wire_names == ["/audit"]
+
+    # Wire category 'Skills' has key ':category:Skills', distinct from ':skills:'
+    assert wire_skills_sec in sections
+    wire_skills_names = [e.name for e in sections[wire_skills_sec]]
+    assert wire_skills_names == ["/inspect-wire"]
 
 
 def test_146_filter_commands_matches_badge_and_section() -> None:

@@ -69,6 +69,7 @@ from talaria.domain.commands import (
     SLASH_EXEC_METHOD,
     SUBAGENT_INTERRUPT_METHOD,
     CommandCatalog,
+    CommandEntry,
     GatewayInvocation,
     LocalInvocation,
     PasteThreshold,
@@ -4152,6 +4153,30 @@ class TalariaApp(App[None]):
 
     async def action_toggle_palette(self) -> None:
         await self.palette.toggle()
+
+    async def open_slash_palette(self, prefix: str = "") -> None:
+        """Open the slash-command palette filtered by ``prefix`` (#146)."""
+        await self.palette.show_slash(self.catalog, prefix)
+
+    async def select_slash_command(
+        self, entry: CommandEntry | None = None
+    ) -> CommandEntry | None:
+        """Consume and dispatch the selected slash command once (#146).
+
+        Guarantees single dispatch: consumes the entry via ``consume_selected``
+        (or uses the explicitly provided entry), closes the slash palette,
+        clears the composer, and dispatches through the single Submitted funnel.
+        """
+        picked = entry or self.palette.consume_selected()
+        if picked is None:
+            return None
+        await self.palette.hide_slash()
+        self.composer.text = ""
+        name = picked.name if picked.name.startswith("/") else f"/{picked.name}"
+        self.on_chat_text_area_submitted(
+            ChatTextArea.Submitted(self.composer.text_area, name)
+        )
+        return picked
 
     async def open_theme_picker(self) -> None:
         """Open theme mode at the currently applied session selection."""

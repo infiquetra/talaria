@@ -96,6 +96,14 @@ had to render unavailable fields as labelled rather than fabricating them.
 possible passing result and say so in the report: a docs-and-tests unit that proves the
 behavior holds is stronger than a gratuitous refactor that risks it.
 
+### AST introspection guards break when overriding framework lifecycle methods instead of handling events at the boundary (C7/#146)
+
+**Evidence.** Unit C7 implemented single-dispatch and duplicate-dismissal protection for modal dialogs (`talaria/ui/dialog.py`). An initial implementation overrode Textual's `ModalScreen.dismiss()` to return `AwaitComplete.nothing()` when already dismissed. While runtime behavior passed, `test_read_only_boundary_is_proved_by_ast_keymap_and_command_introspection` (`tests/ui/test_diff_viewer.py:990`) failed: the test's strict AST checks assert that direct imports and function calls match expected frozensets, flagging `nothing` as an unauthorized call and `AwaitComplete` as an unauthorized import. The repair moved the re-entrance guard to the user-input boundary (`on_key`, `_choose`, `_back`) using internal boolean state (`_dismissed`), leaving Textual's standard `dismiss()` untouched.
+
+**Mechanism.** Overriding framework lifecycle methods often pulls in internal framework types (`AwaitComplete`) and framework helper calls (`nothing()`). When AST static analysis enforces an explicit call-graph allowlist for architectural boundaries, adding framework shims fails AST assertions even if the runtime behavior is valid. Guarding re-entrance at the user-input layer (`on_key`) prevents double-invocation while preserving the exact framework call set and import tree.
+
+**Generalizable rule.** When guarding a screen or widget against duplicate event dispatch, guard at the event-handling boundary using internal state rather than overriding framework lifecycle methods that introduce new framework dependencies or call names.
+
 ## 2026-09-04
 
 ### A seam nobody calls after mount can secretly be an initializer — wiring it live turns its side effects into behavior
