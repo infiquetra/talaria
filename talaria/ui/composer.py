@@ -47,6 +47,7 @@ from talaria.domain.commands import PasteThreshold
 from talaria.domain.composer_history import abandon, move_down, move_up
 from talaria.ui.attach import detect_dropped_path
 from talaria.ui.literal import literal_text
+from talaria.ui.palette import PaletteRegion
 
 #: Shown in the empty composer. Carries both bindings because R12 asks that
 #: "submit versus newline" be discoverable without documentation.
@@ -161,15 +162,20 @@ class ChatTextArea(TextArea):
         # Both units claim keys in ChatTextArea._on_key, not in
         # TalariaApp.on_key. One handler site, one ordered predicate — grep
         # for _on_key must show a single site. The palette (C2) claims
-        # Up/Down/Enter/Esc/Tab while its filtered mode is active; history
-        # (C1) is inert while the palette is open. The palette opens on
-        # typed input, never on programmatic writes to composer.text (ruling
-        # 3), so history recall's direct text assignment must not open it.
+        # Up/Down/Enter/Esc/Tab while its filtered mode is active, plus
+        # PageUp/PageDown (C7, #146): paging is browsing, and letting a page
+        # key fall through to caret handling closes the very menu being
+        # browsed. History (C1) is inert while the palette is open. The
+        # palette opens on typed input, never on programmatic writes to
+        # composer.text (ruling 3), so history recall's direct text
+        # assignment must not open it.
         # The palette's active state lives in PaletteRegion (is_slash_active),
         # driven only by typed-input paths that compute the predicted text.
         if self._is_slash_palette_open() and event.key in (
             "up",
             "down",
+            "pageup",
+            "pagedown",
             "enter",
             "escape",
             "tab",
@@ -191,6 +197,11 @@ class ChatTextArea(TextArea):
                 return
             if event.key == "down":
                 palette.move_selection(1)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key in ("pageup", "pagedown"):
+                palette.move_selection(self._page_delta(palette, event.key))
                 event.stop()
                 event.prevent_default()
                 return
@@ -517,15 +528,31 @@ class ChatTextArea(TextArea):
                 ancestor.show_caret_location(True)
                 break
 
-    def _is_slash_palette_open(self) -> bool:
-        """Whether C2's slash-command palette claims Up/Down/Enter/Esc/Tab.
+    @staticmethod
+    def _page_delta(palette: PaletteRegion, key: str) -> int:
+        """One page of slash-menu rows, signed by the key (C7, #146).
 
-        While the filtered palette is active it claims those five keys and
-        history is inert. Not keyed to the F3 browse listing (PaletteRegion
-        showing as browse), which claims none of those keys. The active flag
-        lives in PaletteRegion and is driven only by typed input via
-        sync_slash, so programmatic writes (history recall, paste-collapse)
-        never open it — ruling 3.
+        The count is knowable, not a constant: the region is laid out by the
+        time an operator presses a key, so its height names the visible rows
+        and one row of that is the always-mounted header. Clamping at the
+        ends comes free from :meth:`PaletteRegion.move_selection`, which is
+        what makes PageUp/PageDown share Down/Up's personality instead of
+        wrapping where arrows clamp. Before first layout (or off-screen) the
+        height reads 0 and the page is a single row — the only honest answer
+        when nothing is visible yet.
+        """
+        page = max(1, palette.size.height - 1)
+        return -page if key == "pageup" else page
+
+    def _is_slash_palette_open(self) -> bool:
+        """Whether C2's slash-command palette claims its keys.
+
+        While the filtered palette is active it claims Up/Down/Enter/Esc/Tab
+        plus PageUp/PageDown (C7, #146) and history is inert. Not keyed to the
+        F3 browse listing (PaletteRegion showing as browse), which claims none
+        of those keys. The active flag lives in PaletteRegion and is driven
+        only by typed input via sync_slash, so programmatic writes (history
+        recall, paste-collapse) never open it — ruling 3.
         """
         try:
             app = self.app

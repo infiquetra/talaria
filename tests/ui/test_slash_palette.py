@@ -1886,3 +1886,77 @@ async def test_long_descriptions_use_the_screen_they_have() -> None:
     wide = await first_row_length((100, 30))
     assert narrow <= 80, narrow
     assert wide > narrow, (narrow, wide)
+
+
+# ── PageUp/PageDown browse the slash menu (C7, #146) ──────────────────────
+#
+# The probe's "selection None" was the aftermath of the menu closing: the
+# page keys fell through to caret handling, which calls hide_slash. They
+# are claimed now, and route to move_selection with a page-sized delta.
+
+
+@pytest.mark.asyncio
+async def test_pagedown_pages_without_closing_the_menu() -> None:
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    entries = [(f"/cmd{i:02d}", f"desc {i}", "Info", "dispatch") for i in range(20)]
+    app.catalog = _catalog_with(entries)
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert app.palette.selected_index == 0
+
+        await pilot.press("pagedown")
+        await pilot.pause()
+
+        # The menu is still open on a real selection, and the composer text
+        # is untouched — no caret paging leaked through.
+        assert app.palette.is_slash_active
+        assert app.palette.selected_entry is not None
+        assert app.composer.text == "/"
+        # A page, not a step, sized to what is visible: region height minus
+        # the always-mounted header row.
+        page = max(1, app.palette.size.height - 1)
+        assert page > 1
+        assert app.palette.selected_index == min(len(entries) - 1, page)
+        assert app.palette.selected_entry.name == f"/cmd{min(len(entries) - 1, page):02d}"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_page_keys_clamp_like_arrows_at_both_ends() -> None:
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    entries = [(f"/cmd{i:02d}", f"desc {i}", "Info", "dispatch") for i in range(20)]
+    app.catalog = _catalog_with(entries)
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+
+        # PageUp at the top stays at the top, exactly like Up.
+        await pilot.press("pageup")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert app.palette.selected_index == 0
+
+        # PageDown past the end clamps at the last entry, exactly like Down.
+        await pilot.press("pagedown")
+        await pilot.pause()
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert app.palette.selected_index == len(entries) - 1
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/cmd19"
+
+        # And PageUp from the end moves back up by a page.
+        page = max(1, app.palette.size.height - 1)
+        await pilot.press("pageup")
+        await pilot.pause()
+        assert app.palette.selected_index == len(entries) - 1 - page
+        await app.shutdown_sources()
