@@ -825,7 +825,8 @@ _CONNECTION_NOTICE: Final[Mapping[str, str]] = {
     "auth_failed": "authentication failed — the gateway rejected the credential",
 }
 
-#: The notice lines the connected transition's clear may erase (#161): the
+#: The notice lines the connected transition's clear may erase (live-17's
+#: transfer case): the
 #: lifecycle's own placeholders, written by this same callback, whose whole
 #: purpose is to come off the line when the connection lands. Detailed
 #: variants (``"<line> · <detail>"``) are covered by the prefix match, which
@@ -2781,7 +2782,8 @@ class TalariaApp(App[None]):
             # ``test_a_background_connections_drop_does_not_write_the_focused_notice``,
             # which asserts both halves: the rows learn, the focused view does not.
             if state == "connected" and not line:
-                # #161 (live-17's transfer case): the connected transition's
+                # Live-17's transfer case (the rehearsal's dropped-attach
+                # finding): the connected transition's
                 # clear exists to take the lifecycle's own placeholder off the
                 # line — the ``connecting…`` a fresh dial leaves and the
                 # ``reconnecting…`` a drop leaves. An unrelated explanation

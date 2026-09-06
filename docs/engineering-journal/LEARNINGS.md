@@ -4,7 +4,7 @@
 
 ## 2026-09-06
 
-### An async rebuild that mounts one row per await must be serialized against itself (#161)
+### An async rebuild that mounts one row per await must be serialized against itself (#146)
 
 **Evidence.** The live rehearsal's recurrence of #146's F-1: the cross-tier model filter drew
 adjacent duplicated headings. Probing the tester's own captured catalogue through every one of

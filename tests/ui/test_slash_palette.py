@@ -2096,7 +2096,7 @@ def test_page_delta_floor_on_an_unmounted_region() -> None:
     assert ChatTextArea._page_delta(region, "pageup") == -1
 
 
-# ── the #161 recurrence of #146's F-1 ───────────────────────────────────
+# ── the recurrence of #146's F-1, from the live rehearsal ────────────────
 
 
 @pytest.mark.asyncio
@@ -2138,7 +2138,7 @@ async def test_concurrent_rebuilds_draw_one_set_of_rows_not_two() -> None:
 async def test_a_non_contiguous_section_order_still_draws_each_heading_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#161's general statement: the heading is a function of the grouping,
+    """#146's general statement: the heading is a function of the grouping,
     not of adjacency. Whatever order the filtered list arrives in — the shape
     a tier-first filter produces before the display grouping repairs it — each
     section's heading is drawn exactly once, at its first row. Against the

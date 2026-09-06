@@ -330,7 +330,7 @@ class PaletteRegion(Vertical):
         #: :attr:`_rows` at every site that mounts or clears rows.
         self._row_entries: list[int | None] = []
         self._catalog: CommandCatalog | None = None
-        # One rebuild at a time (issue #161). ``apply`` mounts one row per
+        # One rebuild at a time (issue #146's recurrence). ``apply`` mounts one row per
         # await, so two interleaved rebuilds each mount their whole list into
         # the same container and the operator sees both — duplicated rows and
         # duplicated headings. Contended only when callers race, which is the
@@ -454,15 +454,28 @@ class PaletteRegion(Vertical):
     async def apply(self, catalog: CommandCatalog | None) -> None:
         """Render the listing. Safe to call before anything has been fetched.
 
-        **Serialized against itself** (the #161 recurrence of #146's F-1):
-        the typed-input path fires one call per keystroke and the catalog
-        fetch fires its own, and the rebuild below mounts one row per await —
-        so two rebuilds interleaving left both passes' rows mounted at once,
-        which the live rehearsal witnessed as adjacent duplicated headings.
-        Every heading drawn twice is a section whose rebuild happened twice.
-        The lock is uncontended in the ordinary path and costs nothing there,
+        **Serialized against itself** — the recurrence of #146's F-1 that the
+        live rehearsal witnessed. The rebuild below mounts one row per
+        await, so two rebuilds interleaving left both passes' rows mounted
+        at once — adjacent duplicated headings and duplicated rows, every
+        heading drawn twice a section whose rebuild happened twice. The
+        lock is uncontended in the ordinary path and costs nothing there,
         the same trade ``TalariaApp.render_snapshot`` already documents for
         its own rebuild.
+
+        **The two callers that can race, named so the lock's reason is
+        their concurrency and not any defect in either.** The composer's
+        typed-input path (:meth:`~talaria.ui.composer.ChatTextArea._on_key`
+        and its paste sibling, through :meth:`sync_slash`) re-filters on
+        every keystroke and paste; the app's catalog-fetch completion calls
+        this directly when the fetch lands, which it can while the menu is
+        open and the operator is typing — the exact pairing the rehearsal
+        caught. Both are legitimate: the live filter is the feature, and a
+        fetch that lands on an open menu must show its rows, so the lock
+        stands alone rather than standing in for a duplicate call. The
+        unchanged-prefix re-apply inside :meth:`sync_slash` exists to catch
+        that same fetch-landing-while-open case; it is redundant work when
+        no catalog changed, and harmless now that the rebuild is atomic.
         """
         async with self._apply_lock:
             await self._apply_locked(catalog)
@@ -531,7 +544,7 @@ class PaletteRegion(Vertical):
                 # its labels cannot disagree about where a row lives (D5,
                 # #146). A heading is drawn the first time its section is
                 # met in the walk — a function of the grouping, not of
-                # adjacency (#161's general statement) — so any list order,
+                # adjacency (#146's general statement) — so any list order,
                 # including one whose sections are not contiguous, draws
                 # each section exactly once. A section with no surviving row
                 # still draws no heading, and Uncategorised appears only

@@ -731,7 +731,7 @@ async def test_a_focus_move_between_dialog_and_answer_stales_the_stage(
 async def test_a_dropped_attach_explains_itself_past_the_reconnect(
     tmp_path: Path,
 ) -> None:
-    """#161, from live-17's transfer rehearsal: the gateway dropped the
+    """From live-17's transfer rehearsal: the gateway dropped the
     session's ``file.attach`` before forwarding it, the link died, and
     Talaria reconnected. The transport resolves the call ``unknown`` the
     instant the socket dies and the failure text reaches the notice line
@@ -771,7 +771,7 @@ async def test_a_dropped_attach_explains_itself_past_the_reconnect(
         async with app.run_test(size=(120, 40)) as pilot:
             await gateway.wait_for_attach()
             # The lifecycle's own placeholder still clears on connect
-            # (#161's second condition): after the startup connect the
+            # (the ruling's second condition): after the startup connect the
             # line is empty, exactly as before.
             await wait_until(lambda: app.state.connection == "connected")
             for _ in range(5):
