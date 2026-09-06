@@ -825,6 +825,16 @@ _CONNECTION_NOTICE: Final[Mapping[str, str]] = {
     "auth_failed": "authentication failed — the gateway rejected the credential",
 }
 
+#: The notice lines the connected transition's clear may erase (#161): the
+#: lifecycle's own placeholders, written by this same callback, whose whole
+#: purpose is to come off the line when the connection lands. Detailed
+#: variants (``"<line> · <detail>"``) are covered by the prefix match, which
+#: is the same shape the lifecycle writes.
+_CONNECTION_OWNED_NOTICE_LINES: Final[tuple[str, ...]] = (
+    "connecting to the gateway…",
+    "connection lost — reconnecting…",
+)
+
 
 #: Which claim the transcript is allowed to make about a submitted message, for
 #: each reason the correlator can resolve a call with (``talaria.transport.rpc``).
@@ -2770,7 +2780,28 @@ class TalariaApp(App[None]):
             # ``connection_notices`` line naming that profile. Pinned by
             # ``test_a_background_connections_drop_does_not_write_the_focused_notice``,
             # which asserts both halves: the rows learn, the focused view does not.
-            self._notice(line)
+            if state == "connected" and not line:
+                # #161 (live-17's transfer case): the connected transition's
+                # clear exists to take the lifecycle's own placeholder off the
+                # line — the ``connecting…`` a fresh dial leaves and the
+                # ``reconnecting…`` a drop leaves. An unrelated explanation
+                # that lands in between — a dropped attachment's failure
+                # text, which the transport resolves the instant the socket
+                # dies — is the one thing on the line the operator most
+                # needs to read, and this clear used to erase it
+                # milliseconds later when the reconnect completed. The clear
+                # takes only the lifecycle's own words; every other
+                # transition above still writes its own line unconditionally.
+                try:
+                    current = self.composer.notice
+                except NoMatches:  # pragma: no cover - teardown ordering
+                    current = ""
+                if any(
+                    current.startswith(own) for own in _CONNECTION_OWNED_NOTICE_LINES
+                ):
+                    self._notice("")
+            else:
+                self._notice(line)
         if state == "connected":
             named = profile or self.fleet_profile
             if focused:

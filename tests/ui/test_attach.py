@@ -9,7 +9,8 @@ submit reconciles omitted tokens.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,9 @@ from textual.events import Paste
 from talaria.domain.commands import LocalInvocation, resolve_command
 from talaria.replay.controls import ReplayControls
 from talaria.replay.source import ReplaySource
+from talaria.transport.attach import AttachTarget
 from talaria.transport.rpc import RpcOutcome
+from talaria.transport.source import LiveSource
 from talaria.ui.app import TalariaApp
 from talaria.ui.attach import (
     IMAGE_EXTENSIONS,
@@ -33,6 +36,8 @@ from talaria.ui.attach import (
     stat_for_confirm,
 )
 from talaria.ui.dialog import ConfirmDialog
+from tests.transport.conftest import StubGateway
+from tests.transport.test_compat_baseline import StubProvider
 from tests.ui.conftest import event, paused_app, records
 
 
@@ -720,3 +725,85 @@ async def test_a_focus_move_between_dialog_and_answer_stales_the_stage(
         assert "nothing was staged" in app.composer.notice
         await app.shutdown_sources()
 
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_attach_explains_itself_past_the_reconnect(
+    tmp_path: Path,
+) -> None:
+    """#161, from live-17's transfer rehearsal: the gateway dropped the
+    session's ``file.attach`` before forwarding it, the link died, and
+    Talaria reconnected. The transport resolves the call ``unknown`` the
+    instant the socket dies and the failure text reaches the notice line
+    milliseconds later — where the reconnect's completion used to erase it,
+    so the operator learned nothing within 35 seconds. The connected
+    transition's clear now takes only the lifecycle's own placeholder, so
+    the explanation survives the reconnect: the operator reads the failure,
+    keeps the recoverable command line, and nothing is recorded as staged.
+    """
+    saw_attach: asyncio.Event = asyncio.Event()
+
+    def never_forwarded(
+        query: dict[str, Any], gateway: StubGateway
+    ) -> dict[str, Any] | None:
+        if query.get("method") == "file.attach":
+            saw_attach.set()
+        return None
+
+    gateway = StubGateway(responder=never_forwarded)
+    await gateway.start()
+    source = LiveSource(
+        AttachTarget.from_url(gateway.url),
+        StubProvider(),
+        reconnect_delays=(0.0, 0.01, 0.01),
+    )
+    app = TalariaApp(source, mode="live", dispatcher=source)
+    source.bind(on_connection=app.note_connection_state, on_reconnect=app.note_reconnect)
+
+    async def wait_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while not predicate():
+            if asyncio.get_running_loop().time() > deadline:
+                raise AssertionError("condition not reached in time")
+            await asyncio.sleep(0.02)
+
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await gateway.wait_for_attach()
+            # The lifecycle's own placeholder still clears on connect
+            # (#161's second condition): after the startup connect the
+            # line is empty, exactly as before.
+            await wait_until(lambda: app.state.connection == "connected")
+            for _ in range(5):
+                await pilot.pause()
+            assert app.composer.notice == ""
+
+            target = tmp_path / "sample.txt"
+            target.write_text("live content")
+            app.composer.text = f"/attach {target}"
+            app.composer.text_area.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmDialog)
+            await confirm_open_dialog(pilot)
+
+            await asyncio.wait_for(saw_attach.wait(), timeout=5)
+            # The rehearsal's fault shape: the link closed with 1011 while
+            # the request was in flight, so it is never forwarded, never
+            # answered.
+            await gateway.sessions[-1].connection.close(code=1011)
+
+            await wait_until(lambda: len(gateway.sessions) == 2)
+            await wait_until(lambda: app.state.connection == "connected")
+            for _ in range(10):
+                await pilot.pause()
+
+            notice = app.composer.notice
+            assert "file.attach call was interrupted" in notice
+            assert "may or may not be staged" in notice
+            # Recoverable input preserved; nothing claims delivery.
+            assert app.composer.text.startswith("/attach")
+            assert staged_records(app) == []
+            await app.shutdown_sources()
+    finally:
+        await gateway.stop()
