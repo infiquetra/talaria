@@ -251,6 +251,37 @@ the frozen v0.5.0 and v0.6.0 flows rather than replacing them:
     --expected-receipts 21 --applies-map <map path>
   ```
 
+**The ruled contract, per the tester's objections.** Identity is split by
+key, never by convention: `candidate_commit_sha` names the Talaria commit whose
+code ran, `install` says how the product was installed (a source checkout at
+that commit, or a wheel with its filename and digest), and `harness` names what
+wrote the receipt — its commit required only when the harness is this
+repository's own tooling. The retired `harness_commit` key is rejected outright.
+The tester field is a closed-set role label (`dedicated-tester`,
+`worker-lane-a`, `worker-lane-b`, `controller`); the session-to-role map arrives
+as attestations, never baked in. The literal `not recorded` is permitted only on
+`gateway`, `session`, `terminal`, and `harness.identity`, and the validator
+names the clause when it lands anywhere else. Private identifiers — pane
+coordinates, session names — are refused wherever a string can hide, and the
+generator refuses to build a manifest while any non-evidence file under
+`docs/acceptance/v0.6.1/` carries one.
+
+**Converting filed receipts.** `convert` turns the pre-conversion filed shape
+into the ruled one, reproducibly: three admissible sources in order — what the
+receipt says, what is on disk beside it, and an attestation by the capturing
+role recorded with its date — and nothing back-filled. The attestation file
+arrives as an explicit argument keyed by live case (`attested_by`,
+`attested_at`, `tester`, the child's pass condition as `expected`, and optional
+`harness_identity` / `gateway` / `session` / `terminal`); the file inventory is
+derived from disk and stamped `files_listed_at`; and a receipt whose commit
+cannot be attested is re-captured, not converted. Conversion is all-or-nothing
+and writes to a separate output root, leaving the filed receipts untouched:
+
+```bash
+uv run python -m scripts.acceptance.v061_evidence convert \
+  --attestations <map path> --output-root <dir> --listed-at <date>
+```
+
 The manifest (`talaria-v0.6.1-artifact-manifest-v1`, schema copy beside it)
 declares gate `v0-6-1-daily-driver`, carries each receipt's digest, harness
 commit, and attestation, and the release workflow's existing version-agnostic

@@ -2,6 +2,39 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-09-06
+
+### Receipt identity is split by key, and conversion never back-fills (#150's second ruling)
+
+**Decision.** A v0.6.1 receipt carries three identities, each its own key:
+`candidate_commit_sha` (the Talaria commit whose code ran), `install` (how the
+product was installed — a source checkout at that commit, or a wheel with its
+filename and digest), and `harness` (what wrote the receipt, its commit
+required only when that harness is this repository's own tooling). The retired
+`harness_commit` key is rejected outright, so no reader ever has to guess which
+artefact a commit refers to. The tester field is a closed set of role labels
+supplied by the controller's attested session-to-role map; the literal
+`not recorded` is permitted only on gateway, session, terminal, and
+harness.identity; private identifiers (pane coordinates, session names) are
+refused wherever a string can hide; and `v061_evidence.py convert` turns the
+filed receipts into the ruled shape from three admissible sources in order —
+what the receipt says, what is on disk, an attestation recorded with its date —
+with nothing back-filled and no attestation defaulted.
+
+**Rationale.** The tester's three objections were consumer findings against the
+first contract: one key held two facts (the frozen target under test and,
+sometimes, nothing at all about the harness), two receipts had already grown a
+richer shape than the schema allowed, and a pane identifier had already reached
+a public tree. Splitting by key makes every identity checkable independently;
+the attestation rule makes provenance an argument rather than a guess; and the
+all-or-nothing convert refuses the one thing the ruling names unforgivable —
+inventing a value no source can support.
+
+**Revisit when.** A future lineage needs a fourth identity key (add it beside
+the three and retire nothing), or a live case genuinely captures neither the
+receipt's nor the disk's story — which is a re-capture, not a conversion
+loosening.
+
 ## 2026-09-05
 
 ### The v0.6.1 acceptance lineage rides the version-agnostic workflow, not a parallel one

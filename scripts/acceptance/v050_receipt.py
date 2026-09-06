@@ -768,14 +768,32 @@ V061_ITEM_SCHEMA = "talaria-v0.6.1-receipt-v1"
 V061_INSTALL_SCHEMA = "talaria-v0.6.1-install-v1"
 V061_RELEASE = "0.6.1"
 
+#: A herdr pane identifier (``wFB:pT``) — a workspace coordinate, not a
+#: product fact, and exactly the class of identifier the tester's objection
+#: and the ruling on infiquetra/talaria#150 keep out of the public tree.
+_V061_PANE_ID = re.compile(r"\bw[A-Za-z0-9]+:p[A-Za-z0-9]+\b")
+#: A session name from this run's vocabulary: a role word plus a numbered
+#: suffix (``worker-2``, ``controller-3``, ``worker-3-3``). The closed role
+#: labels (``worker-lane-a``) carry letters, not digits, so they survive.
+_V061_SESSION_NAME = re.compile(
+    r"\b(?:worker|controller|reviewer|architect|investigator|tester|operator)"
+    r"-\d+(?:-\d+)*\b"
+)
+#: The literal a conversion may write only where the ruling allows it; the
+#: never-fields reject it by their own type rules, and the error below names
+#: the clause rather than leaving it to look like a typo.
+_V061_NOT_RECORDED = "not recorded"
 #: The live-case inventory the v0.6.1 run owes. A pattern, never a literal in
 #: code: the manifest declares ``counts.expected_receipts`` and the verifier
 #: reads it from there (the architect ruling on infiquetra/talaria#150).
 _V061_ITEM = re.compile(r"^live-(0[1-9]|1[0-9]|2[0-1])$")
-#: A stable role label, never a session or pane name. Every session and pane
-#: name this run mints is number-suffixed (``worker-2``, ``controller-3``), so
-#: a digit in the tester field reads as a session name wearing a role's
-#: clothes; role labels are bare words (``tester``, ``worker``, ``operator``).
+#: The closed role-label set from the ruling on infiquetra/talaria#150. A
+#: session or pane name never belongs here: the labels name roles, and the
+#: controller supplies the session-to-role map as attestations rather than
+#: letting a session name stand in for one.
+V061_ROLE_LABELS = ("dedicated-tester", "worker-lane-a", "worker-lane-b", "controller")
+#: Kept for the not-recorded and identifier rules above; the tester field
+#: itself is judged by membership in :data:`V061_ROLE_LABELS`.
 _V061_TESTER = re.compile(r"^[A-Za-z][A-Za-z-]*$")
 _V061_ISSUE = re.compile(
     r"^(?:(?P<number>\d+)|https://github\.com/infiquetra/talaria/issues/(?P<url_number>\d+))$"
@@ -870,30 +888,77 @@ def _validate_v060_install(
     return errors
 
 
+def _v061_private_identifier_errors(value: Any, *, field: str) -> list[str]:
+    """Every private pane or session identifier nested inside a receipt.
+
+    Refused the way home paths are refused: scanned wherever a string can
+    hide, because a pane coordinate in a ``method`` sentence is as private as
+    one in a dedicated field — and one filed receipt proved the sentence is
+    where it landed (#150's identifier ruling).
+    """
+    if isinstance(value, str):
+        found: list[str] = []
+        if _V061_PANE_ID.search(value):
+            found.append("a terminal pane identifier")
+        if _V061_SESSION_NAME.search(value):
+            found.append("a session name")
+        return [f"{field} contains {label}" for label in found]
+    if isinstance(value, dict):
+        errors: list[str] = []
+        for key, item in value.items():
+            label = f"{field}.{key}" if field else str(key)
+            errors.extend(_v061_private_identifier_errors(item, field=label))
+        return errors
+    if isinstance(value, list):
+        errors = []
+        for index, item in enumerate(value):
+            errors.extend(
+                _v061_private_identifier_errors(item, field=f"{field}[{index}]")
+            )
+        return errors
+    return []
+
+
 def _validate_v061_receipt(
     receipt: dict[str, Any],
     *,
     receipt_path: Path,
     verify_files: bool = True,
 ) -> list[str]:
-    """Return every defect in a v0.6.1 live-case receipt (#150's ruling).
+    """Return every defect in a v0.6.1 live-case receipt (#150's rulings).
 
-    The shape is the architect's contract, not the v0.5.0 or v0.6.0 ones:
-    one directory per live case, ``checklist_item`` a ``live-NN`` string, the
-    tester a stable role label, and the receipt's own directory its evidence
-    inventory — every evidence file named with the digest it had when the
-    reviewer saw it, and no file beside the receipt left unlisted. The prose
-    keys (``kind``, ``method``, ``observation``, ``source``) carry the
-    observation the reviewer inspects; the ``files`` map carries what a
-    machine can re-check forever.
+    Identity is split by key, not by convention: ``candidate_commit_sha``
+    names the Talaria commit whose code ran, ``install`` says how the product
+    was installed (a source checkout at that commit, or a wheel with its
+    filename and digest), and ``harness`` names what wrote the receipt — its
+    commit required only when the harness is this repository's own tooling,
+    because a scratch harness under a temporary directory has no commit and
+    says so with a null and an identity string. The retired ``harness_commit``
+    key is rejected outright, so no reader ever has to guess which artefact a
+    commit refers to.
+
+    The literal ``not recorded`` is permitted only where the ruling allows
+    it — gateway, session, terminal, harness.identity — and the fields the
+    ruling forbids it on carry a named error alongside their type rules.
+    Private identifiers (pane coordinates, session names) are refused the way
+    home paths are. Unknown extra keys are allowed, so the rich receipts keep
+    their detail; the two forbidden things are the retired key and private
+    identifiers.
     """
     errors: list[str] = []
     if _contains_home_path(receipt):
         errors.append("receipt contains the current user's home path")
+    errors.extend(_v061_private_identifier_errors(receipt, field="receipt"))
     if receipt.get("schema_version") != V061_ITEM_SCHEMA:
         errors.append(f"schema_version is not {V061_ITEM_SCHEMA}")
     if receipt.get("release") != V061_RELEASE:
         errors.append(f"release is not {V061_RELEASE}")
+    if "harness_commit" in receipt:
+        errors.append(
+            "harness_commit is retired: candidate_commit_sha, install, and harness "
+            "split the identities by key so no reader has to guess which "
+            "artefact a commit refers to"
+        )
     item = receipt.get("checklist_item")
     if not isinstance(item, str) or not _V061_ITEM.fullmatch(item):
         errors.append("checklist_item must be a live-NN string with NN from 01 through 21")
@@ -904,16 +969,16 @@ def _validate_v061_receipt(
     if not isinstance(issue, str) or not _V061_ISSUE.fullmatch(issue):
         errors.append("issue must be the owning child's number or its talaria issue URL")
     tester = receipt.get("tester")
-    if not isinstance(tester, str) or not _V061_TESTER.fullmatch(tester):
-        errors.append(
-            "tester must be a stable role label (a bare word such as 'tester'); session "
-            "and pane names are number-suffixed, so a digit reads as one"
-        )
+    if tester not in V061_ROLE_LABELS:
+        labels = ", ".join(V061_ROLE_LABELS[:-1]) + f", or {V061_ROLE_LABELS[-1]}"
+        errors.append(f"tester must be a closed-set role label ({labels})")
     if receipt.get("verdict") not in VERDICTS:
         errors.append("verdict must be pass, fail, blocked, or reserved")
-    harness_commit = receipt.get("harness_commit")
-    if not isinstance(harness_commit, str) or not _COMMIT.fullmatch(harness_commit):
-        errors.append("harness_commit must be a full lowercase 40-character Git commit")
+    candidate_commit = receipt.get("candidate_commit_sha")
+    if not isinstance(candidate_commit, str) or not _COMMIT.fullmatch(candidate_commit):
+        errors.append(
+            "candidate_commit_sha must be a full lowercase 40-character Git commit"
+        )
     recorded_at = receipt.get("recorded_at")
     if not isinstance(recorded_at, str):
         errors.append("recorded_at must be an ISO-8601 timestamp")
@@ -922,13 +987,79 @@ def _validate_v061_receipt(
             dt.datetime.fromisoformat(recorded_at)
         except ValueError:
             errors.append("recorded_at must be an ISO-8601 timestamp")
+    for never_field in (
+        "candidate_commit_sha",
+        "recorded_at",
+        "verdict",
+        "checklist_item",
+        "issue",
+        "tester",
+    ):
+        if receipt.get(never_field) == _V061_NOT_RECORDED:
+            errors.append(
+                "the literal 'not recorded' is permitted only on gateway, session, "
+                f"terminal, or harness.identity — not on {never_field}"
+            )
+
+    try:
+        install = _object(receipt.get("install"), field="install")
+        install_kind = install.get("kind")
+        if install_kind not in ("source-checkout", "wheel"):
+            errors.append(
+                "install.kind must be source-checkout or wheel; the literal "
+                "'not recorded' is not one of them"
+            )
+        elif install_kind == "source-checkout":
+            install_commit = install.get("commit")
+            if install_commit != candidate_commit:
+                errors.append(
+                    "install.commit must be the receipt's candidate_commit_sha for a "
+                    "source-checkout install"
+                )
+        else:
+            filename = install.get("filename")
+            if not isinstance(filename, str) or not filename.strip():
+                errors.append("install.filename must be a non-empty string for a wheel")
+            install_sha = install.get("sha256")
+            if not isinstance(install_sha, str) or not _V061_DIGEST.fullmatch(install_sha):
+                errors.append("install.sha256 must be the wheel's SHA-256 digest")
+    except HarnessError as exc:
+        errors.append(str(exc))
+
+    try:
+        harness = _object(receipt.get("harness"), field="harness")
+        harness_kind = harness.get("kind")
+        if harness_kind not in ("repository-tooling", "scratch-capture", "manual"):
+            errors.append("harness.kind must be repository-tooling, scratch-capture, or manual")
+        harness_commit = harness.get("commit")
+        if harness_commit is None:
+            if harness_kind == "repository-tooling":
+                errors.append(
+                    "a repository-tooling harness must name its own commit in harness.commit"
+                )
+        elif not isinstance(harness_commit, str) or not _COMMIT.fullmatch(harness_commit):
+            errors.append("harness.commit must be a full 40-character commit or null")
+        harness_identity = harness.get("identity")
+        if harness_identity is not None and (
+            not isinstance(harness_identity, str) or not harness_identity.strip()
+        ):
+            errors.append("harness.identity must be a non-empty string or null")
+    except HarnessError as exc:
+        errors.append(str(exc))
 
     try:
         evidence = _object(receipt.get("evidence"), field="evidence")
-        for prose_field in ("kind", "method", "observation", "source"):
-            value = evidence.get(prose_field)
-            if not isinstance(value, str) or not value.strip():
-                errors.append(f"evidence.{prose_field} must be a non-empty string")
+        narrative = evidence.get("narrative")
+        if narrative is not None:
+            if not isinstance(narrative, dict):
+                errors.append("evidence.narrative must be an object when present")
+            else:
+                for prose_field in ("method", "observation"):
+                    value = narrative.get(prose_field)
+                    if not isinstance(value, str) or not value.strip():
+                        errors.append(
+                            f"evidence.narrative.{prose_field} must be a non-empty string"
+                        )
         files = evidence.get("files")
         if not isinstance(files, dict) or not files:
             errors.append("evidence.files must name every evidence file with its digest")
@@ -1185,14 +1316,15 @@ def verify_run(
                 if entry.get(manifest_field) != receipt.get(receipt_field):
                     errors.append(f"manifest {manifest_field} does not match: {relative}")
             if schema_version == V061_ITEM_SCHEMA:
-                if entry.get("harness_commit") != harness_commit:
-                    errors.append(f"manifest harness_commit does not match: {relative}")
+                receipt_commit = receipt.get("candidate_commit_sha")
+                if entry.get("candidate_commit_sha") != receipt_commit:
+                    errors.append(f"manifest candidate_commit_sha does not match: {relative}")
                 applies = entry.get("applies_to_candidate")
-                if harness_commit == expected_commit:
+                if receipt_commit == expected_commit:
                     if applies != "same":
                         errors.append(
-                            f"applies_to_candidate must be 'same' when the receipt's commit "
-                            f"equals the candidate's: {relative}"
+                            "applies_to_candidate must be 'same' when the receipt's "
+                            f"candidate_commit_sha equals the candidate's: {relative}"
                         )
                 elif not isinstance(applies, str) or not applies.strip() or applies == "same":
                     errors.append(

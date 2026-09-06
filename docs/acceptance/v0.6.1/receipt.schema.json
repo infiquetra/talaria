@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://infiquetra.github.io/talaria/acceptance/v0.6.1/receipt.schema.json",
   "title": "Talaria v0.6.1 live-test receipt",
-  "description": "One live case of the v0.6.1 run: the receipt names the frozen head its test ran on, the tester's role, and the evidence inventory — every file beside the receipt with the digest it carried at review. Cross-receipt rules (checklist-item uniqueness, digest and presence verification, the no-waiver READY rule) are enforced by the verifier in scripts/acceptance/v050_receipt.py, not by this shape.",
+  "description": "One live case of the v0.6.1 run. Identity is split by key: candidate_commit_sha names the Talaria commit whose code ran, install says how the product was installed, harness names what wrote the receipt. The evidence inventory binds every file beside the receipt by digest. Cross-receipt rules (checklist-item uniqueness, digest and presence verification, the no-waiver READY rule, the retired harness_commit key, private-identifier refusal, and the not-recorded matrix) are enforced by the verifier in scripts/acceptance/v050_receipt.py. Unknown extra keys are allowed so rich receipts keep their detail.",
   "type": "object",
-  "additionalProperties": false,
+  "additionalProperties": true,
   "required": [
     "schema_version",
     "release",
@@ -13,8 +13,10 @@
     "issue",
     "tester",
     "verdict",
-    "harness_commit",
+    "candidate_commit_sha",
     "recorded_at",
+    "install",
+    "harness",
     "evidence"
   ],
   "properties": {
@@ -30,31 +32,93 @@
       "pattern": "^(\\d+|https://github\\.com/infiquetra/talaria/issues/\\d+)$"
     },
     "tester": {
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z-]*$",
-      "description": "A stable role label — a bare word such as tester, worker, or operator. Session and pane names are number-suffixed in this run, so a digit reads as one."
+      "enum": ["dedicated-tester", "worker-lane-a", "worker-lane-b", "controller"],
+      "description": "A closed-set role label. The controller supplies the session-to-role map as attestations; a session or pane name never stands in for one."
     },
     "verdict": {"enum": ["pass", "fail", "blocked", "reserved"]},
-    "harness_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "candidate_commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The Talaria commit whose code was running under test. The retired harness_commit key is rejected by the verifier."
+    },
+    "candidate_branch": {"type": "string", "minLength": 1},
     "recorded_at": {"type": "string", "format": "date-time"},
+    "install": {
+      "type": "object",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {"const": "source-checkout"},
+            "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "basis": {"type": "string", "minLength": 1}
+          },
+          "required": ["kind", "commit"],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "kind": {"const": "wheel"},
+            "filename": {"type": "string", "minLength": 1},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          },
+          "required": ["kind", "filename", "sha256"],
+          "additionalProperties": false
+        }
+      ],
+      "description": "How the product under test was installed. The basis field records who attested a source-checkout and when."
+    },
+    "harness": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": ["repository-tooling", "scratch-capture", "manual"]
+        },
+        "commit": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "Required (non-null) only when the harness is this repository's own tooling; a scratch harness under a temporary directory has no commit and says so with null."
+        },
+        "identity": {
+          "type": ["string", "null"],
+          "description": "The harness's own name (a script name plus its SHA-256 digest, or the literal 'not recorded')."
+        }
+      },
+      "required": ["kind", "commit", "identity"],
+      "additionalProperties": false
+    },
+    "gateway": {
+      "description": "Free-form; the literal 'not recorded' is permitted here. The verifier refuses private identifiers."
+    },
+    "session": {
+      "description": "Free-form; the literal 'not recorded' is permitted here. The verifier refuses private identifiers."
+    },
+    "terminal": {
+      "description": "Free-form; the literal 'not recorded' is permitted here. The verifier refuses private identifiers."
+    },
     "evidence": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "method", "observation", "source", "files"],
+      "required": ["files"],
       "properties": {
-        "kind": {"type": "string", "minLength": 1},
-        "method": {"type": "string", "minLength": 1},
-        "observation": {"type": "string", "minLength": 1},
-        "source": {"type": "string", "minLength": 1},
+        "narrative": {
+          "type": "object",
+          "required": ["method", "observation"],
+          "properties": {
+            "kind": {"type": "string", "minLength": 1},
+            "method": {"type": "string", "minLength": 1},
+            "observation": {"type": "string", "minLength": 1},
+            "source": {"type": "string", "minLength": 1}
+          }
+        },
         "files": {
           "type": "object",
           "minProperties": 1,
-          "description": "Every evidence file beside the receipt, keyed by its path relative to the receipt's own directory, valued by its SHA-256 digest.",
+          "description": "Every evidence file beside the receipt, keyed by its path relative to the receipt's own directory, valued by its SHA-256 digest; files_listed_at stamps the listing as a derivation.",
           "propertyNames": {
             "pattern": "^(?!/|~)(?!.*(^|/)\\.\\.(/|$)).+$"
           },
           "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-        }
+        },
+        "files_listed_at": {"type": "string", "minLength": 1}
       }
     }
   }

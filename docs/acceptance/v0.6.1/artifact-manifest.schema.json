@@ -79,7 +79,7 @@
           "checklist_item",
           "tester",
           "verdict",
-          "harness_commit",
+          "candidate_commit_sha",
           "applies_to_candidate"
         ],
         "properties": {
@@ -89,13 +89,15 @@
             "type": "string",
             "pattern": "^live-(0[1-9]|1[0-9]|2[0-1])$"
           },
-          "tester": {"type": "string", "pattern": "^[A-Za-z][A-Za-z-]*$"},
+          "tester": {
+            "enum": ["dedicated-tester", "worker-lane-a", "worker-lane-b", "controller"]
+          },
           "verdict": {"enum": ["pass", "fail", "blocked", "reserved"]},
-          "harness_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "candidate_commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
           "applies_to_candidate": {
             "type": "string",
             "minLength": 4,
-            "description": "The literal `same` when the receipt's harness_commit equals the candidate's, otherwise a non-empty sentence naming the unchanged surfaces since that commit; the verifier enforces which of the two is required."
+            "description": "The literal `same` when the receipt's candidate_commit_sha equals the candidate's, otherwise a non-empty sentence naming the unchanged surfaces since that commit; the verifier enforces which of the two is required."
           }
         }
       }
