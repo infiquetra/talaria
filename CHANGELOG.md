@@ -10,6 +10,41 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-09-06
+
+The first published release since v0.5.0. The `0.6.0` line below landed on `main`
+but was never tagged or published, so upgrading from v0.5.0 delivers both at once.
+See the [v0.6.1 release notes](docs/releases/v0.6.1.md) for the limits and the
+upgrade reasons, and read the `0.6.0` section below alongside them.
+
+### Added
+
+- A slash-command palette that makes a large command inventory discoverable, with
+  provenance taken from the catalogue's own wire-backed category rather than inferred
+  from a command's name.
+- File and image attachments in the composer, by slash command and by paste, with
+  honest refusals for missing, unreadable, unsupported and oversize files.
+- A richer Mixture of Agents presentation — progress, references, phases and
+  aggregation — that falls back honestly when a session carries no rich events.
+- Configuration views inside the client boundary: effective values and their sources,
+  restart-required labelling, refusal of invalid input, and a live theme picker.
+- A session-scoped launch directory. Talaria asks the gateway to start the session in
+  the launch directory and reports honestly whether that request was adopted, rather
+  than claiming an adoption that never happened.
+
+### Fixed
+
+- A mid-stream credential failure could silently discard assistant text you had already
+  received. A non-terminal dial published the terminal status without its cause, so a
+  teardown landing in that window dropped the partial reply with no notice.
+- An attachment that failed to transfer did report itself — for about a third of a
+  second. The reconnect that followed cleared the notice line unconditionally, erasing
+  the explanation before it could be read.
+- The slash-command palette drew duplicate headings when two rebuilds of the listing
+  raced each other, mounting both lists into one container.
+- A render tick arriving after teardown had begun raised instead of stopping quietly.
+
+
 ## [0.6.0] — 2026-09-04
 
 Talaria v0.6.0 is a configurable daily-driver follow-up to v0.5.0, answering ten
@@ -448,8 +483,9 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/infiquetra/talaria/releases/tag/v0.6.0
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/infiquetra/talaria/releases/tag/v0.6.1
+[0.6.0]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.0.md
 [0.5.0]: https://github.com/infiquetra/talaria/releases/tag/v0.5.0
 [0.4.0]: https://github.com/infiquetra/talaria/releases/tag/v0.4.0
 [0.3.0]: https://github.com/infiquetra/talaria/releases/tag/v0.3.0
