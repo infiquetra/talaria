@@ -30,6 +30,7 @@ from scripts.acceptance.v050_receipt import (
     ALLOWED_PREIMAGE_CLASSES,
     ATTESTATION_MAP_SCHEMA,
     CAPTURE_METADATA_SCHEMA,
+    DIRECTORY_EQUALITY_DERIVATION_SCHEMA,
     HOST_SENTINEL_SCHEMA,
     INSTALL_RECEIPT_SCHEMA,
     PIXEL_MEASUREMENTS_SCHEMA,
@@ -49,11 +50,13 @@ from scripts.acceptance.v050_receipt import (
     _public_evidence_roots,
     _validate_v061_install,
     _validate_v061_receipt,
+    classify_evidence_file,
     evidence_file_privacy_errors,
     find_absolute_paths_in_text,
     is_absolute_filesystem_path,
     is_forbidden_key,
     mask_matched_sentinels,
+    validate_directory_equality_derivation,
     validate_image_read_confirmations,
     validate_read_confirmation_record,
     validate_redactions_list,
@@ -3518,6 +3521,412 @@ def test_host_sentinel_quartet_proposal_validation(tmp_path: Path) -> None:
     }
     errs = HOST_SENTINEL_SCHEMA.validate(empty_root_doc, path=witness_path)
     assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
+
+
+def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-13"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    def _write_wire_file(name: str, frames: list[dict[str, Any]]) -> tuple[str, str]:
+        p = evidence_dir / name
+        header = {
+            "kind": "header",
+            "version": 1,
+            "startedAt": "2026-09-06T12:00:00+00:00",
+            "endpoint": "ws://127.0.0.1:8765/api/ws",
+            "derivation": {
+                "tool": "scripts/acceptance/v061_evidence.py derive-capture",
+                "source_sha256": "a" * 64,
+                "source_bytes": 500,
+                "source_frames": len(frames),
+                "selection": {"frame_types": None, "start_seq": 1, "end_seq": len(frames)},
+                "rules": ["redact-cwd"],
+                "derived_at": "2026-09-06T12:00:00+00:00",
+            },
+        }
+        lines = [json.dumps(header)]
+        for seq, f in enumerate(frames, start=1):
+            lines.append(
+                json.dumps(
+                    {
+                        "kind": "frame",
+                        "seq": seq,
+                        "sourceSeq": seq * 2,
+                        "frame": f,
+                        "redactions": [],
+                    }
+                )
+            )
+        text_content = "\n".join(lines) + "\n"
+        p.write_text(text_content, encoding="utf-8")
+        digest = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
+        return name, digest
+
+    # Create 4 valid sibling derived wire capture files
+    dummy_frame = {"type": "event", "data": "clean"}
+    _, d_a_init = _write_wire_file("session-a-init.derived.jsonl", [dummy_frame, dummy_frame])
+    _, d_b_init = _write_wire_file(
+        "session-b-init.derived.jsonl",
+        [dummy_frame, dummy_frame, dummy_frame, dummy_frame],
+    )
+    _, d_a_override = _write_wire_file(
+        "session-a-override.derived.jsonl", [dummy_frame, dummy_frame]
+    )
+    _, d_a_reconnect = _write_wire_file(
+        "session-a-reconnect.derived.jsonl", [dummy_frame, dummy_frame]
+    )
+
+    sources_data: dict[str, dict[str, Any]] = {
+        "session-a-init": {
+            "source_file": "session-a-init.wire.jsonl",
+            "source_sha256": "1" * 64,
+            "derived_file": "session-a-init.derived.jsonl",
+            "derived_sha256": d_a_init,
+        },
+        "session-b-init": {
+            "source_file": "session-b-init.wire.jsonl",
+            "source_sha256": "2" * 64,
+            "derived_file": "session-b-init.derived.jsonl",
+            "derived_sha256": d_b_init,
+        },
+        "session-a-override": {
+            "source_file": "session-a-override.wire.jsonl",
+            "source_sha256": "3" * 64,
+            "derived_file": "session-a-override.derived.jsonl",
+            "derived_sha256": d_a_override,
+        },
+        "session-a-reconnect": {
+            "source_file": "session-a-reconnect.wire.jsonl",
+            "source_sha256": "4" * 64,
+            "derived_file": "session-a-reconnect.derived.jsonl",
+            "derived_sha256": d_a_reconnect,
+        },
+    }
+
+    observations_data: dict[str, dict[str, Any]] = {
+        "project-a-adoption": {
+            "source_id": "session-a-init",
+            "request_seq": 1,
+            "reply_seq": 2,
+            "request_source_seq": 2,
+            "reply_source_seq": 4,
+            "requested_equals_launch": True,
+            "reported_equals_expected": True,
+        },
+        "project-a-tool": {
+            "source_id": "session-a-init",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+        },
+        "project-b-adoption": {
+            "source_id": "session-b-init",
+            "request_seq": 1,
+            "reply_seq": 2,
+            "request_source_seq": 2,
+            "reply_source_seq": 4,
+            "requested_equals_launch": True,
+            "reported_equals_expected": True,
+        },
+        "project-b-tool": {
+            "source_id": "session-b-init",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+        },
+        "a-tool-override": {
+            "source_id": "session-a-override",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": True,
+        },
+        "b-after-a-override": {
+            "source_id": "session-b-init",
+            "tool_start_seq": 2,
+            "tool_complete_seq": 4,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+            "bounded_absence_session_cwd_set": True,
+            "b_reported_cwd_unchanged": True,
+        },
+        "a-after-reconnect": {
+            "source_id": "session-a-reconnect",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+        },
+        "fresh-a": {
+            "source_id": "session-a-init",
+            "request_seq": 1,
+            "reply_seq": 2,
+            "request_source_seq": 2,
+            "reply_source_seq": 4,
+            "requested_equals_launch": True,
+            "reported_equals_expected": True,
+        },
+        "resumed-a": {
+            "source_id": "session-a-reconnect",
+            "request_seq": 1,
+            "reply_seq": 2,
+            "request_source_seq": 2,
+            "reply_source_seq": 4,
+            "requested_equals_launch": True,
+            "reported_equals_expected": True,
+        },
+        "resumed-a-tool": {
+            "source_id": "session-a-reconnect",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+        },
+    }
+
+    valid_doc: dict[str, Any] = {
+        "record_type": "directory-equality-derivation",
+        "format_version": "talaria-directory-equality-v1",
+        "case": "live-13",
+        "checklist_item": "live-13",
+        "candidate_commit": "e" * 40,
+        "derived_by": "dedicated-tester",
+        "derived_at": "2026-09-06T12:00:00+00:00",
+        "status": "pass",
+        "permission_semantics": "explicit-allow-all",
+        "sources": sources_data,
+        "observations": observations_data,
+    }
+
+    derivation_path = evidence_dir / "directory-equality-derivation.json"
+    derivation_path.write_text(json.dumps(valid_doc, indent=2), encoding="utf-8")
+
+    # 1. Conforming derivation passes all checks
+    assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(valid_doc, path=derivation_path) == []
+    assert validate_directory_equality_derivation(valid_doc, path=derivation_path) == []
+    assert evidence_file_privacy_errors(derivation_path, repo_root=tmp_path) == []
+    assert (
+        SchemaRegistry.lookup(derivation_path, valid_doc)
+        is DIRECTORY_EQUALITY_DERIVATION_SCHEMA
+    )
+    assert classify_evidence_file(derivation_path) == "directory-equality-derivation"
+
+    # 2. Strict privacy check: rejects absolute filesystem paths
+    bad_path_doc = copy.deepcopy(valid_doc)
+    bad_path_doc["permission_semantics"] = "allow /private/var/folders/secret/path"
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_path_doc, path=derivation_path)
+    assert any("discloses absolute path" in e for e in errs)
+
+    bad_path_obs = copy.deepcopy(valid_doc)
+    bad_path_obs["observations"]["project-a-adoption"]["leaked_path"] = "/Users/jefcox/project"
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_path_obs, path=derivation_path)
+    assert any("discloses absolute path" in e for e in errs)
+
+    # 3. Missing mandatory source refused (mutation-held)
+    bad_src = copy.deepcopy(valid_doc)
+    del bad_src["sources"]["session-a-reconnect"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_src, path=derivation_path)
+    assert any("Live 13 derivation requires all 4 mandatory sources" in e for e in errs)
+    assert any("'session-a-reconnect'" in e for e in errs)
+
+    # 4. Undeclared source refused
+    extra_src = copy.deepcopy(valid_doc)
+    extra_src["sources"]["session-c-init"] = copy.deepcopy(
+        extra_src["sources"]["session-a-init"]
+    )
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(extra_src, path=derivation_path)
+    assert any("Live 13 derivation contains undeclared sources" in e for e in errs)
+
+    # 5. Missing mandatory scenario stage refused (mutation-held)
+    bad_stage = copy.deepcopy(valid_doc)
+    del bad_stage["observations"]["b-after-a-override"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_stage, path=derivation_path)
+    assert any("Live 13 derivation requires all 10 mandatory scenario stages" in e for e in errs)
+    assert any("'b-after-a-override'" in e for e in errs)
+
+    # 6. Undeclared scenario stage refused
+    extra_stage = copy.deepcopy(valid_doc)
+    extra_stage["observations"]["rogue-stage"] = {"source_id": "session-a-init"}
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(extra_stage, path=derivation_path)
+    assert any("Live 13 derivation contains undeclared scenario stages" in e for e in errs)
+
+    # 7. One-sided adoption comparison refused (mutation-held)
+    one_sided_adopt1 = copy.deepcopy(valid_doc)
+    del one_sided_adopt1["observations"]["project-a-adoption"]["reported_equals_expected"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(one_sided_adopt1, path=derivation_path)
+    assert any(
+        "incomplete comparison: 'requested_equals_launch' present "
+        "without 'reported_equals_expected'"
+        in e
+        for e in errs
+    )
+
+    one_sided_adopt2 = copy.deepcopy(valid_doc)
+    del one_sided_adopt2["observations"]["project-a-adoption"]["requested_equals_launch"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(one_sided_adopt2, path=derivation_path)
+    assert any(
+        "incomplete comparison: 'reported_equals_expected' present "
+        "without 'requested_equals_launch'"
+        in e
+        for e in errs
+    )
+
+    # 8. One-sided tool comparison refused (mutation-held)
+    one_sided_tool1 = copy.deepcopy(valid_doc)
+    del one_sided_tool1["observations"]["project-a-tool"]["pwd_equals_expected"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(one_sided_tool1, path=derivation_path)
+    assert any(
+        "incomplete comparison: 'fixture_content_matches' present without 'pwd_equals_expected'"
+        in e
+        for e in errs
+    )
+
+    one_sided_tool2 = copy.deepcopy(valid_doc)
+    del one_sided_tool2["observations"]["project-a-tool"]["fixture_content_matches"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(one_sided_tool2, path=derivation_path)
+    assert any(
+        "incomplete comparison: 'pwd_equals_expected' present without 'fixture_content_matches'"
+        in e
+        for e in errs
+    )
+
+    # 9. Invariant omissions on b-after-a-override refused (mutation-held)
+    no_bounded_absence = copy.deepcopy(valid_doc)
+    del no_bounded_absence["observations"]["b-after-a-override"]["bounded_absence_session_cwd_set"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(no_bounded_absence, path=derivation_path)
+    assert any("missing mandatory invariant 'bounded_absence_session_cwd_set'" in e for e in errs)
+
+    no_b_unchanged = copy.deepcopy(valid_doc)
+    del no_b_unchanged["observations"]["b-after-a-override"]["b_reported_cwd_unchanged"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(no_b_unchanged, path=derivation_path)
+    assert any("missing mandatory invariant 'b_reported_cwd_unchanged'" in e for e in errs)
+
+    # 10. Inverted sequence numbers refused (mutation-held)
+    inverted_seq = copy.deepcopy(valid_doc)
+    inverted_seq["observations"]["project-a-adoption"]["reply_seq"] = 1
+    inverted_seq["observations"]["project-a-adoption"]["request_seq"] = 5
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(inverted_seq, path=derivation_path)
+    assert any("reply_seq (1) cannot precede request_seq (5)" in e for e in errs)
+
+    inverted_tool_seq = copy.deepcopy(valid_doc)
+    inverted_tool_seq["observations"]["project-a-tool"]["tool_start_seq"] = 10
+    inverted_tool_seq["observations"]["project-a-tool"]["tool_complete_seq"] = 2
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(inverted_tool_seq, path=derivation_path)
+    assert any("tool_complete_seq (2) cannot precede tool_start_seq (10)" in e for e in errs)
+
+    # 11. Sibling wire capture containing session.cwd.set in bounded window refused
+    bad_b_frames: list[dict[str, Any]] = [
+        dummy_frame,
+        {"type": "event", "data": "clean"},
+        {"type": "event", "method": "session.cwd.set", "params": {}},
+        {"type": "event", "data": "clean"},
+    ]
+    _, bad_b_digest = _write_wire_file("session-b-bad.derived.jsonl", bad_b_frames)
+    bad_b_doc = copy.deepcopy(valid_doc)
+    bad_b_doc["sources"]["session-b-init"]["derived_file"] = "session-b-bad.derived.jsonl"
+    bad_b_doc["sources"]["session-b-init"]["derived_sha256"] = bad_b_digest
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_b_doc, path=derivation_path)
+    assert any(
+        "wire log 'session-b-bad.derived.jsonl' contains 'session.cwd.set' "
+        "at seq 3 within bounded window [2, 4]"
+        in e
+        for e in errs
+    )
+
+    # 12. Missing referenced derived wire capture refused
+    missing_wire_doc = copy.deepcopy(valid_doc)
+    missing_wire_doc["sources"]["session-a-init"]["derived_file"] = "absent.derived.jsonl"
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(missing_wire_doc, path=derivation_path)
+    assert any(
+        "referenced derived wire capture 'absent.derived.jsonl' does not exist" in e
+        for e in errs
+    )
+
+    # 13. SHA-256 digest mismatch on derived wire capture refused
+    mismatched_sha_doc = copy.deepcopy(valid_doc)
+    mismatched_sha_doc["sources"]["session-a-init"]["derived_sha256"] = "f" * 64
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(mismatched_sha_doc, path=derivation_path)
+    assert any(
+        "SHA-256 digest" in e and "does not match declared derived_sha256" in e
+        for e in errs
+    )
+
+    # 14. Outcome coherence: pass status refused when equality predicate is false
+    false_pred_doc = copy.deepcopy(valid_doc)
+    false_pred_doc["observations"]["project-a-adoption"]["reported_equals_expected"] = False
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_pred_doc, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    # But failed status is permitted when an equality predicate is false (preserves failure reports)
+    false_pred_doc["status"] = "failed"
+    assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_pred_doc, path=derivation_path) == []
+
+    # 15. generate_directory_equality_derivation helper creates conforming output
+    gen_out = evidence_dir / "generated-derivation.json"
+    written_path = v061_evidence.generate_directory_equality_derivation(
+        output_path=gen_out,
+        candidate_commit="e" * 40,
+        sources=sources_data,
+        observations=observations_data,
+        status="pass",
+        derived_by="dedicated-tester",
+        derived_at="2026-09-06T12:00:00+00:00",
+        permission_semantics="explicit-allow-all",
+        case="live-13",
+        checklist_item="live-13",
+        repo_root=tmp_path,
+    )
+    assert written_path.is_file()
+    assert evidence_file_privacy_errors(written_path, repo_root=tmp_path) == []
+
+    # 16. Generator refuses invalid input and does not leak temporary files
+    bad_gen_out = evidence_dir / "failed-generation.json"
+    bad_sources_data = copy.deepcopy(sources_data)
+    del bad_sources_data["session-a-init"]
+    with pytest.raises(SystemExit) as excinfo:
+        v061_evidence.generate_directory_equality_derivation(
+            output_path=bad_gen_out,
+            candidate_commit="e" * 40,
+            sources=bad_sources_data,
+            observations=observations_data,
+            repo_root=tmp_path,
+        )
+    assert "Live 13 derivation requires all 4 mandatory sources" in str(excinfo.value)
+    assert not bad_gen_out.exists()
+
+    # 17. CLI derive-directory-equality execution
+    sources_json_file = evidence_dir / "sources.json"
+    sources_json_file.write_text(json.dumps(sources_data), encoding="utf-8")
+    observations_json_file = evidence_dir / "observations.json"
+    observations_json_file.write_text(json.dumps(observations_data), encoding="utf-8")
+    cli_out = evidence_dir / "cli-derivation.json"
+    exit_code = v061_evidence.main([
+        "derive-directory-equality",
+        "--candidate-commit", "e" * 40,
+        "--sources-json", str(sources_json_file),
+        "--observations-json", str(observations_json_file),
+        "--output", str(cli_out),
+        "--status", "pass",
+        "--derived-by", "dedicated-tester",
+        "--derived-at", "2026-09-06T12:00:00+00:00",
+        "--repo-root", str(tmp_path),
+    ])
+    assert exit_code == 0
+    assert cli_out.is_file()
+    assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(
+        json.loads(cli_out.read_text(encoding="utf-8")), path=cli_out
+    ) == []
 
 
 def test_no_conflict_markers_in_repository() -> None:
