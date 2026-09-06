@@ -1191,10 +1191,78 @@ replies per method rather than on exhaustive traffic, and the same measurement
 found two of the pinned shapes wrong. A row that clears while its own
 measurement is correcting the record is a row worth reading twice.
 
+**Restated a fifth time on 2026-09-06, the same one-edit rule, because the
+`review-by` horizon reached its own date and that re-read is the whole point.**
+The re-read below is the reviewer's, recorded here verbatim-in-substance so the
+diff carries the reading rather than only the date.
+
+The document's twenty rows cite twenty-one named tests. All twenty-one still
+exist — none renamed away, none deleted — and running every one of them at
+current `origin/main` (`6a53620`) gives 42 passed, 2805 deselected, zero
+failures (forty-two rather than twenty-one because several names match more
+than one parametrisation). The mechanical evidence under rows 1 through 16 is
+intact five releases on. Every row is graded `measured` or `met`, consistent
+with a gate block carrying no `blocks-on` lines — the shape a cleared gate
+has. All twenty grades were confirmed rather than sampled.
+
+**Why the gate is not superseded — checked, not assumed.** The v0.1 gate
+covers R1, R2, R3, R34, R36, R39, AE7, AE10, F1, F7. None of those
+identifiers appears in `talaria-v0-5-0-live-acceptance` or
+`v0-6-daily-driver`, which grade later features — the command catalogue, the
+inspector toggle, the status bar, themes, seam placement. No other gate in
+this repository grades the credential surface, terminal restoration, process
+hygiene, the compatibility baseline, or the clean-environment install.
+Retiring this gate would delete the only recorded verdict on those
+properties and free its identifier for nothing. It is re-dated, not retired.
+
+**What moved since 2026-08-02 — the document's own history is the account:**
+`7cc47c7` recorded the CI evidence that closed rows 12 and 14; `74bdb6c`
+fixed the status child leak row 9 names as "found by CI after this document
+was first written"; `0691f3a` corrected two pinned reply shapes, clearing row
+6 on a measurement; `6904a63` re-scoped `terminal.read.respond` out of row
+6's runtime requirement; `09a9fac` graded row 19 met on the observation it
+had named; `30f1c5a` removed the endpoint-URL credential route, refusing
+rather than stripping; `1012c05` re-titled row 13 to grade Talaria rather
+than the machine, reaching READY. Since then, v0.2 through v0.6 shipped and
+none of it contradicts a row. One piece of newer work strengthens one:
+v0.6.1's status-bar unit (child #143) confirmed the status command's child
+environment is default-deny with an allowlist, and that credential-shaped
+names never forward even when allowlisted — row 13's claim holding under
+work done a month later, the best kind of re-read evidence: a property that
+survived being built against.
+
+**Three things this restatement must say plainly, because a re-read that
+only reports good news is not one.** Rows 17, 18 and 19 rest on evidence
+nobody can re-check: they cite live corpora by digest
+(`talaria-live-corpus-v1-2659f-bd69e537f1d9` and two others) which R29
+deliberately keeps out of version control — a designed choice, not decay,
+but at a five-release remove three of the twenty rows cannot be re-verified
+by anyone who does not still hold those recordings on the machine that made
+them; the next re-read must say whether they still exist, and if they do
+not, those rows are historical rather than current and the document should
+say so in its own vocabulary rather than continuing to read `measured`.
+Rows 11 and 16 are measured against the stub, and the table labels them
+that way — unchanged and still honest, noted so this restatement does not
+quietly upgrade them. Row 15's platform matrix is a point-in-time record —
+one operating system, two Python versions, two terminal hosts, one
+multiplexer, as of 2026-08-02; the supported range is still `>=3.12,<3.14`,
+so nothing has drifted, but a matrix row five releases old is a statement
+about then rather than about now.
+
+**`review-by` moves to 2026-12-01, and the date is chosen deliberately.**
+Not 2026-09-30, which would join the two gates already there; not 2026-10-31,
+which would pair it with `v0-6-1-daily-driver`. A longer horizon is defensible
+here precisely because this gate's conditions are the least volatile in the
+repository — terminal restoration, credential non-exposure, process hygiene
+and install behaviour change slowly, and this table has been stable since
+2026-08-07 through five releases. The resulting spread keeps no two gates
+due on one day: `talaria-v0-5-0-live-acceptance` and `v0-6-daily-driver` at
+2026-09-30, `v0-6-1-daily-driver` at 2026-10-31, this gate at 2026-12-01.
+
 ```gate
 id: v0-1-daily-driver
 verdict: READY
-review-by: 2026-09-06
+review-by: 2026-12-01
 ```
 
 ## Related

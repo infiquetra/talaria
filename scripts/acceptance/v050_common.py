@@ -107,8 +107,16 @@ def validate_config_dir(config_dir: Path, *, scratch_root: Path) -> Path:
 
 
 def receipt_paths(evidence_root: Path) -> tuple[Path, ...]:
-    """Enumerate active and quarantined item receipts from the evidence tree."""
-    return tuple(sorted(evidence_root.glob(RECEIPT_GLOB)))
+    """Enumerate active and quarantined item receipts from the evidence tree.
+
+    Two tree shapes, both active: the v0.5.0/v0.6.0 ``receipts/`` directories
+    and the v0.6.1 one-directory-per-live-case layout
+    (``live-NN/receipt.json``). Additive — no earlier tree contains a
+    ``live-*`` directory, so their enumerations are unchanged.
+    """
+    return tuple(
+        sorted({*evidence_root.glob(RECEIPT_GLOB), *evidence_root.glob("live-*/receipt.json")})
+    )
 
 
 def is_quarantined_receipt(path: Path, *, evidence_root: Path) -> bool:
