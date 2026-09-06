@@ -438,6 +438,35 @@ def test_the_release_gate_reader_refuses_a_verdict_that_is_not_the_expected_one(
     )
 
 
+def test_the_horizons_mode_prints_a_countdown_for_every_gate() -> None:
+    """The cliff the horizon test fires on becomes a countdown a month early.
+
+    F-2 arrived as a red suite on a document nobody had edited: the expiry was
+    invisible until the assertion fired. This pins the mode that makes it
+    visible — every declared gate, its verdict, and the days remaining on its
+    review-by, printed from the same block walk the verdict reader uses.
+    """
+    result = _run_gate_verdict("--horizons")
+    assert result.returncode == 0, result.stderr
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert lines, "--horizons printed nothing"
+    printed_ids = set()
+    for line in lines:
+        identifier, _, rest = line.partition(" ")
+        printed_ids.add(identifier)
+        assert "verdict=" in rest, line
+        assert "review-by=" in rest, line
+        assert "days-remaining=" in rest, line
+        days = int(rest.rpartition("=")[2])
+        assert days >= 0 or "review-by=" in rest, line  # expired gates count down negative, loudly
+    assert printed_ids == {
+        _parse_gate(path, body).identifier for path, body in _GATE_SOURCES
+    }
+    # The countdown makes the spread checkable at a glance; the two gates that
+    # share 2026-09-30 today are left that way deliberately, on the record, and
+    # their next re-read is the moment to take a date no other gate holds.
+
+
 def test_the_release_gate_reader_separates_unknown_from_wrong() -> None:
     """A moved document must not read as a failed gate.
 

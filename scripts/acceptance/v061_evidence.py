@@ -394,6 +394,8 @@ def record(
 
 
 _ATTESTATION_ROLE_FIELDS = ("attested_by", "tester")
+_INSTALL_KINDS = ("source-checkout", "wheel")
+_HARNESS_KINDS = ("repository-tooling", "scratch-capture", "manual")
 
 
 def _attestation_refusals(item: str, filed: dict[str, Any]) -> tuple[str | None, list[str]]:
@@ -443,7 +445,7 @@ def _converted_receipt(
         "candidate_commit_sha": commit,
         "recorded_at": filed["recorded_at"],
         "install": {
-            "kind": "source-checkout",
+            "kind": attestation["install_kind"],
             "commit": commit,
             "basis": (
                 "attested at conversion by the capturing role, "
@@ -451,8 +453,8 @@ def _converted_receipt(
             ),
         },
         "harness": {
-            "kind": "scratch-capture",
-            "commit": None,
+            "kind": attestation["harness_kind"],
+            "commit": attestation.get("harness_commit"),
             "identity": attestation.get("harness_identity") or "not recorded",
         },
     }
@@ -508,6 +510,7 @@ def convert(
     output_root: Path,
     listed_at: str,
     repo_root: Path = REPO_ROOT,
+    exclude: tuple[str, ...] = (),
 ) -> list[Path]:
     """Convert every filed receipt with its attestation; return what was written.
 
@@ -515,6 +518,11 @@ def convert(
     nothing survives on disk when any receipt refuses — the operator sees
     exactly which live cases need re-capture, and the tree is never
     half-converted.
+
+    ``exclude`` names live cases the controller has ruled out of this run —
+    a re-capture already scheduled, an unattestable provenance. An excluded
+    case is skipped out in the open (the caller reports it) rather than
+    silently dropped or allowed to block the rest.
     """
     receipts = _live_receipts(repo_root)
     if not receipts:
@@ -522,35 +530,76 @@ def convert(
     refusals: list[str] = []
     plans: list[tuple[str, Path, dict[str, Any], dict[str, Path]]] = []
     for item, (path, _rel) in sorted(receipts.items()):
+        if item in exclude:
+            continue
         filed = _read_json(path)
+        item_refusals: list[str] = []
         commit, commit_refusals = _attestation_refusals(item, filed)
-        refusals.extend(f"{item}: {refusal}" for refusal in commit_refusals)
+        item_refusals.extend(commit_refusals)
         attestation = attestations.get(item)
         if attestation is None:
-            refusals.append(
-                f"{item}: no attestation for its commit — re-capture rather than convert"
+            item_refusals.append(
+                "no attestation for its commit — re-capture rather than convert"
             )
-            continue
-        if commit is None:
-            continue
-        for role_field in _ATTESTATION_ROLE_FIELDS:
-            if attestation.get(role_field) not in V061_ROLE_LABELS:
-                refusals.append(
-                    f"{item}: attestation.{role_field} must be a closed-set role label "
-                    f"({', '.join(V061_ROLE_LABELS)})"
+        if attestation is not None and commit is not None:
+            for role_field in _ATTESTATION_ROLE_FIELDS:
+                if attestation.get(role_field) not in V061_ROLE_LABELS:
+                    item_refusals.append(
+                        f"attestation.{role_field} must be a closed-set role label "
+                        f"({', '.join(V061_ROLE_LABELS)})"
+                    )
+            attested_at = attestation.get("attested_at")
+            if not isinstance(attested_at, str) or not attested_at.strip():
+                item_refusals.append("attestation.attested_at must record its date")
+            install_kind = attestation.get("install_kind")
+            if install_kind not in _INSTALL_KINDS:
+                item_refusals.append(
+                    "attestation.install_kind must be source-checkout or wheel — the "
+                    "install kind is an attested fact, not an assumption"
                 )
-        attested_at = attestation.get("attested_at")
-        if not isinstance(attested_at, str) or not attested_at.strip():
-            refusals.append(f"{item}: attestation.attested_at must record its date")
-        rich = "candidate_commit_sha" in filed
-        if not rich and not (
-            isinstance(attestation.get("expected"), str)
-            and attestation["expected"].strip()
-        ):
-            refusals.append(
-                f"{item}: a thin receipt converts only with the owning child's pass "
-                f"condition as an explicit attestation (attestation.expected)"
-            )
+            elif install_kind != "source-checkout":
+                item_refusals.append(
+                    "a wheel-install case is not defined for conversion — re-file it "
+                    "fresh in the ruled shape rather than convert"
+                )
+            harness_kind = attestation.get("harness_kind")
+            if harness_kind not in _HARNESS_KINDS:
+                item_refusals.append(
+                    "attestation.harness_kind must be repository-tooling, "
+                    "scratch-capture, or manual — the harness kind is an attested "
+                    "fact, not an assumption"
+                )
+            elif harness_kind == "repository-tooling":
+                attested_harness_commit = attestation.get("harness_commit")
+                if (
+                    not isinstance(attested_harness_commit, str)
+                    or len(attested_harness_commit) != 40
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in attested_harness_commit
+                    )
+                ):
+                    item_refusals.append(
+                        "a repository-tooling harness conversion must attest its own "
+                        "commit in attestation.harness_commit"
+                    )
+            elif attestation.get("harness_commit") is not None:
+                item_refusals.append(
+                    "attestation.harness_commit must be absent unless the harness is "
+                    "repository tooling"
+                )
+            rich = "candidate_commit_sha" in filed
+            if not rich and not (
+                isinstance(attestation.get("expected"), str)
+                and attestation["expected"].strip()
+            ):
+                item_refusals.append(
+                    "a thin receipt converts only with the owning child's pass "
+                    "condition as an explicit attestation (attestation.expected)"
+                )
+        if item_refusals or attestation is None or commit is None:
+            refusals.extend(f"{item}: {refusal}" for refusal in item_refusals)
+            continue
         source_dir = path.parent
         files: dict[str, Path] = {
             evidence_path.relative_to(source_dir).as_posix(): evidence_path
@@ -651,6 +700,12 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="the derivation stamp recorded as evidence.files_listed_at",
     )
+    convert_cmd.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="a live case the controller has ruled out of this conversion (repeatable)",
+    )
     convert_cmd.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     return parser
 
@@ -673,7 +728,14 @@ def main(argv: list[str] | None = None) -> int:
             output_root=args.output_root,
             listed_at=args.listed_at,
             repo_root=args.repo_root,
+            exclude=tuple(args.exclude),
         )
+        excluded = [item for item in args.exclude]
+        if excluded:
+            print(
+                "excluded, reported and not converted — awaiting their "
+                "re-capture: " + ", ".join(sorted(excluded))
+            )
         print(f"converted {len(written)} files under {args.output_root}")
         return 0
     raw_map = json.loads(args.applies_map.read_text(encoding="utf-8"))

@@ -256,6 +256,55 @@ def test_not_recorded_is_refused_on_the_never_fields(tmp_path: Path, field: str)
     ), errors
 
 
+def test_not_recorded_is_refused_on_every_prose_field_the_ruling_does_not_name(
+    tmp_path: Path,
+) -> None:
+    """F-3: an allowlist, not a denylist — no prose field inherits acceptance."""
+    path, receipt = _conforming_receipt(tmp_path / "live-01")
+    receipt["title"] = "not recorded"
+    receipt["install"]["basis"] = "not recorded"
+    receipt["evidence"]["files_listed_at"] = "not recorded"
+    for prose_field in ("kind", "method", "observation", "source"):
+        receipt["evidence"]["narrative"][prose_field] = "not recorded"
+    errors = _errors_of(receipt, path)
+    for field_path in (
+        "title",
+        "install.basis",
+        "evidence.files_listed_at",
+        "evidence.narrative.kind",
+        "evidence.narrative.method",
+        "evidence.narrative.observation",
+        "evidence.narrative.source",
+    ):
+        assert any(
+            error.startswith(field_path) and "'not recorded'" in error for error in errors
+        ), (field_path, errors)
+
+
+def test_not_recorded_is_permitted_on_nested_gateway_session_terminal(
+    tmp_path: Path,
+) -> None:
+    path, receipt = _conforming_receipt(tmp_path / "live-01")
+    receipt["gateway"] = {"profile": "not recorded", "endpoint": "ws://x"}
+    receipt["session"] = {"mode": "not recorded"}
+    receipt["terminal"] = {"host": "not recorded"}
+    errors = _errors_of(receipt, path)
+    assert not any("'not recorded'" in error for error in errors), errors
+
+
+def test_a_pass_receipt_with_an_unrecorded_observation_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The reviewer's stated harm, on the field where it costs most."""
+    path, receipt = _conforming_receipt(tmp_path / "live-01", verdict="pass")
+    receipt["evidence"]["narrative"]["observation"] = "not recorded"
+    errors = _errors_of(receipt, path)
+    assert any(
+        "evidence.narrative.observation" in error and "'not recorded'" in error
+        for error in errors
+    ), errors
+
+
 def test_a_pane_identifier_hiding_in_prose_is_refused(tmp_path: Path) -> None:
     path, receipt = _conforming_receipt(tmp_path / "live-01")
     receipt["evidence"]["narrative"]["method"] = (
@@ -317,13 +366,41 @@ def test_the_v061_install_shape_is_checked() -> None:
 # ── verify-run: the routing fix and the run-level rules ─────────────────────
 
 
-def _git_repo(root: Path) -> Path:
+def _commit_at(repo: Path, message: str) -> str:
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-qm", message], cwd=repo, check=True
+    )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _git_repo(root: Path) -> tuple[Path, str, str]:
+    """A repo with an early commit and a candidate head, for the F-1 floor.
+
+    The early commit is an ancestor of the candidate, so a receipt riding it
+    is the legitimate `applies_to_candidate` sentence case; a divergent side
+    commit is created on demand for the non-ancestor case.
+    """
     root.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-qm", "init"], cwd=root, check=True)
-    return root
+    early = _commit_at(root, "early")
+    candidate = _commit_at(root, "candidate")
+    return root, early, candidate
+
+
+def _side_commit(repo: Path, base: str) -> str:
+    """A commit on a divergent branch: resolves, but is no candidate's ancestor."""
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "-q", base], cwd=repo, check=True)
+    subprocess.run(["git", "checkout", "-q", "-b", "side"], cwd=repo, check=True)
+    side = _commit_at(repo, "side")
+    subprocess.run(["git", "checkout", "-q", branch], cwd=repo, check=True)
+    return side
 
 
 def _manifest(
@@ -331,6 +408,8 @@ def _manifest(
     receipt_entries: list[dict[str, Any]],
     *,
     expected: int,
+    candidate_commit: str | None = None,
+    harness_commit: str | None = None,
 ) -> Path:
     manifest = {
         "$schema": "./artifact-manifest.schema.json",
@@ -339,9 +418,9 @@ def _manifest(
         "generated_command": "recorded for test",
         "status": "complete",
         "recorded_at": "2026-09-05T00:00:00+00:00",
-        "harness_commit": _COMMIT,
+        "harness_commit": harness_commit or _COMMIT,
         "candidate": {
-            "commit": _COMMIT,
+            "commit": candidate_commit or _COMMIT,
             "version": "0.6.1",
             "wheel_filename": "talaria-0.6.1-py3-none-any.whl",
             "wheel_sha256": "d" * 64,
@@ -383,14 +462,18 @@ def _entry(path: Path, repo: Path, receipt: dict[str, Any]) -> dict[str, Any]:
 def test_verify_run_names_an_unknown_schema_instead_of_falling_through(
     tmp_path: Path,
 ) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
-    path, receipt = _conforming_receipt(evidence / "live-01")
+    path, receipt = _conforming_receipt(
+        evidence / "live-01", candidate_commit_sha=candidate
+    )
     receipt["schema_version"] = "talaria-v0.7.0-receipt-v1"
     path.write_text(json.dumps(receipt, indent=1) + "\n", encoding="utf-8")
-    manifest = _manifest(evidence, [], expected=1)
+    manifest = _manifest(evidence, [], expected=1, candidate_commit=candidate)
 
-    errors = verify_run(manifest, evidence_root=evidence, repo_root=repo)
+    errors = verify_run(
+        manifest, evidence_root=evidence, repo_root=repo, expected_candidate_commit=None
+    )
     assert any("unknown receipt schema_version" in error for error in errors), errors
     assert not any(
         "schema_version is not talaria-v0.5.0-receipt-v1" in error for error in errors
@@ -398,26 +481,33 @@ def test_verify_run_names_an_unknown_schema_instead_of_falling_through(
 
 
 def test_verify_run_routes_v061_receipts_to_the_v061_contract(tmp_path: Path) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
-    path, receipt = _conforming_receipt(evidence / "live-01")
-    manifest = _manifest(evidence, [_entry(path, repo, receipt)], expected=1)
+    path, receipt = _conforming_receipt(
+        evidence / "live-01", candidate_commit_sha=candidate
+    )
+    manifest = _manifest(
+        evidence, [_entry(path, repo, receipt)], expected=1, candidate_commit=candidate
+    )
 
     errors = verify_run(manifest, evidence_root=evidence, repo_root=repo)
     assert errors == [], errors
 
 
 def test_a_duplicate_live_case_is_rejected(tmp_path: Path) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
-    first, receipt_one = _conforming_receipt(evidence / "live-01")
+    first, receipt_one = _conforming_receipt(
+        evidence / "live-01", candidate_commit_sha=candidate
+    )
     second, receipt_two = _conforming_receipt(
-        evidence / "live-01-copy", checklist_item="live-01"
+        evidence / "live-01-copy", checklist_item="live-01", candidate_commit_sha=candidate
     )
     manifest = _manifest(
         evidence,
         [_entry(first, repo, receipt_one), _entry(second, repo, receipt_two)],
         expected=2,
+        candidate_commit=candidate,
     )
 
     errors = verify_run(manifest, evidence_root=evidence, repo_root=repo)
@@ -427,27 +517,33 @@ def test_a_duplicate_live_case_is_rejected(tmp_path: Path) -> None:
 def test_the_expected_receipt_count_is_read_from_the_manifest_not_a_literal(
     tmp_path: Path,
 ) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
-    path, receipt = _conforming_receipt(evidence / "live-01")
+    path, receipt = _conforming_receipt(
+        evidence / "live-01", candidate_commit_sha=candidate
+    )
     entries = [_entry(path, repo, receipt)]
-    manifest = _manifest(evidence, entries, expected=2)
+    manifest = _manifest(evidence, entries, expected=2, candidate_commit=candidate)
 
     errors = verify_run(manifest, evidence_root=evidence, repo_root=repo)
     assert any(
         "live receipts on disk, but counts.expected_receipts" in error for error in errors
     )
 
-    manifest = _manifest(evidence, entries, expected=1)
+    manifest = _manifest(evidence, entries, expected=1, candidate_commit=candidate)
     errors = verify_run(manifest, evidence_root=evidence, repo_root=repo)
     assert not any("expected_receipts declares" in error for error in errors), errors
 
 
 def test_the_ready_rule_has_no_waiver_path(tmp_path: Path) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
-    path, receipt = _conforming_receipt(evidence / "live-01", verdict="blocked")
-    manifest = _manifest(evidence, [_entry(path, repo, receipt)], expected=1)
+    path, receipt = _conforming_receipt(
+        evidence / "live-01", candidate_commit_sha=candidate, verdict="blocked"
+    )
+    manifest = _manifest(
+        evidence, [_entry(path, repo, receipt)], expected=1, candidate_commit=candidate
+    )
     document = json.loads(manifest.read_text(encoding="utf-8"))
     document["counts"]["item_verdicts"] = {
         "blocked": 1,
@@ -462,35 +558,79 @@ def test_the_ready_rule_has_no_waiver_path(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("receipt_commit", "applies", "expected_fragment"),
+    ("ride", "applies", "expected_fragment"),
     [
-        (_COMMIT, "same", None),
-        (_COMMIT, "the theme surfaces are unchanged", "applies_to_candidate must be 'same'"),
-        (_OTHER_COMMIT, "same", "non-empty sentence"),
-        (_OTHER_COMMIT, "  ", "non-empty sentence"),
-        (_OTHER_COMMIT, "the theme surfaces are unchanged since that commit", None),
+        ("candidate", "same", None),
+        ("candidate", "the theme surfaces are unchanged", "applies_to_candidate must be 'same'"),
+        ("early", "same", "non-empty sentence"),
+        ("early", "  ", "non-empty sentence"),
+        ("early", "the theme surfaces are unchanged since that commit", None),
     ],
 )
 def test_the_applies_attestation_is_enforced_against_the_candidate(
     tmp_path: Path,
-    receipt_commit: str,
+    ride: str,
     applies: str,
     expected_fragment: str | None,
 ) -> None:
-    repo = _git_repo(tmp_path)
+    repo, early, candidate = _git_repo(tmp_path)
+    receipt_commit = candidate if ride == "candidate" else early
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
     path, receipt = _conforming_receipt(
         evidence / "live-01", candidate_commit_sha=receipt_commit
     )
     entry = _entry(path, repo, receipt)
     entry["applies_to_candidate"] = applies
-    manifest = _manifest(evidence, [entry], expected=1)
+    manifest = _manifest(
+        evidence, [entry], expected=1, candidate_commit=candidate, harness_commit=candidate
+    )
 
     errors = verify_run(manifest, evidence_root=evidence, repo_root=repo)
     if expected_fragment is None:
         assert not any("applies_to_candidate" in error for error in errors), errors
     else:
         assert any(expected_fragment in error for error in errors), errors
+
+
+def test_the_candidate_floor_refuses_a_commit_that_resolves_nowhere(
+    tmp_path: Path,
+) -> None:
+    """F-1: a v0.6.1 receipt may not name a commit that exists in no repository."""
+    repo, _early, candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
+    path, receipt = _conforming_receipt(
+        evidence / "live-01", candidate_commit_sha=_COMMIT
+    )
+    entry = _entry(path, repo, receipt)
+    entry["applies_to_candidate"] = "the theme surfaces are unchanged since that commit"
+    manifest = _manifest(
+        evidence, [entry], expected=1, candidate_commit=candidate, harness_commit=candidate
+    )
+
+    errors = verify_run(manifest, evidence_root=evidence, repo_root=repo)
+    assert any("does not resolve in this repository" in error for error in errors), errors
+
+
+def test_the_candidate_floor_refuses_a_commit_outside_the_candidates_lineage(
+    tmp_path: Path,
+) -> None:
+    """F-1: the attestation sentence must explain a real lineage, not an invented one."""
+    repo, early, candidate = _git_repo(tmp_path)
+    side = _side_commit(repo, early)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
+    path, receipt = _conforming_receipt(
+        evidence / "live-01", candidate_commit_sha=side
+    )
+    entry = _entry(path, repo, receipt)
+    entry["applies_to_candidate"] = "the theme surfaces are unchanged since that commit"
+    manifest = _manifest(
+        evidence, [entry], expected=1, candidate_commit=candidate, harness_commit=candidate
+    )
+
+    errors = verify_run(manifest, evidence_root=evidence, repo_root=repo)
+    assert any(
+        "is not an ancestor of the manifest's candidate" in error for error in errors
+    ), errors
 
 
 # ── the generator's refusals ────────────────────────────────────────────────
@@ -511,7 +651,7 @@ def test_the_generator_refuses_a_tree_that_has_not_been_bumped() -> None:
 def test_the_generator_demands_a_sentence_for_every_earlier_head_receipt(
     tmp_path: Path,
 ) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
     _conforming_receipt(evidence / "live-01", candidate_commit_sha=_OTHER_COMMIT)
     receipts = v061_evidence._live_receipts(repo)
@@ -536,7 +676,7 @@ def test_the_generator_demands_a_sentence_for_every_earlier_head_receipt(
 
 
 def test_the_generator_refuses_receipts_the_verifier_rejects(tmp_path: Path) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
     _filed_thin_receipt(evidence / "live-01", tester="worker-2")
     receipts = v061_evidence._live_receipts(repo)
@@ -549,7 +689,7 @@ def test_the_generator_refuses_receipts_the_verifier_rejects(tmp_path: Path) -> 
 def test_the_generator_refuses_private_identifiers_beside_the_evidence(
     tmp_path: Path,
 ) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     root = repo / "docs" / "acceptance" / "v0.6.1"
     (root / "evidence").mkdir(parents=True)
     stray = root / "CONTROLLER-HANDOFF.md"
@@ -569,7 +709,7 @@ def test_the_generator_refuses_private_identifiers_beside_the_evidence(
 def test_the_generator_records_the_binding_when_every_gate_opens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
     _conforming_receipt(evidence / "live-01")
     _conforming_receipt(
@@ -636,13 +776,15 @@ def _attestation(**overrides: Any) -> dict[str, Any]:
         "attested_at": "2026-09-06",
         "tester": "dedicated-tester",
         "expected": "the derived theme applies live and persists",
+        "install_kind": "source-checkout",
+        "harness_kind": "scratch-capture",
     }
     attestation.update(overrides)
     return attestation
 
 
 def test_convert_derives_attests_and_never_backfills(tmp_path: Path) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
     _filed_thin_receipt(evidence / "live-01")
     output = tmp_path / "converted"
@@ -710,7 +852,7 @@ def test_convert_derives_attests_and_never_backfills(tmp_path: Path) -> None:
 
 
 def test_convert_preserves_a_rich_receipt_minus_its_pane_keys(tmp_path: Path) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     case = repo / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-01"
     case.mkdir(parents=True)
     (case / "live-01-01-fresh.png").write_bytes(_FRAME_ONE)
@@ -768,7 +910,7 @@ def test_convert_preserves_a_rich_receipt_minus_its_pane_keys(tmp_path: Path) ->
 def test_convert_refuses_without_every_attestation(
     tmp_path: Path, attestation: dict[str, Any] | None, fragment: str
 ) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
     _filed_thin_receipt(evidence / "live-01")
     output = tmp_path / "converted"
@@ -787,7 +929,7 @@ def test_convert_refuses_without_every_attestation(
 def test_convert_refuses_a_receipt_whose_commit_cannot_be_attested(
     tmp_path: Path,
 ) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
     _filed_thin_receipt(evidence / "live-01", harness_commit=None)
     output = tmp_path / "converted"
@@ -803,8 +945,58 @@ def test_convert_refuses_a_receipt_whose_commit_cannot_be_attested(
     assert not list(output.rglob("receipt.json")) if output.exists() else True
 
 
+def test_convert_refuses_hardcoded_kinds_from_the_attestation(
+    tmp_path: Path,
+) -> None:
+    """F-4: the install and harness kinds are attested facts, not assumptions."""
+    repo, _early, _candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
+    _filed_thin_receipt(evidence / "live-01")
+    output = tmp_path / "converted"
+    for attestation, fragment in (
+        (_attestation(install_kind=None), "attestation.install_kind must be"),
+        (_attestation(install_kind="wheel"), "wheel-install case is not defined"),
+        (_attestation(harness_kind=None), "attestation.harness_kind must be"),
+        (
+            _attestation(harness_kind="repository-tooling"),
+            "must attest its own commit in attestation.harness_commit",
+        ),
+    ):
+        with pytest.raises(SystemExit) as caught:
+            v061_evidence.convert(
+                attestations={"live-01": attestation},
+                output_root=output,
+                listed_at="2026-09-06",
+                repo_root=repo,
+            )
+        assert fragment in str(caught.value)
+        assert not list(output.rglob("receipt.json")) if output.exists() else True
+
+    # The other direction: a repository-tooling harness that attests its own
+    # commit converts cleanly, and the commit rides in harness.commit.
+    tooling = tmp_path / "tooling-converted"
+    v061_evidence.convert(
+        attestations={
+            "live-01": _attestation(
+                harness_kind="repository-tooling", harness_commit=_COMMIT
+            )
+        },
+        output_root=tooling,
+        listed_at="2026-09-06",
+        repo_root=repo,
+    )
+    converted = json.loads(
+        (tooling / "live-01" / "receipt.json").read_text(encoding="utf-8")
+    )
+    assert converted["harness"] == {
+        "kind": "repository-tooling",
+        "commit": _COMMIT,
+        "identity": "not recorded",
+    }
+
+
 def test_convert_refuses_when_identifiers_survive_the_filed_text(tmp_path: Path) -> None:
-    repo = _git_repo(tmp_path)
+    repo, _early, _candidate = _git_repo(tmp_path)
     evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
     _filed_thin_receipt(
         evidence / "live-01",

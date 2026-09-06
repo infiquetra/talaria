@@ -888,13 +888,55 @@ def _validate_v060_install(
     return errors
 
 
-def _v061_private_identifier_errors(value: Any, *, field: str) -> list[str]:
-    """Every private pane or session identifier nested inside a receipt.
+def _v061_not_recorded_allowlist_errors(value: Any, *, path: str) -> list[str]:
+    """Refuse the `not recorded` literal everywhere the ruling does not permit it.
 
-    Refused the way home paths are refused: scanned wherever a string can
-    hide, because a pane coordinate in a ``method`` sentence is as private as
-    one in a dedicated field — and one filed receipt proved the sentence is
-    where it landed (#150's identifier ruling).
+    Written as an allowlist, not a denylist, because a denylist cannot cover a
+    field that does not exist yet: every string is walked, the literal is
+    permitted only under gateway, session, terminal, or at harness.identity,
+    and it is refused at every other path — today's prose fields and every
+    future one included (F-3: the never-list was an approximation of the
+    rule, and a pass receipt with an unrecorded observation slipped through).
+    """
+    if isinstance(value, str):
+        if value != _V061_NOT_RECORDED:
+            return []
+        head = path.partition(".")[0]
+        if head in ("gateway", "session", "terminal") or path == "harness.identity":
+            return []
+        where = path or "the receipt root"
+        return [
+            f"{where}: the literal 'not recorded' is permitted only on gateway, "
+            "session, terminal, or harness.identity"
+        ]
+    if isinstance(value, dict):
+        errors: list[str] = []
+        for key, item in value.items():
+            child = f"{path}.{key}" if path else str(key)
+            errors.extend(_v061_not_recorded_allowlist_errors(item, path=child))
+        return errors
+    if isinstance(value, list):
+        errors = []
+        for index, item in enumerate(value):
+            errors.extend(
+                _v061_not_recorded_allowlist_errors(item, path=f"{path}[{index}]")
+            )
+        return errors
+    return []
+
+
+def _v061_private_identifier_errors(value: Any, *, field: str) -> list[str]:
+    """Every known-shape private identifier nested inside a receipt.
+
+    A high-value FILTER for the shapes this run mints, not a boundary that
+    makes reading receipts unnecessary: two patterns — herdr pane
+    coordinates and role-word-plus-digit session names — scanned wherever a
+    string can hide, because a pane coordinate in a ``method`` sentence is as
+    private as one in a dedicated field (one filed receipt proved the
+    sentence is where it landed). ``_contains_home_path`` covers other
+    common leaks separately, and "private" is not a regex-expressible
+    property, so a receipt still gets read; this catches the known shapes so
+    the reading starts from a cleaner page (#150's F-5 framing).
     """
     if isinstance(value, str):
         found: list[str] = []
@@ -987,19 +1029,10 @@ def _validate_v061_receipt(
             dt.datetime.fromisoformat(recorded_at)
         except ValueError:
             errors.append("recorded_at must be an ISO-8601 timestamp")
-    for never_field in (
-        "candidate_commit_sha",
-        "recorded_at",
-        "verdict",
-        "checklist_item",
-        "issue",
-        "tester",
-    ):
-        if receipt.get(never_field) == _V061_NOT_RECORDED:
-            errors.append(
-                "the literal 'not recorded' is permitted only on gateway, session, "
-                f"terminal, or harness.identity — not on {never_field}"
-            )
+    # The allowlist walk subsumes the old never-list: the mandatory fields
+    # refuse the literal through their own type rules and through this walk,
+    # and no future prose field can inherit acceptance silently.
+    errors.extend(_v061_not_recorded_allowlist_errors(receipt, path=""))
 
     try:
         install = _object(receipt.get("install"), field="install")
@@ -1138,6 +1171,30 @@ def _validate_v061_install(
     except HarnessError as exc:
         errors.append(str(exc))
     return errors
+
+
+def _commit_resolves(commit: str, *, repo_root: Path) -> bool:
+    """Whether ``commit`` names an object that exists in this repository."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _is_ancestor(commit: str, descendant: str, *, repo_root: Path) -> bool:
+    """Whether ``commit`` is an ancestor of ``descendant`` in this repository."""
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, descendant],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def _manifest_candidate(manifest: dict[str, Any]) -> dict[str, Any] | None:
@@ -1282,9 +1339,31 @@ def verify_run(
             # The v0.6.1 lineage replaces harness-identity with the manifest's
             # per-receipt attestation: live receipts ride frozen wave heads,
             # and `applies_to_candidate` says why each still applies. The
-            # v0.5.0 harness-bytes check below does not run for them.
+            # v0.5.0 harness-bytes check below does not run for them — which
+            # is exactly why the candidate floor here is mechanical and
+            # fail-closed: the receipt's named commit must resolve in this
+            # repository and be an ancestor of what the manifest binds, or
+            # the old skip would leave nothing under the candidate at all
+            # (F-1: it failed toward accepting, and now it cannot).
             item = receipt.get("checklist_item")
             verdict = receipt.get("verdict")
+            receipt_commit = receipt.get("candidate_commit_sha")
+            if isinstance(receipt_commit, str) and _COMMIT.fullmatch(receipt_commit):
+                if not _commit_resolves(receipt_commit, repo_root=repo_root):
+                    errors.append(
+                        f"{relative}: candidate_commit_sha {receipt_commit[:12]} does not "
+                        f"resolve in this repository — a receipt may not name a commit "
+                        f"that exists nowhere"
+                    )
+                elif not _is_ancestor(
+                    receipt_commit, expected_commit, repo_root=repo_root
+                ):
+                    errors.append(
+                        f"{relative}: candidate_commit_sha {receipt_commit[:12]} is not an "
+                        f"ancestor of the manifest's candidate {expected_commit[:12]} — "
+                        f"the attestation sentence must explain a real lineage, not an "
+                        f"invented one"
+                    )
             if isinstance(item, str):
                 if any(item == seen for seen, _ in v061_items):
                     errors.append(f"checklist_item {item} is declared by more than one receipt")
