@@ -232,6 +232,7 @@ def test_a_catalogue_that_could_not_be_read_says_so_and_keeps_the_local_set() ->
     # says what it last knew — with each dropped connection named in it, which is
     # the state an operator most wants the list for.
     assert {entry.name for entry in catalog.local_entries} == {
+        "/attach",
         "/quit",
         "/pause",
         "/resume",
@@ -534,6 +535,7 @@ def test_the_local_set_includes_the_theme_picker_and_explicit_save_surface() -> 
     out not to exist.
     """
     assert {command.name for command in TALARIA_LOCAL_COMMANDS} == {
+        "/attach",
         "/quit",
         "/pause",
         "/resume",

@@ -19,7 +19,13 @@ from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from talaria.domain.selection import Choice, Selection, Stage
-from talaria.ui.dialog import NO_MATCH, REFUSED_PREFIX, ConfirmDialog, PickerDialog
+from talaria.ui.dialog import (
+    NO_MATCH,
+    REFUSED_PREFIX,
+    ConfirmDialog,
+    PickerDialog,
+    attachment_dialog_copy,
+)
 
 # ── a source with two levels, one unselectable row, and a long list ───────
 
@@ -621,3 +627,45 @@ async def test_146_confirm_dialog_duplicate_key_after_dismiss_is_safe() -> None:
         await pilot.pause()
         assert dialog._dismissed
         assert app.result is True
+
+
+# ── C9's attachment confirm/remove copy (#147) ───────────────────────────
+
+
+def test_confirm_copy_names_the_file_and_nothing_has_moved() -> None:
+    title, body, proceed, cancel = attachment_dialog_copy(
+        "confirm", "notes.txt", "text or code file · 12 bytes", ""
+    )
+
+    assert title == "Attach this file?"
+    assert body[0] == "notes.txt"
+    assert "12 bytes" in body[1]
+    assert "attach" in proceed
+    assert "nothing" in cancel
+    # The file name travels, never the operator-local path.
+    assert "/" not in body[0]
+
+
+def test_remove_copy_counts_the_others_and_defaults_to_keep() -> None:
+    title, body, proceed, cancel = attachment_dialog_copy(
+        "remove", "shot.png", "", "image · 72 bytes · staged", other_count=2
+    )
+
+    assert title == "Remove this attachment?"
+    assert body[0] == "shot.png"
+    assert "2 other attachments" in body[2]
+    assert "remove" in proceed
+    assert "keep" in cancel
+
+
+def test_remove_copy_with_no_others_names_no_count() -> None:
+    _, body, _, _ = attachment_dialog_copy(
+        "remove", "shot.png", "", "image · 72 bytes · staged"
+    )
+
+    assert not any("other attachment" in line for line in body)
+
+
+def test_an_unknown_dialog_mode_raises_rather_than_opening() -> None:
+    with pytest.raises(ValueError):
+        attachment_dialog_copy("preview", "notes.txt", "", "")

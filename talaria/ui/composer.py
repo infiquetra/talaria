@@ -45,6 +45,7 @@ from textual.widgets import Static, TextArea
 
 from talaria.domain.commands import PasteThreshold
 from talaria.domain.composer_history import abandon, move_down, move_up
+from talaria.ui.attach import detect_dropped_path
 from talaria.ui.literal import literal_text
 
 #: Shown in the empty composer. Carries both bindings because R12 asks that
@@ -83,6 +84,21 @@ class ChatTextArea(TextArea):
             self.composer = composer
             self.text = text
 
+    class DroppedPath(Message):
+        """A paste body that is a dropped file path, never inserted (C9/D6).
+
+        Carries the path the drop resolves to. Unlike :class:`LargePaste`
+        the text is *not* in the editor: inserting a path the operator
+        dropped to attach would stage the bytes and leave the path as prose
+        beside them, and the operator would submit both. The app confirms
+        and stages from this message instead.
+        """
+
+        def __init__(self, composer: ChatTextArea, path: str) -> None:
+            super().__init__()
+            self.composer = composer
+            self.path = path
+
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
         #: KTD16's bounds. Replaced by :class:`Composer` from configuration.
@@ -110,6 +126,16 @@ class ChatTextArea(TextArea):
         ordinary keys and ``TextArea._on_paste`` never does.
         """
         event.prevent_default()
+        # D6's second route diverts before the literal insert: a paste body
+        # that is a dropped file path is never inserted (see DroppedPath),
+        # and the check runs first because after super() the text is already
+        # in the document. Only a body naming an existing file diverts — a
+        # path naming nothing stays text, which is what keeps a pasted
+        # sentence that merely looks like a path out of the attach flow.
+        dropped = detect_dropped_path(event.text or "")
+        if dropped is not None:
+            self.post_message(self.DroppedPath(self, dropped))
+            return
         await super()._on_paste(event)
         # After the literal insert, sync the slash palette for a user paste.
         # Collapse-placeholder replacement is programmatic via Composer.text
