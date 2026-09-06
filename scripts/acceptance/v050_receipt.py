@@ -12,7 +12,8 @@ import struct
 import subprocess
 import sys
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -66,7 +67,6 @@ def _public_evidence_roots(repo_root: Path = _REPO_ROOT) -> tuple[Path, ...]:
     return tuple(roots)
 
 
-_PUBLIC_EVIDENCE_ROOTS = _public_evidence_roots(_REPO_ROOT)
 _ROUTE_ALIASES: dict[str, str | None] = {
     "primary": PRIMARY_MODEL_ROUTE,
     "fallback": FALLBACK_MODEL_ROUTE,
@@ -142,6 +142,570 @@ FORBIDDEN_KEY_NAMES: frozenset[str] = frozenset({
 
 def is_forbidden_key(key: str) -> bool:
     return key in FORBIDDEN_KEY_NAMES or key.endswith("_pane")
+
+
+def is_absolute_filesystem_path(tok: str) -> bool:
+    if not isinstance(tok, str):
+        return False
+    if tok.startswith(("<scratch-root>", "<candidate-root>", "<integration-tree>")):
+        return False
+    if tok.startswith("file://"):
+        target = tok[7:]
+        if target.startswith(("<scratch-root>", "<candidate-root>", "<integration-tree>")):
+            return False
+        return is_absolute_filesystem_path(target)
+    if tok.startswith(("http://", "https://", "//")):
+        return False
+    if tok.startswith("~/") or re.match(r"^~[A-Za-z0-9._-]+/", tok):
+        return True
+    if tok in ("/dev/null", "/dev/ptmx", "/dev/tty"):
+        return False
+    if tok.startswith("/") and not tok.startswith("//"):
+        if tok.startswith(("/v1/", "/api/")):
+            return False
+        if tok.count("/") >= 2:
+            return True
+        if tok.endswith("/") and len(tok) > 1:
+            return True
+        first_segment = tok[1:].split("/")[0]
+        if first_segment in (
+            "tmp",
+            "private",
+            "var",
+            "opt",
+            "Users",
+            "home",
+            "root",
+            "etc",
+            "usr",
+            "Volumes",
+            "srv",
+            "mnt",
+        ):
+            return True
+        if "." in first_segment and not first_segment.startswith("."):
+            return True
+    return False
+
+
+def find_absolute_paths_in_text(text: str) -> list[str]:
+    violations: list[str] = []
+    raw_tokens = re.findall(r'[^\s"\'\(\)\[\]{}`]+', text)
+    for raw in raw_tokens:
+        tok = raw.strip("\"'()[]{}`<>").rstrip(",.;:!?")
+        if not tok:
+            continue
+        if "=" in tok:
+            val = tok.split("=", 1)[1].strip("\"'()[]{}`<>").rstrip(",.;:!?")
+            if is_absolute_filesystem_path(val):
+                violations.append(val)
+                continue
+        if is_absolute_filesystem_path(tok):
+            violations.append(tok)
+    return violations
+
+
+class ValueCategory(StrEnum):
+    COUNT = "count"
+    DIGEST = "digest"
+    TIMESTAMP = "timestamp"
+    GATEWAY_SESSION_ID = "gateway-session-id"
+    CLOSED_VOCABULARY = "closed-vocabulary"
+    OBJECT = "object"
+    LIST = "list"
+    BOOLEAN = "boolean"
+    STRING = "string"
+    PATH = "path"
+    HARNESS_IDENTITY = "harness-identity"
+    URL = "url"
+    MAP = "map"
+
+
+V050_INSTALL_SCHEMA = "talaria-v0.5.0-install-v1"
+V061_ITEM_SCHEMA = "talaria-v0.6.1-receipt-v1"
+V061_INSTALL_SCHEMA = "talaria-v0.6.1-install-v1"
+V061_RELEASE = "0.6.1"
+V061_ROLE_LABELS = ("dedicated-tester", "worker-lane-a", "worker-lane-b", "controller")
+
+
+@dataclass(frozen=True)
+class RecordSchema:
+    name: str
+    declared_keys: dict[str, ValueCategory]
+    nested_schemas: dict[str, dict[str, ValueCategory]] = field(default_factory=dict)
+    map_schemas: dict[str, tuple[str, ValueCategory]] = field(default_factory=dict)
+    nullable_keys: frozenset[str] = field(default_factory=frozenset)
+
+    def validate(
+        self, doc: dict[str, Any], *, path: Path, prefix: str = ""
+    ) -> list[str]:
+        errors: list[str] = []
+        for k, v in doc.items():
+            loc = f"{prefix}.{k}" if prefix else str(k)
+            if is_forbidden_key(k):
+                errors.append(f"{path}: contains forbidden key {k!r} at {loc}")
+                continue
+            if k not in self.declared_keys:
+                errors.append(
+                    f"{path}: {self.name} contains undeclared key {k!r} at {loc}"
+                )
+                continue
+            if v is None and (k in self.nullable_keys or loc.split(".")[-1] in self.nullable_keys):
+                continue
+            cat = self.declared_keys[k]
+            if cat == ValueCategory.COUNT:
+                if not isinstance(v, (int, float)) or v < 0:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a non-negative number"
+                    )
+            elif cat == ValueCategory.DIGEST:
+                if isinstance(v, list):
+                    if not all(
+                        isinstance(x, str)
+                        and len(x) in (40, 64)
+                        and all(c in "0123456789abcdefABCDEF" for c in x)
+                        for x in v
+                    ):
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must be a list of hex digests"
+                        )
+                elif not (
+                    isinstance(v, str)
+                    and len(v) in (40, 64)
+                    and all(c in "0123456789abcdefABCDEF" for c in v)
+                ):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a hex digest"
+                    )
+            elif cat == ValueCategory.TIMESTAMP:
+                if not isinstance(v, str) or not v.strip():
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a timestamp string"
+                    )
+            elif cat == ValueCategory.GATEWAY_SESSION_ID:
+                if not isinstance(v, str) or not v.strip():
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a gateway session id string"
+                    )
+            elif cat == ValueCategory.CLOSED_VOCABULARY:
+                if not isinstance(v, str) or not v.strip():
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a non-empty string"
+                    )
+            elif cat == ValueCategory.HARNESS_IDENTITY:
+                if v is not None:
+                    if not isinstance(v, str) or not v.strip():
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must be a non-empty string or null"
+                        )
+                    elif find_absolute_paths_in_text(v):
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must not contain an absolute "
+                            f"filesystem path ({v!r})"
+                        )
+            elif cat == ValueCategory.PATH:
+                if isinstance(v, str) and find_absolute_paths_in_text(v):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must not be an absolute "
+                        f"filesystem path ({v!r})"
+                    )
+            elif cat == ValueCategory.LIST:
+                if not isinstance(v, list):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a list"
+                    )
+            elif cat == ValueCategory.BOOLEAN:
+                if not isinstance(v, bool):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a boolean"
+                    )
+            elif cat == ValueCategory.OBJECT:
+                if isinstance(v, dict):
+                    if k in self.nested_schemas:
+                        sub_schema = RecordSchema(
+                            f"{self.name}.{k}",
+                            self.nested_schemas[k],
+                            nested_schemas=self.nested_schemas,
+                            map_schemas=self.map_schemas,
+                            nullable_keys=self.nullable_keys,
+                        )
+                        errors.extend(sub_schema.validate(v, path=path, prefix=loc))
+                    elif k in self.map_schemas:
+                        key_type, val_cat = self.map_schemas[k]
+                        for mk, mv in v.items():
+                            mloc = f"{loc}.{mk}"
+                            if is_forbidden_key(mk):
+                                errors.append(
+                                    f"{path}: contains forbidden key {mk!r} at {mloc}"
+                                )
+                            if key_type == "path" and (
+                                is_absolute_filesystem_path(mk)
+                                or mk.startswith("/")
+                                or ".." in mk
+                            ):
+                                errors.append(
+                                    f"{path}: {self.name} map key {mk!r} at {mloc} "
+                                    "must be a valid relative path"
+                                )
+                            if val_cat == ValueCategory.DIGEST:
+                                if not (
+                                    isinstance(mv, str)
+                                    and len(mv) in (40, 64)
+                                    and all(c in "0123456789abcdefABCDEF" for c in mv)
+                                ):
+                                    errors.append(
+                                        f"{path}: {self.name} map value at {mloc} "
+                                        "must be a hex digest"
+                                    )
+                elif isinstance(v, str):
+                    if find_absolute_paths_in_text(v):
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must not contain an absolute "
+                            f"filesystem path ({v!r})"
+                        )
+                else:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be an object"
+                    )
+            elif cat == ValueCategory.STRING:
+                if isinstance(v, list):
+                    if not all(isinstance(x, str) for x in v):
+                        errors.append(
+                            f"{path}: {self.name} field {loc!r} must be a string or list of strings"
+                        )
+                elif not isinstance(v, str):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a string"
+                    )
+        return errors
+
+
+RECEIPT_SCHEMA = RecordSchema(
+    name="receipt",
+    declared_keys={
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "release": ValueCategory.CLOSED_VOCABULARY,
+        "checklist_item": ValueCategory.CLOSED_VOCABULARY,
+        "title": ValueCategory.STRING,
+        "issue": ValueCategory.STRING,
+        "tester": ValueCategory.CLOSED_VOCABULARY,
+        "verdict": ValueCategory.CLOSED_VOCABULARY,
+        "candidate_commit_sha": ValueCategory.DIGEST,
+        "candidate_branch": ValueCategory.STRING,
+        "recorded_at": ValueCategory.TIMESTAMP,
+        "install": ValueCategory.OBJECT,
+        "harness": ValueCategory.OBJECT,
+        "gateway": ValueCategory.OBJECT,
+        "session": ValueCategory.OBJECT,
+        "terminal": ValueCategory.OBJECT,
+        "actions": ValueCategory.STRING,
+        "actual": ValueCategory.STRING,
+        "expected": ValueCategory.OBJECT,
+        "evidence": ValueCategory.OBJECT,
+        "screenshots_read_by": ValueCategory.CLOSED_VOCABULARY,
+        "screenshots_read_at": ValueCategory.TIMESTAMP,
+    },
+    nested_schemas={
+        "install": {
+            "kind": ValueCategory.CLOSED_VOCABULARY,
+            "commit": ValueCategory.DIGEST,
+            "basis": ValueCategory.STRING,
+            "filename": ValueCategory.STRING,
+            "sha256": ValueCategory.DIGEST,
+            "url": ValueCategory.URL,
+            "wheel_path": ValueCategory.PATH,
+            "version_reported": ValueCategory.CLOSED_VOCABULARY,
+            "help_ok": ValueCategory.BOOLEAN,
+        },
+        "harness": {
+            "kind": ValueCategory.CLOSED_VOCABULARY,
+            "commit": ValueCategory.DIGEST,
+            "identity": ValueCategory.HARNESS_IDENTITY,
+        },
+        "evidence": {
+            "narrative": ValueCategory.OBJECT,
+            "files": ValueCategory.OBJECT,
+            "files_listed_at": ValueCategory.TIMESTAMP,
+            "screenshots_read_by": ValueCategory.CLOSED_VOCABULARY,
+            "screenshots_read_at": ValueCategory.TIMESTAMP,
+            "frames": ValueCategory.LIST,
+            "wire": ValueCategory.OBJECT,
+            "screenshot_path": ValueCategory.PATH,
+            "screenshot_sha256": ValueCategory.DIGEST,
+            "pty_result_path": ValueCategory.PATH,
+            "pty_result_sha256": ValueCategory.DIGEST,
+            "source": ValueCategory.STRING,
+            "observation": ValueCategory.STRING,
+        },
+        "narrative": {
+            "kind": ValueCategory.CLOSED_VOCABULARY,
+            "method": ValueCategory.STRING,
+            "observation": ValueCategory.STRING,
+            "source": ValueCategory.STRING,
+        },
+        "wire": {
+            "events": ValueCategory.COUNT,
+        },
+        "gateway": {
+            "url": ValueCategory.URL,
+            "session_id": ValueCategory.GATEWAY_SESSION_ID,
+            "token": ValueCategory.STRING,
+            "profile": ValueCategory.STRING,
+        },
+        "session": {
+            "session_id": ValueCategory.GATEWAY_SESSION_ID,
+            "title": ValueCategory.STRING,
+            "mode": ValueCategory.STRING,
+            "profile": ValueCategory.STRING,
+        },
+        "terminal": {
+            "columns": ValueCategory.COUNT,
+            "rows": ValueCategory.COUNT,
+            "cell_width": ValueCategory.COUNT,
+            "cell_height": ValueCategory.COUNT,
+            "width": ValueCategory.COUNT,
+            "height": ValueCategory.COUNT,
+            "dpi": ValueCategory.COUNT,
+            "scale": ValueCategory.COUNT,
+            "term": ValueCategory.STRING,
+            "program": ValueCategory.STRING,
+        },
+        "expected": {
+            "source": ValueCategory.STRING,
+            "text": ValueCategory.STRING,
+        },
+    },
+
+    map_schemas={
+        "files": ("path", ValueCategory.DIGEST),
+    },
+    nullable_keys=frozenset({"commit", "identity"}),
+)
+
+INSTALL_RECEIPT_SCHEMA = RecordSchema(
+    name="install-receipt",
+    declared_keys={
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "tester": ValueCategory.CLOSED_VOCABULARY,
+        "candidate": ValueCategory.OBJECT,
+        "install": ValueCategory.OBJECT,
+        "recorded_at": ValueCategory.TIMESTAMP,
+    },
+    nested_schemas={
+        "candidate": {
+            "commit": ValueCategory.DIGEST,
+            "wheel_sha256": ValueCategory.DIGEST,
+            "version": ValueCategory.CLOSED_VOCABULARY,
+            "branch": ValueCategory.STRING,
+        },
+        "install": {
+            "version_reported": ValueCategory.CLOSED_VOCABULARY,
+            "help_ok": ValueCategory.BOOLEAN,
+            "filename": ValueCategory.STRING,
+            "sha256": ValueCategory.DIGEST,
+            "url": ValueCategory.URL,
+            "wheel_path": ValueCategory.PATH,
+        },
+    },
+)
+
+CAPTURE_METADATA_SCHEMA = RecordSchema(
+    name="capture-metadata",
+    declared_keys={
+        "columns": ValueCategory.COUNT,
+        "rows": ValueCategory.COUNT,
+        "cell_width": ValueCategory.COUNT,
+        "cell_height": ValueCategory.COUNT,
+        "width": ValueCategory.COUNT,
+        "height": ValueCategory.COUNT,
+        "dpi": ValueCategory.COUNT,
+        "scale": ValueCategory.COUNT,
+        "frame": ValueCategory.COUNT,
+        "frame_digest": ValueCategory.DIGEST,
+        "frame_digests": ValueCategory.DIGEST,
+        "digests": ValueCategory.DIGEST,
+        "sha256": ValueCategory.DIGEST,
+        "twin_digest": ValueCategory.DIGEST,
+        "recorded_at": ValueCategory.TIMESTAMP,
+        "captured_at": ValueCategory.TIMESTAMP,
+        "timestamp": ValueCategory.TIMESTAMP,
+        "session_id": ValueCategory.GATEWAY_SESSION_ID,
+        "format": ValueCategory.CLOSED_VOCABULARY,
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "title": ValueCategory.CLOSED_VOCABULARY,
+        "geometry": ValueCategory.OBJECT,
+        "terminal": ValueCategory.OBJECT,
+        "source_digest_sha256": ValueCategory.DIGEST,
+        "source": ValueCategory.STRING,
+        "view_id": ValueCategory.STRING,
+        "capture_kind": ValueCategory.CLOSED_VOCABULARY,
+    },
+    nested_schemas={
+        "geometry": {
+            "columns": ValueCategory.COUNT,
+            "rows": ValueCategory.COUNT,
+            "cell_width": ValueCategory.COUNT,
+            "cell_height": ValueCategory.COUNT,
+            "width": ValueCategory.COUNT,
+            "height": ValueCategory.COUNT,
+            "dpi": ValueCategory.COUNT,
+            "scale": ValueCategory.COUNT,
+        },
+        "terminal": {
+            "columns": ValueCategory.COUNT,
+            "rows": ValueCategory.COUNT,
+            "cell_width": ValueCategory.COUNT,
+            "cell_height": ValueCategory.COUNT,
+        },
+    },
+)
+
+PIXEL_MEASUREMENTS_SCHEMA = RecordSchema(
+    name="pixel-measurements",
+    declared_keys={
+        "columns": ValueCategory.COUNT,
+        "rows": ValueCategory.COUNT,
+        "cell_width": ValueCategory.COUNT,
+        "cell_height": ValueCategory.COUNT,
+        "width": ValueCategory.COUNT,
+        "height": ValueCategory.COUNT,
+        "dpi": ValueCategory.COUNT,
+        "scale": ValueCategory.COUNT,
+        "x": ValueCategory.COUNT,
+        "y": ValueCategory.COUNT,
+        "recorded_at": ValueCategory.TIMESTAMP,
+        "timestamp": ValueCategory.TIMESTAMP,
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "measurements": ValueCategory.OBJECT,
+        "geometry": ValueCategory.OBJECT,
+        "regions": ValueCategory.LIST,
+        "sha256": ValueCategory.DIGEST,
+        "title": ValueCategory.STRING,
+        "box": ValueCategory.OBJECT,
+        "bounds": ValueCategory.OBJECT,
+    },
+)
+
+STEP_LOG_SCHEMA = RecordSchema(
+    name="step-log",
+    declared_keys={
+        "step": ValueCategory.COUNT,
+        "seq": ValueCategory.COUNT,
+        "sourceSeq": ValueCategory.COUNT,
+        "timestamp": ValueCategory.TIMESTAMP,
+        "recorded_at": ValueCategory.TIMESTAMP,
+        "action": ValueCategory.STRING,
+        "status": ValueCategory.STRING,
+        "kind": ValueCategory.STRING,
+        "elapsed_ms": ValueCategory.COUNT,
+        "duration_ms": ValueCategory.COUNT,
+        "result": ValueCategory.STRING,
+        "details": ValueCategory.OBJECT,
+        "digest": ValueCategory.DIGEST,
+        "sha256": ValueCategory.DIGEST,
+        "error": ValueCategory.STRING,
+        "command": ValueCategory.STRING,
+        "exit_code": ValueCategory.COUNT,
+        "env": ValueCategory.OBJECT,
+    },
+)
+
+ATTESTATION_ITEM_SCHEMA = RecordSchema(
+    name="attestation",
+    declared_keys={
+        "tester": ValueCategory.CLOSED_VOCABULARY,
+        "capturing_role": ValueCategory.CLOSED_VOCABULARY,
+        "attested_at": ValueCategory.TIMESTAMP,
+        "install_kind": ValueCategory.CLOSED_VOCABULARY,
+        "harness_kind": ValueCategory.CLOSED_VOCABULARY,
+        "harness_commit": ValueCategory.DIGEST,
+        "harness_identity": ValueCategory.HARNESS_IDENTITY,
+        "expected": ValueCategory.STRING,
+        "gateway": ValueCategory.OBJECT,
+        "session": ValueCategory.OBJECT,
+        "terminal": ValueCategory.OBJECT,
+        "screenshots_read_by": ValueCategory.CLOSED_VOCABULARY,
+        "screenshots_read_at": ValueCategory.TIMESTAMP,
+        "notes": ValueCategory.STRING,
+        "checklist_item": ValueCategory.CLOSED_VOCABULARY,
+        "commit": ValueCategory.DIGEST,
+    },
+    nullable_keys=frozenset({"harness_commit", "harness_identity"}),
+)
+
+
+class AttestationMapSchema:
+    name = "attestation-map"
+
+    def validate(self, doc: dict[str, Any], *, path: Path, prefix: str = "") -> list[str]:
+        errors: list[str] = []
+        for k, v in doc.items():
+            loc = f"{prefix}.{k}" if prefix else str(k)
+            if is_forbidden_key(k):
+                errors.append(f"{path}: contains forbidden key {k!r} at {loc}")
+                continue
+            if re.match(r"^live-\d+$", k):
+                if isinstance(v, dict):
+                    errors.extend(ATTESTATION_ITEM_SCHEMA.validate(v, path=path, prefix=loc))
+                else:
+                    errors.append(f"{path}: attestation item {k!r} must be an object")
+            elif k in ATTESTATION_ITEM_SCHEMA.declared_keys:
+                return ATTESTATION_ITEM_SCHEMA.validate(doc, path=path, prefix=prefix)
+            else:
+                errors.append(
+                    f"{path}: attestation-map contains undeclared key {k!r} at {loc}"
+                )
+        return errors
+
+
+ATTESTATION_MAP_SCHEMA = AttestationMapSchema()
+
+
+class SchemaRegistry:
+    """Registry of authored record schemas under the amended privacy contract."""
+
+    @classmethod
+    def lookup(cls, path: Path, doc: Any) -> RecordSchema | AttestationMapSchema | None:
+        if path.name == "receipt.json" or path.name.endswith("-receipt.json"):
+            if isinstance(doc, dict) and (
+                doc.get("schema_version") == V061_INSTALL_SCHEMA
+                or "candidate" in doc
+            ):
+                return INSTALL_RECEIPT_SCHEMA
+            return RECEIPT_SCHEMA
+        if isinstance(doc, dict):
+            if (
+                doc.get("schema_version") == V061_INSTALL_SCHEMA
+                or ("candidate" in doc and "install" in doc and "tester" in doc)
+            ):
+                return INSTALL_RECEIPT_SCHEMA
+            if "checklist_item" in doc and "verdict" in doc:
+                return RECEIPT_SCHEMA
+            if any(k in doc for k in ("frame_digest", "frame_digests", "twin_digest")) or (
+                {"columns", "rows", "cell_width"}.issubset(doc.keys())
+                and not ("measurements" in path.name.lower() or "measurements" in doc)
+            ):
+                return CAPTURE_METADATA_SCHEMA
+            if (
+                "measurements" in path.name.lower()
+                or "pixel" in path.name.lower()
+                or "measurements" in doc
+                or "regions" in doc
+            ):
+                return PIXEL_MEASUREMENTS_SCHEMA
+            if (
+                "step" in path.name.lower()
+                or "step" in doc
+                or ("seq" in doc and "action" in doc)
+                or ("sourceSeq" in doc)
+            ):
+                return STEP_LOG_SCHEMA
+            if (
+                "attestation" in path.name.lower()
+                or any(k.startswith("live-") for k in doc.keys())
+            ):
+                return ATTESTATION_MAP_SCHEMA
+        return None
 
 _MACOS_ACCEPTANCE_SCRATCH_PATH = re.compile(
     rb"/private/var/folders/[A-Za-z0-9._/-]+/T/"
@@ -594,82 +1158,13 @@ _ALLOWED_NON_TEXT_ANCILLARY_CHUNKS: frozenset[bytes] = frozenset({
 _TEXT_CHUNK_TYPES: frozenset[bytes] = frozenset({b"tEXt", b"zTXt", b"iTXt"})
 
 _CAPTURE_METADATA_DECLARED_KEYS: dict[str, str] = {
-    "columns": "count",
-    "rows": "count",
-    "cell_width": "count",
-    "cell_height": "count",
-    "width": "count",
-    "height": "count",
-    "dpi": "count",
-    "scale": "count",
-    "frame": "count",
-    "frame_digest": "digest",
-    "frame_digests": "digest",
-    "digests": "digest",
-    "sha256": "digest",
-    "twin_digest": "digest",
-    "recorded_at": "timestamp",
-    "captured_at": "timestamp",
-    "timestamp": "timestamp",
-    "session_id": "gateway-session-id",
-    "format": "closed-vocabulary",
-    "schema_version": "closed-vocabulary",
-    "title": "closed-vocabulary",
-    "geometry": "object",
-    "terminal": "object",
+    k: v.value for k, v in CAPTURE_METADATA_SCHEMA.declared_keys.items()
 }
 
 
 def _validate_capture_metadata(doc: dict[str, Any], *, path: Path) -> list[str]:
     """Validate capture metadata against registered schema and value categories."""
-    errors: list[str] = []
-    for key, value in doc.items():
-        if is_forbidden_key(key):
-            errors.append(f"{path}: capture metadata contains forbidden key {key!r}")
-            continue
-        if key not in _CAPTURE_METADATA_DECLARED_KEYS:
-            errors.append(f"{path}: capture metadata contains undeclared key {key!r}")
-            continue
-        category = _CAPTURE_METADATA_DECLARED_KEYS[key]
-        if category == "count":
-            if not isinstance(value, (int, float)) or value < 0:
-                errors.append(
-                    f"{path}: capture metadata field {key!r} must be a non-negative number"
-                )
-        elif category == "digest":
-            if isinstance(value, list):
-                if not all(
-                    isinstance(x, str)
-                    and (len(x) in (40, 64))
-                    and all(c in "0123456789abcdefABCDEF" for c in x)
-                    for x in value
-                ):
-                    errors.append(
-                        f"{path}: capture metadata field {key!r} must be a list of hex digests"
-                    )
-            elif not (
-                isinstance(value, str)
-                and (len(value) in (40, 64))
-                and all(c in "0123456789abcdefABCDEF" for c in value)
-            ):
-                errors.append(f"{path}: capture metadata field {key!r} must be a hex digest")
-        elif category == "timestamp":
-            if not isinstance(value, str) or not value.strip():
-                errors.append(f"{path}: capture metadata field {key!r} must be a timestamp string")
-        elif category == "gateway-session-id":
-            if not isinstance(value, str) or not value.strip():
-                errors.append(
-                    f"{path}: capture metadata field {key!r} must be a gateway session id string"
-                )
-        elif category == "closed-vocabulary":
-            if not isinstance(value, str) or not value.strip():
-                errors.append(f"{path}: capture metadata field {key!r} must be a non-empty string")
-        elif category == "object":
-            if isinstance(value, dict):
-                errors.extend(_validate_capture_metadata(value, path=path))
-            else:
-                errors.append(f"{path}: capture metadata field {key!r} must be an object")
-    return errors
+    return CAPTURE_METADATA_SCHEMA.validate(doc, path=path)
 
 
 def _parse_png_text_chunk(chunk_type: bytes, chunk_data: bytes) -> tuple[str, bytes, str | None]:
@@ -834,26 +1329,9 @@ def classify_evidence_file(path: Path) -> str:
     try:
         doc = json.loads(data.decode("utf-8"))
         if isinstance(doc, dict):
-            if any(
-                k in doc
-                for k in (
-                    "columns",
-                    "rows",
-                    "cell_width",
-                    "frame",
-                    "frame_digest",
-                    "frame_digests",
-                    "twin_digest",
-                    "tester_pane",
-                )
-            ):
-                return "capture-metadata"
-            if "measurements" in path.name.lower():
-                return "pixel-measurements"
-            if "steps" in path.name.lower() or "step" in doc:
-                return "step-logs"
-            if "attestation" in path.name.lower() or any(k.startswith("live-") for k in doc.keys()):
-                return "attestation-map"
+            schema = SchemaRegistry.lookup(path, doc)
+            if schema is not None:
+                return schema.name
         return "harness-record"
     except (UnicodeDecodeError, json.JSONDecodeError):
         pass
@@ -974,7 +1452,9 @@ def _wire_capture_errors(path: Path, data: bytes) -> list[str]:
 
 
 def _walk_json_privacy_errors(value: Any, *, path: Path, prefix: str = "") -> list[str]:
-    """Recursive walk on parsed JSON to refuse forbidden keys and private string values."""
+    """Recursive walk on parsed JSON to refuse forbidden keys, absolute paths,
+    and private string values.
+    """
     errors: list[str] = []
     if isinstance(value, dict):
         for k, v in value.items():
@@ -987,6 +1467,8 @@ def _walk_json_privacy_errors(value: Any, *, path: Path, prefix: str = "") -> li
             loc = f"{prefix}[{idx}]"
             errors.extend(_walk_json_privacy_errors(item, path=path, prefix=loc))
     elif isinstance(value, str):
+        for p in find_absolute_paths_in_text(value):
+            errors.append(f"{path}: contains absolute filesystem path {p!r} at {prefix}")
         val_bytes = value.encode("utf-8")
         for pattern, label in _PRIVATE_PATTERNS:
             if pattern.search(val_bytes):
@@ -1030,58 +1512,69 @@ def evidence_file_privacy_errors(path: Path, repo_root: Path = _REPO_ROOT) -> li
                 errors.append(f"{path}: contains a private {label}")
         return errors
 
-    if file_class == "capture-metadata":
-        try:
-            doc = json.loads(data.decode("utf-8"))
-            if isinstance(doc, dict):
-                errors.extend(_validate_capture_metadata(doc, path=path))
-                errors.extend(_walk_json_privacy_errors(doc, path=path))
-            else:
-                errors.append(f"{path}: capture metadata must be a JSON object")
-        except Exception as exc:
-            errors.append(f"{path}: capture metadata is invalid JSON: {exc}")
-        return errors
+    text: str | None = None
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
 
-    if file_class in {"receipt", "harness-record"}:
-        parsed_ok, doc = False, None
+    if text is not None:
         try:
-            doc = json.loads(data.decode("utf-8"))
-            parsed_ok = True
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            pass
-        if parsed_ok and isinstance(doc, dict):
-            if "evidence" in path.parts and path.name != "receipt.json":
-                if any(
-                    k in doc
-                    for k in (
-                        "columns",
-                        "rows",
-                        "cell_width",
-                        "frame",
-                        "frame_digest",
-                        "tester_pane",
-                    )
-                ):
-                    errors.extend(_validate_capture_metadata(doc, path=path))
-                else:
-                    errors.append(
-                        f"{path}: unregistered record type or undeclared key in {path.name}"
-                    )
+            doc = json.loads(text)
+            is_json = True
+        except json.JSONDecodeError:
+            is_json = False
+            doc = None
+
+        if is_json and isinstance(doc, dict):
+            schema = SchemaRegistry.lookup(path, doc)
+            if schema is not None:
+                errors.extend(schema.validate(doc, path=path))
+            elif "evidence" in path.parts:
+                errors.append(
+                    f"{path}: unregistered record type or undeclared key in {path.name}"
+                )
             errors.extend(_walk_json_privacy_errors(doc, path=path))
             return errors
 
-        try:
-            text = data.decode("utf-8")
-            for idx, line in enumerate(text.splitlines(), start=1):
-                if not line.strip():
-                    continue
-                line_obj = json.loads(line)
-                errors.extend(_walk_json_privacy_errors(line_obj, path=path, prefix=f"line_{idx}"))
+        if is_json and isinstance(doc, list):
+            for idx, item in enumerate(doc):
+                loc = f"[{idx}]"
+                if isinstance(item, dict):
+                    schema = SchemaRegistry.lookup(path, item)
+                    if schema is not None:
+                        errors.extend(schema.validate(item, path=path, prefix=loc))
+                    elif "evidence" in path.parts:
+                        errors.append(
+                            f"{path}: unregistered record type or undeclared key at {loc}"
+                        )
+                errors.extend(_walk_json_privacy_errors(item, path=path, prefix=loc))
             return errors
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            pass
 
-    # Fallback to byte pattern scan
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if lines and all(_is_valid_json_line(line_str) for line_str in lines):
+            for idx, line in enumerate(lines, start=1):
+                loc = f"line_{idx}"
+                line_obj = json.loads(line)
+                if isinstance(line_obj, dict):
+                    schema = SchemaRegistry.lookup(path, line_obj)
+                    if schema is not None:
+                        errors.extend(schema.validate(line_obj, path=path, prefix=loc))
+                    elif "evidence" in path.parts:
+                        errors.append(
+                            f"{path}: unregistered record type or undeclared key at {loc}"
+                        )
+                errors.extend(_walk_json_privacy_errors(line_obj, path=path, prefix=loc))
+            return errors
+
+        # Free text (e.g. terminal-text, notes outside evidence, or text probes)
+        for p in find_absolute_paths_in_text(text):
+            errors.append(f"{path}: contains absolute filesystem path {p!r}")
+        for pattern, label in _PRIVATE_PATTERNS:
+            if pattern.search(data):
+                errors.append(f"{path}: contains a private {label}")
+        return errors
+
     for pattern, label in _PRIVATE_PATTERNS:
         if pattern.search(data):
             errors.append(f"{path}: contains a private {label}")
@@ -1317,10 +1810,6 @@ V060_INSTALL_SCHEMA = "talaria-v0.6.0-install-v1"
 V060_RELEASE = "0.6.0"
 
 V050_ITEM_SCHEMA = "talaria-v0.5.0-receipt-v1"
-V050_INSTALL_SCHEMA = "talaria-v0.5.0-install-v1"
-V061_ITEM_SCHEMA = "talaria-v0.6.1-receipt-v1"
-V061_INSTALL_SCHEMA = "talaria-v0.6.1-install-v1"
-V061_RELEASE = "0.6.1"
 
 #: A herdr workspace coordinate (``wFB:pT`` or ``w1:t1``) — an operational
 #: handle, not a product fact, and kept out of the public tree.
@@ -1340,11 +1829,6 @@ _V061_NOT_RECORDED = "not recorded"
 #: code: the manifest declares ``counts.expected_receipts`` and the verifier
 #: reads it from there (the architect ruling on infiquetra/talaria#150).
 _V061_ITEM = re.compile(r"^live-(0[1-9]|1[0-9]|2[0-1])$")
-#: The closed role-label set from the ruling on infiquetra/talaria#150. A
-#: session or pane name never belongs here: the labels name roles, and the
-#: controller supplies the session-to-role map as attestations rather than
-#: letting a session name stand in for one.
-V061_ROLE_LABELS = ("dedicated-tester", "worker-lane-a", "worker-lane-b", "controller")
 #: Kept for the not-recorded and identifier rules above; the tester field
 #: itself is judged by membership in :data:`V061_ROLE_LABELS`.
 _V061_TESTER = re.compile(r"^[A-Za-z][A-Za-z-]*$")
@@ -1631,17 +2115,7 @@ def _validate_v061_receipt(
         if harness_identity is not None:
             if not isinstance(harness_identity, str) or not harness_identity.strip():
                 errors.append("harness.identity must be a non-empty string or null")
-            elif (
-                harness_identity.startswith("/")
-                or Path(harness_identity).is_absolute()
-                or any(
-                    p in harness_identity
-                    # Denylist prefixes the contract refuses, not opened paths:
-                    for p in (  # nosec B108
-                        "/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/"
-                    )
-                )
-            ):
+            elif find_absolute_paths_in_text(harness_identity):
                 errors.append(
                     "harness.identity must not contain an absolute filesystem path "
                     f"({harness_identity!r})"

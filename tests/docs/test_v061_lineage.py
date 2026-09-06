@@ -26,12 +26,22 @@ import pytest
 
 from scripts.acceptance import v061_evidence
 from scripts.acceptance.v050_receipt import (
+    ATTESTATION_MAP_SCHEMA,
+    CAPTURE_METADATA_SCHEMA,
+    INSTALL_RECEIPT_SCHEMA,
+    PIXEL_MEASUREMENTS_SCHEMA,
+    RECEIPT_SCHEMA,
+    STEP_LOG_SCHEMA,
     V061_ITEM_SCHEMA,
     V061_ROLE_LABELS,
+    SchemaRegistry,
     _png_chunk_errors,
+    _public_evidence_roots,
     _validate_v061_install,
     _validate_v061_receipt,
     evidence_file_privacy_errors,
+    find_absolute_paths_in_text,
+    is_absolute_filesystem_path,
     verify_run,
 )
 
@@ -1580,3 +1590,168 @@ def test_convert_source_inventory_reconciliation_and_notes(tmp_path: Path) -> No
         )
     assert "refusing to convert" in str(caught.value)
     assert "markdown files forbidden under evidence" in str(caught.value)
+
+
+# ── F-1, F-2, F-4: Structural Path Checks & Schema Registry Allowlist ──────
+
+
+def test_structural_path_check_all_probe_shapes() -> None:
+    """F-1: All absolute filesystem path probe shapes are refused."""
+    positive_probes = [
+        "/tmp/talaria-v061-live/driver.py",
+        "/private/tmp/talaria-v061-live/driver.py",
+        "/var/folders/ky/n5fq/T/pytest-of-jefcox/x",
+        "/opt/scratch/talaria-run",
+        "/Users/someone/.codex/worktrees/v061-w2",
+        "/Users/operator/workspace",
+        "file:///tmp/talaria-v061-live/driver.py",
+        "~/driver.py",
+        "~alice/driver.py",
+        "talaria at /tmp/talaria-v061-live/driver.py, commit 94b2aaa",
+        "`/tmp/talaria-v061-live/driver.py`",
+        "--workdir=/opt/scratch/talaria-run",
+        "identity=/tmp/talaria-v061-live/driver.py",
+    ]
+    for probe in positive_probes:
+        found = find_absolute_paths_in_text(probe)
+        assert len(found) >= 1, f"Expected probe to be refused: {probe!r}"
+    assert is_absolute_filesystem_path("/tmp/talaria-v061-live/driver.py")
+    assert is_absolute_filesystem_path("~/driver.py")
+    assert is_absolute_filesystem_path("~alice/driver.py")
+
+
+def test_structural_path_check_exemptions() -> None:
+    """F-1: Declared placeholders, URLs, device nodes, and slash commands are permitted."""
+    negative_probes = [
+        "<candidate-root>/dist/wheel.whl",
+        "file://<candidate-root>/dist/wheel.whl",
+        "<scratch-root>/evidence/live-01",
+        "file://<scratch-root>/evidence/live-01",
+        "<integration-tree>/test",
+        "/dev/null",
+        "/dev/ptmx",
+        "/dev/tty",
+        "/theme",
+        "/diffs",
+        "live-01.png",
+        "https://github.com/infiquetra/talaria",
+        "http://localhost:8000/v1/sessions",
+        "/v1/sessions",
+        "/api/v1/stream",
+        "./artifact-manifest.schema.json",
+        "../relative/path.txt",
+    ]
+    for probe in negative_probes:
+        found = find_absolute_paths_in_text(probe)
+        assert found == [], f"Expected exemption to pass: {probe!r}, got {found}"
+
+
+def test_converted_receipt_with_tmp_path_in_identity_refused(tmp_path: Path) -> None:
+    """F-1: harness.identity carrying /tmp paths is refused by receipt validation and scan."""
+    receipt_dir = tmp_path / "evidence" / "live-01"
+    receipt_dir.mkdir(parents=True)
+    receipt_path, receipt = _conforming_receipt(
+        receipt_dir,
+        harness_identity="talaria at /tmp/talaria-v061-live/driver.py, commit 94b2aaa",
+    )
+    # Receipt validator rejects /tmp path in harness.identity
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert any("must not contain an absolute filesystem path" in e for e in errors)
+
+    # Privacy scanner on the receipt file rejects it structurally
+    file_errors = evidence_file_privacy_errors(receipt_path)
+    assert any("/tmp/talaria-v061-live/driver.py" in e for e in file_errors)
+
+
+def test_schema_registry_covers_all_authored_record_types() -> None:
+    """F-2: SchemaRegistry resolves every authored record type without key sniffing."""
+    # 1. receipt
+    r_schema = SchemaRegistry.lookup(
+        Path("receipt.json"),
+        {"checklist_item": "live-01", "verdict": "pass"},
+    )
+    assert r_schema is RECEIPT_SCHEMA
+
+    # 2. install-receipt
+    ir_schema = SchemaRegistry.lookup(
+        Path("install-receipt.json"),
+        {"candidate": {}, "install": {}, "tester": "dedicated-tester"},
+    )
+    assert ir_schema is INSTALL_RECEIPT_SCHEMA
+
+    # 3. capture-metadata
+    cm_schema = SchemaRegistry.lookup(
+        Path("capture-metadata.json"),
+        {"frame_digest": "0" * 64, "columns": 80, "rows": 24},
+    )
+    assert cm_schema is CAPTURE_METADATA_SCHEMA
+
+    # 4. pixel-measurements
+    pm_schema = SchemaRegistry.lookup(
+        Path("measurements.json"),
+        {"measurements": {}, "columns": 80, "rows": 24},
+    )
+    assert pm_schema is PIXEL_MEASUREMENTS_SCHEMA
+
+    # 5. step-log
+    sl_schema = SchemaRegistry.lookup(
+        Path("step-log.json"),
+        {"step": 1, "action": "focus"},
+    )
+    assert sl_schema is STEP_LOG_SCHEMA
+
+    # 6. attestation-map
+    am_schema = SchemaRegistry.lookup(
+        Path("attestations.json"),
+        {"live-01": {"tester": "dedicated-tester"}},
+    )
+    assert am_schema is ATTESTATION_MAP_SCHEMA
+
+
+def test_schema_registry_enforces_allowlist_and_refuses_undeclared_or_unregistered(
+    tmp_path: Path,
+) -> None:
+    """F-2: Unregistered record types or undeclared keys in evidence/ are refused."""
+    ev_dir = tmp_path / "evidence" / "live-01"
+    ev_dir.mkdir(parents=True)
+
+    # Undeclared key in receipt.json
+    receipt_file = ev_dir / "receipt.json"
+    bad_receipt = {
+        "schema_version": V061_ITEM_SCHEMA,
+        "release": "0.6.1",
+        "checklist_item": "live-01",
+        "verdict": "pass",
+        "tester": "dedicated-tester",
+        "undeclared_private_field": "some-value",
+    }
+    receipt_file.write_text(json.dumps(bad_receipt), encoding="utf-8")
+    errors = evidence_file_privacy_errors(receipt_file)
+    assert any("undeclared key 'undeclared_private_field'" in e for e in errors)
+
+    # Forbidden key in receipt.json
+    forbidden_receipt = dict(bad_receipt)
+    del forbidden_receipt["undeclared_private_field"]
+    forbidden_receipt["tester_pane"] = "w1:p1"
+    receipt_file.write_text(json.dumps(forbidden_receipt), encoding="utf-8")
+    errors = evidence_file_privacy_errors(receipt_file)
+    assert any("forbidden key 'tester_pane'" in e for e in errors)
+
+    # Unregistered JSON record type under evidence/
+    unknown_file = ev_dir / "arbitrary_custom_record.json"
+    unknown_file.write_text(json.dumps({"arbitrary_payload": 123}), encoding="utf-8")
+    errors = evidence_file_privacy_errors(unknown_file)
+    assert any("unregistered record type or undeclared key" in e for e in errors)
+
+
+def test_dead_constant_removed_and_dynamic_roots_functional(tmp_path: Path) -> None:
+    """F-4: _PUBLIC_EVIDENCE_ROOTS dead constant is deleted and dynamic discovery works."""
+    from scripts.acceptance import v050_receipt
+
+    assert not hasattr(v050_receipt, "_PUBLIC_EVIDENCE_ROOTS")
+
+    # Dynamic roots discover version directories correctly
+    v_root = tmp_path / "docs" / "acceptance" / "v0.6.1"
+    v_root.mkdir(parents=True)
+    roots = _public_evidence_roots(tmp_path)
+    assert "docs/acceptance/v0.6.1" in [r.as_posix() for r in roots]

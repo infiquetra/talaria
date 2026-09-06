@@ -57,6 +57,7 @@ from scripts.acceptance.v050_receipt import (
     _validate_v061_receipt,
     classify_evidence_file,
     evidence_file_privacy_errors,
+    find_absolute_paths_in_text,
     public_evidence_privacy_errors,
 )
 from scripts.acceptance.v060_evidence import (
@@ -821,17 +822,7 @@ def inventory_source_evidence(
                 harness = filed.get("harness")
                 if isinstance(harness, dict):
                     h_id = harness.get("identity")
-                    if isinstance(h_id, str) and (
-                        h_id.startswith("/")
-                        or Path(h_id).is_absolute()
-                        or any(
-                            p in h_id
-                            # Denylist prefixes the contract refuses, not opened paths:
-                            for p in (  # nosec B108
-                                "/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/"
-                            )
-                        )
-                    ):
+                    if isinstance(h_id, str) and bool(find_absolute_paths_in_text(h_id)):
                         receipt_had_findings = True
                         entries.append(
                             SourceInventoryEntry(
@@ -1043,17 +1034,7 @@ def convert(
                 )
             harness_identity = attestation.get("harness_identity")
             if harness_identity is not None and isinstance(harness_identity, str):
-                if (
-                    harness_identity.startswith("/")
-                    or Path(harness_identity).is_absolute()
-                    or any(
-                        p in harness_identity
-                        # Denylist prefixes the contract refuses, not opened paths:
-                        for p in (  # nosec B108
-                            "/tmp/", "/private/tmp", "/private/var/", "/Users/", "/home/"
-                        )
-                    )
-                ):
+                if find_absolute_paths_in_text(harness_identity):
                     item_refusals.append(
                         "attestation.harness_identity must not contain an absolute "
                         f"filesystem path ({harness_identity!r})"
