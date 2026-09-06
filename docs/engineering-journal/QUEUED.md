@@ -1608,6 +1608,33 @@ Not widened because a genuinely slow replay is wall-clock expensive: `speed` mul
 
 **Revisit when.** The determinism check is next touched, or a timing-dependent reducer bug escapes to a user — that would make the unmeasured slow end the first place to look.
 
+### A versioned status-line field for the agent's working directory
+
+**Priority.** P3 — the bar's contract is frozen v1 and the inspector already shows both
+directories; nothing is lost, only unsurfaced in the compact form.
+
+**Evidence.** C13 (#157) keeps the launch directory in the bar's `cwd` segment and puts both
+directories in the inspector's CONTEXT section. The external status contract
+(`docs/formats/status-line.md`) is frozen v1 and names no agent-directory field, so a
+consumer reading the bar cannot tell `adopted` from `not-adopted` without opening the
+inspector.
+
+**Worth it when.** The status-line contract is versioned to v2 for another reason; the agent
+directory rides along as a new field rather than forcing the version bump alone.
+
+### Mid-session directory switching through session.cwd.set, deliberately unused
+
+**Priority.** P3 — no live case needs it; recorded so a future reader does not mistake absence
+for oversight.
+
+**Evidence.** C13 (#157) sends the launch directory once at `session.create` and never calls
+`session.cwd.set`; the non-goals rule out mid-session switching, retry, and any second
+request. The gateway route exists but this release makes no claim through it.
+
+**Worth it when.** A live case requires the agent to move after creation *and* the two-project
+probe has shown per-session scoping holds — switching without scoping evidence would
+reintroduce the item-12 divergence as a feature.
+
 ## Maybe
 
 ### ~~Package Talaria as an independently installable distribution~~ — CLOSED 2026-08-08

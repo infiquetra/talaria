@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import ClassVar
 
+from rich.cells import cell_len, get_character_cell_size
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
@@ -21,6 +22,7 @@ from talaria.domain.changes import (
     InspectorView,
 )
 from talaria.domain.normalize import MOA_FALLBACK_TEXT
+from talaria.domain.workdir import DirectoryStatus
 from talaria.ui.literal import literal_text
 
 DEFAULT_INSPECTOR_WIDTH = 36
@@ -400,12 +402,31 @@ class Inspector(VerticalScroll):
         """Render the context section from the held view and caret region.
 
         Safe before the first :meth:`apply` and before compose has run: the
-        row simply waits for whichever of the two lands first.
+        row simply waits for whichever of the two lands first. The panel width
+        clips the C13 directory rows to one screen line each; before any width
+        is known the values go out whole and a later repaint clips them.
         """
         if self._context_widget is None:
             return
+        # The panel width, never the laid-out content size: the latter moves
+        # under a repaint (scrollbar visibility, layout phase), and clipping
+        # to a transient width sticks, because nothing re-clips afterwards.
+        # Chrome is the Inspector rule's own border and padding (2 + 2) plus
+        # one scrollbar allowance, so a row budgeted here fits whether or not
+        # the scrollbar is showing. If that rule's chrome ever changes, rows
+        # wrap instead of clipping — visible in the status-region screens,
+        # not silent.
+        width = self.effective_width - 5
         self._context_widget.update(
-            literal_text("\n".join(_context_lines(self._view, self._focus_region)))
+            literal_text(
+                "\n".join(
+                    _context_lines(
+                        self._view,
+                        self._focus_region,
+                        width=width if width > _ROW_PREFIX_CELLS else None,
+                    )
+                )
+            )
         )
 
     async def apply_diagnostics(self, lines: Sequence[str]) -> bool:
@@ -479,7 +500,12 @@ class Inspector(VerticalScroll):
                     await self._moa_section.mount(_moa_empty_row())
 
     def set_terminal_width(self, width: int) -> None:
-        """Apply the inclusive 120-column dock breakpoint synchronously."""
+        """Apply the inclusive 120-column dock breakpoint synchronously.
+
+        Repaints the context section: the C13 directory rows clip to the
+        content width, so a width change without a repaint would leave them
+        clipped for a panel that no longer exists.
+        """
         width = max(0, width)
         was_auto_collapsed = self.auto_collapsed
         self._terminal_width = width
@@ -491,6 +517,10 @@ class Inspector(VerticalScroll):
             if self.overlay_open:
                 self._close_overlay(restore_focus=True)
         self._sync_geometry()
+        # Width-dependent clipping lives here rather than in a resize timer:
+        # geometry is already synchronous, and _repaint_context is a no-op
+        # before compose mounts the context widget.
+        self._repaint_context()
 
     def toggle(self) -> None:
         """Toggle the dock on wide screens or the non-reflowing narrow overlay."""
@@ -634,7 +664,61 @@ def _moa_empty_row() -> Static:
     )
 
 
-def _context_lines(view: InspectorView | None, focus_region: str) -> tuple[str, ...]:
+def _agent_note(status: DirectoryStatus) -> str:
+    """The parenthetical a mismatch carries, or "" when the state is bare."""
+    if status == "reported":
+        return " (session's own)"
+    if status == "not-adopted":
+        return " (launch directory not adopted)"
+    if status == "moved":
+        return " (moved by the agent)"
+    return ""
+
+
+def _agent_row_value(status: DirectoryStatus, agent: str) -> str:
+    """The agent row's text for a reported directory and its status (C13).
+
+    The exact strings are the contract: ``not reported`` names the absence,
+    the parentheticals name the mismatch, and adoption is bare — the expected
+    state needs no annotation, and any annotation on it would teach the
+    operator to ignore the ones that matter.
+    """
+    if not agent:
+        return "not reported"
+    return f"{agent}{_agent_note(status)}"
+
+
+#: Cells a ``launch``/``agent`` row's label and gutters occupy (C13): two
+#: leading spaces, the label padded to eight, one space before the value.
+#: Clipping budgets against this keeps every directory row on exactly one
+#: screen line, like every other inspector row.
+_ROW_PREFIX_CELLS = 2 + 8 + 1
+
+
+def _clip_row_value(value: str, budget: int) -> str:
+    """Clip a row value to a cell budget with a trailing ellipsis (C13).
+
+    Cell-aware rather than character-slicing, so a wide character is never
+    split and the ellipsis itself always fits. A value already within budget
+    comes back untouched.
+    """
+    budget = max(budget, 1)
+    if cell_len(value) <= budget:
+        return value
+    kept: list[str] = []
+    used = 0
+    for char in value:
+        size = get_character_cell_size(char)
+        if used + size > budget - 1:
+            break
+        kept.append(char)
+        used += size
+    return "".join(kept) + "…"
+
+
+def _context_lines(
+    view: InspectorView | None, focus_region: str, *, width: int | None = None
+) -> tuple[str, ...]:
     """The context section's rows: the caret location, then session facts.
 
     The caret row is first and always present — it is UI state that exists
@@ -643,6 +727,13 @@ def _context_lines(view: InspectorView | None, focus_region: str) -> tuple[str, 
     session context still says so: the caret row reports the interface, and the
     empty-section sentence reports the session, and neither stands in for the
     other.
+
+    ``width`` is the content width in cells, when the caller knows it: the two
+    C13 directory rows clip their paths to it so each renders on exactly one
+    screen line instead of wrapping a long path over the diagnostics below,
+    and a mismatch annotation rides on its own row beneath the path. None
+    keeps the contract-literal single row per status — the shape the row-text
+    tests pin.
     """
     caret = f"  {'caret':<8} {focus_region}"
     context = None if view is None else view.context
@@ -656,6 +747,40 @@ def _context_lines(view: InspectorView | None, focus_region: str) -> tuple[str, 
             rows.append(("endpoint", context.endpoint))
         if context.model:
             rows.append(("model", context.model))
+        # C13: the launch directory Talaria requested, and the directory the
+        # agent actually reports, side by side with the status between them.
+        # Gated like every sibling row, so a view from before any session
+        # still renders the empty state rather than blank labels.
+        launch, agent = context.launch, context.agent
+        note = ""
+        if width is not None and (launch or agent):
+            # The annotation survives because it never passes through the
+            # clipper at all: it rides on its own row beneath the path, so no
+            # budget reservation exists to get wrong — and none is kept, so
+            # the path it annotates keeps every cell the panel allows. A
+            # clipped-away "(launch directory not adopted)" would read as an
+            # adoption, which is the original complaint reproduced; this
+            # structure is what forbids it, at every width.
+            budget = width - _ROW_PREFIX_CELLS
+            launch = _clip_row_value(launch, budget)
+            agent = _clip_row_value(agent, budget)
+            if agent:
+                note = _agent_note(context.status)
+        if launch:
+            rows.append(("launch", launch))
+        if launch or agent:
+            if width is None or not note:
+                rows.append(("agent", _agent_row_value(context.status, agent)))
+            else:
+                # A 36-cell dock cannot hold a path and a 30-cell note on one
+                # line. The note rides beneath the path it annotates rather
+                # than beside it: the row already spends two screen lines at
+                # the real width, so the explicit second row costs nothing
+                # vertically and keeps the path — the actionable half —
+                # readable. The note keeps its leading separator stripped:
+                # the row is two spaces, the note whole, never clipped.
+                rows.append(("agent", agent))
+                rows.append(("", note.strip()))
         if context.input_tokens is not None or context.output_tokens is not None:
             rows.append(
                 (
@@ -665,7 +790,12 @@ def _context_lines(view: InspectorView | None, focus_region: str) -> tuple[str, 
             )
     if not rows:
         return (caret, f"  {EMPTY_SECTION}")
-    return (caret, *(f"  {label:<8} {value}" for label, value in rows))
+    # A labelless row is a mismatch annotation riding beneath its path: two
+    # spaces, the note whole, never clipped.
+    return (
+        caret,
+        *(f"  {value}" if not label else f"  {label:<8} {value}" for label, value in rows),
+    )
 
 
 def _operation_lines(view: InspectorView) -> tuple[str, ...]:

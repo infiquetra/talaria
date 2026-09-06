@@ -4,6 +4,35 @@
 
 ## 2026-09-06
 
+### Talaria adopts the launch directory as the session's working directory at creation (Live 13 option (c), #157)
+
+**Decision.** On every `session.create` Talaria initiates, the request carries the resolved
+launch directory as `cwd`; the interface always shows both the launch directory and the
+directory the agent actually reports, and never claims a directory the gateway did not adopt.
+`session.resume` sends nothing, a socket reconnect re-sends nothing, and `session.cwd.set` is
+never called. Jeff selected option (c) on parent #139 with the costs stated — the largest of
+the three implementable options, a real behaviour change for the agent rather than a
+presentation change, and new interface scope late in the run.
+
+**Rationale.** Item 12's complaint was the agent reporting one directory while Talaria displayed
+another. A request the gateway cannot use is silently replaced by its own default, so only the
+reported value counts: the status (`unreported`, `reported`, `adopted`, `not-adopted`,
+`moved`) is derived from the request and the reports at every fold, adoption is silent, and a
+mismatch speaks once on the transcript where the operator reads. The bar's `cwd` segment is
+unchanged — it shows the launch directory, as the frozen status-line contract defines.
+
+**Rejected alternatives.** (a) Unchanged behaviour with a recorded deferral — leaves the
+complaint in place. (a′) Unchanged behaviour plus honest labelling (inspector row only) — the
+smallest answer to the complaint, superseded by the selection. (b) Inform the agent without
+changing where tools run — not implementable on this gateway, which has no write route for
+context or resources. (d) Keep the agent's directory and add the project to context and
+permitted resources — not implementable either, since no permitted-resources model exists on
+any observed route.
+
+**Revisit when.** The gateway offers a context or resource write route, which re-opens (b) and
+(d); or the two-project probe shows one conversation's directory change moving the other,
+which blocks Live 13 and routes to the operator rather than converting into a pass.
+
 ### Receipt identity is split by key, and conversion never back-fills (#150's second ruling)
 
 **Decision.** A v0.6.1 receipt carries three identities, each its own key:

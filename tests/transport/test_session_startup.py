@@ -23,6 +23,7 @@ attached in *this* run — was and remains true, and is unchanged.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -1017,6 +1018,143 @@ async def test_a_refused_resume_announces_nothing() -> None:
             assert all(
                 "resumed session" not in e.text for e in app.state.transcript
             ), "a refused landing announced itself"
+            await app.shutdown_sources()
+    finally:
+        await stub.stop()
+
+
+# ── creation carries the launch directory; resume carries none (C13) ──
+
+
+@pytest.mark.asyncio
+async def test_a_create_request_carries_the_launch_directory_and_nothing_else_new(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """Issue #157: ``session.create`` sends ``{"cols", "cwd"}`` with the same
+    resolved launch string the status bar shows — and the stock reply, whose
+    ``info`` names no directory, leaves the status ``unreported`` rather than
+    inferring an adoption."""
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="new"))
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        params = params_of(gateway_for_startup, CREATE_METHOD)
+        assert set(params) == {"cols", "cwd"}
+        assert params["cwd"] == app.local_status.cwd
+        assert app.state.requested_cwd == app.local_status.cwd
+        assert app.state.agent_cwd is None
+        assert app.state.directory == "unreported"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_resume_request_carries_no_directory(
+    gateway_for_startup: StubGateway,
+) -> None:
+    """Attaching to an existing conversation must not move it: no ``cwd``
+    goes out and nothing is recorded as requested. The stock resume reply
+    names no directory in ``info``, so the status stays ``unreported`` —
+    a missing value is not a value, on resume exactly as on create."""
+    app, _source = live_app(
+        gateway_for_startup, StartupSelection(mode="session", session_id="s-asked-for")
+    )
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        assert "cwd" not in params_of(gateway_for_startup, RESUME_METHOD)
+        assert app.state.requested_cwd is None
+        assert app.state.agent_cwd is None
+        assert app.state.directory == "unreported"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_resume_reply_naming_a_directory_reads_reported_silently() -> None:
+    """The persisted directory of a resumed session is the session's own:
+    reported, with no request behind it and no transcript line."""
+    persisted = "/sessions/persisted"
+    stub = StubGateway(
+        responder=startup_responder(resume={**RESUMED, "info": {"cwd": persisted}})
+    )
+    await stub.start()
+    try:
+        app, _source = live_app(
+            stub, StartupSelection(mode="session", session_id="s-asked-for")
+        )
+        async with app.run_test():
+            await until(lambda: app._startup_done)
+            assert app.state.focused_session_id == "s-live-042"
+            assert app.state.requested_cwd is None
+            assert app.state.agent_cwd == persisted
+            assert app.state.directory == "reported"
+            assert not any(
+                "agent directory" in entry.text for entry in app.state.transcript
+            )
+            await app.shutdown_sources()
+    finally:
+        await stub.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_socket_reconnect_resends_nothing(
+    gateway_for_startup: StubGateway,
+) -> None:
+    app, _source = live_app(gateway_for_startup, StartupSelection(mode="new"))
+
+    async with app.run_test():
+        await until(lambda: app._startup_done)
+        wire_before = len(gateway_for_startup.current.received)
+        app.note_reconnect(app._last_reconnect_epoch + 1)
+        assert len(gateway_for_startup.current.received) == wire_before
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_create_reply_naming_the_launch_directory_adopts_silently() -> None:
+    """The reply's ``info.cwd`` equalling the request is the expected state:
+    adopted, with no transcript line."""
+    stub = StubGateway(
+        responder=startup_responder(create={**CREATED, "info": {"cwd": os.getcwd()}})
+    )
+    await stub.start()
+    try:
+        app, _source = live_app(stub, StartupSelection(mode="new"))
+        async with app.run_test():
+            await until(lambda: app._startup_done)
+            assert app.state.requested_cwd == app.local_status.cwd
+            assert app.state.agent_cwd == app.local_status.cwd
+            assert app.state.directory == "adopted"
+            assert not any(
+                "agent directory" in entry.text for entry in app.state.transcript
+            )
+            await app.shutdown_sources()
+    finally:
+        await stub.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_create_reply_naming_another_directory_speaks_once() -> None:
+    """The gateway substituted its own default: ``not-adopted``, named once
+    on the transcript where the operator reads — never a confident claim to
+    the requested directory."""
+    elsewhere = "/var/gateway"
+    stub = StubGateway(
+        responder=startup_responder(create={**CREATED, "info": {"cwd": elsewhere}})
+    )
+    await stub.start()
+    try:
+        app, _source = live_app(stub, StartupSelection(mode="new"))
+        async with app.run_test():
+            await until(lambda: app._startup_done)
+            assert app.state.requested_cwd == app.local_status.cwd
+            assert app.state.agent_cwd == elsewhere
+            assert app.state.directory == "not-adopted"
+            spoken = [
+                entry.text
+                for entry in app.state.transcript
+                if "agent directory" in entry.text
+            ]
+            assert spoken == [f"agent directory: {elsewhere} (launch directory not adopted)"]
             await app.shutdown_sources()
     finally:
         await stub.stop()

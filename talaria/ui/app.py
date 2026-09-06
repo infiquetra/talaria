@@ -167,6 +167,7 @@ from talaria.domain.state import (
     fleet_row,
     fleet_seam_board,
     fleet_switch_refusal,
+    fold_reported_cwd,
     land_session,
     latch_attach_residue,
     latch_resolved_prompts,
@@ -177,6 +178,7 @@ from talaria.domain.state import (
     record_command_result,
     record_local_note,
     record_replayed_submission,
+    record_requested_cwd,
     record_seam_board,
     record_submission,
     replayed_submission_text,
@@ -2452,6 +2454,9 @@ class TalariaApp(App[None]):
                 endpoint=self.profile_endpoints.get(profile, "") if profile else "",
                 model=self._inspector_model(),
                 usage=self.state.usage,
+                launch=self.local_status.cwd,
+                agent=self.state.agent_cwd or "",
+                status=self.state.directory,
                 moa=snapshot.moa,
             )
             if inspector_projection != self._inspector_view:
@@ -5163,10 +5168,20 @@ class TalariaApp(App[None]):
             cols = max(self.size.width or DEFAULT_SESSION_COLS, 1)
 
             if selection.mode == "new":
+                # C13: the resolved launch directory Talaria already captured
+                # once at start (``self.local_status.cwd``) goes out as the
+                # requested ``cwd`` — that string, never a different one, so
+                # what the bar shows and what was requested cannot disagree.
+                # Sent whether or not the directory is a repository: the
+                # operator launched there, and a directory is a directory. A
+                # gateway that does not know the parameter ignores it; adoption
+                # is confirmed only by the reply, in ``_land_session``.
                 with self._landing():
                     return self._land_session(
                         await dispatcher.call(
-                            CREATE_METHOD, {"cols": cols}, timeout=self.call_timeout
+                            CREATE_METHOD,
+                            {"cols": cols, "cwd": self.local_status.cwd},
+                            timeout=self.call_timeout,
                         )
                     )
 
@@ -5291,6 +5306,20 @@ class TalariaApp(App[None]):
             self.state,
             raw,
             session_key=stored if isinstance(stored, str) and stored else None,
+        )
+        # C13: what the gateway actually adopted. On a create landing the
+        # request above named the launch directory, so it is recorded as the
+        # request before the reply's ``info.cwd`` is folded against it; on a
+        # resume landing nothing was sent, so only the reported directory is
+        # folded and the status can only ever read ``reported``. A reply
+        # without ``info.cwd`` folds to nothing — adoption is read, never
+        # inferred, and a missing value is not a value.
+        if outcome.method == CREATE_METHOD:
+            self.state = record_requested_cwd(self.state, self.local_status.cwd)
+        info = result.get("info")
+        info_cwd = info.get("cwd") if isinstance(info, dict) else None
+        self.state = fold_reported_cwd(
+            self.state, info_cwd if isinstance(info_cwd, str) else None
         )
         if previously_focused != raw:
             # The retain branch (landing the session already focused) keeps

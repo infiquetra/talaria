@@ -263,7 +263,7 @@ def _region_texts(app: TalariaApp) -> str:
 async def test_a_clean_board_renders_in_the_inspector_alone() -> None:
     """A clean board fills the inspector and leaves the region empty."""
     app, _ = paused_app([event("gateway.ready", {})])
-    async with app.run_test(size=(132, 30)) as pilot:
+    async with app.run_test(size=(132, 32)) as pilot:
         await pilot.pause()
         _paint_board(app, {"roster": "present", "approval-detail": "present"})
         await app._render_seams()
@@ -287,7 +287,7 @@ async def test_a_clean_board_renders_in_the_inspector_alone() -> None:
 async def test_actionable_seam_rows_never_return_above_the_composer(status: str) -> None:
     """#144: a seam naming a lost capability is inspector-only, in full."""
     app, _ = paused_app([event("gateway.ready", {})])
-    async with app.run_test(size=(132, 30)) as pilot:
+    async with app.run_test(size=(132, 32)) as pilot:
         await pilot.pause()
         _paint_board(app, {"roster": status, "approval-detail": "present"})
         await app._render_seams()
@@ -313,7 +313,7 @@ async def test_a_stale_present_seam_grows_stale_in_the_inspector_only() -> None:
     """An un-revalidated verdict is ambiguous currency — and #144 keeps even
     the stale copy off the composer, which is the duplicate the operator saw."""
     app, _ = paused_app([event("gateway.ready", {})])
-    async with app.run_test(size=(132, 30)) as pilot:
+    async with app.run_test(size=(132, 32)) as pilot:
         await pilot.pause()
         _paint_board(app, {"roster": "present"}, at=app.state.last_observed_at - 400.0)
         await app._render_seams()
@@ -382,7 +382,7 @@ async def test_a_seam_failing_mid_move_surfaces_in_the_inspector_alone() -> None
     """A seam that turns against the interface mid-move updates its inspector
     row — it does not return above the composer to be seen."""
     app, _ = paused_app([event("gateway.ready", {})])
-    async with app.run_test(size=(132, 30)) as pilot:
+    async with app.run_test(size=(132, 32)) as pilot:
         await pilot.pause()
         clock = app.state.last_observed_at
         board = _paint_board(
@@ -489,7 +489,7 @@ async def test_a_failed_move_drops_the_board_until_the_next_paint(
 async def test_clean_flow_snapshot_keeps_routine_rows_out_of_the_composer_area() -> None:
     """Steady-state ticks render the chat with nowhere routine leaking."""
     app, _ = paused_app([event("gateway.ready", {})])
-    async with app.run_test(size=(132, 30)) as pilot:
+    async with app.run_test(size=(132, 32)) as pilot:
         await pilot.pause()
         for seq, frame in enumerate(streaming_turn(["hello"]), start=101):
             feed(app, frame, seq=seq)
