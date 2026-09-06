@@ -977,8 +977,11 @@ async def test_palette_move_selection_scrolls_into_view() -> None:
         assert app.palette.selected_entry is not None
         assert app.palette.selected_entry.name == "/cmd15"
         # Rendered rows must still contain the selected entry (scroll kept it visible)
-        # The active row class should be on the correct widget
-        assert app.palette._rows[15].has_class("-active")
+        # The active row class should be on the correct widget. Widget
+        # position is not entry position once section headings interleave
+        # (D5, #146), so resolve through the map rather than indexing rows.
+        position = app.palette._row_entries.index(15)
+        assert app.palette._rows[position].has_class("-active")
         # Scroll offset must have moved from 0 so row 15 is visible
         # Before fix scroll_y was 0 and row 15 was at y=20 off-screen
         assert app.palette.scroll_offset.y > 0
@@ -1012,9 +1015,16 @@ async def test_palette_header_click_does_not_crash() -> None:
         await pilot.pause()
         assert app.composer.text == before
         assert app.palette.is_slash_active
-        # Clicking a row should insert
+        # Clicking a row should insert. The first widget is a section
+        # heading (D5, #146), which addresses no entry and inserts nothing,
+        # so click the first command row instead.
         assert len(app.palette._rows) >= 1
-        row = app.palette._rows[0]
+        position = next(
+            index
+            for index, entry in enumerate(app.palette._row_entries)
+            if entry is not None
+        )
+        row = app.palette._rows[position]
         await pilot.click(row)
         await pilot.pause()
         assert app.composer.text.endswith(" ")
@@ -1057,9 +1067,20 @@ async def test_filtered_order_groups_talaria_first_like_browse() -> None:
         assert categories.index("Info") > max(
             i for i, c in enumerate(categories) if c == "Talaria"
         ), categories
-        # The rendered rows carry the same order, not just the backing tuple.
+        # The rendered rows carry the same order, not just the backing tuple —
+        # divided by section headings (D5, #146): Talaria first, then the
+        # gateway categories in wire order, each group under its own label.
+        assert app.palette.row_texts[0] == "── Talaria ──"
         rendered = [text.split()[0] for text in app.palette.row_texts]
-        assert rendered == ["/agents", "/models", "/about", "/model"], rendered
+        assert rendered == [
+            "──",
+            "/agents",
+            "/models",
+            "──",
+            "/about",
+            "──",
+            "/model",
+        ], rendered
         await app.shutdown_sources()
 
 
@@ -1551,3 +1572,317 @@ async def test_146_app_slash_palette_open_and_select_wiring() -> None:
         assert second is None
 
         await app.shutdown_sources()
+
+
+# ── D5 sectioned slash menu (#146) ────────────────────────────────────────
+#
+# Bare ``/`` reads as one flat scrolling list divided into labelled
+# sections: Talaria controls first, then gateway categories in wire order,
+# then Skills, then Uncategorised. Headings are labels, not rows.
+
+
+def _section_catalog() -> CommandCatalog:
+    """One row per section kind: local, two wire categories, a skill, and a remainder."""
+    return CommandCatalog(
+        entries=(
+            CommandEntry(
+                name="/quit",
+                description="Leave",
+                category="Talaria",
+                availability="talaria-local",
+            ),
+            CommandEntry(
+                name="/sess01",
+                description="session thing",
+                category="Session",
+                availability="dispatch",
+            ),
+            CommandEntry(
+                name="/info01",
+                description="info thing",
+                category="Info",
+                availability="dispatch",
+            ),
+            CommandEntry(
+                name="/zeta",
+                description="does zeta",
+                category="",
+                availability="dispatch",
+                origin="local",
+                is_skill=True,
+            ),
+            CommandEntry(
+                name="/lone",
+                description="no home",
+                category="",
+                availability="dispatch",
+            ),
+        ),
+        canon={},
+        available=True,
+        skills={"/zeta": {"usage": 0, "origin": "local"}},
+        categories_order=("Session", "Info"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_bare_slash_labels_each_section_before_its_first_row() -> None:
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _section_catalog()
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+
+        names = [text.split()[0] for text in app.palette.row_texts]
+        assert names == [
+            "──",
+            "/quit",
+            "──",
+            "/sess01",
+            "──",
+            "/info01",
+            "──",
+            "/zeta",
+            "──",
+            "/lone",
+        ], names
+        assert app.palette.row_texts[0] == "── Talaria ──"
+        # The list and its labels cannot disagree: every command row sits
+        # under the heading the domain's own section_for names for it.
+        current_label = ""
+        catalog = app.catalog
+        assert catalog is not None
+        for position, text in enumerate(app.palette.row_texts):
+            entry_index = app.palette._row_entries[position]
+            if entry_index is None:
+                current_label = text
+                continue
+            entry = app.palette.filtered_entries[entry_index]
+            assert current_label == f"── {catalog.section_for(entry).label} ──"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_navigation_moves_between_commands_never_onto_labels() -> None:
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _section_catalog()
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+
+        seen: list[str] = []
+        for _ in range(len(app.palette.filtered_entries) - 1):
+            await pilot.press("down")
+            await pilot.pause()
+            selected = app.palette.selected_entry
+            assert selected is not None
+            seen.append(selected.name)
+            active = [
+                row for row in app.palette._rows if row.has_class("-active")
+            ]
+            assert len(active) == 1
+            assert not active[0].has_class("-section")
+        assert seen == ["/sess01", "/info01", "/zeta", "/lone"], seen
+        for _ in range(len(app.palette.filtered_entries) - 1):
+            await pilot.press("up")
+            await pilot.pause()
+            assert app.palette.selected_entry is not None
+            active = [
+                row for row in app.palette._rows if row.has_class("-active")
+            ]
+            assert len(active) == 1
+            assert not active[0].has_class("-section")
+        assert app.palette.selected_entry is not None
+        assert app.palette.selected_entry.name == "/quit"
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_filter_leaving_one_skill_keeps_only_the_skills_heading() -> None:
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _section_catalog()
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        for character in "/zeta":
+            await pilot.press(character)
+            await pilot.pause()
+        assert app.palette.is_slash_active
+
+        texts = app.palette.row_texts
+        assert len(texts) == 2, texts
+        assert texts[0] == "── Skills ──"
+        assert texts[1].split()[0] == "/zeta"
+        # The badge survives filtering: provenance is wire data, not layout.
+        assert "[local]" in texts[1]
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_clicking_a_heading_inserts_nothing_and_keeps_the_selection() -> None:
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _section_catalog()
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+        assert app.palette.is_slash_active
+        assert app.palette.selected_index == 0
+
+        await pilot.click(app.palette._rows[0])
+        await pilot.pause()
+        assert app.palette.row_texts[0] == "── Talaria ──"
+        assert app.composer.text == "/"
+        assert app.palette.selected_index == 0
+        assert app.palette.is_slash_active
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_empty_sections_are_not_drawn() -> None:
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = CommandCatalog(
+        entries=(
+            CommandEntry(
+                name="/quit",
+                description="Leave",
+                category="Talaria",
+                availability="talaria-local",
+            ),
+            CommandEntry(
+                name="/sess01",
+                description="session thing",
+                category="Session",
+                availability="dispatch",
+            ),
+        ),
+        canon={},
+        available=True,
+        categories_order=("Session", "Configuration"),
+    )
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+
+        texts = app.palette.row_texts
+        assert "── Talaria ──" in texts
+        assert "── Session ──" in texts
+        # No skills, no remainder, and Configuration is ordered but empty:
+        # none of them draws a heading.
+        assert not any("Skills" in text for text in texts)
+        assert not any("Uncategorised" in text for text in texts)
+        assert not any("Configuration" in text for text in texts)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_row_in_both_category_and_skills_renders_once_badged() -> None:
+    """Ruling item 5: the gateway's explicit placement wins, never duplicated."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = CommandCatalog(
+        entries=(
+            CommandEntry(
+                name="/quit",
+                description="Leave",
+                category="Talaria",
+                availability="talaria-local",
+            ),
+            CommandEntry(
+                name="/both",
+                description="placed twice by the wire",
+                category="Session",
+                availability="dispatch",
+                origin="hub",
+                is_skill=True,
+            ),
+        ),
+        canon={},
+        available=True,
+        skills={"/both": {"usage": 0, "origin": "hub"}},
+        categories_order=("Session",),
+    )
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+
+        texts = app.palette.row_texts
+        both = [text for text in texts if text.split()[0] == "/both"]
+        assert len(both) == 1
+        assert "[hub]" in both[0]
+        session_at = texts.index("── Session ──")
+        assert texts[session_at + 1].split()[0] == "/both"
+        assert not any(text == "── Skills ──" for text in texts)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_badges_stay_on_skill_rows_only() -> None:
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _section_catalog()
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+
+        for position, text in enumerate(app.palette.row_texts):
+            entry_index = app.palette._row_entries[position]
+            if entry_index is None:
+                assert "[" not in text and "]" not in text
+                continue
+            entry = app.palette.filtered_entries[entry_index]
+            if entry.is_skill:
+                assert "[local]" in text
+            else:
+                assert "[" not in text and "]" not in text
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_long_descriptions_use_the_screen_they_have() -> None:
+    """Review observation on #146: the fixed 80-cell wrap left 20 columns
+    empty at 100 wide while clipping early. The region passes its own width;
+    below 80 cells (and before layout) the historic default stands."""
+    long_description = " ".join(f"word{i}" for i in range(30))
+
+    async def first_row_length(size: tuple[int, int]) -> int:
+        disp = RecordingDispatcher()
+        app = live_app(disp)
+        app.catalog = _catalog_with(
+            [("/longdesc", long_description, "Info", "dispatch")]
+        )
+        async with app.run_test(size=size) as pilot:
+            app.composer.text_area.focus()
+            await pilot.pause()
+            await pilot.press("slash")
+            await pilot.pause()
+            rows = [
+                text
+                for position, text in enumerate(app.palette.row_texts)
+                if app.palette._row_entries[position] is not None
+            ]
+            await app.shutdown_sources()
+            assert len(rows) == 1
+            return len(rows[0].split("\n")[0])
+
+    narrow = await first_row_length((80, 24))
+    wide = await first_row_length((100, 30))
+    assert narrow <= 80, narrow
+    assert wide > narrow, (narrow, wide)
