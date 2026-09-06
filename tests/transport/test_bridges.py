@@ -46,7 +46,7 @@ FAST_RETRIES = (0.0, 0.01, 0.01)
 #: see ``test_the_served_viewport_is_the_rows_on_screen``, which is what
 #: holds this pair to the actual screen.
 SCREEN = (80, 24)
-#: 15, and the arithmetic is a running tally of chrome rows rather than a
+#: 16, and the arithmetic is a running tally of chrome rows rather than a
 #: constant anyone chose. B1 reclaimed a row, taking 17 to 18. A4 added the
 #: one-row help footer (``talaria/ui/app.py:HelpBar``) and took it back, 18 to
 #: 17. v0.4's U7 adds the reserved needs-you row, 17 to 16 — one row of
@@ -54,12 +54,14 @@ SCREEN = (80, 24)
 #: a summary that never moves anything by appearing. v0.5 replaces that row
 #: with the true-bottom status bar. Its U6 restores one permanently
 #: mounted status-region caret row, taking 16 to 15 without focus-dependent
-#: geometry.
+#: geometry. v0.6.1's #144 moves that caret row out of the status region into
+#: the inspector's context section — a side column, so it costs the main
+#: column nothing — and the transcript reclaims the row, taking 15 to 16.
 #:
-#: The cost is written down here rather than absorbed because this is the second
-#: time the pin has moved for a bottom row, and a third would otherwise look
+#: The cost is written down here rather than absorbed because this is the third
+#: time the pin has moved for a bottom row, and a fourth would otherwise look
 #: like drift.
-SCREEN_ROWS = 15
+SCREEN_ROWS = 16
 
 #: The one value swept for across the frame log, the transcript, the status
 #: document and every notice. Distinctive enough that a substring search over
@@ -563,9 +565,10 @@ async def test_the_served_viewport_is_the_rows_on_screen(
     """
     measured: dict[int, tuple[int, int, int]] = {}
 
-    # 15 and 25 include the always-mounted U6 caret row. See ``SCREEN_ROWS``
-    # above for the complete chrome tally.
-    for index, (height, expected) in enumerate(((24, 15), (34, 25))):
+    # 16 and 26 no longer include a caret row — #144 moved it into the
+    # inspector's context section, a side column that costs the main column
+    # nothing. See ``SCREEN_ROWS`` above for the complete chrome tally.
+    for index, (height, expected) in enumerate(((24, 16), (34, 26))):
         app, source = live_app(bridge_gateway)
         request_id = f"t-size-{index}"
         async with app.run_test(size=(80, height)):

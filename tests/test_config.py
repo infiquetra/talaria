@@ -853,8 +853,12 @@ def test_v050_user_guide_toml_examples_parse_and_match_runtime_defaults() -> Non
         for source in fence.findall(document.read_text(encoding="utf-8"))
     ]
 
-    assert len(examples) == 1
-    example = examples[0]
+    # Exactly one fence carries the complete default shape (C4's starter
+    # fence in the same document carries only a [status] table and is
+    # validated by tests/status/test_starter_config.py instead).
+    defaults = [example for example in examples if "theme" in example]
+    assert len(defaults) == 1
+    example = defaults[0]
     assert example["theme"] == DEFAULTS["theme"]
     assert example["ui"] == DEFAULTS["ui"]
     assert example["status"] == {

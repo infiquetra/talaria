@@ -1,5 +1,6 @@
 # ruff: noqa: E501
-"""B1 discard notices coexist with U6's always-mounted caret row.
+"""B1 discard notices coexist with the caret-location row, which #144 moved
+from the status region into the inspector's context section.
 
 Covers AE1-AE5 (plan:421-457) and KTD2 truncation
 and the truncation clause KTD2. Each test names which AE and which fact it
@@ -58,22 +59,15 @@ def _notice(app: TalariaApp) -> str:
     return app.composer.notice
 
 def _has_caret_row(app: TalariaApp) -> bool:
-    # Presence-of-text check, not a broad "caret" substring search. The U6 row
-    # is separate from shell-status rows and the shell failure marker, so scan
-    # those first and then the painted screen for the dedicated Static.
-    for txt in app.status_region.row_texts:
-        if txt.startswith("caret:"):
-            return True
-    if app.status_region.marker_text.startswith("caret:"):
-        return True
-    # The focus row intentionally is not part of row_texts: that property is
-    # the status command's payload. Read the painted screen as the independent
-    # observation that the focus row is mounted.
-    screen = _screen_text(app)
-    for line in screen.splitlines():
-        if line.strip().startswith("caret:"):
-            return True
-    return False
+    # #144: the caret row is the inspector context section's first row. Read
+    # the section's own content rather than the painted screen — the section
+    # is mounted even while the inspector is auto-collapsed below the
+    # 120-column dock breakpoint, which is exactly when a screen-based check
+    # would report the row gone.
+    return any(
+        line.strip().startswith("caret ")
+        for line in app.inspector.context_text.splitlines()
+    )
 
 
 # ── AE1 ───────────────────────────────────────────────────────────────────────
