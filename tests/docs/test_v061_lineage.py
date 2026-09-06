@@ -26,6 +26,7 @@ import pytest
 
 from scripts.acceptance import v061_evidence
 from scripts.acceptance.v050_receipt import (
+    ALLOWED_PREIMAGE_CLASSES,
     ATTESTATION_MAP_SCHEMA,
     CAPTURE_METADATA_SCHEMA,
     INSTALL_RECEIPT_SCHEMA,
@@ -34,7 +35,9 @@ from scripts.acceptance.v050_receipt import (
     STEP_LOG_SCHEMA,
     V061_ITEM_SCHEMA,
     V061_ROLE_LABELS,
+    RecordSchema,
     SchemaRegistry,
+    ValueCategory,
     _png_chunk_errors,
     _public_evidence_roots,
     _validate_v061_install,
@@ -42,6 +45,7 @@ from scripts.acceptance.v050_receipt import (
     evidence_file_privacy_errors,
     find_absolute_paths_in_text,
     is_absolute_filesystem_path,
+    is_forbidden_key,
     verify_run,
 )
 
@@ -1755,3 +1759,176 @@ def test_dead_constant_removed_and_dynamic_roots_functional(tmp_path: Path) -> N
     v_root.mkdir(parents=True)
     roots = _public_evidence_roots(tmp_path)
     assert "docs/acceptance/v0.6.1" in [r.as_posix() for r in roots]
+
+
+# ── Second Amendment: Refused Value Derivations & Preimage Binding ────────
+
+
+def test_reversible_transformations_and_abbreviations_refused() -> None:
+    """Amendment 2, Sec 1: URL-encoded, escaped, encoded, and abbreviated paths are refused."""
+    refused_probes = [
+        # URL-encoded paths
+        "%2FUsers%2Foperator%2Ftalaria",
+        "%2ftmp%2flive-script.py",
+        "%2fprivate%2ftmp%2fworker",
+        "%2Fvar%2Ffolders%2Fky%2Ftest",
+        "%2e%2e%2e%2ftalaria",
+        "file://%2FUsers%2Foperator",
+        # Escaped path separators
+        r"\/Users\/operator\/talaria",
+        r"\/tmp\/script.py",
+        r"\\tmp\\driver.py",
+        r"\\Users\\operator\\work",
+        # Encoded path prefixes
+        "/-Users-jefcox-workspace-infiquetra-talaria",
+        "/-tmp-scratch-dir",
+        "/-private-tmp-run",
+        # Windows absolute paths
+        r"C:\Users\operator\project",
+        r"c:\tmp\run.py",
+        # Abbreviated paths
+        ".../talaria",
+        "…/talaria",
+        ".../scratch",
+        "…/live-09",
+    ]
+    for probe in refused_probes:
+        assert is_absolute_filesystem_path(probe), f"Expected probe to be refused: {probe!r}"
+        found = find_absolute_paths_in_text(f"value at {probe}")
+        assert len(found) >= 1, f"Expected text scan to refuse: {probe!r}"
+
+
+def test_path_category_refuses_abbreviations_and_absolute_paths() -> None:
+    """Amendment 2, Sec 1: ValueCategory.PATH requires relative or placeholder."""
+    schema = RecordSchema(
+        name="test-path",
+        declared_keys={"target": ValueCategory.PATH},
+    )
+
+    # Valid relative paths and approved placeholders pass
+    valid_paths = [
+        "dist/wheel.whl",
+        "evidence/live-01/file.txt",
+        "<candidate-root>/dist/wheel.whl",
+        "<scratch-root>/output.json",
+        "<integration-tree>/evidence",
+    ]
+    for p in valid_paths:
+        errors = schema.validate({"target": p}, path=Path("test.json"))
+        assert errors == [], f"Expected valid path to pass: {p!r}, got {errors}"
+
+    # Refused: abbreviated paths (... and …)
+    for p in [".../talaria", "…/talaria", "path/.../file", "path/…/file"]:
+        errors = schema.validate({"target": p}, path=Path("test.json"))
+        assert any(
+            "must not be an abbreviated path" in e for e in errors
+        ), f"Expected abbreviation error: {p!r}"
+
+    # Refused: absolute paths
+    for p in ["/tmp/file.txt", "/Users/operator/file", "~/file.txt"]:
+        errors = schema.validate({"target": p}, path=Path("test.json"))
+        assert any(
+            "must not be an absolute filesystem path" in e for e in errors
+        ), f"Expected absolute path error: {p!r}"
+
+
+def test_harness_label_category_enforces_placeholder_vocabulary() -> None:
+    """Amendment 2, Sec 1: ValueCategory.HARNESS_LABEL requires bracketed placeholder format."""
+    schema = RecordSchema(
+        name="test-label",
+        declared_keys={"label": ValueCategory.HARNESS_LABEL},
+    )
+
+    # Valid placeholder labels pass
+    for valid in ["<project-a>", "<project-b>", "<run-1>"]:
+        errors = schema.validate({"label": valid}, path=Path("test.json"))
+        assert errors == [], f"Expected label to pass: {valid!r}, got {errors}"
+
+    # Unbracketed or raw strings fail
+    for invalid in ["project-a", "my-secret-task", "", "<>"]:
+        errors = schema.validate({"label": invalid}, path=Path("test.json"))
+        assert len(errors) >= 1, f"Expected invalid label to fail: {invalid!r}"
+
+
+def test_digest_preimage_registration_enforcement() -> None:
+    """Amendment 2, Sec 1: Schema registration fails without declared or valid preimage class."""
+    assert "git-commit" in ALLOWED_PREIMAGE_CLASSES
+
+    # 1. Registration fails if digest field has no declared preimage
+    with pytest.raises(ValueError) as exc:
+        RecordSchema(
+            name="missing-preimage",
+            declared_keys={"artifact_hash": ValueCategory.DIGEST},
+        )
+    assert "digest field 'artifact_hash' has no declared preimage class" in str(exc.value)
+
+    # 2. Registration fails if nested digest field has no declared preimage
+    with pytest.raises(ValueError) as exc:
+        RecordSchema(
+            name="missing-nested-preimage",
+            declared_keys={"sub": ValueCategory.OBJECT},
+            nested_schemas={"sub": {"item_digest": ValueCategory.DIGEST}},
+        )
+    assert "nested digest field 'sub.item_digest' has no declared preimage class" in str(exc.value)
+
+    # 3. Registration fails if preimage class is not allowed (e.g. working-directory)
+    with pytest.raises(ValueError) as exc:
+        RecordSchema(
+            name="disallowed-preimage",
+            declared_keys={"workdir_sha": ValueCategory.DIGEST},
+            digest_preimages={"workdir_sha": "working-directory"},
+        )
+    assert "is not an allowed preimage class" in str(exc.value)
+
+    # 4. Valid registration with allowed preimage class succeeds
+    schema = RecordSchema(
+        name="valid-schema",
+        declared_keys={"commit_sha": ValueCategory.DIGEST},
+        digest_preimages={"commit_sha": "git-commit"},
+    )
+    assert schema.validate({"commit_sha": _COMMIT}, path=Path("test.json")) == []
+
+
+def test_forbidden_workdir_hash_keys_refused() -> None:
+    """Amendment 2, Sec 1: Workdir/path hash keys are strictly forbidden."""
+    forbidden_keys = [
+        "workdir_hash",
+        "working_directory_hash",
+        "cwd_hash",
+        "workdir_sha256",
+        "working_directory_sha256",
+        "path_hash",
+        "custom_workdir_hash",
+        "run_cwd_hash",
+    ]
+    for key in forbidden_keys:
+        assert is_forbidden_key(key), f"Expected key to be forbidden: {key!r}"
+
+
+def test_receipt_supersedes_schema_support(tmp_path: Path) -> None:
+    """Amendment 2, Sec 3: RECEIPT_SCHEMA supports supersedes object with valid digests."""
+    receipt_dir = tmp_path / "evidence" / "live-01"
+    receipt_dir.mkdir(parents=True)
+    receipt_path, receipt = _conforming_receipt(receipt_dir)
+
+    # Add valid supersedes block
+    receipt["supersedes"] = {
+        "receipt_sha256": "c" * 64,
+        "candidate_commit_sha": _COMMIT,
+    }
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    # Both _validate_v061_receipt and schema validation pass
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert errors == [], f"Expected supersedes to pass validation: {errors}"
+    scan_errors = evidence_file_privacy_errors(receipt_path)
+    assert scan_errors == [], f"Expected clean scan: {scan_errors}"
+
+    # Invalid supersedes digest fails
+    receipt["supersedes"]["receipt_sha256"] = "not-a-sha256"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    errors = _validate_v061_receipt(receipt, receipt_path=receipt_path, verify_files=True)
+    assert any(
+        "supersedes.receipt_sha256 must be a 64-character SHA-256 digest" in e
+        for e in errors
+    )

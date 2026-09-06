@@ -49,7 +49,6 @@ from pathlib import Path
 from typing import Any
 
 from scripts.acceptance.v050_receipt import (
-    FORBIDDEN_KEY_NAMES,
     V061_ITEM_SCHEMA,
     V061_RELEASE,
     V061_ROLE_LABELS,
@@ -58,6 +57,7 @@ from scripts.acceptance.v050_receipt import (
     classify_evidence_file,
     evidence_file_privacy_errors,
     find_absolute_paths_in_text,
+    is_forbidden_key,
     public_evidence_privacy_errors,
 )
 from scripts.acceptance.v060_evidence import (
@@ -806,15 +806,15 @@ def inventory_source_evidence(
                                 rule_or_reason="role-digit session name requires attestation",
                             )
                         )
-                for fk in FORBIDDEN_KEY_NAMES:
-                    if fk in filed:
+                for k in filed.keys():
+                    if is_forbidden_key(k):
                         receipt_had_findings = True
                         entries.append(
                             SourceInventoryEntry(
                                 case_item=item,
                                 file_path=receipt_file,
                                 file_class="receipt",
-                                finding=f"{fk} key present in receipt",
+                                finding=f"{k} key present in receipt",
                                 disposition="refused",
                                 rule_or_reason="forbidden operational key must be fixed at source",
                             )

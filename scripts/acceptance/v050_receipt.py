@@ -11,6 +11,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import urllib.parse
 import zlib
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -137,11 +138,23 @@ FORBIDDEN_KEY_NAMES: frozenset[str] = frozenset({
     "pane",
     "session_name",
     "goal_id",
+    "workdir_hash",
+    "working_directory_hash",
+    "cwd_hash",
+    "workdir_sha256",
+    "working_directory_sha256",
+    "path_hash",
 })
 
 
 def is_forbidden_key(key: str) -> bool:
-    return key in FORBIDDEN_KEY_NAMES or key.endswith("_pane")
+    return (
+        key in FORBIDDEN_KEY_NAMES
+        or key.endswith("_pane")
+        or key.endswith("_workdir_hash")
+        or key.endswith("_workdir_sha256")
+        or key.endswith("_cwd_hash")
+    )
 
 
 def is_absolute_filesystem_path(tok: str) -> bool:
@@ -160,6 +173,35 @@ def is_absolute_filesystem_path(tok: str) -> bool:
         return True
     if tok in ("/dev/null", "/dev/ptmx", "/dev/tty"):
         return False
+    # Reversible transformation: URL-encoding (e.g. %2FUsers%2F... or %2e%2e%2e%2ftalaria)
+    if "%2f" in tok.lower() or "%2e" in tok.lower():
+        unquoted = urllib.parse.unquote(tok)
+        if unquoted != tok and is_absolute_filesystem_path(unquoted):
+            return True
+    # Reversible transformation: escaped path separators (\/ or \\)
+    if r"\/" in tok or r"\\" in tok:
+        unescaped = tok.replace(r"\/", "/").replace(r"\\", "/")
+        if unescaped != tok and is_absolute_filesystem_path(unescaped):
+            return True
+    # Encoded path prefixes
+    if tok.startswith(("/-Users-", "/-home-", "/-tmp-", "/-private-", "/-var-", "/-opt-")):
+        return True
+    # Windows absolute path prefixes
+    windows_prefixes = (
+        "\\tmp\\",
+        "\\temp\\",
+        "\\Users\\",
+        "\\home\\",
+        "C:\\",
+        "c:\\",
+        "D:\\",
+        "d:\\",
+    )
+    if tok.startswith(windows_prefixes):
+        return True
+    # Truncation or abbreviation of refused paths (.../talaria, …/talaria)
+    if tok.startswith((".../", "…/")):
+        return True
     if tok.startswith("/") and not tok.startswith("//"):
         if tok.startswith(("/v1/", "/api/")):
             return False
@@ -217,8 +259,24 @@ class ValueCategory(StrEnum):
     STRING = "string"
     PATH = "path"
     HARNESS_IDENTITY = "harness-identity"
+    HARNESS_LABEL = "harness-label"
     URL = "url"
     MAP = "map"
+
+
+ALLOWED_PREIMAGE_CLASSES: frozenset[str] = frozenset({
+    "git-commit",
+    "commit",
+    "wheel",
+    "artifact",
+    "evidence-file",
+    "file",
+    "rendered-frame",
+    "text-twin",
+    "source-capture",
+    "step-payload",
+    "receipt",
+})
 
 
 V050_INSTALL_SCHEMA = "talaria-v0.5.0-install-v1"
@@ -235,6 +293,57 @@ class RecordSchema:
     nested_schemas: dict[str, dict[str, ValueCategory]] = field(default_factory=dict)
     map_schemas: dict[str, tuple[str, ValueCategory]] = field(default_factory=dict)
     nullable_keys: frozenset[str] = field(default_factory=frozenset)
+    digest_preimages: dict[str, str] = field(default_factory=dict)
+
+    def _lookup_preimage(self, loc: str, key: str) -> str | None:
+        candidates = [loc]
+        parts = loc.split(".")
+        for i in range(len(parts)):
+            candidates.append(".".join(parts[i:]))
+        name_parts = self.name.split(".")
+        for i in range(len(name_parts)):
+            prefix = ".".join(name_parts[i:])
+            candidates.append(f"{prefix}.{key}")
+            candidates.append(f"{prefix}.{loc}")
+        candidates.append(key)
+        for cand in candidates:
+            if cand in self.digest_preimages:
+                return self.digest_preimages[cand]
+        return None
+
+    def __post_init__(self) -> None:
+        for target, preimage_cls in self.digest_preimages.items():
+            if preimage_cls not in ALLOWED_PREIMAGE_CLASSES:
+                raise ValueError(
+                    f"Schema {self.name!r}: preimage class {preimage_cls!r} for {target!r} "
+                    f"is not an allowed preimage class ({sorted(ALLOWED_PREIMAGE_CLASSES)})"
+                )
+        for k, cat in self.declared_keys.items():
+            if cat == ValueCategory.DIGEST:
+                preimage = self._lookup_preimage(k, k)
+                if not preimage:
+                    raise ValueError(
+                        f"Schema {self.name!r}: digest field {k!r} has no declared preimage class"
+                    )
+        if "." not in self.name:
+            for nk, n_keys in self.nested_schemas.items():
+                for field_name, cat in n_keys.items():
+                    if cat == ValueCategory.DIGEST:
+                        loc = f"{nk}.{field_name}"
+                        preimage = self._lookup_preimage(loc, field_name)
+                        if not preimage:
+                            raise ValueError(
+                                f"Schema {self.name!r}: nested digest field {loc!r} "
+                                "has no declared preimage class"
+                            )
+            for mk, (_key_type, val_cat) in self.map_schemas.items():
+                if val_cat == ValueCategory.DIGEST:
+                    preimage = self._lookup_preimage(mk, mk)
+                    if not preimage:
+                        raise ValueError(
+                            f"Schema {self.name!r}: digest map {mk!r} "
+                            "has no declared preimage class"
+                        )
 
     def validate(
         self, doc: dict[str, Any], *, path: Path, prefix: str = ""
@@ -259,7 +368,13 @@ class RecordSchema:
                         f"{path}: {self.name} field {loc!r} must be a non-negative number"
                     )
             elif cat == ValueCategory.DIGEST:
-                if isinstance(v, list):
+                preimage = self._lookup_preimage(loc, k)
+                if not preimage or preimage not in ALLOWED_PREIMAGE_CLASSES:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} has undeclared or disallowed "
+                        f"digest preimage class ({preimage!r})"
+                    )
+                elif isinstance(v, list):
                     if not all(
                         isinstance(x, str)
                         and len(x) in (40, 64)
@@ -303,11 +418,33 @@ class RecordSchema:
                             f"{path}: {self.name} field {loc!r} must not contain an absolute "
                             f"filesystem path ({v!r})"
                         )
+            elif cat == ValueCategory.HARNESS_LABEL:
+                if not isinstance(v, str) or not v.strip():
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a "
+                        "non-empty harness label string"
+                    )
+                elif not (v.startswith("<") and v.endswith(">") and len(v) > 2):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be a placeholder harness label "
+                        f"enclosed in '<...>' ({v!r})"
+                    )
             elif cat == ValueCategory.PATH:
-                if isinstance(v, str) and find_absolute_paths_in_text(v):
+                if not isinstance(v, str) or not v.strip():
+                    errors.append(f"{path}: {self.name} field {loc!r} must be a path string")
+                elif "..." in v or "…" in v:
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must not be an abbreviated path ({v!r})"
+                    )
+                elif is_absolute_filesystem_path(v) or find_absolute_paths_in_text(v):
                     errors.append(
                         f"{path}: {self.name} field {loc!r} must not be an absolute "
                         f"filesystem path ({v!r})"
+                    )
+                elif v.startswith("/") or v.startswith("~"):
+                    errors.append(
+                        f"{path}: {self.name} field {loc!r} must be repository-relative or "
+                        f"placeholder ({v!r})"
                     )
             elif cat == ValueCategory.LIST:
                 if not isinstance(v, list):
@@ -328,6 +465,7 @@ class RecordSchema:
                             nested_schemas=self.nested_schemas,
                             map_schemas=self.map_schemas,
                             nullable_keys=self.nullable_keys,
+                            digest_preimages=self.digest_preimages,
                         )
                         errors.extend(sub_schema.validate(v, path=path, prefix=loc))
                     elif k in self.map_schemas:
@@ -342,13 +480,27 @@ class RecordSchema:
                                 is_absolute_filesystem_path(mk)
                                 or mk.startswith("/")
                                 or ".." in mk
+                                or "..." in mk
+                                or "…" in mk
                             ):
                                 errors.append(
                                     f"{path}: {self.name} map key {mk!r} at {mloc} "
                                     "must be a valid relative path"
                                 )
                             if val_cat == ValueCategory.DIGEST:
-                                if not (
+                                map_preimage = (
+                                    self._lookup_preimage(mloc, mk)
+                                    or self._lookup_preimage(loc, k)
+                                )
+                                if (
+                                    not map_preimage
+                                    or map_preimage not in ALLOWED_PREIMAGE_CLASSES
+                                ):
+                                    errors.append(
+                                        f"{path}: {self.name} map value at {mloc} has undeclared "
+                                        f"or disallowed digest preimage class ({map_preimage!r})"
+                                    )
+                                elif not (
                                     isinstance(mv, str)
                                     and len(mv) in (40, 64)
                                     and all(c in "0123456789abcdefABCDEF" for c in mv)
@@ -402,6 +554,7 @@ RECEIPT_SCHEMA = RecordSchema(
         "actual": ValueCategory.STRING,
         "expected": ValueCategory.OBJECT,
         "evidence": ValueCategory.OBJECT,
+        "supersedes": ValueCategory.OBJECT,
         "screenshots_read_by": ValueCategory.CLOSED_VOCABULARY,
         "screenshots_read_at": ValueCategory.TIMESTAMP,
     },
@@ -436,6 +589,10 @@ RECEIPT_SCHEMA = RecordSchema(
             "pty_result_sha256": ValueCategory.DIGEST,
             "source": ValueCategory.STRING,
             "observation": ValueCategory.STRING,
+        },
+        "supersedes": {
+            "receipt_sha256": ValueCategory.DIGEST,
+            "candidate_commit_sha": ValueCategory.DIGEST,
         },
         "narrative": {
             "kind": ValueCategory.CLOSED_VOCABULARY,
@@ -475,11 +632,22 @@ RECEIPT_SCHEMA = RecordSchema(
             "text": ValueCategory.STRING,
         },
     },
-
     map_schemas={
         "files": ("path", ValueCategory.DIGEST),
     },
-    nullable_keys=frozenset({"commit", "identity"}),
+    nullable_keys=frozenset({"commit", "identity", "supersedes"}),
+    digest_preimages={
+        "candidate_commit_sha": "git-commit",
+        "install.commit": "git-commit",
+        "install.sha256": "wheel",
+        "harness.commit": "git-commit",
+        "evidence.screenshot_sha256": "rendered-frame",
+        "evidence.pty_result_sha256": "step-payload",
+        "evidence.files": "evidence-file",
+        "files": "evidence-file",
+        "supersedes.receipt_sha256": "receipt",
+        "supersedes.candidate_commit_sha": "git-commit",
+    },
 )
 
 INSTALL_RECEIPT_SCHEMA = RecordSchema(
@@ -506,6 +674,11 @@ INSTALL_RECEIPT_SCHEMA = RecordSchema(
             "url": ValueCategory.URL,
             "wheel_path": ValueCategory.PATH,
         },
+    },
+    digest_preimages={
+        "candidate.commit": "git-commit",
+        "candidate.wheel_sha256": "wheel",
+        "install.sha256": "wheel",
     },
 )
 
@@ -558,6 +731,14 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "cell_height": ValueCategory.COUNT,
         },
     },
+    digest_preimages={
+        "frame_digest": "rendered-frame",
+        "frame_digests": "rendered-frame",
+        "digests": "rendered-frame",
+        "sha256": "source-capture",
+        "twin_digest": "text-twin",
+        "source_digest_sha256": "source-capture",
+    },
 )
 
 PIXEL_MEASUREMENTS_SCHEMA = RecordSchema(
@@ -584,6 +765,9 @@ PIXEL_MEASUREMENTS_SCHEMA = RecordSchema(
         "box": ValueCategory.OBJECT,
         "bounds": ValueCategory.OBJECT,
     },
+    digest_preimages={
+        "sha256": "rendered-frame",
+    },
 )
 
 STEP_LOG_SCHEMA = RecordSchema(
@@ -608,6 +792,10 @@ STEP_LOG_SCHEMA = RecordSchema(
         "exit_code": ValueCategory.COUNT,
         "env": ValueCategory.OBJECT,
     },
+    digest_preimages={
+        "digest": "step-payload",
+        "sha256": "step-payload",
+    },
 )
 
 ATTESTATION_ITEM_SCHEMA = RecordSchema(
@@ -631,6 +819,10 @@ ATTESTATION_ITEM_SCHEMA = RecordSchema(
         "commit": ValueCategory.DIGEST,
     },
     nullable_keys=frozenset({"harness_commit", "harness_identity"}),
+    digest_preimages={
+        "harness_commit": "git-commit",
+        "commit": "git-commit",
+    },
 )
 
 
@@ -2209,6 +2401,17 @@ def _validate_v061_receipt(
                         break
     except HarnessError as exc:
         errors.append(str(exc))
+    if "supersedes" in receipt and receipt["supersedes"] is not None:
+        try:
+            supersedes = _object(receipt.get("supersedes"), field="supersedes")
+            sup_receipt_sha = supersedes.get("receipt_sha256")
+            if not isinstance(sup_receipt_sha, str) or not _V061_DIGEST.fullmatch(sup_receipt_sha):
+                errors.append("supersedes.receipt_sha256 must be a 64-character SHA-256 digest")
+            sup_commit = supersedes.get("candidate_commit_sha")
+            if not isinstance(sup_commit, str) or not _COMMIT.fullmatch(sup_commit):
+                errors.append("supersedes.candidate_commit_sha must be a full 40-character commit")
+        except HarnessError as exc:
+            errors.append(str(exc))
     return errors
 
 
