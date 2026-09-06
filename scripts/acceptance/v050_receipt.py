@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import re
 import shutil
@@ -1367,7 +1368,6 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "session_id": ValueCategory.GATEWAY_SESSION_ID,
         "format": ValueCategory.CLOSED_VOCABULARY,
         "schema_version": ValueCategory.CLOSED_VOCABULARY,
-        "format_version": ValueCategory.CLOSED_VOCABULARY,
         "title": ValueCategory.STRING,
         "geometry": ValueCategory.OBJECT,
         "terminal": ValueCategory.OBJECT,
@@ -1379,6 +1379,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "case": ValueCategory.CLOSED_VOCABULARY,
         "record_type": ValueCategory.CLOSED_VOCABULARY,
         "schema": ValueCategory.CLOSED_VOCABULARY,
+        "format_version": ValueCategory.CLOSED_VOCABULARY,
         "purpose": ValueCategory.CLOSED_VOCABULARY,
         "session": ValueCategory.OBJECT,
         "first_ansi_offset": ValueCategory.COUNT,
@@ -1474,6 +1475,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
     vocabularies={
         "format": frozenset({"ansi", "text", "png", "json", "jsonl", "svg", "binary"}),
         "schema_version": frozenset({
+            "talaria-live-capture-v2",
             "talaria-v0.6.1-capture-v1",
             "talaria-capture-metadata-v1",
             "talaria-v0.6.0-capture-v1",
@@ -1500,8 +1502,18 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "receipt",
             "capture-metadata",
             "pixel-measurements",
+            "host-sentinel",
+            "sentinel-witness",
         }),
         "schema": frozenset({
+            "talaria-live-capture-v2",
+            "talaria-v0.6.1-capture-v1",
+            "talaria-capture-metadata-v1",
+            "talaria-v0.6.0-capture-v1",
+            "talaria-v0.5.0-capture-v1",
+        }),
+        "format_version": frozenset({
+            "talaria-live-capture-v2",
             "talaria-v0.6.1-capture-v1",
             "talaria-capture-metadata-v1",
             "talaria-v0.6.0-capture-v1",
@@ -1543,11 +1555,6 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "ok",
         }),
         "covered_class": REFUSED_CLASSES,
-        "format_version": frozenset({
-            "talaria-v0.6.0-live",
-            "talaria-live-capture-v1",
-            "talaria-live-capture-v2",
-        }),
     },
 )
 
@@ -1681,12 +1688,349 @@ class AttestationMapSchema:
 
 ATTESTATION_MAP_SCHEMA = AttestationMapSchema()
 
+SENTINEL_ALLOWED_TOKENS: frozenset[str] = frozenset({
+    "sentinel-idle",
+    "sentinel-fired",
+    "idle",
+    "fired",
+})
+SENTINEL_IDLE_TOKENS: frozenset[str] = frozenset({"sentinel-idle", "idle"})
+SENTINEL_FIRED_TOKENS: frozenset[str] = frozenset({"sentinel-fired", "fired"})
+
+HOST_SENTINEL_ITEM_SCHEMA = RecordSchema(
+    name="host-sentinel-witness",
+    declared_keys={
+        "key": ValueCategory.STRING,
+        "consumed_before": ValueCategory.STRING,
+        "consumed_after": ValueCategory.STRING,
+        "control_before": ValueCategory.STRING,
+        "control_after": ValueCategory.STRING,
+    },
+)
+
+HOST_SENTINEL_RECORD_SCHEMA = RecordSchema(
+    name="host-sentinel",
+    declared_keys={
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "format_version": ValueCategory.CLOSED_VOCABULARY,
+        "record_type": ValueCategory.CLOSED_VOCABULARY,
+        "checklist_item": ValueCategory.CLOSED_VOCABULARY,
+        "case": ValueCategory.CLOSED_VOCABULARY,
+        "candidate_commit": ValueCategory.STRING,
+        "read_by": ValueCategory.CLOSED_VOCABULARY,
+        "read_at": ValueCategory.TIMESTAMP,
+        "keys": ValueCategory.LIST,
+        "positive_controls_confirmed": ValueCategory.BOOLEAN,
+        "consumed_keys_stayed_idle": ValueCategory.BOOLEAN,
+    },
+    vocabularies={
+        "schema_version": frozenset({
+            "talaria-v0.6.1-sentinel-v1",
+            "talaria-sentinel-v1",
+            "talaria-host-sentinel-v1",
+        }),
+        "format_version": frozenset({
+            "talaria-v0.6.1-sentinel-v1",
+            "talaria-sentinel-v1",
+            "talaria-host-sentinel-v1",
+        }),
+        "record_type": frozenset({"host-sentinel", "sentinel-witness", "host-sentinel-witness"}),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 24)),
+        "case": frozenset(f"live-{i:02d}" for i in range(1, 24)),
+        "read_by": frozenset(V061_ROLE_LABELS),
+    },
+)
+
+
+def validate_host_sentinel_record(
+    doc: dict[str, Any], *, path: Path, prefix: str = ""
+) -> list[str]:
+    """Validate host-sentinel evidence against the content-free non-leak contract."""
+    errors: list[str] = []
+    errors.extend(HOST_SENTINEL_RECORD_SCHEMA.validate(doc, path=path, prefix=prefix))
+
+    keys_list = doc.get("keys")
+    if keys_list is None:
+        errors.append(f"{path}: host-sentinel record requires 'keys' (quartet observations)")
+    elif not isinstance(keys_list, list):
+        errors.append(f"{path}: 'keys' must be a list")
+    elif not keys_list:
+        errors.append(f"{path}: 'keys' list must not be empty")
+
+    cand = doc.get("candidate_commit")
+    if cand is None:
+        errors.append(f"{path}: host-sentinel record requires 'candidate_commit'")
+    elif not isinstance(cand, str) or not re.fullmatch(r"[0-9a-f]{40}", cand):
+        errors.append(
+            f"{path}: 'candidate_commit' must be a 40-character hexadecimal git commit SHA "
+            f"(got {cand!r})"
+        )
+
+    if doc.get("positive_controls_confirmed") is not True:
+        errors.append(f"{path}: 'positive_controls_confirmed' must be explicitly true")
+    if doc.get("consumed_keys_stayed_idle") is not True:
+        errors.append(f"{path}: 'consumed_keys_stayed_idle' must be explicitly true")
+
+    doc_read_by = doc.get("read_by")
+    doc_read_at = doc.get("read_at")
+    read_dt: dt.datetime | None = None
+    if not doc_read_by:
+        errors.append(f"{path}: missing recorded read (read_by is required)")
+    elif doc_read_by not in V061_ROLE_LABELS:
+        errors.append(f"{path}: read_by {doc_read_by!r} not in role labels")
+    if not doc_read_at:
+        errors.append(f"{path}: missing recorded read (read_at is required)")
+    else:
+        try:
+            parsed_read = dt.datetime.fromisoformat(str(doc_read_at).replace("Z", "+00:00"))
+            if parsed_read.utcoffset() is None:
+                errors.append(f"{path}: read_at must have timezone qualification")
+            else:
+                read_dt = parsed_read
+        except (ValueError, TypeError):
+            errors.append(f"{path}: read_at must be an ISO 8601 timestamp")
+
+    if not isinstance(keys_list, list) or not keys_list:
+        return errors
+
+    root = path.parent
+    seen_observations: set[str] = set()
+    found_keys: set[str] = set()
+    prev_captured_dt: dt.datetime | None = None
+    quartet_phases = {
+        "consumed_before": "sentinel-idle",
+        "consumed_after": "sentinel-idle",
+        "control_before": "sentinel-idle",
+        "control_after": "sentinel-fired",
+    }
+
+    for idx, item in enumerate(keys_list):
+        loc = f"keys[{idx}]"
+        if not isinstance(item, dict):
+            errors.append(f"{path}: {loc} must be an object")
+            continue
+        errors.extend(HOST_SENTINEL_ITEM_SCHEMA.validate(item, path=path, prefix=loc))
+        k = item.get("key")
+        if not k:
+            errors.append(f"{path}: {loc} missing mandatory field 'key'")
+        else:
+            found_keys.add(k.lower())
+
+        for phase, expected_token in quartet_phases.items():
+            obs = item.get(phase)
+            if not obs or not isinstance(obs, str):
+                errors.append(
+                    f"{path}: {loc}: incomplete quartet: missing observation '{phase}'"
+                )
+                continue
+            if obs in seen_observations:
+                errors.append(
+                    f"{path}: {loc}: reused observation reference {obs!r} "
+                    "across phases or keys"
+                )
+            seen_observations.add(obs)
+
+            # Cross-file checks against sibling capture artifacts
+            png_file = root / obs
+            if not png_file.is_file():
+                errors.append(f"{path}: referenced frame {obs!r} does not exist")
+                continue
+
+            # 1. Validate PNG chunk and embedded metadata
+            png_data = png_file.read_bytes()
+            embedded: dict[str, Any] | None = None
+            if not png_data.startswith(b"\x89PNG\r\n\x1a\n"):
+                errors.append(f"{path}: {obs!r} is not a valid PNG file")
+            else:
+                embedded = _extract_png_capture_metadata(png_data)
+                if embedded is None:
+                    errors.append(f"{path}: {obs!r} missing talaria-evidence chunk in PNG")
+                else:
+                    if embedded.get("record_type") != "capture-metadata":
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk record_type is "
+                            f"{embedded.get('record_type')!r}, expected 'capture-metadata'"
+                        )
+                    if embedded.get("format_version") != "talaria-live-capture-v2":
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk format_version is "
+                            f"{embedded.get('format_version')!r}, "
+                            "expected 'talaria-live-capture-v2'"
+                        )
+                    if embedded.get("case") != "live-22":
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk case is "
+                            f"{embedded.get('case')!r}, expected 'live-22'"
+                        )
+                    if cand and embedded.get("candidate", {}).get("commit_sha") != cand:
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk candidate commit "
+                            f"{embedded.get('candidate', {}).get('commit_sha')!r} "
+                            f"does not match witness candidate {cand!r}"
+                        )
+                    if embedded.get("redactions"):
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk contains redactions "
+                            "on content-free host surface"
+                        )
+
+            # 2. Text twin validation
+            txt_file = png_file.with_suffix(".txt")
+            if not txt_file.is_file():
+                errors.append(
+                    f"{path}: referenced frame {obs!r} missing text twin {txt_file.name!r}"
+                )
+            else:
+                txt_bytes = txt_file.read_bytes()
+                actual_token = txt_bytes.decode("utf-8", errors="replace").strip()
+                if actual_token != expected_token:
+                    errors.append(
+                        f"{path}: {loc}.{phase}: text twin {txt_file.name!r} contains "
+                        f"{actual_token!r}, expected exact sentinel token "
+                        f"{expected_token!r}"
+                    )
+                twin_sha = hashlib.sha256(txt_bytes).hexdigest()
+                if embedded is not None:
+                    chunk_twin = (
+                        embedded.get("twin_digest")
+                        or embedded.get("text_twin", {}).get("sha256")
+                    )
+                    if chunk_twin and chunk_twin != twin_sha:
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk twin_digest ({chunk_twin}) "
+                            f"does not match text twin digest ({twin_sha})"
+                        )
+
+            # 3. Capture metadata JSON sidecar
+            json_file = png_file.with_suffix(".json")
+            if not json_file.is_file():
+                errors.append(
+                    f"{path}: referenced frame {obs!r} missing capture metadata "
+                    f"{json_file.name!r}"
+                )
+            else:
+                sidecar: dict[str, Any] | None = None
+                try:
+                    parsed_json = json.loads(json_file.read_text(encoding="utf-8"))
+                    if isinstance(parsed_json, dict):
+                        sidecar = parsed_json
+                except Exception as exc:
+                    errors.append(f"{path}: {json_file.name!r} is not valid JSON: {exc}")
+
+                if sidecar is not None:
+                    if sidecar.get("record_type") != "capture-metadata":
+                        errors.append(
+                            f"{path}: {json_file.name!r} record_type is "
+                            f"{sidecar.get('record_type')!r}, expected 'capture-metadata'"
+                        )
+                    if sidecar.get("format_version") != "talaria-live-capture-v2":
+                        errors.append(
+                            f"{path}: {json_file.name!r} format_version is "
+                            f"{sidecar.get('format_version')!r}, "
+                            "expected 'talaria-live-capture-v2'"
+                        )
+                    if sidecar.get("case") != "live-22":
+                        errors.append(
+                            f"{path}: {json_file.name!r} case is "
+                            f"{sidecar.get('case')!r}, expected 'live-22'"
+                        )
+                    if cand and sidecar.get("candidate", {}).get("commit_sha") != cand:
+                        errors.append(
+                            f"{path}: {json_file.name!r} candidate commit "
+                            f"{sidecar.get('candidate', {}).get('commit_sha')!r} "
+                            f"does not match witness candidate {cand!r}"
+                        )
+                    if sidecar.get("frame") != png_file.stem:
+                        errors.append(
+                            f"{path}: {json_file.name!r} frame is "
+                            f"{sidecar.get('frame')!r}, expected {png_file.stem!r}"
+                        )
+                    if sidecar.get("redactions"):
+                        errors.append(
+                            f"{path}: {json_file.name!r} contains redactions "
+                            "on content-free host surface"
+                        )
+
+                    if embedded is not None:
+                        sidecar_cmp = dict(sidecar)
+                        sidecar_cmp.pop("png_sha256", None)
+                        embedded_cmp = dict(embedded)
+                        embedded_cmp.pop("png_sha256", None)
+                        if sidecar_cmp != embedded_cmp:
+                            errors.append(
+                                f"{path}: {obs!r} sidecar metadata and "
+                                "embedded PNG chunk disagree"
+                            )
+
+                    cap_raw = sidecar.get("captured_at")
+                    if not cap_raw:
+                        errors.append(f"{path}: {json_file.name!r} missing 'captured_at'")
+                    else:
+                        try:
+                            cap_dt = dt.datetime.fromisoformat(
+                                str(cap_raw).replace("Z", "+00:00")
+                            )
+                            if cap_dt.utcoffset() is None:
+                                errors.append(
+                                    f"{path}: {json_file.name!r} captured_at "
+                                    "must have timezone qualification"
+                                )
+                            else:
+                                if read_dt is not None and cap_dt > read_dt:
+                                    errors.append(
+                                        f"{path}: {json_file.name!r} captured_at "
+                                        f"({cap_raw}) is after read_at ({doc_read_at})"
+                                    )
+                                if (
+                                    prev_captured_dt is not None
+                                    and cap_dt <= prev_captured_dt
+                                ):
+                                    errors.append(
+                                        f"{path}: {json_file.name!r} observations are not "
+                                        f"chronologically ordered ({cap_raw} <= previous)"
+                                    )
+                                prev_captured_dt = cap_dt
+                        except (ValueError, TypeError):
+                            errors.append(
+                                f"{path}: {json_file.name!r} captured_at "
+                                "must be an ISO 8601 timestamp"
+                            )
+
+    if (
+        doc.get("checklist_item") == "live-22"
+        or doc.get("case") == "live-22"
+        or "live-22" in str(path)
+    ):
+        required_keys = {"ctrl+o", "ctrl+s", "f1", "f2"}
+        missing_keys = required_keys - found_keys
+        if missing_keys:
+            errors.append(
+                f"{path}: Live 22 host-sentinel evidence requires all 4 default keys "
+                f"{sorted(required_keys)}, missing: {sorted(missing_keys)}"
+            )
+
+    return errors
+
+
+class HostSentinelSchema:
+    name = "host-sentinel"
+    declared_keys = HOST_SENTINEL_RECORD_SCHEMA.declared_keys
+    vocabularies = HOST_SENTINEL_RECORD_SCHEMA.vocabularies
+
+    def validate(self, doc: dict[str, Any], *, path: Path, prefix: str = "") -> list[str]:
+        return validate_host_sentinel_record(doc, path=path, prefix=prefix)
+
+
+HOST_SENTINEL_SCHEMA = HostSentinelSchema()
+
 
 class SchemaRegistry:
     """Registry of authored record schemas under the amended privacy contract."""
 
     @classmethod
-    def lookup(cls, path: Path, doc: Any) -> RecordSchema | AttestationMapSchema | None:
+    def lookup(
+        cls, path: Path, doc: Any
+    ) -> RecordSchema | AttestationMapSchema | HostSentinelSchema | None:
         if path.name == "receipt.json" or path.name.endswith("-receipt.json"):
             if isinstance(doc, dict) and (
                 doc.get("schema_version") == V061_INSTALL_SCHEMA
@@ -1706,6 +2050,24 @@ class SchemaRegistry:
                 return INSTALL_RECEIPT_SCHEMA
             if "checklist_item" in doc and "verdict" in doc:
                 return RECEIPT_SCHEMA
+            if (
+                doc.get("record_type") in (
+                    "host-sentinel", "sentinel-witness", "host-sentinel-witness"
+                )
+                or doc.get("schema_version") in (
+                    "talaria-v0.6.1-sentinel-v1",
+                    "talaria-sentinel-v1",
+                    "talaria-host-sentinel-v1",
+                )
+                or doc.get("format_version") in (
+                    "talaria-v0.6.1-sentinel-v1",
+                    "talaria-sentinel-v1",
+                    "talaria-host-sentinel-v1",
+                )
+                or "sentinel" in path.name.lower()
+                or ("keys" in doc and "positive_controls_confirmed" in doc)
+            ):
+                return HOST_SENTINEL_SCHEMA
             if any(
                 k in doc for k in ("frame_digest", "frame_digests", "twin_digest", "redactions")
             ) or (

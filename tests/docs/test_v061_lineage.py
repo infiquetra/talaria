@@ -14,6 +14,7 @@ back-filling. These tests pin each half.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import struct
@@ -29,6 +30,7 @@ from scripts.acceptance.v050_receipt import (
     ALLOWED_PREIMAGE_CLASSES,
     ATTESTATION_MAP_SCHEMA,
     CAPTURE_METADATA_SCHEMA,
+    HOST_SENTINEL_SCHEMA,
     INSTALL_RECEIPT_SCHEMA,
     PIXEL_MEASUREMENTS_SCHEMA,
     READ_CONFIRMATION_RECORD_SCHEMA,
@@ -3239,34 +3241,283 @@ def test_live_22_and_live_23_case_vocabulary(tmp_path: Path) -> None:
     )
 
 
-def test_talaria_live_capture_v2_format_version_is_sole_path() -> None:
-    # format_version is the single registered path for talaria-live-capture-v2
-    meta = {
-        "columns": 80,
-        "rows": 24,
-        "cell_width": 10,
-        "cell_height": 20,
-        "twin_digest": "a" * 64,
-        "format_version": "talaria-live-capture-v2",
-    }
-    assert CAPTURE_METADATA_SCHEMA.validate(meta, path=Path("frame.json")) == []
-
-    # SchemaRegistry.lookup resolves document with format_version="talaria-live-capture-v2"
-    doc_fmt = {"format_version": "talaria-live-capture-v2"}
-    assert SchemaRegistry.lookup(Path("frame.json"), doc_fmt) is CAPTURE_METADATA_SCHEMA
-
-    # Dropped paths: schema and schema_version do not admit talaria-live-capture-v2
-    for dropped_key in ("schema", "schema_version"):
-        bad_meta = {
+def test_talaria_live_capture_v2_admitted_in_schema_and_format_version() -> None:
+    # format_version, schema, and schema_version all admit talaria-live-capture-v2
+    for version_key in ("format_version", "schema", "schema_version"):
+        meta = {
             "columns": 80,
             "rows": 24,
             "cell_width": 10,
             "cell_height": 20,
             "twin_digest": "a" * 64,
-            dropped_key: "talaria-live-capture-v2",
+            version_key: "talaria-live-capture-v2",
         }
-        errs = CAPTURE_METADATA_SCHEMA.validate(bad_meta, path=Path("frame.json"))
-        assert any("not in registered closed vocabulary" in e for e in errs)
+        assert CAPTURE_METADATA_SCHEMA.validate(meta, path=Path("frame.json")) == []
+
+        # SchemaRegistry.lookup resolves document with any of these fields
+        doc = {version_key: "talaria-live-capture-v2"}
+        assert SchemaRegistry.lookup(Path("frame.json"), doc) is CAPTURE_METADATA_SCHEMA
+
+
+def test_host_sentinel_legacy_witnesses_format_refused(tmp_path: Path) -> None:
+    sentinel_path = tmp_path / "live-22" / "evidence" / "sentinel.json"
+
+    # 1. Document with legacy 'witnesses' list is strictly refused
+    legacy_witnesses_doc = {
+        "record_type": "host-sentinel",
+        "schema_version": "talaria-v0.6.1-sentinel-v1",
+        "checklist_item": "live-22",
+        "case": "live-22",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T18:00:00Z",
+        "witnesses": [
+            {
+                "key": "ctrl+o",
+                "before": "sentinel-idle",
+                "after": "sentinel-idle",
+                "positive_control": {"before": "sentinel-idle", "after": "sentinel-fired"},
+            }
+        ],
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(legacy_witnesses_doc, path=sentinel_path)
+    assert any("undeclared key 'witnesses'" in e for e in errs)
+    assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
+
+    # 2. Document with legacy 'pairs' list is strictly refused
+    legacy_pairs_doc = {
+        "record_type": "host-sentinel",
+        "schema_version": "talaria-v0.6.1-sentinel-v1",
+        "checklist_item": "live-22",
+        "case": "live-22",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T18:00:00Z",
+        "pairs": [],
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(legacy_pairs_doc, path=sentinel_path)
+    assert any("undeclared key 'pairs'" in e for e in errs)
+    assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
+
+    # 3. Single-witness document with before/after/positive_control at root is strictly refused
+    single_doc = {
+        "record_type": "host-sentinel",
+        "schema_version": "talaria-v0.6.1-sentinel-v1",
+        "checklist_item": "live-22",
+        "case": "live-22",
+        "key": "ctrl+o",
+        "before": "sentinel-idle",
+        "after": "sentinel-idle",
+        "positive_control": {
+            "key": "ctrl+o",
+            "before": "sentinel-idle",
+            "after": "sentinel-fired",
+        },
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T18:00:00Z",
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(single_doc, path=sentinel_path)
+    assert any("undeclared key 'key'" in e for e in errs)
+    assert any("undeclared key 'before'" in e for e in errs)
+    assert any("undeclared key 'after'" in e for e in errs)
+    assert any("undeclared key 'positive_control'" in e for e in errs)
+    assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
+
+
+def test_host_sentinel_content_free_constraints() -> None:
+    path = Path("evidence/sentinel.json")
+
+    # Constraint 1: pane or tab identifier is rejected as a forbidden or undeclared key
+    for forbidden_field in ("pane_id", "tab_id", "multiplexer_pane", "window_id", "tokens"):
+        doc_with_id = {
+            "record_type": "host-sentinel-witness",
+            "format_version": "talaria-host-sentinel-v1",
+            "case": "live-22",
+            "candidate_commit": "0" * 40,
+            "read_by": "dedicated-tester",
+            "read_at": "2026-09-06T18:00:00+00:00",
+            "positive_controls_confirmed": True,
+            "consumed_keys_stayed_idle": True,
+            "keys": [],
+            forbidden_field: "pane-01",
+        }
+        errs = HOST_SENTINEL_SCHEMA.validate(doc_with_id, path=path)
+        assert any(
+            f"forbidden key {forbidden_field!r}" in e or f"undeclared key {forbidden_field!r}" in e
+            for e in errs
+        )
+
+    # Constraint 2: undeclared fields in item schema are refused
+    doc_with_bad_item = {
+        "record_type": "host-sentinel-witness",
+        "format_version": "talaria-host-sentinel-v1",
+        "case": "live-22",
+        "candidate_commit": "0" * 40,
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T18:00:00+00:00",
+        "positive_controls_confirmed": True,
+        "consumed_keys_stayed_idle": True,
+        "keys": [
+            {
+                "key": "ctrl+o",
+                "consumed_before": "a.png",
+                "consumed_after": "b.png",
+                "control_before": "c.png",
+                "control_after": "d.png",
+                "arbitrary_extra": "leak",
+            }
+        ],
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(doc_with_bad_item, path=path)
+    assert any("undeclared key 'arbitrary_extra'" in e for e in errs)
+
+
+def _make_evidence_png(metadata_dict: dict[str, Any]) -> bytes:
+    json_bytes = json.dumps(metadata_dict).encode("utf-8")
+    text_data = b"talaria-evidence\x00" + json_bytes
+    base = _base_png_chunks()
+    return _make_png([base[0], (b"tEXt", text_data), base[1], base[2]])
+
+
+def test_host_sentinel_quartet_proposal_validation(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-22"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    candidate_sha = "a" * 40
+    read_at_str = "2026-09-06T18:00:00+00:00"
+
+    key_slugs = [("ctrl+o", "ctrl-o"), ("ctrl+s", "ctrl-s"), ("f1", "f1"), ("f2", "f2")]
+    phases = [
+        ("consumed_before", "sentinel-idle"),
+        ("consumed_after", "sentinel-idle"),
+        ("control_before", "sentinel-idle"),
+        ("control_after", "sentinel-fired"),
+    ]
+
+    keys_data: list[dict[str, Any]] = []
+    minute_counter = 0
+
+    for key, slug in key_slugs:
+        key_entry: dict[str, Any] = {"key": key}
+        for phase, expected_token in phases:
+            stem = f"{slug}-{phase.replace('_', '-')}"
+            png_name = f"{stem}.png"
+            txt_name = f"{stem}.txt"
+            json_name = f"{stem}.json"
+            key_entry[phase] = png_name
+
+            # Write text twin
+            txt_path = evidence_dir / txt_name
+            txt_path.write_text(expected_token + "\n", encoding="utf-8")
+            twin_digest = hashlib.sha256(txt_path.read_bytes()).hexdigest()
+
+            # Write sidecar JSON & embedded PNG
+            minute_counter += 1
+            captured_at = f"2026-09-06T17:{minute_counter:02d}:00+00:00"
+            metadata = {
+                "record_type": "capture-metadata",
+                "format_version": "talaria-live-capture-v2",
+                "case": "live-22",
+                "candidate": {"commit_sha": candidate_sha},
+                "frame": stem,
+                "twin_digest": twin_digest,
+                "captured_at": captured_at,
+            }
+            json_path = evidence_dir / json_name
+            json_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            png_path = evidence_dir / png_name
+            png_path.write_bytes(_make_evidence_png(metadata))
+
+        keys_data.append(key_entry)
+
+    valid_quartet_doc: dict[str, Any] = {
+        "record_type": "host-sentinel-witness",
+        "format_version": "talaria-host-sentinel-v1",
+        "case": "live-22",
+        "checklist_item": "live-22",
+        "candidate_commit": candidate_sha,
+        "keys": keys_data,
+        "read_by": "dedicated-tester",
+        "read_at": read_at_str,
+        "positive_controls_confirmed": True,
+        "consumed_keys_stayed_idle": True,
+    }
+
+    witness_path = evidence_dir / "host-sentinel-witness.json"
+    assert SchemaRegistry.lookup(witness_path, valid_quartet_doc) is HOST_SENTINEL_SCHEMA
+
+    # 1. Complete tree passes validation cleanly
+    assert HOST_SENTINEL_SCHEMA.validate(valid_quartet_doc, path=witness_path) == []
+    witness_path.write_text(json.dumps(valid_quartet_doc), encoding="utf-8")
+    assert evidence_file_privacy_errors(witness_path, repo_root=tmp_path) == []
+
+    # 2. Deleting referenced trios is refused (mutation-held)
+    missing_trio_doc = dict(valid_quartet_doc)
+    fake_path = tmp_path / "empty_dir" / "host-sentinel-witness.json"
+    fake_path.parent.mkdir(parents=True, exist_ok=True)
+    fake_path.write_text(json.dumps(missing_trio_doc), encoding="utf-8")
+    errs = HOST_SENTINEL_SCHEMA.validate(missing_trio_doc, path=fake_path)
+    assert any(
+        "referenced frame 'ctrl-o-consumed-before.png' does not exist" in e for e in errs
+    )
+    scan_errs = evidence_file_privacy_errors(fake_path, repo_root=tmp_path)
+    assert any(
+        "referenced frame 'ctrl-o-consumed-before.png' does not exist" in e for e in scan_errs
+    )
+
+    # 3. Missing confirming booleans is refused (mutation-held)
+    no_bool_doc = copy.deepcopy(valid_quartet_doc)
+    del no_bool_doc["positive_controls_confirmed"]
+    del no_bool_doc["consumed_keys_stayed_idle"]
+    no_bool_path = tmp_path / "no_bool" / "host-sentinel-witness.json"
+    no_bool_path.parent.mkdir(parents=True, exist_ok=True)
+    no_bool_path.write_text(json.dumps(no_bool_doc), encoding="utf-8")
+    errs = HOST_SENTINEL_SCHEMA.validate(no_bool_doc, path=witness_path)
+    assert any("'positive_controls_confirmed' must be explicitly true" in e for e in errs)
+    assert any("'consumed_keys_stayed_idle' must be explicitly true" in e for e in errs)
+    scan_errs = evidence_file_privacy_errors(no_bool_path, repo_root=tmp_path)
+    assert any("'positive_controls_confirmed' must be explicitly true" in e for e in scan_errs)
+    assert any("'consumed_keys_stayed_idle' must be explicitly true" in e for e in scan_errs)
+
+    # 4. Arbitrary candidate commit is refused (mutation-held)
+    bad_cand_doc = copy.deepcopy(valid_quartet_doc)
+    bad_cand_doc["candidate_commit"] = "not-a-commit"
+    bad_cand_path = tmp_path / "bad_cand" / "host-sentinel-witness.json"
+    bad_cand_path.parent.mkdir(parents=True, exist_ok=True)
+    bad_cand_path.write_text(json.dumps(bad_cand_doc), encoding="utf-8")
+    errs = HOST_SENTINEL_SCHEMA.validate(bad_cand_doc, path=witness_path)
+    assert any("must be a 40-character hexadecimal git commit SHA" in e for e in errs)
+    scan_errs = evidence_file_privacy_errors(bad_cand_path, repo_root=tmp_path)
+    assert any("must be a 40-character hexadecimal git commit SHA" in e for e in scan_errs)
+
+    # 5. Reusing an observation reference across keys or phases is refused
+    reused_keys: list[dict[str, Any]] = copy.deepcopy(keys_data)
+    reused_keys[1]["consumed_before"] = "ctrl-o-consumed-before.png"
+    reused_doc = dict(valid_quartet_doc, keys=reused_keys)
+    errs = HOST_SENTINEL_SCHEMA.validate(reused_doc, path=witness_path)
+    assert any("reused observation reference 'ctrl-o-consumed-before.png'" in e for e in errs)
+
+    # 6. Missing one of the 4 mandatory keys for Live 22 is refused
+    missing_keys: list[dict[str, Any]] = copy.deepcopy(keys_data)
+    missing_key_doc = dict(valid_quartet_doc, keys=missing_keys[:3])  # drop f2
+    errs = HOST_SENTINEL_SCHEMA.validate(missing_key_doc, path=witness_path)
+    assert any("requires all 4 default keys" in e and "'f2'" in e for e in errs)
+
+    # 7. Incomplete quartet missing an observation is refused
+    incomplete_keys: list[dict[str, Any]] = copy.deepcopy(keys_data)
+    del incomplete_keys[0]["control_after"]
+    incomplete_quartet_doc = dict(valid_quartet_doc, keys=incomplete_keys)
+    errs = HOST_SENTINEL_SCHEMA.validate(incomplete_quartet_doc, path=witness_path)
+    assert any("incomplete quartet: missing observation 'control_after'" in e for e in errs)
+
+    # 8. Empty root without keys or witnesses is refused
+    empty_root_doc = {
+        "record_type": "host-sentinel-witness",
+        "format_version": "talaria-host-sentinel-v1",
+        "case": "live-22",
+        "positive_controls_confirmed": True,
+        "consumed_keys_stayed_idle": True,
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(empty_root_doc, path=witness_path)
+    assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
 
 
 def test_no_conflict_markers_in_repository() -> None:
