@@ -9,6 +9,7 @@ programmatic writes must not open the palette.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -24,6 +25,7 @@ from talaria.domain.commands import (
 from talaria.domain.composer_history import ComposerHistory
 from talaria.themes.builtins import BUILTIN_THEMES
 from talaria.transport.rpc import RpcOutcome
+from talaria.ui import palette as palette_module
 from talaria.ui.app import TalariaApp
 from talaria.ui.composer import ChatTextArea
 from talaria.ui.palette import PaletteRegion, format_filtered_entry
@@ -2092,3 +2094,89 @@ def test_page_delta_floor_on_an_unmounted_region() -> None:
     region = PaletteRegion()
     assert ChatTextArea._page_delta(region, "pagedown") == 1
     assert ChatTextArea._page_delta(region, "pageup") == -1
+
+
+# ── the #161 recurrence of #146's F-1 ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_concurrent_rebuilds_draw_one_set_of_rows_not_two() -> None:
+    """The rehearsal's recurrence: ``apply`` mounts one row per await, so a
+    keystroke-driven rebuild and a catalog-landing rebuild that interleaved
+    each mounted their whole list into the same container — every heading
+    and row on screen twice, witnessed live as adjacent duplicate Talaria
+    headings. The rebuild is serialized against itself (the same trade
+    ``TalariaApp.render_snapshot`` documents), so the second pass starts
+    from the first pass's finished state, not its middle."""
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = _review_catalog()
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await app.palette.show_slash(app.catalog, "/s")
+        await pilot.pause()
+
+        # Two rebuilds racing: the typing path and a catalog-landing apply.
+        await asyncio.gather(
+            app.palette.sync_slash(app.catalog, "/session01"),
+            app.palette.apply(app.catalog),
+        )
+        await pilot.pause()
+
+        rows = app.palette.row_texts
+        # Both rebuilds produce the same "/session01" list; serialized, the
+        # screen holds exactly one copy of it. Interleaved (the defect), the
+        # same assertion sees every row twice.
+        assert len(rows) == len(set(rows)), rows
+        assert _headings(app) == ["── Session ──"], _headings(app)
+        assert len(app.palette._rows) == len(app.palette._row_entries) == len(rows)
+        await app.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_a_non_contiguous_section_order_still_draws_each_heading_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#161's general statement: the heading is a function of the grouping,
+    not of adjacency. Whatever order the filtered list arrives in — the shape
+    a tier-first filter produces before the display grouping repairs it — each
+    section's heading is drawn exactly once, at its first row. Against the
+    adjacency rule this list drew Talaria twice and Session twice."""
+    catalog = _review_catalog()
+    entries = catalog.entries
+    local_rows = tuple(e for e in entries if e.availability == "talaria-local")
+    session_rows = tuple(e for e in entries if e.category == "Session")
+    interleaved = (
+        local_rows[0],
+        session_rows[0],
+        local_rows[1],
+        session_rows[1],
+    )
+    monkeypatch.setattr(
+        palette_module, "_filtered_entries", lambda catalog_arg, prefix: interleaved
+    )
+
+    disp = RecordingDispatcher()
+    app = live_app(disp)
+    app.catalog = catalog
+    async with app.run_test() as pilot:
+        app.composer.text_area.focus()
+        await pilot.pause()
+        await app.palette.show_slash(app.catalog, "/x")
+        await pilot.pause()
+
+        assert _headings(app) == ["── Talaria ──", "── Session ──"], _headings(app)
+        rows = app.palette.row_texts
+        # Every row is on screen exactly once, in the order the list gave —
+        # and the second local row and second session row appear with no
+        # second heading above them. The adjacency rule drew eight rows and
+        # four headings here; the grouping rule draws six and two.
+        assert len(rows) == len(interleaved) + 2
+        assert rows[0] == "── Talaria ──"
+        assert rows[1].startswith(local_rows[0].name)
+        assert rows[2] == "── Session ──"
+        assert rows[3].startswith(session_rows[0].name)
+        assert rows[4].startswith(local_rows[1].name)
+        assert rows[5].startswith(session_rows[1].name)
+        await app.shutdown_sources()
