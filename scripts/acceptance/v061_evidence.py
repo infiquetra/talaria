@@ -23,7 +23,7 @@ Three mistakes this module is built to make impossible:
    ``--applies-map``; this module refuses to record without it, computes
    ``same`` itself only when the commits genuinely match, and refuses a map
    that claims ``same`` for a differing commit.
-3. **A waived case.** The READY rule is pass-21, fail-0, blocked-0, reserved-0
+3. **A waived case.** The READY rule is pass-23, fail-0, blocked-0, reserved-0
    with no waiver path. The verifier enforces it at verify-run time; this
    generator refuses to record anything less, so a blocked or reserved live
    case cannot be papered over at record time either.
@@ -225,7 +225,7 @@ def _results_document(
         "the readiness verdict itself lives in the gate document, not here.",
         "",
         "Live cases are source-checkout evidence unless a receipt says "
-        "otherwise: twenty source-checkout receipts, two install probes, one "
+        "otherwise: twenty-two source-checkout receipts, two install probes, one "
         "wheel receipt — the wheel is proved by the probes and by Live 21 "
         "executed from the built wheel in a fresh tool environment.",
         "",
@@ -270,7 +270,7 @@ def record(
 ) -> Path:
     """Record the v0.6.1 binding; return the manifest path."""
     stamped = _utc_now(recorded_at)
-    version = _package_version()
+    version = _package_version(repo_root)
     if version != V061_RELEASE:
         raise SystemExit(
             f"the package at {repo_root} reports version {version!r}, not {V061_RELEASE!r}: "

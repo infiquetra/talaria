@@ -41,6 +41,7 @@ uv run mypy
 uv run pytest
 uv run bandit -r talaria -q
 git diff --check
+! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
 ```
 
 A change touching `src/` runs the Node check as well:
@@ -49,6 +50,7 @@ A change touching `src/` runs the Node check as well:
 npm install
 npm run check
 git diff --check
+! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
 ```
 
 The equivalence assertion between the two recorders runs from the Python suite, not this one. The

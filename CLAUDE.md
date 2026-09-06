@@ -23,6 +23,7 @@ uv run pytest
 uv run bandit -r talaria -q
 uv run bandit -r scripts -q -ll
 git diff --check
+! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
 ```
 
 `npm run check` still applies to `src/`, which is no longer a bootstrap awaiting removal: it is three
