@@ -17,7 +17,7 @@ import pytest
 
 from talaria.domain.commands import TALARIA_LOCAL_COMMANDS
 from talaria.replay.controls import ReplayControls
-from talaria.ui.app import AGENTS_NOTHING_TO_TOGGLE, NOTHING_TO_INTERRUPT, TalariaApp
+from talaria.ui.app import AGENTS_NOTHING_TO_TOGGLE, NOTHING_TO_INTERRUPT, HelpBar, TalariaApp
 from tests.ui.conftest import RecordingDispatcher, event, feed, live_app, settle
 
 
@@ -26,9 +26,10 @@ async def test_ae1_jump_is_gone() -> None:
     """AE1 structural: F1 has no binding and no action.
 
     The approval card is answerable without any function key (A1 auto-focus +
-    enter/esc), and the help bar documents F1 as eaten on macOS. The absence of
-    a binding is asserted rather than a press, because a eaten key sends no
-    bytes and the program cannot distinguish it from not having been pressed.
+    enter/esc), and the help bar marks F1 questionable and F2 macOS-dependent
+    rather than calling either eaten. The absence of a binding is asserted
+    rather than a press, because an intercepted key sends no bytes and the
+    program cannot distinguish it from not having been pressed.
     """
     # Structural check: no Binding("f1", "jump_to_prompt") and no action
     from talaria.ui.app import TalariaApp as AppClass
@@ -54,7 +55,7 @@ async def test_ae1_jump_is_gone() -> None:
 
 @pytest.mark.asyncio
 async def test_ae2_toggle_agents_via_chord_and_alias() -> None:
-    """AE2 behavioural: F2's eaten, so ctrl+g is the primary, F2 remains alias.
+    """AE2 behavioural: F2 may be intercepted, so ctrl+g is the primary, F2 remains alias.
 
     With no rows, the toggle still flips its flag and the empty notice is shown,
     but the notice is latched per focus-hold (AE12) and a second press in the
@@ -375,7 +376,7 @@ async def test_ae6_row_is_discoverable() -> None:
         assert "ctrl+q" in live_text, "live should name the quit chord"
         assert "quit" in live_text, "live should label quit-client"
         assert "F1" in live_text
-        assert "eaten" in live_text.lower()
+        assert "eaten" not in live_text.lower(), f"uniform eaten claim returned: {live_text!r}"
         await pilot.pause()
         strips = app_live.screen._compositor.render_strips()
         row = app_live.help_bar.region.y
@@ -385,7 +386,7 @@ async def test_ae6_row_is_discoverable() -> None:
         rendered = "".join(seg.text for seg in strips[row])
         assert "…" not in rendered, f"live footer clipped at 80x24: {rendered!r}"
         assert "cancel-turn" in rendered, f"live cancel label missing: {rendered!r}"
-        assert "F1/F2 eaten" in rendered, f"live tail missing: {rendered!r}"
+        assert HelpBar.FKEY_MACOS_ADVISORY in rendered, f"live tail missing: {rendered!r}"
         await app_live.shutdown_sources()
 
     from talaria.replay.source import ReplaySource
@@ -411,7 +412,54 @@ async def test_ae6_row_is_discoverable() -> None:
         assert app_replay.bottom_status_bar.region.height == 1
         rendered = "".join(seg.text for seg in strips[row])
         assert "…" not in rendered, f"replay footer clipped at 80x24: {rendered!r}"
-        assert "F1/F2 eaten" in rendered, f"replay tail missing: {rendered!r}"
+        assert HelpBar.FKEY_MACOS_ADVISORY in rendered, f"replay tail missing: {rendered!r}"
+        await app_replay.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_footer_fkey_advisory_matches_key_configuration() -> None:
+    """Live 22 finding: the footer advisory is bound to the binding table.
+
+    F1 is deliberately unbound and F2 is a hidden alias with ctrl+g as its
+    collision-free primary; both footer halves must name the two keys without
+    the uniform "eaten" claim. The table facts below come from
+    build_app_bindings rather than from the shipped literal, so a table change
+    forces this test to re-examine the footer — a literal assert would go
+    stale instead — and the advisory is never deleted to fix its wording.
+    """
+    from textual.binding import Binding
+
+    from talaria.config import DEFAULT_INSPECTOR_KEY, DEFAULT_INTERRUPT_KEY
+    from talaria.ui.app import build_app_bindings
+
+    bindings = build_app_bindings(DEFAULT_INSPECTOR_KEY, DEFAULT_INTERRUPT_KEY)
+    by_key = {b.key: b for b in bindings if isinstance(b, Binding)}
+    assert "f1" not in by_key, "F1 is deliberately unbound"
+    assert by_key["f2"].action == "toggle_agents", "F2 is a working alias, not inert"
+    assert by_key["f2"].show is False
+    primaries = [
+        b.key for b in bindings if isinstance(b, Binding) and b.action == "toggle_agents" and b.show
+    ]
+    assert "ctrl+g" in primaries, "the collision-free primary stands"
+
+    app_live = live_app(RecordingDispatcher())
+    async with app_live.run_test():
+        live_text = app_live.help_bar.help_text
+        assert HelpBar.FKEY_MACOS_ADVISORY in live_text
+        assert "F1" in live_text and "F2" in live_text
+        assert "eaten" not in live_text.lower()
+        await app_live.shutdown_sources()
+
+    from talaria.replay.source import ReplaySource
+    from tests.ui.conftest import records
+
+    controls = ReplayControls(paused=False)
+    source = ReplaySource(records([event("gateway.ready", {})]), controls=controls)
+    app_replay = TalariaApp(source, mode="replay", controls=controls)
+    async with app_replay.run_test():
+        replay_text = app_replay.help_bar.help_text
+        assert HelpBar.FKEY_MACOS_ADVISORY in replay_text
+        assert "eaten" not in replay_text.lower()
         await app_replay.shutdown_sources()
 
 

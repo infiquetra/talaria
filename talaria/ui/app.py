@@ -1206,6 +1206,15 @@ class HelpBar(Static):
     }
     """
 
+    #: The function-key advisory shared by both footer halves (Live 22
+    #: finding). F1 is unbound — it does nothing even where the desktop
+    #: delivers it — and F2 is a working alias, so neither is "eaten" in the
+    #: inert sense; but macOS may intercept both before Talaria sees them,
+    #: depending on the user's "Use F1, F2, etc. as standard function keys"
+    #: setting. Thirteen cells, so the live footer still fits 80 columns
+    #: unclipped; the setting detail lives in the notes, not here.
+    FKEY_MACOS_ADVISORY = "F1? F2 macOS?"
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
         self._help_text = ""
@@ -1224,7 +1233,7 @@ class HelpBar(Static):
             # routes visible without clipping at the standard 80-column size.
             text = (
                 f"{inspector_key} inspector · / commands · F8 pause · "
-                "F9/F10 speed · F1/F2 eaten"
+                f"F9/F10 speed · {self.FKEY_MACOS_ADVISORY}"
             )
         else:
             # Live: pacing keys are inert, so not advertised. The inspector's
@@ -1233,7 +1242,7 @@ class HelpBar(Static):
             # quit, so a cancel press can never read as a quit press.
             text = (
                 f"{inspector_key} inspector · / commands · "
-                f"{interrupt_key} cancel-turn · ctrl+q quit · F1/F2 eaten"
+                f"{interrupt_key} cancel-turn · ctrl+q quit · {self.FKEY_MACOS_ADVISORY}"
             )
         self._help_text = text
         self.update(literal_text(text))
@@ -1265,9 +1274,10 @@ def build_app_bindings(
         Binding("ctrl+q", "quit", "quit", priority=True),
         Binding(inspector_key, "toggle_inspector", "inspector", priority=True),
         # A4 KTD1/KTD2: F1 removed — the focus-owning card (A1) is the anchor,
-        # so the jump has no job on this desktop. On macOS F1/F2 are eaten before
-        # Talaria sees them; a eaten key sends no bytes and the program cannot
-        # detect it, so every eaten action gets a non-function-key primary.
+        # so the jump has no job on this desktop. On macOS F1/F2 may be
+        # intercepted before Talaria sees them; an intercepted key sends no
+        # bytes and the program cannot detect it, so every interceptable
+        # action gets a non-function-key primary.
         # F2/F4 remain as aliases where the desktop delivers them (KTD3).
         Binding("ctrl+g", "toggle_agents", "sub-agents", priority=True),
         Binding("f2", "toggle_agents", "sub-agents", priority=True, show=False),
