@@ -2,6 +2,38 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-06
+
+### Stopping a timer cannot recall an in-flight tick; every await is a handoff (#158)
+
+**Evidence.** The render timer ticked into teardown and raised `NoMatches` on `#transcript`
+roughly one run in three under suite load — on `main` twice, on a branch touching no UI code,
+and always where the harness calls `_shutdown()` directly rather than through `exit()`.
+`shutdown_sources` already stops the coalescing timer *first* (its own docstring says why), and
+`_render_tick` checks `_teardown_started` on entry — and neither closes the window, because a
+tick that has already passed those checks is running code, and stopping a timer cannot recall a
+callback already in flight. The landed guard (`talaria/ui/app.py`,
+`_render_snapshot_locked`, issue #158): the widget queries are wrapped so a missing region is
+teardown — caught and returned, the same rule `_refresh_bottom_status_bar` already applied — and
+`_teardown_started` is re-checked after every await, because an await is where the teardown task
+gets its turn. Pinned both ways in `tests/ui/test_teardown.py`: the widgets-gone case and the
+teardown-during-an-await case fail against the pre-guard code and pass with it. The test half —
+the one named test in the module that did not await `shutdown_sources()` — closes the common
+window and cannot save an in-flight tick, which is why the production guard is the durable half.
+
+**Mechanism.** The interactive path is *mostly* protected by `exit()` setting `_exit` before
+shutdown, and "mostly" is load-bearing: the suite detonates instead of the terminal only because
+`run_test` never sets that flag. A protection an operator gets by accident and a test harness
+does not is not protection; the render path now treats missing widgets as teardown on its own,
+whatever the caller did.
+
+**Generalizable rule.** For any timer-driven render in a UI framework with cooperative teardown:
+guard the render body, not just the timer — catch the missing-widget query and return, and
+re-check the teardown flag after every await, because each await is a scheduling point where
+teardown can begin between two regions. And never "fix" the symptom by stretching the timer
+interval: that hides the window from the tests that would prove the guard, which is the exact
+reason issue #158 rules the stretch out.
+
 ## 2026-09-05
 
 ### Substring assertions on an un-clipped model string are blind to what a width-bounded panel renders

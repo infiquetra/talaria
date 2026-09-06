@@ -2354,40 +2354,63 @@ class TalariaApp(App[None]):
         self.snapshot = snapshot
         entries = entry_scoped_view(self.state)
 
-        if "transcript" in snapshot.changed:
-            # KTD6: the pane needs entry identity and raw (unwelded) bodies
-            # that TranscriptView's flattened line buffer does not carry, so
-            # U4 computes the entry-scoped surface here rather than growing
-            # Snapshot's frozen shape — entry_scoped_view is a pure function
-            # of the same SessionState project() already read this tick.
-            await self.transcript.apply(snapshot.transcript, entries)
-        if "subagents" in snapshot.changed:
-            await self.agents.apply(snapshot.subagents)
-        if {"prompts", "status"} & snapshot.changed:
-            # Both regions, because the activity line is a function of the
-            # prompts *and* of the derived turn status. Watching only "prompts"
-            # leaves "working…" on screen after a turn ends with a prompt still
-            # outstanding, which is the one sentence R8 forbids.
-            await self.prompts.apply(
-                snapshot.prompts,
-                snapshot.status.turn,
-                focus_new=not self.composer.text.strip(),
+        # Issue #158: a tick already past the _teardown_started check in
+        # _render_tick can still be in flight when shutdown empties the
+        # screen, because every await below hands control back to the task
+        # doing the emptying. A missing #transcript, #agents, #prompts or
+        # #inspector is therefore teardown, not an error — the same rule
+        # _refresh_bottom_status_bar already applies — and the re-checks
+        # after each await bail before touching a widget the screen may no
+        # longer hold. No retry and no sleep: a tearing-down process renders
+        # nothing further, and the next state belongs to the next run.
+        try:
+            if "transcript" in snapshot.changed:
+                # KTD6: the pane needs entry identity and raw (unwelded) bodies
+                # that TranscriptView's flattened line buffer does not carry, so
+                # U4 computes the entry-scoped surface here rather than growing
+                # Snapshot's frozen shape — entry_scoped_view is a pure function
+                # of the same SessionState project() already read this tick.
+                await self.transcript.apply(snapshot.transcript, entries)
+            if self._teardown_started:
+                return
+            if "subagents" in snapshot.changed:
+                await self.agents.apply(snapshot.subagents)
+            if self._teardown_started:
+                return
+            if {"prompts", "status"} & snapshot.changed:
+                # Both regions, because the activity line is a function of the
+                # prompts *and* of the derived turn status. Watching only "prompts"
+                # leaves "working…" on screen after a turn ends with a prompt still
+                # outstanding, which is the one sentence R8 forbids.
+                await self.prompts.apply(
+                    snapshot.prompts,
+                    snapshot.status.turn,
+                    focus_new=not self.composer.text.strip(),
+                )
+            if self._teardown_started:
+                return
+            profile = self.current_profile
+            inspector_projection = inspector_view(
+                entries,
+                queue=self.needs_you,
+                agents=snapshot.subagents,
+                session_id=self.state.focused_session_id or "",
+                profile=profile,
+                endpoint=self.profile_endpoints.get(profile, "") if profile else "",
+                model=self._inspector_model(),
+                usage=self.state.usage,
             )
-        profile = self.current_profile
-        inspector_projection = inspector_view(
-            entries,
-            queue=self.needs_you,
-            agents=snapshot.subagents,
-            session_id=self.state.focused_session_id or "",
-            profile=profile,
-            endpoint=self.profile_endpoints.get(profile, "") if profile else "",
-            model=self._inspector_model(),
-            usage=self.state.usage,
-        )
-        if inspector_projection != self._inspector_view:
-            self._inspector_view = inspector_projection
-            await self.inspector.apply(inspector_projection)
-        self._answer_unattended_prompts(snapshot)
+            if inspector_projection != self._inspector_view:
+                self._inspector_view = inspector_projection
+                await self.inspector.apply(inspector_projection)
+            if self._teardown_started:
+                return
+            self._answer_unattended_prompts(snapshot)
+        except NoMatches:
+            # The screen was emptied underneath this tick. Counted as a
+            # render above because the projection did happen; every region
+            # this tick would have painted is gone.
+            return
         self._refresh_bottom_status_bar()
 
     # ── the status region (U6) ───────────────────────────────────────────
