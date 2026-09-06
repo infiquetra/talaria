@@ -20,6 +20,7 @@ from talaria.domain.changes import (
     InspectorTaskView,
     InspectorView,
 )
+from talaria.domain.normalize import MOA_FALLBACK_TEXT
 from talaria.ui.literal import literal_text
 
 DEFAULT_INSPECTOR_WIDTH = 36
@@ -138,6 +139,29 @@ class InspectorDiagRow(Static):
         self.update(literal_text(f"{gutter} {self.diag_line}"))
 
 
+class InspectorMoaRow(Static):
+    """One mixture-of-agents advisor row (D7, issue #148), focusable like diag rows."""
+
+    can_focus = True
+
+    def __init__(self, line: str) -> None:
+        super().__init__("", markup=False, classes="inspector--moa")
+        self.moa_line = line
+
+    def on_mount(self) -> None:
+        self._refresh_line()
+
+    def on_focus(self) -> None:
+        self._refresh_line()
+
+    def on_blur(self) -> None:
+        self._refresh_line()
+
+    def _refresh_line(self) -> None:
+        gutter = ">" if self.has_focus else " "
+        self.update(literal_text(f"{gutter} {self.moa_line}"))
+
+
 class Inspector(VerticalScroll):
     """Five inspector sections plus session-only responsive geometry.
 
@@ -187,14 +211,16 @@ class Inspector(VerticalScroll):
     }
     Inspector .inspector--task,
     Inspector .inspector--file,
-    Inspector .inspector--diag {
+    Inspector .inspector--diag,
+    Inspector .inspector--moa {
         width: 1fr;
         height: 1;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
     Inspector .inspector--empty,
-    Inspector .inspector--diag-empty {
+    Inspector .inspector--diag-empty,
+    Inspector .inspector--moa-empty {
         width: 1fr;
         height: auto;
         text-wrap: wrap;
@@ -202,7 +228,8 @@ class Inspector(VerticalScroll):
     Inspector .inspector--task:focus,
     Inspector .inspector--file:focus,
     Inspector .inspector--file-selected,
-    Inspector .inspector--diag:focus {
+    Inspector .inspector--diag:focus,
+    Inspector .inspector--moa:focus {
         color: $talaria-inspector-heading;
         text-style: bold;
     }
@@ -210,7 +237,8 @@ class Inspector(VerticalScroll):
        holds focus, because the panel clips the provenance off every width
        and focus is how the source and age become readable. Task and file
        rows keep the shared one-line rule above, focused or not. */
-    Inspector .inspector--diag:focus {
+    Inspector .inspector--diag:focus,
+    Inspector .inspector--moa:focus {
         height: auto;
         text-wrap: wrap;
         text-overflow: fold;
@@ -255,6 +283,8 @@ class Inspector(VerticalScroll):
         self._operation_widget: Static | None = None
         self._task_rows: list[InspectorTaskRow] = []
         self._file_rows: list[InspectorFileRow] = []
+        self._moa_section: Vertical | None = None
+        self._moa_rows: list[InspectorMoaRow] = []
         self._diagnostics: Vertical | None = None
         self._diag_rows: list[InspectorDiagRow] = []
 
@@ -271,6 +301,9 @@ class Inspector(VerticalScroll):
         yield Static("OPERATION DETAILS", markup=False, classes="inspector--heading")
         self._operation_widget = Static("", markup=False, classes="inspector--operation")
         yield self._operation_widget
+        yield Static("MIXTURE OF AGENTS", markup=False, classes="inspector--heading")
+        self._moa_section = Vertical(_moa_empty_row(), classes="inspector--section")
+        yield self._moa_section
         yield Static("DIAGNOSTICS", markup=False, classes="inspector--heading")
         self._diagnostics = Vertical(_diag_empty_row(), classes="inspector--section")
         yield self._diagnostics
@@ -335,6 +368,18 @@ class Inspector(VerticalScroll):
             if self._operation_widget is None
             else str(self._operation_widget.content)
         )
+
+    @property
+    def moa_texts(self) -> tuple[str, ...]:
+        if self._moa_rows:
+            return tuple(str(row.content) for row in self._moa_rows)
+        return (f"  {MOA_FALLBACK_TEXT}",)
+
+    @property
+    def moa_lines(self) -> tuple[str, ...]:
+        if self._moa_rows:
+            return tuple(row.moa_line for row in self._moa_rows)
+        return (MOA_FALLBACK_TEXT,)
 
     @property
     def diag_texts(self) -> tuple[str, ...]:
@@ -420,6 +465,18 @@ class Inspector(VerticalScroll):
             self._selected_file_key = None
         self._refresh_file_selection()
         self._operation_widget.update(literal_text("\n".join(_operation_lines(view))))
+
+        if self._moa_section is not None:
+            await self._moa_section.remove_children()
+            if view.moa.inspector_rows == (MOA_FALLBACK_TEXT,):
+                self._moa_rows = []
+                await self._moa_section.mount(_moa_empty_row())
+            else:
+                self._moa_rows = [InspectorMoaRow(line) for line in view.moa.inspector_rows]
+                if self._moa_rows:
+                    await self._moa_section.mount(*self._moa_rows)
+                else:
+                    await self._moa_section.mount(_moa_empty_row())
 
     def set_terminal_width(self, width: int) -> None:
         """Apply the inclusive 120-column dock breakpoint synchronously."""
@@ -521,7 +578,7 @@ class Inspector(VerticalScroll):
             previous.focus()
 
     def _focusable_rows(self) -> list[Widget]:
-        return [*self._task_rows, *self._file_rows, *self._diag_rows]
+        return [*self._task_rows, *self._file_rows, *self._moa_rows, *self._diag_rows]
 
     def _focus_first_row(self) -> None:
         rows = self._focusable_rows()
@@ -565,6 +622,15 @@ def _diag_empty_row() -> Static:
         literal_text(f"  {EMPTY_SECTION}"),
         markup=False,
         classes="inspector--diag-empty",
+    )
+
+
+def _moa_empty_row() -> Static:
+    """The mixture-of-agents section's honest-empty row (D7, issue #148)."""
+    return Static(
+        literal_text(f"  {MOA_FALLBACK_TEXT}"),
+        markup=False,
+        classes="inspector--moa-empty",
     )
 
 

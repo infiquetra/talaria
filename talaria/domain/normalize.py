@@ -27,6 +27,7 @@ from talaria.domain.models import (
     TERMINAL_SUBAGENT_STATUSES,
     GatewayEvent,
     MoaPhase,
+    MoaRun,
     SubagentStatus,
 )
 
@@ -268,6 +269,101 @@ def keep_terminal_moa_phase(current: MoaPhase, proposed: MoaPhase) -> MoaPhase:
     is left behind after a supported cancellation or failure (Live 19).
     """
     return current if is_terminal_moa_phase(current) else proposed
+
+
+def format_moa_live_line(run: MoaRun) -> str:
+    """Format one live transcript line while the run is non-terminal (D7, issue #148)."""
+    k = str(run.refs_done) if run.refs_done is not None else "?"
+    n = str(run.refs_total) if run.refs_total is not None else "?"
+
+    if run.wire_phase and run.wire_phase != "aggregator":
+        return f'Mixture of Agents: phase "{run.wire_phase}" · {k}/{n} references'
+
+    if run.phase == "aggregating":
+        if run.aggregator:
+            return f"Mixture of Agents: aggregating {k}/{n} references · {run.aggregator}"
+        return f"Mixture of Agents: aggregating {k}/{n} references"
+
+    # references phase
+    if run.finished:
+        label = run.finished[-1]
+        return f"Mixture of Agents: collecting {k}/{n} references · {label} finished"
+    return f"Mixture of Agents: collecting 0/{n} references"
+
+
+def format_moa_committed_line(run: MoaRun) -> str:
+    """Format one committed transcript line when the run becomes terminal (D7, issue #148)."""
+    k = str(run.refs_done) if run.refs_done is not None else "?"
+    n = str(run.refs_total) if run.refs_total is not None else "?"
+    was_aggregating = (
+        run.wire_phase == "aggregator" or bool(run.aggregator) or run.phase == "aggregating"
+    )
+
+    if run.phase == "complete":
+        if run.aggregator:
+            return f"Mixture of Agents: {k}/{n} references · aggregated by {run.aggregator}"
+        return f"Mixture of Agents: {k}/{n} references · no aggregation phase observed"
+
+    if run.phase == "cancelled":
+        if was_aggregating:
+            if run.aggregator:
+                return f"Mixture of Agents: interrupted while aggregating · {run.aggregator}"
+            return "Mixture of Agents: interrupted while aggregating"
+        return f"Mixture of Agents: interrupted at {k}/{n} references"
+
+    if run.phase == "failed":
+        if was_aggregating:
+            if run.aggregator:
+                return f"Mixture of Agents: failed while aggregating · {run.aggregator}"
+            return "Mixture of Agents: failed while aggregating"
+        return f"Mixture of Agents: failed at {k}/{n} references"
+
+    if run.phase == "lost":
+        if was_aggregating:
+            if run.aggregator:
+                return f"Mixture of Agents: connection lost while aggregating · {run.aggregator}"
+            return "Mixture of Agents: connection lost while aggregating"
+        return f"Mixture of Agents: connection lost at {k}/{n} references"
+
+    return format_moa_live_line(run)
+
+
+def format_moa_inspector_rows(run: MoaRun | None) -> tuple[str, ...]:
+    """Format inspector rows for the MIXTURE OF AGENTS section (D7, issue #148)."""
+    if run is None:
+        return (MOA_FALLBACK_TEXT,)
+
+    # 1. First row: the same phase text as the transcript line, without "Mixture of Agents: "
+    if run.is_terminal:
+        transcript_line = format_moa_committed_line(run)
+    else:
+        transcript_line = format_moa_live_line(run)
+    first_row = transcript_line.removeprefix("Mixture of Agents: ")
+
+    rows: list[str] = [first_row]
+    n = str(run.refs_total) if run.refs_total is not None else "?"
+
+    # 2. One row per finished advisor, in finished order:
+    finished_roster = list(run.finished)
+    for ref in run.references:
+        if ref.label and ref.label not in finished_roster:
+            finished_roster.append(ref.label)
+
+    for i, label in enumerate(finished_roster, start=1):
+        ref_match = next((r for r in run.references if r.label == label), None)
+        if ref_match is not None and ref_match.first_line:
+            rows.append(f"{label} · finished {i}/{n} · {ref_match.first_line}")
+        else:
+            rows.append(f"{label} · finished {i}/{n}")
+
+    # 3. One row for remainder while any are outstanding: <n minus k> pending
+    if run.refs_total is not None:
+        k_val = run.refs_done if run.refs_done is not None else len(finished_roster)
+        rem = run.refs_total - k_val
+        if rem > 0:
+            rows.append(f"{rem} pending")
+
+    return tuple(rows)
 
 
 # ── Text hygiene ─────────────────────────────────────────────────────────

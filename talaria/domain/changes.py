@@ -10,10 +10,10 @@ create structure.  Unrecognized tool text remains literal operation detail.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from talaria.domain.models import Usage
+from talaria.domain.models import MoaView, Usage
 from talaria.domain.projection import EntryScopedView, SubagentView
 from talaria.domain.queue import NeedsYouQueue
 
@@ -113,12 +113,13 @@ class InspectorContextView:
 
 @dataclass(frozen=True)
 class InspectorView:
-    """All four inspector sections, computed once and handed to the UI."""
+    """All inspector sections, computed once and handed to the UI."""
 
     tasks: tuple[InspectorTaskView, ...]
     context: InspectorContextView
     document: DiffDocument
     operations: tuple[OperationView, ...]
+    moa: MoaView = field(default_factory=MoaView)
     selected_operation: OperationView | None = None
 
     @property
@@ -137,14 +138,16 @@ def inspector_view(
     model: str = "",
     usage: Usage | None = None,
     selected_operation_key: str | None = None,
+    moa: MoaView | None = None,
 ) -> InspectorView:
-    """Build the four inspector sections exclusively from held runtime state."""
+    """Build the inspector sections exclusively from held runtime state."""
     operations, document = parse_changes(entries)
     selected = next(
         (operation for operation in operations if operation.key == selected_operation_key),
         operations[-1] if operations else None,
     )
     observed_usage = usage if usage is not None and usage.observed else None
+    moa_val = moa if moa is not None else getattr(entries, "moa", MoaView())
     return InspectorView(
         tasks=_task_views(queue or NeedsYouQueue(), agents),
         context=InspectorContextView(
@@ -157,6 +160,7 @@ def inspector_view(
         ),
         document=document,
         operations=operations,
+        moa=moa_val,
         selected_operation=selected,
     )
 
