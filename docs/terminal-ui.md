@@ -255,8 +255,9 @@ there: no credentials, connection settings, environment allowlist, column limits
 agent identity ever reaches this view.
 
 - **Theme row.** Shows the effective theme and its source, labelled `live`. The only edit path
-  is the existing theme picker, which the row opens; selection applies and persists through the
-  theme flow, never through a second picker or editor.
+  is the existing theme picker, which the row opens by closing this view first — the picker is
+  the palette's theme mode, not a screen the modal could stack; selection applies and persists
+  through the theme flow, never through a second picker or editor.
 - **Status rows.** Labelled `restart`: the status keys resolve once at startup. Command edits as
   text (empty is allowed and labelled "no status script"); interval as an integer with the
   1–3600 bound shown — an invalid value is rejected inline and nothing is written; segments as

@@ -163,7 +163,7 @@ can be written from it.
 
 | Row | Control | Mode |
 | --- | --- | --- |
-| `theme.name` | opens the theme picker — no second picker or editor | live: applies and persists through the theme flow |
+| `theme.name` | opens the theme picker (closing the view — the picker is the palette's theme mode) | live: applies and persists through the theme flow |
 | `status.command` | text; empty is allowed and labelled "no status script" | restart |
 | `status.interval_seconds` | integer, the 1–3600 bound shown; invalid input is rejected inline and nothing is written | restart |
 | `status.segments` | ordered multi-select over the seven known names (space toggles, shift+↑↓ reorders) | restart |

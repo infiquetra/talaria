@@ -12,17 +12,23 @@ second writer would be a second editor.
 Everything the screen needs arrives through its constructor, so the screen
 never reaches into the application and the mounting seam stays one call:
 
-* ``cfg`` — the same merged configuration the process loaded.
+* the effective values — what this process resolved at startup, which is why
+  they are parameters and not a fresh file read: restart-to-apply is the
+  contract the rows display, so the values must say what the process runs,
+  not what the files say now.
 * ``scopes`` — :func:`~talaria.config.setting_scopes`'s provenance walk, keyed
   like :data:`~talaria.config.CONFIG_VIEW_KEYS`.
 * ``segments_now`` — the running bar's segment set (startup resolution plus
-  any ``/bar`` session toggles). When it differs from what ``cfg`` resolved,
-  the segments row's source reads ``session`` (D8), because the session layer
-  is what is actually in effect; Apply still writes the startup-resolved
-  shape and never touches the running set.
-* ``open_theme_picker`` — the mounting seam's callback: awaited when the
-  operator opens the picker from this view, returning the newly selected
-  theme name or ``None`` when the picker was cancelled.
+  any ``/bar`` session toggles). When it differs from what the startup
+  resolution holds, the segments row's source reads ``session`` (D8), because
+  the session layer is what is actually in effect; Apply still writes the
+  startup-resolved shape and never touches the running set.
+
+The theme row does not open the picker from inside this modal: the picker is
+the palette's theme *mode*, not a screen this view could stack, and switching
+a region hidden beneath a modal would be an invisible control. The row
+dismisses with :attr:`ConfigViewResult.open_theme_picker` set and the mounting
+seam opens the picker over the transcript.
 
 ADR-0002 holds by construction: this is a presentation surface and it
 carries no transport work, only the configuration module's own write path.
@@ -30,7 +36,8 @@ carries no transport work, only the configuration module's own write path.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from textual import events, on
@@ -40,7 +47,6 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
 from talaria.config import (
-    Config,
     ConfigError,
     SettingScope,
     save_status_settings,
@@ -48,7 +54,22 @@ from talaria.config import (
 from talaria.status.contract import DEFAULT_STATUS_SEGMENTS
 from talaria.ui.literal import literal_text
 
-__all__ = ("ConfigViewScreen",)
+__all__ = ("ConfigViewResult", "ConfigViewScreen")
+
+
+@dataclass(frozen=True)
+class ConfigViewResult:
+    """What the mounting seam should do when the view closes.
+
+    ``notice`` is surfaced through the app's notice line (empty means
+    nothing to surface); ``open_theme_picker`` asks the seam to open the
+    theme picker, because the picker is the palette's theme mode rather than
+    a screen this modal could stack. ``None`` — not an empty result — means
+    the operator cancelled with nothing to say.
+    """
+
+    notice: str = ""
+    open_theme_picker: bool = False
 
 #: The environment aliases that make a row read-only (D8): an environment
 #: value shadows any file write, so the view refuses to offer one. Segments
@@ -179,11 +200,12 @@ class _SegmentChooser(Vertical, can_focus=True):
         return ""
 
 
-class ConfigViewScreen(ModalScreen[str | None]):
+class ConfigViewScreen(ModalScreen[ConfigViewResult | None]):
     """Configuration, one screen: effective values, sources, and the write.
 
-    Dismisses with the notice the app should surface (the last one, or
-    ``None`` when nothing happened). The dismiss payload is a message, never
+    Dismisses with a :class:`ConfigViewResult` — the notice to surface and
+    whether the theme picker should open next — or ``None`` when the operator
+    cancelled with nothing to say. The payload is a message, never
     a value: the writes already happened through
     :func:`~talaria.config.save_status_settings`, and restart-required state
     is read back from configuration on the next start.
@@ -200,7 +222,7 @@ class ConfigViewScreen(ModalScreen[str | None]):
         min-width: 56;
         max-width: 92;
         height: auto;
-        max-height: 30;
+        max-height: 34;
         border: round $accent;
         background: $surface;
         padding: 0 1;
@@ -240,33 +262,31 @@ class ConfigViewScreen(ModalScreen[str | None]):
 
     def __init__(
         self,
-        cfg: Config,
-        scopes: Mapping[tuple[str, str], str],
         *,
+        theme_name: str,
+        status_command: str,
+        status_interval_seconds: int,
+        status_segments: Sequence[str],
+        scopes: Mapping[tuple[str, str], str],
         segments_now: Sequence[str] = (),
-        open_theme_picker: Callable[[], Awaitable[str | None]] | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._open_theme_picker = open_theme_picker
         # theme.name is display-only: an explicit select persists through the
-        # picker, and the callback's return re-reads what that path did.
-        self._theme_effective: str = str(cfg.get("theme", "name", default=""))
+        # picker this view asks the seam to open.
+        self._theme_effective: str = theme_name
         self._theme_scope: str = scopes.get(("theme", "name"), "default")
-        raw_command = cfg.get("status", "command")
         # The saved state is the raw value, not the display label: an empty
         # command edits as "" — the state the write persists (D8).
-        self._command_saved: str = raw_command if isinstance(raw_command, str) else ""
+        self._command_saved: str = status_command
         self._command_effective: str = _display_command(self._command_saved)
-        self._interval_saved: int = int(cfg.get("status", "interval_seconds"))
         # What the running process resolved at startup — the "effective now"
         # half of the after-apply line. Apply never rewrites it: the status
         # settings take effect on restart (D8), so "effective now" stays the
         # startup value no matter what was saved.
+        self._interval_saved: int = status_interval_seconds
         self._interval_effective: int = self._interval_saved
-        self._segments_saved: tuple[str, ...] = tuple(
-            cfg.get("status", "segments", default=())
-        )
+        self._segments_saved: tuple[str, ...] = tuple(status_segments)
         self._segments_startup: tuple[str, ...] = self._segments_saved
         # The running set the seam handed in: startup resolution plus any
         # /bar session toggles. Missing (nothing running) reads as the
@@ -386,11 +406,11 @@ class ConfigViewScreen(ModalScreen[str | None]):
                 classes="config--sub",
             )
             yield self._theme_line
-            self._theme_button = Button("open the theme picker", id="theme-picker")
-            if self._open_theme_picker is None:
-                # Without the seam callback the row stays honest rather than
-                # promising a picker that was never wired.
-                self._theme_button.display = False
+            self._theme_button = Button(
+                "open the theme picker (closes this view)",
+                id="theme-picker",
+                compact=True,
+            )
             yield self._theme_button
 
             yield Static(
@@ -463,9 +483,15 @@ class ConfigViewScreen(ModalScreen[str | None]):
             )
             yield self._notice_line
             with Horizontal(classes="config--actions"):
-                yield Button("apply — save to user configuration", id="apply-user")
-                yield Button("save to repository", id="apply-repository")
-                yield Button("cancel", id="cancel")
+                yield Button(
+                    "apply — save to user configuration",
+                    id="apply-user",
+                    compact=True,
+                )
+                yield Button(
+                    "save to repository", id="apply-repository", compact=True
+                )
+                yield Button("cancel", id="cancel", compact=True)
             yield Static(literal_text(_HINT), markup=False, classes="config--hint")
 
     async def on_mount(self) -> None:
@@ -546,28 +572,33 @@ class ConfigViewScreen(ModalScreen[str | None]):
     # ── actions ──────────────────────────────────────────────────────────
 
     def action_cancel_view(self) -> None:
-        self.dismiss(self._notice or None)
+        """Escape and cancel: close, surfacing anything already done.
+
+        Cancelling never writes, so a plain cancel dismisses with ``None``
+        (nothing to say); a notice exists only when an apply already wrote,
+        and it rides the result so the seam surfaces it.
+        """
+        if self._notice:
+            self.dismiss(ConfigViewResult(notice=self._notice))
+        else:
+            self.dismiss(None)
 
     @on(Button.Pressed, "#cancel")
     def _cancel(self) -> None:
         self.action_cancel_view()
 
     @on(Button.Pressed, "#theme-picker")
-    async def _open_picker(self) -> None:
-        if self._open_theme_picker is None:
-            return
-        name = await self._open_theme_picker()
-        if name:
-            # The W1 select path already persisted the selection to user
-            # scope; this row only re-reads what that path did.
-            self._theme_effective = name
-            self._theme_scope = "user"
-            self._notice = (
-                f"theme.name {name} applied live and saved to user configuration"
-            )
-        else:
-            self._notice = "theme picker cancelled — nothing changed"
-        await self._paint()
+    def _open_picker_from_row(self) -> None:
+        """Close, and ask the seam to open the theme picker.
+
+        The picker is the palette's theme mode, not a screen this modal
+        could stack: switching a region hidden beneath the modal would be an
+        invisible control, so the row closes the view and the seam opens the
+        picker over the transcript (D8: the existing picker, no second one).
+        """
+        self.dismiss(
+            ConfigViewResult(notice=self._notice, open_theme_picker=True)
+        )
 
     async def _apply(self, scope: Literal["user", "repository"]) -> None:
         command_input = self._command_input

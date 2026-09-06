@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -58,6 +59,7 @@ from talaria.config import (
     global_config_dir,
     resolve_keybindings,
     save_theme,
+    setting_scopes,
 )
 from talaria.domain.attachments import AttachmentRecord
 from talaria.domain.changes import DiffSelection, InspectorView, inspector_view
@@ -245,6 +247,7 @@ from talaria.ui.attach import (
     stat_for_confirm,
 )
 from talaria.ui.composer import ChatTextArea, Composer
+from talaria.ui.config_view import ConfigViewResult, ConfigViewScreen
 from talaria.ui.dialog import ConfirmDialog, PickerDialog, attachment_dialog_copy
 from talaria.ui.diff_viewer import DiffViewer, adapt_diff_document
 from talaria.ui.focus import CaretReleased, focused_region
@@ -5509,6 +5512,13 @@ class TalariaApp(App[None]):
             self.composer.clear()
             self._open_diffs()
             return True
+        if command.action == "config":
+            # C11 (#149): scheduled like every screen-opening control — the
+            # screen's own reading of state and painting is async, and this
+            # method cannot be.
+            self.composer.clear()
+            self._spawn_live(self._open_config_view())
+            return True
         if command.action == "pause":
             self.controls.pause()
         elif command.action == "resume":
@@ -5526,6 +5536,64 @@ class TalariaApp(App[None]):
         self.composer.clear()
         self._notice(self._pacing_notice())
         return True
+
+    # ── C11: the /config mounting seam (#149, D8 recorded) ───────────
+    #
+    # The view's own contract — rows, readonly rules, chooser, and the
+    # byte-preserving write — lives in ``talaria/ui/config_view.py`` and is
+    # tested there against a minimal host. What lives here is the mounting:
+    # the control's row in :meth:`perform_local_command` above, the state the
+    # screen is fed, and what the app does with the result the screen
+    # dismisses with.
+
+    async def _open_config_view(self) -> None:
+        """Mount the configuration view over the transcript.
+
+        Every value the screen is fed comes from this process's own state,
+        because restart-to-apply is the contract the rows display: a fresh
+        file read here would show what the files say *now* while the process
+        still runs what it loaded at startup, and the row's "effective value"
+        would be a lie. Only the source scopes are walked fresh
+        (:func:`setting_scopes`), since nothing retained them at launch — so a
+        hand-edited file mid-session can move a row's *scope* label before the
+        restart that applies it, and the row's value still says what runs.
+
+        The command re-joins the runner's parsed argument vector: the runner
+        owns what actually spawns, and the join is its faithful rendering —
+        the operator's original spacing survives in the file because an
+        unedited apply writes nothing.
+        """
+        runner = self.status_runner
+        status_command = ""
+        if runner is not None and runner.enabled:
+            # ``_argv`` is the runner's private vector; reading it here is the
+            # one cross-module private read in this seam. A public accessor
+            # on StatusRunner would be a one-line runner.py change outside
+            # this custody window.
+            status_command = shlex.join(tuple(runner._argv or ()))
+        self.push_screen(
+            ConfigViewScreen(
+                theme_name=self.theme,
+                status_command=status_command,
+                status_interval_seconds=int(self.status_interval),
+                status_segments=tuple(self.status_bar_settings.segments),
+                scopes=setting_scopes(cwd=self.launch_cwd),
+                segments_now=tuple(self.bottom_status_bar.settings.segments),
+            ),
+            self._config_view_closed,
+        )
+
+    def _config_view_closed(self, result: ConfigViewResult | None) -> None:
+        """Surface the view's message, and open the picker when it asked."""
+        if result is None:
+            return
+        if result.notice:
+            self._notice(result.notice)
+        if result.open_theme_picker:
+            # The picker is the palette's theme mode, so the view closed
+            # itself first and the picker opens over the transcript — the
+            # existing W1 path, unchanged (D8: no second picker).
+            self._spawn_live(self.open_theme_picker())
 
     # ── C9: attachments (D6, #147) ───────────────────────────────────
     #
