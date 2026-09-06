@@ -272,7 +272,10 @@ COMPAT_BASELINE: tuple[MethodBaseline, ...] = (
         classification="evidence-only",
         evidence="tui_gateway/methods_session.py:14-158",
         purpose="KTD7's default-new startup path (R2).",
-        request_fixture={"cols": 80},
+        # C13: creation carries the launch directory as ``cwd``. The value is
+        # a fixture shape, like ``cols`` — the live request carries the
+        # resolved launch directory Talaria started from.
+        request_fixture={"cols": 80, "cwd": "/launch"},
         response_shape={
             "session_id": "str",
             "stored_session_id": "str",

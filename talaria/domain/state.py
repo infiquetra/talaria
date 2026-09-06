@@ -108,6 +108,7 @@ from talaria.domain.registry import (
     note_identityless,
 )
 from talaria.domain.session_list import ActiveSessionDirectory, SessionDirectory
+from talaria.domain.workdir import DirectoryStatus, directory_status
 
 #: Which prompt kind each request/expire event pair belongs to.
 _PROMPT_EVENTS: Mapping[str, PromptKind] = {
@@ -144,6 +145,28 @@ class SessionState:
     #: switcher at an id the gateway forgets when the socket closes.
     session_key: str | None = None
     session_title: str | None = None
+    #: What Talaria asked the gateway to adopt as this session's working
+    #: directory (C13, issue #157): the launch directory on ``session.create``,
+    #: None on resume, where nothing is sent and the session keeps the
+    #: directory the gateway persisted for it.
+    requested_cwd: str | None = None
+    #: The last directory the gateway reported for this session, or None where
+    #: no reply or event has named one yet. Read, never inferred: a request
+    #: the gateway cannot use is silently replaced by its own default, so only
+    #: the reported value counts.
+    agent_cwd: str | None = None
+    #: The first directory any reply or event named for this session. The
+    #: ``not-adopted`` verdict turns on whether the *first* report differed,
+    #: and the latest report overwrites :attr:`agent_cwd` — so without this,
+    #: a session the gateway never adopted would read ``adopted`` the moment
+    #: the agent wandered into the requested directory. Stored, not
+    #: reconstructed, for exactly that reason.
+    first_reported_cwd: str | None = None
+    #: What the interface may honestly claim, derived by
+    #: :func:`~talaria.domain.workdir.directory_status` from the two fields
+    #: above at every fold — never set directly, so the status cannot drift
+    #: from the values behind it.
+    directory: DirectoryStatus = "unreported"
     connection: ConnectionStatus = "disconnected"
 
     turn: TurnPhase = "idle"
@@ -553,6 +576,14 @@ def focus_session(state: SessionState, session_id: str | None) -> SessionState:
         state,
         focused_session_id=session_id,
         session_title=None,
+        # The working-directory claims belonged to the last session: what was
+        # requested of the gateway and what it reported do not transfer, and
+        # carrying them would show one session's directories on another's
+        # screen — the divergence C13 exists to end.
+        requested_cwd=None,
+        agent_cwd=None,
+        first_reported_cwd=None,
+        directory="unreported",
         turn="idle",
         streaming_text="",
         reasoning_text="",
@@ -645,6 +676,65 @@ def land_session(
         return replace(state, session_key=key or state.session_key)
     previous = state if state.focused_session_id is None else replace(state, transcript=())
     return replace(focus_session(previous, session_id), session_key=key)
+
+
+def record_requested_cwd(state: SessionState, requested: str) -> SessionState:
+    """Remember what directory Talaria asked the gateway to adopt (C13).
+
+    Called once, when the ``session.create`` reply lands — never on resume,
+    where nothing is sent, and never again for the session's life: there is
+    no mid-session switching and no second request, so the request cannot
+    change under the reports that follow it.
+    """
+    return replace(state, requested_cwd=requested)
+
+
+def agent_directory_not_adopted_line(reported: str) -> str:
+    """Name the directory the gateway substituted for the requested one."""
+    return f"agent directory: {reported} (launch directory not adopted)"
+
+
+def agent_directory_moved_line(reported: str) -> str:
+    """Name the directory the agent moved itself to."""
+    return f"agent directory changed to {reported}"
+
+
+def fold_reported_cwd(state: SessionState, reported: str | None) -> SessionState:
+    """Fold a directory the gateway reported into working-directory status.
+
+    Every ``info.cwd`` arrives here — the ``session.create`` and
+    ``session.resume`` replies and each ``session.info`` event — and nothing
+    else does. A missing or blank value leaves the state untouched: a reply
+    without ``info.cwd`` names no directory, so there is nothing to adopt and
+    nothing to mismatch.
+
+    The status is re-derived from :func:`~talaria.domain.workdir.directory_status`
+    on every fold, so it cannot drift from the request and the reports, and
+    that function stays the sole decider — there is no sticky branch here for
+    ``not-adopted``, because the stored first report already makes a later
+    coincidence read honestly.
+
+    One ``system`` line per session, and only at the moment the status first
+    becomes ``not-adopted`` or ``moved``. Adoption is silent — it is the
+    expected state — and repeats are silent, because the line already spoken
+    still stands. A mismatch that never reaches the transcript is the
+    complaint that created item 12.
+    """
+    cwd = coerce_text(reported)
+    if not cwd:
+        return state
+    first = state.first_reported_cwd if state.first_reported_cwd is not None else cwd
+    status = directory_status(state.requested_cwd, first, cwd)
+    updated = replace(state, agent_cwd=cwd, first_reported_cwd=first, directory=status)
+    if status == "not-adopted" and state.directory != "not-adopted":
+        return _append(
+            updated, "system", clip_transcript_line(agent_directory_not_adopted_line(cwd))
+        )
+    if status == "moved" and state.directory != "moved":
+        return _append(
+            updated, "system", clip_transcript_line(agent_directory_moved_line(cwd))
+        )
+    return updated
 
 
 def seed_history(
@@ -2588,7 +2678,11 @@ def _on_session_info(state: SessionState, event: GatewayEvent) -> SessionState:
         else state.usage
     )
     session_key = coerce_text(event.payload.get("stored_session_id")) or state.session_key
-    return replace(state, session_title=title, usage=usage, session_key=session_key)
+    updated = replace(state, session_title=title, usage=usage, session_key=session_key)
+    # The agent may change its own directory at any time through the
+    # gateway's own callback; the event carries ``cwd`` when it does (C13).
+    # Absent, it folds to nothing — see :func:`fold_reported_cwd`.
+    return fold_reported_cwd(updated, coerce_text(event.payload.get("cwd")) or None)
 
 
 def _on_session_usage(state: SessionState, event: GatewayEvent) -> SessionState:

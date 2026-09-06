@@ -16,6 +16,7 @@ from typing import Literal
 from talaria.domain.models import MoaView, Usage
 from talaria.domain.projection import EntryScopedView, SubagentView
 from talaria.domain.queue import NeedsYouQueue
+from talaria.domain.workdir import DirectoryStatus
 
 OperationStatus = Literal["running", "completed", "failed", "observed"]
 ChangedFileStatus = Literal["M", "A", "D", "R"]
@@ -96,6 +97,13 @@ class InspectorContextView:
     model: str = ""
     input_tokens: int | None = None
     output_tokens: int | None = None
+    #: The directory Talaria was launched from (C13). Shown always, because it
+    #: is the directory that was requested — the claim under test.
+    launch: str = ""
+    #: The last directory the gateway reported, or "" where none has yet.
+    agent: str = ""
+    #: What the interface may honestly claim about the two above.
+    status: DirectoryStatus = "unreported"
 
     @property
     def is_empty(self) -> bool:
@@ -137,6 +145,9 @@ def inspector_view(
     endpoint: str = "",
     model: str = "",
     usage: Usage | None = None,
+    launch: str = "",
+    agent: str = "",
+    status: DirectoryStatus = "unreported",
     selected_operation_key: str | None = None,
     moa: MoaView | None = None,
 ) -> InspectorView:
@@ -163,6 +174,9 @@ def inspector_view(
             model=model,
             input_tokens=(observed_usage.input_tokens if observed_usage is not None else None),
             output_tokens=(observed_usage.output_tokens if observed_usage is not None else None),
+            launch=launch,
+            agent=agent,
+            status=status,
         ),
         document=document,
         operations=operations,
