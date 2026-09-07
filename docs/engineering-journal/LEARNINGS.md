@@ -2,6 +2,71 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-07 — Four things in one release looked like verification and performed none
+
+**Evidence.** All four surfaced during the v0.6.1 acceptance run.
+
+1. A guard comparing a value to itself. `scripts/acceptance/v061_evidence.py`
+   set `doc["candidate_commit"]` from `candidate_commit`, then passed
+   `expected_commit=candidate_commit` to the validator. The comparison could
+   not fail, and because the argument was non-`None` it also suppressed the
+   sibling-receipt lookup that would have been the real check. Fixed in pull
+   request #176.
+2. A regex asserting about itself. A viewport test at
+   `tests/transport/test_bridges.py:550` counted a pattern the prompt line
+   could not match, so it passed only when the screenshot beat the scroll.
+   Fixed in pull request #172.
+3. A vocabulary mistaken for a scanner. `REFUSED_CLASSES` at
+   `scripts/acceptance/v050_receipt.py:294` is a declaration vocabulary for what
+   a redaction may claim it covered; it never drives a scan, every use being a
+   membership test on a declared `covered_class`. Five of its six names happen
+   to have an independent live check elsewhere — three in the structural rules
+   of `PRIVACY_PATTERNS` at `:89`, one in the allowed-host allowlist, one in the
+   capture-metadata closed vocabulary. One does not: `operator-identity`, which
+   is the name whose presence in the list invites the conclusion that the
+   scanner refuses an operator's name. It does not.
+4. A contract nothing reads. The implementation plan specifies a per-row
+   evidence identity — for example "the written `theme.name` line (sanitized)"
+   — and no acceptance tool checks it. Nothing under `scripts/` or `tests/`
+   references the plan by path or names any per-row artefact. The mechanism is
+   visible in the validator: `evidence.files` is checked for closure, every
+   listed file existing and matching its digest and every file on disk being
+   listed, and never against a required-name list. Four live cases were
+   therefore complete by every automated measure while missing artefacts their
+   own contract named. Recorded on the owning child issues #140, #141 and #149.
+   That completeness describes the state before the gaps were closed; all
+   four cases have since been amended, and the superseded receipt
+   digests are in the reviewer's inspection records.
+
+A fifth is adjacent. `recorded_at` is a property of the captures a receipt
+represents, so a receipt's prose can be rewritten with the field legitimately
+unmoved, and `evidence.files` carries no digest for `receipt.json` itself —
+none of the four receipts lists its own file. Four receipts changed content
+this run. The two that filed retained artefacts moved no field at all. The two
+that were re-run moved `recorded_at`, but because a new capture was taken
+rather than because the content changed, so the field would have stayed put had
+only the prose been rewritten. No receipt carries a digest of its own bytes.
+
+**Mechanism.** Each of these passes for a reason unrelated to the property it
+claims to establish, and no suite went red for the right reason. Only the first
+had a gate that could have caught it and did not; the second went red on one
+continuous-integration leg with the defective pattern still in place — the race
+lost rather than won — which is how it was found; the last three have no gate
+at all, being a vocabulary, a document contract with no tool behind it, and a
+field's semantics. What separated the real checks from the theatrical ones was
+driving them: removing the guard and watching whether anything went red, and
+recomputing a digest rather than reading a timestamp. The reviewer's refusal to
+record an inspection they could not prove they had read was the same instrument
+pointed at itself.
+
+**Generalizable rule.** The standard this run adopted: a check earns belief
+only when something has been shown to break it. For a guard, remove it and
+watch the test fail. For an assertion about rendered output, verify the pattern
+can match the thing it claims to find. For a document that names required
+artefacts, either a tool reads that list or the list is decoration. And prefer
+a content digest over a timestamp whenever the question is whether bytes
+changed.
+
 ## 2026-09-07 — An option space presented after the decision re-opens the decision
 
 **Evidence.** Issue #151 comment 5573347042 and issue #139 comment 5573349097,
