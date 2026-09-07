@@ -1455,6 +1455,36 @@ A fenced code block or a table is one renderable spanning many lines. Every one 
 **Do not start by writing widgets.** Start by deciding what replaces "one line, one widget" as the bounded-rendering claim, and get that into an ADR. The rest follows from it.
 
 
+### Pin the install-receipt declaration list, and give `ValueCategory.DIGEST` a width
+
+**Author.** reviewer-2, in the pull request #179 review — deferred 2026-09-07
+**Priority.** P2
+**Effort.** Small for the first, medium for the second
+**Worth it when.** The next schema gains a field, or the next release records a manifest.
+
+Two findings the reviewer raised and explicitly did not block on. Both are recorded here
+rather than fixed in #179, because #179 was repairing a release-path blocker and neither of
+these is one.
+
+**The declaration list has no test pinning what it declares.** `INSTALL_RECEIPT_SCHEMA`'s
+nested `install` schema now names nine keys, and nothing asserts that those nine are the
+only ones — which is the mirror of the defect #179 repaired, arriving from the other side.
+The reviewer drove the backstop before reporting it: `evidence_file_privacy_errors` does
+catch a document carrying an absolute filesystem path at `install.operator_home`, so this
+is a defence-in-depth gap and not a shippable leak. One assertion comparing
+`set(INSTALL_RECEIPT_SCHEMA.nested_schemas["install"])` against a literal set closes it.
+Worth noting the shipped JSON schemas already have this property through
+`additionalProperties: false`; the Python declaration list is the one surface without an
+equivalent.
+
+**`ValueCategory.DIGEST` checks hex-ness, not width.** An equal-shape mutation survives: a
+forty-character hex value passes both digest fields #179 adds, and a sixty-four-character
+value passes `harness_commit`, which is registered under the `git-commit` preimage class.
+The preimage class constrains schema *construction* — a missing one raises at import — not
+the value. The reviewer diffed the `DIGEST` branch against `origin/main` and found it
+byte-identical, so this is pre-existing and affects every digest field in the file. It is
+recorded now because #179 adds two more fields that inherit the shape.
+
 ## P3
 
 ### Three small findings from the U8 live acceptance run
