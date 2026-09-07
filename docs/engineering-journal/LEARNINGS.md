@@ -38,6 +38,29 @@ re-measured the premise when the calling sequence was the thing that changed.
 will always run, treat that as a premise that expires with the next caller, not a fact about
 the code it sits in; every such premise needs a test that reaches the branch, or it is a
 hole wearing a comment.
+### A regex measuring a rendered artifact asserts about its own vocabulary, not the render
+
+**Evidence**: `test_the_served_viewport_is_the_rows_on_screen`
+(`tests/transport/test_bridges.py`) counted `scrollback \d+` matches in a tag-stripped
+screenshot and flaked as `assert 15 == 16` on the Python 3.13 leg. After a settled
+follow-bottom, one of the sixteen on-screen rows is the prompt arrival line, which that
+regex cannot match — so the count is 15 by construction, and 16 only when the screenshot
+wins the race against the scroll. The transport was innocent (its own `served == 16`
+passed), the Python version was innocent (16 rows on screen on both), and no other test
+left state behind (the prompt line is created inside the test).
+
+**Mechanism**: the test measured the render through a vocabulary the render does not speak
+throughout. The repair counts non-blank rendered strip rows inside the transcript region
+instead: 16 before the scroll settles (sixteen notes) and 16 after (fifteen notes plus the
+prompt line), so the measurement is identical in both race outcomes and the race is gone
+rather than waited out. Both halves still bite: serving one row too many fails the served
+assert (`assert 17 == 16`), and mounting ten rows in a sixteen-row region fails the
+on-screen assert with the flake's own signature (`assert 10 == 16`).
+
+**Generalizable rule**: a test that measures a rendered artifact with a regex is asserting
+about the regex's vocabulary, not about the thing rendered, and it will pass or fail on
+timing rather than on truth. Count the rendered thing — rows, widgets, regions — in the
+units the operator reads it in.
 
 ## 2026-09-06
 
