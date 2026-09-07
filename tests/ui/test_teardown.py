@@ -209,6 +209,24 @@ def read_pid(path: Path) -> int:
     return int(path.read_text(encoding="utf-8").strip())
 
 
+def exited_summary(workdir: Path) -> str:
+    """What the driver recorded on return from ``app.run()``, if it returned.
+
+    The driver writes ``workdir/exited`` after :meth:`TalariaApp.run` returns,
+    so absence means the run never came back — the Textual panic path — while
+    presence names the return code the app left with.
+    """
+    path = workdir / "exited"
+    if not path.exists():
+        return "absent — app.run() never returned"
+    return f"return_code={path.read_text(encoding='utf-8').strip()}"
+
+
+def pty_tail(output: bytearray, *, limit: int = 4000) -> str:
+    """The last bytes on the terminal, where Textual writes its panic."""
+    return bytes(output[-limit:]).decode("utf-8", errors="replace")
+
+
 @pytest.fixture
 def workdir(tmp_path: Path) -> Path:
     directory = tmp_path / "run"
@@ -270,6 +288,12 @@ def test_a_normal_exit_leaves_no_status_child_or_grandchild(workdir: Path) -> No
     The status command writes its own pid and backgrounds a ten-minute sleep,
     so both are demonstrably alive while Talaria runs — that is the positive
     half — and both must be gone once it has exited.
+
+    A nonzero exit still fails here; it just fails informatively. An exit code
+    of 1 is Talaria's code, not a process count, and a bare ``1 == 0`` cost two
+    investigator dispatches — so the message carries the PTY tail, where
+    Textual writes its panic, and the exited file, which exists only if
+    ``app.run()`` returned.
     """
     run = PtyRun("normal", workdir)
     try:
@@ -280,7 +304,12 @@ def test_a_normal_exit_leaves_no_status_child_or_grandchild(workdir: Path) -> No
         assert alive(grandchild), "the backgrounded grandchild was never running"
 
         run.send_quit()
-        assert run.wait() == 0
+        exit_code = run.wait()
+        assert exit_code == 0, (
+            f"Talaria exited {exit_code} on ctrl+q "
+            f"(workdir/exited: {exited_summary(workdir)}); "
+            f"last PTY bytes:\n{pty_tail(run.output)}"
+        )
         time.sleep(0.5)
 
         assert not alive(read_pid(workdir / "status-child.pid")), (
