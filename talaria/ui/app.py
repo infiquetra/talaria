@@ -2106,28 +2106,40 @@ class TalariaApp(App[None]):
                 task.cancel()
         self._live_tasks.clear()
         if self.status_runner is not None:
-            # What this call is, stated accurately, because an earlier comment
-            # here claimed more than it does and the next reader would have
-            # trusted it. Cancelling ``_status_task`` **is** enough for the tick
-            # that task owns: cancellation unwinds into ``_run_once``'s
-            # ``finally``, which sweeps the child's process group whatever the
-            # leader's state. Removing this line and re-running the pty
-            # teardown tests three times left no status child behind, so it is
-            # not the only thing standing between R36 and a leaked process.
-            #
-            # It is kept for the three things cancellation does not cover. It
-            # sweeps without waiting for the cancelled task to get another turn
-            # (it yields only when a spawn is still in flight, which is the
-            # third case below). It closes the window in which a child has been
-            # forked but not yet recorded by the runner, where cancellation
-            # sweeps nothing because the group is not known yet — an R36 leak
-            # CI caught after this line was written; see
-            # ``StatusRunner.aclose``. And it covers a tick this app does not own —
-            # anything that called ``status_runner.tick()`` from a task other
-            # than ``_status_task`` — which is what
+            # What this call does, stated accurately, because the earlier
+            # comment here claimed more than it did and the next reader
+            # trusted it to a leak. It sweeps the tick's process group *itself*,
+            # whether the leader is still running, already reaped — a command
+            # that backgrounds a worker ("worker & echo ok") reaps the leader
+            # within milliseconds while the worker holds the pipes — or recorded
+            # mid-spawn; ``StatusRunner.aclose`` owns that contract now. The old
+            # premise, that this "sweeps without waiting for the cancelled task
+            # to get another turn", was true only on the live-leader path: on
+            # the reaped path this call swept *nothing*, the only sweep was the
+            # cancelled tick's ``finally``, and a caller that never awaits that
+            # tick cannot promise the loop will ever run it — which is how a
+            # reaped leader's grandchild survived a normal exit. The call is
+            # kept for the case cancellation cannot reach: a tick driven by a
+            # task the app does not hold — anything calling
+            # ``status_runner.tick()`` outside ``_status_task`` — which is what
             # ``test_teardown_stops_a_status_child_this_app_does_not_own``
             # exercises, and which cancelling ``_status_task`` cannot reach.
             await self.status_runner.aclose()
+        status_task = self._status_task
+        if status_task is not None and not status_task.done():
+            # The cancelled status tick is awaited, unlike the fleet's dial
+            # cancelled above. The fleet would hold teardown open for a whole
+            # connect timeout; this tick's unwind is bounded by a process group
+            # ``aclose`` has already killed, so what runs here is pipe release
+            # and runner state reset, not a wait. Without this await that unwind
+            # is left to whatever the event loop does next — and on the paths
+            # where the loop never runs another callback, the tick's ``finally``
+            # never runs at all, which was the survival window of the reaped
+            # leader's grandchild. Ordering is the guarantee: the tick is done
+            # before ``self.source.close()`` below, which is what
+            # ``tests/ui/test_status_shutdown.py`` pins.
+            with suppress(asyncio.CancelledError):
+                await status_task
         await self.source.close()
 
     # ── the frame pump ───────────────────────────────────────────────────

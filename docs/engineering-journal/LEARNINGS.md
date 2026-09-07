@@ -2,6 +2,43 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-07
+
+### A sweep guarded on the leader's liveness misses the grandchild the leader was only a handle for
+
+**Evidence**: a status command that backgrounds a worker (`sh -c "sleep 60 & echo $! >
+…; exit 0"`) left that worker alive after a normal exit — the run's investigator measured
+the survival on Python 3.12 and 3.13, on the frozen candidate and every release before it.
+`talaria/status/runner.py` `StatusRunner.aclose` returned early once the leader's
+`returncode` was set, so teardown never signalled the process group; `talaria/ui/app.py`
+`shutdown_sources` cancelled the status task without awaiting it, and the only remaining
+sweep was that cancelled task's `finally`. Both halves are pinned red-without/green-with:
+`tests/status/test_runner.py::test_aclose_sweeps_a_reaped_leaders_group_without_awaiting_the_tick`
+fails with the runner change stashed ("a reaped leader's backgrounded worker outlived
+aclose()"), and
+`tests/ui/test_status_shutdown.py::test_shutdown_sources_sweeps_and_unwinds_a_reaped_leaders_tick`
+fails with the app change stashed ("closed the source before the cancelled status tick had
+unwound").
+
+**Mechanism**: `start_new_session=True` made the leader's pid the process-group id, and a
+backgrounded worker keeps that group alive after the leader exits — asyncio's watcher reaps
+the leader within milliseconds, so by teardown the runner holds a *handle* whose group is
+still alive. `aclose` treated "leader reaped" as "nothing to sweep" and returned;
+`shutdown_sources` treated the cancelled task's `finally` as guaranteed to run. Neither
+claim was about its own code: the first was a claim about process state it never checked,
+the second a claim about the caller's future, which no callee can check. A cleanup guarded
+on the liveness of the object it was handed misses the thing it actually owned — the group.
+The `shutdown_sources` comment asserting the call "sweeps without waiting for the cancelled
+task to get another turn" and the `aclose` docstring arguing the reaped branch was
+unreachable were both true only on the live-leader path, and both survived because nobody
+re-measured the premise when the calling sequence was the thing that changed.
+
+**Generalizable rule**: sweep the unit you own (the group), never the unit you were handed
+(the leader) — and when a comment argues a branch is safe to skip because some other code
+will always run, treat that as a premise that expires with the next caller, not a fact about
+the code it sits in; every such premise needs a test that reaches the branch, or it is a
+hole wearing a comment.
+
 ## 2026-09-06
 
 ### A caveat tag among capability labels reads as a capability; relocate, don't reword
