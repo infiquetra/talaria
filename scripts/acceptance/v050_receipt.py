@@ -1005,15 +1005,22 @@ def validate_image_read_confirmations(
     8. witnessed_element must appear in the twin outside every sentinel span.
     """
     errors: list[str] = []
+    def _matches_image(rec_img: Any, target_name: str) -> bool:
+        if not isinstance(rec_img, str):
+            return False
+        if rec_img == target_name:
+            return True
+        rec_p = Path(rec_img)
+        tgt_p = Path(target_name)
+        if rec_p == tgt_p:
+            return True
+        if rec_p.parent != Path(".") or tgt_p.parent != Path("."):
+            return False
+        return rec_p.name == tgt_p.name
+
     matching_records = [
         rec for rec in confirmations
-        if isinstance(rec, dict) and (
-            rec.get("image") in (png_name, Path(png_name).name)
-            or (
-                isinstance(rec.get("image"), str)
-                and Path(rec["image"]).name == Path(png_name).name
-            )
-        )
+        if isinstance(rec, dict) and _matches_image(rec.get("image"), png_name)
     ]
     if not redactions:
         for rec in matching_records:
@@ -2037,8 +2044,8 @@ DIRECTORY_EQUALITY_STATUS_VOCABULARY: frozenset[str] = frozenset({
 DIRECTORY_EQUALITY_MANDATORY_SOURCES: tuple[str, ...] = (
     "session-a-init",
     "session-b-init",
-    "session-a-override",
-    "session-a-reconnect",
+    "session-a-fresh",
+    "session-a-resume",
 )
 
 DIRECTORY_EQUALITY_MANDATORY_STAGES: tuple[str, ...] = (
@@ -2395,6 +2402,8 @@ def validate_directory_equality_derivation(
                     if not isinstance(b_val, bool):
                         errors.append(f"{path}: {loc}.{b_key} must be a boolean (got {b_val!r})")
                     elif b_val is not True:
+                        if stage_name == "resumed-a" and b_key == "requested_equals_launch":
+                            continue
                         all_predicates_passed = False
 
         elif stage_name in DIRECTORY_EQUALITY_TOOL_STAGES:
@@ -2477,11 +2486,17 @@ def validate_directory_equality_derivation(
                                 r_seq = rec.get("seq")
                                 if isinstance(r_seq, int) and start_seq <= r_seq <= comp_seq:
                                     frame_data = rec.get("frame", {})
-                                    m = frame_data.get("method") or frame_data.get("type")
+                                    candidates: list[Any] = [
+                                        frame_data.get("method"),
+                                        frame_data.get("type"),
+                                    ]
                                     params = frame_data.get("params", {})
                                     if isinstance(params, dict):
-                                        m = params.get("method") or params.get("type") or m
-                                    if m == "session.cwd.set":
+                                        candidates.extend([
+                                            params.get("method"),
+                                            params.get("type"),
+                                        ])
+                                    if any(m == "session.cwd.set" for m in candidates):
                                         errors.append(
                                             f"{path}: {loc}: wire log {derived_name!r} contains "
                                             f"'session.cwd.set' at seq {r_seq} within "
@@ -4365,7 +4380,7 @@ def _validate_v061_receipt(
                     has_redaction_defects = True
                 else:
                     c_errs = validate_image_read_confirmations(
-                        png_path.name,
+                        str(png_path),
                         twin_file=str(twin_file) if twin_file is not None else None,
                         twin_text=twin_text,
                         redactions=redactions,

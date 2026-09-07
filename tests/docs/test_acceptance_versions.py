@@ -172,3 +172,20 @@ def test_declared_results_and_notes_name_the_candidate(version_dir: Path) -> Non
             assert gate_id in body or "gate" in body.lower(), (
                 f"{rel}: names neither the gate id nor any gate"
             )
+
+
+def test_talaria_live_capture_v2_vocabulary_registration() -> None:
+    """talaria-live-capture-v2 is registered exclusively under format_version.
+
+    A stale pre-split branch once silently widened CAPTURE_METADATA_SCHEMA to
+    admit schema and schema_version aliases, while erasing the sole-path test in
+    test_v061_lineage.py. This second assertion in a separate module ensures that
+    re-adding the aliases fails outside the two files carried by that merge hunk.
+    """
+    from scripts.acceptance.v050_receipt import CAPTURE_METADATA_SCHEMA
+
+    assert "talaria-live-capture-v2" in CAPTURE_METADATA_SCHEMA.vocabularies["format_version"]
+    assert "talaria-live-capture-v2" not in CAPTURE_METADATA_SCHEMA.vocabularies.get(
+        "schema_version", ()
+    )
+    assert "talaria-live-capture-v2" not in CAPTURE_METADATA_SCHEMA.vocabularies.get("schema", ())

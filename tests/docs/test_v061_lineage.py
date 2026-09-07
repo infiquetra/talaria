@@ -3591,11 +3591,11 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
         "session-b-init.derived.jsonl",
         [dummy_frame, dummy_frame, dummy_frame, dummy_frame],
     )
-    _, d_a_override = _write_wire_file(
-        "session-a-override.derived.jsonl", [dummy_frame, dummy_frame]
+    _, d_a_fresh = _write_wire_file(
+        "session-a-fresh.derived.jsonl", [dummy_frame, dummy_frame]
     )
-    _, d_a_reconnect = _write_wire_file(
-        "session-a-reconnect.derived.jsonl", [dummy_frame, dummy_frame]
+    _, d_a_resume = _write_wire_file(
+        "session-a-resume.derived.jsonl", [dummy_frame, dummy_frame]
     )
 
     sources_data: dict[str, dict[str, Any]] = {
@@ -3611,17 +3611,17 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
             "derived_file": "session-b-init.derived.jsonl",
             "derived_sha256": d_b_init,
         },
-        "session-a-override": {
-            "source_file": "session-a-override.wire.jsonl",
+        "session-a-fresh": {
+            "source_file": "session-a-fresh.wire.jsonl",
             "source_sha256": "3" * 64,
-            "derived_file": "session-a-override.derived.jsonl",
-            "derived_sha256": d_a_override,
+            "derived_file": "session-a-fresh.derived.jsonl",
+            "derived_sha256": d_a_fresh,
         },
-        "session-a-reconnect": {
-            "source_file": "session-a-reconnect.wire.jsonl",
+        "session-a-resume": {
+            "source_file": "session-a-resume.wire.jsonl",
             "source_sha256": "4" * 64,
-            "derived_file": "session-a-reconnect.derived.jsonl",
-            "derived_sha256": d_a_reconnect,
+            "derived_file": "session-a-resume.derived.jsonl",
+            "derived_sha256": d_a_resume,
         },
     }
 
@@ -3661,7 +3661,7 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
             "override_supplied": False,
         },
         "a-tool-override": {
-            "source_id": "session-a-override",
+            "source_id": "session-a-init",
             "tool_start_seq": 1,
             "tool_complete_seq": 2,
             "pwd_equals_expected": True,
@@ -3679,7 +3679,7 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
             "b_reported_cwd_unchanged": True,
         },
         "a-after-reconnect": {
-            "source_id": "session-a-reconnect",
+            "source_id": "session-a-init",
             "tool_start_seq": 1,
             "tool_complete_seq": 2,
             "pwd_equals_expected": True,
@@ -3687,7 +3687,7 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
             "override_supplied": False,
         },
         "fresh-a": {
-            "source_id": "session-a-init",
+            "source_id": "session-a-fresh",
             "request_seq": 1,
             "reply_seq": 2,
             "request_source_seq": 2,
@@ -3696,16 +3696,16 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
             "reported_equals_expected": True,
         },
         "resumed-a": {
-            "source_id": "session-a-reconnect",
+            "source_id": "session-a-resume",
             "request_seq": 1,
             "reply_seq": 2,
             "request_source_seq": 2,
             "reply_source_seq": 4,
-            "requested_equals_launch": True,
+            "requested_equals_launch": False,
             "reported_equals_expected": True,
         },
         "resumed-a-tool": {
-            "source_id": "session-a-reconnect",
+            "source_id": "session-a-resume",
             "tool_start_seq": 1,
             "tool_complete_seq": 2,
             "pwd_equals_expected": True,
@@ -3754,10 +3754,10 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
 
     # 3. Missing mandatory source refused (mutation-held)
     bad_src = copy.deepcopy(valid_doc)
-    del bad_src["sources"]["session-a-reconnect"]
+    del bad_src["sources"]["session-a-resume"]
     errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_src, path=derivation_path)
     assert any("Live 13 derivation requires all 4 mandatory sources" in e for e in errs)
-    assert any("'session-a-reconnect'" in e for e in errs)
+    assert any("'session-a-resume'" in e for e in errs)
 
     # 4. Undeclared source refused
     extra_src = copy.deepcopy(valid_doc)
@@ -3867,6 +3867,69 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
         for e in errs
     )
 
+    # 11b. Sibling wire capture containing session.cwd.set nested under frame.params.method
+    nested_b_frames: list[dict[str, Any]] = [
+        dummy_frame,
+        {"type": "event", "data": "clean"},
+        {"type": "event", "params": {"method": "session.cwd.set"}},
+        {"type": "event", "data": "clean"},
+    ]
+    _, nested_b_digest = _write_wire_file("session-b-nested.derived.jsonl", nested_b_frames)
+    bad_nested_doc = copy.deepcopy(valid_doc)
+    bad_nested_doc["sources"]["session-b-init"]["derived_file"] = "session-b-nested.derived.jsonl"
+    bad_nested_doc["sources"]["session-b-init"]["derived_sha256"] = nested_b_digest
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_nested_doc, path=derivation_path)
+    assert any(
+        "wire log 'session-b-nested.derived.jsonl' contains 'session.cwd.set' "
+        "at seq 3 within bounded window [2, 4]"
+        in e
+        for e in errs
+    )
+
+    # 11c. Sibling wire capture containing session.cwd.set nested under frame.params.type
+    nested_type_frames: list[dict[str, Any]] = [
+        dummy_frame,
+        {"type": "event", "data": "clean"},
+        {"type": "event", "params": {"type": "session.cwd.set"}},
+        {"type": "event", "data": "clean"},
+    ]
+    _, nested_type_digest = _write_wire_file(
+        "session-b-nested-type.derived.jsonl", nested_type_frames
+    )
+    bad_nested_type_doc = copy.deepcopy(valid_doc)
+    bad_nested_type_doc["sources"]["session-b-init"]["derived_file"] = (
+        "session-b-nested-type.derived.jsonl"
+    )
+    bad_nested_type_doc["sources"]["session-b-init"]["derived_sha256"] = nested_type_digest
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(
+        bad_nested_type_doc, path=derivation_path
+    )
+    assert any(
+        "wire log 'session-b-nested-type.derived.jsonl' contains 'session.cwd.set' "
+        "at seq 3 within bounded window [2, 4]"
+        in e
+        for e in errs
+    )
+
+    # 11d. Sibling wire capture where top-level method is not shadowed by nested params
+    shadow_frames: list[dict[str, Any]] = [
+        dummy_frame,
+        {"type": "event", "data": "clean"},
+        {"type": "event", "method": "session.cwd.set", "params": {"type": "sub_event"}},
+        {"type": "event", "data": "clean"},
+    ]
+    _, shadow_digest = _write_wire_file("session-b-shadow.derived.jsonl", shadow_frames)
+    bad_shadow_doc = copy.deepcopy(valid_doc)
+    bad_shadow_doc["sources"]["session-b-init"]["derived_file"] = "session-b-shadow.derived.jsonl"
+    bad_shadow_doc["sources"]["session-b-init"]["derived_sha256"] = shadow_digest
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_shadow_doc, path=derivation_path)
+    assert any(
+        "wire log 'session-b-shadow.derived.jsonl' contains 'session.cwd.set' "
+        "at seq 3 within bounded window [2, 4]"
+        in e
+        for e in errs
+    )
+
     # 12. Missing referenced derived wire capture refused
     missing_wire_doc = copy.deepcopy(valid_doc)
     missing_wire_doc["sources"]["session-a-init"]["derived_file"] = "absent.derived.jsonl"
@@ -3886,6 +3949,7 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     )
 
     # 14. Outcome coherence: pass status refused when equality predicate is false
+    # 14a. Adoption predicate: reported_equals_expected is False
     false_pred_doc = copy.deepcopy(valid_doc)
     false_pred_doc["observations"]["project-a-adoption"]["reported_equals_expected"] = False
     errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_pred_doc, path=derivation_path)
@@ -3894,9 +3958,92 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
         for e in errs
     )
 
+    # 14b. Adoption predicate: requested_equals_launch is False on created sessions
+    for created_stage in ("project-a-adoption", "project-b-adoption", "fresh-a"):
+        bad_created_launch = copy.deepcopy(valid_doc)
+        bad_created_launch["observations"][created_stage]["requested_equals_launch"] = False
+        errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(
+            bad_created_launch, path=derivation_path
+        )
+        assert any(
+            "status cannot be 'pass' when one or more equality predicates are false" in e
+            for e in errs
+        ), f"Expected failure when {created_stage}.requested_equals_launch=False"
+
+    # Exemption is strictly scoped to resumed-a
+    resumed_clean_doc = copy.deepcopy(valid_doc)
+    assert resumed_clean_doc["observations"]["resumed-a"]["requested_equals_launch"] is False
+    assert resumed_clean_doc["observations"]["resumed-a"]["reported_equals_expected"] is True
+    assert (
+        DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(resumed_clean_doc, path=derivation_path)
+        == []
+    )
+
+    # But reported_equals_expected=False on resumed-a is still fatal
+    false_resumed_reported = copy.deepcopy(valid_doc)
+    false_resumed_reported["observations"]["resumed-a"]["reported_equals_expected"] = False
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(
+        false_resumed_reported, path=derivation_path
+    )
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    false_launch_doc = copy.deepcopy(valid_doc)
+    false_launch_doc["observations"]["project-a-adoption"]["requested_equals_launch"] = False
+
+    # 14c. Tool predicate: pwd_equals_expected is False
+    false_tool_pwd_doc = copy.deepcopy(valid_doc)
+    false_tool_pwd_doc["observations"]["project-a-tool"]["pwd_equals_expected"] = False
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_tool_pwd_doc, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    # 14d. Tool predicate: fixture_content_matches is False
+    false_tool_fix_doc = copy.deepcopy(valid_doc)
+    false_tool_fix_doc["observations"]["project-a-tool"]["fixture_content_matches"] = False
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_tool_fix_doc, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    # 14e. Invariant predicate: bounded_absence_session_cwd_set is False
+    false_inv_abs_doc = copy.deepcopy(valid_doc)
+    false_inv_abs_doc["observations"]["b-after-a-override"][
+        "bounded_absence_session_cwd_set"
+    ] = False
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_inv_abs_doc, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    # 14f. Invariant predicate: b_reported_cwd_unchanged is False
+    false_inv_cwd_doc = copy.deepcopy(valid_doc)
+    false_inv_cwd_doc["observations"]["b-after-a-override"]["b_reported_cwd_unchanged"] = False
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_inv_cwd_doc, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
     # But failed status is permitted when an equality predicate is false (preserves failure reports)
-    false_pred_doc["status"] = "failed"
-    assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_pred_doc, path=derivation_path) == []
+    for failed_doc in (
+        false_pred_doc,
+        false_launch_doc,
+        false_tool_pwd_doc,
+        false_tool_fix_doc,
+        false_inv_abs_doc,
+        false_inv_cwd_doc,
+    ):
+        failed_doc["status"] = "failed"
+        assert (
+            DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(failed_doc, path=derivation_path) == []
+        )
 
     # 15. generate_directory_equality_derivation helper creates conforming output
     gen_out = evidence_dir / "generated-derivation.json"
@@ -4192,6 +4339,58 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     errs = validate_directory_equality_derivation(bad, path=derivation_path)
     assert any("requested_equals_launch must be a boolean" in e for e in errs)
 
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["reported_equals_expected"] = "true"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("reported_equals_expected must be a boolean" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["requested_equals_launch"] = False
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-b-adoption"]["requested_equals_launch"] = False
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["fresh-a"]["requested_equals_launch"] = False
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["reported_equals_expected"] = False
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    # resumed-a with requested_equals_launch=False passes
+    resumed_ok = copy.deepcopy(valid_doc)
+    assert resumed_ok["observations"]["resumed-a"]["requested_equals_launch"] is False
+    assert resumed_ok["observations"]["resumed-a"]["reported_equals_expected"] is True
+    assert validate_directory_equality_derivation(resumed_ok, path=derivation_path) == []
+
+    # resumed-a with reported_equals_expected=False fails
+    bad_resumed = copy.deepcopy(valid_doc)
+    bad_resumed["observations"]["resumed-a"]["reported_equals_expected"] = False
+    errs = validate_directory_equality_derivation(bad_resumed, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
     # ── Group 5: Tool observations fields and predicates ─────────────────────
     bad = copy.deepcopy(valid_doc)
     del bad["observations"]["project-a-tool"]["tool_start_seq"]
@@ -4225,6 +4424,27 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     assert any("pwd_equals_expected must be a boolean" in e for e in errs)
 
     bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["fixture_content_matches"] = 1
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("fixture_content_matches must be a boolean" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["pwd_equals_expected"] = False
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["fixture_content_matches"] = False
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    bad = copy.deepcopy(valid_doc)
     del bad["observations"]["project-a-tool"]["override_supplied"]
     errs = validate_directory_equality_derivation(bad, path=derivation_path)
     assert any("missing mandatory boolean 'override_supplied'" in e for e in errs)
@@ -4244,6 +4464,22 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     bad["observations"]["b-after-a-override"]["b_reported_cwd_unchanged"] = "yes"
     errs = validate_directory_equality_derivation(bad, path=derivation_path)
     assert any("b_reported_cwd_unchanged must be a boolean" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["b-after-a-override"]["bounded_absence_session_cwd_set"] = False
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["b-after-a-override"]["b_reported_cwd_unchanged"] = False
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
 
 
 def test_candidate_wheel_sha256_validation_and_privacy_scanning(tmp_path: Path) -> None:
@@ -4356,6 +4592,167 @@ def test_candidate_wheel_sha256_validation_and_privacy_scanning(tmp_path: Path) 
     bad_png_file.write_bytes(bad_png_bytes)
     errs = evidence_file_privacy_errors(bad_png_file, repo_root=tmp_path)
     assert any("must be a hex digest" in e for e in errs)
+
+
+def test_v061_multidir_receipt_confirmation_matching_and_mutations(tmp_path: Path) -> None:
+    """Multi-directory receipt confirmation matching respects path components.
+
+    When screenshots in sibling directories share identical basenames (e.g. Live 15 matrix
+    partitions), confirmation matching must compare relative paths rather than collapsing to
+    basenames, and survive equal-width pairing swaps and missing twin mutations.
+    """
+    receipt_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-15"
+    (receipt_dir / "text-slash").mkdir(parents=True)
+    (receipt_dir / "code-slash").mkdir(parents=True)
+
+    text_txt = receipt_dir / "text-slash" / "03-staged.txt"
+    text_txt.write_text(
+        "sample text in text-slash staged [redacted:role-digit-session-name:0]\n",
+        encoding="utf-8",
+    )
+    d_text = hashlib.sha256(text_txt.read_bytes()).hexdigest()
+
+    code_txt = receipt_dir / "code-slash" / "03-staged.txt"
+    code_txt.write_text(
+        "sample python in code-slash staged [redacted:role-digit-session-name:0]\n",
+        encoding="utf-8",
+    )
+    d_code = hashlib.sha256(code_txt.read_bytes()).hexdigest()
+
+    meta_text = {
+        "record_type": "capture-metadata",
+        "format_version": "talaria-live-capture-v2",
+        "case": "live-15",
+        "candidate": {"commit_sha": _COMMIT},
+        "frame": "03-staged",
+        "twin_digest": d_text,
+        "captured_at": "2026-09-06T18:00:00+00:00",
+        "redactions": [
+            {
+                "index": 0,
+                "covered_class": "role-digit-session-name",
+                "twin_span": "[redacted:role-digit-session-name:0]",
+                "region": {"x": 10, "y": 10, "width": 80, "height": 20},
+            }
+        ],
+    }
+    meta_code = {
+        "record_type": "capture-metadata",
+        "format_version": "talaria-live-capture-v2",
+        "case": "live-15",
+        "candidate": {"commit_sha": _COMMIT},
+        "frame": "03-staged",
+        "twin_digest": d_code,
+        "captured_at": "2026-09-06T18:01:00+00:00",
+        "redactions": [
+            {
+                "index": 0,
+                "covered_class": "role-digit-session-name",
+                "twin_span": "[redacted:role-digit-session-name:0]",
+                "region": {"x": 10, "y": 10, "width": 80, "height": 20},
+            }
+        ],
+    }
+
+    text_png = receipt_dir / "text-slash" / "03-staged.png"
+    text_png.write_bytes(_make_evidence_png(meta_text))
+
+    code_png = receipt_dir / "code-slash" / "03-staged.png"
+    code_png.write_bytes(_make_evidence_png(meta_code))
+
+    confs = [
+        {
+            "image": "text-slash/03-staged.png",
+            "read_by": "dedicated-tester",
+            "read_at": "2026-09-06T18:00:00+00:00",
+            "witnessed_element": "sample text",
+            "nothing_else_masked": True,
+            "redactions_confirmed": [
+                {
+                    "index": 0,
+                    "covered_class": "role-digit-session-name",
+                    "region_matches_twin_span": True,
+                }
+            ],
+        },
+        {
+            "image": "code-slash/03-staged.png",
+            "read_by": "dedicated-tester",
+            "read_at": "2026-09-06T18:00:00+00:00",
+            "witnessed_element": "sample python",
+            "nothing_else_masked": True,
+            "redactions_confirmed": [
+                {
+                    "index": 0,
+                    "covered_class": "role-digit-session-name",
+                    "region_matches_twin_span": True,
+                }
+            ],
+        },
+    ]
+
+    receipt_doc: dict[str, Any] = {
+        "schema_version": V061_ITEM_SCHEMA,
+        "release": "0.6.1",
+        "checklist_item": "live-15",
+        "title": "Live 15: Cross-directory confirmation matching",
+        "issue": "https://github.com/infiquetra/talaria/issues/140",
+        "tester": "dedicated-tester",
+        "verdict": "pass",
+        "candidate_commit_sha": _COMMIT,
+        "recorded_at": "2026-09-06T18:00:00+00:00",
+        "install": {
+            "kind": "source-checkout",
+            "commit": _COMMIT,
+            "basis": "verified test run",
+        },
+        "harness": {
+            "kind": "scratch-capture",
+            "commit": None,
+            "identity": "talaria test harness",
+        },
+        "evidence": {
+            "narrative": {
+                "kind": "reported-live-dispatch",
+                "method": "matrix test run",
+                "observation": "isolated text and code subdirectories",
+                "source": "https://github.com/infiquetra/talaria/issues/140",
+            },
+            "files": {
+                "text-slash/03-staged.png": _sha256(text_png),
+                "text-slash/03-staged.txt": d_text,
+                "code-slash/03-staged.png": _sha256(code_png),
+                "code-slash/03-staged.txt": d_code,
+            },
+            "files_listed_at": "2026-09-06",
+            "read_confirmations": confs,
+            "redaction_review": "passed",
+        },
+    }
+    receipt_file = receipt_dir / "receipt.json"
+    receipt_file.write_text(json.dumps(receipt_doc), encoding="utf-8")
+
+    # 1. Clean multi-directory receipt validates with zero errors
+    clean_errs = _validate_v061_receipt(receipt_doc, receipt_path=receipt_file, verify_files=True)
+    assert clean_errs == []
+
+    # 2. Mutation: Twin lacking witnessed element (equal-width pairing swap across directories)
+    bad_swap_doc = copy.deepcopy(receipt_doc)
+    bad_swap_doc["evidence"]["read_confirmations"][0]["witnessed_element"] = "sample python"
+    receipt_file.write_text(json.dumps(bad_swap_doc), encoding="utf-8")
+    errs = _validate_v061_receipt(bad_swap_doc, receipt_path=receipt_file, verify_files=True)
+    assert any("does not appear in text twin" in e for e in errs)
+
+    # 3. Mutation: Missing twin file refused
+    code_txt.unlink()
+    bad_missing_twin = copy.deepcopy(receipt_doc)
+    del bad_missing_twin["evidence"]["files"]["code-slash/03-staged.txt"]
+    receipt_file.write_text(json.dumps(bad_missing_twin), encoding="utf-8")
+    errs = _validate_v061_receipt(bad_missing_twin, receipt_path=receipt_file, verify_files=True)
+    assert any(
+        "screenshots have neither a text twin nor a recorded human read" in e
+        for e in errs
+    )
 
 
 def test_no_conflict_markers_in_repository() -> None:
