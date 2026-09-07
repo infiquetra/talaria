@@ -447,10 +447,18 @@ class UrllibMarketplaceTransport:
     def _file_url(
         self, publisher: str, extension: str, version: str, path: str
     ) -> str:
+        # In-extension files live on the unpkg route, under the vsix-internal
+        # extension/ prefix — not on the /api/.../file/ route, which serves
+        # only registry artifacts (the .vsix itself, the extracted manifest)
+        # and answers 404 for any other in-extension path. The manifest read
+        # only ever worked because the service 302-redirects that one file;
+        # both call sites use this shape now, verified live against
+        # dracula-theme/theme-dracula/2.25.1 (old theme path 404, unpkg 200,
+        # unpkg package.json 200 with identical bytes).
         quoted = "/".join(urllib.parse.quote(part) for part in path.split("/"))
         return (
-            f"{self._base_url}/api/{publisher}/{extension}/{version}"
-            f"/file/{quoted}"
+            f"{self._base_url}/vscode/unpkg/{publisher}/{extension}/{version}"
+            f"/extension/{quoted}"
         )
 
     def _themes_from_package(

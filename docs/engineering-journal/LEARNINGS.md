@@ -4,6 +4,32 @@
 
 ## 2026-09-07
 
+### An unexercised URL builder constructs something plausible and wrong
+
+**Evidence**: theme downloads from Open VSX 404'd (`talaria/themes/marketplace.py:_file_url`),
+while the manifest read through the same builder worked. The builder served both call
+sites — the download at line 488 and the package.json read at line 510 — from
+`/api/{publisher}/{extension}/{version}/file/{path}`, a route that serves only registry
+artifacts. The manifest worked only because the service 302-redirects that one file (which
+urllib follows silently); every other in-extension path 404s. Verified live against
+dracula-theme/theme-dracula/2.25.1: old theme path 404, unpkg path 200 with 39,820 real
+bytes, unpkg package.json 200 with bytes identical to the redirected read.
+
+**Mechanism**: the in-extension files live on the unpkg route under the vsix-internal
+`extension/` prefix, so the fix is one shape used by both call sites —
+`/vscode/unpkg/{publisher}/{extension}/{version}/extension/{path}` — keeping the
+working manifest read working on a direct URL instead of a followed redirect. The
+round-trip test drives the real transport against a double implementing the recorded
+routing (old theme path 404s, unpkg 200s), so reverting the builder fails the download
+without ever naming the new shape. The raw GitHub route never touches the builder —
+`convert_page_url` rewrites file pages to raw URLs and direct URLs download as-is —
+so it is undisturbed.
+
+**Generalizable rule**: a URL builder that is never exercised against the live service
+will construct something plausible and wrong, and the failure surfaces as a 404 that
+reads like a missing asset rather than like a client defect. Distrust any fetch path
+whose only test fakes above the URL construction.
+
 ### A sweep guarded on the leader's liveness misses the grandchild the leader was only a handle for
 
 **Evidence**: a status command that backgrounds a worker (`sh -c "sleep 60 & echo $! >
