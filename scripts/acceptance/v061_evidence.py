@@ -810,7 +810,9 @@ def generate_directory_equality_derivation(
     }
 
     # Preliminary validation against directory-equality derivation schema
-    prelim_errors = validate_directory_equality_derivation(doc, path=output_path)
+    prelim_errors = validate_directory_equality_derivation(
+        doc, path=output_path, expected_commit=candidate_commit, repo_root=repo_root
+    )
     if prelim_errors:
         raise SystemExit(
             "refusing to write directory-equality derivation: record does not validate:\n  "
