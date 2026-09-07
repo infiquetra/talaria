@@ -40,7 +40,9 @@ from scripts.acceptance.v050_receipt import (
     REDACTION_ITEM_SCHEMA,
     REFUSED_CLASSES,
     STEP_LOG_SCHEMA,
+    V061_INSTALL_SCHEMA,
     V061_ITEM_SCHEMA,
+    V061_RELEASE,
     V061_ROLE_LABELS,
     RecordSchema,
     SchemaRegistry,
@@ -4956,6 +4958,243 @@ def test_v061_multidir_receipt_confirmation_matching_and_mutations(tmp_path: Pat
         "screenshots have neither a text twin nor a recorded human read" in e
         for e in errs
     )
+
+
+def test_install_receipt_schema_declarations_preimages_and_vocabularies() -> None:
+    # 1. Declared keys and categories
+    assert INSTALL_RECEIPT_SCHEMA.declared_keys["release"] == ValueCategory.CLOSED_VOCABULARY
+    assert INSTALL_RECEIPT_SCHEMA.declared_keys["harness_commit"] == ValueCategory.DIGEST
+    assert INSTALL_RECEIPT_SCHEMA.declared_keys["tester"] == ValueCategory.CLOSED_VOCABULARY
+    assert INSTALL_RECEIPT_SCHEMA.declared_keys["candidate"] == ValueCategory.OBJECT
+    assert INSTALL_RECEIPT_SCHEMA.declared_keys["install"] == ValueCategory.OBJECT
+    assert INSTALL_RECEIPT_SCHEMA.declared_keys["schema_version"] == ValueCategory.CLOSED_VOCABULARY
+    assert INSTALL_RECEIPT_SCHEMA.declared_keys["recorded_at"] == ValueCategory.TIMESTAMP
+
+    # 2. Candidate nested schema
+    cand_schema = INSTALL_RECEIPT_SCHEMA.nested_schemas["candidate"]
+    assert cand_schema["wheel_filename"] == ValueCategory.STRING
+    assert cand_schema["wheel_sha256"] == ValueCategory.DIGEST
+    assert cand_schema["commit"] == ValueCategory.DIGEST
+    assert cand_schema["version"] == ValueCategory.CLOSED_VOCABULARY
+
+    # 3. Install nested schema
+    inst_schema = INSTALL_RECEIPT_SCHEMA.nested_schemas["install"]
+    assert inst_schema["scratch_root"] == ValueCategory.PATH
+    assert inst_schema["venv"] == ValueCategory.PATH
+    assert inst_schema["executable"] == ValueCategory.PATH
+    assert inst_schema["executable_sha256"] == ValueCategory.DIGEST
+    assert inst_schema["installed_file_count"] == ValueCategory.COUNT
+    assert inst_schema["installed_files_sha256"] == ValueCategory.DIGEST
+    assert inst_schema["version_reported"] == ValueCategory.CLOSED_VOCABULARY
+    assert inst_schema["help_ok"] == ValueCategory.BOOLEAN
+
+    # 4. Digest preimages
+    assert INSTALL_RECEIPT_SCHEMA.digest_preimages["harness_commit"] == "git-commit"
+    assert INSTALL_RECEIPT_SCHEMA.digest_preimages["install.executable_sha256"] == "artifact"
+    assert INSTALL_RECEIPT_SCHEMA.digest_preimages["install.installed_files_sha256"] == "artifact"
+    for target, preimage_cls in INSTALL_RECEIPT_SCHEMA.digest_preimages.items():
+        assert preimage_cls in ALLOWED_PREIMAGE_CLASSES, f"{target} has invalid {preimage_cls}"
+
+    # 5. Closed vocabularies
+    assert "operator" in INSTALL_RECEIPT_SCHEMA.vocabularies["tester"]
+    assert "controller" in INSTALL_RECEIPT_SCHEMA.vocabularies["tester"]
+    assert V061_RELEASE in INSTALL_RECEIPT_SCHEMA.vocabularies["release"]
+    assert V061_RELEASE in INSTALL_RECEIPT_SCHEMA.vocabularies["candidate.version"]
+    assert V061_RELEASE in INSTALL_RECEIPT_SCHEMA.vocabularies["install.version_reported"]
+
+
+def test_install_receipt_schema_validates_probe_output_and_mutations() -> None:
+    doc_path = Path("docs/acceptance/v0.6.1/evidence/probe-1/install-receipt.json")
+    base_doc: dict[str, Any] = {
+        "schema_version": V061_INSTALL_SCHEMA,
+        "release": V061_RELEASE,
+        "tester": "operator",
+        "recorded_at": "2026-09-07T12:00:00+00:00",
+        "harness_commit": "c" * 40,
+        "candidate": {
+            "commit": "c" * 40,
+            "version": V061_RELEASE,
+            "wheel_filename": "talaria-0.6.1-py3-none-any.whl",
+            "wheel_sha256": "a" * 64,
+        },
+        "install": {
+            "scratch_root": "<scratch-root>",
+            "venv": "<scratch-root>/venv",
+            "executable": "<scratch-root>/venv/bin/talaria",
+            "executable_sha256": "b" * 64,
+            "installed_file_count": 42,
+            "installed_files_sha256": "d" * 64,
+            "version_reported": V061_RELEASE,
+            "help_ok": True,
+        },
+    }
+
+    # 1. Base probe document passes both validators with zero errors
+    assert INSTALL_RECEIPT_SCHEMA.validate(base_doc, path=doc_path) == []
+    assert _validate_v061_install(base_doc) == []
+
+    # 2. Mutation: undeclared top-level key rejected
+    mut_top = copy.deepcopy(base_doc)
+    mut_top["extra_top_key"] = "forbidden"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_top, path=doc_path)
+    assert any("contains undeclared key 'extra_top_key'" in e for e in errs)
+
+    # 3. Mutation: undeclared candidate key rejected
+    mut_cand = copy.deepcopy(base_doc)
+    mut_cand["candidate"]["extra_cand_key"] = "forbidden"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_cand, path=doc_path)
+    assert any("contains undeclared key 'extra_cand_key'" in e for e in errs)
+
+    # 4. Mutation: undeclared install key rejected
+    mut_inst = copy.deepcopy(base_doc)
+    mut_inst["install"]["extra_inst_key"] = "forbidden"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_inst, path=doc_path)
+    assert any("contains undeclared key 'extra_inst_key'" in e for e in errs)
+
+    # 5. Mutation: disallowed tester value rejected by schema
+    mut_tester = copy.deepcopy(base_doc)
+    mut_tester["tester"] = "unknown-role"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_tester, path=doc_path)
+    assert any("not in registered closed vocabulary" in e for e in errs)
+
+    # 6. Mutation: non-operator tester accepted by schema but refused by _validate_v061_install
+    mut_ctrl = copy.deepcopy(base_doc)
+    mut_ctrl["tester"] = "controller"
+    assert INSTALL_RECEIPT_SCHEMA.validate(mut_ctrl, path=doc_path) == []
+    ctrl_errs = _validate_v061_install(mut_ctrl)
+    assert ctrl_errs == ["tester is not operator"]
+
+    # 7. Mutation: negative installed_file_count rejected
+    mut_count = copy.deepcopy(base_doc)
+    mut_count["install"]["installed_file_count"] = -1
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_count, path=doc_path)
+    assert any("must be a non-negative number" in e for e in errs)
+
+    # 8. Mutation: malformed executable_sha256 rejected
+    mut_dig = copy.deepcopy(base_doc)
+    mut_dig["install"]["executable_sha256"] = "not-a-digest"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_dig, path=doc_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # 9. Mutation: malformed installed_files_sha256 rejected
+    mut_fdig = copy.deepcopy(base_doc)
+    mut_fdig["install"]["installed_files_sha256"] = "not-a-digest"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_fdig, path=doc_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # 10. Mutation: absolute path in scratch_root rejected
+    mut_abs_scratch = copy.deepcopy(base_doc)
+    mut_abs_scratch["install"]["scratch_root"] = "/var/folders/scratch"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_abs_scratch, path=doc_path)
+    assert any("must not be an absolute filesystem path" in e for e in errs)
+
+    # 11. Mutation: absolute path in venv rejected
+    mut_abs_venv = copy.deepcopy(base_doc)
+    mut_abs_venv["install"]["venv"] = "/Users/jefcox/venv"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_abs_venv, path=doc_path)
+    assert any("must not be an absolute filesystem path" in e for e in errs)
+
+    # 12. Mutation: absolute path in executable rejected
+    mut_abs_exe = copy.deepcopy(base_doc)
+    mut_abs_exe["install"]["executable"] = "/Users/jefcox/venv/bin/talaria"
+    errs = INSTALL_RECEIPT_SCHEMA.validate(mut_abs_exe, path=doc_path)
+    assert any("must not be an absolute filesystem path" in e for e in errs)
+
+
+def test_verify_run_with_probe_install_receipts_both_mutation_directions(
+    tmp_path: Path,
+) -> None:
+    repo, _early, candidate = _git_repo(tmp_path)
+    evidence = repo / "docs" / "acceptance" / "v0.6.1" / "evidence"
+    path, receipt = _conforming_receipt(
+        evidence / "live-01", candidate_commit_sha=candidate
+    )
+
+    install_entries: list[dict[str, Any]] = []
+    for probe in ("probe-1", "probe-2"):
+        p_dir = evidence / probe
+        p_dir.mkdir(parents=True)
+        inst_rec: dict[str, Any] = {
+            "schema_version": V061_INSTALL_SCHEMA,
+            "release": V061_RELEASE,
+            "tester": "operator",
+            "recorded_at": "2026-09-07T00:00:00+00:00",
+            "harness_commit": candidate,
+            "candidate": {
+                "commit": candidate,
+                "version": V061_RELEASE,
+                "wheel_filename": "talaria-0.6.1-py3-none-any.whl",
+                "wheel_sha256": "d" * 64,
+            },
+            "install": {
+                "scratch_root": "<scratch-root>",
+                "venv": "<scratch-root>/venv",
+                "executable": "<scratch-root>/venv/bin/talaria",
+                "executable_sha256": "b" * 64,
+                "installed_file_count": 42,
+                "installed_files_sha256": "c" * 64,
+                "version_reported": V061_RELEASE,
+                "help_ok": True,
+            },
+        }
+        inst_path = p_dir / "install-receipt.json"
+        inst_path.write_text(json.dumps(inst_rec, indent=2), encoding="utf-8")
+        rel = f"docs/acceptance/v0.6.1/evidence/{probe}/install-receipt.json"
+        install_entries.append({
+            "receipt_path": rel,
+            "receipt_sha256": _sha256(inst_path),
+            "tester": "operator",
+        })
+
+    m_path = _manifest(
+        evidence, [_entry(path, repo, receipt)], expected=1, candidate_commit=candidate
+    )
+    manifest_data = json.loads(m_path.read_text(encoding="utf-8"))
+    manifest_data["install_receipts"] = install_entries
+    manifest_data["counts"]["install_receipts"] = len(install_entries)
+    m_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+    # Direction 1: Clean run with conforming probe install receipts passes with zero errors
+    errors = verify_run(
+        m_path,
+        evidence_root=evidence,
+        repo_root=repo,
+        expected_candidate_commit=candidate,
+    )
+    assert errors == [], f"Expected 0 errors on conforming run, got: {errors}"
+
+    # Direction 2a: Mutation with undeclared key in probe-1 install receipt caught by verify_run
+    p1_path = evidence / "probe-1" / "install-receipt.json"
+    p1_doc = json.loads(p1_path.read_text(encoding="utf-8"))
+    p1_mutated = copy.deepcopy(p1_doc)
+    p1_mutated["unregistered_key"] = "leak"
+    p1_path.write_text(json.dumps(p1_mutated, indent=2), encoding="utf-8")
+    manifest_data["install_receipts"][0]["receipt_sha256"] = _sha256(p1_path)
+    m_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+    mut_errors = verify_run(
+        m_path,
+        evidence_root=evidence,
+        repo_root=repo,
+        expected_candidate_commit=candidate,
+    )
+    assert any("contains undeclared key 'unregistered_key'" in e for e in mut_errors)
+
+    # Direction 2b: Mutation with non-operator tester caught by
+    # _validate_v061_install inside verify_run
+    p1_mut_tester = copy.deepcopy(p1_doc)
+    p1_mut_tester["tester"] = "controller"
+    p1_path.write_text(json.dumps(p1_mut_tester, indent=2), encoding="utf-8")
+    manifest_data["install_receipts"][0]["receipt_sha256"] = _sha256(p1_path)
+    m_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+    mut_tester_errors = verify_run(
+        m_path,
+        evidence_root=evidence,
+        repo_root=repo,
+        expected_candidate_commit=candidate,
+    )
+    assert any("tester is not operator" in e for e in mut_tester_errors)
 
 
 def test_no_conflict_markers_in_repository() -> None:
