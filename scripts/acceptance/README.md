@@ -248,7 +248,7 @@ the frozen v0.5.0 and v0.6.0 flows rather than replacing them:
   ```bash
   uv run python -m scripts.acceptance.v061_evidence record \
     --candidate-commit <40-char commit> --wheel <wheel path> \
-    --expected-receipts 21 --applies-map <map path>
+    --expected-receipts 23 --applies-map <map path>
   ```
 
 **The ruled contract, per the tester's objections.** Identity is split by
@@ -287,5 +287,5 @@ declares gate `v0-6-1-daily-driver`, carries each receipt's digest, harness
 commit, and attestation, and the release workflow's existing version-agnostic
 `verify-run` step resolves it from the tag. The readiness verdict itself lives
 in `docs/analysis/2026-09-05-v0-6-1-daily-driver-verdict.md`, flips to READY
-only when all twenty-one live rows clear, and has no waiver path: a blocked or
+only when all twenty-three live rows clear, and has no waiver path: a blocked or
 reserved case keeps the gate NOT READY.

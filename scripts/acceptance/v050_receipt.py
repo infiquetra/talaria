@@ -1280,7 +1280,7 @@ RECEIPT_SCHEMA = RecordSchema(
             "talaria-v0.6.0-receipt-v1",
         }),
         "release": frozenset({V061_RELEASE, "0.5.0", "0.6.0"}),
-        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 22)),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 24)),
         "tester": frozenset(V061_ROLE_LABELS),
         "verdict": frozenset(VERDICTS),
         "install.kind": frozenset({"source-checkout", "wheel"}),
@@ -1367,6 +1367,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "session_id": ValueCategory.GATEWAY_SESSION_ID,
         "format": ValueCategory.CLOSED_VOCABULARY,
         "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "format_version": ValueCategory.CLOSED_VOCABULARY,
         "title": ValueCategory.STRING,
         "geometry": ValueCategory.OBJECT,
         "terminal": ValueCategory.OBJECT,
@@ -1486,7 +1487,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "probe",
             "trace",
         }),
-        "case": frozenset(f"live-{i:02d}" for i in range(1, 22)) | frozenset({
+        "case": frozenset(f"live-{i:02d}" for i in range(1, 24)) | frozenset({
             "probe-1",
             "probe-2",
             "matrix",
@@ -1542,6 +1543,11 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "ok",
         }),
         "covered_class": REFUSED_CLASSES,
+        "format_version": frozenset({
+            "talaria-v0.6.0-live",
+            "talaria-live-capture-v1",
+            "talaria-live-capture-v2",
+        }),
     },
 )
 
@@ -1643,7 +1649,7 @@ ATTESTATION_ITEM_SCHEMA = RecordSchema(
         "install_kind": frozenset({"source-checkout", "wheel"}),
         "harness_kind": frozenset({"repository-tooling", "scratch-capture", "manual"}),
         "screenshots_read_by": frozenset(V061_ROLE_LABELS),
-        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 22)),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 24)),
         "redaction_review": frozenset({"passed", "withheld", "pending"}),
     },
 )
@@ -1705,6 +1711,20 @@ class SchemaRegistry:
             ) or (
                 {"columns", "rows", "cell_width"}.issubset(doc.keys())
                 and not ("measurements" in path.name.lower() or "measurements" in doc)
+            ) or (
+                (
+                    doc.get("format_version")
+                    in CAPTURE_METADATA_SCHEMA.vocabularies.get("format_version", ())
+                )
+                or (
+                    doc.get("schema_version")
+                    in CAPTURE_METADATA_SCHEMA.vocabularies.get("schema_version", ())
+                )
+                or (
+                    doc.get("schema")
+                    in CAPTURE_METADATA_SCHEMA.vocabularies.get("schema", ())
+                )
+                or doc.get("record_type") == "capture-metadata"
             ):
                 return CAPTURE_METADATA_SCHEMA
             if (
@@ -3021,7 +3041,7 @@ _V061_NOT_RECORDED = "not recorded"
 #: The live-case inventory the v0.6.1 run owes. A pattern, never a literal in
 #: code: the manifest declares ``counts.expected_receipts`` and the verifier
 #: reads it from there (the architect ruling on infiquetra/talaria#150).
-_V061_ITEM = re.compile(r"^live-(0[1-9]|1[0-9]|2[0-1])$")
+_V061_ITEM = re.compile(r"^live-(0[1-9]|1[0-9]|2[0-3])$")
 #: Kept for the not-recorded and identifier rules above; the tester field
 #: itself is judged by membership in :data:`V061_ROLE_LABELS`.
 _V061_TESTER = re.compile(r"^[A-Za-z][A-Za-z-]*$")
@@ -3235,7 +3255,7 @@ def _validate_v061_receipt(
         )
     item = receipt.get("checklist_item")
     if not isinstance(item, str) or not _V061_ITEM.fullmatch(item):
-        errors.append("checklist_item must be a live-NN string with NN from 01 through 21")
+        errors.append("checklist_item must be a live-NN string with NN from 01 through 23")
     title = receipt.get("title")
     if not isinstance(title, str) or not title.strip():
         errors.append("title must be a non-empty string")

@@ -212,7 +212,7 @@ def test_the_retired_harness_commit_key_is_rejected(tmp_path: Path) -> None:
         {"schema_version": "talaria-v0.7.0-receipt-v1"},
         {"release": "0.6.0"},
         {"checklist_item": "live-1"},
-        {"checklist_item": "live-22"},
+        {"checklist_item": "live-24"},
         {"checklist_item": 1},
         {"title": ""},
         {"issue": "not-an-issue"},
@@ -671,13 +671,17 @@ def test_the_candidate_floor_refuses_a_commit_outside_the_candidates_lineage(
 # ── the generator's refusals ────────────────────────────────────────────────
 
 
-def test_the_generator_refuses_a_tree_that_has_not_been_bumped() -> None:
+def test_the_generator_refuses_a_tree_that_has_not_been_bumped(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "talaria").mkdir(parents=True)
+    (repo / "talaria" / "__init__.py").write_text('__version__ = "0.6.0"\n', encoding="utf-8")
     with pytest.raises(SystemExit) as caught:
         v061_evidence.record(
             candidate_commit=_COMMIT,
             wheel=Path("/nonexistent.whl"),
-            expected_receipts=21,
+            expected_receipts=23,
             applies_map={},
+            repo_root=repo,
         )
     assert "0.6.1" in str(caught.value)
     assert "version bump must land" in str(caught.value)
@@ -757,7 +761,7 @@ def test_the_generator_records_the_binding_when_every_gate_opens(
             "the transcript surfaces are unchanged since that commit"
         )
     }
-    monkeypatch.setattr(v061_evidence, "_package_version", lambda: "0.6.1")
+    monkeypatch.setattr(v061_evidence, "_package_version", lambda *args, **kwargs: "0.6.1")
 
     def _fake_probe(
         wheel: Path, *, candidate: dict[str, str], recorded_at: str
@@ -798,7 +802,7 @@ def test_the_generator_records_the_binding_when_every_gate_opens(
         body = (repo / manifest[pointer]).read_text(encoding="utf-8")
         assert _COMMIT in body
     results_body = (repo / manifest["results_document"]).read_text(encoding="utf-8")
-    assert "twenty source-checkout receipts" in results_body
+    assert "twenty-two source-checkout receipts" in results_body
     assert "one wheel receipt" in results_body
 
 
@@ -1455,7 +1459,7 @@ def test_record_refuses_when_public_evidence_carries_privacy_defects(
     ) -> tuple[dict[str, Any], Path]:
         return {"schema_version": "talaria-v0.6.0-install-v1"}, tmp_path / "scratch"
 
-    monkeypatch.setattr(v061_evidence, "_package_version", lambda: "0.6.1")
+    monkeypatch.setattr(v061_evidence, "_package_version", lambda *args, **kwargs: "0.6.1")
     monkeypatch.setattr(v061_evidence, "_probe_install", _fake_probe)
     wheel = tmp_path / "talaria-0.6.1-py3-none-any.whl"
     wheel.write_bytes(b"wheel bytes")
@@ -3200,3 +3204,75 @@ def test_seven_value_collision_and_expected_rejection_privacy() -> None:
         "error loading [redacted:absolute-filesystem-path:0]"
     )
     assert CAPTURE_METADATA_SCHEMA.validate(redacted_meta, path=meta_path) == []
+
+
+def test_live_22_and_live_23_case_vocabulary(tmp_path: Path) -> None:
+    for case_name in ("live-22", "live-23"):
+        # Capture metadata accepts live-22 and live-23
+        meta = {
+            "columns": 80,
+            "rows": 24,
+            "cell_width": 10,
+            "cell_height": 20,
+            "twin_digest": "a" * 64,
+            "case": case_name,
+        }
+        assert CAPTURE_METADATA_SCHEMA.validate(meta, path=Path("capture.json")) == []
+
+        # Receipt validation accepts live-22 and live-23
+        case_dir = tmp_path / case_name
+        receipt_p, receipt = _conforming_receipt(case_dir, checklist_item=case_name)
+        assert _validate_v061_receipt(receipt, receipt_path=receipt_p) == []
+        assert RECEIPT_SCHEMA.validate(receipt, path=receipt_p) == []
+
+    # live-24 is refused
+    bad_meta = {"case": "live-24"}
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_meta, path=Path("capture.json"))
+    assert any("not in registered closed vocabulary" in e for e in errs)
+
+    bad_dir = tmp_path / "live-24"
+    receipt_p, receipt = _conforming_receipt(bad_dir, checklist_item="live-24")
+    errs = _validate_v061_receipt(receipt, receipt_path=receipt_p)
+    assert any(
+        "checklist_item must be a live-NN string with NN from 01 through 23" in e
+        for e in errs
+    )
+
+
+def test_talaria_live_capture_v2_format_version_is_sole_path() -> None:
+    # format_version is the single registered path for talaria-live-capture-v2
+    meta = {
+        "columns": 80,
+        "rows": 24,
+        "cell_width": 10,
+        "cell_height": 20,
+        "twin_digest": "a" * 64,
+        "format_version": "talaria-live-capture-v2",
+    }
+    assert CAPTURE_METADATA_SCHEMA.validate(meta, path=Path("frame.json")) == []
+
+    # SchemaRegistry.lookup resolves document with format_version="talaria-live-capture-v2"
+    doc_fmt = {"format_version": "talaria-live-capture-v2"}
+    assert SchemaRegistry.lookup(Path("frame.json"), doc_fmt) is CAPTURE_METADATA_SCHEMA
+
+    # Dropped paths: schema and schema_version do not admit talaria-live-capture-v2
+    for dropped_key in ("schema", "schema_version"):
+        bad_meta = {
+            "columns": 80,
+            "rows": 24,
+            "cell_width": 10,
+            "cell_height": 20,
+            "twin_digest": "a" * 64,
+            dropped_key: "talaria-live-capture-v2",
+        }
+        errs = CAPTURE_METADATA_SCHEMA.validate(bad_meta, path=Path("frame.json"))
+        assert any("not in registered closed vocabulary" in e for e in errs)
+
+
+def test_no_conflict_markers_in_repository() -> None:
+    res = subprocess.run(
+        ["git", "grep", "-nE", r"^(<{7}|={7}|>{7})( |$)", "--", "."],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode != 0, f"Conflict markers found in repository:\n{res.stdout}"
