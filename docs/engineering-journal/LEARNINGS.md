@@ -4,8 +4,7 @@
 
 ## 2026-09-07 — Four checks in one release looked like verification and performed none
 
-**Evidence.** All four surfaced during the v0.6.1 acceptance run and none was
-caught by a green suite.
+**Evidence.** All four surfaced during the v0.6.1 acceptance run.
 
 1. A guard comparing a value to itself. `scripts/acceptance/v061_evidence.py`
    set `doc["candidate_commit"]` from `candidate_commit`, then passed
@@ -13,38 +12,54 @@ caught by a green suite.
    not fail, and because the argument was non-`None` it also suppressed the
    sibling-receipt lookup that would have been the real check. Fixed in pull
    request #176.
-2. A regex asserting about itself. A viewport test counted a pattern the prompt
-   line could not match, so it passed only when the screenshot beat the scroll.
-   Recorded separately.
-3. A vocabulary mistaken for a scanner. `REFUSED_CLASSES` names identifier
-   classes, but every live `PRIVACY_PATTERNS` rule is structural and no name
-   detector exists, so membership in the refused set is not a scan rule.
+2. A regex asserting about itself. A viewport test at
+   `tests/transport/test_bridges.py:550` counted a pattern the prompt line
+   could not match, so it passed only when the screenshot beat the scroll.
+   Fixed in pull request #172.
+3. A vocabulary mistaken for a scanner. `REFUSED_CLASSES` at
+   `scripts/acceptance/v050_receipt.py:294` names identifier classes, but every
+   live rule in `PRIVACY_PATTERNS` at `:89` is structural and no name detector
+   exists, so membership in the refused set is not a scan rule.
 4. A contract nothing reads. The implementation plan specifies a per-row
    evidence identity — for example "the written `theme.name` line (sanitized)"
-   — and no acceptance tool checks it. Four live cases were complete by every
-   automated measure, zero validator errors, zero digest failures, zero privacy
-   errors, while missing artefacts their own contract named. Recorded on #150.
+   — and no acceptance tool checks it. Nothing under `scripts/` or `tests/`
+   references the plan by path or names any per-row artefact. The mechanism is
+   visible in the validator: `evidence.files` is checked for closure, every
+   listed file existing and matching its digest and every file on disk being
+   listed, and never against a required-name list. Four live cases were
+   therefore complete by every automated measure while missing artefacts their
+   own contract named. Recorded on the owning child issues #140, #141 and #149.
+   Those zero-error measurements describe the state before the gaps were
+   closed; all four cases have since been amended, and the superseded receipt
+   digests are in the reviewer's inspection records.
 
-A fifth is adjacent: `recorded_at` is a property of the captures a receipt
+A fifth is adjacent. `recorded_at` is a property of the captures a receipt
 represents, so a receipt's prose can be rewritten with the field legitimately
-unmoved, and `evidence.files` carries no digest for `receipt.json` itself. Four
-receipts changed content this run with nothing in them recording that they had.
+unmoved, and `evidence.files` carries no digest for `receipt.json` itself —
+none of the four receipts lists its own file. Four receipts changed content
+this run. The two that filed retained artefacts moved no field at all. The two
+that were re-run moved `recorded_at`, but because a new capture was taken
+rather than because the content changed, so the field would have stayed put had
+only the prose been rewritten. No receipt carries a digest of its own bytes.
 
-**Mechanism.** Each of these passes its gate for a reason unrelated to the
-property it claims to establish. That is invisible to a test run, because a test
-run reports only red or green, and all five were green. What separated the real
-checks from the theatrical ones was driving them: removing the guard and
-watching whether anything went red, and recomputing a digest rather than reading
-a timestamp. The reviewer's refusal to record an inspection it could not prove
-it had read was the same instrument pointed at itself.
+**Mechanism.** Each of these passes for a reason unrelated to the property it
+claims to establish, and no suite went red for the right reason. Only the first
+had a gate that could have caught it and did not; the second went red once its
+pattern was corrected, which is how it was found; the last three have no gate
+at all, being a vocabulary, a document contract with no tool behind it, and a
+field's semantics. What separated the real checks from the theatrical ones was
+driving them: removing the guard and watching whether anything went red, and
+recomputing a digest rather than reading a timestamp. The reviewer's refusal to
+record an inspection they could not prove they had read was the same instrument
+pointed at itself.
 
-**Generalizable rule.** A check earns belief only when something has been shown
-to break it. For a guard, remove it and watch the test fail. For an assertion
-about rendered output, verify the pattern can match the thing it claims to find.
-For a document that names required artefacts, either a tool reads that list or
-the list is decoration. Ask what would make this fail before trusting that it
-passed — and prefer a content digest over a timestamp whenever the question is
-whether bytes changed.
+**Generalizable rule.** The standard this run adopted: a check earns belief
+only when something has been shown to break it. For a guard, remove it and
+watch the test fail. For an assertion about rendered output, verify the pattern
+can match the thing it claims to find. For a document that names required
+artefacts, either a tool reads that list or the list is decoration. And prefer
+a content digest over a timestamp whenever the question is whether bytes
+changed.
 
 ## 2026-09-07 — An option space presented after the decision re-opens the decision
 
