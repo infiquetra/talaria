@@ -2,6 +2,34 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-07 — An option space presented after the decision re-opens the decision
+
+**Evidence.** Issue #151 comment 5573347042 and issue #139 comment 5573349097,
+both retracted; the corrections are #151 comment 5574191698 and #139 comment
+5574191856. The architect's option space is #151 comment 5557445152.
+
+**Mechanism.** The architect wrote a correct option space at 06:25 UTC on
+2026-09-06, correctly qualified to `main` at `94b2aaa` and explicitly deciding
+nothing. The operator chose option (c) at 13:56 UTC. It was admitted as issue
+#157 and merged the same day through pull requests #160 and #163. The next day
+the controller re-read the option-space document, did not re-read the decision
+record beneath it, and put the same menu back to the operator with option (c)
+still described as available and untaken. The operator answered it. The result
+was a public record stating that a shipped, advertised feature had not been
+built — while the code, the CHANGELOG, the release notes and `DECISIONS.md` in
+the same candidate described it correctly.
+
+The document was never wrong. It was a dated snapshot that stayed accurate to
+its own commit and went stale silently, because nothing in it changes when the
+decision it exists to inform is taken. Reading it felt exactly like reading a
+current source.
+
+**Generalizable rule.** An option space is evidence of a pending decision only
+until one is made. Before presenting one, check for a decision on the record and
+for the child issues and merged pull requests that would exist if it had been
+taken — the shipped artefacts are the current source, and the deliberation
+document is not.
+
 ## 2026-09-07
 
 ### A rebase can silently revert a merged consolidation when carrying a pre-split commit
