@@ -299,6 +299,7 @@ uv run mypy
 uv run pytest
 uv run bandit -r talaria -q
 git diff --check
+! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
 ```
 
 If the change touches `src/`, run `npm run check` as well.

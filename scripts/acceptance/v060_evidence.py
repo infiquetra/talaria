@@ -26,9 +26,9 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -123,11 +123,20 @@ def _write_new(path: Path, value: dict[str, Any]) -> str:
     return _sha256_file(path)
 
 
-def _package_version() -> str:
-    sys.path.insert(0, str(REPO_ROOT))
-    import talaria
-
-    return talaria.__version__
+def _package_version(repo_root: Path = REPO_ROOT) -> str:
+    init_path = repo_root / "talaria" / "__init__.py"
+    if not init_path.is_file():
+        raise SystemExit(f"the package at {repo_root} has no talaria/__init__.py")
+    match = re.search(
+        r'^__version__\s*=\s*["\']([^"\']+)["\']',
+        init_path.read_text("utf-8"),
+        re.MULTILINE,
+    )
+    if not match:
+        raise SystemExit(
+            f"the package at {repo_root} declares no __version__ in talaria/__init__.py"
+        )
+    return match.group(1)
 
 
 def _run(argv: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -322,7 +331,7 @@ def record(
 ) -> Path:
     """Record the whole v0.6.0 evidence tree; return the manifest path."""
     stamped = _utc_now(recorded_at)
-    version = _package_version()
+    version = _package_version(repo_root)
     wheel_sha = _sha256_file(wheel)
     candidate = {
         "commit": candidate_commit,
