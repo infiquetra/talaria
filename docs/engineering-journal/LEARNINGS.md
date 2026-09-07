@@ -19,9 +19,11 @@ section (`talaria/ui/inspector.py:FUNCTION_KEY_NOTE`) — F1 unbound, F2 as ctrl
 macOS interception with the system-setting name, deliberately using "consumed", a word the
 footer refuses, so the footer-only scope of the guard stays load-bearing. The panel has no
 vertical slack for an always-open note: an early version broke
-`test_a_focused_diagnostics_row_expands_and_folds_back`, observed here on the Context-region
-asserts (the region shifts in y and width when the overflow engages scroll and scrollbar), so
-the row uses the #144 Option B pattern: one line until focused, full sentences on focus, last
+`test_a_focused_diagnostics_row_expands_and_folds_back`, on its diagnostics-row assertions — an unfocused roster row comes back three lines tall
+instead of one, its provenance is no longer readable, and it does not fold back. The Context
+region does shift when the overflow engages scroll and a scrollbar (y 6 to 8, width 32 to
+31), but the test captures its baseline after the KEYS row exists, so that shift is absorbed
+and the Context assertions pass. So the row uses the #144 Option B pattern: one line until focused, full sentences on focus, last
 in the keyboard cycle. The test pins the relocation and opens the row, so a future edit can
 neither silently drop the caveat nor ship one nobody can read. The live footer now sits at
 exactly 80 of 80 cells with no headroom for another chord; a clipped footer fails
