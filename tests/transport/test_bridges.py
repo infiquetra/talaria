@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +36,6 @@ from talaria.ui.app import (
 )
 from talaria.ui.prompts import RESPOND_METHODS, decline_value
 from tests.transport.conftest import STUB_TOKEN, StubGateway, event, ok
-from tests.ui.conftest import screen_text
 
 FAST_RETRIES = (0.0, 0.01, 0.01)
 
@@ -560,7 +558,8 @@ async def test_the_served_viewport_is_the_rows_on_screen(
     left the suite green — even the guard ``assert total > rows`` survives, at
     ``40 > 1``. The number is pinned here two ways that do not go through the
     function: against a literal for a named terminal size, and against a count
-    of the transcript rows visible in the rendered screenshot. A constant fails
+    of the non-blank rows rendered in the transcript region — what the operator
+    can actually read. A constant fails
     the second size, and any constant at all fails the difference at the end.
     """
     measured: dict[int, tuple[int, int, int]] = {}
@@ -594,12 +593,19 @@ async def test_the_served_viewport_is_the_rows_on_screen(
             )
             assert sent["params"]["request_id"] == request_id
             answered = json.loads(sent["params"]["text"])
-            on_screen = len(
-                [
-                    row
-                    for row in screen_text(app).splitlines()
-                    if re.search(r"scrollback \d+", row)
-                ]
+            # Count rendered rows in the transcript region, never vocabulary
+            # in a screenshot. After a settled follow-bottom, one of the
+            # sixteen rows is the prompt arrival line, which no scrollback
+            # regex can see — so the old count was 15 by construction while
+            # the operator reads 16, and 16 only when the race was won. The
+            # rendered rows are 16 before the scroll settles and 16 after,
+            # so this measurement has no race in it.
+            strips = app.screen._compositor.render_strips()
+            region = app.transcript.region
+            on_screen = sum(
+                1
+                for y in range(region.y, region.y + region.height)
+                if "".join(seg.text for seg in strips[y]).strip()
             )
             measured[height] = (expected, answered["viewport_rows"], on_screen)
             await app.shutdown_sources()
