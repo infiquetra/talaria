@@ -1478,7 +1478,6 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
     vocabularies={
         "format": frozenset({"ansi", "text", "png", "json", "jsonl", "svg", "binary"}),
         "schema_version": frozenset({
-            "talaria-live-capture-v2",
             "talaria-v0.6.1-capture-v1",
             "talaria-capture-metadata-v1",
             "talaria-v0.6.0-capture-v1",
@@ -1511,7 +1510,6 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "directory-equality-derivation",
         }),
         "schema": frozenset({
-            "talaria-live-capture-v2",
             "talaria-v0.6.1-capture-v1",
             "talaria-capture-metadata-v1",
             "talaria-v0.6.0-capture-v1",

@@ -4,6 +4,14 @@
 
 ## 2026-09-07
 
+### A rebase can silently revert a merged consolidation when carrying a pre-split commit
+
+**Evidence**: Pull Request 171 on branch `work/150-f3-twin-binding` widened `CAPTURE_METADATA_SCHEMA.vocabularies` in `scripts/acceptance/v050_receipt.py` to admit `schema` and `schema_version` for `"talaria-live-capture-v2"`, while deleting `test_talaria_live_capture_v2_format_version_is_sole_path` from `tests/docs/test_v061_lineage.py`. This change accidentally un-did the single-path consolidation that had landed on `main` through Pull Request 167 (commit `1f1067e`).
+
+**Mechanism**: Commit `81fcc32` had admitted `schema` and `schema_version` as alternate labels alongside `format_version`. That commit was subsequently split to land urgent acceptance gate repairs directly on `main`: commit `1f1067e` in Pull Request 167 closed the two alternate label routes, established `format_version` as the sole canonical route, and added an explicit test pinning that sole path. However, branch `work/150-f3-twin-binding` retained the pre-split state in commit `197df98` (which carried the held host sentinel work). When the branch was rebased onto `main`, git replayed `197df98` on top of `main`. Because `197df98` touched the exact same lines in `v050_receipt.py` and `test_v061_lineage.py` as `1f1067e`, git resolved the three-way merge cleanly without generating merge conflict markers, replacing the consolidated single-path code and its test with the older three-path code and three-path test. The branch test suite remained green, silently concealing the reversion.
+
+**Generalizable rule**: When splitting a branch into an upstream fix and a held feature, any rebase of the held branch onto the merged fix must inspect overlapping hunks; a clean merge without conflicts does not mean semantic agreement when the rebased commit predates the split.
+
 ### An unexercised URL builder constructs something plausible and wrong
 
 **Evidence**: theme downloads from Open VSX 404'd (`talaria/themes/marketplace.py:_file_url`),
@@ -64,6 +72,7 @@ re-measured the premise when the calling sequence was the thing that changed.
 will always run, treat that as a premise that expires with the next caller, not a fact about
 the code it sits in; every such premise needs a test that reaches the branch, or it is a
 hole wearing a comment.
+
 ### A regex measuring a rendered artifact asserts about its own vocabulary, not the render
 
 **Evidence**: `test_the_served_viewport_is_the_rows_on_screen`

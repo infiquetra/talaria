@@ -3254,22 +3254,34 @@ def test_live_22_and_live_23_case_vocabulary(tmp_path: Path) -> None:
     )
 
 
-def test_talaria_live_capture_v2_admitted_in_schema_and_format_version() -> None:
-    # format_version, schema, and schema_version all admit talaria-live-capture-v2
-    for version_key in ("format_version", "schema", "schema_version"):
-        meta = {
+def test_talaria_live_capture_v2_format_version_is_sole_path() -> None:
+    # format_version is the single registered path for talaria-live-capture-v2
+    meta = {
+        "columns": 80,
+        "rows": 24,
+        "cell_width": 10,
+        "cell_height": 20,
+        "twin_digest": "a" * 64,
+        "format_version": "talaria-live-capture-v2",
+    }
+    assert CAPTURE_METADATA_SCHEMA.validate(meta, path=Path("frame.json")) == []
+
+    # SchemaRegistry.lookup resolves document with format_version="talaria-live-capture-v2"
+    doc_fmt = {"format_version": "talaria-live-capture-v2"}
+    assert SchemaRegistry.lookup(Path("frame.json"), doc_fmt) is CAPTURE_METADATA_SCHEMA
+
+    # Dropped paths: schema and schema_version do not admit talaria-live-capture-v2
+    for dropped_key in ("schema", "schema_version"):
+        bad_meta = {
             "columns": 80,
             "rows": 24,
             "cell_width": 10,
             "cell_height": 20,
             "twin_digest": "a" * 64,
-            version_key: "talaria-live-capture-v2",
+            dropped_key: "talaria-live-capture-v2",
         }
-        assert CAPTURE_METADATA_SCHEMA.validate(meta, path=Path("frame.json")) == []
-
-        # SchemaRegistry.lookup resolves document with any of these fields
-        doc = {version_key: "talaria-live-capture-v2"}
-        assert SchemaRegistry.lookup(Path("frame.json"), doc) is CAPTURE_METADATA_SCHEMA
+        errs = CAPTURE_METADATA_SCHEMA.validate(bad_meta, path=Path("frame.json"))
+        assert any("not in registered closed vocabulary" in e for e in errs)
 
 
 def test_host_sentinel_legacy_witnesses_format_refused(tmp_path: Path) -> None:
@@ -3767,6 +3779,10 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     extra_stage["observations"]["rogue-stage"] = {"source_id": "session-a-init"}
     errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(extra_stage, path=derivation_path)
     assert any("Live 13 derivation contains undeclared scenario stages" in e for e in errs)
+    assert any(
+        "undeclared scenario stage 'rogue-stage' at observations.rogue-stage" in e
+        for e in errs
+    )
 
     # 7. One-sided adoption comparison refused (mutation-held)
     one_sided_adopt1 = copy.deepcopy(valid_doc)
@@ -3937,6 +3953,297 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(
         json.loads(cli_out.read_text(encoding="utf-8")), path=cli_out
     ) == []
+
+    # 18. Comprehensive mutation-held refusal of all remaining validation rules
+    # ── Group 1: Document identity, versioning, and metadata ─────────────────
+    bad = copy.deepcopy(valid_doc)
+    bad["record_type"] = "wrong-record-type"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("'record_type' must be 'directory-equality-derivation'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["format_version"] = "wrong-format-version"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("'format_version' must be 'talaria-directory-equality-v1'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["case"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'case'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["checklist_item"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'checklist_item'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["case"] = "live-13"
+    bad["checklist_item"] = "live-14"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("does not match 'checklist_item'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["status"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'status'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["status"] = "unapproved-status"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("not in status vocabulary" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["candidate_commit"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("requires 'candidate_commit'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["candidate_commit"] = "not-a-40-hex-commit"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a 40-character hexadecimal git commit SHA" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["derived_by"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing recorded derivation role ('derived_by' is required)" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["derived_by"] = "unapproved-role"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("not in role labels" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["derived_at"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "missing recorded derivation timestamp ('derived_at' is required)" in e for e in errs
+    )
+
+    bad = copy.deepcopy(valid_doc)
+    bad["derived_at"] = "2026-09-06T12:00:00"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("derived_at must have timezone qualification" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["derived_at"] = "yesterday-afternoon"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("derived_at must be an ISO 8601 timestamp" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["permission_semantics"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'permission_semantics'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["permission_semantics"] = "   "
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("'permission_semantics' must be a non-empty string" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["permission_semantics"] = "granted on /private/var/folders/xyz/leak"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("discloses absolute path" in e for e in errs)
+    bad_disk_file = evidence_dir / "disclosed-path-derivation.json"
+    bad_disk_file.write_text(json.dumps(bad), encoding="utf-8")
+    disk_errs = evidence_file_privacy_errors(bad_disk_file, repo_root=tmp_path)
+    assert any("discloses absolute path" in e for e in disk_errs)
+
+    # ── Group 2: Sources structure and item fields ───────────────────────────
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("requires 'sources'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"] = ["session-a-init"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(e == f"{derivation_path}: 'sources' must be an object" for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"] = "not-a-dict"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("sources.session-a-init must be an object" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]["session-a-init"]["source_file"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'source_file'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["source_file"] = "/Users/jefcox/secret/raw.wire.jsonl"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a relative filename" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]["session-a-init"]["derived_file"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'derived_file'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["derived_file"] = "/tmp/derived.jsonl"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a relative filename" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]["session-a-init"]["source_sha256"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'source_sha256'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["source_sha256"] = "invalid-sha"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a 64-character hexadecimal SHA-256 digest" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]["session-a-init"]["derived_sha256"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'derived_sha256'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["derived_sha256"] = "invalid-sha"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a 64-character hexadecimal SHA-256 digest" in e for e in errs)
+
+    corrupt_wire = evidence_dir / "corrupt-header.derived.jsonl"
+    corrupt_wire.write_text("not json at all\n", encoding="utf-8")
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["derived_file"] = "corrupt-header.derived.jsonl"
+    bad["sources"]["session-a-init"]["derived_sha256"] = (
+        hashlib.sha256(b"not json at all\n").hexdigest()
+    )
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("headerless slice" in e for e in errs)
+
+    # ── Group 3: Observations structure and common stage fields ──────────────
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("requires 'observations'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"] = ["project-a-adoption"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(e == f"{derivation_path}: 'observations' must be an object" for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"] = "not-an-object"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("observations.project-a-adoption must be an object" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["source_id"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'source_id'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["source_id"] = "undeclared-source-id"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("not declared in 'sources'" in e for e in errs)
+
+    # ── Group 4: Adoption observations fields and predicates ─────────────────
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["request_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'request_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["request_seq"] = 0
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("request_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["reply_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'reply_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["reply_seq"] = -1
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("reply_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["request_source_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'request_source_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["request_source_seq"] = "two"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("request_source_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["reply_source_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'reply_source_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["reply_source_seq"] = 0
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("reply_source_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["requested_equals_launch"]
+    del bad["observations"]["project-a-adoption"]["reported_equals_expected"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing adoption equality predicates" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["requested_equals_launch"] = "true"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("requested_equals_launch must be a boolean" in e for e in errs)
+
+    # ── Group 5: Tool observations fields and predicates ─────────────────────
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-tool"]["tool_start_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'tool_start_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["tool_start_seq"] = 0
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("tool_start_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-tool"]["tool_complete_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'tool_complete_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["tool_complete_seq"] = -3
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("tool_complete_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-tool"]["pwd_equals_expected"]
+    del bad["observations"]["project-a-tool"]["fixture_content_matches"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing tool equality predicates" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["pwd_equals_expected"] = 1
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("pwd_equals_expected must be a boolean" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-tool"]["override_supplied"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory boolean 'override_supplied'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["override_supplied"] = "no"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("override_supplied must be a boolean" in e for e in errs)
+
+    # ── Group 6: Invariant observation on b-after-a-override ─────────────────
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["b-after-a-override"]["bounded_absence_session_cwd_set"] = "yes"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("bounded_absence_session_cwd_set must be a boolean" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["b-after-a-override"]["b_reported_cwd_unchanged"] = "yes"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("b_reported_cwd_unchanged must be a boolean" in e for e in errs)
 
 
 def test_candidate_wheel_sha256_validation_and_privacy_scanning(tmp_path: Path) -> None:
