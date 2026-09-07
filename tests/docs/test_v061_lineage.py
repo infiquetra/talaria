@@ -3546,8 +3546,13 @@ def test_host_sentinel_quartet_proposal_validation(tmp_path: Path) -> None:
 
 
 def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: Path) -> None:
+    repo, early, candidate = _git_repo(tmp_path)
     evidence_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-13"
     evidence_dir.mkdir(parents=True, exist_ok=True)
+    receipt_file = evidence_dir / "receipt.json"
+    receipt_file.write_text(
+        json.dumps({"candidate_commit_sha": candidate}, indent=2), encoding="utf-8"
+    )
 
     def _write_wire_file(name: str, frames: list[dict[str, Any]]) -> tuple[str, str]:
         p = evidence_dir / name
@@ -3719,7 +3724,7 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
         "format_version": "talaria-directory-equality-v1",
         "case": "live-13",
         "checklist_item": "live-13",
-        "candidate_commit": "e" * 40,
+        "candidate_commit": candidate,
         "derived_by": "dedicated-tester",
         "derived_at": "2026-09-06T12:00:00+00:00",
         "status": "pass",
@@ -4049,7 +4054,7 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     gen_out = evidence_dir / "generated-derivation.json"
     written_path = v061_evidence.generate_directory_equality_derivation(
         output_path=gen_out,
-        candidate_commit="e" * 40,
+        candidate_commit=candidate,
         sources=sources_data,
         observations=observations_data,
         status="pass",
@@ -4070,7 +4075,7 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     with pytest.raises(SystemExit) as excinfo:
         v061_evidence.generate_directory_equality_derivation(
             output_path=bad_gen_out,
-            candidate_commit="e" * 40,
+            candidate_commit=candidate,
             sources=bad_sources_data,
             observations=observations_data,
             repo_root=tmp_path,
@@ -4086,7 +4091,7 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     cli_out = evidence_dir / "cli-derivation.json"
     exit_code = v061_evidence.main([
         "derive-directory-equality",
-        "--candidate-commit", "e" * 40,
+        "--candidate-commit", candidate,
         "--sources-json", str(sources_json_file),
         "--observations-json", str(observations_json_file),
         "--output", str(cli_out),
@@ -4100,6 +4105,53 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(
         json.loads(cli_out.read_text(encoding="utf-8")), path=cli_out
     ) == []
+
+    # 17b. Generator refuses --candidate-commit disagreeing with sibling receipt.json
+    cli_mismatched_out = evidence_dir / "cli-mismatched-derivation.json"
+    with pytest.raises(SystemExit) as excinfo:
+        v061_evidence.main([
+            "derive-directory-equality",
+            "--candidate-commit", early,
+            "--sources-json", str(sources_json_file),
+            "--observations-json", str(observations_json_file),
+            "--output", str(cli_mismatched_out),
+            "--status", "pass",
+            "--derived-by", "dedicated-tester",
+            "--derived-at", "2026-09-06T12:00:00+00:00",
+            "--repo-root", str(tmp_path),
+        ])
+    assert "refusing to write directory-equality derivation: record does not validate" in str(
+        excinfo.value
+    )
+    assert (
+        f"candidate_commit ({early}) does not match receipt candidate_commit_sha ({candidate})"
+        in str(excinfo.value)
+    )
+    assert not cli_mismatched_out.exists()
+
+    gen_mismatched_out = evidence_dir / "gen-mismatched-derivation.json"
+    with pytest.raises(SystemExit) as excinfo:
+        v061_evidence.generate_directory_equality_derivation(
+            output_path=gen_mismatched_out,
+            candidate_commit=early,
+            sources=sources_data,
+            observations=observations_data,
+            status="pass",
+            derived_by="dedicated-tester",
+            derived_at="2026-09-06T12:00:00+00:00",
+            permission_semantics="explicit-allow-all",
+            case="live-13",
+            checklist_item="live-13",
+            repo_root=tmp_path,
+        )
+    assert "refusing to write directory-equality derivation: record does not validate" in str(
+        excinfo.value
+    )
+    assert (
+        f"candidate_commit ({early}) does not match receipt candidate_commit_sha ({candidate})"
+        in str(excinfo.value)
+    )
+    assert not gen_mismatched_out.exists()
 
     # 18. Comprehensive mutation-held refusal of all remaining validation rules
     # ── Group 1: Document identity, versioning, and metadata ─────────────────
@@ -4479,6 +4531,157 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     assert any(
         "status cannot be 'pass' when one or more equality predicates are false" in e
         for e in errs
+    )
+
+    # ── Group 7: Candidate commit binding and Git resolution ─────────────────
+    # Mismatched commit against sibling receipt is refused
+    bad_commit = copy.deepcopy(valid_doc)
+    bad_commit["candidate_commit"] = early
+    errs = validate_directory_equality_derivation(bad_commit, path=derivation_path)
+    assert any(
+        f"candidate_commit ({early}) does not match receipt candidate_commit_sha ({candidate})"
+        in e
+        for e in errs
+    )
+    assert not any("does not resolve in this repository" in e for e in errs)
+
+    # Unresolvable commit (e.g. forty zeros) is refused by git resolution
+    bad_unresolvable = copy.deepcopy(valid_doc)
+    bad_unresolvable["candidate_commit"] = "0" * 40
+    errs = validate_directory_equality_derivation(bad_unresolvable, path=derivation_path)
+    assert any(
+        "candidate_commit 000000000000 does not resolve in this repository" in e for e in errs
+    )
+
+    # Even when expected_commit matches the unresolvable SHA, git resolution still refuses
+    errs_matched = validate_directory_equality_derivation(
+        bad_unresolvable, path=derivation_path, expected_commit="0" * 40
+    )
+    assert any(
+        "candidate_commit 000000000000 does not resolve in this repository" in e
+        for e in errs_matched
+    )
+    assert not any("does not match receipt candidate_commit_sha" in e for e in errs_matched)
+
+    # Explicit expected_commit mismatch is refused
+    errs_exp = validate_directory_equality_derivation(
+        valid_doc, path=derivation_path, expected_commit=early
+    )
+    assert any(
+        f"candidate_commit ({candidate}) does not match receipt candidate_commit_sha ({early})"
+        in e
+        for e in errs_exp
+    )
+
+    # Tree-path binding: missing sibling receipt.json when expected_commit is None is refused
+    isolated_dir = (
+        tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "isolated-derivation"
+    )
+    isolated_dir.mkdir(parents=True, exist_ok=True)
+    iso_derivation_path = isolated_dir / "directory-equality-derivation.json"
+    errs_missing_receipt = validate_directory_equality_derivation(
+        valid_doc, path=iso_derivation_path
+    )
+    assert any(
+        "missing sibling receipt.json for candidate_commit verification" in e
+        for e in errs_missing_receipt
+    )
+
+    # Tree-path binding: malformed sibling receipt.json is explicitly refused
+    malformed_receipt_file = isolated_dir / "receipt.json"
+    malformed_receipt_file.write_text("{invalid-json", encoding="utf-8")
+    errs_malformed = validate_directory_equality_derivation(
+        valid_doc, path=iso_derivation_path
+    )
+    assert any("sibling receipt.json is malformed" in e for e in errs_malformed)
+
+    # Tree-path binding: sibling receipt.json missing candidate_commit_sha is explicitly refused
+    malformed_receipt_file.write_text(
+        json.dumps({"checklist_item": "live-13"}), encoding="utf-8"
+    )
+    errs_missing_sha = validate_directory_equality_derivation(
+        valid_doc, path=iso_derivation_path
+    )
+    assert any(
+        "sibling receipt.json missing 'candidate_commit_sha'" in e for e in errs_missing_sha
+    )
+
+    # ── Group 8: Stage-to-source deterministic mapping ───────────────────────
+    bad_source_map1 = copy.deepcopy(valid_doc)
+    bad_source_map1["observations"]["resumed-a"]["source_id"] = "session-a-init"
+    errs = validate_directory_equality_derivation(bad_source_map1, path=derivation_path)
+    assert any(
+        "observations.resumed-a.source_id 'session-a-init' does not match "
+        "expected source 'session-a-resume' for stage 'resumed-a'"
+        in e
+        for e in errs
+    )
+
+    bad_source_map2 = copy.deepcopy(valid_doc)
+    bad_source_map2["observations"]["project-b-adoption"]["source_id"] = "session-a-init"
+    errs = validate_directory_equality_derivation(bad_source_map2, path=derivation_path)
+    assert any(
+        "observations.project-b-adoption.source_id 'session-a-init' does not match "
+        "expected source 'session-b-init' for stage 'project-b-adoption'"
+        in e
+        for e in errs
+    )
+
+    # ── Group 9: Receipt verification enforces matching derivation commit ────
+    receipt_test_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-13-receipt"
+    receipt_test_dir.mkdir(parents=True, exist_ok=True)
+    r_derivation_path = receipt_test_dir / "directory-equality-derivation.json"
+    r_derivation_path.write_text(json.dumps(valid_doc, indent=2), encoding="utf-8")
+    actual_derivation_digest = hashlib.sha256(r_derivation_path.read_bytes()).hexdigest()
+
+    r_receipt_data: dict[str, Any] = {
+        "schema_version": "talaria-v0.6.1-receipt-v1",
+        "release": "0.6.1",
+        "checklist_item": "live-13",
+        "title": "Working Directory Equality Derivation",
+        "issue": "https://github.com/infiquetra/talaria/issues/140",
+        "tester": "dedicated-tester",
+        "verdict": "pass",
+        "candidate_commit_sha": candidate,
+        "recorded_at": "2026-09-06T12:00:00+00:00",
+        "install": {
+            "kind": "source-checkout",
+            "commit": candidate,
+        },
+        "harness": {
+            "kind": "repository-tooling",
+            "commit": candidate,
+        },
+        "evidence": {
+            "files": {
+                "directory-equality-derivation.json": actual_derivation_digest,
+            },
+        },
+    }
+    r_receipt_file = receipt_test_dir / "receipt.json"
+    r_receipt_file.write_text(json.dumps(r_receipt_data, indent=2), encoding="utf-8")
+    assert (
+        _validate_v061_receipt(r_receipt_data, receipt_path=r_receipt_file, verify_files=True)
+        == []
+    )
+
+    mismatched_derivation_doc = copy.deepcopy(valid_doc)
+    mismatched_derivation_doc["candidate_commit"] = early
+    r_derivation_path.write_text(json.dumps(mismatched_derivation_doc, indent=2), encoding="utf-8")
+    mismatched_digest = hashlib.sha256(r_derivation_path.read_bytes()).hexdigest()
+    mismatched_receipt_data = copy.deepcopy(r_receipt_data)
+    mismatched_receipt_data["evidence"]["files"]["directory-equality-derivation.json"] = (
+        mismatched_digest
+    )
+    r_receipt_file.write_text(json.dumps(mismatched_receipt_data, indent=2), encoding="utf-8")
+    receipt_errs = _validate_v061_receipt(
+        mismatched_receipt_data, receipt_path=r_receipt_file, verify_files=True
+    )
+    assert any(
+        f"directory-equality derivation candidate_commit ({early}) does not match "
+        f"receipt candidate_commit_sha ({candidate})"
+        in e
+        for e in receipt_errs
     )
 
 

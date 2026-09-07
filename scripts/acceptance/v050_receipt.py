@@ -2155,15 +2155,65 @@ DIRECTORY_EQUALITY_INVARIANT_OBSERVATION_SCHEMA = RecordSchema(
     },
 )
 
+DIRECTORY_EQUALITY_STAGE_SOURCES: dict[str, str] = {
+    "project-a-adoption": "session-a-init",
+    "project-a-tool": "session-a-init",
+    "project-b-adoption": "session-b-init",
+    "project-b-tool": "session-b-init",
+    "a-tool-override": "session-a-init",
+    "b-after-a-override": "session-b-init",
+    "a-after-reconnect": "session-a-init",
+    "fresh-a": "session-a-fresh",
+    "resumed-a": "session-a-resume",
+    "resumed-a-tool": "session-a-resume",
+}
+
+
+def _commit_resolves(commit: str, *, repo_root: Path) -> bool:
+    """Whether ``commit`` names an object that exists in this repository."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _find_repo_for_path(path: Path) -> Path | None:
+    """Find the root of the Git repository containing path, if any."""
+    try:
+        cur = path.resolve()
+        if cur.is_file():
+            cur = cur.parent
+        for p in [cur] + list(cur.parents):
+            if (p / ".git").exists():
+                return p
+    except Exception:
+        pass
+    return None
+
 
 def validate_directory_equality_derivation(
-    doc: dict[str, Any], *, path: Path, prefix: str = ""
+    doc: dict[str, Any],
+    *,
+    path: Path,
+    prefix: str = "",
+    expected_commit: str | None = None,
+    repo_root: Path = _REPO_ROOT,
 ) -> list[str]:
     """Validate Live 13 directory-equality derivation against privacy and completeness contracts."""
     errors: list[str] = []
     errors.extend(
         DIRECTORY_EQUALITY_DERIVATION_RECORD_SCHEMA.validate(doc, path=path, prefix=prefix)
     )
+
+    active_repo = repo_root
+    if active_repo == _REPO_ROOT:
+        discovered = _find_repo_for_path(path)
+        if discovered is not None:
+            active_repo = discovered
 
     # 0. Identification and versioning
     if doc.get("record_type") != "directory-equality-derivation":
@@ -2188,7 +2238,7 @@ def validate_directory_equality_derivation(
     elif doc.get("status") not in DIRECTORY_EQUALITY_STATUS_VOCABULARY:
         errors.append(f"{path}: status {doc.get('status')!r} not in status vocabulary")
 
-    # 1. Candidate commit format
+    # 1. Candidate commit format and resolution
     cand = doc.get("candidate_commit")
     if cand is None:
         errors.append(f"{path}: directory-equality derivation requires 'candidate_commit'")
@@ -2197,6 +2247,41 @@ def validate_directory_equality_derivation(
             f"{path}: 'candidate_commit' must be a 40-character hexadecimal git commit SHA "
             f"(got {cand!r})"
         )
+    else:
+        if expected_commit is None:
+            sibling_receipt = path.parent / "receipt.json"
+            if sibling_receipt.is_file():
+                try:
+                    receipt_obj = json.loads(sibling_receipt.read_text(encoding="utf-8"))
+                    if isinstance(receipt_obj, dict):
+                        cand_sha = receipt_obj.get("candidate_commit_sha")
+                        if isinstance(cand_sha, str) and cand_sha:
+                            expected_commit = cand_sha
+                        else:
+                            errors.append(
+                                f"{path}: sibling receipt.json missing 'candidate_commit_sha'"
+                            )
+                    else:
+                        errors.append(
+                            f"{path}: sibling receipt.json is not a valid JSON object"
+                        )
+                except Exception as exc:
+                    errors.append(f"{path}: sibling receipt.json is malformed: {exc}")
+            else:
+                errors.append(
+                    f"{path}: missing sibling receipt.json for candidate_commit verification"
+                )
+
+        if expected_commit is not None and cand != expected_commit:
+            errors.append(
+                f"{path}: candidate_commit ({cand}) does not match "
+                f"receipt candidate_commit_sha ({expected_commit})"
+            )
+
+        if not _commit_resolves(cand, repo_root=active_repo):
+            errors.append(
+                f"{path}: candidate_commit {cand[:12]} does not resolve in this repository"
+            )
 
     # 2. Derived by & derived at
     derived_by = doc.get("derived_by")
@@ -2362,6 +2447,13 @@ def validate_directory_equality_derivation(
             errors.append(f"{path}: {loc} missing mandatory field 'source_id'")
         elif s_id not in sources_dict:
             errors.append(f"{path}: {loc}.source_id {s_id!r} not declared in 'sources'")
+        else:
+            expected_source = DIRECTORY_EQUALITY_STAGE_SOURCES.get(stage_name)
+            if expected_source and s_id != expected_source:
+                errors.append(
+                    f"{path}: {loc}.source_id {s_id!r} does not match "
+                    f"expected source {expected_source!r} for stage {stage_name!r}"
+                )
 
         if stage_name in DIRECTORY_EQUALITY_ADOPTION_STAGES:
             for seq_key in ("request_seq", "reply_seq", "request_source_seq", "reply_source_seq"):
@@ -2520,8 +2612,22 @@ class DirectoryEqualityDerivationSchema:
     declared_keys = DIRECTORY_EQUALITY_DERIVATION_RECORD_SCHEMA.declared_keys
     vocabularies = DIRECTORY_EQUALITY_DERIVATION_RECORD_SCHEMA.vocabularies
 
-    def validate(self, doc: dict[str, Any], *, path: Path, prefix: str = "") -> list[str]:
-        return validate_directory_equality_derivation(doc, path=path, prefix=prefix)
+    def validate(
+        self,
+        doc: dict[str, Any],
+        *,
+        path: Path,
+        prefix: str = "",
+        expected_commit: str | None = None,
+        repo_root: Path = _REPO_ROOT,
+    ) -> list[str]:
+        return validate_directory_equality_derivation(
+            doc,
+            path=path,
+            prefix=prefix,
+            expected_commit=expected_commit,
+            repo_root=repo_root,
+        )
 
 
 DIRECTORY_EQUALITY_DERIVATION_SCHEMA = DirectoryEqualityDerivationSchema()
@@ -3615,7 +3721,10 @@ def evidence_file_privacy_errors(path: Path, repo_root: Path = _REPO_ROOT) -> li
         if is_json and isinstance(doc, dict):
             schema = SchemaRegistry.lookup(path, doc)
             if schema is not None:
-                errors.extend(schema.validate(doc, path=path))
+                if isinstance(schema, DirectoryEqualityDerivationSchema):
+                    errors.extend(schema.validate(doc, path=path, repo_root=repo_root))
+                else:
+                    errors.extend(schema.validate(doc, path=path))
             elif "evidence" in path.parts:
                 errors.append(
                     f"{path}: unregistered record type or undeclared key in {path.name}"
@@ -4415,6 +4524,23 @@ def _validate_v061_receipt(
                         f"{receipt_path}: evidence.redaction_review cannot be 'passed' "
                         "while redaction defects exist"
                     )
+
+            derivation_name = Path("directory-equality-derivation.json")
+            if derivation_name in listed:
+                target = receipt_dir / derivation_name
+                if target.is_file():
+                    try:
+                        derivation_doc = json.loads(target.read_text(encoding="utf-8"))
+                        if isinstance(derivation_doc, dict):
+                            d_commit = derivation_doc.get("candidate_commit")
+                            if candidate_commit is not None and d_commit != candidate_commit:
+                                errors.append(
+                                    f"directory-equality derivation candidate_commit ({d_commit}) "
+                                    f"does not match receipt candidate_commit_sha "
+                                    f"({candidate_commit})"
+                                )
+                    except Exception:
+                        pass
     except HarnessError as exc:
         errors.append(str(exc))
     if "supersedes" in receipt and receipt["supersedes"] is not None:
@@ -4462,18 +4588,6 @@ def _validate_v061_install(
     except HarnessError as exc:
         errors.append(str(exc))
     return errors
-
-
-def _commit_resolves(commit: str, *, repo_root: Path) -> bool:
-    """Whether ``commit`` names an object that exists in this repository."""
-    result = subprocess.run(
-        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0
 
 
 def _is_ancestor(commit: str, descendant: str, *, repo_root: Path) -> bool:
