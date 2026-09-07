@@ -19,11 +19,16 @@ section (`talaria/ui/inspector.py:FUNCTION_KEY_NOTE`) — F1 unbound, F2 as ctrl
 macOS interception with the system-setting name, deliberately using "consumed", a word the
 footer refuses, so the footer-only scope of the guard stays load-bearing. The panel has no
 vertical slack for an always-open note: an early version broke
-`test_a_focused_diagnostics_row_expands_and_folds_back`, on its diagnostics-row assertions — an unfocused roster row comes back three lines tall
-instead of one, its provenance is no longer readable, and it does not fold back. The Context
-region does shift when the overflow engages scroll and a scrollbar (y 6 to 8, width 32 to
-31), but the test captures its baseline after the KEYS row exists, so that shift is absorbed
-and the Context assertions pass. So the row uses the #144 Option B pattern: one line until focused, full sentences on focus, last
+`test_a_focused_diagnostics_row_expands_and_folds_back` (tests/ui/test_inspector.py) on a
+Context-region assertion. With only the KEYS row held open, an unfocused roster row stays
+one line, its provenance is still readable on focus, and it still folds back. What moves is
+the Context section: with rows expanding, the panel takes a scrollbar and the
+section shifts — measured at y 6 to 5 and width 32 to 31 at the point the test moves focus on
+to the last row. Those figures belong to that focus sequence; a single focus change from a
+fresh panel moves nothing, and other orders shift it further. Roster height 3, a missing "0s ago"
+substring, and a row that will not fold appear only if the shared row CSS that diagnostics
+rows also use is forced to wrap — that is an artifact of the forcing method, not of an open
+KEYS note. So the row uses the #144 Option B pattern: one line until focused, full sentences on focus, last
 in the keyboard cycle. The test pins the relocation and opens the row, so a future edit can
 neither silently drop the caveat nor ship one nobody can read. The live footer now sits at
 exactly 80 of 80 cells with no headroom for another chord; a clipped footer fails
