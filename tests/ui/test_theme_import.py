@@ -8,6 +8,7 @@ import json
 import os
 import re
 import threading
+import types
 import urllib.error
 from email.message import Message
 from pathlib import Path
@@ -1819,11 +1820,20 @@ class _RecordedOpenVsxUrlopen:
 
     Each route answers the way the live service did when recorded (see
     tests/fixtures/openvsx/README.md): the metadata document and the manifest
-    answer 200 on either URL shape, the theme file answers 200 on the unpkg
-    route, and any other /api/.../file/ path raises the HTTPError 404 the
-    live service returns — raised, not returned, because that is what real
-    urllib does and what the transport handles.
+    answer 200 on either URL shape, the theme file answers 200 on the one
+    recorded unpkg URL, and anything else raises the HTTPError 404 the live
+    service returns — raised, not returned, because that is what real urllib
+    does and what the transport handles. The unpkg branch matches the recorded
+    URL exactly, never a substring: a URL missing the extension/ prefix, or
+    carrying a wrong publisher or version, is a live 404 for each, and the
+    double must refuse all three.
     """
+
+    #: The one file URL the live service answered 200 for when recorded.
+    RECORDED_FILE_URL = (
+        "https://open-vsx.org/vscode/unpkg/dracula-theme/theme-dracula/"
+        "2.25.1/extension/theme/dracula.json"
+    )
 
     def __init__(self, metadata: bytes, manifest: bytes, theme: bytes) -> None:
         self._metadata = metadata
@@ -1838,7 +1848,7 @@ class _RecordedOpenVsxUrlopen:
             return _MemoryResponse(200, self._metadata)
         if url.endswith("/package.json"):
             return _MemoryResponse(200, self._manifest)
-        if "/vscode/unpkg/" in url:
+        if url == _RecordedOpenVsxUrlopen.RECORDED_FILE_URL:
             return _MemoryResponse(200, self._theme)
         raise urllib.error.HTTPError(url, 404, "Not Found", Message(), None)
 
@@ -1872,3 +1882,42 @@ def test_openvsx_lookup_and_download_follow_the_live_routing() -> None:
         data
         == (OPENVSX_FIXTURES / "dracula-theme-2.25.1-dracula.json").read_bytes()
     )
+
+
+def test_openvsx_double_serves_only_the_recorded_file_url() -> None:
+    """The double is a record, not a matcher: the exact URL or a 404.
+
+    The unpkg branch once matched the /vscode/unpkg/ substring, so a URL
+    missing the extension/ prefix, or carrying a wrong publisher or version —
+    each a live 404, checked when recorded — passed green. Each near-miss
+    below must raise the live 404 while the recorded URL serves the fixture;
+    otherwise the round-trip test above proves a fragment, not the URL.
+    """
+    openers = _RecordedOpenVsxUrlopen(
+        metadata=b'{"version": "2.25.1", "description": "recorded"}',
+        manifest=(OPENVSX_FIXTURES / "dracula-theme-2.25.1-package.json").read_bytes(),
+        theme=(OPENVSX_FIXTURES / "dracula-theme-2.25.1-dracula.json").read_bytes(),
+    )
+
+    recorded = _RecordedOpenVsxUrlopen.RECORDED_FILE_URL
+    with openers(types.SimpleNamespace(full_url=recorded)) as response:
+        assert response.status == 200
+        assert response.read() == (
+            OPENVSX_FIXTURES / "dracula-theme-2.25.1-dracula.json"
+        ).read_bytes()
+
+    near_misses = (
+        # No extension/ prefix.
+        "https://open-vsx.org/vscode/unpkg/dracula-theme/theme-dracula/"
+        "2.25.1/theme/dracula.json",
+        # Wrong publisher.
+        "https://open-vsx.org/vscode/unpkg/acme-corp/theme-dracula/"
+        "2.25.1/extension/theme/dracula.json",
+        # Wrong version.
+        "https://open-vsx.org/vscode/unpkg/dracula-theme/theme-dracula/"
+        "9.9.9/extension/theme/dracula.json",
+    )
+    for miss in near_misses:
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            openers(types.SimpleNamespace(full_url=miss))
+        assert exc_info.value.code == 404
