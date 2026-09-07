@@ -299,6 +299,10 @@ def test_v050_is_a_dated_released_section_with_a_tag_reference() -> None:
     assert (
         "[0.5.0]: https://github.com/infiquetra/talaria/releases/tag/v0.5.0" in changelog
     )
+    # Derived from the package version rather than written here. A literal pinned the
+    # previous release, so every bump silently required editing this test — and a test
+    # that must be edited to keep passing is not checking anything at that moment.
     assert (
-        "[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.0...HEAD" in changelog
+        "[Unreleased]: "
+        f"https://github.com/infiquetra/talaria/compare/v{__version__}...HEAD" in changelog
     )
