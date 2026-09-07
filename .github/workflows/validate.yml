@@ -25,6 +25,9 @@ jobs:
         run: npm run check
       - name: Check whitespace
         run: git diff --check
+      - name: Check conflict markers
+        run: |
+          ! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
 
   # Talaria's actual check pipeline (ADR-0004). PC7's supported matrix is
   # macOS arm64, so this job carries no continue-on-error: a failure here
