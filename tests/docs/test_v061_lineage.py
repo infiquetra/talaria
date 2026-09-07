@@ -4106,6 +4106,53 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
         json.loads(cli_out.read_text(encoding="utf-8")), path=cli_out
     ) == []
 
+    # 17b. Generator refuses --candidate-commit disagreeing with sibling receipt.json
+    cli_mismatched_out = evidence_dir / "cli-mismatched-derivation.json"
+    with pytest.raises(SystemExit) as excinfo:
+        v061_evidence.main([
+            "derive-directory-equality",
+            "--candidate-commit", early,
+            "--sources-json", str(sources_json_file),
+            "--observations-json", str(observations_json_file),
+            "--output", str(cli_mismatched_out),
+            "--status", "pass",
+            "--derived-by", "dedicated-tester",
+            "--derived-at", "2026-09-06T12:00:00+00:00",
+            "--repo-root", str(tmp_path),
+        ])
+    assert "refusing to write directory-equality derivation: record does not validate" in str(
+        excinfo.value
+    )
+    assert (
+        f"candidate_commit ({early}) does not match receipt candidate_commit_sha ({candidate})"
+        in str(excinfo.value)
+    )
+    assert not cli_mismatched_out.exists()
+
+    gen_mismatched_out = evidence_dir / "gen-mismatched-derivation.json"
+    with pytest.raises(SystemExit) as excinfo:
+        v061_evidence.generate_directory_equality_derivation(
+            output_path=gen_mismatched_out,
+            candidate_commit=early,
+            sources=sources_data,
+            observations=observations_data,
+            status="pass",
+            derived_by="dedicated-tester",
+            derived_at="2026-09-06T12:00:00+00:00",
+            permission_semantics="explicit-allow-all",
+            case="live-13",
+            checklist_item="live-13",
+            repo_root=tmp_path,
+        )
+    assert "refusing to write directory-equality derivation: record does not validate" in str(
+        excinfo.value
+    )
+    assert (
+        f"candidate_commit ({early}) does not match receipt candidate_commit_sha ({candidate})"
+        in str(excinfo.value)
+    )
+    assert not gen_mismatched_out.exists()
+
     # 18. Comprehensive mutation-held refusal of all remaining validation rules
     # ── Group 1: Document identity, versioning, and metadata ─────────────────
     bad = copy.deepcopy(valid_doc)
@@ -4524,6 +4571,39 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
         f"candidate_commit ({candidate}) does not match receipt candidate_commit_sha ({early})"
         in e
         for e in errs_exp
+    )
+
+    # Tree-path binding: missing sibling receipt.json when expected_commit is None is refused
+    isolated_dir = (
+        tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "isolated-derivation"
+    )
+    isolated_dir.mkdir(parents=True, exist_ok=True)
+    iso_derivation_path = isolated_dir / "directory-equality-derivation.json"
+    errs_missing_receipt = validate_directory_equality_derivation(
+        valid_doc, path=iso_derivation_path
+    )
+    assert any(
+        "missing sibling receipt.json for candidate_commit verification" in e
+        for e in errs_missing_receipt
+    )
+
+    # Tree-path binding: malformed sibling receipt.json is explicitly refused
+    malformed_receipt_file = isolated_dir / "receipt.json"
+    malformed_receipt_file.write_text("{invalid-json", encoding="utf-8")
+    errs_malformed = validate_directory_equality_derivation(
+        valid_doc, path=iso_derivation_path
+    )
+    assert any("sibling receipt.json is malformed" in e for e in errs_malformed)
+
+    # Tree-path binding: sibling receipt.json missing candidate_commit_sha is explicitly refused
+    malformed_receipt_file.write_text(
+        json.dumps({"checklist_item": "live-13"}), encoding="utf-8"
+    )
+    errs_missing_sha = validate_directory_equality_derivation(
+        valid_doc, path=iso_derivation_path
+    )
+    assert any(
+        "sibling receipt.json missing 'candidate_commit_sha'" in e for e in errs_missing_sha
     )
 
     # ── Group 8: Stage-to-source deterministic mapping ───────────────────────

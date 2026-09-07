@@ -2255,10 +2255,22 @@ def validate_directory_equality_derivation(
                     receipt_obj = json.loads(sibling_receipt.read_text(encoding="utf-8"))
                     if isinstance(receipt_obj, dict):
                         cand_sha = receipt_obj.get("candidate_commit_sha")
-                        if isinstance(cand_sha, str):
+                        if isinstance(cand_sha, str) and cand_sha:
                             expected_commit = cand_sha
-                except Exception:
-                    pass
+                        else:
+                            errors.append(
+                                f"{path}: sibling receipt.json missing 'candidate_commit_sha'"
+                            )
+                    else:
+                        errors.append(
+                            f"{path}: sibling receipt.json is not a valid JSON object"
+                        )
+                except Exception as exc:
+                    errors.append(f"{path}: sibling receipt.json is malformed: {exc}")
+            else:
+                errors.append(
+                    f"{path}: missing sibling receipt.json for candidate_commit verification"
+                )
 
         if expected_commit is not None and cand != expected_commit:
             errors.append(
@@ -4194,7 +4206,6 @@ def _validate_v061_receipt(
     *,
     receipt_path: Path,
     verify_files: bool = True,
-    repo_root: Path = _REPO_ROOT,
 ) -> list[str]:
     """Return every defect in a v0.6.1 live-case receipt (#150's rulings).
 
