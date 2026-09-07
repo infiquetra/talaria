@@ -22,8 +22,10 @@ vertical slack for an always-open note: an early version broke
 `test_a_focused_diagnostics_row_expands_and_folds_back` (tests/ui/test_inspector.py) on a
 Context-region assertion. With only the KEYS row held open, an unfocused roster row stays
 one line, its provenance is still readable on focus, and it still folds back. What moves is
-the Context section, once a later diagnostics row takes focus and the panel engages a
-scrollbar (measured: y 6 to 5, width 32 to 31). Roster height 3, a missing "0s ago"
+the Context section: with rows expanding, the panel takes a scrollbar and the
+section shifts — measured at y 6 to 5 and width 32 to 31 at the point the test moves focus on
+to the last row. Those figures belong to that focus sequence; a single focus change from a
+fresh panel moves nothing, and other orders shift it further. Roster height 3, a missing "0s ago"
 substring, and a row that will not fold appear only if the shared row CSS that diagnostics
 rows also use is forced to wrap — that is an artifact of the forcing method, not of an open
 KEYS note. So the row uses the #144 Option B pattern: one line until focused, full sentences on focus, last
