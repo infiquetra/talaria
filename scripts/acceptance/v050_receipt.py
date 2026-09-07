@@ -1417,6 +1417,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         },
         "candidate": {
             "commit_sha": ValueCategory.DIGEST,
+            "wheel_sha256": ValueCategory.DIGEST,
             "entry_point": ValueCategory.PATH,
             "source_module": ValueCategory.PATH,
             "binary_sha256": ValueCategory.DIGEST,
@@ -1464,8 +1465,10 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "png_sha256": "source-capture",
         "candidate.commit_sha": "git-commit",
         "candidate.binary_sha256": "artifact",
+        "candidate.wheel_sha256": "wheel",
         "commit_sha": "git-commit",
         "binary_sha256": "artifact",
+        "wheel_sha256": "wheel",
         "text_twin.sha256": "text-twin",
         "text_twin.twin_digest": "text-twin",
         "text_twin.digest": "text-twin",

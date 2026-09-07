@@ -2449,6 +2449,16 @@ def test_capture_metadata_schema_category_enforcement() -> None:
     errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
     assert any("must be a hex digest" in e for e in errs)
 
+    # 5b. candidate.wheel_sha256 DIGEST: accepts 64-char hex, rejects non-digest string
+    good_wheel = json.loads(json.dumps(base_doc))
+    good_wheel["candidate"]["wheel_sha256"] = "6" * 64
+    assert CAPTURE_METADATA_SCHEMA.validate(good_wheel, path=dummy_path) == []
+
+    bad_wheel = json.loads(json.dumps(base_doc))
+    bad_wheel["candidate"]["wheel_sha256"] = "not-a-wheel-digest"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_wheel, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
     # Additional category checks to bind all declared assignments:
     # 6. twin_path PATH: rejects absolute path
     bad = json.loads(json.dumps(base_doc))
@@ -3927,6 +3937,118 @@ def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: P
     assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(
         json.loads(cli_out.read_text(encoding="utf-8")), path=cli_out
     ) == []
+
+
+def test_candidate_wheel_sha256_validation_and_privacy_scanning(tmp_path: Path) -> None:
+    # 1. Registration assertions
+    candidate_schema = CAPTURE_METADATA_SCHEMA.nested_schemas["candidate"]
+    assert candidate_schema["wheel_sha256"] == ValueCategory.DIGEST
+    assert CAPTURE_METADATA_SCHEMA.digest_preimages["candidate.wheel_sha256"] == "wheel"
+    assert "wheel" in ALLOWED_PREIMAGE_CLASSES
+
+    # 2. Schema validation with valid 64-char hex digest
+    meta_doc: dict[str, Any] = {
+        "candidate": {
+            "commit_sha": "5" * 40,
+            "entry_point": "<tool-environment>/bin/talaria",
+            "source_module": "talaria/__init__.py",
+            "wheel_sha256": "68a0abe454f18388ed15e7a7442bf9866f9f4bd4b9a1079edf8270ade11ecf95",
+        },
+        "captured_at": "2026-09-07T02:35:43.969484+00:00",
+        "case": "probe-1",
+        "cell_height": 18,
+        "cell_width": 9.0,
+        "columns": 150,
+        "event_log": "wire-evidence.jsonl",
+        "final_ansi_offset": 100,
+        "first_ansi_offset": 100,
+        "first_frame_sha256": "2" * 64,
+        "format_version": "talaria-live-capture-v2",
+        "frame": "wheel-host-closed",
+        "frame_sha256": "2" * 64,
+        "gateway": "ws://127.0.0.1:8765/api/ws",
+        "png_sha256": "0" * 64,
+        "purpose": "probe",
+        "record_type": "capture-metadata",
+        "rows": 54,
+        "scope": "stable frame",
+        "self_check": {
+            "algorithm": "cell-frame-equality-v1",
+            "expected_rejection": "none",
+            "stable_control": "pass",
+            "status": "pass",
+        },
+        "session": {
+            "durable_id": "ses-durable",
+            "profile": "default",
+            "reply_seq": 1,
+            "request_id": "1",
+            "runtime_id": "ses-run",
+        },
+        "settling": {
+            "quiet_seconds_per_window": 0.05,
+            "timeout_seconds": 15.0,
+            "windows": 2,
+        },
+        "tester": "dedicated-tester",
+        "text_twin": {
+            "file": "wheel-host-closed.txt",
+            "frame_sha256": "2" * 64,
+            "sha256": "5" * 64,
+        },
+        "twin_digest": "5" * 64,
+    }
+    dummy_path = Path("docs/acceptance/v0.6.1/evidence/probe-1/wheel-host-closed.json")
+    assert CAPTURE_METADATA_SCHEMA.validate(meta_doc, path=dummy_path) == []
+
+    # 3. Negative controls on candidate.wheel_sha256
+    # Non-hex characters
+    bad_doc = copy.deepcopy(meta_doc)
+    bad_doc["candidate"]["wheel_sha256"] = "g" * 64
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_doc, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # Wrong length (e.g. 63 or 32 chars)
+    bad_doc = copy.deepcopy(meta_doc)
+    bad_doc["candidate"]["wheel_sha256"] = "a" * 63
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_doc, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    bad_doc = copy.deepcopy(meta_doc)
+    bad_doc["candidate"]["wheel_sha256"] = "a" * 32
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_doc, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # Non-string
+    bad_doc = copy.deepcopy(meta_doc)
+    bad_doc["candidate"]["wheel_sha256"] = 12345
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_doc, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # 4. Evidence file privacy scanner: JSON sidecar and embedded PNG chunk
+    evidence_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "probe-1"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    json_file = evidence_dir / "wheel-host-closed.json"
+    json_file.write_text(json.dumps(meta_doc), encoding="utf-8")
+    assert evidence_file_privacy_errors(json_file, repo_root=tmp_path) == []
+
+    png_bytes = _make_evidence_png(meta_doc)
+    png_file = evidence_dir / "wheel-host-closed.png"
+    png_file.write_bytes(png_bytes)
+    assert evidence_file_privacy_errors(png_file, repo_root=tmp_path) == []
+    assert _png_chunk_errors(png_file, png_bytes) == []
+
+    # 5. Privacy scanner refuses bad wheel_sha256 in both files
+    bad_json_file = evidence_dir / "bad-wheel.json"
+    bad_json_file.write_text(json.dumps(bad_doc), encoding="utf-8")
+    errs = evidence_file_privacy_errors(bad_json_file, repo_root=tmp_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    bad_png_bytes = _make_evidence_png(bad_doc)
+    bad_png_file = evidence_dir / "bad-wheel.png"
+    bad_png_file.write_bytes(bad_png_bytes)
+    errs = evidence_file_privacy_errors(bad_png_file, repo_root=tmp_path)
+    assert any("must be a hex digest" in e for e in errs)
 
 
 def test_no_conflict_markers_in_repository() -> None:
