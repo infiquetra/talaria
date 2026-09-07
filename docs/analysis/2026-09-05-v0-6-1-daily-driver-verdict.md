@@ -2,8 +2,10 @@
 
 This document gates the v0.6.1 release the way the v0.6.0 verdict gated its
 own: one fenced block states the verdict, and the evidence table below is the
-authority behind it. The twenty-three rows are the run's twenty-three live tests
-(parent issue #139's live-test ledger); a row clears only when its live test
+authority behind it. The twenty-three rows are the run's live tests: the twenty-one of parent
+issue #139's live-test ledger, plus Live 22 and Live 23, which the operator
+added on child issue #150 (comment 5561683073) and which appear in no ledger
+on #139; a row clears only when its live test
 carries a passing receipt on the final candidate with reviewer inspection.
 The machine checks the rows as receipts are filed — the v0.6.1 verifier
 branch in `scripts/acceptance/v050_receipt.py` validates every receipt against
@@ -92,10 +94,20 @@ three re-reads do not expire together, and C12-R resets it at the flip.
 The interim receipts this gate was written against are gone: the evidence
 tree now holds twenty-two final receipts, every one bound to the candidate
 `c798be0` and inspected by the reviewer. They are graded `pending` above
-rather than `met` because a receipt on disk is not yet a verified set — the
-record flow has not bound the manifest and `verify-run` has not been run
-over the whole tree. Those two steps, not this document, are what clears a
-row, and the flip is the tooling's to make.
+rather than `met` because the row rule in "How a row clears" is not yet
+satisfied for them. A row needs a passing receipt on the final candidate
+**and reviewer inspection recorded on the owning child**, and it is that
+second leg that is outstanding: every inspection on file was recorded on
+2026-09-05 or 2026-09-06 and attests receipts these have since superseded,
+while all twenty-two current receipts were recorded on 2026-09-07. Child
+issue #157, which owns row 13, carries no inspection record at all. The
+reviewer has in fact inspected the current tree; what is missing is the
+recorded form the rule requires.
+
+Separately, and downstream of the rows rather than part of them, the record
+flow has not bound the manifest and `verify-run` has not been run over the
+whole tree. Those are conditions on the verdict flip, not on a row, and the
+flip is the tooling's to make.
 
 Row 21 is the outstanding case. It is an attended live session and cannot
 be run unattended, so no row above can be graded clear and no waiver exists
