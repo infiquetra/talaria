@@ -87,7 +87,7 @@
           "receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "checklist_item": {
             "type": "string",
-            "pattern": "^live-(0[1-9]|1[0-9]|2[0-1])$"
+            "pattern": "^live-(0[1-9]|1[0-9]|2[0-3])$"
           },
           "tester": {
             "enum": ["dedicated-tester", "worker-lane-a", "worker-lane-b", "controller"]
