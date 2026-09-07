@@ -505,6 +505,13 @@ async def test_footer_agents_chord_matches_key_configuration() -> None:
         assert keys_note == FUNCTION_KEY_NOTE
         assert "F1" in keys_note and "F2" in keys_note
         assert "ctrl+g" in keys_note and "macOS" in keys_note
+        # The exemption is a constraint, not a comment: the note deliberately
+        # uses interception vocabulary ("consumed") the footer refuses, so a
+        # future edit widening FOOTER_FORBIDDEN to cover the note breaks the
+        # footer loops above instead of biting silently years later.
+        assert "consumed" in keys_note, (
+            "the note must keep the interception wording the footer refuses"
+        )
         await app_live.shutdown_sources()
 
     from talaria.replay.source import ReplaySource

@@ -39,10 +39,13 @@ EMPTY_SECTION = "[none available from this session]"
 #: the reason a pressed function key may do nothing lives here, where a
 #: sentence fits. It states all three per-key facts the tag could not carry:
 #: F1 is unbound, F2 is ctrl+g's alias for the same action, and macOS may
-#: intercept either before Talaria sees them.
+#: intercept either before Talaria sees them. It deliberately uses "consumed",
+#: a word the footer refuses: the note's job is explaining interception, so
+#: the footer-only scope of FOOTER_FORBIDDEN stays load-bearing through this
+#: sentence — any edit widening the guard to the note breaks the pin below.
 FUNCTION_KEY_NOTE = (
     "F1 does nothing here. F2 toggles sub-agent rows, the same action as "
-    "ctrl+g — but macOS may intercept function keys before Talaria sees "
+    "ctrl+g — but on macOS function keys may be consumed before Talaria sees "
     "them (Keyboard settings: Use F1, F2, etc. as standard function keys)."
 )
 

@@ -16,11 +16,16 @@ unsatisfying: the budget fits one joint claim, and the joint claim is not what t
 across surfaces by their nature: the footer names the working chord (`ctrl+g agents`, in the
 same chord-label form as every other segment), and the reason lives in the inspector KEYS
 section (`talaria/ui/inspector.py:FUNCTION_KEY_NOTE`) — F1 unbound, F2 as ctrl+g's alias,
-macOS interception with the system-setting name. The panel has no vertical slack for an
-always-open note (an early version broke the Context focus-stability test), so the row uses
-the #144 Option B pattern: one line until focused, full sentences on focus, last in the
-keyboard cycle. The test pins the relocation and opens the row, so a future edit can neither
-silently drop the caveat nor ship one nobody can read.
+macOS interception with the system-setting name, deliberately using "consumed", a word the
+footer refuses, so the footer-only scope of the guard stays load-bearing. The panel has no
+vertical slack for an always-open note: an early version broke
+`test_a_focused_diagnostics_row_expands_and_folds_back`, observed here on the Context-region
+asserts (the region shifts in y and width when the overflow engages scroll and scrollbar), so
+the row uses the #144 Option B pattern: one line until focused, full sentences on focus, last
+in the keyboard cycle. The test pins the relocation and opens the row, so a future edit can
+neither silently drop the caveat nor ship one nobody can read. The live footer now sits at
+exactly 80 of 80 cells with no headroom for another chord; a clipped footer fails
+`test_ae6_row_is_discoverable`, so overgrowth is caught rather than silent.
 
 **Generalizable rule**: when a hint is incomprehensible at its budget, move it to where its
 budget exists instead of compressing it further. Deleting it from the small surface while
