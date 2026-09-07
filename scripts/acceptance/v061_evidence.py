@@ -61,6 +61,7 @@ from scripts.acceptance.v050_receipt import (
     find_absolute_paths_in_text,
     is_forbidden_key,
     public_evidence_privacy_errors,
+    validate_directory_equality_derivation,
     validate_image_read_confirmations,
     validate_redactions_list,
     validate_twin_redactions,
@@ -778,6 +779,61 @@ def derive_capture(
     return output_path
 
 
+def generate_directory_equality_derivation(
+    *,
+    output_path: Path,
+    candidate_commit: str,
+    sources: dict[str, dict[str, Any]],
+    observations: dict[str, dict[str, Any]],
+    status: str = "pass",
+    derived_by: str = "dedicated-tester",
+    derived_at: str | None = None,
+    permission_semantics: str = "explicit-allow-all",
+    case: str = "live-13",
+    checklist_item: str = "live-13",
+    repo_root: Path = REPO_ROOT,
+) -> Path:
+    """Generate and validate a structured Live 13 directory-equality derivation record."""
+    output_path = output_path.expanduser().resolve()
+    doc = {
+        "record_type": "directory-equality-derivation",
+        "format_version": "talaria-directory-equality-v1",
+        "case": case,
+        "checklist_item": checklist_item,
+        "candidate_commit": candidate_commit,
+        "derived_by": derived_by,
+        "derived_at": _utc_now(derived_at),
+        "status": status,
+        "permission_semantics": permission_semantics,
+        "sources": sources,
+        "observations": observations,
+    }
+
+    # Preliminary validation against directory-equality derivation schema
+    prelim_errors = validate_directory_equality_derivation(doc, path=output_path)
+    if prelim_errors:
+        raise SystemExit(
+            "refusing to write directory-equality derivation: record does not validate:\n  "
+            + "\n  ".join(prelim_errors)
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_output = output_path.with_suffix(f".tmp.{os.getpid()}")
+    content = json.dumps(doc, indent=2, sort_keys=True) + "\n"
+    temp_output.write_text(content, encoding="utf-8")
+
+    errors = evidence_file_privacy_errors(temp_output, repo_root=repo_root)
+    if errors:
+        temp_output.unlink(missing_ok=True)
+        raise SystemExit(
+            "refusing to write directory-equality derivation: output carries privacy defects:\n  "
+            + "\n  ".join(errors)
+        )
+
+    temp_output.replace(output_path)
+    return output_path
+
+
 @dataclass(frozen=True)
 class SourceInventoryEntry:
     case_item: str
@@ -1385,11 +1441,71 @@ def _parser() -> argparse.ArgumentParser:
     )
     derive_cmd.add_argument("--derived-at", default=None, help="derivation timestamp")
     derive_cmd.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    dir_cmd = subparsers.add_parser(
+        "derive-directory-equality",
+        help="generate and validate a structured Live 13 directory-equality derivation record",
+    )
+    dir_cmd.add_argument("--candidate-commit", required=True, help="candidate git commit SHA")
+    dir_cmd.add_argument(
+        "--sources-json",
+        type=Path,
+        required=True,
+        help="JSON file defining the 4 mandatory sources",
+    )
+    dir_cmd.add_argument(
+        "--observations-json",
+        type=Path,
+        required=True,
+        help="JSON file defining the 10 scenario stage observations",
+    )
+    dir_cmd.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="output path for directory-equality-derivation.json",
+    )
+    dir_cmd.add_argument(
+        "--status", default="pass", help="derivation status (pass|failed|blocked|qualified)"
+    )
+    dir_cmd.add_argument(
+        "--derived-by", default="dedicated-tester", help="closed-vocabulary role label"
+    )
+    dir_cmd.add_argument("--derived-at", default=None, help="derivation timestamp")
+    dir_cmd.add_argument(
+        "--permission-semantics",
+        default="explicit-allow-all",
+        help="permission semantics specification",
+    )
+    dir_cmd.add_argument("--case", default="live-13", help="case identifier")
+    dir_cmd.add_argument("--checklist-item", default="live-13", help="checklist item")
+    dir_cmd.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "derive-directory-equality":
+        raw_sources = json.loads(args.sources_json.read_text(encoding="utf-8"))
+        if not isinstance(raw_sources, dict):
+            raise SystemExit(f"{args.sources_json}: sources must be a JSON object")
+        raw_observations = json.loads(args.observations_json.read_text(encoding="utf-8"))
+        if not isinstance(raw_observations, dict):
+            raise SystemExit(f"{args.observations_json}: observations must be a JSON object")
+        out_p = generate_directory_equality_derivation(
+            output_path=args.output,
+            candidate_commit=args.candidate_commit,
+            sources=raw_sources,
+            observations=raw_observations,
+            status=args.status,
+            derived_by=args.derived_by,
+            derived_at=args.derived_at,
+            permission_semantics=args.permission_semantics,
+            case=args.case,
+            checklist_item=args.checklist_item,
+            repo_root=args.repo_root,
+        )
+        print(f"wrote directory-equality derivation to {out_p}")
+        return 0
     if args.command == "derive-capture":
         keep_list: list[str] = list(args.keep_list or [])
         if args.keep_list_file is not None:

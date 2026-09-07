@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import re
 import shutil
@@ -1367,7 +1368,6 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "session_id": ValueCategory.GATEWAY_SESSION_ID,
         "format": ValueCategory.CLOSED_VOCABULARY,
         "schema_version": ValueCategory.CLOSED_VOCABULARY,
-        "format_version": ValueCategory.CLOSED_VOCABULARY,
         "title": ValueCategory.STRING,
         "geometry": ValueCategory.OBJECT,
         "terminal": ValueCategory.OBJECT,
@@ -1379,6 +1379,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "case": ValueCategory.CLOSED_VOCABULARY,
         "record_type": ValueCategory.CLOSED_VOCABULARY,
         "schema": ValueCategory.CLOSED_VOCABULARY,
+        "format_version": ValueCategory.CLOSED_VOCABULARY,
         "purpose": ValueCategory.CLOSED_VOCABULARY,
         "session": ValueCategory.OBJECT,
         "first_ansi_offset": ValueCategory.COUNT,
@@ -1416,6 +1417,7 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         },
         "candidate": {
             "commit_sha": ValueCategory.DIGEST,
+            "wheel_sha256": ValueCategory.DIGEST,
             "entry_point": ValueCategory.PATH,
             "source_module": ValueCategory.PATH,
             "binary_sha256": ValueCategory.DIGEST,
@@ -1463,8 +1465,10 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
         "png_sha256": "source-capture",
         "candidate.commit_sha": "git-commit",
         "candidate.binary_sha256": "artifact",
+        "candidate.wheel_sha256": "wheel",
         "commit_sha": "git-commit",
         "binary_sha256": "artifact",
+        "wheel_sha256": "wheel",
         "text_twin.sha256": "text-twin",
         "text_twin.twin_digest": "text-twin",
         "text_twin.digest": "text-twin",
@@ -1500,8 +1504,19 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "receipt",
             "capture-metadata",
             "pixel-measurements",
+            "host-sentinel",
+            "sentinel-witness",
+            "host-sentinel-witness",
+            "directory-equality-derivation",
         }),
         "schema": frozenset({
+            "talaria-v0.6.1-capture-v1",
+            "talaria-capture-metadata-v1",
+            "talaria-v0.6.0-capture-v1",
+            "talaria-v0.5.0-capture-v1",
+        }),
+        "format_version": frozenset({
+            "talaria-live-capture-v2",
             "talaria-v0.6.1-capture-v1",
             "talaria-capture-metadata-v1",
             "talaria-v0.6.0-capture-v1",
@@ -1543,11 +1558,6 @@ CAPTURE_METADATA_SCHEMA = RecordSchema(
             "ok",
         }),
         "covered_class": REFUSED_CLASSES,
-        "format_version": frozenset({
-            "talaria-v0.6.0-live",
-            "talaria-live-capture-v1",
-            "talaria-live-capture-v2",
-        }),
     },
 )
 
@@ -1681,12 +1691,840 @@ class AttestationMapSchema:
 
 ATTESTATION_MAP_SCHEMA = AttestationMapSchema()
 
+SENTINEL_ALLOWED_TOKENS: frozenset[str] = frozenset({
+    "sentinel-idle",
+    "sentinel-fired",
+    "idle",
+    "fired",
+})
+SENTINEL_IDLE_TOKENS: frozenset[str] = frozenset({"sentinel-idle", "idle"})
+SENTINEL_FIRED_TOKENS: frozenset[str] = frozenset({"sentinel-fired", "fired"})
+
+HOST_SENTINEL_ITEM_SCHEMA = RecordSchema(
+    name="host-sentinel-witness",
+    declared_keys={
+        "key": ValueCategory.STRING,
+        "consumed_before": ValueCategory.STRING,
+        "consumed_after": ValueCategory.STRING,
+        "control_before": ValueCategory.STRING,
+        "control_after": ValueCategory.STRING,
+    },
+)
+
+HOST_SENTINEL_RECORD_SCHEMA = RecordSchema(
+    name="host-sentinel",
+    declared_keys={
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "format_version": ValueCategory.CLOSED_VOCABULARY,
+        "record_type": ValueCategory.CLOSED_VOCABULARY,
+        "checklist_item": ValueCategory.CLOSED_VOCABULARY,
+        "case": ValueCategory.CLOSED_VOCABULARY,
+        "candidate_commit": ValueCategory.STRING,
+        "read_by": ValueCategory.CLOSED_VOCABULARY,
+        "read_at": ValueCategory.TIMESTAMP,
+        "keys": ValueCategory.LIST,
+        "positive_controls_confirmed": ValueCategory.BOOLEAN,
+        "consumed_keys_stayed_idle": ValueCategory.BOOLEAN,
+    },
+    vocabularies={
+        "schema_version": frozenset({
+            "talaria-v0.6.1-sentinel-v1",
+            "talaria-sentinel-v1",
+            "talaria-host-sentinel-v1",
+        }),
+        "format_version": frozenset({
+            "talaria-v0.6.1-sentinel-v1",
+            "talaria-sentinel-v1",
+            "talaria-host-sentinel-v1",
+        }),
+        "record_type": frozenset({"host-sentinel", "sentinel-witness", "host-sentinel-witness"}),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 24)),
+        "case": frozenset(f"live-{i:02d}" for i in range(1, 24)),
+        "read_by": frozenset(V061_ROLE_LABELS),
+    },
+)
+
+
+def validate_host_sentinel_record(
+    doc: dict[str, Any], *, path: Path, prefix: str = ""
+) -> list[str]:
+    """Validate host-sentinel evidence against the content-free non-leak contract."""
+    errors: list[str] = []
+    errors.extend(HOST_SENTINEL_RECORD_SCHEMA.validate(doc, path=path, prefix=prefix))
+
+    keys_list = doc.get("keys")
+    if keys_list is None:
+        errors.append(f"{path}: host-sentinel record requires 'keys' (quartet observations)")
+    elif not isinstance(keys_list, list):
+        errors.append(f"{path}: 'keys' must be a list")
+    elif not keys_list:
+        errors.append(f"{path}: 'keys' list must not be empty")
+
+    cand = doc.get("candidate_commit")
+    if cand is None:
+        errors.append(f"{path}: host-sentinel record requires 'candidate_commit'")
+    elif not isinstance(cand, str) or not re.fullmatch(r"[0-9a-f]{40}", cand):
+        errors.append(
+            f"{path}: 'candidate_commit' must be a 40-character hexadecimal git commit SHA "
+            f"(got {cand!r})"
+        )
+
+    if doc.get("positive_controls_confirmed") is not True:
+        errors.append(f"{path}: 'positive_controls_confirmed' must be explicitly true")
+    if doc.get("consumed_keys_stayed_idle") is not True:
+        errors.append(f"{path}: 'consumed_keys_stayed_idle' must be explicitly true")
+
+    doc_read_by = doc.get("read_by")
+    doc_read_at = doc.get("read_at")
+    read_dt: dt.datetime | None = None
+    if not doc_read_by:
+        errors.append(f"{path}: missing recorded read (read_by is required)")
+    elif doc_read_by not in V061_ROLE_LABELS:
+        errors.append(f"{path}: read_by {doc_read_by!r} not in role labels")
+    if not doc_read_at:
+        errors.append(f"{path}: missing recorded read (read_at is required)")
+    else:
+        try:
+            parsed_read = dt.datetime.fromisoformat(str(doc_read_at).replace("Z", "+00:00"))
+            if parsed_read.utcoffset() is None:
+                errors.append(f"{path}: read_at must have timezone qualification")
+            else:
+                read_dt = parsed_read
+        except (ValueError, TypeError):
+            errors.append(f"{path}: read_at must be an ISO 8601 timestamp")
+
+    if not isinstance(keys_list, list) or not keys_list:
+        return errors
+
+    root = path.parent
+    seen_observations: set[str] = set()
+    found_keys: set[str] = set()
+    prev_captured_dt: dt.datetime | None = None
+    quartet_phases = {
+        "consumed_before": "sentinel-idle",
+        "consumed_after": "sentinel-idle",
+        "control_before": "sentinel-idle",
+        "control_after": "sentinel-fired",
+    }
+
+    for idx, item in enumerate(keys_list):
+        loc = f"keys[{idx}]"
+        if not isinstance(item, dict):
+            errors.append(f"{path}: {loc} must be an object")
+            continue
+        errors.extend(HOST_SENTINEL_ITEM_SCHEMA.validate(item, path=path, prefix=loc))
+        k = item.get("key")
+        if not k:
+            errors.append(f"{path}: {loc} missing mandatory field 'key'")
+        else:
+            found_keys.add(k.lower())
+
+        for phase, expected_token in quartet_phases.items():
+            obs = item.get(phase)
+            if not obs or not isinstance(obs, str):
+                errors.append(
+                    f"{path}: {loc}: incomplete quartet: missing observation '{phase}'"
+                )
+                continue
+            if obs in seen_observations:
+                errors.append(
+                    f"{path}: {loc}: reused observation reference {obs!r} "
+                    "across phases or keys"
+                )
+            seen_observations.add(obs)
+
+            # Cross-file checks against sibling capture artifacts
+            png_file = root / obs
+            if not png_file.is_file():
+                errors.append(f"{path}: referenced frame {obs!r} does not exist")
+                continue
+
+            # 1. Validate PNG chunk and embedded metadata
+            png_data = png_file.read_bytes()
+            embedded: dict[str, Any] | None = None
+            if not png_data.startswith(b"\x89PNG\r\n\x1a\n"):
+                errors.append(f"{path}: {obs!r} is not a valid PNG file")
+            else:
+                embedded = _extract_png_capture_metadata(png_data)
+                if embedded is None:
+                    errors.append(f"{path}: {obs!r} missing talaria-evidence chunk in PNG")
+                else:
+                    if embedded.get("record_type") != "capture-metadata":
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk record_type is "
+                            f"{embedded.get('record_type')!r}, expected 'capture-metadata'"
+                        )
+                    if embedded.get("format_version") != "talaria-live-capture-v2":
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk format_version is "
+                            f"{embedded.get('format_version')!r}, "
+                            "expected 'talaria-live-capture-v2'"
+                        )
+                    if embedded.get("case") != "live-22":
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk case is "
+                            f"{embedded.get('case')!r}, expected 'live-22'"
+                        )
+                    if cand and embedded.get("candidate", {}).get("commit_sha") != cand:
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk candidate commit "
+                            f"{embedded.get('candidate', {}).get('commit_sha')!r} "
+                            f"does not match witness candidate {cand!r}"
+                        )
+                    if embedded.get("redactions"):
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk contains redactions "
+                            "on content-free host surface"
+                        )
+
+            # 2. Text twin validation
+            txt_file = png_file.with_suffix(".txt")
+            if not txt_file.is_file():
+                errors.append(
+                    f"{path}: referenced frame {obs!r} missing text twin {txt_file.name!r}"
+                )
+            else:
+                txt_bytes = txt_file.read_bytes()
+                actual_token = txt_bytes.decode("utf-8", errors="replace").strip()
+                if actual_token != expected_token:
+                    errors.append(
+                        f"{path}: {loc}.{phase}: text twin {txt_file.name!r} contains "
+                        f"{actual_token!r}, expected exact sentinel token "
+                        f"{expected_token!r}"
+                    )
+                twin_sha = hashlib.sha256(txt_bytes).hexdigest()
+                if embedded is not None:
+                    chunk_twin = (
+                        embedded.get("twin_digest")
+                        or embedded.get("text_twin", {}).get("sha256")
+                    )
+                    if chunk_twin and chunk_twin != twin_sha:
+                        errors.append(
+                            f"{path}: {obs!r} PNG chunk twin_digest ({chunk_twin}) "
+                            f"does not match text twin digest ({twin_sha})"
+                        )
+
+            # 3. Capture metadata JSON sidecar
+            json_file = png_file.with_suffix(".json")
+            if not json_file.is_file():
+                errors.append(
+                    f"{path}: referenced frame {obs!r} missing capture metadata "
+                    f"{json_file.name!r}"
+                )
+            else:
+                sidecar: dict[str, Any] | None = None
+                try:
+                    parsed_json = json.loads(json_file.read_text(encoding="utf-8"))
+                    if isinstance(parsed_json, dict):
+                        sidecar = parsed_json
+                except Exception as exc:
+                    errors.append(f"{path}: {json_file.name!r} is not valid JSON: {exc}")
+
+                if sidecar is not None:
+                    if sidecar.get("record_type") != "capture-metadata":
+                        errors.append(
+                            f"{path}: {json_file.name!r} record_type is "
+                            f"{sidecar.get('record_type')!r}, expected 'capture-metadata'"
+                        )
+                    if sidecar.get("format_version") != "talaria-live-capture-v2":
+                        errors.append(
+                            f"{path}: {json_file.name!r} format_version is "
+                            f"{sidecar.get('format_version')!r}, "
+                            "expected 'talaria-live-capture-v2'"
+                        )
+                    if sidecar.get("case") != "live-22":
+                        errors.append(
+                            f"{path}: {json_file.name!r} case is "
+                            f"{sidecar.get('case')!r}, expected 'live-22'"
+                        )
+                    if cand and sidecar.get("candidate", {}).get("commit_sha") != cand:
+                        errors.append(
+                            f"{path}: {json_file.name!r} candidate commit "
+                            f"{sidecar.get('candidate', {}).get('commit_sha')!r} "
+                            f"does not match witness candidate {cand!r}"
+                        )
+                    if sidecar.get("frame") != png_file.stem:
+                        errors.append(
+                            f"{path}: {json_file.name!r} frame is "
+                            f"{sidecar.get('frame')!r}, expected {png_file.stem!r}"
+                        )
+                    if sidecar.get("redactions"):
+                        errors.append(
+                            f"{path}: {json_file.name!r} contains redactions "
+                            "on content-free host surface"
+                        )
+
+                    if embedded is not None:
+                        sidecar_cmp = dict(sidecar)
+                        sidecar_cmp.pop("png_sha256", None)
+                        embedded_cmp = dict(embedded)
+                        embedded_cmp.pop("png_sha256", None)
+                        if sidecar_cmp != embedded_cmp:
+                            errors.append(
+                                f"{path}: {obs!r} sidecar metadata and "
+                                "embedded PNG chunk disagree"
+                            )
+
+                    cap_raw = sidecar.get("captured_at")
+                    if not cap_raw:
+                        errors.append(f"{path}: {json_file.name!r} missing 'captured_at'")
+                    else:
+                        try:
+                            cap_dt = dt.datetime.fromisoformat(
+                                str(cap_raw).replace("Z", "+00:00")
+                            )
+                            if cap_dt.utcoffset() is None:
+                                errors.append(
+                                    f"{path}: {json_file.name!r} captured_at "
+                                    "must have timezone qualification"
+                                )
+                            else:
+                                if read_dt is not None and cap_dt > read_dt:
+                                    errors.append(
+                                        f"{path}: {json_file.name!r} captured_at "
+                                        f"({cap_raw}) is after read_at ({doc_read_at})"
+                                    )
+                                if (
+                                    prev_captured_dt is not None
+                                    and cap_dt <= prev_captured_dt
+                                ):
+                                    errors.append(
+                                        f"{path}: {json_file.name!r} observations are not "
+                                        f"chronologically ordered ({cap_raw} <= previous)"
+                                    )
+                                prev_captured_dt = cap_dt
+                        except (ValueError, TypeError):
+                            errors.append(
+                                f"{path}: {json_file.name!r} captured_at "
+                                "must be an ISO 8601 timestamp"
+                            )
+
+    if (
+        doc.get("checklist_item") == "live-22"
+        or doc.get("case") == "live-22"
+        or "live-22" in str(path)
+    ):
+        required_keys = {"ctrl+o", "ctrl+s", "f1", "f2"}
+        missing_keys = required_keys - found_keys
+        if missing_keys:
+            errors.append(
+                f"{path}: Live 22 host-sentinel evidence requires all 4 default keys "
+                f"{sorted(required_keys)}, missing: {sorted(missing_keys)}"
+            )
+
+    return errors
+
+
+class HostSentinelSchema:
+    name = "host-sentinel"
+    declared_keys = HOST_SENTINEL_RECORD_SCHEMA.declared_keys
+    vocabularies = HOST_SENTINEL_RECORD_SCHEMA.vocabularies
+
+    def validate(self, doc: dict[str, Any], *, path: Path, prefix: str = "") -> list[str]:
+        return validate_host_sentinel_record(doc, path=path, prefix=prefix)
+
+
+HOST_SENTINEL_SCHEMA = HostSentinelSchema()
+
+
+DIRECTORY_EQUALITY_STATUS_VOCABULARY: frozenset[str] = frozenset({
+    "pass",
+    "failed",
+    "blocked",
+    "qualified",
+})
+
+DIRECTORY_EQUALITY_MANDATORY_SOURCES: tuple[str, ...] = (
+    "session-a-init",
+    "session-b-init",
+    "session-a-override",
+    "session-a-reconnect",
+)
+
+DIRECTORY_EQUALITY_MANDATORY_STAGES: tuple[str, ...] = (
+    "project-a-adoption",
+    "project-a-tool",
+    "project-b-adoption",
+    "project-b-tool",
+    "a-tool-override",
+    "b-after-a-override",
+    "a-after-reconnect",
+    "fresh-a",
+    "resumed-a",
+    "resumed-a-tool",
+)
+
+DIRECTORY_EQUALITY_ADOPTION_STAGES: frozenset[str] = frozenset({
+    "project-a-adoption",
+    "project-b-adoption",
+    "fresh-a",
+    "resumed-a",
+})
+
+DIRECTORY_EQUALITY_TOOL_STAGES: frozenset[str] = frozenset({
+    "project-a-tool",
+    "project-b-tool",
+    "a-tool-override",
+    "b-after-a-override",
+    "a-after-reconnect",
+    "resumed-a-tool",
+})
+
+DIRECTORY_EQUALITY_DERIVATION_RECORD_SCHEMA = RecordSchema(
+    name="directory-equality-derivation",
+    declared_keys={
+        "record_type": ValueCategory.CLOSED_VOCABULARY,
+        "format_version": ValueCategory.CLOSED_VOCABULARY,
+        "case": ValueCategory.CLOSED_VOCABULARY,
+        "checklist_item": ValueCategory.CLOSED_VOCABULARY,
+        "candidate_commit": ValueCategory.STRING,
+        "derived_by": ValueCategory.CLOSED_VOCABULARY,
+        "derived_at": ValueCategory.TIMESTAMP,
+        "status": ValueCategory.CLOSED_VOCABULARY,
+        "permission_semantics": ValueCategory.STRING,
+        "sources": ValueCategory.OBJECT,
+        "observations": ValueCategory.OBJECT,
+    },
+    vocabularies={
+        "record_type": frozenset({"directory-equality-derivation"}),
+        "format_version": frozenset({"talaria-directory-equality-v1"}),
+        "case": frozenset(f"live-{i:02d}" for i in range(1, 24)),
+        "checklist_item": frozenset(f"live-{i:02d}" for i in range(1, 24)),
+        "status": DIRECTORY_EQUALITY_STATUS_VOCABULARY,
+        "derived_by": frozenset(V061_ROLE_LABELS),
+    },
+)
+
+DIRECTORY_EQUALITY_SOURCE_ITEM_SCHEMA = RecordSchema(
+    name="directory-equality-source",
+    declared_keys={
+        "source_file": ValueCategory.STRING,
+        "source_sha256": ValueCategory.DIGEST,
+        "derived_file": ValueCategory.STRING,
+        "derived_sha256": ValueCategory.DIGEST,
+    },
+    digest_preimages={
+        "source_sha256": "source-capture",
+        "derived_sha256": "evidence-file",
+    },
+)
+
+DIRECTORY_EQUALITY_ADOPTION_OBSERVATION_SCHEMA = RecordSchema(
+    name="directory-equality-adoption-observation",
+    declared_keys={
+        "source_id": ValueCategory.STRING,
+        "request_seq": ValueCategory.COUNT,
+        "reply_seq": ValueCategory.COUNT,
+        "request_source_seq": ValueCategory.COUNT,
+        "reply_source_seq": ValueCategory.COUNT,
+        "requested_equals_launch": ValueCategory.BOOLEAN,
+        "reported_equals_expected": ValueCategory.BOOLEAN,
+    },
+)
+
+DIRECTORY_EQUALITY_TOOL_OBSERVATION_SCHEMA = RecordSchema(
+    name="directory-equality-tool-observation",
+    declared_keys={
+        "source_id": ValueCategory.STRING,
+        "tool_start_seq": ValueCategory.COUNT,
+        "tool_complete_seq": ValueCategory.COUNT,
+        "pwd_equals_expected": ValueCategory.BOOLEAN,
+        "fixture_content_matches": ValueCategory.BOOLEAN,
+        "override_supplied": ValueCategory.BOOLEAN,
+    },
+)
+
+DIRECTORY_EQUALITY_INVARIANT_OBSERVATION_SCHEMA = RecordSchema(
+    name="directory-equality-invariant-observation",
+    declared_keys={
+        "source_id": ValueCategory.STRING,
+        "tool_start_seq": ValueCategory.COUNT,
+        "tool_complete_seq": ValueCategory.COUNT,
+        "pwd_equals_expected": ValueCategory.BOOLEAN,
+        "fixture_content_matches": ValueCategory.BOOLEAN,
+        "override_supplied": ValueCategory.BOOLEAN,
+        "bounded_absence_session_cwd_set": ValueCategory.BOOLEAN,
+        "b_reported_cwd_unchanged": ValueCategory.BOOLEAN,
+    },
+)
+
+
+def validate_directory_equality_derivation(
+    doc: dict[str, Any], *, path: Path, prefix: str = ""
+) -> list[str]:
+    """Validate Live 13 directory-equality derivation against privacy and completeness contracts."""
+    errors: list[str] = []
+    errors.extend(
+        DIRECTORY_EQUALITY_DERIVATION_RECORD_SCHEMA.validate(doc, path=path, prefix=prefix)
+    )
+
+    # 0. Identification and versioning
+    if doc.get("record_type") != "directory-equality-derivation":
+        errors.append(f"{path}: 'record_type' must be 'directory-equality-derivation'")
+    if doc.get("format_version") != "talaria-directory-equality-v1":
+        errors.append(f"{path}: 'format_version' must be 'talaria-directory-equality-v1'")
+    if not doc.get("case"):
+        errors.append(f"{path}: missing mandatory field 'case'")
+    if not doc.get("checklist_item"):
+        errors.append(f"{path}: missing mandatory field 'checklist_item'")
+    if (
+        doc.get("case")
+        and doc.get("checklist_item")
+        and doc.get("case") != doc.get("checklist_item")
+    ):
+        errors.append(
+            f"{path}: 'case' ({doc.get('case')}) does not match "
+            f"'checklist_item' ({doc.get('checklist_item')})"
+        )
+    if "status" not in doc:
+        errors.append(f"{path}: missing mandatory field 'status'")
+    elif doc.get("status") not in DIRECTORY_EQUALITY_STATUS_VOCABULARY:
+        errors.append(f"{path}: status {doc.get('status')!r} not in status vocabulary")
+
+    # 1. Candidate commit format
+    cand = doc.get("candidate_commit")
+    if cand is None:
+        errors.append(f"{path}: directory-equality derivation requires 'candidate_commit'")
+    elif not isinstance(cand, str) or not re.fullmatch(r"[0-9a-f]{40}", cand):
+        errors.append(
+            f"{path}: 'candidate_commit' must be a 40-character hexadecimal git commit SHA "
+            f"(got {cand!r})"
+        )
+
+    # 2. Derived by & derived at
+    derived_by = doc.get("derived_by")
+    if not derived_by:
+        errors.append(f"{path}: missing recorded derivation role ('derived_by' is required)")
+    elif derived_by not in V061_ROLE_LABELS:
+        errors.append(f"{path}: derived_by {derived_by!r} not in role labels")
+
+    derived_at = doc.get("derived_at")
+    if not derived_at:
+        errors.append(f"{path}: missing recorded derivation timestamp ('derived_at' is required)")
+    else:
+        try:
+            parsed_dt = dt.datetime.fromisoformat(str(derived_at).replace("Z", "+00:00"))
+            if parsed_dt.utcoffset() is None:
+                errors.append(f"{path}: derived_at must have timezone qualification")
+        except (ValueError, TypeError):
+            errors.append(f"{path}: derived_at must be an ISO 8601 timestamp")
+
+    # 3. Permission semantics
+    perm = doc.get("permission_semantics")
+    if perm is None:
+        errors.append(f"{path}: missing mandatory field 'permission_semantics'")
+    elif not isinstance(perm, str) or not perm.strip():
+        errors.append(f"{path}: 'permission_semantics' must be a non-empty string")
+
+    # 4. Strict privacy check: no absolute filesystem paths in the record
+    try:
+        doc_serialized = json.dumps(doc)
+        for p in find_absolute_paths_in_text(doc_serialized):
+            errors.append(f"{path}: directory-equality derivation discloses absolute path {p!r}")
+    except Exception:
+        pass
+
+    # 5. Sources validation
+    sources = doc.get("sources")
+    sources_dict: dict[str, Any] = {}
+    if sources is None:
+        errors.append(f"{path}: directory-equality derivation requires 'sources'")
+    elif not isinstance(sources, dict):
+        errors.append(f"{path}: 'sources' must be an object")
+    else:
+        sources_dict = sources
+        missing_sources = set(DIRECTORY_EQUALITY_MANDATORY_SOURCES) - set(sources.keys())
+        if missing_sources:
+            errors.append(
+                f"{path}: Live 13 derivation requires all 4 mandatory sources "
+                f"{sorted(DIRECTORY_EQUALITY_MANDATORY_SOURCES)}, "
+                f"missing: {sorted(missing_sources)}"
+            )
+        unexpected_sources = set(sources.keys()) - set(DIRECTORY_EQUALITY_MANDATORY_SOURCES)
+        if unexpected_sources:
+            errors.append(
+                f"{path}: Live 13 derivation contains undeclared sources "
+                f"{sorted(unexpected_sources)}"
+            )
+
+        root = path.parent
+        for s_id, s_entry in sources.items():
+            s_loc = f"sources.{s_id}"
+            if not isinstance(s_entry, dict):
+                errors.append(f"{path}: {s_loc} must be an object")
+                continue
+            errors.extend(
+                DIRECTORY_EQUALITY_SOURCE_ITEM_SCHEMA.validate(s_entry, path=path, prefix=s_loc)
+            )
+
+            for f_key in ("source_file", "derived_file"):
+                f_val = s_entry.get(f_key)
+                if not f_val or not isinstance(f_val, str):
+                    errors.append(f"{path}: {s_loc} missing mandatory field {f_key!r}")
+                elif Path(f_val).is_absolute() or f_val.startswith("/"):
+                    errors.append(
+                        f"{path}: {s_loc}.{f_key} must be a relative filename (got {f_val!r})"
+                    )
+
+            for h_key in ("source_sha256", "derived_sha256"):
+                h_val = s_entry.get(h_key)
+                if not h_val or not isinstance(h_val, str):
+                    errors.append(f"{path}: {s_loc} missing mandatory field {h_key!r}")
+                elif not re.fullmatch(r"[0-9a-f]{64}", h_val):
+                    errors.append(
+                        f"{path}: {s_loc}.{h_key} must be a 64-character hexadecimal "
+                        f"SHA-256 digest (got {h_val!r})"
+                    )
+
+            derived_name = s_entry.get("derived_file")
+            if derived_name and isinstance(derived_name, str):
+                derived_path = root / derived_name
+                if not derived_path.is_file():
+                    errors.append(
+                        f"{path}: referenced derived wire capture {derived_name!r} does not exist"
+                    )
+                else:
+                    derived_bytes = derived_path.read_bytes()
+                    actual_sha = hashlib.sha256(derived_bytes).hexdigest()
+                    expected_sha = s_entry.get("derived_sha256")
+                    if expected_sha and actual_sha != expected_sha:
+                        errors.append(
+                            f"{path}: {derived_name!r} SHA-256 digest ({actual_sha}) "
+                            f"does not match declared derived_sha256 ({expected_sha})"
+                        )
+                    wire_errs = _wire_capture_errors(derived_path, derived_bytes)
+                    if wire_errs:
+                        errors.extend(wire_errs)
+
+    # 6. Observations validation
+    observations = doc.get("observations")
+    if observations is None:
+        errors.append(f"{path}: directory-equality derivation requires 'observations'")
+        return errors
+
+    if not isinstance(observations, dict):
+        errors.append(f"{path}: 'observations' must be an object")
+        return errors
+
+    missing_stages = set(DIRECTORY_EQUALITY_MANDATORY_STAGES) - set(observations.keys())
+    if missing_stages:
+        errors.append(
+            f"{path}: Live 13 derivation requires all 10 mandatory scenario stages "
+            f"{sorted(DIRECTORY_EQUALITY_MANDATORY_STAGES)}, missing: {sorted(missing_stages)}"
+        )
+    unexpected_stages = set(observations.keys()) - set(DIRECTORY_EQUALITY_MANDATORY_STAGES)
+    if unexpected_stages:
+        errors.append(
+            f"{path}: Live 13 derivation contains undeclared scenario stages "
+            f"{sorted(unexpected_stages)}"
+        )
+
+    all_predicates_passed = True
+
+    for stage_name, obs in observations.items():
+        loc = f"observations.{stage_name}"
+        if not isinstance(obs, dict):
+            errors.append(f"{path}: {loc} must be an object")
+            continue
+
+        if stage_name in DIRECTORY_EQUALITY_ADOPTION_STAGES:
+            errors.extend(
+                DIRECTORY_EQUALITY_ADOPTION_OBSERVATION_SCHEMA.validate(
+                    obs, path=path, prefix=loc
+                )
+            )
+        elif stage_name in DIRECTORY_EQUALITY_TOOL_STAGES:
+            if stage_name == "b-after-a-override":
+                errors.extend(
+                    DIRECTORY_EQUALITY_INVARIANT_OBSERVATION_SCHEMA.validate(
+                        obs, path=path, prefix=loc
+                    )
+                )
+            else:
+                errors.extend(
+                    DIRECTORY_EQUALITY_TOOL_OBSERVATION_SCHEMA.validate(
+                        obs, path=path, prefix=loc
+                    )
+                )
+        else:
+            errors.append(f"{path}: undeclared scenario stage {stage_name!r} at {loc}")
+            continue
+
+        s_id = obs.get("source_id")
+        if not s_id:
+            errors.append(f"{path}: {loc} missing mandatory field 'source_id'")
+        elif s_id not in sources_dict:
+            errors.append(f"{path}: {loc}.source_id {s_id!r} not declared in 'sources'")
+
+        if stage_name in DIRECTORY_EQUALITY_ADOPTION_STAGES:
+            for seq_key in ("request_seq", "reply_seq", "request_source_seq", "reply_source_seq"):
+                val = obs.get(seq_key)
+                if val is None:
+                    errors.append(f"{path}: {loc} missing mandatory sequence field {seq_key!r}")
+                elif not isinstance(val, int) or val < 1:
+                    errors.append(
+                        f"{path}: {loc}.{seq_key} must be a positive integer (got {val!r})"
+                    )
+
+            req_seq = obs.get("request_seq")
+            rep_seq = obs.get("reply_seq")
+            if isinstance(req_seq, int) and isinstance(rep_seq, int) and rep_seq < req_seq:
+                errors.append(
+                    f"{path}: {loc}: reply_seq ({rep_seq}) cannot precede request_seq ({req_seq})"
+                )
+
+            has_launch = "requested_equals_launch" in obs
+            has_reported = "reported_equals_expected" in obs
+            if has_launch and not has_reported:
+                errors.append(
+                    f"{path}: {loc}: incomplete comparison: 'requested_equals_launch' present "
+                    "without 'reported_equals_expected'"
+                )
+            elif has_reported and not has_launch:
+                errors.append(
+                    f"{path}: {loc}: incomplete comparison: 'reported_equals_expected' present "
+                    "without 'requested_equals_launch'"
+                )
+            elif not has_launch and not has_reported:
+                errors.append(
+                    f"{path}: {loc}: incomplete comparison: missing adoption equality predicates"
+                )
+            else:
+                for b_key in ("requested_equals_launch", "reported_equals_expected"):
+                    b_val = obs.get(b_key)
+                    if not isinstance(b_val, bool):
+                        errors.append(f"{path}: {loc}.{b_key} must be a boolean (got {b_val!r})")
+                    elif b_val is not True:
+                        all_predicates_passed = False
+
+        elif stage_name in DIRECTORY_EQUALITY_TOOL_STAGES:
+            for seq_key in ("tool_start_seq", "tool_complete_seq"):
+                val = obs.get(seq_key)
+                if val is None:
+                    errors.append(f"{path}: {loc} missing mandatory sequence field {seq_key!r}")
+                elif not isinstance(val, int) or val < 1:
+                    errors.append(
+                        f"{path}: {loc}.{seq_key} must be a positive integer (got {val!r})"
+                    )
+
+            start_seq = obs.get("tool_start_seq")
+            comp_seq = obs.get("tool_complete_seq")
+            if isinstance(start_seq, int) and isinstance(comp_seq, int) and comp_seq < start_seq:
+                errors.append(
+                    f"{path}: {loc}: tool_complete_seq ({comp_seq}) cannot precede "
+                    f"tool_start_seq ({start_seq})"
+                )
+
+            has_pwd = "pwd_equals_expected" in obs
+            has_fixture = "fixture_content_matches" in obs
+            if has_pwd and not has_fixture:
+                errors.append(
+                    f"{path}: {loc}: incomplete comparison: 'pwd_equals_expected' present "
+                    "without 'fixture_content_matches'"
+                )
+            elif has_fixture and not has_pwd:
+                errors.append(
+                    f"{path}: {loc}: incomplete comparison: 'fixture_content_matches' present "
+                    "without 'pwd_equals_expected'"
+                )
+            elif not has_pwd and not has_fixture:
+                errors.append(
+                    f"{path}: {loc}: incomplete comparison: missing tool equality predicates"
+                )
+            else:
+                for b_key in ("pwd_equals_expected", "fixture_content_matches"):
+                    b_val = obs.get(b_key)
+                    if not isinstance(b_val, bool):
+                        errors.append(f"{path}: {loc}.{b_key} must be a boolean (got {b_val!r})")
+                    elif b_val is not True:
+                        all_predicates_passed = False
+
+            if "override_supplied" not in obs:
+                errors.append(f"{path}: {loc} missing mandatory boolean 'override_supplied'")
+            elif not isinstance(obs.get("override_supplied"), bool):
+                errors.append(f"{path}: {loc}.override_supplied must be a boolean")
+
+            if stage_name == "b-after-a-override":
+                for inv_key in ("bounded_absence_session_cwd_set", "b_reported_cwd_unchanged"):
+                    if inv_key not in obs:
+                        errors.append(f"{path}: {loc} missing mandatory invariant '{inv_key}'")
+                    else:
+                        inv_val = obs.get(inv_key)
+                        if not isinstance(inv_val, bool):
+                            errors.append(f"{path}: {loc}.{inv_key} must be a boolean")
+                        elif inv_val is not True:
+                            all_predicates_passed = False
+
+                s_entry = sources_dict.get(s_id, {}) if isinstance(s_id, str) else {}
+                derived_name = s_entry.get("derived_file") if isinstance(s_entry, dict) else None
+                if derived_name:
+                    derived_path = path.parent / derived_name
+                    if (
+                        derived_path.is_file()
+                        and isinstance(start_seq, int)
+                        and isinstance(comp_seq, int)
+                    ):
+                        try:
+                            lines = [
+                                line_text
+                                for line_text in derived_path.read_text(
+                                    encoding="utf-8"
+                                ).splitlines()
+                                if line_text.strip()
+                            ]
+                            for line in lines[1:]:
+                                rec = json.loads(line)
+                                r_seq = rec.get("seq")
+                                if isinstance(r_seq, int) and start_seq <= r_seq <= comp_seq:
+                                    frame_data = rec.get("frame", {})
+                                    m = frame_data.get("method") or frame_data.get("type")
+                                    params = frame_data.get("params", {})
+                                    if isinstance(params, dict):
+                                        m = params.get("method") or params.get("type") or m
+                                    if m == "session.cwd.set":
+                                        errors.append(
+                                            f"{path}: {loc}: wire log {derived_name!r} contains "
+                                            f"'session.cwd.set' at seq {r_seq} within "
+                                            f"bounded window [{start_seq}, {comp_seq}]"
+                                        )
+                        except Exception:
+                            pass
+
+    # 7. Outcome coherence check
+    doc_status = doc.get("status")
+    if doc_status == "pass" and not all_predicates_passed:
+        errors.append(
+            f"{path}: status cannot be 'pass' when one or more equality predicates are false"
+        )
+
+    return errors
+
+
+class DirectoryEqualityDerivationSchema:
+    name = "directory-equality-derivation"
+    declared_keys = DIRECTORY_EQUALITY_DERIVATION_RECORD_SCHEMA.declared_keys
+    vocabularies = DIRECTORY_EQUALITY_DERIVATION_RECORD_SCHEMA.vocabularies
+
+    def validate(self, doc: dict[str, Any], *, path: Path, prefix: str = "") -> list[str]:
+        return validate_directory_equality_derivation(doc, path=path, prefix=prefix)
+
+
+DIRECTORY_EQUALITY_DERIVATION_SCHEMA = DirectoryEqualityDerivationSchema()
+
 
 class SchemaRegistry:
     """Registry of authored record schemas under the amended privacy contract."""
 
     @classmethod
-    def lookup(cls, path: Path, doc: Any) -> RecordSchema | AttestationMapSchema | None:
+    def lookup(
+        cls, path: Path, doc: Any
+    ) -> (
+        RecordSchema
+        | AttestationMapSchema
+        | HostSentinelSchema
+        | DirectoryEqualityDerivationSchema
+        | None
+    ):
         if path.name == "receipt.json" or path.name.endswith("-receipt.json"):
             if isinstance(doc, dict) and (
                 doc.get("schema_version") == V061_INSTALL_SCHEMA
@@ -1706,6 +2544,32 @@ class SchemaRegistry:
                 return INSTALL_RECEIPT_SCHEMA
             if "checklist_item" in doc and "verdict" in doc:
                 return RECEIPT_SCHEMA
+            if (
+                doc.get("record_type") in (
+                    "host-sentinel", "sentinel-witness", "host-sentinel-witness"
+                )
+                or doc.get("schema_version") in (
+                    "talaria-v0.6.1-sentinel-v1",
+                    "talaria-sentinel-v1",
+                    "talaria-host-sentinel-v1",
+                )
+                or doc.get("format_version") in (
+                    "talaria-v0.6.1-sentinel-v1",
+                    "talaria-sentinel-v1",
+                    "talaria-host-sentinel-v1",
+                )
+                or "sentinel" in path.name.lower()
+                or ("keys" in doc and "positive_controls_confirmed" in doc)
+            ):
+                return HOST_SENTINEL_SCHEMA
+            if (
+                doc.get("record_type") == "directory-equality-derivation"
+                or doc.get("format_version") == "talaria-directory-equality-v1"
+                or path.name == "directory-equality-derivation.json"
+                or "directory-equality" in path.name.lower()
+                or ("stages" in doc and "sources" in doc and "derivation" in path.name.lower())
+            ):
+                return DIRECTORY_EQUALITY_DERIVATION_SCHEMA
             if any(
                 k in doc for k in ("frame_digest", "frame_digests", "twin_digest", "redactions")
             ) or (

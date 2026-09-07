@@ -14,6 +14,7 @@ back-filling. These tests pin each half.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import struct
@@ -29,6 +30,8 @@ from scripts.acceptance.v050_receipt import (
     ALLOWED_PREIMAGE_CLASSES,
     ATTESTATION_MAP_SCHEMA,
     CAPTURE_METADATA_SCHEMA,
+    DIRECTORY_EQUALITY_DERIVATION_SCHEMA,
+    HOST_SENTINEL_SCHEMA,
     INSTALL_RECEIPT_SCHEMA,
     PIXEL_MEASUREMENTS_SCHEMA,
     READ_CONFIRMATION_RECORD_SCHEMA,
@@ -47,11 +50,13 @@ from scripts.acceptance.v050_receipt import (
     _public_evidence_roots,
     _validate_v061_install,
     _validate_v061_receipt,
+    classify_evidence_file,
     evidence_file_privacy_errors,
     find_absolute_paths_in_text,
     is_absolute_filesystem_path,
     is_forbidden_key,
     mask_matched_sentinels,
+    validate_directory_equality_derivation,
     validate_image_read_confirmations,
     validate_read_confirmation_record,
     validate_redactions_list,
@@ -2444,6 +2449,16 @@ def test_capture_metadata_schema_category_enforcement() -> None:
     errs = CAPTURE_METADATA_SCHEMA.validate(bad, path=dummy_path)
     assert any("must be a hex digest" in e for e in errs)
 
+    # 5b. candidate.wheel_sha256 DIGEST: accepts 64-char hex, rejects non-digest string
+    good_wheel = json.loads(json.dumps(base_doc))
+    good_wheel["candidate"]["wheel_sha256"] = "6" * 64
+    assert CAPTURE_METADATA_SCHEMA.validate(good_wheel, path=dummy_path) == []
+
+    bad_wheel = json.loads(json.dumps(base_doc))
+    bad_wheel["candidate"]["wheel_sha256"] = "not-a-wheel-digest"
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_wheel, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
     # Additional category checks to bind all declared assignments:
     # 6. twin_path PATH: rejects absolute path
     bad = json.loads(json.dumps(base_doc))
@@ -3267,6 +3282,1080 @@ def test_talaria_live_capture_v2_format_version_is_sole_path() -> None:
         }
         errs = CAPTURE_METADATA_SCHEMA.validate(bad_meta, path=Path("frame.json"))
         assert any("not in registered closed vocabulary" in e for e in errs)
+
+
+def test_host_sentinel_legacy_witnesses_format_refused(tmp_path: Path) -> None:
+    sentinel_path = tmp_path / "live-22" / "evidence" / "sentinel.json"
+
+    # 1. Document with legacy 'witnesses' list is strictly refused
+    legacy_witnesses_doc = {
+        "record_type": "host-sentinel",
+        "schema_version": "talaria-v0.6.1-sentinel-v1",
+        "checklist_item": "live-22",
+        "case": "live-22",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T18:00:00Z",
+        "witnesses": [
+            {
+                "key": "ctrl+o",
+                "before": "sentinel-idle",
+                "after": "sentinel-idle",
+                "positive_control": {"before": "sentinel-idle", "after": "sentinel-fired"},
+            }
+        ],
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(legacy_witnesses_doc, path=sentinel_path)
+    assert any("undeclared key 'witnesses'" in e for e in errs)
+    assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
+
+    # 2. Document with legacy 'pairs' list is strictly refused
+    legacy_pairs_doc = {
+        "record_type": "host-sentinel",
+        "schema_version": "talaria-v0.6.1-sentinel-v1",
+        "checklist_item": "live-22",
+        "case": "live-22",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T18:00:00Z",
+        "pairs": [],
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(legacy_pairs_doc, path=sentinel_path)
+    assert any("undeclared key 'pairs'" in e for e in errs)
+    assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
+
+    # 3. Single-witness document with before/after/positive_control at root is strictly refused
+    single_doc = {
+        "record_type": "host-sentinel",
+        "schema_version": "talaria-v0.6.1-sentinel-v1",
+        "checklist_item": "live-22",
+        "case": "live-22",
+        "key": "ctrl+o",
+        "before": "sentinel-idle",
+        "after": "sentinel-idle",
+        "positive_control": {
+            "key": "ctrl+o",
+            "before": "sentinel-idle",
+            "after": "sentinel-fired",
+        },
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T18:00:00Z",
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(single_doc, path=sentinel_path)
+    assert any("undeclared key 'key'" in e for e in errs)
+    assert any("undeclared key 'before'" in e for e in errs)
+    assert any("undeclared key 'after'" in e for e in errs)
+    assert any("undeclared key 'positive_control'" in e for e in errs)
+    assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
+
+
+def test_host_sentinel_content_free_constraints() -> None:
+    path = Path("evidence/sentinel.json")
+
+    # Constraint 1: pane or tab identifier is rejected as a forbidden or undeclared key
+    for forbidden_field in ("pane_id", "tab_id", "multiplexer_pane", "window_id", "tokens"):
+        doc_with_id = {
+            "record_type": "host-sentinel-witness",
+            "format_version": "talaria-host-sentinel-v1",
+            "case": "live-22",
+            "candidate_commit": "0" * 40,
+            "read_by": "dedicated-tester",
+            "read_at": "2026-09-06T18:00:00+00:00",
+            "positive_controls_confirmed": True,
+            "consumed_keys_stayed_idle": True,
+            "keys": [],
+            forbidden_field: "pane-01",
+        }
+        errs = HOST_SENTINEL_SCHEMA.validate(doc_with_id, path=path)
+        assert any(
+            f"forbidden key {forbidden_field!r}" in e or f"undeclared key {forbidden_field!r}" in e
+            for e in errs
+        )
+
+    # Constraint 2: undeclared fields in item schema are refused
+    doc_with_bad_item = {
+        "record_type": "host-sentinel-witness",
+        "format_version": "talaria-host-sentinel-v1",
+        "case": "live-22",
+        "candidate_commit": "0" * 40,
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-06T18:00:00+00:00",
+        "positive_controls_confirmed": True,
+        "consumed_keys_stayed_idle": True,
+        "keys": [
+            {
+                "key": "ctrl+o",
+                "consumed_before": "a.png",
+                "consumed_after": "b.png",
+                "control_before": "c.png",
+                "control_after": "d.png",
+                "arbitrary_extra": "leak",
+            }
+        ],
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(doc_with_bad_item, path=path)
+    assert any("undeclared key 'arbitrary_extra'" in e for e in errs)
+
+
+def _make_evidence_png(metadata_dict: dict[str, Any]) -> bytes:
+    json_bytes = json.dumps(metadata_dict).encode("utf-8")
+    text_data = b"talaria-evidence\x00" + json_bytes
+    base = _base_png_chunks()
+    return _make_png([base[0], (b"tEXt", text_data), base[1], base[2]])
+
+
+def test_host_sentinel_quartet_proposal_validation(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-22"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    candidate_sha = "a" * 40
+    read_at_str = "2026-09-06T18:00:00+00:00"
+
+    key_slugs = [("ctrl+o", "ctrl-o"), ("ctrl+s", "ctrl-s"), ("f1", "f1"), ("f2", "f2")]
+    phases = [
+        ("consumed_before", "sentinel-idle"),
+        ("consumed_after", "sentinel-idle"),
+        ("control_before", "sentinel-idle"),
+        ("control_after", "sentinel-fired"),
+    ]
+
+    keys_data: list[dict[str, Any]] = []
+    minute_counter = 0
+
+    for key, slug in key_slugs:
+        key_entry: dict[str, Any] = {"key": key}
+        for phase, expected_token in phases:
+            stem = f"{slug}-{phase.replace('_', '-')}"
+            png_name = f"{stem}.png"
+            txt_name = f"{stem}.txt"
+            json_name = f"{stem}.json"
+            key_entry[phase] = png_name
+
+            # Write text twin
+            txt_path = evidence_dir / txt_name
+            txt_path.write_text(expected_token + "\n", encoding="utf-8")
+            twin_digest = hashlib.sha256(txt_path.read_bytes()).hexdigest()
+
+            # Write sidecar JSON & embedded PNG
+            minute_counter += 1
+            captured_at = f"2026-09-06T17:{minute_counter:02d}:00+00:00"
+            metadata = {
+                "record_type": "capture-metadata",
+                "format_version": "talaria-live-capture-v2",
+                "case": "live-22",
+                "candidate": {"commit_sha": candidate_sha},
+                "frame": stem,
+                "twin_digest": twin_digest,
+                "captured_at": captured_at,
+            }
+            json_path = evidence_dir / json_name
+            json_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            png_path = evidence_dir / png_name
+            png_path.write_bytes(_make_evidence_png(metadata))
+
+        keys_data.append(key_entry)
+
+    valid_quartet_doc: dict[str, Any] = {
+        "record_type": "host-sentinel-witness",
+        "format_version": "talaria-host-sentinel-v1",
+        "case": "live-22",
+        "checklist_item": "live-22",
+        "candidate_commit": candidate_sha,
+        "keys": keys_data,
+        "read_by": "dedicated-tester",
+        "read_at": read_at_str,
+        "positive_controls_confirmed": True,
+        "consumed_keys_stayed_idle": True,
+    }
+
+    witness_path = evidence_dir / "host-sentinel-witness.json"
+    assert SchemaRegistry.lookup(witness_path, valid_quartet_doc) is HOST_SENTINEL_SCHEMA
+
+    # 1. Complete tree passes validation cleanly
+    assert HOST_SENTINEL_SCHEMA.validate(valid_quartet_doc, path=witness_path) == []
+    witness_path.write_text(json.dumps(valid_quartet_doc), encoding="utf-8")
+    assert evidence_file_privacy_errors(witness_path, repo_root=tmp_path) == []
+
+    # 2. Deleting referenced trios is refused (mutation-held)
+    missing_trio_doc = dict(valid_quartet_doc)
+    fake_path = tmp_path / "empty_dir" / "host-sentinel-witness.json"
+    fake_path.parent.mkdir(parents=True, exist_ok=True)
+    fake_path.write_text(json.dumps(missing_trio_doc), encoding="utf-8")
+    errs = HOST_SENTINEL_SCHEMA.validate(missing_trio_doc, path=fake_path)
+    assert any(
+        "referenced frame 'ctrl-o-consumed-before.png' does not exist" in e for e in errs
+    )
+    scan_errs = evidence_file_privacy_errors(fake_path, repo_root=tmp_path)
+    assert any(
+        "referenced frame 'ctrl-o-consumed-before.png' does not exist" in e for e in scan_errs
+    )
+
+    # 3. Missing confirming booleans is refused (mutation-held)
+    no_bool_doc = copy.deepcopy(valid_quartet_doc)
+    del no_bool_doc["positive_controls_confirmed"]
+    del no_bool_doc["consumed_keys_stayed_idle"]
+    no_bool_path = tmp_path / "no_bool" / "host-sentinel-witness.json"
+    no_bool_path.parent.mkdir(parents=True, exist_ok=True)
+    no_bool_path.write_text(json.dumps(no_bool_doc), encoding="utf-8")
+    errs = HOST_SENTINEL_SCHEMA.validate(no_bool_doc, path=witness_path)
+    assert any("'positive_controls_confirmed' must be explicitly true" in e for e in errs)
+    assert any("'consumed_keys_stayed_idle' must be explicitly true" in e for e in errs)
+    scan_errs = evidence_file_privacy_errors(no_bool_path, repo_root=tmp_path)
+    assert any("'positive_controls_confirmed' must be explicitly true" in e for e in scan_errs)
+    assert any("'consumed_keys_stayed_idle' must be explicitly true" in e for e in scan_errs)
+
+    # 4. Arbitrary candidate commit is refused (mutation-held)
+    bad_cand_doc = copy.deepcopy(valid_quartet_doc)
+    bad_cand_doc["candidate_commit"] = "not-a-commit"
+    bad_cand_path = tmp_path / "bad_cand" / "host-sentinel-witness.json"
+    bad_cand_path.parent.mkdir(parents=True, exist_ok=True)
+    bad_cand_path.write_text(json.dumps(bad_cand_doc), encoding="utf-8")
+    errs = HOST_SENTINEL_SCHEMA.validate(bad_cand_doc, path=witness_path)
+    assert any("must be a 40-character hexadecimal git commit SHA" in e for e in errs)
+    scan_errs = evidence_file_privacy_errors(bad_cand_path, repo_root=tmp_path)
+    assert any("must be a 40-character hexadecimal git commit SHA" in e for e in scan_errs)
+
+    # 5. Reusing an observation reference across keys or phases is refused
+    reused_keys: list[dict[str, Any]] = copy.deepcopy(keys_data)
+    reused_keys[1]["consumed_before"] = "ctrl-o-consumed-before.png"
+    reused_doc = dict(valid_quartet_doc, keys=reused_keys)
+    errs = HOST_SENTINEL_SCHEMA.validate(reused_doc, path=witness_path)
+    assert any("reused observation reference 'ctrl-o-consumed-before.png'" in e for e in errs)
+
+    # 6. Missing one of the 4 mandatory keys for Live 22 is refused
+    missing_keys: list[dict[str, Any]] = copy.deepcopy(keys_data)
+    missing_key_doc = dict(valid_quartet_doc, keys=missing_keys[:3])  # drop f2
+    errs = HOST_SENTINEL_SCHEMA.validate(missing_key_doc, path=witness_path)
+    assert any("requires all 4 default keys" in e and "'f2'" in e for e in errs)
+
+    # 7. Incomplete quartet missing an observation is refused
+    incomplete_keys: list[dict[str, Any]] = copy.deepcopy(keys_data)
+    del incomplete_keys[0]["control_after"]
+    incomplete_quartet_doc = dict(valid_quartet_doc, keys=incomplete_keys)
+    errs = HOST_SENTINEL_SCHEMA.validate(incomplete_quartet_doc, path=witness_path)
+    assert any("incomplete quartet: missing observation 'control_after'" in e for e in errs)
+
+    # 8. Empty root without keys or witnesses is refused
+    empty_root_doc = {
+        "record_type": "host-sentinel-witness",
+        "format_version": "talaria-host-sentinel-v1",
+        "case": "live-22",
+        "positive_controls_confirmed": True,
+        "consumed_keys_stayed_idle": True,
+    }
+    errs = HOST_SENTINEL_SCHEMA.validate(empty_root_doc, path=witness_path)
+    assert any("host-sentinel record requires 'keys' (quartet observations)" in e for e in errs)
+
+
+def test_live13_directory_equality_derivation_contract_and_mutations(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "live-13"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    def _write_wire_file(name: str, frames: list[dict[str, Any]]) -> tuple[str, str]:
+        p = evidence_dir / name
+        header = {
+            "kind": "header",
+            "version": 1,
+            "startedAt": "2026-09-06T12:00:00+00:00",
+            "endpoint": "ws://127.0.0.1:8765/api/ws",
+            "derivation": {
+                "tool": "scripts/acceptance/v061_evidence.py derive-capture",
+                "source_sha256": "a" * 64,
+                "source_bytes": 500,
+                "source_frames": len(frames),
+                "selection": {"frame_types": None, "start_seq": 1, "end_seq": len(frames)},
+                "rules": ["redact-cwd"],
+                "derived_at": "2026-09-06T12:00:00+00:00",
+            },
+        }
+        lines = [json.dumps(header)]
+        for seq, f in enumerate(frames, start=1):
+            lines.append(
+                json.dumps(
+                    {
+                        "kind": "frame",
+                        "seq": seq,
+                        "sourceSeq": seq * 2,
+                        "frame": f,
+                        "redactions": [],
+                    }
+                )
+            )
+        text_content = "\n".join(lines) + "\n"
+        p.write_text(text_content, encoding="utf-8")
+        digest = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
+        return name, digest
+
+    # Create 4 valid sibling derived wire capture files
+    dummy_frame = {"type": "event", "data": "clean"}
+    _, d_a_init = _write_wire_file("session-a-init.derived.jsonl", [dummy_frame, dummy_frame])
+    _, d_b_init = _write_wire_file(
+        "session-b-init.derived.jsonl",
+        [dummy_frame, dummy_frame, dummy_frame, dummy_frame],
+    )
+    _, d_a_override = _write_wire_file(
+        "session-a-override.derived.jsonl", [dummy_frame, dummy_frame]
+    )
+    _, d_a_reconnect = _write_wire_file(
+        "session-a-reconnect.derived.jsonl", [dummy_frame, dummy_frame]
+    )
+
+    sources_data: dict[str, dict[str, Any]] = {
+        "session-a-init": {
+            "source_file": "session-a-init.wire.jsonl",
+            "source_sha256": "1" * 64,
+            "derived_file": "session-a-init.derived.jsonl",
+            "derived_sha256": d_a_init,
+        },
+        "session-b-init": {
+            "source_file": "session-b-init.wire.jsonl",
+            "source_sha256": "2" * 64,
+            "derived_file": "session-b-init.derived.jsonl",
+            "derived_sha256": d_b_init,
+        },
+        "session-a-override": {
+            "source_file": "session-a-override.wire.jsonl",
+            "source_sha256": "3" * 64,
+            "derived_file": "session-a-override.derived.jsonl",
+            "derived_sha256": d_a_override,
+        },
+        "session-a-reconnect": {
+            "source_file": "session-a-reconnect.wire.jsonl",
+            "source_sha256": "4" * 64,
+            "derived_file": "session-a-reconnect.derived.jsonl",
+            "derived_sha256": d_a_reconnect,
+        },
+    }
+
+    observations_data: dict[str, dict[str, Any]] = {
+        "project-a-adoption": {
+            "source_id": "session-a-init",
+            "request_seq": 1,
+            "reply_seq": 2,
+            "request_source_seq": 2,
+            "reply_source_seq": 4,
+            "requested_equals_launch": True,
+            "reported_equals_expected": True,
+        },
+        "project-a-tool": {
+            "source_id": "session-a-init",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+        },
+        "project-b-adoption": {
+            "source_id": "session-b-init",
+            "request_seq": 1,
+            "reply_seq": 2,
+            "request_source_seq": 2,
+            "reply_source_seq": 4,
+            "requested_equals_launch": True,
+            "reported_equals_expected": True,
+        },
+        "project-b-tool": {
+            "source_id": "session-b-init",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+        },
+        "a-tool-override": {
+            "source_id": "session-a-override",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": True,
+        },
+        "b-after-a-override": {
+            "source_id": "session-b-init",
+            "tool_start_seq": 2,
+            "tool_complete_seq": 4,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+            "bounded_absence_session_cwd_set": True,
+            "b_reported_cwd_unchanged": True,
+        },
+        "a-after-reconnect": {
+            "source_id": "session-a-reconnect",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+        },
+        "fresh-a": {
+            "source_id": "session-a-init",
+            "request_seq": 1,
+            "reply_seq": 2,
+            "request_source_seq": 2,
+            "reply_source_seq": 4,
+            "requested_equals_launch": True,
+            "reported_equals_expected": True,
+        },
+        "resumed-a": {
+            "source_id": "session-a-reconnect",
+            "request_seq": 1,
+            "reply_seq": 2,
+            "request_source_seq": 2,
+            "reply_source_seq": 4,
+            "requested_equals_launch": True,
+            "reported_equals_expected": True,
+        },
+        "resumed-a-tool": {
+            "source_id": "session-a-reconnect",
+            "tool_start_seq": 1,
+            "tool_complete_seq": 2,
+            "pwd_equals_expected": True,
+            "fixture_content_matches": True,
+            "override_supplied": False,
+        },
+    }
+
+    valid_doc: dict[str, Any] = {
+        "record_type": "directory-equality-derivation",
+        "format_version": "talaria-directory-equality-v1",
+        "case": "live-13",
+        "checklist_item": "live-13",
+        "candidate_commit": "e" * 40,
+        "derived_by": "dedicated-tester",
+        "derived_at": "2026-09-06T12:00:00+00:00",
+        "status": "pass",
+        "permission_semantics": "explicit-allow-all",
+        "sources": sources_data,
+        "observations": observations_data,
+    }
+
+    derivation_path = evidence_dir / "directory-equality-derivation.json"
+    derivation_path.write_text(json.dumps(valid_doc, indent=2), encoding="utf-8")
+
+    # 1. Conforming derivation passes all checks
+    assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(valid_doc, path=derivation_path) == []
+    assert validate_directory_equality_derivation(valid_doc, path=derivation_path) == []
+    assert evidence_file_privacy_errors(derivation_path, repo_root=tmp_path) == []
+    assert (
+        SchemaRegistry.lookup(derivation_path, valid_doc)
+        is DIRECTORY_EQUALITY_DERIVATION_SCHEMA
+    )
+    assert classify_evidence_file(derivation_path) == "directory-equality-derivation"
+
+    # 2. Strict privacy check: rejects absolute filesystem paths
+    bad_path_doc = copy.deepcopy(valid_doc)
+    bad_path_doc["permission_semantics"] = "allow /private/var/folders/secret/path"
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_path_doc, path=derivation_path)
+    assert any("discloses absolute path" in e for e in errs)
+
+    bad_path_obs = copy.deepcopy(valid_doc)
+    bad_path_obs["observations"]["project-a-adoption"]["leaked_path"] = "/Users/jefcox/project"
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_path_obs, path=derivation_path)
+    assert any("discloses absolute path" in e for e in errs)
+
+    # 3. Missing mandatory source refused (mutation-held)
+    bad_src = copy.deepcopy(valid_doc)
+    del bad_src["sources"]["session-a-reconnect"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_src, path=derivation_path)
+    assert any("Live 13 derivation requires all 4 mandatory sources" in e for e in errs)
+    assert any("'session-a-reconnect'" in e for e in errs)
+
+    # 4. Undeclared source refused
+    extra_src = copy.deepcopy(valid_doc)
+    extra_src["sources"]["session-c-init"] = copy.deepcopy(
+        extra_src["sources"]["session-a-init"]
+    )
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(extra_src, path=derivation_path)
+    assert any("Live 13 derivation contains undeclared sources" in e for e in errs)
+
+    # 5. Missing mandatory scenario stage refused (mutation-held)
+    bad_stage = copy.deepcopy(valid_doc)
+    del bad_stage["observations"]["b-after-a-override"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_stage, path=derivation_path)
+    assert any("Live 13 derivation requires all 10 mandatory scenario stages" in e for e in errs)
+    assert any("'b-after-a-override'" in e for e in errs)
+
+    # 6. Undeclared scenario stage refused
+    extra_stage = copy.deepcopy(valid_doc)
+    extra_stage["observations"]["rogue-stage"] = {"source_id": "session-a-init"}
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(extra_stage, path=derivation_path)
+    assert any("Live 13 derivation contains undeclared scenario stages" in e for e in errs)
+    assert any(
+        "undeclared scenario stage 'rogue-stage' at observations.rogue-stage" in e
+        for e in errs
+    )
+
+    # 7. One-sided adoption comparison refused (mutation-held)
+    one_sided_adopt1 = copy.deepcopy(valid_doc)
+    del one_sided_adopt1["observations"]["project-a-adoption"]["reported_equals_expected"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(one_sided_adopt1, path=derivation_path)
+    assert any(
+        "incomplete comparison: 'requested_equals_launch' present "
+        "without 'reported_equals_expected'"
+        in e
+        for e in errs
+    )
+
+    one_sided_adopt2 = copy.deepcopy(valid_doc)
+    del one_sided_adopt2["observations"]["project-a-adoption"]["requested_equals_launch"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(one_sided_adopt2, path=derivation_path)
+    assert any(
+        "incomplete comparison: 'reported_equals_expected' present "
+        "without 'requested_equals_launch'"
+        in e
+        for e in errs
+    )
+
+    # 8. One-sided tool comparison refused (mutation-held)
+    one_sided_tool1 = copy.deepcopy(valid_doc)
+    del one_sided_tool1["observations"]["project-a-tool"]["pwd_equals_expected"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(one_sided_tool1, path=derivation_path)
+    assert any(
+        "incomplete comparison: 'fixture_content_matches' present without 'pwd_equals_expected'"
+        in e
+        for e in errs
+    )
+
+    one_sided_tool2 = copy.deepcopy(valid_doc)
+    del one_sided_tool2["observations"]["project-a-tool"]["fixture_content_matches"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(one_sided_tool2, path=derivation_path)
+    assert any(
+        "incomplete comparison: 'pwd_equals_expected' present without 'fixture_content_matches'"
+        in e
+        for e in errs
+    )
+
+    # 9. Invariant omissions on b-after-a-override refused (mutation-held)
+    no_bounded_absence = copy.deepcopy(valid_doc)
+    del no_bounded_absence["observations"]["b-after-a-override"]["bounded_absence_session_cwd_set"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(no_bounded_absence, path=derivation_path)
+    assert any("missing mandatory invariant 'bounded_absence_session_cwd_set'" in e for e in errs)
+
+    no_b_unchanged = copy.deepcopy(valid_doc)
+    del no_b_unchanged["observations"]["b-after-a-override"]["b_reported_cwd_unchanged"]
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(no_b_unchanged, path=derivation_path)
+    assert any("missing mandatory invariant 'b_reported_cwd_unchanged'" in e for e in errs)
+
+    # 10. Inverted sequence numbers refused (mutation-held)
+    inverted_seq = copy.deepcopy(valid_doc)
+    inverted_seq["observations"]["project-a-adoption"]["reply_seq"] = 1
+    inverted_seq["observations"]["project-a-adoption"]["request_seq"] = 5
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(inverted_seq, path=derivation_path)
+    assert any("reply_seq (1) cannot precede request_seq (5)" in e for e in errs)
+
+    inverted_tool_seq = copy.deepcopy(valid_doc)
+    inverted_tool_seq["observations"]["project-a-tool"]["tool_start_seq"] = 10
+    inverted_tool_seq["observations"]["project-a-tool"]["tool_complete_seq"] = 2
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(inverted_tool_seq, path=derivation_path)
+    assert any("tool_complete_seq (2) cannot precede tool_start_seq (10)" in e for e in errs)
+
+    # 11. Sibling wire capture containing session.cwd.set in bounded window refused
+    bad_b_frames: list[dict[str, Any]] = [
+        dummy_frame,
+        {"type": "event", "data": "clean"},
+        {"type": "event", "method": "session.cwd.set", "params": {}},
+        {"type": "event", "data": "clean"},
+    ]
+    _, bad_b_digest = _write_wire_file("session-b-bad.derived.jsonl", bad_b_frames)
+    bad_b_doc = copy.deepcopy(valid_doc)
+    bad_b_doc["sources"]["session-b-init"]["derived_file"] = "session-b-bad.derived.jsonl"
+    bad_b_doc["sources"]["session-b-init"]["derived_sha256"] = bad_b_digest
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(bad_b_doc, path=derivation_path)
+    assert any(
+        "wire log 'session-b-bad.derived.jsonl' contains 'session.cwd.set' "
+        "at seq 3 within bounded window [2, 4]"
+        in e
+        for e in errs
+    )
+
+    # 12. Missing referenced derived wire capture refused
+    missing_wire_doc = copy.deepcopy(valid_doc)
+    missing_wire_doc["sources"]["session-a-init"]["derived_file"] = "absent.derived.jsonl"
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(missing_wire_doc, path=derivation_path)
+    assert any(
+        "referenced derived wire capture 'absent.derived.jsonl' does not exist" in e
+        for e in errs
+    )
+
+    # 13. SHA-256 digest mismatch on derived wire capture refused
+    mismatched_sha_doc = copy.deepcopy(valid_doc)
+    mismatched_sha_doc["sources"]["session-a-init"]["derived_sha256"] = "f" * 64
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(mismatched_sha_doc, path=derivation_path)
+    assert any(
+        "SHA-256 digest" in e and "does not match declared derived_sha256" in e
+        for e in errs
+    )
+
+    # 14. Outcome coherence: pass status refused when equality predicate is false
+    false_pred_doc = copy.deepcopy(valid_doc)
+    false_pred_doc["observations"]["project-a-adoption"]["reported_equals_expected"] = False
+    errs = DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_pred_doc, path=derivation_path)
+    assert any(
+        "status cannot be 'pass' when one or more equality predicates are false" in e
+        for e in errs
+    )
+
+    # But failed status is permitted when an equality predicate is false (preserves failure reports)
+    false_pred_doc["status"] = "failed"
+    assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(false_pred_doc, path=derivation_path) == []
+
+    # 15. generate_directory_equality_derivation helper creates conforming output
+    gen_out = evidence_dir / "generated-derivation.json"
+    written_path = v061_evidence.generate_directory_equality_derivation(
+        output_path=gen_out,
+        candidate_commit="e" * 40,
+        sources=sources_data,
+        observations=observations_data,
+        status="pass",
+        derived_by="dedicated-tester",
+        derived_at="2026-09-06T12:00:00+00:00",
+        permission_semantics="explicit-allow-all",
+        case="live-13",
+        checklist_item="live-13",
+        repo_root=tmp_path,
+    )
+    assert written_path.is_file()
+    assert evidence_file_privacy_errors(written_path, repo_root=tmp_path) == []
+
+    # 16. Generator refuses invalid input and does not leak temporary files
+    bad_gen_out = evidence_dir / "failed-generation.json"
+    bad_sources_data = copy.deepcopy(sources_data)
+    del bad_sources_data["session-a-init"]
+    with pytest.raises(SystemExit) as excinfo:
+        v061_evidence.generate_directory_equality_derivation(
+            output_path=bad_gen_out,
+            candidate_commit="e" * 40,
+            sources=bad_sources_data,
+            observations=observations_data,
+            repo_root=tmp_path,
+        )
+    assert "Live 13 derivation requires all 4 mandatory sources" in str(excinfo.value)
+    assert not bad_gen_out.exists()
+
+    # 17. CLI derive-directory-equality execution
+    sources_json_file = evidence_dir / "sources.json"
+    sources_json_file.write_text(json.dumps(sources_data), encoding="utf-8")
+    observations_json_file = evidence_dir / "observations.json"
+    observations_json_file.write_text(json.dumps(observations_data), encoding="utf-8")
+    cli_out = evidence_dir / "cli-derivation.json"
+    exit_code = v061_evidence.main([
+        "derive-directory-equality",
+        "--candidate-commit", "e" * 40,
+        "--sources-json", str(sources_json_file),
+        "--observations-json", str(observations_json_file),
+        "--output", str(cli_out),
+        "--status", "pass",
+        "--derived-by", "dedicated-tester",
+        "--derived-at", "2026-09-06T12:00:00+00:00",
+        "--repo-root", str(tmp_path),
+    ])
+    assert exit_code == 0
+    assert cli_out.is_file()
+    assert DIRECTORY_EQUALITY_DERIVATION_SCHEMA.validate(
+        json.loads(cli_out.read_text(encoding="utf-8")), path=cli_out
+    ) == []
+
+    # 18. Comprehensive mutation-held refusal of all remaining validation rules
+    # ── Group 1: Document identity, versioning, and metadata ─────────────────
+    bad = copy.deepcopy(valid_doc)
+    bad["record_type"] = "wrong-record-type"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("'record_type' must be 'directory-equality-derivation'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["format_version"] = "wrong-format-version"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("'format_version' must be 'talaria-directory-equality-v1'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["case"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'case'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["checklist_item"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'checklist_item'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["case"] = "live-13"
+    bad["checklist_item"] = "live-14"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("does not match 'checklist_item'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["status"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'status'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["status"] = "unapproved-status"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("not in status vocabulary" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["candidate_commit"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("requires 'candidate_commit'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["candidate_commit"] = "not-a-40-hex-commit"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a 40-character hexadecimal git commit SHA" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["derived_by"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing recorded derivation role ('derived_by' is required)" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["derived_by"] = "unapproved-role"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("not in role labels" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["derived_at"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(
+        "missing recorded derivation timestamp ('derived_at' is required)" in e for e in errs
+    )
+
+    bad = copy.deepcopy(valid_doc)
+    bad["derived_at"] = "2026-09-06T12:00:00"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("derived_at must have timezone qualification" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["derived_at"] = "yesterday-afternoon"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("derived_at must be an ISO 8601 timestamp" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["permission_semantics"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'permission_semantics'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["permission_semantics"] = "   "
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("'permission_semantics' must be a non-empty string" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["permission_semantics"] = "granted on /private/var/folders/xyz/leak"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("discloses absolute path" in e for e in errs)
+    bad_disk_file = evidence_dir / "disclosed-path-derivation.json"
+    bad_disk_file.write_text(json.dumps(bad), encoding="utf-8")
+    disk_errs = evidence_file_privacy_errors(bad_disk_file, repo_root=tmp_path)
+    assert any("discloses absolute path" in e for e in disk_errs)
+
+    # ── Group 2: Sources structure and item fields ───────────────────────────
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("requires 'sources'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"] = ["session-a-init"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(e == f"{derivation_path}: 'sources' must be an object" for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"] = "not-a-dict"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("sources.session-a-init must be an object" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]["session-a-init"]["source_file"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'source_file'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["source_file"] = "/Users/jefcox/secret/raw.wire.jsonl"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a relative filename" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]["session-a-init"]["derived_file"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'derived_file'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["derived_file"] = "/tmp/derived.jsonl"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a relative filename" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]["session-a-init"]["source_sha256"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'source_sha256'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["source_sha256"] = "invalid-sha"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a 64-character hexadecimal SHA-256 digest" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["sources"]["session-a-init"]["derived_sha256"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'derived_sha256'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["derived_sha256"] = "invalid-sha"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("must be a 64-character hexadecimal SHA-256 digest" in e for e in errs)
+
+    corrupt_wire = evidence_dir / "corrupt-header.derived.jsonl"
+    corrupt_wire.write_text("not json at all\n", encoding="utf-8")
+    bad = copy.deepcopy(valid_doc)
+    bad["sources"]["session-a-init"]["derived_file"] = "corrupt-header.derived.jsonl"
+    bad["sources"]["session-a-init"]["derived_sha256"] = (
+        hashlib.sha256(b"not json at all\n").hexdigest()
+    )
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("headerless slice" in e for e in errs)
+
+    # ── Group 3: Observations structure and common stage fields ──────────────
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("requires 'observations'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"] = ["project-a-adoption"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any(e == f"{derivation_path}: 'observations' must be an object" for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"] = "not-an-object"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("observations.project-a-adoption must be an object" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["source_id"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory field 'source_id'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["source_id"] = "undeclared-source-id"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("not declared in 'sources'" in e for e in errs)
+
+    # ── Group 4: Adoption observations fields and predicates ─────────────────
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["request_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'request_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["request_seq"] = 0
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("request_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["reply_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'reply_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["reply_seq"] = -1
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("reply_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["request_source_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'request_source_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["request_source_seq"] = "two"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("request_source_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["reply_source_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'reply_source_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["reply_source_seq"] = 0
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("reply_source_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-adoption"]["requested_equals_launch"]
+    del bad["observations"]["project-a-adoption"]["reported_equals_expected"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing adoption equality predicates" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-adoption"]["requested_equals_launch"] = "true"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("requested_equals_launch must be a boolean" in e for e in errs)
+
+    # ── Group 5: Tool observations fields and predicates ─────────────────────
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-tool"]["tool_start_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'tool_start_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["tool_start_seq"] = 0
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("tool_start_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-tool"]["tool_complete_seq"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory sequence field 'tool_complete_seq'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["tool_complete_seq"] = -3
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("tool_complete_seq must be a positive integer" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-tool"]["pwd_equals_expected"]
+    del bad["observations"]["project-a-tool"]["fixture_content_matches"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing tool equality predicates" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["pwd_equals_expected"] = 1
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("pwd_equals_expected must be a boolean" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    del bad["observations"]["project-a-tool"]["override_supplied"]
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("missing mandatory boolean 'override_supplied'" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["project-a-tool"]["override_supplied"] = "no"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("override_supplied must be a boolean" in e for e in errs)
+
+    # ── Group 6: Invariant observation on b-after-a-override ─────────────────
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["b-after-a-override"]["bounded_absence_session_cwd_set"] = "yes"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("bounded_absence_session_cwd_set must be a boolean" in e for e in errs)
+
+    bad = copy.deepcopy(valid_doc)
+    bad["observations"]["b-after-a-override"]["b_reported_cwd_unchanged"] = "yes"
+    errs = validate_directory_equality_derivation(bad, path=derivation_path)
+    assert any("b_reported_cwd_unchanged must be a boolean" in e for e in errs)
+
+
+def test_candidate_wheel_sha256_validation_and_privacy_scanning(tmp_path: Path) -> None:
+    # 1. Registration assertions
+    candidate_schema = CAPTURE_METADATA_SCHEMA.nested_schemas["candidate"]
+    assert candidate_schema["wheel_sha256"] == ValueCategory.DIGEST
+    assert CAPTURE_METADATA_SCHEMA.digest_preimages["candidate.wheel_sha256"] == "wheel"
+    assert "wheel" in ALLOWED_PREIMAGE_CLASSES
+
+    # 2. Schema validation with valid 64-char hex digest
+    meta_doc: dict[str, Any] = {
+        "candidate": {
+            "commit_sha": "5" * 40,
+            "entry_point": "<tool-environment>/bin/talaria",
+            "source_module": "talaria/__init__.py",
+            "wheel_sha256": "68a0abe454f18388ed15e7a7442bf9866f9f4bd4b9a1079edf8270ade11ecf95",
+        },
+        "captured_at": "2026-09-07T02:35:43.969484+00:00",
+        "case": "probe-1",
+        "cell_height": 18,
+        "cell_width": 9.0,
+        "columns": 150,
+        "event_log": "wire-evidence.jsonl",
+        "final_ansi_offset": 100,
+        "first_ansi_offset": 100,
+        "first_frame_sha256": "2" * 64,
+        "format_version": "talaria-live-capture-v2",
+        "frame": "wheel-host-closed",
+        "frame_sha256": "2" * 64,
+        "gateway": "ws://127.0.0.1:8765/api/ws",
+        "png_sha256": "0" * 64,
+        "purpose": "probe",
+        "record_type": "capture-metadata",
+        "rows": 54,
+        "scope": "stable frame",
+        "self_check": {
+            "algorithm": "cell-frame-equality-v1",
+            "expected_rejection": "none",
+            "stable_control": "pass",
+            "status": "pass",
+        },
+        "session": {
+            "durable_id": "ses-durable",
+            "profile": "default",
+            "reply_seq": 1,
+            "request_id": "1",
+            "runtime_id": "ses-run",
+        },
+        "settling": {
+            "quiet_seconds_per_window": 0.05,
+            "timeout_seconds": 15.0,
+            "windows": 2,
+        },
+        "tester": "dedicated-tester",
+        "text_twin": {
+            "file": "wheel-host-closed.txt",
+            "frame_sha256": "2" * 64,
+            "sha256": "5" * 64,
+        },
+        "twin_digest": "5" * 64,
+    }
+    dummy_path = Path("docs/acceptance/v0.6.1/evidence/probe-1/wheel-host-closed.json")
+    assert CAPTURE_METADATA_SCHEMA.validate(meta_doc, path=dummy_path) == []
+
+    # 3. Negative controls on candidate.wheel_sha256
+    # Non-hex characters
+    bad_doc = copy.deepcopy(meta_doc)
+    bad_doc["candidate"]["wheel_sha256"] = "g" * 64
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_doc, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # Wrong length (e.g. 63 or 32 chars)
+    bad_doc = copy.deepcopy(meta_doc)
+    bad_doc["candidate"]["wheel_sha256"] = "a" * 63
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_doc, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    bad_doc = copy.deepcopy(meta_doc)
+    bad_doc["candidate"]["wheel_sha256"] = "a" * 32
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_doc, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # Non-string
+    bad_doc = copy.deepcopy(meta_doc)
+    bad_doc["candidate"]["wheel_sha256"] = 12345
+    errs = CAPTURE_METADATA_SCHEMA.validate(bad_doc, path=dummy_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    # 4. Evidence file privacy scanner: JSON sidecar and embedded PNG chunk
+    evidence_dir = tmp_path / "docs" / "acceptance" / "v0.6.1" / "evidence" / "probe-1"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    json_file = evidence_dir / "wheel-host-closed.json"
+    json_file.write_text(json.dumps(meta_doc), encoding="utf-8")
+    assert evidence_file_privacy_errors(json_file, repo_root=tmp_path) == []
+
+    png_bytes = _make_evidence_png(meta_doc)
+    png_file = evidence_dir / "wheel-host-closed.png"
+    png_file.write_bytes(png_bytes)
+    assert evidence_file_privacy_errors(png_file, repo_root=tmp_path) == []
+    assert _png_chunk_errors(png_file, png_bytes) == []
+
+    # 5. Privacy scanner refuses bad wheel_sha256 in both files
+    bad_json_file = evidence_dir / "bad-wheel.json"
+    bad_json_file.write_text(json.dumps(bad_doc), encoding="utf-8")
+    errs = evidence_file_privacy_errors(bad_json_file, repo_root=tmp_path)
+    assert any("must be a hex digest" in e for e in errs)
+
+    bad_png_bytes = _make_evidence_png(bad_doc)
+    bad_png_file = evidence_dir / "bad-wheel.png"
+    bad_png_file.write_bytes(bad_png_bytes)
+    errs = evidence_file_privacy_errors(bad_png_file, repo_root=tmp_path)
+    assert any("must be a hex digest" in e for e in errs)
 
 
 def test_no_conflict_markers_in_repository() -> None:
