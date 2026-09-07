@@ -33,6 +33,22 @@ INSPECTOR_DOCK_BREAKPOINT = 120
 NARROW_OVERLAY_INSET_BREAKPOINT = 32
 EMPTY_SECTION = "[none available from this session]"
 
+#: The function-key caveat as sentences (Live 22 finding, reviewer shape).
+#: The footer has no room for prose, and a caveat tag among capability labels
+#: reads as a capability — so the footer names the working chord (ctrl+g) and
+#: the reason a pressed function key may do nothing lives here, where a
+#: sentence fits. It states all three per-key facts the tag could not carry:
+#: F1 is unbound, F2 is ctrl+g's alias for the same action, and macOS may
+#: intercept either before Talaria sees them. It deliberately uses "consumed",
+#: a word the footer refuses: the note's job is explaining interception, so
+#: the footer-only scope of FOOTER_FORBIDDEN stays load-bearing through this
+#: sentence — any edit widening the guard to the note breaks the pin below.
+FUNCTION_KEY_NOTE = (
+    "F1 does nothing here. F2 toggles sub-agent rows, the same action as "
+    "ctrl+g — but on macOS function keys may be consumed before Talaria sees "
+    "them (Keyboard settings: Use F1, F2, etc. as standard function keys)."
+)
+
 _STATUS_GLYPHS: dict[str, str] = {
     "queued": "[..]",
     "running": "[>]",
@@ -164,8 +180,41 @@ class InspectorMoaRow(Static):
         self.update(literal_text(f"{gutter} {self.moa_line}"))
 
 
+class InspectorKeysRow(Static):
+    """The function-key caveat row: one line until focused, sentences on focus.
+
+    The #144 Option B pattern applied to static product text. The panel has no
+    vertical slack for an always-open note — the focus-stability test pins the
+    Context section against in-panel focus moves, and nine wrapped lines push
+    the seeded geometry past the overflow boundary — so the row shows the
+    note's first line with an ellipsis until focused and lends its full
+    sentences to focus, exactly the way a diagnostics row lends its clipped
+    provenance. Focusable and last in the keyboard cycle, so the caveat the
+    footer relocated here stays reachable without moving anything else.
+    """
+
+    can_focus = True
+
+    def __init__(self) -> None:
+        super().__init__("", markup=False, classes="inspector--keys")
+        self.note_text = FUNCTION_KEY_NOTE
+
+    def on_mount(self) -> None:
+        self._refresh_line()
+
+    def on_focus(self) -> None:
+        self._refresh_line()
+
+    def on_blur(self) -> None:
+        self._refresh_line()
+
+    def _refresh_line(self) -> None:
+        gutter = ">" if self.has_focus else " "
+        self.update(literal_text(f"{gutter} {self.note_text}"))
+
+
 class Inspector(VerticalScroll):
-    """Five inspector sections plus session-only responsive geometry.
+    """Six inspector sections plus session-only responsive geometry.
 
     The app calls :meth:`set_terminal_width` from its screen resize boundary.
     Keeping that input explicit avoids a timer and avoids mistaking this
@@ -214,7 +263,8 @@ class Inspector(VerticalScroll):
     Inspector .inspector--task,
     Inspector .inspector--file,
     Inspector .inspector--diag,
-    Inspector .inspector--moa {
+    Inspector .inspector--moa,
+    Inspector .inspector--keys {
         width: 1fr;
         height: 1;
         text-wrap: nowrap;
@@ -240,7 +290,8 @@ class Inspector(VerticalScroll):
        and focus is how the source and age become readable. Task and file
        rows keep the shared one-line rule above, focused or not. */
     Inspector .inspector--diag:focus,
-    Inspector .inspector--moa:focus {
+    Inspector .inspector--moa:focus,
+    Inspector .inspector--keys:focus {
         height: auto;
         text-wrap: wrap;
         text-overflow: fold;
@@ -289,6 +340,7 @@ class Inspector(VerticalScroll):
         self._moa_rows: list[InspectorMoaRow] = []
         self._diagnostics: Vertical | None = None
         self._diag_rows: list[InspectorDiagRow] = []
+        self._keys_row: InspectorKeysRow | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("TASKS", markup=False, classes="inspector--heading inspector--heading-first")
@@ -309,6 +361,13 @@ class Inspector(VerticalScroll):
         yield Static("DIAGNOSTICS", markup=False, classes="inspector--heading")
         self._diagnostics = Vertical(_diag_empty_row(), classes="inspector--section")
         yield self._diagnostics
+        # KEYS last: the heading-order tests pin MIXTURE OF AGENTS immediately
+        # before DIAGNOSTICS, so the caveat section goes after both, never
+        # between. Static, not view-driven — it needs no projection and never
+        # shows an empty state.
+        yield Static("KEYS", markup=False, classes="inspector--heading")
+        self._keys_row = InspectorKeysRow()
+        yield self._keys_row
 
     def on_mount(self) -> None:
         self.set_terminal_width(self.app.size.width)
@@ -386,6 +445,10 @@ class Inspector(VerticalScroll):
     @property
     def diag_texts(self) -> tuple[str, ...]:
         return tuple(str(row.content) for row in self._diag_rows)
+
+    @property
+    def keys_note_text(self) -> str:
+        return "" if self._keys_row is None else self._keys_row.note_text
 
     def set_focus_region(self, region: str) -> None:
         """Repaint the context section's caret row, no layout mutation (#144).
@@ -608,7 +671,10 @@ class Inspector(VerticalScroll):
             previous.focus()
 
     def _focusable_rows(self) -> list[Widget]:
-        return [*self._task_rows, *self._file_rows, *self._moa_rows, *self._diag_rows]
+        rows: list[Widget] = [*self._task_rows, *self._file_rows, *self._moa_rows, *self._diag_rows]
+        if self._keys_row is not None:
+            rows.append(self._keys_row)
+        return rows
 
     def _focus_first_row(self) -> None:
         rows = self._focusable_rows()

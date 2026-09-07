@@ -1206,6 +1206,21 @@ class HelpBar(Static):
     }
     """
 
+    #: The sub-agents chord both footer halves name (Live 22 finding,
+    #: reviewer shape). The old ``F1/F2 eaten`` claim sat here, then a macOS
+    #: caveat tag — but a caveat in a row of capability labels reads as a
+    #: capability, and either tag spent the footer's last cells on two keys
+    #: that do nothing useful while omitting the chord that works. The caveat
+    #: now lives in the inspector as a sentence (see
+    #: :data:`talaria.ui.inspector.FUNCTION_KEY_NOTE`, where prose fits); the
+    #: footer names the working chord the same chord-label way it names the
+    #: others. The label matches the ``/agents`` command users type; the
+    #: palette's ``/agents`` description pairs it with the F2 alias, so the
+    #: two are never presented as different actions. Thirteen cells, so the
+    #: live footer lands at exactly 80 columns — the width the A4 render test
+    #: pins, with no room left for a further segment.
+    AGENTS_FOOTER = "ctrl+g agents"
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
         self._help_text = ""
@@ -1222,9 +1237,11 @@ class HelpBar(Static):
         if mode == "replay":
             # Replay: keep the pacing controls and the inspector's reliable
             # routes visible without clipping at the standard 80-column size.
+            # The agents toggle is local UI state, so it works here too and
+            # the same chord is honest in both halves.
             text = (
                 f"{inspector_key} inspector · / commands · F8 pause · "
-                "F9/F10 speed · F1/F2 eaten"
+                f"F9/F10 speed · {self.AGENTS_FOOTER}"
             )
         else:
             # Live: pacing keys are inert, so not advertised. The inspector's
@@ -1233,7 +1250,7 @@ class HelpBar(Static):
             # quit, so a cancel press can never read as a quit press.
             text = (
                 f"{inspector_key} inspector · / commands · "
-                f"{interrupt_key} cancel-turn · ctrl+q quit · F1/F2 eaten"
+                f"{interrupt_key} cancel-turn · ctrl+q quit · {self.AGENTS_FOOTER}"
             )
         self._help_text = text
         self.update(literal_text(text))
@@ -1265,9 +1282,10 @@ def build_app_bindings(
         Binding("ctrl+q", "quit", "quit", priority=True),
         Binding(inspector_key, "toggle_inspector", "inspector", priority=True),
         # A4 KTD1/KTD2: F1 removed — the focus-owning card (A1) is the anchor,
-        # so the jump has no job on this desktop. On macOS F1/F2 are eaten before
-        # Talaria sees them; a eaten key sends no bytes and the program cannot
-        # detect it, so every eaten action gets a non-function-key primary.
+        # so the jump has no job on this desktop. On macOS F1/F2 may be
+        # intercepted before Talaria sees them; an intercepted key sends no
+        # bytes and the program cannot detect it, so every interceptable
+        # action gets a non-function-key primary.
         # F2/F4 remain as aliases where the desktop delivers them (KTD3).
         Binding("ctrl+g", "toggle_agents", "sub-agents", priority=True),
         Binding("f2", "toggle_agents", "sub-agents", priority=True, show=False),
