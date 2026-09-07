@@ -2,7 +2,7 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
-## 2026-09-07 — Four checks in one release looked like verification and performed none
+## 2026-09-07 — Four things in one release looked like verification and performed none
 
 **Evidence.** All four surfaced during the v0.6.1 acceptance run.
 
@@ -17,9 +17,14 @@
    could not match, so it passed only when the screenshot beat the scroll.
    Fixed in pull request #172.
 3. A vocabulary mistaken for a scanner. `REFUSED_CLASSES` at
-   `scripts/acceptance/v050_receipt.py:294` names identifier classes, but every
-   live rule in `PRIVACY_PATTERNS` at `:89` is structural and no name detector
-   exists, so membership in the refused set is not a scan rule.
+   `scripts/acceptance/v050_receipt.py:294` is a declaration vocabulary for what
+   a redaction may claim it covered; it never drives a scan, every use being a
+   membership test on a declared `covered_class`. Five of its six names happen
+   to have an independent live check elsewhere — three in the structural rules
+   of `PRIVACY_PATTERNS` at `:89`, one in the allowed-host allowlist, one in the
+   capture-metadata closed vocabulary. One does not: `operator-identity`, which
+   is the name whose presence in the list invites the conclusion that the
+   scanner refuses an operator's name. It does not.
 4. A contract nothing reads. The implementation plan specifies a per-row
    evidence identity — for example "the written `theme.name` line (sanitized)"
    — and no acceptance tool checks it. Nothing under `scripts/` or `tests/`
@@ -29,8 +34,8 @@
    listed, and never against a required-name list. Four live cases were
    therefore complete by every automated measure while missing artefacts their
    own contract named. Recorded on the owning child issues #140, #141 and #149.
-   Those zero-error measurements describe the state before the gaps were
-   closed; all four cases have since been amended, and the superseded receipt
+   That completeness describes the state before the gaps were closed; all
+   four cases have since been amended, and the superseded receipt
    digests are in the reviewer's inspection records.
 
 A fifth is adjacent. `recorded_at` is a property of the captures a receipt
@@ -44,8 +49,9 @@ only the prose been rewritten. No receipt carries a digest of its own bytes.
 
 **Mechanism.** Each of these passes for a reason unrelated to the property it
 claims to establish, and no suite went red for the right reason. Only the first
-had a gate that could have caught it and did not; the second went red once its
-pattern was corrected, which is how it was found; the last three have no gate
+had a gate that could have caught it and did not; the second went red on one
+continuous-integration leg with the defective pattern still in place — the race
+lost rather than won — which is how it was found; the last three have no gate
 at all, being a vocabulary, a document contract with no tool behind it, and a
 field's semantics. What separated the real checks from the theatrical ones was
 driving them: removing the guard and watching whether anything went red, and
