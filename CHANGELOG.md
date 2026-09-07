@@ -44,7 +44,6 @@ upgrade reasons, and read the `0.6.0` section below alongside them.
   raced each other, mounting both lists into one container.
 - A render tick arriving after teardown had begun raised instead of stopping quietly.
 
-
 ## [0.6.0] — 2026-09-04
 
 Talaria v0.6.0 is a configurable daily-driver follow-up to v0.5.0, answering ten
