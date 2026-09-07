@@ -8,7 +8,11 @@ portable and each script fully controls its own behavior.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
+import signal
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -29,7 +33,7 @@ from talaria.status.contract import (
     normalize_status_settings,
     parse_command,
 )
-from talaria.status.runner import StatusRunner
+from talaria.status.runner import StatusRunner, StatusTickResult
 from tests.status.conftest import python_argv
 
 
@@ -418,5 +422,81 @@ def test_trusted_script_rows_render_while_allowlisted_provider_keys_stay_denied(
         # No synthetic credential material anywhere in the render.
         assert not any("synthetic-" in row.text for row in result.script_rows)
         assert not any("token=" in row.text for row in result.script_rows)
+
+    asyncio.run(scenario())
+
+
+def test_aclose_sweeps_a_reaped_leaders_group_without_awaiting_the_tick(
+    tmp_path: Path, sample_payload: StatusPayload
+) -> None:
+    """R36's sweep must not depend on the leader staying alive (the reaped gap).
+
+    ``sh -c 'sleep 60 & echo $! > pidfile; exit 0'`` is the shape the
+    ``_run_once`` ``finally`` exists for: the leader exits at once, the
+    backgrounded worker holds the pipes, and asyncio's watcher reaps the leader
+    within milliseconds. Teardown then has only this sequence — cancel the
+    tick, call ``aclose``, never give the cancelled task another turn — and the
+    worker must still be dead once ``aclose`` returns. The liveness poll below
+    is a synchronous ``time.sleep`` on purpose: a single ``await`` there would
+    schedule the cancelled tick's ``finally`` and let *that* do the sweeping,
+    passing the test on the exact hole it exists to catch.
+    """
+
+    def alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    async def scenario() -> None:
+        pidfile = tmp_path / "worker.pid"
+        runner = StatusRunner(
+            argv=["sh", "-c", f"sleep 60 & echo $! > {pidfile}; exit 0"],
+            launch_cwd=tmp_path,
+            limits=_fast_limits(timeout_seconds=30.0),
+        )
+        task: asyncio.Task[StatusTickResult] = asyncio.create_task(
+            runner.tick(sample_payload)
+        )
+
+        def leader_reaped() -> bool:
+            process = runner._process
+            return (
+                pidfile.exists()
+                and pidfile.read_text().strip() != ""
+                and process is not None
+                and process.returncode is not None
+            )
+
+        try:
+            async def poll_reaped() -> None:
+                while not leader_reaped():
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(poll_reaped(), timeout=10.0)
+            worker = int(pidfile.read_text().strip())
+            assert alive(worker), "the backgrounded worker was never running"
+
+            task.cancel()
+            await runner.aclose()
+
+            gone = False
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                if not alive(worker):
+                    gone = True
+                    break
+                # Deliberately synchronous: this loop must not yield to the
+                # event loop, or the cancelled tick's finally would sweep.
+                time.sleep(0.05)
+            assert gone, "a reaped leader's backgrounded worker outlived aclose()"
+        finally:
+            if pidfile.exists() and pidfile.read_text().strip():
+                with contextlib.suppress(ProcessLookupError, PermissionError, ValueError):
+                    os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     asyncio.run(scenario())

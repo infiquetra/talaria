@@ -487,21 +487,35 @@ class StatusRunner:
             os.killpg(process.pid, signal.SIGKILL)
 
     async def aclose(self) -> None:
-        """Idempotent teardown hook (R36): kill any in-flight child's process group.
+        """Idempotent teardown hook (R36): kill the recorded tick's process group.
 
         Safe to call whether or not a tick is in flight, and safe to call more
         than once. Talaria's own teardown path calls this unconditionally so a
         status child is never left running after Talaria exits.
 
-        **This handles the still-running child only, and that is deliberate.**
-        The reaped-leader case — a command that backgrounds a worker, exits at
-        once, and leaves the worker holding the pipes — belongs to
-        :meth:`_run_once`'s ``finally``, which sweeps the group whatever the
-        leader's state. Widening this method to cover it as well was measured to
-        add a branch nothing in the suite could reach: cancelling the status task
-        runs that ``finally`` before this coroutine's first ``await`` returns, so
-        the group is already gone by the time control arrives here. A guard
-        nothing can exercise is a guard nobody can trust, so it is not here.
+        **Not conditional on the leader's liveness.** A command that
+        backgrounds a worker — ``worker & echo ok`` — exits its leader at once
+        while the worker keeps the pipes open, and asyncio's watcher reaps that
+        leader within milliseconds, so a set ``returncode`` is ordinary
+        bookkeeping here, not the end of the group: the leader was only ever a
+        handle for the group (KTD5's ``start_new_session=True`` made its pid
+        the group id), and the group outlives it. The pid-recycling stance
+        recorded at :meth:`_run_once`'s ``finally`` applies here unchanged. The
+        reaped path sweeps with no ``await`` at all, so once this coroutine
+        returns on it the group is dead even if the caller's event loop never
+        runs another callback.
+
+        An earlier version returned early on a reaped leader and argued the
+        branch was unreachable: cancelling the status task "runs that ``finally``
+        before this coroutine's first ``await`` returns". That was a premise
+        about the *caller*, not about this method — it held only while the
+        caller never awaited the cancelled tick **and** the loop stayed alive
+        long enough to unwind it, and on the path where neither held, a
+        backgrounded grandchild survived a normal exit. The reaped leader is
+        reaped here now, and
+        ``tests/status/test_runner.py::test_aclose_sweeps_a_reaped_leaders_group_without_awaiting_the_tick``
+        exercises exactly this branch — which resolves this method's own rule:
+        a guard nothing can exercise is a guard nobody can trust.
 
         **A spawn in flight is waited for, not treated as an absent child.**
         ``create_subprocess_exec`` forks the child and then keeps awaiting while
@@ -520,11 +534,12 @@ class StatusRunner:
                 )
 
         process = self._process
-        if process is None or process.returncode is not None:
+        if process is None:
             return
         self._kill_process_group(process)
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(process.wait(), timeout=self._limits.timeout_seconds)
+        if process.returncode is None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(process.wait(), timeout=self._limits.timeout_seconds)
 
 
 async def run_forever(
