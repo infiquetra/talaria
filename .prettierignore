@@ -18,3 +18,11 @@ __pycache__
 
 # This fixture must remain invalid JSON so the importer rejection stays real.
 tests/fixtures/vscode-themes/malformed.json
+
+# These fixtures are recorded Open VSX responses and must stay byte-identical
+# to the live service so the routing the round-trip test pins stays provable;
+# reformatting them would destroy the byte fidelity they exist to preserve.
+# Scoped to the two JSON files deliberately —
+# tests/fixtures/openvsx/README.md stays Prettier-governed.
+tests/fixtures/openvsx/dracula-theme-2.25.1-package.json
+tests/fixtures/openvsx/dracula-theme-2.25.1-dracula.json
