@@ -13,6 +13,8 @@ and the measurement-gap discussion.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from talaria.domain.commands import TALARIA_LOCAL_COMMANDS
@@ -20,14 +22,38 @@ from talaria.replay.controls import ReplayControls
 from talaria.ui.app import AGENTS_NOTHING_TO_TOGGLE, NOTHING_TO_INTERRUPT, HelpBar, TalariaApp
 from tests.ui.conftest import RecordingDispatcher, event, feed, live_app, settle
 
+#: Words the footer may never use of F1/F2 (Live 22 finding, reviewer shape).
+#: From the reviewer's own mutation run, relayed by the controller: five are
+#: the words it actually mutated, ten close the class. The class is any
+#: wording asserting the keys are inert ("the key does nothing": inert,
+#: unbound, disabled, dead, no-op) or that something else took them
+#: (eaten, consumed, swallowed, blocked), plus the generic not-working family
+#: (broken). Case-insensitive substring against the rendered footer string.
+#: Footer only, never the inspector sentences: the inspector's job is now to
+#: explain interception, so it must stay free to say a key may be consumed or
+#: blocked — a shared list would forbid the correct wording where it belongs.
+FOOTER_FORBIDDEN: tuple[str, ...] = (
+    "eaten",
+    "broken",
+    "disabled",
+    "unbound",
+    "inert",
+    "consumed",
+    "swallowed",
+    "blocked",
+    "dead",
+    "no-op",
+)
+
 
 @pytest.mark.asyncio
 async def test_ae1_jump_is_gone() -> None:
     """AE1 structural: F1 has no binding and no action.
 
     The approval card is answerable without any function key (A1 auto-focus +
-    enter/esc), and the help bar names both keys as macOS-governed rather than
-    calling either eaten. The absence of a binding is asserted
+    enter/esc), and the help bar names the working ctrl+g chord rather than
+    calling either key eaten; the macOS caveat lives in the inspector, where
+    a sentence fits. The absence of a binding is asserted
     rather than a press, because an intercepted key sends no bytes and the
     program cannot distinguish it from not having been pressed.
     """
@@ -375,8 +401,16 @@ async def test_ae6_row_is_discoverable() -> None:
         assert "cancel-turn" in live_text, "live should label cancel-turn"
         assert "ctrl+q" in live_text, "live should name the quit chord"
         assert "quit" in live_text, "live should label quit-client"
-        assert "F1" in live_text
-        assert "eaten" not in live_text.lower(), f"uniform eaten claim returned: {live_text!r}"
+        assert "ctrl+g" in live_text, "live should name the working agents chord"
+        assert "agents" in live_text, "live should label the agents action"
+        assert re.search(r"F1(?!\d)", live_text) is None
+        assert re.search(r"F2(?!\d)", live_text) is None, (
+            f"footer carries a function-key caveat again: {live_text!r}"
+        )
+        for forbidden in FOOTER_FORBIDDEN:
+            assert forbidden not in live_text.lower(), (
+                f"footer verdict returned: {forbidden!r} in {live_text!r}"
+            )
         await pilot.pause()
         strips = app_live.screen._compositor.render_strips()
         row = app_live.help_bar.region.y
@@ -386,7 +420,7 @@ async def test_ae6_row_is_discoverable() -> None:
         rendered = "".join(seg.text for seg in strips[row])
         assert "…" not in rendered, f"live footer clipped at 80x24: {rendered!r}"
         assert "cancel-turn" in rendered, f"live cancel label missing: {rendered!r}"
-        assert HelpBar.FKEY_MACOS_ADVISORY in rendered, f"live tail missing: {rendered!r}"
+        assert HelpBar.AGENTS_FOOTER in rendered, f"live tail missing: {rendered!r}"
         await app_live.shutdown_sources()
 
     from talaria.replay.source import ReplaySource
@@ -404,6 +438,15 @@ async def test_ae6_row_is_discoverable() -> None:
         assert "ctrl+o" in replay_text, "replay should name the inspector chord"
         assert "ctrl+s" not in replay_text
         assert "ctrl+c" not in replay_text
+        assert "ctrl+g" in replay_text, "replay should name the working agents chord"
+        assert re.search(r"F1(?!\d)", replay_text) is None
+        assert re.search(r"F2(?!\d)", replay_text) is None, (
+            f"replay footer carries a function-key caveat again: {replay_text!r}"
+        )
+        for forbidden in FOOTER_FORBIDDEN:
+            assert forbidden not in replay_text.lower(), (
+                f"replay footer verdict returned: {forbidden!r} in {replay_text!r}"
+            )
         await pilot.pause()
         strips = app_replay.screen._compositor.render_strips()
         row = app_replay.help_bar.region.y
@@ -412,25 +455,30 @@ async def test_ae6_row_is_discoverable() -> None:
         assert app_replay.bottom_status_bar.region.height == 1
         rendered = "".join(seg.text for seg in strips[row])
         assert "…" not in rendered, f"replay footer clipped at 80x24: {rendered!r}"
-        assert HelpBar.FKEY_MACOS_ADVISORY in rendered, f"replay tail missing: {rendered!r}"
+        assert HelpBar.AGENTS_FOOTER in rendered, f"replay tail missing: {rendered!r}"
         await app_replay.shutdown_sources()
 
 
 @pytest.mark.asyncio
-async def test_footer_fkey_advisory_matches_key_configuration() -> None:
-    """Live 22 finding: the footer advisory is bound to the binding table.
+async def test_footer_agents_chord_matches_key_configuration() -> None:
+    """Live 22 finding (reviewer shape): the footer names the working chord.
 
     F1 is deliberately unbound and F2 is a hidden alias with ctrl+g as its
-    collision-free primary; both footer halves must name the two keys without
-    the uniform "eaten" claim. The table facts below come from
+    collision-free primary; both footer halves name that shown primary instead
+    of carrying a function-key caveat. The table facts below come from
     build_app_bindings rather than from the shipped literal, so a table change
     forces this test to re-examine the footer — a literal assert would go
-    stale instead — and the advisory is never deleted to fix its wording.
+    stale instead. The caveat is not deleted, it is relocated: F2's alias and
+    the macOS interception sentences live in the inspector KEYS section, and
+    this test pins that relocation so a future edit cannot silently drop it.
+    The footer refuses the whole forbidden class, not just the shipped
+    "eaten" instance.
     """
     from textual.binding import Binding
 
     from talaria.config import DEFAULT_INSPECTOR_KEY, DEFAULT_INTERRUPT_KEY
     from talaria.ui.app import build_app_bindings
+    from talaria.ui.inspector import FUNCTION_KEY_NOTE
 
     bindings = build_app_bindings(DEFAULT_INSPECTOR_KEY, DEFAULT_INTERRUPT_KEY)
     by_key = {b.key: b for b in bindings if isinstance(b, Binding)}
@@ -440,14 +488,23 @@ async def test_footer_fkey_advisory_matches_key_configuration() -> None:
     primaries = [
         b.key for b in bindings if isinstance(b, Binding) and b.action == "toggle_agents" and b.show
     ]
-    assert "ctrl+g" in primaries, "the collision-free primary stands"
+    assert primaries == ["ctrl+g"], "one shown primary stands for the action"
 
     app_live = live_app(RecordingDispatcher())
     async with app_live.run_test():
         live_text = app_live.help_bar.help_text
-        assert HelpBar.FKEY_MACOS_ADVISORY in live_text
-        assert "F1" in live_text and "F2" in live_text
-        assert "eaten" not in live_text.lower()
+        assert HelpBar.AGENTS_FOOTER in live_text
+        assert primaries[0] in live_text
+        assert re.search(r"F1(?!\d)", live_text) is None
+        assert re.search(r"F2(?!\d)", live_text) is None
+        for forbidden in FOOTER_FORBIDDEN:
+            assert forbidden not in live_text.lower(), (
+                f"footer verdict returned: {forbidden!r} in {live_text!r}"
+            )
+        keys_note = app_live.inspector.keys_note_text
+        assert keys_note == FUNCTION_KEY_NOTE
+        assert "F1" in keys_note and "F2" in keys_note
+        assert "ctrl+g" in keys_note and "macOS" in keys_note
         await app_live.shutdown_sources()
 
     from talaria.replay.source import ReplaySource
@@ -458,9 +515,50 @@ async def test_footer_fkey_advisory_matches_key_configuration() -> None:
     app_replay = TalariaApp(source, mode="replay", controls=controls)
     async with app_replay.run_test():
         replay_text = app_replay.help_bar.help_text
-        assert HelpBar.FKEY_MACOS_ADVISORY in replay_text
-        assert "eaten" not in replay_text.lower()
+        assert HelpBar.AGENTS_FOOTER in replay_text
+        assert primaries[0] in replay_text
+        assert re.search(r"F1(?!\d)", replay_text) is None
+        assert re.search(r"F2(?!\d)", replay_text) is None
+        for forbidden in FOOTER_FORBIDDEN:
+            assert forbidden not in replay_text.lower(), (
+                f"replay footer verdict returned: {forbidden!r} in {replay_text!r}"
+            )
+        assert app_replay.inspector.keys_note_text == FUNCTION_KEY_NOTE
         await app_replay.shutdown_sources()
+
+
+@pytest.mark.asyncio
+async def test_inspector_keys_row_lends_full_note_to_focus() -> None:
+    """Live 22 finding (reviewer shape): the relocated caveat stays readable.
+
+    The KEYS row holds one line unfocused — the panel has no vertical slack
+    for an always-open note — and expands to the full sentences while focused,
+    the #144 Option B pattern. A relocated caveat nobody can open would be
+    deletion by another name, so this test opens it: the setting name must be
+    readable on focus, and the row must fold back to one line after.
+    """
+    from talaria.ui.inspector import InspectorKeysRow
+
+    app_live = live_app(RecordingDispatcher())
+    async with app_live.run_test(size=(132, 40)) as pilot:
+        await pilot.pause()
+        (row,) = [
+            node
+            for node in app_live.inspector.query(".inspector--keys").nodes
+            if isinstance(node, InspectorKeysRow)
+        ]
+        assert row.size.height == 1
+        app_live.screen.set_focus(row)
+        await pilot.pause()
+        assert row.size.height > 1, "a focused keys row must expand to its sentences"
+        rendered = "\n".join(row.render_line(y).text for y in range(row.size.height))
+        assert "standard function keys" in rendered, (
+            "the setting name must be readable on focus"
+        )
+        app_live.screen.set_focus(None)
+        await pilot.pause()
+        assert row.size.height == 1, "focus leaving folds the row back"
+        await app_live.shutdown_sources()
 
 
 def test_ae7_eaten_keys_documented_statically_no_detector() -> None:

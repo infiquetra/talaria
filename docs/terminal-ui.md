@@ -73,13 +73,14 @@ uses the saved width or terminal width minus two, whichever is smaller. Below 32
 terminal width. `Escape` closes the overlay and restores the prior focus. Widening back to 120
 restores a panel that was requested open; a manually closed panel stays closed.
 
-The five sections are always present:
+The sections are always present:
 
 - Tasks
 - Context
 - Changed files
 - Operation details
 - Diagnostics
+- Keys — the function-key caveat as one row: a single line until focused, expanding to the full sentences on focus (the diagnostics-row pattern), naming the working `ctrl+g` agents chord's `F2` alias and the macOS interception setting
 
 The first four are derived from the current session's held transcript, queue, model/context,
 connection, session, and tool-change state. A section with no state says

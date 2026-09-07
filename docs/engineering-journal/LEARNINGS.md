@@ -4,6 +4,29 @@
 
 ## 2026-09-06
 
+### A caveat tag among capability labels reads as a capability; relocate, don't reword
+
+**Evidence**: the `F1/F2 macOS` footer tag (`talaria/ui/app.py`, Live 22 reviewer round) was
+true and still unreadable — sitting beside `F8 pause` and `F9/F10 speed`, it parsed as two
+keys doing a thing called macOS, while the chord that works (`ctrl+g`) was absent from the
+footer entirely. A third reword inside the same eleven cells could only be differently
+unsatisfying: the budget fits one joint claim, and the joint claim is not what the user needs.
+
+**Mechanism**: footer cells can carry a remedy *or* a reason, never both. The fix split them
+across surfaces by their nature: the footer names the working chord (`ctrl+g agents`, in the
+same chord-label form as every other segment), and the reason lives in the inspector KEYS
+section (`talaria/ui/inspector.py:FUNCTION_KEY_NOTE`) — F1 unbound, F2 as ctrl+g's alias,
+macOS interception with the system-setting name. The panel has no vertical slack for an
+always-open note (an early version broke the Context focus-stability test), so the row uses
+the #144 Option B pattern: one line until focused, full sentences on focus, last in the
+keyboard cycle. The test pins the relocation and opens the row, so a future edit can neither
+silently drop the caveat nor ship one nobody can read.
+
+**Generalizable rule**: when a hint is incomprehensible at its budget, move it to where its
+budget exists instead of compressing it further. Deleting it from the small surface while
+placing it on a larger one is relocation, not deletion — and the test must assert the new
+location.
+
 ### A user-facing string that restates configuration state drifts false; bind its test to the table
 
 **Evidence**: the live footer printed `F1/F2 eaten` (`talaria/ui/app.py`, Live 22 finding).

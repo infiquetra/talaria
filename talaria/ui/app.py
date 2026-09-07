@@ -1206,18 +1206,20 @@ class HelpBar(Static):
     }
     """
 
-    #: The function-key advisory shared by both footer halves (Live 22
-    #: finding). F1 is unbound — it does nothing even where the desktop
-    #: delivers it — and F2 is a working alias, so neither is "eaten" in the
-    #: inert sense; but macOS may intercept both before Talaria sees them,
-    #: depending on the user's "Use F1, F2, etc. as standard function keys"
-    #: setting. The two keys have different per-key truths, so the only honest
-    #: joint claim in footer budget is the common governor: macOS decides
-    #: whether either arrives. Eleven cells, so the live footer lands at 78 of
-    #: 80 columns unclipped with margin; the setting detail and the per-key
-    #: remedy (F2's ctrl+g primary, named in the palette) live in the notes,
-    #: not here.
-    FKEY_MACOS_ADVISORY = "F1/F2 macOS"
+    #: The sub-agents chord both footer halves name (Live 22 finding,
+    #: reviewer shape). The old ``F1/F2 eaten`` claim sat here, then a macOS
+    #: caveat tag — but a caveat in a row of capability labels reads as a
+    #: capability, and either tag spent the footer's last cells on two keys
+    #: that do nothing useful while omitting the chord that works. The caveat
+    #: now lives in the inspector as a sentence (see
+    #: :data:`talaria.ui.inspector.FUNCTION_KEY_NOTE`, where prose fits); the
+    #: footer names the working chord the same chord-label way it names the
+    #: others. The label matches the ``/agents`` command users type; the
+    #: palette's ``/agents`` description pairs it with the F2 alias, so the
+    #: two are never presented as different actions. Thirteen cells, so the
+    #: live footer lands at exactly 80 columns — the width the A4 render test
+    #: pins, with no room left for a further segment.
+    AGENTS_FOOTER = "ctrl+g agents"
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
@@ -1235,9 +1237,11 @@ class HelpBar(Static):
         if mode == "replay":
             # Replay: keep the pacing controls and the inspector's reliable
             # routes visible without clipping at the standard 80-column size.
+            # The agents toggle is local UI state, so it works here too and
+            # the same chord is honest in both halves.
             text = (
                 f"{inspector_key} inspector · / commands · F8 pause · "
-                f"F9/F10 speed · {self.FKEY_MACOS_ADVISORY}"
+                f"F9/F10 speed · {self.AGENTS_FOOTER}"
             )
         else:
             # Live: pacing keys are inert, so not advertised. The inspector's
@@ -1246,7 +1250,7 @@ class HelpBar(Static):
             # quit, so a cancel press can never read as a quit press.
             text = (
                 f"{inspector_key} inspector · / commands · "
-                f"{interrupt_key} cancel-turn · ctrl+q quit · {self.FKEY_MACOS_ADVISORY}"
+                f"{interrupt_key} cancel-turn · ctrl+q quit · {self.AGENTS_FOOTER}"
             )
         self._help_text = text
         self.update(literal_text(text))
