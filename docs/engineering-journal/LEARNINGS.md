@@ -2,6 +2,50 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-07 — Four checks in one release looked like verification and performed none
+
+**Evidence.** All four surfaced during the v0.6.1 acceptance run and none was
+caught by a green suite.
+
+1. A guard comparing a value to itself. `scripts/acceptance/v061_evidence.py`
+   set `doc["candidate_commit"]` from `candidate_commit`, then passed
+   `expected_commit=candidate_commit` to the validator. The comparison could
+   not fail, and because the argument was non-`None` it also suppressed the
+   sibling-receipt lookup that would have been the real check. Fixed in pull
+   request #176.
+2. A regex asserting about itself. A viewport test counted a pattern the prompt
+   line could not match, so it passed only when the screenshot beat the scroll.
+   Recorded separately.
+3. A vocabulary mistaken for a scanner. `REFUSED_CLASSES` names identifier
+   classes, but every live `PRIVACY_PATTERNS` rule is structural and no name
+   detector exists, so membership in the refused set is not a scan rule.
+4. A contract nothing reads. The implementation plan specifies a per-row
+   evidence identity — for example "the written `theme.name` line (sanitized)"
+   — and no acceptance tool checks it. Four live cases were complete by every
+   automated measure, zero validator errors, zero digest failures, zero privacy
+   errors, while missing artefacts their own contract named. Recorded on #150.
+
+A fifth is adjacent: `recorded_at` is a property of the captures a receipt
+represents, so a receipt's prose can be rewritten with the field legitimately
+unmoved, and `evidence.files` carries no digest for `receipt.json` itself. Four
+receipts changed content this run with nothing in them recording that they had.
+
+**Mechanism.** Each of these passes its gate for a reason unrelated to the
+property it claims to establish. That is invisible to a test run, because a test
+run reports only red or green, and all five were green. What separated the real
+checks from the theatrical ones was driving them: removing the guard and
+watching whether anything went red, and recomputing a digest rather than reading
+a timestamp. The reviewer's refusal to record an inspection it could not prove
+it had read was the same instrument pointed at itself.
+
+**Generalizable rule.** A check earns belief only when something has been shown
+to break it. For a guard, remove it and watch the test fail. For an assertion
+about rendered output, verify the pattern can match the thing it claims to find.
+For a document that names required artefacts, either a tool reads that list or
+the list is decoration. Ask what would make this fail before trusting that it
+passed — and prefer a content digest over a timestamp whenever the question is
+whether bytes changed.
+
 ## 2026-09-07 — An option space presented after the decision re-opens the decision
 
 **Evidence.** Issue #151 comment 5573347042 and issue #139 comment 5573349097,
