@@ -1312,7 +1312,9 @@ INSTALL_RECEIPT_SCHEMA = RecordSchema(
     name="install-receipt",
     declared_keys={
         "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "release": ValueCategory.CLOSED_VOCABULARY,
         "tester": ValueCategory.CLOSED_VOCABULARY,
+        "harness_commit": ValueCategory.DIGEST,
         "candidate": ValueCategory.OBJECT,
         "install": ValueCategory.OBJECT,
         "recorded_at": ValueCategory.TIMESTAMP,
@@ -1320,11 +1322,18 @@ INSTALL_RECEIPT_SCHEMA = RecordSchema(
     nested_schemas={
         "candidate": {
             "commit": ValueCategory.DIGEST,
+            "wheel_filename": ValueCategory.STRING,
             "wheel_sha256": ValueCategory.DIGEST,
             "version": ValueCategory.CLOSED_VOCABULARY,
             "branch": ValueCategory.STRING,
         },
         "install": {
+            "scratch_root": ValueCategory.PATH,
+            "venv": ValueCategory.PATH,
+            "executable": ValueCategory.PATH,
+            "executable_sha256": ValueCategory.DIGEST,
+            "installed_file_count": ValueCategory.COUNT,
+            "installed_files_sha256": ValueCategory.DIGEST,
             "version_reported": ValueCategory.CLOSED_VOCABULARY,
             "help_ok": ValueCategory.BOOLEAN,
             "filename": ValueCategory.STRING,
@@ -1334,9 +1343,12 @@ INSTALL_RECEIPT_SCHEMA = RecordSchema(
         },
     },
     digest_preimages={
+        "harness_commit": "git-commit",
         "candidate.commit": "git-commit",
         "candidate.wheel_sha256": "wheel",
         "install.sha256": "wheel",
+        "install.executable_sha256": "artifact",
+        "install.installed_files_sha256": "artifact",
     },
     vocabularies={
         "schema_version": frozenset({
@@ -1344,7 +1356,8 @@ INSTALL_RECEIPT_SCHEMA = RecordSchema(
             "talaria-v0.6.0-install-v1",
             V061_INSTALL_SCHEMA,
         }),
-        "tester": frozenset(V061_ROLE_LABELS) | frozenset(TESTERS),
+        "release": frozenset({V061_RELEASE, "0.6.0", "0.5.0"}),
+        "tester": frozenset(V061_ROLE_LABELS) | frozenset(TESTERS) | frozenset({"operator"}),
         "candidate.version": frozenset({V061_RELEASE, "0.6.0", "0.5.0"}),
         "install.version_reported": frozenset({V061_RELEASE, "0.6.0", "0.5.0"}),
     },

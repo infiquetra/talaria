@@ -24,7 +24,7 @@
     "release": {"const": "0.6.1"},
     "checklist_item": {
       "type": "string",
-      "pattern": "^live-(0[1-9]|1[0-9]|2[0-1])$"
+      "pattern": "^live-(0[1-9]|1[0-9]|2[0-3])$"
     },
     "title": {"type": "string", "minLength": 1},
     "issue": {

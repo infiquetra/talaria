@@ -19,6 +19,7 @@ import hashlib
 import json
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 import pytest
@@ -189,3 +190,101 @@ def test_talaria_live_capture_v2_vocabulary_registration() -> None:
         "schema_version", ()
     )
     assert "talaria-live-capture-v2" not in CAPTURE_METADATA_SCHEMA.vocabularies.get("schema", ())
+
+
+def test_v061_manifest_schema_checklist_item_bounds() -> None:
+    """The v0.6.1 manifest schema accepts items through live-23 and rejects live-24."""
+    schema_path = _ACCEPTANCE_ROOT / "v0.6.1" / "artifact-manifest.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    item_subschema = schema["properties"]["receipts"]["items"]["properties"]["checklist_item"]
+
+    validator = jsonschema.Draft202012Validator(item_subschema)
+
+    for num in (1, 9, 10, 19, 20, 21, 22, 23):
+        assert validator.is_valid(f"live-{num:02d}"), f"live-{num:02d} should be valid"
+
+    for invalid in ("live-00", "live-24", "live-25", "live-1", "live-001"):
+        assert not validator.is_valid(invalid), f"{invalid} should be rejected"
+
+
+def test_v061_receipt_schema_checklist_item_bounds() -> None:
+    """The v0.6.1 receipt schema accepts items through live-23 and rejects live-24."""
+    schema_path = _ACCEPTANCE_ROOT / "v0.6.1" / "receipt.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    item_subschema = schema["properties"]["checklist_item"]
+
+    validator = jsonschema.Draft202012Validator(item_subschema)
+
+    for num in (1, 9, 10, 19, 20, 21, 22, 23):
+        assert validator.is_valid(f"live-{num:02d}"), f"live-{num:02d} should be valid"
+
+    for invalid in ("live-00", "live-24", "live-25", "live-1", "live-001"):
+        assert not validator.is_valid(invalid), f"{invalid} should be rejected"
+
+
+def test_v061_manifest_document_validates_against_shipped_schema() -> None:
+    """A complete manifest containing live-22 and live-23 satisfies the schema copy."""
+    schema_path = _ACCEPTANCE_ROOT / "v0.6.1" / "artifact-manifest.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    receipts: list[dict[str, Any]] = [
+        {
+            "receipt_path": f"docs/acceptance/v0.6.1/evidence/live-{i:02d}/receipt.json",
+            "receipt_sha256": "c" * 64,
+            "checklist_item": f"live-{i:02d}",
+            "tester": "dedicated-tester",
+            "verdict": "pass",
+            "candidate_commit_sha": "a" * 40,
+            "applies_to_candidate": "same",
+        }
+        for i in range(1, 24)
+    ]
+    manifest: dict[str, Any] = {
+        "$schema": "./artifact-manifest.schema.json",
+        "schema_version": "talaria-v0.6.1-artifact-manifest-v1",
+        "gate_id": "v0-6-1-daily-driver",
+        "generated_command": "recorded for test",
+        "status": "complete",
+        "recorded_at": "2026-09-07T00:00:00+00:00",
+        "harness_commit": "a" * 40,
+        "candidate": {
+            "commit": "a" * 40,
+            "version": "0.6.1",
+            "wheel_filename": "talaria-0.6.1-py3-none-any.whl",
+            "wheel_sha256": "d" * 64,
+        },
+        "counts": {
+            "expected_receipts": 23,
+            "install_receipts": 1,
+            "item_receipts": 23,
+            "item_verdicts": {"blocked": 0, "fail": 0, "pass": 23, "reserved": 0},
+            "invalid_item_receipts": 0,
+        },
+        "receipts": receipts,
+        "install_receipts": [
+            {
+                "receipt_path": "docs/acceptance/v0.6.1/evidence/probe-1/install-receipt.json",
+                "receipt_sha256": "e" * 64,
+                "tester": "operator",
+            }
+        ],
+        "results_document": "docs/acceptance/v0.6.1/results.md",
+        "notes_document": "docs/acceptance/v0.6.1/notes.md",
+    }
+
+    jsonschema.validate(manifest, schema)
+
+    # Mutation: adding live-24 fails validation
+    receipts.append(
+        {
+            "receipt_path": "docs/acceptance/v0.6.1/evidence/live-24/receipt.json",
+            "receipt_sha256": "c" * 64,
+            "checklist_item": "live-24",
+            "tester": "dedicated-tester",
+            "verdict": "pass",
+            "candidate_commit_sha": "a" * 40,
+            "applies_to_candidate": "same",
+        }
+    )
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(manifest, schema)
