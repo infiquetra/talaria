@@ -26,8 +26,8 @@ async def test_ae1_jump_is_gone() -> None:
     """AE1 structural: F1 has no binding and no action.
 
     The approval card is answerable without any function key (A1 auto-focus +
-    enter/esc), and the help bar marks F1 questionable and F2 macOS-dependent
-    rather than calling either eaten. The absence of a binding is asserted
+    enter/esc), and the help bar names both keys as macOS-governed rather than
+    calling either eaten. The absence of a binding is asserted
     rather than a press, because an intercepted key sends no bytes and the
     program cannot distinguish it from not having been pressed.
     """

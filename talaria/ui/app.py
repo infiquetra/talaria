@@ -1211,9 +1211,13 @@ class HelpBar(Static):
     #: delivers it — and F2 is a working alias, so neither is "eaten" in the
     #: inert sense; but macOS may intercept both before Talaria sees them,
     #: depending on the user's "Use F1, F2, etc. as standard function keys"
-    #: setting. Thirteen cells, so the live footer still fits 80 columns
-    #: unclipped; the setting detail lives in the notes, not here.
-    FKEY_MACOS_ADVISORY = "F1? F2 macOS?"
+    #: setting. The two keys have different per-key truths, so the only honest
+    #: joint claim in footer budget is the common governor: macOS decides
+    #: whether either arrives. Eleven cells, so the live footer lands at 78 of
+    #: 80 columns unclipped with margin; the setting detail and the per-key
+    #: remedy (F2's ctrl+g primary, named in the palette) live in the notes,
+    #: not here.
+    FKEY_MACOS_ADVISORY = "F1/F2 macOS"
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__("", markup=False, **kwargs)  # type: ignore[arg-type]
