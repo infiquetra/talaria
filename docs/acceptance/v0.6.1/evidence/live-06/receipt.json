@@ -1,0 +1,109 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-06",
+  "title": "Left-bar visibility across streaming and completed formats",
+  "issue": "141",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T19:28:15.623458+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_111924_e7df6e",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "The intermediate frame is bound to a real message.delta and shows working, a plain sentence, Markdown bullets and a Python code block with no left bar. The correlated turn subsequently completed.\nThe completed frame preserves plain text, bullets and code without the bar; reloading the same theme with the bar enabled restores it while preserving content.\nSelecting Neutral Dark retains the content with its visible bar.\nUnder Jeff\u2019s issue150 ruling, both isolated sessions selected gemini-3.6-flash through gemini using /model gemini-3.6-flash --provider gemini --session. Gateway, credentials and profile were unchanged; no shared default or tester model/account changed. The wire records selection and completed usage model.\nComplete gapless wire intervals without event filters: {\"wire-completed-formats.jsonl\": {\"frames\": 69, \"requests\": 23, \"methods\": {\"agents.list\": 1, \"approval.pending\": 2, \"commands.catalog\": 2, \"delegation.status\": 1, \"prompt.submit\": 1, \"session.active_list\": 6, \"session.create\": 1, \"session.list\": 6, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}}, \"wire-evidence.jsonl\": {\"frames\": 118, \"requests\": 37, \"methods\": {\"agents.list\": 1, \"approval.pending\": 10, \"commands.catalog\": 2, \"delegation.status\": 1, \"prompt.submit\": 1, \"session.active_list\": 9, \"session.create\": 1, \"session.list\": 9, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}}}\nThe same completed plain sentence, two Markdown bullets and Python code fence were also captured at 80 columns in one independent session. The hidden-bar frame and the bar-restored frame are both settled, identity-bound PNG/text/sidecar trios; the complete derived wire interval is wire-80-col.jsonl.",
+  "expected": {
+    "source": "case contract",
+    "text": "Hide the transcript bar through theme configuration; inspect streamed/completed plain text, Markdown and code, restore the bar and switch themes."
+  },
+  "actual": "Four frames were visually reviewed. Capture-time twins and individual bindings accompany all frames. No MoA event occurs in either complete raw interval. Under Jeff\u2019s issue150 ruling, both isolated sessions selected gemini-3.6-flash through gemini using /model gemini-3.6-flash --provider gemini --session. Gateway, credentials and profile were unchanged; no shared default or tester model/account changed. The wire records selection and completed usage model.\nClause 1: pass: The intermediate frame is bound to a real message.delta and shows working, a plain sentence, Markdown bullets and a Python code block with no left bar. The correlated turn subsequently completed. (https://github.com/infiquetra/talaria/issues/141)\nClause 2: pass: The completed frame preserves plain text, bullets and code without the bar; reloading the same theme with the bar enabled restores it while preserving content. (https://github.com/infiquetra/talaria/issues/141)\nClause 3: pass: Selecting Neutral Dark retains the content with its visible bar. (https://github.com/infiquetra/talaria/issues/141)\nA supplemental independent 80-column launch was captured and visually reviewed: the hidden-bar frame shows the response formats without a transcript bar, and the restored frame shows the bar with the content preserved. Its PNGs, text twins, sidecars and complete derived wire interval are listed and bound to the same candidate.",
+  "evidence": {
+    "files": {
+      "completed-formats-bar-restored.png": "0b42587a202307724c9566f6a82a93f7b3a8f7d3db0a2ffc8f3cd24dceeb093a",
+      "completed-formats-bar-restored.txt": "db39d397a25146c3044453ea24a418561d7c23b282a5ac805d7a6bb6b4056860",
+      "completed-formats-bar-restored.json": "86f8631c5199f5724ae0a8e51c18b8732f84ad93fdbf663155a4d128b00cac2d",
+      "completed-formats-default-theme.png": "e9859cb82832eb8ec65def80517ac25864d58cd949d0a49ac790c544937b5259",
+      "completed-formats-default-theme.txt": "e32113293c47f52ca43084722472eb6db3a13126d83259bbf31aa2d6b2004d58",
+      "completed-formats-default-theme.json": "46676b3147e77eeb5a46e61d22a36da6992db0691e46b9b6b0ff6ffab413cd22",
+      "completed-plain-markdown-code-no-bar.png": "a9af397c784641cf605732bb0b40aae6c36b0d57ed06eb2ddfd2cfa6e63d1d2b",
+      "completed-plain-markdown-code-no-bar.txt": "5ac5794f87c6cb75c0680dc9bb939c5e5f43ceef44ea4b06b7d8cf297ac78c72",
+      "completed-plain-markdown-code-no-bar.json": "5bcbe89d4c9d59491c4f987b186219fcf802e0ee9c9b671c08083f13cac1c4c6",
+      "streaming-markdown-code-no-bar.png": "07019d1c30ca30c00df58bb397b8c12b7d01c334251eb284b6662630ce4e1c8f",
+      "streaming-markdown-code-no-bar.txt": "b2f67382bb02fc28f01d78e57bb731b195d355bdfebfe807767db810e8b9acca",
+      "streaming-markdown-code-no-bar.json": "90e7d8bc5142632923325b35b9a5a210e13d3a6920bdeccad273a44615a55620",
+      "wire-completed-formats.jsonl": "3e0c722b178dc6519fdfab87c24ac58d2ad08d8631583985a040a1738e3dca40",
+      "wire-evidence.jsonl": "a40f2ac5e5463eb9f89eeb2ddcefb7bda2796efcfbb4b2afa37a1434231132c6",
+      "supplement-80-hidden.png": "b3e0d0232ee21993e8c15cb774a3e9dd6aa60be51f00a19373f43e68a2c74fa2",
+      "supplement-80-hidden.txt": "aaf3fad0972f3855470c1f439de92a55ab2c53aa93cff336b6e816997c7b7721",
+      "supplement-80-hidden.json": "a911806c25b8e186ba3a26875eab8017dcdbfdb5556d1793317e509f74c8b7a8",
+      "supplement-80-restored.png": "74929f29bc6e14f2b1f5cd7440f518de434c179955b1194bcb3bf431ff203cf7",
+      "supplement-80-restored.txt": "96cb7bda61d5b85e4a35d5eb341a49b6c5f41b0cd33127b701d081ad93ca670a",
+      "supplement-80-restored.json": "317e0687455cb07d594ca4cf9c4630d1bf046987fc01d0bb0c782ff55919c38e",
+      "supplement-80-hidden.read.json": "a7e28e01cec664b8b28a4ae1a20e75478bed32c2c90429bd2c7d67879d32b719",
+      "supplement-80-restored.read.json": "33557e07bca819ec7089df39c8ed53bd81f25ab086b099cff6f75d1d167c2a64",
+      "wire-80-col.jsonl": "32dc4ff15bf274ff50aad917ecba89f14fd83a459de100b30762b0a95bf50bb5"
+    },
+    "files_listed_at": "2026-09-07T19:30:21.717578+00:00",
+    "read_confirmations": [
+      {
+        "image": "supplement-80-hidden.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T19:30:21.646086+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "bird",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "supplement-80-restored.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T19:30:21.715987+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "bird",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

@@ -1,0 +1,40 @@
+█fallback: talaria.transcript.fault.background <- Refined Default #FDEDEF                                               
+█fallback: talaria.diff.line-number <- Refined Default #57606A                                                          
+█fallback: talaria.diff.added <- Refined Default #116329                                                                
+█fallback: talaria.diff.added.background <- Refined Default #E6F4EA                                                     
+█fallback: talaria.diff.removed <- Refined Default #A40E26                                                              
+█fallback: talaria.diff.removed.background <- Refined Default #FCE8E6                                                   
+█fallback: talaria.diff.hunk <- Refined Default #0550AE                                                                 
+█fallback: talaria.diff.hunk.background <- Refined Default #EAF2FC                                                      
+█fallback: talaria.diff.intraline-added.background <- Refined Default #BFE3C8                                           
+█fallback: talaria.diff.intraline-removed.background <- Refined Default #F4C7C3                                         
+█fallback: talaria.syntax.comment <- Refined Default #57606A                                                            
+█fallback: talaria.syntax.keyword <- Refined Default #6F42C1                                                            
+█fallback: talaria.syntax.string <- Refined Default #116329                                                             
+█fallback: talaria.syntax.number <- Refined Default #953800                                                             
+█fallback: talaria.syntax.function <- Refined Default #0550AE                                                           
+█fallback: talaria.syntax.type <- Refined Default #0B7285                                                               
+█fallback: talaria.syntax.variable <- Refined Default #1F2328                                                           
+█fallback: talaria.syntax.operator <- Refined Default #6F42C1                                                          ▆
+█fallback: talaria.syntax.constant <- Refined Default #A40E4C                                                           
+█> You  Write one brief sentence about an imaginary blue bird. Then one Markdown bullet and a three-line Python code    
+█fence. No tools.                                                                                                       
+█ . Reasoning  Parsing the formatting and content requirements and separating the sentence, bullet, and code fence      
+█ constraints.                                                                                                          
+█ The little blue skimmer hums as it stitches clouds together.                                                          
+█                                                                                                                       
+█ • thimble nest lined with stolen starlight                                                                            
+█                                                                                                                       
+█                                                                                                                       
+█   bird = "blue skimmer"                                                                                               
+█   song = f"{bird} sings"                                                                                              
+█   print(song)                                                                                                         
+█                                                                                                                       
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

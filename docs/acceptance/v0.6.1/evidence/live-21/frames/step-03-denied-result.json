@@ -1,0 +1,169 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<tool-environment>/bin/talaria",
+    "source_module": "talaria/__init__.py",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "captured_at": "2026-09-09T19:47:59.608303+00:00",
+  "case": "live-21",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 170,
+  "diagnostics_cells": [
+    136,
+    31,
+    167,
+    37
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 827005,
+  "first_ansi_offset": 827005,
+  "first_frame_sha256": "73672659644acbe560df8574c74a6203e3c350d590783b3213ad255aa05b365f",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "step-03-denied-result",
+  "frame_sha256": "73672659644acbe560df8574c74a6203e3c350d590783b3213ad255aa05b365f",
+  "gateway": "<gateway>",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1323,
+        "y": 198
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 774,
+        "x": 396,
+        "y": 216
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 3,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1323,
+        "y": 216
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:3]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 4,
+      "region": {
+        "height": 18,
+        "width": 657,
+        "x": 324,
+        "y": 270
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:4]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 5,
+      "region": {
+        "height": 18,
+        "width": 774,
+        "x": 396,
+        "y": 324
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:5]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 6,
+      "region": {
+        "height": 18,
+        "width": 657,
+        "x": 324,
+        "y": 360
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:6]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 7,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 153,
+        "y": 396
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:7]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 8,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 1224,
+        "y": 414
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:8]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 9,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 9,
+        "y": 432
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:9]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 10,
+      "region": {
+        "height": 18,
+        "width": 774,
+        "x": 396,
+        "y": 504
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:10]"
+    }
+  ],
+  "rows": 46,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260909_151322_bfe0f2",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "abcb775a"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.1,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "step-03-denied-result.txt",
+    "frame_sha256": "73672659644acbe560df8574c74a6203e3c350d590783b3213ad255aa05b365f",
+    "sha256": "58c6b464cb887ac55c4160172fc5952b61074aff473ef2e2208e9b7f471f9781"
+  },
+  "twin_digest": "58c6b464cb887ac55c4160172fc5952b61074aff473ef2e2208e9b7f471f9781",
+  "png_sha256": "d704b2e2efafd54693f25092b2ea7b1e726f5460e383c4c2a575e109ebd77a2e"
+}

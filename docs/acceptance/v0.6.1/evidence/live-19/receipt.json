@@ -1,0 +1,141 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-19",
+  "title": "Mixture of Agents ordinary fallback and interruption",
+  "issue": "148",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T14:10:15.223634+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_100952_0b13f0",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "The real ordinary Ready turn completes before the MoA action. Its full sourceSeq1\u201347 interval has no moa event type; the derived log keeps all event types without an event filter. Inspector says no progress events observed, not zero work.\nA supported Ctrl+S interrupts the real MoA run after two of five references. The gateway answers session.interrupt with interrupted; message.complete at sourceSeq86 also reports interrupted. Both terminal frames show the durable interrupted2/5 summary and no working progress indicator.\nLate reference/phase events remain in the complete wire record; they do not replace the interrupted summary with a fabricated success. The session ends after the terminal witness; an unrelated model-restore step is not attempted. Full gapless recording: {\"frames\": 92, \"methods\": {\"agents.list\": 1, \"approval.pending\": 4, \"commands.catalog\": 2, \"delegation.status\": 1, \"prompt.submit\": 2, \"session.active_list\": 7, \"session.create\": 1, \"session.interrupt\": 1, \"session.list\": 7, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}, \"requests\": 29}",
+  "expected": {
+    "source": "case contract",
+    "text": "Distinguish ordinary absence of rich events from zero work; supported cancellation leaves an honest terminal summary and no permanently running progress."
+  },
+  "actual": "Four frames visually reviewed. Real ordinary completion and real interruption are both present. No code4014 is substituted for an absent reply; the actual interrupt reply is retained.\nClause 1: pass: The real ordinary Ready turn completes before the MoA action. Its full sourceSeq1\u201347 interval has no moa event type; the derived log keeps all event types without an event filter. Inspector says no progress events observed, not zero work. (https://github.com/infiquetra/talaria/issues/148)\nClause 2: pass: A supported Ctrl+S interrupts the real MoA run after two of five references. The gateway answers session.interrupt with interrupted; message.complete at sourceSeq86 also reports interrupted. Both terminal frames show the durable interrupted2/5 summary and no working progress indicator. (https://github.com/infiquetra/talaria/issues/148)\nClause 3: pass: Late reference/phase events remain in the complete wire record; they do not replace the interrupted summary with a fabricated success. The session ends after the terminal witness; an unrelated model-restore step is not attempted. Full gapless recording: {\"frames\": 92, \"methods\": {\"agents.list\": 1, \"approval.pending\": 4, \"commands.catalog\": 2, \"delegation.status\": 1, \"prompt.submit\": 2, \"session.active_list\": 7, \"session.create\": 1, \"session.interrupt\": 1, \"session.list\": 7, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}, \"requests\": 29} (https://github.com/infiquetra/talaria/issues/148)",
+  "evidence": {
+    "files": {
+      "ordinary-no-rich-events.png": "178e5aa88f44fbd8ba31066777d3d8526b3c06c360486774b05b8d753d817b5e",
+      "ordinary-no-rich-events.txt": "86ba99257c299bea231a43df1c140228ef8e2d359f7740b59e01093f86cca0cc",
+      "ordinary-no-rich-events.json": "5fa1e55068684603d99611dad49bee8cc459837ba21e859e54314fa119ac6e2f",
+      "ordinary-no-rich-events.read.json": "a2c006b95c49ac4d477c5ede9c3f6515dd47169d3047213e0782ab90ad97ac5e",
+      "before-interrupt.png": "430c5ef7297827b492917d25a46a8e139b7f71584fb837e45ba55994ae48bf50",
+      "before-interrupt.txt": "22d890f0dcc149d597208af6053ce63be87459c917eb00b48fad8284689eb1f9",
+      "before-interrupt.json": "bcfb7949b5c5fb4b1c0c6aa9211510ddfcced8d930a7e0ece5967d47214dde19",
+      "before-interrupt.read.json": "6e446aedd14ba43e7af3dda0da8e13d9843b8b3a9fa2db7f4ff876af7afaa4ff",
+      "interrupted.png": "cdb5cb00ebb165bbc97f3e8a747919d8d807a06e2c4262912ecfe6d598a414fa",
+      "interrupted.txt": "694d7221c9a81af4e9012975a8b367ee242ef886715781543df286cecc317c38",
+      "interrupted.json": "b82a069bbc769ef6488ac707634a12f237d60f59eb95e0c4854cf7e8a023cf94",
+      "interrupted.read.json": "82a47c731b67ae7d5098a50c6922f4fa815455304089694b0c0dcfc5d7748321",
+      "after-interrupt-terminal.png": "2d565862c9ba8717252c30d838fa085ee6308a3205fc99086d68801f0d100f35",
+      "after-interrupt-terminal.txt": "694d7221c9a81af4e9012975a8b367ee242ef886715781543df286cecc317c38",
+      "after-interrupt-terminal.json": "81d6e82db8b3aa89560b0359f6b4d2294ca035dc63c1dfa7bf60e81f67f87f12",
+      "after-interrupt-terminal.read.json": "0a1abb2e67ef499e39304a28d5b74707db15a0b99978cc08502a271f8c116e66",
+      "wire-evidence.jsonl": "a70ad26fe5a9e260481cc146323602318335c765621b48625aca3e9f752a45dc"
+    },
+    "files_listed_at": "2026-09-07T14:15:23.419494+00:00",
+    "read_confirmations": [
+      {
+        "image": "ordinary-no-rich-events.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:15:23.240989+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "MIXTURE OF AGENTS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "before-interrupt.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:15:23.268922+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "MIXTURE OF AGENTS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "interrupted.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:15:23.270025+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "MIXTURE OF AGENTS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "after-interrupt-terminal.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:15:23.271017+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "MIXTURE OF AGENTS",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

@@ -1,0 +1,40 @@
+                                                                                    ┌─ Inspector [docked 36] ──────────┐
+                                                                                    │ TASKS                            │
+                                                                                    │   [!] approval  waiting — scrip… │
+                                                                                    │                                  │
+                                                                                    │ CONTEXT                          │
+                                                                                    │   caret    composer              │
+                                                                                    │   session  3e27fcef              │
+                                                                                    │   profile  default               │
+                                                                                    │   model                          │
+                                                                                    │ muse-spark-1.3-contributor-free  │
+                                                                                    │   launch   [redacted:absolute-filesystem-path:1]  │
+                                                                                    │   agent    [redacted:absolute-filesystem-path:2]  │
+                                                                                    │   usage    0 input · 0 output    │
+                                                                                    │                                  │
+                                                                                    │ CHANGED FILES                    │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+                                                                                    │ OPERATION DETAILS                │
+commands: 133 from the gateway · 15 local · 3 unsupported                           │   [none available from this      │
+── Talaria ──                                                                     ▁▁│ session]                         │
+/config            Open the configuration view (effective values, sources, save)    │                                  │
+── Session ──                                                                       │ MIXTURE OF AGENTS                │
+/snapshot          Create or restore state snapshots of Hermes config/state         │   no progress events observed    │
+(usage:                                                                           ▂▂│                                  │
+                   /snapshot [create|restore <id>|prune])                           │ DIAGNOSTICS                      │
+── Configuration ──                                                                 │   roster: present — fleet roste… │
+/approvals         Show or set the persistent dangerous-command approval mode       │   approval-detail: present — fo… │
+                   (usage: /approvals [manual|smart|off])                           │   http-runner: present — admin … │
+/battery           Toggle a color-coded battery indicator in the status bar         │   kanban-dispatcher: not observ… │
+(usage:                                                                             │                                  │
+                   /battery [on|off|status])                                        │ KEYS                             │
+/busy              Control how messages behave while Hermes is working (usage:      │   F1 does nothing here. F2 togg… │
+                                                                                    └──────────────────────────────────┘
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ /config                                                                                                              │
+│ the newest line is already followed — nothing changed                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

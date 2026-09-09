@@ -1,0 +1,67 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-08",
+  "title": "Status script setup, refresh, restart and failure",
+  "issue": "143",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:46:27.112542+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094613_244f43",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "The supplied status starter runs as a real script. Its unavailable spending data is explicitly labelled; adding a line to the script appears on the next actual refresh.\nThe configuration view saves interval7 while identifying effective-now2 and takes-effect-on-restart. Relaunching the real application reports effective7 with user provenance and the same script command.\nAn intentional script exit1 displays a visible status-command failure; the composer remains editable. No unavailable value is manufactured as a measured zero.\nwire-evidence.jsonl: complete gapless interval of26 frames and12 outgoing requests; no event filter applied.\nwire-config-before-restart.jsonl: complete gapless interval of26 frames and12 outgoing requests; no event filter applied.\nwire-config-after-restart.jsonl: complete gapless interval of28 frames and12 outgoing requests; no event filter applied.",
+  "expected": {
+    "source": "case contract",
+    "text": "Configure the supplied real status script, observe and edit its output, exercise apply/restart behavior and show a failing script while keeping status and composer usable."
+  },
+  "actual": "All selected frames were visually reviewed against these clauses. Every frame has its capture-time text twin and sidecar. Complete derived wire intervals preserve every event type, and no MoA event occurs in these runs.\nClause 1: pass: The supplied status starter runs as a real script. Its unavailable spending data is explicitly labelled; adding a line to the script appears on the next actual refresh. (https://github.com/infiquetra/talaria/issues/143)\nClause 2: pass: The configuration view saves interval7 while identifying effective-now2 and takes-effect-on-restart. Relaunching the real application reports effective7 with user provenance and the same script command. (https://github.com/infiquetra/talaria/issues/143)\nClause 3: pass: An intentional script exit1 displays a visible status-command failure; the composer remains editable. No unavailable value is manufactured as a measured zero. (https://github.com/infiquetra/talaria/issues/143)",
+  "evidence": {
+    "files": {
+      "script-failure.png": "9453ac7deb1b1a53a98b4c5f0d4e6ea419248f5115fbb633c403d49024dc0dab",
+      "script-failure.txt": "e6791c2c1d7c28b30787ed8d37de82a84b6a8ea72e0d06f87168128cff4b8b84",
+      "script-failure.json": "a948e8f94478c307088dba8ac8f0e9bf462940e5a105d3626eecad7449eb4890",
+      "script-refreshed.png": "09a9e7c6da47b5adc50c60771ced9e8836abe02140978a49cbc9efcbd7f20a46",
+      "script-refreshed.txt": "02d68aa07e7f046f13a06e9082a2efe0850e6201ba75ec7100b2ee5ab8bd81c2",
+      "script-refreshed.json": "5a5aac4bc52bed931e5b7336fc67fe592e1f98107e975c25dd589f878e1a55ee",
+      "starter-unavailable-values.png": "eb1746b00cbf5f14085dff4b70459891abcd6066ac85c3b8e78b93655a9a4dbf",
+      "starter-unavailable-values.txt": "7ae6a31eb7ba12ea6165cb313a914bcf0755ccb421d36c6d99d7c8c284c87499",
+      "starter-unavailable-values.json": "f56a24f6bacb124ca3bf99a7781da7e35c4e26607fb6b84ad5eaeaebc2382d59",
+      "configuration-saved-versus-effective.png": "ed5854514ee7dcb5f223446bf03d99504f64954889d0ba771ea53417cd96c87a",
+      "configuration-saved-versus-effective.txt": "a38037fe9c6fd44965ab667310e5905b21ac2574cf32adb148fa89fed36a9f96",
+      "configuration-saved-versus-effective.json": "194701a48f90c100fe2e6fae87d27228ba65b15be63646dc522b9fc98a6842cb",
+      "configuration-script-before-restart.png": "d82e87921e089179083e1de4c3862e387ad3483be2bd0c9e64e5c9e4a1a287a7",
+      "configuration-script-before-restart.txt": "b2e4184ca2ce8d52439ddc1e4f9f8bb0c944f65065be8b73005d0abddbf686f8",
+      "configuration-script-before-restart.json": "7db95201038932cbd2bc2e5817030e954ee2cdfdd793dae6a719df710f360045",
+      "configuration-after-restart.png": "57e8bfe43153798104aa1d5014d8757c71d60f81d63972d09759ccda39b97716",
+      "configuration-after-restart.txt": "eab3ac7329d5a265078ca7b4f756ec371c48a14bf08b180d6156c778f2e15f28",
+      "configuration-after-restart.json": "5a52d3cca7bb7eaff4fea744d1ad6070ce288f228dbd6e1d10393d1f0eecea5f",
+      "wire-evidence.jsonl": "dcd769385290d60a7398b369aeda729b141e2be9b73db09e2b99bf23090e7071",
+      "wire-config-before-restart.jsonl": "bbf3487a1dbfb357661ae06d8c6e7729c4bbe8343fc1f5ac4dc1e497b2915223",
+      "wire-config-after-restart.jsonl": "f00b27c91b28b2071febd554bae6e30db28347a1f2fca4f485233c5f649ecd5c"
+    },
+    "files_listed_at": "2026-09-07T13:56:48.512272+00:00",
+    "read_confirmations": []
+  }
+}

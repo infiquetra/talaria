@@ -1,0 +1,75 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<tool-environment>/bin/talaria",
+    "source_module": "talaria/__init__.py",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "captured_at": "2026-09-09T20:11:19.898493+00:00",
+  "case": "live-21",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 170,
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 8326763,
+  "first_ansi_offset": 8324331,
+  "first_frame_sha256": "2328cf5228f1705ba7126799c4723643599b30c8bdede4b7f8936a851fe1cacf",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "step-06-text-staged",
+  "frame_sha256": "2328cf5228f1705ba7126799c4723643599b30c8bdede4b7f8936a851fe1cacf",
+  "gateway": "<gateway>",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 387,
+        "x": 72,
+        "y": 738
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 387,
+        "x": 405,
+        "y": 756
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 46,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260909_151322_bfe0f2",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "abcb775a"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.1,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "step-06-text-staged.txt",
+    "frame_sha256": "2328cf5228f1705ba7126799c4723643599b30c8bdede4b7f8936a851fe1cacf",
+    "sha256": "a8cdc740ec3cbccef19c6895f81759fc2bb2364ff6f144a8b68ab67184167e6e"
+  },
+  "twin_digest": "a8cdc740ec3cbccef19c6895f81759fc2bb2364ff6f144a8b68ab67184167e6e",
+  "png_sha256": "ffd804687eb1ceaed409a83659d232ebb8d0245160d3e14dce1ae3d56e724e3f"
+}

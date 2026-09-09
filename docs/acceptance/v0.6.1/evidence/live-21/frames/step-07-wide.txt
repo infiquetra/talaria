@@ -1,0 +1,45 @@
+█  32. Prefer moving files to trash or archive over immediate permanent deletion.                                                           
+█  33. Check for mounted network drives before running broad cleanup commands.                                                              
+█  34. Avoid running bulk commands across many hosts without staged rollout.                                                                
+█  35. Keep dangerous aliases clearly named so they do not surprise future users.                                                           
+█  36. Review environment variables because they can alter command behavior silently.                                                       
+█  37. Disable history expansion when pasting commands with exclamation marks.                                                              
+█  38. Use checksums to verify downloads before making them executable.                                                                     
+█  39. Limit background jobs and verify they exit instead of leaving orphans.                                                               
+█  40. Close terminal sessions cleanly to release locks and temporary resources.                                                            
+█  41. Teach teammates safe patterns so shortcuts do not become hidden risks.                                                               
+█  42. Document every production shell action so others can audit and recover.                                                              
+█> You  Provide a long numbered explanation of terminal session safety, with at least 200 numbered points and one sentence per point.       
+█ . Reasoning  Checking constraints for generating a long numbered terminal safety list with strict one-sentence formatting.                
+█                                                                                                                                           
+█ Enforcing a no-internal-period rule while drafting 200 distinct single-sentence safety tipsGenerating a long numbered list with one       
+█ sentence per point while avoiding internal periods and ensuring exactly 200+ items.                                                       
+█  1. Always confirm your present working directory before executing any command.                                                           
+█  2. Never run destructive removal commands                                                                                                
+█                                                                                                                                           
+█ [interrupted]                                                                                                                             
+█> You  Reply with exactly 60 lines, each line exactly SAFE. Do not add any other words and do not use tools.                               
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE    
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE    
+█ SAFE SAFE SAFE SAFE SAFE SAFE                                                                                                             
+█ . Reasoning  SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE     ▅
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE    
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE                                                                                              
+█> You  Report the checkpoint word in the attached notes.@file:[redacted:absolute-filesystem-path:1]                                  
+█$ Tool/Subagent  ⏺ read_file notes.txt L1-2000                                                                                             
+█$ Tool/Subagent  ⏺ read_file ✓                                                                                                             
+█ . Reasoning  kingfisher                                                                                                                   
+█ kingfisher                                                                                                                                
+█> You  Report the two shapes and their colors in the attached image.                                                                       
+█$ Tool/Subagent  ⏺ vision_analyze What are the two shapes in this image and their colors? Describe precisely.                              
+█$ Tool/Subagent  ⏺ vision_analyze ✓                                                                                                        
+█ . Reasoning  A blue square (left) and an orange circle (right).                                                                           
+█ A blue square (left) and an orange circle (right).                                                                                        
+                                                                                                                                            
+                                                                                                                                            
+╭─ compose [ ] caret elsewhere ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ resize witness draft                                                                                                                     │
+│                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                                            
+[ok] up│v0.6.1                                                                                                                              

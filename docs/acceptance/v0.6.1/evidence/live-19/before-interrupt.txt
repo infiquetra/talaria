@@ -1,0 +1,40 @@
+█> You  Reply only with the word ready. Do not use tools.               ┌─ Inspector [docked 48] ──────────────────────┐
+█ ready                                                                 │ TASKS                                        │
+█ . Reasoning  ready                                                    │   [none available from this session]         │
+█- Session  /moa: Give three distinct explanations of why adding two    │                                              │
+█objects to two yields four. Use about 120 words. Do not use tools,     │ CONTEXT                                      │
+█files, or browsing.                                                    │   caret    composer                          │
+ Mixture of Agents: collecting 2/5 references · gemini:gemini-3.6-flash │   session  f11d7856                          │
+ finished                                                               │   profile  default                           │
+                                                                        │   model    default                           │
+                                                                        │   launch   [redacted:absolute-filesystem-path:1]  │
+                                                                        │   agent    [redacted:absolute-filesystem-path:2]  │
+                                                                        │   usage    12982 input · 27 output           │
+                                                                        │                                              │
+                                                                        │ CHANGED FILES                                │
+                                                                        │   [none available from this session]         │
+                                                                        │                                              │
+                                                                        │ OPERATION DETAILS                            │
+                                                                        │   [none available from this session]         │
+                                                                        │                                              │
+                                                                        │ MIXTURE OF AGENTS                            │
+                                                                        │   collecting 2/5 references · gemini:gemini… │
+                                                                        │   ollama-cloud:deepseek-v4-flash:0731 · fin… │
+                                                                        │   gemini:gemini-3.6-flash · finished 2/5     │
+                                                                        │   3 pending                                  │
+                                                                        │                                              │
+                                                                        │ DIAGNOSTICS                                  │
+                                                                        │   roster: present — fleet roster available … │
+                                                                        │   approval-detail: present — foreign approv… │
+                                                                        │   http-runner: present — admin catalogue av… │
+                                                                        │   kanban-dispatcher: not observed — board q… │
+                                                                        │                                              │
+                                                                        │ KEYS                                         │
+working…                                                                │ > F1 does nothing here. F2 toggles sub-agen… │
+                                                                        └──────────────────────────────────────────────┘
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ MoA one-shot queued with preset default; previous model will be restored after this turn.                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

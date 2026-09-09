@@ -1,0 +1,40 @@
+█- Session  /model: ✓ Model switched: gemini-3.6-flash                                                                  
+█    Provider: Google                                                                                                   
+█    Context: 1,048,576 tokens                                                                                          
+█    Max output: 65,536 tokens                                                                                          
+█    Capabilities: reasoning, tools, vision, PDF, audio, structured output                                              
+█    (session only — add --global to persist)                                                                           
+█> You  Run the terminal tool exactly once with command `sleep 12; printf category_tool_ready`. Then briefly confirm its
+█output.                                                                                                                
+█$ Tool/Subagent  ⏺ terminal sleep 12 + 1 command                                                                       
+█$ Tool/Subagent  ⏺ terminal ✓                                                                                          
+█ . Reasoning  Confirming Tool Availability                                                                             
+█                                                                                                                       
+█ I've confirmed the "terminal" tool's availability. Now, I need to execute the command sleep 12; printf                
+█ category_tool_ready using the terminal and verify its output. I'm prioritizing running the command precisely as       
+█ specified.                                                                                                            
+█ The command executed successfully and returned the output: category_tool_ready.                                       
+█> You  Reply only Ready. No tools.                                                                                     
+█! Error  error: Could not switch model: Unknown provider 'acceptance-unavailable'. Check 'hermes model' for available  
+█providers, or define it in config.yaml under 'providers:'.                                                             
+█- Session  stream began without a message.start event                                                                  
+█ . Reasoning  Ready.                                                                                                   
+█ Ready.                                                                                                                
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ theme 'category-colors' refreshed from stored file (applied live, no restart required)                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

@@ -1,0 +1,53 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-05",
+  "title": "Canvas inheritance across theme reload",
+  "issue": "141",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:49:07.031892+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094835_4b70ab",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Imported a dark theme and configured category backgrounds to inherit. Real assistant plain text, Markdown and code rendered on the dark canvas without white or grey category fills.\nChanged the canvas to brown and reloaded; the same retained transcript followed the new canvas. The code block retained its own syntax surface, distinct from a category background.",
+  "expected": {
+    "source": "case contract",
+    "text": "Satisfy the named live matrix case through the real application and connected gateway."
+  },
+  "actual": "Imported a dark theme and configured category backgrounds to inherit. Real assistant plain text, Markdown and code rendered on the dark canvas without white or grey category fills. Changed the canvas to brown and reloaded; the same retained transcript followed the new canvas. The code block retained its own syntax surface, distinct from a category background.\nClause 1: pass: Imported a dark theme and configured category backgrounds to inherit. Real assistant plain text, Markdown and code rendered on the dark canvas without white or grey category fills. (https://github.com/infiquetra/talaria/issues/141)\nClause 2: pass: Changed the canvas to brown and reloaded; the same retained transcript followed the new canvas. The code block retained its own syntax surface, distinct from a category background. (https://github.com/infiquetra/talaria/issues/141)",
+  "evidence": {
+    "files": {
+      "imported-canvas-inherit.png": "8eb67853d37b3fa507fdff01839faa4706d4f649f2229003e1f720e1c4821beb",
+      "imported-canvas-inherit.txt": "d3a2ccc3d5522582d5474072f241ef845471395adb33fcf8d71b0d5a2b2429e4",
+      "imported-canvas-inherit.json": "376dd446568d19b5705d9d7f72494fe23c5f806a6ec39b8ca901056a462df270",
+      "changed-canvas-inherit.png": "93e417bb99741514a74dc512fc26684cdf61b750a817d181f4cd901f0ffa03b0",
+      "changed-canvas-inherit.txt": "b459e63f9cdfa70c0e1bd7657d7de9244335dec9266eb3b7f2f91e27c1607373",
+      "changed-canvas-inherit.json": "c150ea17e5458a5274768516b1be8c798838d41c58a57feb9b75b50ee0bf8bad",
+      "wire-evidence.jsonl": "552345429af7ca51083237d50b7fcc40ec99966023045eb80f22232101835485"
+    },
+    "files_listed_at": "2026-09-07T13:56:15.759117+00:00",
+    "read_confirmations": []
+  }
+}

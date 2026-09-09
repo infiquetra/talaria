@@ -1,0 +1,32 @@
+█                                                                                                   
+█ [interrupted]                                                                                     
+█> You  Reply with exactly 60 lines, each line exactly SAFE. Do not add any other words and do not  
+█use tools.                                                                                         
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE    
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE    
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE    
+█ SAFE SAFE SAFE                                                                                    
+█ . Reasoning  SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE      
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE    
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE    
+█ SAFE SAFE SAFE SAFE SAFE SAFE                                                                     
+█> You  Report the checkpoint word in the attached                                                  
+█notes.@file:[redacted:absolute-filesystem-path:1]                                            
+█$ Tool/Subagent  ⏺ read_file notes.txt L1-2000                                                     
+█$ Tool/Subagent  ⏺ read_file ✓                                                                     
+█ . Reasoning  kingfisher                                                                           
+█ kingfisher                                                                                        
+█> You  Report the two shapes and their colors in the attached image.                               
+█$ Tool/Subagent  ⏺ vision_analyze What are the two shapes in this image and their colors? Describe▄
+█precisely.                                                                                         
+█$ Tool/Subagent  ⏺ vision_analyze ✓                                                                
+█ . Reasoning  A blue square (left) and an orange circle (right).                                   
+█ A blue square (left) and an orange circle (right).                                                
+                                                                                                    
+                                                                                                    
+╭─ compose [ ] caret elsewhere ────────────────────────────────────────────────────────────────────╮
+│ resize witness draft                                                                             │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                    
+[ok] up                                                                                             

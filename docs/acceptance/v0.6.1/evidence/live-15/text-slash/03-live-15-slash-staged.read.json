@@ -1,0 +1,19 @@
+{
+  "image": "03-live-15-slash-staged.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-07T14:25:01.340462+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    },
+    {
+      "index": 2,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "staged sample.txt",
+  "nothing_else_masked": true
+}

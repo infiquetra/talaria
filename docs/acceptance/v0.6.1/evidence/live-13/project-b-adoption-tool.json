@@ -1,0 +1,91 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T15:20:30.831024+00:00",
+  "case": "live-13",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 240,
+  "diagnostics_cells": [
+    194,
+    23,
+    237,
+    29
+  ],
+  "event_log": "wire-project-b.jsonl",
+  "final_ansi_offset": 970008,
+  "first_ansi_offset": 970008,
+  "first_frame_sha256": "e9fd65587ef7aec7e31df3d33bc361ea329ff638f7c131668eb14d3fbae13b10",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "project-b-adoption-tool",
+  "frame_sha256": "e9fd65587ef7aec7e31df3d33bc361ea329ff638f7c131668eb14d3fbae13b10",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "049b712c38b565331ab3c078f204f64a1fe4604ad672dddbf9f696fbae93d29f",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 1845,
+        "y": 162
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 1845,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 3,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 18,
+        "y": 252
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:3]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_112000_839bfa",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "0befb15c"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 1.0,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "project-b-adoption-tool.txt",
+    "frame_sha256": "e9fd65587ef7aec7e31df3d33bc361ea329ff638f7c131668eb14d3fbae13b10",
+    "sha256": "81848c12c22663147c33542a9aa71a634489c53af76a65d238fecc6c060b6840"
+  },
+  "twin_digest": "81848c12c22663147c33542a9aa71a634489c53af76a65d238fecc6c060b6840"
+}

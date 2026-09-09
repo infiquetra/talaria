@@ -1,0 +1,111 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-20",
+  "title": "Configuration values, validation and scope",
+  "issue": "149",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:47:27.278545+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094642_2b120a",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 200,
+    "rows": 40
+  },
+  "actions": "The real configuration view labels effective values and their default/user provenance. Values0,3601 and fast each produce the integer1\u20133600 refusal and nothing written. Cancel leaves configuration unchanged.\nSaving a status script and interval7 distinguishes saved7 from effective5 and explicitly requires restart. Relaunching the same conversation shows the script running and effective7. Selecting Dark Green Terminal applies its colors live and the view records the selected theme with user provenance.\nA repository interval9 overrides the user setting. Attempting a user save of11 is explicitly refused as shadowed; repository save succeeds and labels saved11 versus effective9. The filed written-user-configuration.txt and written-repository-configuration.txt contain the sanitized configuration lines for the two writes; together with the repository scope, refusal, and save frames, they show only the selected repository configuration changed.\nAn environment override of30 is read-only and names TALARIA_STATUS_INTERVAL_SECONDS with the explanation that file writes would be shadowed. Attempted editing and apply leave it unchanged and report nothing changed \u2014 no write.\nA deliberately malformed configuration file produces a visible /config refusal saying is not valid TOML and Expected ] at the end of a table declaration. Only its absolute path is masked. The end of the syntax detail is ellipsized at200columns; the refusal and reason are legible.",
+  "expected": {
+    "source": "case contract",
+    "text": "Expose effective configuration and provenance, reject invalid inputs without writes, honor cancel and scope, distinguish restart from live changes, and visibly refuse malformed files."
+  },
+  "actual": "All fourteen new frames were visually reviewed. Captures use200columns and closed Inspector with its session fence. Recorded file checks verify cancel and write scope. Previously queued focus concerns are not asserted fixed by these closed-Inspector frames.\nClause 1: pass: The real configuration view labels effective values and their default/user provenance. Values0,3601 and fast each produce the integer1\u20133600 refusal and nothing written. Cancel leaves configuration unchanged. (https://github.com/infiquetra/talaria/issues/149)\nClause 2: pass: Saving a status script and interval7 distinguishes saved7 from effective5 and explicitly requires restart. Relaunching the same conversation shows the script running and effective7. Selecting Dark Green Terminal applies its colors live and the view records the selected theme with user provenance. (https://github.com/infiquetra/talaria/issues/149)\nClause 3: pass: A repository interval9 overrides the user setting. Attempting a user save of11 is explicitly refused as shadowed; repository save succeeds and labels saved11 versus effective9. The filed written-user-configuration.txt and written-repository-configuration.txt contain the sanitized configuration lines for the two writes; together with the repository scope, refusal, and save frames, they show only the selected repository configuration changed. (https://github.com/infiquetra/talaria/issues/149)\nClause 4: pass: An environment override of30 is read-only and names TALARIA_STATUS_INTERVAL_SECONDS with the explanation that file writes would be shadowed. Attempted editing and apply leave it unchanged and report nothing changed \u2014 no write. (https://github.com/infiquetra/talaria/issues/149)\nClause 5: pass: A deliberately malformed configuration file produces a visible /config refusal saying is not valid TOML and Expected ] at the end of a table declaration. Only its absolute path is masked. The end of the syntax detail is ellipsized at200columns; the refusal and reason are legible. (https://github.com/infiquetra/talaria/issues/149) The retained user configuration bytes written during the user-save portion are filed as written-user-configuration.txt, and the retained repository configuration bytes written during the repository-save portion are filed as written-repository-configuration.txt; both are sanitized line extracts with no private paths.",
+  "evidence": {
+    "files": {
+      "effective-values.png": "f495598a45854d3ffbc53df64b02732b3073a7fb2b138e1e1a812463464a1d53",
+      "effective-values.txt": "a863812e0c0ae95e25c431be52a18baa0ec1fc09a80008b92f6098e8f10ec93c",
+      "effective-values.json": "adbc470115b401ebe5d268f4aa6f8aea5685c874b4eb33f67b10fd1169284444",
+      "invalid-zero.png": "204b5ab45a026a49fc35c568ffa48c17248f0a89fa57aaa18e29bccc6c1b33fc",
+      "invalid-zero.txt": "6c600fa564bf49446835e8a9767a05507d852c4a9b72b65c3bc4cce892278296",
+      "invalid-zero.json": "df96da4c6b28d26fc84dfeddc493272b61a5612b72f5ed364091ae526c5e9b43",
+      "invalid-3601.png": "f3b81720427919c3a5493aed1fd38a22dd050b64fa2c20471c016b405a555069",
+      "invalid-3601.txt": "7a1a184efde29b255070db6a6f6171e9f57b9db09c2a5d161c7484828aacab77",
+      "invalid-3601.json": "850a6471a1e9757986ca157d5f28c9db02b4016a87c0868025bfaf4ee2b3e81c",
+      "invalid-fast.png": "934679dbd0a3525a3c059e62a0e9e8fa6071bd393ae93af8a5ea110a9659e9d7",
+      "invalid-fast.txt": "83b218230e0caa805e692c86691fcff4d4a14a2bdacef1cdfb462d2a9c33e6a8",
+      "invalid-fast.json": "4cab62a119fb63e48e79d9ebf57f544c9b640a62361f3fbaf8854bbfcf85d0ed",
+      "saved-versus-effective.png": "2e89f3610c9775c383e89cbd5fa3f3cc94152ea0261279e6c9aeb0c49e025f7e",
+      "saved-versus-effective.txt": "b4d78df5d2d0c76131f94993ce32376414d70bc862eb448c0ab68cd1fe637a3f",
+      "saved-versus-effective.json": "80beb4725986f0f227c0459643c937a8908145665f7d7211a8c0ea96e31a1ebf",
+      "after-restart.png": "ae451c7f6c07dee700b6269ddfa75027893772ad1844e0fe00d43f8bbc59868f",
+      "after-restart.txt": "8ca43d55cb30708e701c897b5378baee68f967ed8940093a4fff57dda7bd2d5a",
+      "after-restart.json": "2ca579992418fb600cb5962fc8c60bf1694cbc4e197d7812904a9d6b9eeb797b",
+      "theme-picker.png": "6d5916fcfc8c1d32906abcfb530f3abf19f5f7f59d996908ab4fffb8d59d6ce1",
+      "theme-picker.txt": "b5a4f5bc548a5695772a3374d2e57e6314ad7811256fbcdcdf975425c92a742a",
+      "theme-picker.json": "974a30b02a4a5f0598e8123ae4b3f1a7c1234a40bdc3cbfb1d66f3122fd66a92",
+      "theme-live.png": "a80a7f9a2fb032142dac901827ed314c7a9879ed0bc882fc9881eef423683602",
+      "theme-live.txt": "4bb68b245990a6aa1ad46e87cc0737bcb66ca32d198cf7834d6284b7019443b2",
+      "theme-live.json": "3b5a2d9029ddc01bd4fa45ad13e6f1623bb5f76905766d0fdc58dd6264485168",
+      "malformed-file-visible.png": "6a62cfef7926dcea3e4b1571f14fd7ef09a8164622d673ff5d59ae756ec3878a",
+      "malformed-file-visible.txt": "5338a72adaf793aeff620a42207ffba576a768c4eb2da3aad68a2c81ce361078",
+      "malformed-file-visible.json": "6109dc751fb7647555f609599857dc092b2d3622c6f431c4dc60907ccbdc5fc3",
+      "malformed-file-visible.read.json": "1dc04eedcf21e9ce10672212b804101eca1a997ab9fe2483a679c3ee908f08e5",
+      "repository-scope.png": "d2403567462516123038addf73fb20abc6970b53762fd1784f820b508f7c1f89",
+      "repository-scope.txt": "2a6292b991ec5d19069dc6d4ea6ef4692b8a17ee8593a2889959d32f39ac85cb",
+      "repository-scope.json": "afb53424c34db3fb499623d11acdb7483c5066860d3ec468ad6020bfd3f3724a",
+      "repository-user-save-refused.png": "3491d6e543424e6f3bd88dfaffcedba23d58b6c7fec2388d92b6e10bcd3c0523",
+      "repository-user-save-refused.txt": "5b01225554c7fa3d88f3bb6cff292cafb2c28f481163ce4490c94a202b8ac1ca",
+      "repository-user-save-refused.json": "ab9bdc240d4bf4a84bcbdbc30f5f3d7b0b3a946f5bc8b69ab4ca058c55c1e537",
+      "repository-repository-saved.png": "3b4ae53e108c48a4b1436e80216dc27a6ce996f019515f1fa39753969f45f535",
+      "repository-repository-saved.txt": "cc884bde5faf2310a62cf518c5d018044bdf697ee5712a5c33a12ba5f44fb7d9",
+      "repository-repository-saved.json": "d14eefbb4997d0f5803368c02a87d3ea158110a040e6fc07d6df7e1b0f4ef3ef",
+      "environment-scope.png": "720ef47c1b11f27c73988ca57344f68c94e1f4141636a9a0e3af121bfb886826",
+      "environment-scope.txt": "280ed5ba13b03b601d36754c208b2747e8a39e67fe266cfdd7d9dc41e5454a8a",
+      "environment-scope.json": "cb10554f3b665da223a9b331ebe706f9cc426cd44f9ada5ee57daf8301d2c56b",
+      "environment-readonly-unchanged.png": "63939d3c06e2109dca3a4887b767db742812ce3130012a5c7efd97b57f5c2c7f",
+      "environment-readonly-unchanged.txt": "7ca95191d3c2856b83cd676511615acd130004c8fdf4938a0d3379f794be6f74",
+      "environment-readonly-unchanged.json": "64a013851eafbec2f467226a5661d270dd2bcf75dac38fec560e994af11bc8a4",
+      "wire-config-initial.jsonl": "8f7c6bfaf90658cd6849220071db53993a77f83dcf7e1122568b235f9a8b5894",
+      "wire-config-restart.jsonl": "b68540c18bf2119cfebbaf8782d6abd9fab37cb3d16d6254e8aade455cbf312f",
+      "wire-config-repository.jsonl": "14910d42a6a936f5013a753de6af44d5c20d1b7a917a1677cdd1d08b7e0502a2",
+      "wire-config-environment.jsonl": "7208529442e1adf376a1e99f9add918c31fc96f3de54235769b941ef01982d75",
+      "written-user-configuration.txt": "c9295289fed152a290310b6aff317c896111326de7be486bdd81d47a13c7dce4",
+      "written-repository-configuration.txt": "148e0d7bcdcc26947d444f7a2f9b6e6b9bf0fae93044f6813ce7810970ab0abb"
+    },
+    "files_listed_at": "2026-09-07T19:27:00+00:00",
+    "read_confirmations": [
+      {
+        "image": "malformed-file-visible.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:07:00.270839+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "is not valid TOML",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

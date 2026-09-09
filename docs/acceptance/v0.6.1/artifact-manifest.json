@@ -1,0 +1,250 @@
+{
+  "$schema": "./artifact-manifest.schema.json",
+  "candidate": {
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "version": "0.6.1",
+    "wheel_filename": "talaria-0.6.1-py3-none-any.whl",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "counts": {
+    "expected_receipts": 23,
+    "install_receipts": 2,
+    "invalid_item_receipts": 0,
+    "item_receipts": 23,
+    "item_verdicts": {
+      "blocked": 0,
+      "fail": 0,
+      "pass": 23,
+      "reserved": 0
+    }
+  },
+  "gate_id": "v0-6-1-daily-driver",
+  "generated_command": "uv run python -m scripts.acceptance.v061_evidence record --candidate-commit c798be0016936c79e356fe0d82cfab7208869c88 --wheel talaria-0.6.1-py3-none-any.whl --expected-receipts 23 --applies-map <path>",
+  "harness_commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "install_receipts": [
+    {
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/probe-1/install-receipt.json",
+      "receipt_sha256": "2c79cb5b1e633344c24fba845919932096d59a4465e830d8803899a281aaf224",
+      "tester": "operator"
+    },
+    {
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/probe-2/install-receipt.json",
+      "receipt_sha256": "6c1b0101ba8dff52c7fe2dc9faed02c307fae1a87f12eae46e567b27ca455995",
+      "tester": "operator"
+    }
+  ],
+  "notes_document": "docs/acceptance/v0.6.1/notes.md",
+  "receipts": [
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-01",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-01/receipt.json",
+      "receipt_sha256": "a6dde28bef37b9da7b379d572caca3444100dada85b07edce7f18524887b9935",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-02",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-02/receipt.json",
+      "receipt_sha256": "c76545bd6faa224440ca53dff04905c770d146dbc1058a920e3d071c6dd88c9b",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-03",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-03/receipt.json",
+      "receipt_sha256": "2bd1dabacdf74eda7324d9b4e3158ccd2a6299c30211033fd83d61be397559a7",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-04",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-04/receipt.json",
+      "receipt_sha256": "c6de8f9c10d512d0ad3a90104956d71d8f9cbc1b16f4f6bd8aee5f8a9d383eb4",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-05",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-05/receipt.json",
+      "receipt_sha256": "e25452416c1d64b5780fa3065b1c65249abd06b7ddcfbdd3ba4f97a245defc6b",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-06",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-06/receipt.json",
+      "receipt_sha256": "fce39877a83ca4df48cf88d3d39fa4cfc76d8a97b19002bfcc3a12e1f1397749",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-07",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-07/receipt.json",
+      "receipt_sha256": "a1e7a1deb8222ea438a14465dd65df182e3c7d663f9ef82d3c7ee2829bb4e811",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-08",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-08/receipt.json",
+      "receipt_sha256": "2e02a682dd90baa05754458b6ba49661c73f07f8341bbec9f740755104ae155a",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-09",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-09/receipt.json",
+      "receipt_sha256": "d4b4c1caee219fbe19cd2e505fcbefa1f5e2a1ca533580858e73b6649c8286dd",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-10",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-10/receipt.json",
+      "receipt_sha256": "01dc773d1c3745688558d2ae61200f4c3bc32fa875c6bf75c4e6e8b08e0480e3",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-11",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-11/receipt.json",
+      "receipt_sha256": "d4a5870a33cca6dcfab09e29ad5dd064a9009d01c0cd7cc31deea186c01cb233",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-12",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-12/receipt.json",
+      "receipt_sha256": "2f3481fc04bb8342c0fe10b650e2a2a2c2187c88823009fee2f8a21e38a2b547",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-13",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-13/receipt.json",
+      "receipt_sha256": "8ba972d8b07f36dc6de21f639b89b9ef074c7f48cdadf3f97dd859071a91b802",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-14",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-14/receipt.json",
+      "receipt_sha256": "db4589b151d62797d4b0a4eb52b75f434e0a0cda34f079cdcca8eeb09ddbfab3",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-15",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-15/receipt.json",
+      "receipt_sha256": "e092ee7308fc6f75a0c1390d8c44dd6e98ba58b84cd64ceaead4c1d83cf5ecf3",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-16",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-16/receipt.json",
+      "receipt_sha256": "8bccc80a2f460fd76245fe922abdfb071e49d1bdac8d56eec49f0b41db77063a",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-17",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-17/receipt.json",
+      "receipt_sha256": "6788f2f4dd7ed79a1b790c6e9629c3c7bcdfda411aff5ae57846df4c1a6df1f9",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-18",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-18/receipt.json",
+      "receipt_sha256": "c8cd4f42eb1d39fee334845993119eacabe1654b6df7f4dde6048c813aff5e07",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-19",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-19/receipt.json",
+      "receipt_sha256": "bc290b9c7dee65f483e803eca61d98cd2ee31db6b0662b86bd635e4b9541ae8b",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-20",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-20/receipt.json",
+      "receipt_sha256": "e89cb45dad38eefb21981ad581800448f7f1acf6d1338309d0082c312aa829ca",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-21",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-21/receipt.json",
+      "receipt_sha256": "05c8f64926aa7504668e22d94ba937f1f6d77e75e03ec02bc2ca078a5d6f69fd",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-22",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-22/receipt.json",
+      "receipt_sha256": "c3e964593a8fa2608b41941254b096260cfe1dd6b57ab65f6d5f1af38a1c2b30",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    },
+    {
+      "applies_to_candidate": "same",
+      "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+      "checklist_item": "live-23",
+      "receipt_path": "docs/acceptance/v0.6.1/evidence/live-23/receipt.json",
+      "receipt_sha256": "b59d920f8ee312c94227cca976e225a23ac26d2adbfb4c24a94941025d4159d6",
+      "tester": "dedicated-tester",
+      "verdict": "pass"
+    }
+  ],
+  "recorded_at": "2026-09-09T21:22:49+00:00",
+  "results_document": "docs/acceptance/v0.6.1/results.md",
+  "schema_version": "talaria-v0.6.1-artifact-manifest-v1",
+  "status": "complete"
+}

@@ -1,0 +1,14 @@
+{
+  "image": "07-live-15-paste-completed-content.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-07T14:25:01.801416+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "f9d1d9a7c39347cf75e4f2c5",
+  "nothing_else_masked": true
+}

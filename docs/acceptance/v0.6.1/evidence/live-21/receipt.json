@@ -1,0 +1,733 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-21",
+  "title": "Integrated daily-use regression",
+  "issue": "150",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-09T20:53:48.811840+00:00",
+  "install": {
+    "kind": "wheel",
+    "filename": "talaria-0.6.1-py3-none-any.whl",
+    "sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "fresh tool environment from the candidate wheel"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "<gateway>",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260909_151322_bfe0f2",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 170,
+    "rows": 46
+  },
+  "actions": "Launch the fresh candidate wheel in a neutral isolated tool environment and record a new session.\nOpen and close the inspector, submit the daily_ready ordinary turn, compose multiline input, recall and clear history, run printf daily_tool_ready through the terminal tool, scroll the transcript, and leave an unsent draft.\nRequest the dangerous recursive delete of the absent approval target, capture the real approval prompt, choose deny, and confirm the target remains absent.\nStart the long numbered explanation, press Ctrl+S during streaming, confirm interruption and connected draft input.\nReload the disposable theme, exercise inspector focus, navigate and filter the slash palette, and cancel the theme picker.\nAttach the text and image fixtures through their real attachment flows and obtain the checkpoint and shape answers.\nResize the outer Herdr terminal to 100x32 and 140x45, inspect reflow and caret placement, and restore the original geometry.\nDrop only the isolated relay, edit the retained draft, inspect identity, quit, relaunch using the exact durable session id, inspect retained history/draft, and submit resume_final.\nRun the wheel identity verifier after capture and inspect all required witness records.",
+  "expected": {
+    "source": "case contract",
+    "text": "The integrated daily-use session keeps input correctly targeted and content readable across ordinary and tool conversation, multiline editing, history and scrolling, approval denial, turn cancellation, theme/inspector/palette use, attachments, real host resize, reconnect, quit and exact-session resume. The installed wheel is the candidate artifact."
+  },
+  "actual": "All nine operational steps were driven against the real gateway through the installed wheel. The provider route was opencode-go with model muse-spark-1.3-contributor and profile default; no session-only model substitution was used. Five gapless derived wire logs cover the launch, recovery, main interaction, reconnect and exact resume intervals. The one placeholder-only unsent-draft frame was withheld; its retained recovery replacement is the filed witness. Unchanged-area applicability: this evidence is bound to candidate c798be0016936c79e356fe0d82cfab7208869c88; later checkout changes were outside the release-relevant paths talaria, pyproject.toml, uv.lock and src, so the candidate-bound evidence remains applicable under the release matching rule.\nClause 1: pass: A fresh installed-wheel session launched from the neutral tool environment. The inspector showed the session identity and the opencode-go contributor actor, the composer returned to focus, and the ordinary daily_ready turn completed. (https://github.com/infiquetra/talaria/issues/150)\nClause 2: pass: Multiline cedar/birch input rendered and completed. Up recalled the submitted text and Escape cleared it without a second dispatch. The terminal tool completed printf daily_tool_ready and the answer was shown; transcript PageUp/PageDown navigation was exercised; the retained recovery frame visibly contains the unsent draft. (https://github.com/infiquetra/talaria/issues/150)\nClause 3: pass: The gateway emitted a real approval.request for the recursive delete of the absent target. The tester selected deny; approval.respond and a blocked tool.complete were recorded, the durable transcript states that no alternative was attempted, and the target remained absent. The refused path spans are masked in the pixels and marked in each matching twin with a completed recorded read. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5561273399)\nClause 4: pass: A visibly active long numbered turn was cancelled with Ctrl+S. The wire contains session.interrupt and message.complete status interrupted; the client remained connected and accepted a connected draft afterward. (https://github.com/infiquetra/talaria/issues/150)\nClause 5: pass: The disposable theme was reloaded after its canvas token changed. The inspector opened and was focused, the slash palette accepted Down/PageDown/Home/End and a filter, and the theme picker was cancelled. The captured live footer reads ctrl+o inspector, / commands, ctrl+s cancel-turn, ctrl+q quit, ctrl+g agents. (https://github.com/infiquetra/talaria/issues/150)\nClause 6: pass: The real file.attach flow staged notes.txt and the agent returned kingfisher from its content. The real image.attach_bytes flow staged shapes.png and the agent returned a blue square on the left and an orange circle on the right. Attachment state, prompts, and answers are shown in the frame trios and corresponding wire interval. (https://github.com/infiquetra/talaria/issues/150)\nClause 7: pass: The actual Herdr terminal was resized to 100 columns by 32 rows and then 140 columns by 45 rows, with readable reflow and editing captures at both sizes; the host relay resize record also records restoration to 170 by 46. (https://github.com/infiquetra/talaria/issues/150)\nClause 8: pass: The isolated transport drop produced real reconnect activity and a session.reclaimed event for the old runtime; the UI retained identity and draft content. Ctrl+Q exited the application. Relaunching with the exact durable session id returned session.resume resumed with 32 retained messages in a new runtime; history and draft were visible, and resume_final completed after the composer was targeted. (https://github.com/infiquetra/talaria/issues/150)\nClause 9: pass: The completeness check passed on 29 valid capture trios plus derived wire logs, and wheel_identity.verify_wheel_install passed after the run for the candidate commit and wheel digest recorded in the receipt. (https://github.com/infiquetra/talaria/issues/150)",
+  "evidence": {
+    "files": {
+      "frames/step-01-start.png": "613d97f5fbc6bcd909d2effb727dba7d00305c555c9ed36a5cd64c5d451016c1",
+      "frames/step-01-start.txt": "943d2d938bf559a0edf405fd157e01c9186f1672e54b0f3bd381bf3aa0d17bf2",
+      "frames/step-01-start.json": "88feabbec6179dd5037f0fa0704c1f3f022a1a47b5f500891927d98087fedd69",
+      "frames/step-01-inspector.png": "5aa496a9b058b77733ad296cff31860766efbfc4986012c122375a6a0b1e6c36",
+      "frames/step-01-inspector.txt": "b0beb025de809ced2e45e3cb7d0b79752e0dca3ae54fe7806075f84d833efbc9",
+      "frames/step-01-inspector.json": "ed8f30351eaf4b7a307671869a1baa532e14978a90c7492a1521cbd82c98e867",
+      "frames/step-01-inspector.read.json": "fb270494ae9515ddc9c3465e95ffa505cf1865e490ccab850c01b0c53444dae6",
+      "frames/step-01-daily-ready.png": "251e17d95bbcaa92f29771b1237a21fba93b9a083dde955f35b252bb1df63d04",
+      "frames/step-01-daily-ready.txt": "635323d12e30c08061a1af9ae9c9642fc3a738ce5b18637d272ea744306f658d",
+      "frames/step-01-daily-ready.json": "f55bed4728c543e82198432028d02ee5678f78138ead2d256e218b20a69f1047",
+      "frames/step-02-multiline.png": "be0dd79978019246cef457d15a731af9e3d47d1472762ad46aa4e54322209dcd",
+      "frames/step-02-multiline.txt": "759bdbf923bbc1b5e9d450bb942228dc5bfb283801fe50ecbd9f37033cbc19c5",
+      "frames/step-02-multiline.json": "8bbfe6a937e8c01b36fbbfd10e1de9e95fbb5f3850157e570e0d1d62d4312310",
+      "frames/step-02-history-recalled.png": "21d0b67a1e96793f5dc17d1dad3c1195d2aec031eedce97a517197803ecbb153",
+      "frames/step-02-history-recalled.txt": "fbb0772388fe013e05082e25a4131c2713ff333afbd04407b3c08a62747ecbf8",
+      "frames/step-02-history-recalled.json": "c42f3ba31b46c83cc03e07d8a985e5ace0b17b870ee10e9e2c876148019f138c",
+      "frames/step-02-tool.png": "c01a81ac1679cadf5bdf0bc4f03e78e81977c5093a0d624eb3fd89d961c5d403",
+      "frames/step-02-tool.txt": "3f742aea80e966c1af951199337368e4f050cfbb1b475d4a00e55465f9959af9",
+      "frames/step-02-tool.json": "bf46efe70f7e2e29da85548b6f9c89e30b8790b7d42b28c498c89c5fe81e2a7f",
+      "frames/step-02-tool.read.json": "7cea4bdcbf7876cbc27304ee30b51b322e5ecd13847b666c00c4acbdcbade60d",
+      "frames/step-02-scroll.png": "e56f4f6e1a84cbd4c37b45283e3641634c368b4f128eea787b562f4557173ad4",
+      "frames/step-02-scroll.txt": "d1823c770a1a79ede4723a736b00f237b440b28c944eac741d2636e6e2ddee57",
+      "frames/step-02-scroll.json": "f12a0bfe2ac41a262cb95dce6a6d63fad176f03badb601a9216b95d9f4fcbf7f",
+      "frames/step-02-scroll.read.json": "06f87cb2f243e70d6465e20be1d353fff3dcdbf9c6d3817b6172571a12b4e976",
+      "frames/step-02-unsent-draft-recovery.png": "c2362d88f50e180044ac0834a95757a0356ecf6fa2fbaa75d6f01f360f3e32f8",
+      "frames/step-02-unsent-draft-recovery.txt": "786299959056785bcb41a6f37b3c8874efe9523b5ba759b64e95c63b3ee81eff",
+      "frames/step-02-unsent-draft-recovery.json": "9bc6b9bf1455cea587b80a82f5b59ca0cd3496a946c5cbf21dc0994f43b023c4",
+      "frames/step-02-unsent-draft-recovery.read.json": "6371ce828a6c66b2b24cfa01fc65bee253bc4f1bfae141bca94a5ad9a0a17142",
+      "frames/step-03-approval.png": "fa1b6003e038e7b48df6191ce590d0b80d935d7ecfd87c70e6a87a514708abb7",
+      "frames/step-03-approval.txt": "224740e4230574d55ce16f0ec18f2df9c54132ed70619cf85a755972d6d7a8e9",
+      "frames/step-03-approval.json": "af176fa9614f25c35086225f75d9116d79e70c5277a3d74b3a715cfa79a01ea9",
+      "frames/step-03-approval.read.json": "b61a4fdebf294a6ea06fc49d5c9084fca0bfea95fe4f5b6c0bbd4fd2ea0d8c3f",
+      "frames/step-03-denied-result.png": "d704b2e2efafd54693f25092b2ea7b1e726f5460e383c4c2a575e109ebd77a2e",
+      "frames/step-03-denied-result.txt": "58c6b464cb887ac55c4160172fc5952b61074aff473ef2e2208e9b7f471f9781",
+      "frames/step-03-denied-result.json": "1b9d5283a30f876f19f806bb5dcd9ed87f1216a55cd2a757b7516e3300a6f6ff",
+      "frames/step-03-denied-result.read.json": "7f030b2860c02de76483e013c7a606b475e6e552a6aa2886b2f53580ff1c1d77",
+      "frames/step-04-interrupted.png": "5c91c40d0e8f6e3e9440067928bbccef124c8f52a032825d3f4fbb79795b1132",
+      "frames/step-04-interrupted.txt": "da27f4c74cc8b245aea9e141258a79d9ef17c39c874a54006b2cf52e7d750ad3",
+      "frames/step-04-interrupted.json": "d0ed3d5dff6a18e1747fd215e06bf66cab2f9c25354cf19fe87b8d53d96d5daa",
+      "frames/step-04-interrupted.read.json": "fa30a78791a56ff20f7fd36d3683c057e24e0d6858991eee5622037ab9dc2fe7",
+      "frames/step-04-connected-draft.png": "c79acf9afe562a6993e011c3d0bbbb21390ceaf64493a66de1c8d1371f4ae7fc",
+      "frames/step-04-connected-draft.txt": "3ad04c9a575d22c4cb8fb3a71c502a8eedaeacab72392f0c84f0329ac8f8c417",
+      "frames/step-04-connected-draft.json": "4166f053c4e5d612739923a188ca900ef2c6eb302ef3a0f92fa55743e4d60abd",
+      "frames/step-04-connected-draft.read.json": "12f1ef40f13cbc7876184f651c2726e9e2364ff65057947e951fabc4275977ed",
+      "frames/step-05-theme-reload.png": "fdc747d8daace0b3c4b0a311055011276bda1178bddc862cd65cc686408c82f3",
+      "frames/step-05-theme-reload.txt": "4ecee6edb88826b565e2d22674fa9846c606d85ccfe9564fcd12032b5b53ad55",
+      "frames/step-05-theme-reload.json": "3eb4cf14a04373b757300092ad4b5704d6f6fa13d22afa475ea9afa36fc924fb",
+      "frames/step-05-theme-reload.read.json": "4bbba8290c2368c2768f9c7bb77ae38cbef3c7ea36e9c2ff3a56b679bc4a3dc0",
+      "frames/step-05-inspector-focus.png": "99206a4c7efcafa0a6d6fec31186906547d903f4f3a882ae2a8cecda88fc4fdd",
+      "frames/step-05-inspector-focus.txt": "4ecee6edb88826b565e2d22674fa9846c606d85ccfe9564fcd12032b5b53ad55",
+      "frames/step-05-inspector-focus.json": "76f61d121dba017a5396094cc3fe3fec1d87a2497b56f8ca2d18cad729936408",
+      "frames/step-05-inspector-focus.read.json": "f922eaf75acbaaaca54135868db0dd6ca2e9b9dee8cb1e22459a6284e5868f96",
+      "frames/step-05-palette.png": "9a75235b7a39304a510d12ef06f87d0d6d8472e4591aecf3d1370fdf6b08e6d3",
+      "frames/step-05-palette.txt": "e9eee64d0297ad8f398c47c93f853b46e96d1609a3e27bef58108c07aa1649a0",
+      "frames/step-05-palette.json": "d11f94bed046baa729c11ac6af47140772bf44cd612963da5100cf1a003d8dda",
+      "frames/step-05-theme-picker.png": "586ac94d5feb827442838b41d0b8221eccd6f11dc5ff00ece5bb7f7142709b59",
+      "frames/step-05-theme-picker.txt": "3ae98d85bf98ebb1a94f4e02b1b9fdfcbc2caa8a7df418b4fddd9bc74c7540cf",
+      "frames/step-05-theme-picker.json": "41acf97ec4723f0d6ab5a8378f210bc306a5044c6667275e4e1ce75f802b64ba",
+      "frames/step-06-text-confirm.png": "67557fcff6c067e1432e3b284263b3a23da791a716ecd21f3cac0c897e576fd7",
+      "frames/step-06-text-confirm.txt": "5d715d220fdb8d02f10a19eef8d4c2196c5af7ee0f3054400ca50ab5a8576291",
+      "frames/step-06-text-confirm.json": "83a419dfcc1eba84962cc821817e68940483eecf7cd452c26dccb97ca9184596",
+      "frames/step-06-text-staged.png": "ffd804687eb1ceaed409a83659d232ebb8d0245160d3e14dce1ae3d56e724e3f",
+      "frames/step-06-text-staged.txt": "a8cdc740ec3cbccef19c6895f81759fc2bb2364ff6f144a8b68ab67184167e6e",
+      "frames/step-06-text-staged.json": "96c68ae2650994802e2a6e88a3b660ca495ca288dc1d23692d991e5934b958a1",
+      "frames/step-06-text-staged.read.json": "5077a56da1af9357204500226861c6f8b0cde8934123ad61353ef6a94f655951",
+      "frames/step-06-text-answer.png": "6db70df29a9c7679868ce2290c0e8a788aff82cff3ee217a7cf4a4cd309b326a",
+      "frames/step-06-text-answer.txt": "70d34f7a432ff7b9a63c6498f8ca9d9c8ea129d826118d4ac7882d10b9c3ffe1",
+      "frames/step-06-text-answer.json": "d093edd288a9d6db70db9cf937a46c1ee4aee15c32c9c033433f5175c5cf2788",
+      "frames/step-06-text-answer.read.json": "4f9c1179c939ec76ab32e59f435e2fa0cce1be32d8e32d4bfed9f87450357d28",
+      "frames/step-06-image-confirm.png": "eb245e8122153395ab40d8aebcfedc3caa69059685df704df90a8d2544edac59",
+      "frames/step-06-image-confirm.txt": "036b76db7582cc8ddb6a2cdb7c785202374e72457d36ff89c1779cfc07652c00",
+      "frames/step-06-image-confirm.json": "b569cfb50a9075bcf549bac463f74601557b1e5e1a045d47a1f19ec6f7478107",
+      "frames/step-06-image-confirm.read.json": "1ec4ad7b462e83940712292bb6abcd15cff3e9e56a5fdd2c799c3efca1953814",
+      "frames/step-06-image-staged.png": "1868b6063036c9a4bb1b270af4f0ed559fc94a4230ecf7bef8253a78582e194f",
+      "frames/step-06-image-staged.txt": "7615c31dce2c14773c22649bfdcecd135c9d5e7f32ac2079fc5055ed18b0be97",
+      "frames/step-06-image-staged.json": "a07dcbc260fe4fcdbd2749810802315c9403cdc9de23af3d6205edab73013314",
+      "frames/step-06-image-staged.read.json": "dc6c267c6b0ce8cb870a592b98a535896ad22a61669f02fbab3946d879307e83",
+      "frames/step-06-image-answer.png": "d1b2ef60db9f6c68bbf67d53d5a778ee1a7fc3e54b65c861d720ef9761bb2a3c",
+      "frames/step-06-image-answer.txt": "3c285452fb620d277b6695ae2534e77b5b02117b910190cc13094b9f5a6a96b3",
+      "frames/step-06-image-answer.json": "40878a30785ec8fd6ad7e9077e8f8a3334f78b3ed74ea49ee701ae6109147a3d",
+      "frames/step-06-image-answer.read.json": "3d4122fa27794d5e49f0bcbe9c936a85c24911952b219b2ba7eb07cbf59abbf0",
+      "frames/step-07-before-resize.png": "e18f75db901533b5d9d1f78a681f44a79ea669a16ddde3db0b1952f30d94877c",
+      "frames/step-07-before-resize.txt": "d1ccc01504150b7a46a370210cab5f51923476789399755db5461f84e4cf8d9d",
+      "frames/step-07-before-resize.json": "7915aec803ae54985bd1436eed71a970bf8d6fa077537012502d9bbaf681fb20",
+      "frames/step-07-before-resize.read.json": "baae7acd898aa5ea177ec496a73782f6346cf94b0370e0e8129c2dc40268ea58",
+      "frames/step-07-narrow.png": "3ac542238db990c89450a274f3fdcf9908883de0722d6b578fa40b228fc77ea8",
+      "frames/step-07-narrow.txt": "74fcabf26b97f9acbb9fcdb4f6384b216927560394e20f6a450a124c6a9ec5f7",
+      "frames/step-07-narrow.json": "ed1654b43a16fd6a0f64ea241b500c800941fc112c65e8a68549a26f691061e8",
+      "frames/step-07-narrow.read.json": "d4586083cb1f29d09e449d13af16b38933442d31ef890fa1a6383f68ac8de5fd",
+      "frames/step-07-wide.png": "f27015d3bc3226a8d5d0cfd78220df5030f9e5f9bd7a18a15e79030f572e7003",
+      "frames/step-07-wide.txt": "e392328e4ca71528fb2e092053deba4522f909006d1f7452990dd6af5788b582",
+      "frames/step-07-wide.json": "af02efcf7927d5a7cac6ba08a46373e0d29a3cb1d333febdef1d4e803e7c622c",
+      "frames/step-07-wide.read.json": "5d6e671b4c904c0f1c0d7bd30dacb33f24603c382fe3656e8eff99696bc669cf",
+      "frames/step-08-reconnected-identity.png": "d012cdee582842d361a40416630d58f8c42c62cc49cbfca6a14d93bcc9619727",
+      "frames/step-08-reconnected-identity.txt": "cea06cc9e1d9f0f868153bd51765c133ff2fa6dad155ade8203ab9a3e4f44286",
+      "frames/step-08-reconnected-identity.json": "6063f3aee0e06adf5a1daa98291ae3c4d3520a9ca91ef69d9b6d65363ce5d956",
+      "frames/step-08-reconnected-identity.read.json": "bc271d7ef9aa42cae3a89e20e8ed5745ace18775f0a3ad7ca8eb32e6b60422ba",
+      "frames/step-08-reconnected-draft.png": "24cc991bd229ed9221423c9e14c50aa538e52b7989b8b57de564b2015fa8e1f1",
+      "frames/step-08-reconnected-draft.txt": "c1a3f4ba5dcc97ae92fd726e967f0e32a767e66f64b04939bc850cd362882042",
+      "frames/step-08-reconnected-draft.json": "f004fbc80efa835d04f841de303d8777281c2f38673c8e12a816f39422f1b5f7",
+      "frames/step-08-reconnected-draft.read.json": "4c5d2bd74c16a92ce626c3bd53f291ac82ac11962c6ba26e7b36186619be443a",
+      "frames/step-08-resumed-history.png": "fc4586ee267f80c931814775b19e92b7be62d198304b3e037d55ade87bb6d215",
+      "frames/step-08-resumed-history.txt": "e430bd8b85ec7ccf60a779e9c628bc3de84af44e9f5d535b5454723f50453d88",
+      "frames/step-08-resumed-history.json": "987974996254fb4e8999c4a7969bfe2b8db7b7a4130ee05a77b6e0afde8e1d32",
+      "frames/step-08-resumed-history.read.json": "aeb65bc490220593bbe119ddcaf7794544e73f1b12f23406b92cf71c2e49fc52",
+      "frames/step-08-resumed-final.png": "2a215735b176d3ae895e2706d838d814c78eda38c43d98c01da0f702a5450645",
+      "frames/step-08-resumed-final.txt": "a9fc6d8b0e71706e867d392bedcfbc7d79b38f8e5318b1ab5410899665d4eb4d",
+      "frames/step-08-resumed-final.json": "31663cbcf46d2547248b6eeb1dfb17ca428593b647f87b199c41d19a9542aa8a",
+      "frames/step-08-resumed-final.read.json": "1dc2b9ba2e3099fb2daba2b9bc3937dabc0a43387f9cec9e68bb9d74e0b9c206",
+      "wire/wire-initial.jsonl": "095637548b5e730946d91b6b94169f86b3e7e5b81f27a0728a83cd58f4a25cf3",
+      "wire/wire-recovery.jsonl": "d2f29f2f36ce1cdf61c35f81beef659e55051573b4ea9cd4bf53faadb4002fcc",
+      "wire/wire-evidence.jsonl": "9c0938874a7e36cd0368e183024dbe126e37d308a39262f9be3dd078e4cb1bb9",
+      "wire/wire-reconnect.jsonl": "48e91e733ec98685c34f584dd4447021dda9ed7cd79963b93852776ad4dc3d2d",
+      "wire/wire-resume.jsonl": "146facad51977217af53321a45b95b295d20d3a3f4ac0419c16e3f3f6046b260",
+      "host/resizes.json": "24ba56b9aacc53fc72b7230d8be043cd5e88d6a15f458c6edeb4097706d2f13d"
+    },
+    "files_listed_at": "2026-09-09T21:10:19.337950+00:00",
+    "read_confirmations": [
+      {
+        "image": "frames/step-01-inspector.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:24:56.942215+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-02-tool.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:28:12.138740+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "daily_ready",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-02-scroll.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:30:00.455020+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "daily_ready",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-02-unsent-draft-recovery.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:38:22.156272+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "daily_ready",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-03-approval.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:42:01.250627+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 6,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 7,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "daily_ready",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-03-denied-result.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:47:59.821229+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 6,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 7,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 8,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 9,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 10,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "daily_ready",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-04-interrupted.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:53:32.585841+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-04-connected-draft.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:54:12.205431+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-05-theme-reload.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:56:21.278272+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-05-inspector-focus.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T19:56:49.800846+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-06-text-staged.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:11:20.128368+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-06-text-answer.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:14:08.988450+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-06-image-confirm.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:19:17.215594+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-06-image-staged.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:20:00.145779+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-06-image-answer.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:21:42.450742+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-07-before-resize.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:22:33.733655+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "approval",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-07-narrow.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:30:04.692536+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "resize witness draft",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-07-wide.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:30:45.676693+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "resize witness draft",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-08-reconnected-identity.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:48:52.909695+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "6689aecf",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-08-reconnected-draft.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:49:30.750752+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "edited after reconnect",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-08-resumed-history.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:53:06.283376+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ab2673ad",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "frames/step-08-resumed-final.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-09T20:53:49.019990+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "resume_final",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

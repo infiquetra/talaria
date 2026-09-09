@@ -1,0 +1,191 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-09",
+  "title": "Inspector-only diagnostics and visible staleness",
+  "issue": "144",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:55:35.922567+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094641_124b75",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Observe fresh and stale diagnostic rows at 120 by 40 with a 48-column Inspector; wait actual wall-clock time without replay or clock substitution.\nCapture unfocused fresh/stale and focused roster fresh/stale frames, then compare only the DIAGNOSTICS pixels.\nIn a separately identified isolated conversation, capture composer focus, close Inspector, reopen with transcript focus, drop only the test connection and observe seam revalidation.",
+  "expected": {
+    "source": "case contract",
+    "text": "Observe a real freshness-to-staleness transition, reconnect and Inspector open/closed states while keeping diagnostics out of the composer."
+  },
+  "actual": "Seven reviewed bound frames establish the aging pair, expanded source/age text, focus and reconnect behavior. The diagnostics-only difference is3935 pixels. The closed frame remains bound to its captured session through the established identity fence.\nClause 1: pass: The unfocused fresh/stale diagnostic section changes by 3935 of 41796 pixels. Frame02 visibly begins the stale roster row with its stale marker; focused frame04 makes the age text legible. No diagnostic row is focused in01/02; the roster is focused in03/04. (https://github.com/infiquetra/talaria/issues/144)\nClause 2: pass: Roster, approval-detail and HTTP-runner details are confined to Inspector. The closed frame contains none of those diagnostics. Composer/transcript focus changes do not create inline diagnostics. The isolated proxy reports an incompatible HTTP seam rather than pretending to be the gateway HTTP surface. (https://github.com/infiquetra/talaria/issues/144)\nClause 3: pass: The same isolated session survives the socket drop and revalidates approval.pending. The complete derived log retains all 44 frames and 20 outgoing requests. The reconnect window has17 consecutive source frames27–43, no session.create/resume/cwd.set, and the fresh approval.pending request/reply at42/43. No method filter can hide a prohibited request. (https://github.com/infiquetra/talaria/issues/144)",
+  "evidence": {
+    "files": {
+      "live-09-01-fresh-unfocused.png": "c47736b9e9c92a9a4a602c8fecd3b431e84fd68ead20c6c72eaaa878f69ec2cc",
+      "live-09-01-fresh-unfocused.txt": "280b9fb50f571f42b45bfee393b3c66bea42500c9a8b1082bc7a2dec140aa29f",
+      "live-09-01-fresh-unfocused.json": "c21e76f5a77b4304125c0bd9aa4ea167d47db84163c3b648fbdb137c9b4cc794",
+      "live-09-01-fresh-unfocused.read.json": "abc8ab805da535c7cfe54a56e67d2443473951c9399f0e6a9c17bb5838f39994",
+      "live-09-02-stale-unfocused.png": "89bbfd02ce4cce9d091c5c8acf891cf8e6e4c0dab6f05a0ffd7fc67bdb6035e5",
+      "live-09-02-stale-unfocused.txt": "d0016515749e49c4b3adc40f1edaae56b88d5aefbbc9e87efef26b5218223439",
+      "live-09-02-stale-unfocused.json": "0b1848140d8893e2a7806b9297f644bd8cd9f514a952f4c1052118ad18fc184b",
+      "live-09-02-stale-unfocused.read.json": "b553d3c896263bb0f671c9bf6afb8aaea05f2cad981c0c686d38658ece4468cf",
+      "live-09-03-fresh-roster-focused.png": "39263e6d2cf45593539d782f897ea3ab2166abe29f7032c1f93ec8768756c182",
+      "live-09-03-fresh-roster-focused.txt": "1fefc88f3fdf5764c3bc425bc971cd90ff18447b14cd67b03b82ad671f3d179e",
+      "live-09-03-fresh-roster-focused.json": "62107b3a7feddce43fece16bfcee283a6a1a9d58782df92de844e72e8c863ed1",
+      "live-09-03-fresh-roster-focused.read.json": "748d38acea3f11e2b961e12c3ddaf0f78095091bd4517820118efcc93d9a6ccf",
+      "live-09-04-stale-roster-focused.png": "65ab97f3ee5743c95920513e5d6b9ec45a7e51794b408264ea69aa584a44d1c6",
+      "live-09-04-stale-roster-focused.txt": "1378101377f0d6b9e42d99ab1be5c88e7963e9daf142c064ffbb12ff98d8d348",
+      "live-09-04-stale-roster-focused.json": "804b6425870661dea9b846f53064663555a301f0d87dbe43d625841c05ddbb52",
+      "live-09-04-stale-roster-focused.read.json": "3c186936a64f440069314771b153657e371bcb5f57fb2f8b0725733479294a27",
+      "reconnect-01-open-composer.png": "6699a0d654711c4aa300bae0d9e461ceac43d3f32f5cdce302d402e63102836a",
+      "reconnect-01-open-composer.txt": "74196fdb5e5da185057bfcf43aeecef40cf4b8760a433a1979b395b9c082e560",
+      "reconnect-01-open-composer.json": "8b4dbf3dd9deb03e35d945488b14d57eef4a2be3e6846d6015d5560a48316758",
+      "reconnect-01-open-composer.read.json": "2c45309d49f418323f90077b6fb6efc8fed59fa8899adc2f7e567cd9704d3967",
+      "reconnect-02-inspector-closed.png": "cb8be5d70ac1dae32492e23e57668c37acc5c48460819827253b8439a16cd217",
+      "reconnect-02-inspector-closed.txt": "42249ba1ec9bedc9c47afdcd240c4c46dc7d0209dc47c5f9d1731929c0c996a6",
+      "reconnect-02-inspector-closed.json": "77fe3c9564e90c4034b2cc04f9b7df26117df532393d9a1d4f0184f800993ae3",
+      "reconnect-03-revalidated.png": "045e8bdcf591308209ac4e19458e918af2fc8db1b4fcfa8deb2dff71e4b2cb3e",
+      "reconnect-03-revalidated.txt": "62979c59332160f996bab63e3f9337c6d9ecfd58f13e8d00c883d841eb3b21ac",
+      "reconnect-03-revalidated.json": "52dadc15273452f09bc515e1afd08c768b0c1e317a1d9085eb5bf4e587a38317",
+      "reconnect-03-revalidated.read.json": "aa6ab6242fba7144b3cd8c9d581c533ec4d491155e5b4d09f65c75a0c917a3da",
+      "wire-evidence.jsonl": "ae16dbaf13a099f86c492f1811f87b68cd1add2262db76d5ec2ae48b60236c5e",
+      "wire-reconnect.jsonl": "c0535c675854b02faa38bbb92422e52292f48460f41fe9837aa968c6d17725b5"
+    },
+    "files_listed_at": "2026-09-07T13:59:29.348674+00:00",
+    "read_confirmations": [
+      {
+        "image": "live-09-01-fresh-unfocused.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T13:59:28.838181+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "DIAGNOSTICS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "live-09-02-stale-unfocused.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T13:59:28.871609+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "DIAGNOSTICS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "live-09-03-fresh-roster-focused.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T13:59:28.872701+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "DIAGNOSTICS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "live-09-04-stale-roster-focused.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T13:59:28.873653+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "DIAGNOSTICS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "reconnect-01-open-composer.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T13:59:28.874748+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "DIAGNOSTICS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "reconnect-03-revalidated.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T13:59:28.875779+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "DIAGNOSTICS",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

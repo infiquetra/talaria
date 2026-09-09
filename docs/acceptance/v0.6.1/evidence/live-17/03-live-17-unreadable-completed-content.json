@@ -1,0 +1,74 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T15:20:01.316803+00:00",
+  "case": "live-17",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "event_log": "wire-failure-unreadable.jsonl",
+  "final_ansi_offset": 659847,
+  "first_ansi_offset": 659847,
+  "first_frame_sha256": "aa1a09026fc60751b323cbab8514f1b4848571e76ea702915ba54ac0bef0ee4e",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "03-live-17-unreadable-completed-content",
+  "frame_sha256": "aa1a09026fc60751b323cbab8514f1b4848571e76ea702915ba54ac0bef0ee4e",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "ecd0adab121b0dda88ffffe434c11cbfd7120c294a5bdb70bca6512a930808e5",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 423,
+        "x": 126,
+        "y": 108
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 423,
+        "x": 18,
+        "y": 234
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_111942_77cc42",
+    "profile": "default",
+    "reply_seq": 22,
+    "request_id": "10",
+    "runtime_id": "e5fddcb3"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "03-live-17-unreadable-completed-content.txt",
+    "frame_sha256": "aa1a09026fc60751b323cbab8514f1b4848571e76ea702915ba54ac0bef0ee4e",
+    "sha256": "7868a7d67ed377374e6eeacd4e7f3f212c59097e2f1efcd6298cc54c69e8ce0e"
+  },
+  "twin_digest": "7868a7d67ed377374e6eeacd4e7f3f212c59097e2f1efcd6298cc54c69e8ce0e"
+}

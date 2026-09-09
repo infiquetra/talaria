@@ -1,0 +1,40 @@
+█- Session  /talaria-acceptance-command-not-installed: Unknown command: /talaria-acceptance-command-not-installed       
+█Type /help for available commands                                                                                      
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ the catalogue did not list this command                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

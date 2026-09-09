@@ -1,0 +1,14 @@
+{
+  "image": "03-live-17-unsupported-completed-content.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-07T15:24:52.249583+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "a98a8ae999f8a33c1eb7f3fd",
+  "nothing_else_masked": true
+}

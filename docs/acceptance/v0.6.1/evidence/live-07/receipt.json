@@ -1,0 +1,65 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-07",
+  "title": "Theme discovery, real marketplace import and explanatory fallbacks",
+  "issue": "142",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:45:45.309049+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094530_c9c1ee",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 240,
+    "rows": 40
+  },
+  "actions": "The theme chooser describes Homebrew as a Talaria-designed green-black palette, not a host-terminal sample or the package manager. The label is preserved.\nThe gallery webpage is refused with an explicit gallery-page reason and the supported registry-reference format. The remaining long guidance is ellipsized, so the frame is not claimed to show every word. The active light canvas remains.\nGitHub file-page and raw URL imports both succeed:36 source tokens,22 fallbacks and262 warnings. Detailed warning rows identify unsupported token selectors and ignored settings.\nThe real registry reference contributes five themes and asks for an explicit selection, naming all five while reporting that vitesse-raw is kept. Selecting antfu/theme-vitesse/1 successfully fetches and applies vitesse-marketplace:36 source tokens,22 fallbacks and260 warnings. The light canvas and success notice are visible.\nAll six frames were actually viewed on this candidate. Gateway wire retention is complete, but theme retrieval is client-side HTTP; the gateway log is not represented as the HTTP response witness.\nPreserve the entire gateway interval:26 frames,12 outgoing requests, with no frame filter.",
+  "expected": {
+    "source": "case contract",
+    "text": "Supported marketplace and raw theme sources import successfully; unsupported input and ambiguous selection explain recovery, preserve the active theme on failure and expose fallbacks and details. Homebrew provenance matches its intended description."
+  },
+  "actual": "The previously failing marketplace route succeeds in the real application. Actual reports distinguish the selected light marketplace theme from the dark raw theme. Every image has its capture-time text twin and binding sidecar.\nClause 1: pass: The theme chooser describes Homebrew as a Talaria-designed green-black palette, not a host-terminal sample or the package manager. The label is preserved. (https://github.com/infiquetra/talaria/issues/142)\nClause 2: pass: The gallery webpage is refused with an explicit gallery-page reason and the supported registry-reference format. The remaining long guidance is ellipsized, so the frame is not claimed to show every word. The active light canvas remains. (https://github.com/infiquetra/talaria/issues/142)\nClause 3: pass: GitHub file-page and raw URL imports both succeed:36 source tokens,22 fallbacks and262 warnings. Detailed warning rows identify unsupported token selectors and ignored settings. (https://github.com/infiquetra/talaria/issues/142)\nClause 4: pass: The real registry reference contributes five themes and asks for an explicit selection, naming all five while reporting that vitesse-raw is kept. Selecting antfu/theme-vitesse/1 successfully fetches and applies vitesse-marketplace:36 source tokens,22 fallbacks and260 warnings. The light canvas and success notice are visible. (https://github.com/infiquetra/talaria/issues/142)\nClause 5: pass: All six frames were actually viewed on this candidate. Gateway wire retention is complete, but theme retrieval is client-side HTTP; the gateway log is not represented as the HTTP response witness. (https://github.com/infiquetra/talaria/issues/142)",
+  "evidence": {
+    "files": {
+      "homebrew-provenance.png": "51a17ea97ace9606df4da99082a2aa314743650e6f6719515930b6c137ccae2c",
+      "homebrew-provenance.txt": "c9c5316c76d9e9141ccbd4af4076602a00f520e4b7cd00f48126c12b8a92583d",
+      "homebrew-provenance.json": "3f36b1a645c11a7e1f7786f9df122732f62dfd460c01216661f08771fded4ab3",
+      "gallery-source-refusal.png": "ee8ba4b2d0a740c4da254672ca51dfb148f8765c670e98962c38c197e5f8929d",
+      "gallery-source-refusal.txt": "5dd6ce97b80ad5bcf763fc6cad6f4e2bdfe7a7885bce61fb067c294eec03e9e3",
+      "gallery-source-refusal.json": "63d8f284ce92428509bb93eefca50a892fcdd991e5c49ed74777655afca58941",
+      "real-import-report.png": "79a16f43c3fe0418964368ae9980d0ede03d24eeac90414bb33159ab6b7e2c57",
+      "real-import-report.txt": "84d74847236b502b03ea61f35978c19c746c6de5079c211fef98a1d3f8892ed8",
+      "real-import-report.json": "6353d0c8ff6699626ed5476ffc47beddf8753c3ac8c041e5b41de4ac02eb7887",
+      "raw-url-import.png": "152c0440e14b83c5f890f26b7f71e559bab129d4b343d7eafec3e2fcbec75d20",
+      "raw-url-import.txt": "53925987588640ba980443b7c87c657598ad23dbfbdaeb4354075eb3a84c156f",
+      "raw-url-import.json": "ae98f2566c89374c6fae3c480564aa05e8df8f4af2db3374aaac4e67d2e336a9",
+      "marketplace-choice-required.png": "34d9ad004aa08f2c87e6c88fa2fd68d75fe6ba57ec671f486de8d15feaad7fff",
+      "marketplace-choice-required.txt": "226952ccba37c6f9b0f226c0f002db019e25daf9de44ba888a3ca8501d5b18d5",
+      "marketplace-choice-required.json": "8851878fad053e1ac981e2a64b642946ee269b8c6e9c53d06e4faf7321ae5068",
+      "marketplace-reference-import.png": "1b71887058a652ec7cab49f0d0cbd7f20f4f0f9ea38234d0b5d3ff5ec6146635",
+      "marketplace-reference-import.txt": "9cc4ca9410e8f5fd2e84ccffca4b42f7c253c455fe69a9ad305dea17dc4125ba",
+      "marketplace-reference-import.json": "5e3fdb2f867535846fc825b8ff42320075bb197b5826a299c462d19a08620d78",
+      "wire-evidence.jsonl": "fa886d7e6181d48865e0e197e788f1fde2c661d312f9c9706265bdb540e38930"
+    },
+    "files_listed_at": "2026-09-07T13:47:35.692798+00:00",
+    "read_confirmations": []
+  }
+}

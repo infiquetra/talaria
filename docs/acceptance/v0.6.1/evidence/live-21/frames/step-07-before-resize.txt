@@ -1,0 +1,46 @@
+█  31. Verify backups are restorable before cleaning up old files.                                                                    ┌─ Inspector [docked 36] ──────────┐
+█  32. Prefer moving files to trash or archive over immediate permanent deletion.                                                     │ TASKS                            │
+█  33. Check for mounted network drives before running broad cleanup commands.                                                        │   [none available from this      │
+█  34. Avoid running bulk commands across many hosts without staged rollout.                                                          │ session]                         │
+█  35. Keep dangerous aliases clearly named so they do not surprise future users.                                                     │                                  │
+█  36. Review environment variables because they can alter command behavior silently.                                                 │ CONTEXT                          │
+█  37. Disable history expansion when pasting commands with exclamation marks.                                                        │   caret    composer              │
+█  38. Use checksums to verify downloads before making them executable.                                                               │   session  abcb775a              │
+█  39. Limit background jobs and verify they exit instead of leaving orphans.                                                         │   profile  default               │
+█  40. Close terminal sessions cleanly to release locks and temporary resources.                                                      │   model                          │
+█  41. Teach teammates safe patterns so shortcuts do not become hidden risks.                                                         │ muse-spark-1.3-contributor       │
+█  42. Document every production shell action so others can audit and recover.                                                        │   launch   [redacted:absolute-filesystem-path:1]  │
+█> You  Provide a long numbered explanation of terminal session safety, with at least 200 numbered points and one sentence per point. │   agent    [redacted:absolute-filesystem-path:2]  │
+█ . Reasoning  Checking constraints for generating a long numbered terminal safety list with strict one-sentence formatting.          │   (session's own)                │
+█                                                                                                                                     │   usage    6497 input · 7558     │
+█ Enforcing a no-internal-period rule while drafting 200 distinct single-sentence safety tipsGenerating a long numbered list with     │ output                           │
+█ one sentence per point while avoiding internal periods and ensuring exactly 200+ items.                                             │                                  │
+█  1. Always confirm your present working directory before executing any command.                                                     │ CHANGED FILES                    │
+█  2. Never run destructive removal commands                                                                                          │   [none available from this      │
+█                                                                                                                                     │ session]                         │
+█ [interrupted]                                                                                                                       │                                  │
+█> You  Reply with exactly 60 lines, each line exactly SAFE. Do not add any other words and do not use tools.                         │ OPERATION DETAILS                │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE   │   vision_analyze · What are the  │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE   │ two shapes in this image and     │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE                                                                                            ▂│ their colors? Describe           │
+█ . Reasoning  SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE     │ precisely.                       │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE   │   completed                      │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE                                                                              │                                  │
+█> You  Report the checkpoint word in the attached notes.@file:[redacted:absolute-filesystem-path:3]                            │ MIXTURE OF AGENTS                │
+█$ Tool/Subagent  ⏺ read_file notes.txt L1-2000                                                                                       │   no progress events observed    │
+█$ Tool/Subagent  ⏺ read_file ✓                                                                                                       │                                  │
+█ . Reasoning  kingfisher                                                                                                             │ DIAGNOSTICS                      │
+█ kingfisher                                                                                                                          │   roster [stale]: present — fle… │
+█> You  Report the two shapes and their colors in the attached image.                                                                 │   approval-detail [stale]: pres… │
+█$ Tool/Subagent  ⏺ vision_analyze What are the two shapes in this image and their colors? Describe precisely.                        │   http-runner [stale]: incompat… │
+█$ Tool/Subagent  ⏺ vision_analyze ✓                                                                                                  │   kanban-dispatcher: not observ… │
+█ . Reasoning  A blue square (left) and an orange circle (right).                                                                     │                                  │
+█ A blue square (left) and an orange circle (right).                                                                                  │ KEYS                             │
+                                                                                                                                      │ > F1 does nothing here. F2 togg… │
+                                                                                                                                      └──────────────────────────────────┘
+╭─ compose [*] caret here ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ resize witness draft                                                                                                                                                   │
+│                                                                                                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                                                                          
+[ok] connected│v0.6.1                                                                                                                                                     

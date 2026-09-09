@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T13:58:43.671148+00:00",
+  "case": "live-22",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 160,
+  "diagnostics_cells": [
+    126,
+    26,
+    157,
+    32
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 723997,
+  "first_ansi_offset": 723215,
+  "first_frame_sha256": "2d178d81efc03d3388e8ad087fcd44ec90a29f45679de61e057b849833cd901f",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "06-f1-after",
+  "frame_sha256": "2d178d81efc03d3388e8ad087fcd44ec90a29f45679de61e057b849833cd901f",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "5ce1a630333ec6b29d1b0a8ff2c5c982cda011c25d57a0c6a4a32ecc0db83068",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1233,
+        "y": 198
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1233,
+        "y": 216
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 49,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_095829_15e44c",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "5a2f7a06"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "06-f1-after.txt",
+    "frame_sha256": "2d178d81efc03d3388e8ad087fcd44ec90a29f45679de61e057b849833cd901f",
+    "sha256": "855ed9d2991b365daf7af0a87391c549250d467ad99b4c415334b227270cdc9d"
+  },
+  "twin_digest": "855ed9d2991b365daf7af0a87391c549250d467ad99b4c415334b227270cdc9d"
+}

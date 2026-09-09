@@ -1,0 +1,59 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-03",
+  "title": "Automatic theme persistence and preview cancellation",
+  "issue": "140",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T19:09:51.108863+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_150941_6bc6ab",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Selected Neutral Dark, and verified the exact configuration bytes written by that selection before opening the preview.\nPreviewed Accessible High Contrast with Down, then cancelled with Escape before any restart; the screen returned to the normal composer and the written configuration bytes remained identical.\nRestarted only after cancellation and the byte comparison; the theme chooser showed Neutral Dark selected, proving the persisted choice survived restart.",
+  "expected": {
+    "source": "case contract",
+    "text": "Persist a selected theme without a separate save; preview another theme, cancel without overwriting the stored choice, then restart and observe the original selection."
+  },
+  "actual": "The corrected-order live run selected Neutral Dark, captured an Accessible High Contrast preview, cancelled it, compared the exact stored configuration bytes, and only then restarted. The bytes before preview and after cancellation were identical; the post-restart chooser showed Neutral Dark.\nClause 1: pass: Neutral Dark was selected and, after the preview was cancelled before restart, appeared selected in the chooser after a fresh application launch. (https://github.com/infiquetra/talaria/issues/140)\nClause 2: pass: Preview and cancellation occurred before restart; the exact persisted configuration bytes were equal before preview and after cancellation, and the sanitized written theme.name extract is filed as written-theme-name.txt. (https://github.com/infiquetra/talaria/issues/140)",
+  "evidence": {
+    "files": {
+      "preview.png": "574542a0e2498826b9e0ef3a66c960318f65aacf702af9630a902b5757b11eaf",
+      "preview.txt": "042f154710b2981aa2a96b1f80f7bbf81792e56df6e85e5dd5624d5ba2cc60a8",
+      "preview.json": "fbdbd0e74e61a28a25ac1ffd1ef63e9bd0069a06c8c6e2fbb5d590ec53a35373",
+      "preview-cancelled.png": "255011b009fb3f122746ed8f05814d56bf0b77921b271daaf401f65ee1359695",
+      "preview-cancelled.txt": "f4886c009a833e92f4d7de649607e4cf7514758c68d6f8271308e87fb1a2b64e",
+      "preview-cancelled.json": "dcab30198abfefeda5c4ef00b7e82207d0fc501420f6283477063bcbe5d35557",
+      "restarted-persisted-selection.png": "dde0998ab62206b4a1f0c4c210314e9be76783afd512410f27b813687b0e74c5",
+      "restarted-persisted-selection.txt": "9f91d07e3bfe0cb1eb1bfbd405ce0b159c18dbc210b68254106eed68964ddd24",
+      "restarted-persisted-selection.json": "31495f7635ee88101ff64f60044388c515dc2e4516779ed9ae9fecee23efe077",
+      "wire-evidence-preview.jsonl": "e41a0f3c0d7ac92cd0cfbc1c6a3aacc2eb7a7a386878c53d51d02c65a77b666a",
+      "wire-evidence-restart.jsonl": "61f1f7b709fd9fe094499322c02b1e718282113eda6ff5f551852b8f6b66e800",
+      "written-theme-name.txt": "27ad7443d8214a9507fe630e4d50f2bf8f318e082c6b992a32fe4fed669dc768"
+    },
+    "files_listed_at": "2026-09-07T19:11:06.637568+00:00",
+    "read_confirmations": [],
+    "redaction_review": "passed"
+  }
+}

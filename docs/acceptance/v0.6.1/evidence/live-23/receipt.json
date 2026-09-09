@@ -1,0 +1,57 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-23",
+  "title": "Compatibility drift and refusal",
+  "issue": "150",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:46:41.103475+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094634_fa1d7d",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Clause 1: /density is marked unsupported in the returned catalogue. The full durable transcript says it is handled inside Hermes own terminal UI and has no gateway dispatch path. The /density draft remains. After idle cancel replaces the notice, the same transcript refusal and draft remain. The recorded action interval sourceSeq22\u201326 contains no prompt.submit, slash.exec or command.dispatch.\nClause 2: the unlisted command was sent once as slash.exec at sourceSeq27 and returned a confirmed result at sourceSeq29. The transcript names /talaria-acceptance-command-not-installed and says Unknown command; the notice names the catalogue miss. The full gapless recording contains 29 frames and 13 outgoing requests, zero prompt.submit. The derived log retains all frame methods without an event or method filter, including any prompt.submit had one occurred.\nClause 3: the actual startup compatibility report names zero blocking seams, thirteen unverified runtime operations and no missing baseline seam. Unverified is not a missing-seam finding.",
+  "expected": {
+    "source": "case contract",
+    "text": "Local unsupported extra: durable reason, retained draft and no dispatch. Unlisted remote command: confirmed transcript output, catalogue-miss notice and no prompt submission. Report startup gaps when present."
+  },
+  "actual": "All three frames were visually inspected; clauses 1 and 2 pass and clause 3 uses its explicit not-applicable provision. Two isolated sessions on the same candidate supplied the separate routes.\nClause 1: pass: Clause 1: /density is marked unsupported in the returned catalogue. The full durable transcript says it is handled inside Hermes own terminal UI and has no gateway dispatch path. The /density draft remains. After idle cancel replaces the notice, the same transcript refusal and draft remain. The recorded action interval sourceSeq22\u201326 contains no prompt.submit, slash.exec or command.dispatch. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5561683073)\nClause 2: pass: Clause 2: the unlisted command was sent once as slash.exec at sourceSeq27 and returned a confirmed result at sourceSeq29. The transcript names /talaria-acceptance-command-not-installed and says Unknown command; the notice names the catalogue miss. The full gapless recording contains 29 frames and 13 outgoing requests, zero prompt.submit. The derived log retains all frame methods without an event or method filter, including any prompt.submit had one occurred. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5564206827)\nClause 3: not-applicable: Clause 3: the actual startup compatibility report names zero blocking seams, thirteen unverified runtime operations and no missing baseline seam. Unverified is not a missing-seam finding. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5561683073); Clause 3 permits not-applicable when the startup report names no gap.",
+  "evidence": {
+    "files": {
+      "clause-01-durable-refusal.png": "053e82f2f4fc253215aa4a206c5ff753c2a39052f174415dedf787fbeb2f7044",
+      "clause-01-durable-refusal.txt": "59212410fe2923900a4a750f672de044d89c46f1068f5ab45d099ce6f02aa94b",
+      "clause-01-durable-refusal.json": "ea8ee963c9705bb6f3777f39020f510f6b1413651bbec643388a420bcdcbb646",
+      "clause-01-unsupported-extra.png": "c2cd6be0a2033e5fdf4369d13696d99cfcc9f10e4c4764a8354e1016f8c78f9d",
+      "clause-01-unsupported-extra.txt": "09f2622e3d367df6fb6ee35282c3cbf40c8ab34f3734470d8aea1bebb9ade523",
+      "clause-01-unsupported-extra.json": "c555794ef0f1d948d60e01cd2aac1cdd3fcafecb1191f8de1eab22489a1841ef",
+      "confirmed-unlisted-command.png": "ddb3934b18d3abefe301bc668453eaaa2fa86004b5758de9418417ba459a4698",
+      "confirmed-unlisted-command.txt": "f5184fd646b48e32c484181b3ff6754c670f13394c86e5497d3e2db77ad2df5a",
+      "confirmed-unlisted-command.json": "583101ab7c85ef55d4773384176901f8c458a0ba2d7a30286b8e9a9edd5eacab",
+      "wire-clause01.jsonl": "db8696257080cdc642bf003b565a7bdd7166f58bea0ab2aba6ca2bb90f223613",
+      "command-routing.jsonl": "674aa0dad0978b9291101f694a4e6d0d76f3da8a0981afe66c32cdba5f8b3a9a"
+    },
+    "files_listed_at": "2026-09-07T13:57:49.140608+00:00",
+    "read_confirmations": []
+  }
+}

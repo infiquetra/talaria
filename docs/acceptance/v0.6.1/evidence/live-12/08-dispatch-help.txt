@@ -1,0 +1,40 @@
+█    /plan           - Write a markdown implementation plan to .hermes/plans/       ┌─ Inspector [docked 36] ──────────┐
+█without executing anything (usage: /plan [task])                                   │ TASKS                            │
+█    /egress         - Show Docker egress proxy status (usage: /egress [status])    │   [!] approval  waiting — scrip… │
+█    /resume         - Resume a previously-named session (usage: /resume [name])    │                                  │
+█    /sessions       - Browse and resume previous sessions                          │ CONTEXT                          │
+█                                                                                   │   caret    composer              │
+█  ── Context ──                                                                    │   session  3e27fcef              │
+█    /compress       - Compress conversation context (add 'here [N]' to keep        │   profile  default               │
+█recent N turns; --preview shows what would happen) (usage: /compress [here [N] |   │   model                          │
+█focus topic | --preview|--dry-run])                                                │ muse-spark-1.3-contributor-free  │
+█    /compact        - Compress conversation context (add 'here [N]' to keep        │   launch   [redacted:absolute-filesystem-path:1]  │
+█recent N turns; --preview shows what would happen) (alias for /compress)           │   agent    [redacted:absolute-filesystem-path:2]  │
+█    /status         - Show session, model, token, and context info                 │   usage    0 input · 0 output    │
+█    /context        - Show detailed context window view with usage gauge,          │                                  │
+█category breakdown, compression stats, and throughput (usage: /context [all])      │ CHANGED FILES                    │
+█    /ctx            - Show detailed context window view with usage gauge,          │   [none available from this      │
+█category breakdown, compression stats, and throughput (alias for /context)         │ session]                         │
+█                                                                                  ▄│                                  │
+█  ── Background & Automation ──                                                    │ OPERATION DETAILS                │
+█    /bg             - Run a prompt in a separate background session (usage: /bg    │   [none available from this      │
+█<prompt>)                                                                          │ session]                         │
+█    /btw            - Ask a side question about the current conversation without   │                                  │
+█interrupting it (usage: /btw <question>)                                           │ MIXTURE OF AGENTS                │
+█    /agents         - Show active agents and running tasks                         │   no progress events observed    │
+█    /tasks          - Show active agents and running tasks (alias for /agents)     │                                  │
+█    /journey        - Open the learning journey timeline (usage: /journey          │ DIAGNOSTICS                      │
+█[list|delete <id>|edit <id>])                                                      │   roster: present — fleet roste… │
+█    /learning       - Open the learning journey timeline (alias for /journey)      │   approval-detail: present — fo… │
+█    /memory-graph   - Open the learning journey timeline (alias for /journey)      │   http-runner: present — admin … │
+█    /queue          - Queue a prompt for the next turn (doesn't interrupt)         │   kanban-dispatcher: not observ… │
+█(usage: /queue <prompt>)                                                           │                                  │
+█    /q  …                                                                          │ KEYS                             │
+                                                                                    │   F1 does nothing here. F2 togg… │
+                                                                                    └──────────────────────────────────┘
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

@@ -1,0 +1,319 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-13",
+  "title": "Project launch directory, session directory and actual tool access",
+  "issue": "157",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T15:21:24.437346+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8000/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_111953_40d369",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 240,
+    "rows": 40
+  },
+  "actions": "Jeff authorized gemini-3.6-flash through the already-configured gemini route for these isolated sessions only. Each new session used /model gemini-3.6-flash --provider gemini --session; resumed project A retained that actor. Gateway, credentials, profile, shared defaults and tester model/account stayed unchanged.\nCandidate setup was redone in two disposable projects. The displayed launch directory and the gateway-reported session directory were checked against real terminal pwd and distinct fixture reads. Both initial sessions reported their requested project directories. The public directory-equality derivation binds these comparisons to the four retained wire recordings without publishing refused paths.\nA per-tool working-directory override in project A reached the intended alternate fixture; project B subsequently retained its own directory and fixture content. Actual tool execution demonstrates access to the tested fixtures. No permission configuration was changed and no broader permission guarantee is claimed.\nAfter an isolated reconnect, project A retained its expected tool directory and fixture access. A fresh project-A session was then created. Resuming the original A session from a different launch context retained the session directory and fixture content; requested_equals_launch is correctly false only at resumed-a because session.resume sends no directory. The launch and agent rows and session-own annotation distinguish the two directory meanings.\nSeven capture-time-bound frames were visually reviewed. The documented distinction between launch and session directory holds across the two projects, reconnect and resume. The original unattestable base observation is not used as candidate acceptance; setup was re-captured on c798be0. This receipt records Live 13's post-decision half under issue 157; issue 151 retains the pre-decision provenance, and parent issue 139 carries the run-level context.\nThe agent directory is observed in recorded session information and actual tool results, not by calling a session.info method.",
+  "expected": {
+    "source": "case contract",
+    "text": "Establish displayed and actual directories and tested resource access on the candidate; demonstrate the distinction across one reconnect and two project conversations, including resume, under the revised Live 13 acceptance contract."
+  },
+  "actual": "The four source recordings, seven reviewed frames and authoritative directory-equality derivation support the revised Live 13 clauses. Jeff authorized gemini-3.6-flash through the already-configured gemini route for these isolated sessions only. Each new session used /model gemini-3.6-flash --provider gemini --session; resumed project A retained that actor. Gateway, credentials, profile, shared defaults and tester model/account stayed unchanged.\nClause 1: pass: Candidate setup was redone in two disposable projects. The displayed launch directory and the gateway-reported session directory were checked against real terminal pwd and distinct fixture reads. Both initial sessions reported their requested project directories. The public directory-equality derivation binds these comparisons to the four retained wire recordings without publishing refused paths. (contract: https://github.com/infiquetra/talaria/issues/157)\nClause 2: pass: A per-tool working-directory override in project A reached the intended alternate fixture; project B subsequently retained its own directory and fixture content. Actual tool execution demonstrates access to the tested fixtures. No permission configuration was changed and no broader permission guarantee is claimed. (contract: https://github.com/infiquetra/talaria/issues/157)\nClause 3: pass: After an isolated reconnect, project A retained its expected tool directory and fixture access. A fresh project-A session was then created. Resuming the original A session from a different launch context retained the session directory and fixture content; requested_equals_launch is correctly false only at resumed-a because session.resume sends no directory. The launch and agent rows and session-own annotation distinguish the two directory meanings. (contract: https://github.com/infiquetra/talaria/issues/157)\nClause 4: pass: Seven capture-time-bound frames were visually reviewed. The documented distinction between launch and session directory holds across the two projects, reconnect and resume. The original unattestable base observation is not used as candidate acceptance; setup was re-captured on c798be0. This receipt records Live 13's post-decision half under issue 157; issue 151 retains the pre-decision provenance, and parent issue 139 carries the run-level context. (contract: https://github.com/infiquetra/talaria/issues/157)",
+  "evidence": {
+    "files": {
+      "project-a-adoption-tool.png": "263dba345d2950623355761bb2ae409474c5afc91be40468b3f74ae5290428a0",
+      "project-a-adoption-tool.txt": "3d7896c74243d93f1ad0ff0bd2daa1307a20838380b2271e1ed629b365d3d515",
+      "project-a-adoption-tool.json": "bd8d361bfbb809c29cb9f5691a68dad82ceead5259e24e6f7f3abdf43baa22f6",
+      "project-a-adoption-tool.read.json": "ea8f83260d270126b1fd457e53700685df790f44ac96bc27bc8733ef5d3aa5ad",
+      "project-b-adoption-tool.png": "049b712c38b565331ab3c078f204f64a1fe4604ad672dddbf9f696fbae93d29f",
+      "project-b-adoption-tool.txt": "81848c12c22663147c33542a9aa71a634489c53af76a65d238fecc6c060b6840",
+      "project-b-adoption-tool.json": "529f8f92c27d5a8f3611cacdd812ae7df737121dc311a29b0207f5777ab57a39",
+      "project-b-adoption-tool.read.json": "861beb8fb29a77a6e64a4d33e04968bc84f078ebf21b817d3d06c2adaad706e0",
+      "project-a-tool-override.png": "1f74bdfff69a5e91084f04cb3804e6f5bfe406dfb14ee94c7977ae7193496926",
+      "project-a-tool-override.txt": "f23dc9ec2f69c4365cdf60581b674b77a4fd7d444a0222bf6645f27825205f5e",
+      "project-a-tool-override.json": "16d52dc70a04ce74df19664410170e5de6e766e46e121cefdc1c3ff1dd0e12df",
+      "project-a-tool-override.read.json": "23326eaba8acf62258c328bce8e9b002808f82acec307b32463ea0dc53428612",
+      "project-b-after-a-override.png": "51517fb921d9a7eb37cf6cd7b98a2ef6fd91e694cfbcceb2975253130ad6efca",
+      "project-b-after-a-override.txt": "de815de601a77b2c8e9aa6bdd73ca4b2a15f1bda07662414bc7fa3d5f38e745c",
+      "project-b-after-a-override.json": "46999fd31d30f33da465b81a13d26f4b9937278be3fcc11166b0ddbd94e385be",
+      "project-b-after-a-override.read.json": "8e5643a0b3d5c82b27dd56a16e0880c45589bd8ea14eb8cbf6209eb88a7928df",
+      "project-a-after-reconnect.png": "2ddc9ecc55e89b6f8d1dc3c49ba3ec854390f878ac4a0e4eb9ce7f0811ede681",
+      "project-a-after-reconnect.txt": "1aa8fbecc698bac41aa7e5dfa31e5648b2f05964b454995ae3228941e1313bc4",
+      "project-a-after-reconnect.json": "0460562c69b84f9027d880d31128f56aa17edb18e4917be8c932ea1d6f8d7abd",
+      "project-a-after-reconnect.read.json": "9d6e9da414fbaeec47c23d0267b50fa66b203dca347a940a7c7f60569f8a244d",
+      "project-a-fresh-session.png": "41dca0470024235914ba00907f525721d8fa871b0d6d0b839d73cfe2dfaab6e9",
+      "project-a-fresh-session.txt": "b165098702390492b5d2445a695fd46c799b9f72fb16bacae67586a25d91f994",
+      "project-a-fresh-session.json": "13f081aba3380d79083776074e080ea692e08f2c32b4e9e77dee4a9e9dbb96a1",
+      "project-a-fresh-session.read.json": "0997739131048641730a0bcdc0b6b23cac12405deaa561ec363ba865e32fc623",
+      "project-a-resumed-session.png": "a5e13d5278501041e925f3cdb00decff4973b09a346f99fc9ba4673d3c90feb2",
+      "project-a-resumed-session.txt": "e12f4f65d838e6c5af31e75913f608a66a024ff4428faf9f2092b3d6facbbdb8",
+      "project-a-resumed-session.json": "68eaefe1bb7b04a55caecea6046bb7cc3f5461c2de8e2b74f4abf55be7043fe9",
+      "project-a-resumed-session.read.json": "32aae6af32d340488d3f6d080a1524cf1e946677738d0f14818b11bafdb775a9",
+      "wire-project-b.jsonl": "f2e03a25b2db86e0ad91f65de4dba5541b6799041943d1b1768455d55fc3a83d",
+      "wire-project-a.jsonl": "bc170664e239cb95ece535263e456472f7c30d036366e33f2baac6851f6723b1",
+      "wire-fresh-a.jsonl": "906e994b02be3cf01d97470da4730a8243c13c9b59fe9ce8f82fabbfa2c6e18b",
+      "wire-resumed-a.jsonl": "ae5b30954d5e0588c7968de72bccc7cb192b154c509e931360474e1dab068900",
+      "directory-equality-derivation.json": "0982b42940ec464910ae92540beb1ee239e1f84e5ed7a631625d2d05c6e05976"
+    },
+    "files_listed_at": "2026-09-07T17:14:45.238651+00:00",
+    "read_confirmations": [
+      {
+        "image": "project-a-adoption-tool.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:27:05.265449+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "gemini-3.6-flash",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "project-b-adoption-tool.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:27:05.340878+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "gemini-3.6-flash",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "project-a-tool-override.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:27:05.343313+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 6,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "gemini-3.6-flash",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "project-b-after-a-override.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:27:05.345589+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "gemini-3.6-flash",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "project-a-after-reconnect.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:27:05.347987+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 6,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 7,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 8,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "gemini-3.6-flash",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "project-a-fresh-session.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:27:05.350506+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "gemini-3.6-flash",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "project-a-resumed-session.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:27:05.352743+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 3,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 4,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 5,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 6,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 7,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 8,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "session's own",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

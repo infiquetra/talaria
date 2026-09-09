@@ -1,0 +1,114 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<tool-environment>/bin/talaria",
+    "source_module": "talaria/__init__.py",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "captured_at": "2026-09-09T20:53:48.811840+00:00",
+  "case": "live-21",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 170,
+  "diagnostics_cells": [
+    136,
+    31,
+    167,
+    37
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 314890,
+  "first_ansi_offset": 314890,
+  "first_frame_sha256": "8833169582469d29a4365ca51f8f48b93f21dac9de5dbaf00383e8abf539c9d5",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "step-08-resumed-final",
+  "frame_sha256": "8833169582469d29a4365ca51f8f48b93f21dac9de5dbaf00383e8abf539c9d5",
+  "gateway": "<gateway>",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1323,
+        "y": 198
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1323,
+        "y": 216
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 3,
+      "region": {
+        "height": 18,
+        "width": 387,
+        "x": 567,
+        "y": 360
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:3]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 4,
+      "region": {
+        "height": 18,
+        "width": 396,
+        "x": 81,
+        "y": 414
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:4]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 5,
+      "region": {
+        "height": 18,
+        "width": 513,
+        "x": 72,
+        "y": 504
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:5]"
+    }
+  ],
+  "rows": 46,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260909_151322_bfe0f2",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "ab2673ad"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.1,
+    "timeout_seconds": 30,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "step-08-resumed-final.txt",
+    "frame_sha256": "8833169582469d29a4365ca51f8f48b93f21dac9de5dbaf00383e8abf539c9d5",
+    "sha256": "a9fc6d8b0e71706e867d392bedcfbc7d79b38f8e5318b1ab5410899665d4eb4d"
+  },
+  "twin_digest": "a9fc6d8b0e71706e867d392bedcfbc7d79b38f8e5318b1ab5410899665d4eb4d",
+  "png_sha256": "2a215735b176d3ae895e2706d838d814c78eda38c43d98c01da0f702a5450645"
+}

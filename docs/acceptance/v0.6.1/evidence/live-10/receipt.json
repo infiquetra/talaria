@@ -1,0 +1,164 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-10",
+  "title": "Insertion caret and accurate focus context",
+  "issue": "144",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:55:46.917806+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_095528_bc2bcc",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Frame01 shows the real insertion caret between ! and B in caret edit A!B, while the composer border and Inspector name composer focus. Moving through transcript, prompts and inspector removes that insertion caret and accurately names each focus region.\nFrame03 is prompts focus. Frame05 is actual theme-palette focus, with a selected theme and Inspector caret palette. No commands focus region is invented.\nThe Context heading remains at cell74,4 and its caret label at76,5 across all five captures and the measured diagnostics expansion/fold-back transitions. Focused roster text expands below Context; it does not shift the caret row.",
+  "expected": {
+    "source": "case contract",
+    "text": "A visible insertion caret only when editing; truthful focus names and stable Context position during diagnostics expansion."
+  },
+  "actual": "All five frames visually reviewed, including the real insertion cursor. Fresh capture-time twins and per-frame sidecars remain bound. Only the two directory values are masked.\nClause 1: pass: Frame01 shows the real insertion caret between ! and B in caret edit A!B, while the composer border and Inspector name composer focus. Moving through transcript, prompts and inspector removes that insertion caret and accurately names each focus region. (https://github.com/infiquetra/talaria/issues/144)\nClause 2: pass: Frame03 is prompts focus. Frame05 is actual theme-palette focus, with a selected theme and Inspector caret palette. No commands focus region is invented. (https://github.com/infiquetra/talaria/issues/144)\nClause 3: pass: The Context heading remains at cell74,4 and its caret label at76,5 across all five captures and the measured diagnostics expansion/fold-back transitions. Focused roster text expands below Context; it does not shift the caret row. (https://github.com/infiquetra/talaria/issues/144)",
+  "evidence": {
+    "files": {
+      "live-10-01-focus-composer.png": "fe9e92ac0c310a73695d0b058be4154a8e2ad48d223fcb46004c82bf48cf9f20",
+      "live-10-01-focus-composer.txt": "0e24437465b6f15e723a33e41d2c9f6da7f136b9620fd986e93e8e328a442133",
+      "live-10-01-focus-composer.json": "3f4eeefa62b2967da6617196b296795aef783ce3f0d46faf6308d630effa22c2",
+      "live-10-01-focus-composer.read.json": "c1e8ca347ac0a8b6b1099e7c4faed81201c18e96ff4edf20ad269869924f1bb4",
+      "live-10-02-focus-transcript.png": "daff6653abdbc874b3562073c89f013db61cb4a4aaeb17c3844399be3cc46070",
+      "live-10-02-focus-transcript.txt": "23ea62a819148fd7a31693e25cab7a280582db3f71631c0544c23d622e67a05f",
+      "live-10-02-focus-transcript.json": "b32665d59079406c1474de35ab0cc9bcfd20f1eb452bfa6cf9a62a01d04c297b",
+      "live-10-02-focus-transcript.read.json": "f2e1c9a71fbed1859b8273557876b01832da894a92c283c9d1a023cf0714cc06",
+      "live-10-03-focus-prompts.png": "b2f73aa480b7757de89a078328466c14605c11fd6b04b9a09974b8fca15601a9",
+      "live-10-03-focus-prompts.txt": "d491bc83de8c44c5d1e299b7527a8862379fdb0f43cc4ec2dd1fa478fef9c2ac",
+      "live-10-03-focus-prompts.json": "e38706149f54c5b08c451629a31e622afbcd10c07e33d03046783e195d7a8693",
+      "live-10-03-focus-prompts.read.json": "8e4a4386b90b90b70f702dc6fdb781a73c46ae878cbf1afe7789395eb8a4bb7a",
+      "live-10-04-focus-inspector.png": "0fbfdedfe44ff09fe79e70f7798f6b84e7fa9af49cea34bb3509e10b5ca2f87e",
+      "live-10-04-focus-inspector.txt": "612ec68a3f1a350877a26f9317a7c0982a09f58bb97fd704d62c2e6d6932da7c",
+      "live-10-04-focus-inspector.json": "6cd058ceae79daa6cd9dbbff8192ae5a21a691e7bc3baead61b78ccd5d7767e8",
+      "live-10-04-focus-inspector.read.json": "033fbd7c2c42ef4cf513fa39d57d69ca0a692453359c4ab2c87878090039ab7a",
+      "live-10-05-focus-palette.png": "4faafe9cf49dc2885d1e64fdd845a5f1c1593e142563062a36cc823652c89fc9",
+      "live-10-05-focus-palette.txt": "00361021abad0f507e0091ca2d166cf71f21f0c7537466cf510086c39a84d762",
+      "live-10-05-focus-palette.json": "540b5b012ddf627360e9172b2fab4346eb441ec475ce668fdc4313cc7e1133d3",
+      "live-10-05-focus-palette.read.json": "75baad3805a70bd1ca911ba5358459e511a50e4a0c724c7a37f1b48a7ae02249",
+      "wire-evidence.jsonl": "4fe65e0c3d3debd49cdeb3d52b64fad92d84e6e8f275274374b94b149993d262"
+    },
+    "files_listed_at": "2026-09-07T14:00:51.576211+00:00",
+    "read_confirmations": [
+      {
+        "image": "live-10-01-focus-composer.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:00:51.422996+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "caret",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "live-10-02-focus-transcript.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:00:51.454090+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "caret",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "live-10-03-focus-prompts.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:00:51.455388+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "caret",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "live-10-04-focus-inspector.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:00:51.456357+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "caret",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "live-10-05-focus-palette.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:00:51.457286+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "caret",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-04",
+  "title": "Independent category text colors on real gateway rows",
+  "issue": "141",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T15:21:47.173935+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_112117_a825e6",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Jeff authorized gemini-3.6-flash through the already-configured gemini route, selected with --session only in this isolated conversation. Gateway, credentials, profile, shared default and tester model/account were preserved.\nRun a real terminal sleep/printf tool. During that owned running session, queue an invalid model/provider choice using config.set with --session. The next turn emits actual gateway error at source sequence93: Could not switch model: Unknown provider acceptance-unavailable. The rejected choice is not applied and the turn completes on gemini-3.6-flash. No synthetic inbound event is used.\nActual gateway rows cover user, assistant, reasoning, tool/activity, session and fault. Reviewed text colors before and after theme reload were [{\"operator\": \"00ff66\", \"assistant\": \"00e5ff\", \"reasoning\": \"e040fb\", \"activity\": \"ffea00\", \"session\": \"ff9100\", \"fault\": \"ff6e6e\"}, {\"operator\": \"69f0ae\", \"assistant\": \"80d8ff\", \"reasoning\": \"ea80fc\", \"activity\": \"ffff8d\", \"session\": \"ffd180\", \"fault\": \"ff8a80\"}]. Cell foregrounds reconstructed at the bound ANSI offsets match all twelve requested colors. Inline-code syntax styling is distinct from plain category text.\nThe complete application and control wire logs retain every frame without event filters: [{\"frames\": 116, \"requests\": 36, \"methods\": {\"agents.list\": 1, \"approval.pending\": 8, \"commands.catalog\": 2, \"delegation.status\": 1, \"prompt.submit\": 2, \"session.active_list\": 9, \"session.create\": 1, \"session.list\": 9, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}}, {\"frames\": 5, \"requests\": 2, \"methods\": {\"config.set\": 1, \"session.active_list\": 1}}]\nThe gateway also produced the visible session notice stream began without a message.start event after the error. The frame preserves it.",
+  "expected": {
+    "source": "case contract",
+    "text": "Render all six real category rows, change their distinct foregrounds and reload; each supported category uses its intended color."
+  },
+  "actual": "Both frames were visually reviewed, with exact cell-color checks. The selected palette clears the existing contrast floor. The earlier too-dark red attempt remains private and is not used to claim an intended color. Jeff authorized gemini-3.6-flash through the already-configured gemini route, selected with --session only in this isolated conversation. Gateway, credentials, profile, shared default and tester model/account were preserved.\nClause 1: pass: Actual gateway rows cover user, assistant, reasoning, tool/activity, session and fault. Reviewed text colors before and after theme reload were [{\"operator\": \"00ff66\", \"assistant\": \"00e5ff\", \"reasoning\": \"e040fb\", \"activity\": \"ffea00\", \"session\": \"ff9100\", \"fault\": \"ff6e6e\"}, {\"operator\": \"69f0ae\", \"assistant\": \"80d8ff\", \"reasoning\": \"ea80fc\", \"activity\": \"ffff8d\", \"session\": \"ffd180\", \"fault\": \"ff8a80\"}]. Cell foregrounds reconstructed at the bound ANSI offsets match all twelve requested colors. Inline-code syntax styling is distinct from plain category text. (https://github.com/infiquetra/talaria/issues/141)",
+  "evidence": {
+    "files": {
+      "category-colors-first.png": "48c41fa0bd254a00294cd9a8a35fd1807c52e8e3b1ff40b5896e063d5e833fa7",
+      "category-colors-first.txt": "d6e3386072c030eec380aadfdf7444214937577d3b70c00f31cfcea7c0665d3b",
+      "category-colors-first.json": "ffeaf85b98a35ca96a75c8cf801bb3300e12652d2b3ebc6d626b6b67aa1eba25",
+      "category-colors-reloaded.png": "28fbd003e25e703461f10e0d20738fa48a4a6daa2985e2faf686153339668986",
+      "category-colors-reloaded.txt": "c2305cce50bd87098909142ba8aff6143f1cf524b700e0ce82cfb2edb2c91fc6",
+      "category-colors-reloaded.json": "d94c4f23145cd4cae5ba377a3d0d20ddba8ebf9efd965b2f4e78814791072145",
+      "wire-evidence.jsonl": "b7d4669c664aae91ce16931ad784b5affc16547a075908f774b2ba554ea3b434",
+      "wire-own-fault-control.jsonl": "bda9f33a9e1d6d9afe1a12ebf3ed0d0c20e796fe48f30263c357675914e55833"
+    },
+    "files_listed_at": "2026-09-07T15:24:09.985670+00:00",
+    "read_confirmations": []
+  }
+}

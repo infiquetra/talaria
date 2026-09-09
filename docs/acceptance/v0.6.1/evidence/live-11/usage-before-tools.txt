@@ -1,0 +1,40 @@
+█> You  Reply with only the word Ready. No tools.                                   ┌─ Inspector [docked 36] ──────────┐
+█ . Reasoning  Ready                                                                │ TASKS                            │
+█ Ready                                                                             │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+                                                                                    │ CONTEXT                          │
+                                                                                    │   caret    inspector             │
+                                                                                    │   session  f9c04987              │
+                                                                                    │   profile  default               │
+                                                                                    │   model                          │
+                                                                                    │ muse-spark-1.3-contributor-free  │
+                                                                                    │   launch   [redacted:absolute-filesystem-path:1]  │
+                                                                                    │   agent    [redacted:absolute-filesystem-path:2]  │
+                                                                                    │   usage    12972 input · 18      │
+                                                                                    │ output                           │
+                                                                                    │                                  │
+                                                                                    │ CHANGED FILES                    │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+                                                                                    │ OPERATION DETAILS                │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+                                                                                    │ MIXTURE OF AGENTS                │
+                                                                                    │   no progress events observed    │
+                                                                                    │                                  │
+                                                                                    │ DIAGNOSTICS                      │
+                                                                                    │   roster: present — fleet        │
+                                                                                    │ roster available (probe        ▄ │
+                                                                                    │ session.active_list, 2s ago)     │
+                                                                                    │   approval-detail: present — f…  │
+                                                                                    │   http-runner: present — admin…  │
+                                                                                    └──────────────────────────────────┘
+╭─ compose [ ] caret elsewhere ────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

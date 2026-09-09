@@ -1,0 +1,40 @@
+                                                                                    ┌─ Inspector [docked 36] ──────────┐
+                                                                                    │ TASKS                            │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+                                                                                    │ CONTEXT                          │
+                                                                                    │   caret    composer              │
+                                                                                    │   session  3e27fcef              │
+                                                                                    │   profile  default               │
+                                                                                    │   model                          │
+                                                                                    │ muse-spark-1.3-contributor-free  │
+                                                                                    │   launch   [redacted:absolute-filesystem-path:1]  │
+                                                                                    │   agent    [redacted:absolute-filesystem-path:2]  │
+                                                                                    │   usage    0 input · 0 output    │
+                                                                                    │                                  │
+                                                                                    │ CHANGED FILES                    │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+/todoist           [local] Todoist API integration via TODOIST_TOKEN env var:       │ OPERATION DETAILS                │
+tasks                                                                               │   [none available from this      │
+                   (list/filter/add/update/complete/delete), projects, sections,    │ session]                         │
+l…                                                                                  │                                  │
+/todoist-stub      [local] Placeholder Todoist integration skill. Real              │ MIXTURE OF AGENTS                │
+                   implementation is deferred to the personal-assistant tooling…    │   no progress events observed    │
+/weekly-review-planning [bundled] Weekly reset: commitments, stalled work,          │                                  │
+next-week                                                                           │ DIAGNOSTICS                      │
+                   plan.                                                            │   roster: present — fleet rost…  │
+/xlsx              [bundled] Create, read, edit Excel .xlsx workbooks and CSVs.     │   approval-detail: present — f…  │
+/xurl              [bundled] X/Twitter via xurl CLI: raw post search, posting, DM,  │   http-runner: present — admin…  │
+                   media.                                                           │   kanban-dispatcher: not obser…  │
+/yuanbao           [hub] Yuanbao (元宝) groups: @mention users, query               │                                  │
+info/members.                                                                       │ KEYS                           ▇ │
+                                                                                    └──────────────────────────────────┘
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ /                                                                                                                    │
+│ the newest line is already followed — nothing changed                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

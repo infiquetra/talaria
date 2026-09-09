@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T13:50:02.951662+00:00",
+  "case": "live-12",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "diagnostics_cells": [
+    86,
+    25,
+    117,
+    31
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 2718302,
+  "first_ansi_offset": 2718302,
+  "first_frame_sha256": "495c1f282aa20c9765c5e0f65fe120c1fcc016d18ed61ab0c1e1fa05884fa04a",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "06-skill-provenance",
+  "frame_sha256": "495c1f282aa20c9765c5e0f65fe120c1fcc016d18ed61ab0c1e1fa05884fa04a",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "f3fba90837ce3b5d722abd32d5f2e0391191e5c633501ca6b9dff9c176471f75",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 873,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 873,
+        "y": 198
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_094915_5cc39c",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "3e27fcef"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "06-skill-provenance.txt",
+    "frame_sha256": "495c1f282aa20c9765c5e0f65fe120c1fcc016d18ed61ab0c1e1fa05884fa04a",
+    "sha256": "050a6c2fe8cc94b0e4d8fbf6e882fb26bf874ccca56f955f8fd32e4936f300fd"
+  },
+  "twin_digest": "050a6c2fe8cc94b0e4d8fbf6e882fb26bf874ccca56f955f8fd32e4936f300fd"
+}

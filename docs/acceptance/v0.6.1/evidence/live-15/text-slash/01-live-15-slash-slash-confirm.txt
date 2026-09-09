@@ -1,0 +1,40 @@
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                      ╭──────────────────────────────────────────╮                                      
+                                      │ Attach this file?                        │                                      
+                                      │ sample.txt                               │                                      
+                                      │ text or code file · 47 bytes             │                                      
+                                      │ Staging uploads the bytes; the agent     │                                      
+                                      │ reads them from this turn.               │                                      
+                                      │ cancel — stage nothing                   │                                      
+                                      │ attach this file — upload the bytes now  │                                      
+                                      │ ↑↓ move · enter choose · esc cancel      │                                      
+                                      ╰──────────────────────────────────────────╯                                      
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ /attach sample.txt                                                                                                   │
+│ the newest line is already followed — nothing changed                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

@@ -1,0 +1,95 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-11",
+  "title": "Real usage events and displayed token updates",
+  "issue": "145",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:50:40.960542+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094909_0a2504",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "An ordinary Ready turn completes, followed by two sequential real terminal calls returning first_step and second_step. Their completed reply is visible without an unrecognized-event error.\nThe actual gateway emits session.usage at source55,82 and122. The first two updates carry13089/213 and13448/304 input/output. The full derived log retains their numeric usage payloads; no event-type filter excludes a possible unknown event.\nThe before frame displays12972 input and18 output, exactly message.complete usage at37. The after frame displays27752 input and1297 output, exactly message.complete usage at186 after the subsequent turn. Intermediate and terminal event types are distinguished; the final display is not incorrectly compared to the older session.usage tick.\nThe subsequent arithmetic request triggered a real approval for a model-chosen Python command despite the request asking for no tools. That command was not approved; the model returned a completed blocked explanation. This case does not assert arithmetic success or an empty approval queue. All three message.complete events report complete, and no unrecognized-event error appears. No absent metric is invented in the receipt as zero.\nInspect the full gapless interval:192 source frames,59 outgoing requests.",
+  "expected": {
+    "source": "case contract",
+    "text": "Ordinary and tool-using turns emit actual usage events, finish without unknown-event errors and show usage matching available event data over subsequent turns."
+  },
+  "actual": "Both usage frames were visually reviewed and matched against their latest recorded completed-turn usage. Three interim session.usage events are retained with their values. The unexpected pending approval is visible and explicitly described, not treated as an arithmetic success.\nClause 1: pass: An ordinary Ready turn completes, followed by two sequential real terminal calls returning first_step and second_step. Their completed reply is visible without an unrecognized-event error. (https://github.com/infiquetra/talaria/issues/145)\nClause 2: pass: The actual gateway emits session.usage at source55,82 and122. The first two updates carry13089/213 and13448/304 input/output. The full derived log retains their numeric usage payloads; no event-type filter excludes a possible unknown event. (https://github.com/infiquetra/talaria/issues/145)\nClause 3: pass: The before frame displays12972 input and18 output, exactly message.complete usage at37. The after frame displays27752 input and1297 output, exactly message.complete usage at186 after the subsequent turn. Intermediate and terminal event types are distinguished; the final display is not incorrectly compared to the older session.usage tick. (https://github.com/infiquetra/talaria/issues/145)\nClause 4: pass: The subsequent arithmetic request triggered a real approval for a model-chosen Python command despite the request asking for no tools. That command was not approved; the model returned a completed blocked explanation. This case does not assert arithmetic success or an empty approval queue. All three message.complete events report complete, and no unrecognized-event error appears. No absent metric is invented in the receipt as zero. (https://github.com/infiquetra/talaria/issues/145)",
+  "evidence": {
+    "files": {
+      "usage-before-tools.png": "c02a8bd91d773b8762a5f2c197ce56723b354c006c17639a8f9073a721675dd8",
+      "usage-before-tools.txt": "4232f12b9926db8a87d096157c2a0ceb959d987c5a8568ba288ca1099527e8ac",
+      "usage-before-tools.json": "268bcaf5ce344392cecfa9e6b509c207a05f4eb7be0e1c563997292aad4dabfb",
+      "usage-before-tools.read.json": "426cf008b9f2cc097ede5acc32c3fb789228ef21d9cfcaa44b23b1f280ac21ab",
+      "usage-after-turns.png": "5ee2f87db73ca300be53324fbbe88a2811831733fc115796c2323f1e6c9a4484",
+      "usage-after-turns.txt": "0df736eaca4b8cf4ea02c49a2fdcb71eacfe2b2e29d3f02ed32e52fb6077a371",
+      "usage-after-turns.json": "e313298d4e07bfe658a4e55e28676d6cba84d45275ea43e571d2d5fc2f5c67ea",
+      "usage-after-turns.read.json": "ca9c2c2a70d71e438fdce8bf88fb724f95f6ee162175a9087e1633d5f8d6facd",
+      "wire-evidence.jsonl": "f15480f85fecc2da27923370b88a2a2167508e8a1ef02700b9d89831e3aa0129"
+    },
+    "files_listed_at": "2026-09-07T14:00:50.423355+00:00",
+    "read_confirmations": [
+      {
+        "image": "usage-before-tools.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:00:50.187714+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "usage",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "usage-after-turns.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:00:50.215944+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "usage",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

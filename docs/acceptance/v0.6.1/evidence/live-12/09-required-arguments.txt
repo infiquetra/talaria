@@ -1,0 +1,40 @@
+█    /compress       - Compress conversation context (add 'here [N]' to keep        ┌─ Inspector [docked 36] ──────────┐
+█recent N turns; --preview shows what would happen) (usage: /compress [here [N] |   │ TASKS                            │
+█focus topic | --preview|--dry-run])                                                │ > [!] approval  waiting — scrip… │
+█    /compact        - Compress conversation context (add 'here [N]' to keep        │                                  │
+█recent N turns; --preview shows what would happen) (alias for /compress)           │ CONTEXT                          │
+█    /status         - Show session, model, token, and context info                 │   caret    composer              │
+█    /context        - Show detailed context window view with usage gauge,          │   session  3e27fcef              │
+█category breakdown, compression stats, and throughput (usage: /context [all])      │   profile  default               │
+█    /ctx            - Show detailed context window view with usage gauge,          │   model                          │
+█category breakdown, compression stats, and throughput (alias for /context)         │ muse-spark-1.3-contributor-free  │
+█                                                                                   │   launch   [redacted:absolute-filesystem-path:1]  │
+█  ── Background & Automation ──                                                    │   agent    [redacted:absolute-filesystem-path:2]  │
+█    /bg             - Run a prompt in a separate background session (usage: /bg    │   usage    0 input · 0 output    │
+█<prompt>)                                                                          │                                  │
+█    /btw            - Ask a side question about the current conversation without   │ CHANGED FILES                    │
+█interrupting it (usage: /btw <question>)                                           │   [none available from this      │
+█    /agents         - Show active agents and running tasks                         │ session]                         │
+█    /tasks          - Show active agents and running tasks (alias for /agents)     │                                  │
+█    /journey        - Open the learning journey timeline (usage: /journey         ▂│ OPERATION DETAILS                │
+█[list|delete <id>|edit <id>])                                                      │   [none available from this      │
+█    /learning       - Open the learning journey timeline (alias for /journey)      │ session]                         │
+█    /memory-graph   - Open the learning journey timeline (alias for /journey)      │                                  │
+█    /queue          - Queue a prompt for the next turn (doesn't interrupt)         │ MIXTURE OF AGENTS                │
+█(usage: /queue <prompt>)                                                           │   no progress events observed    │
+█    /q  …                                                                          │                                  │
+█- Session  /plugins: User plugins (1):                                             │ DIAGNOSTICS                      │
+█  ✓ herdr-agent-state v1.0                                                         │   roster: present — fleet roste… │
+█  (+57 bundled — see: hermes plugins list)                                         │   approval-detail: present — fo… │
+█  Enable/disable: hermes plugins enable/disable <name>                             │   http-runner: present — admin … │
+█- Session  /moa: command.dispatch was refused by the gateway (code 4004): Usage:   │   kanban-dispatcher: not observ… │
+█/moa <prompt>  (runs one prompt through the default MoA preset, then restores your │                                  │
+█model; pick a preset from the model picker to switch for the session)              │ KEYS                             │
+                                                                                    │ > F1 does nothing here. F2 togg… │
+                                                                                    └──────────────────────────────────┘
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ command.dispatch was refused by the gateway (code 4004): Usage: /moa <prompt>  (runs one prompt through the default… │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

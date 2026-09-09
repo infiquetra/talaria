@@ -1,0 +1,40 @@
+█- Session  resumed session 20260907_094642_2b120a — now showing this session's conversation                                                                                                            
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+themes: Up/Down preview · Enter select and save · Escape cancel                                                                                                                                         
+> Refined Default                                                                                                                                                                                       
+  Dark Green Terminal                                                                                                                                                                                   
+  Neutral Dark                                                                                                                                                                                          
+  Accessible High Contrast                                                                                                                                                                              
+  Homebrew — Talaria-designed green-black palette (v0.6.0) — not sampled from a host terminal, not the Homebrew package manager                                                                         
+configuration status ready                                                                                                                                                                              
+                                                                                                                                                                                                        
+╭─ compose [ ] caret elsewhere ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                                                                                                           │
+│ the newest line is already followed — nothing changed                                                                                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                                                                                                        
+v0.6.1                                                                                                                                                                                                  

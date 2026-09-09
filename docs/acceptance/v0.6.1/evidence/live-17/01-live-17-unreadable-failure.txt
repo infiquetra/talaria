@@ -1,0 +1,40 @@
+█- Session  /model: ✓ Model switched: gemini-3.6-flash                                                                  
+█    Provider: Google                                                                                                   
+█    Context: 1,048,576 tokens                                                                                          
+█    Max output: 65,536 tokens                                                                                          
+█    Capabilities: reasoning, tools, vision, PDF, audio, structured output                                              
+█    (session only — add --global to persist)                                                                           
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ /attach unreadable.txt                                                                                               │
+│ cannot read 'unreadable.txt': Permission denied; nothing was sent                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

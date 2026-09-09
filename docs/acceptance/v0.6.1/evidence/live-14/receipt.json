@@ -1,0 +1,60 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-14",
+  "title": "Assistant identity labels preserve genuine content",
+  "issue": "141",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:52:28.651788+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_095042_6ece4c",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "A real completed assistant sentence begins Talaria sleeps beneath amber hills and quiet stars. It has no redundant Talaria assistant prefix and its genuine use of Talaria remains intact.\nAfter a real quit and resume of that durable conversation, the same assistant sentence and reasoning are displayed unchanged. The resume notice identifies that conversation.\nA wire-bound message.delta capture shows Talaria stays intact. while working is visible. The completed reply retains that sentence, its Markdown heading and bullets, a syntax-colored Python fence and eight numbered birds. All four frames preserve actual content, with no text or pixel redaction.",
+  "expected": {
+    "source": "case contract",
+    "text": "Remove redundant assistant identity labels while retaining genuine matching words in streaming, completed and resumed content, including Markdown and code."
+  },
+  "actual": "All four new frames were visually reviewed. Actual matching-word content is preserved in each state; the final wire status is complete. Jeff narrow persona permission remains applicable only to this case and Live04, but this run required no mask or substitution.\nClause 1: pass: A real completed assistant sentence begins Talaria sleeps beneath amber hills and quiet stars. It has no redundant Talaria assistant prefix and its genuine use of Talaria remains intact. (https://github.com/infiquetra/talaria/issues/141)\nClause 2: pass: After a real quit and resume of that durable conversation, the same assistant sentence and reasoning are displayed unchanged. The resume notice identifies that conversation. (https://github.com/infiquetra/talaria/issues/141)\nClause 3: pass: A wire-bound message.delta capture shows Talaria stays intact. while working is visible. The completed reply retains that sentence, its Markdown heading and bullets, a syntax-colored Python fence and eight numbered birds. All four frames preserve actual content, with no text or pixel redaction. (https://github.com/infiquetra/talaria/issues/141)",
+  "evidence": {
+    "files": {
+      "completed-genuine-content.png": "89ccada92e544eb815281c326859617873b1812353889e84ab26e3391c9e5c0f",
+      "completed-genuine-content.txt": "c1fa2abcf40a577d97ed45b3a4219257bad178bea66a7ceff56667c93a39bde5",
+      "completed-genuine-content.json": "0107074eba3ffbd08e5d846fcdcc1aa2cac86630a5e10cf60063c51e2e32085b",
+      "resumed-genuine-content.png": "6ce3840f57018f42cfe81cc3fb6aa2488bebab97642cd2cb31e61e99ef01590b",
+      "resumed-genuine-content.txt": "d9c98301f1eb90df2107530a3b913d19b977370e43ae36a50e8f0ca9545d4ef1",
+      "resumed-genuine-content.json": "1159aebf5488680a95fe90a70bc58d66678fdd46a0d041dc07a768a8effdfd3f",
+      "streaming-genuine-content.png": "f7386fe35c467651c45a8cc8d19f000c8b96ddb23867d4d58b82519d5be44e1a",
+      "streaming-genuine-content.txt": "36ac888bfd4c5533a2b426062b20bbc71f52b14eb09e80f0ab2e4dfa20d742b1",
+      "streaming-genuine-content.json": "b4abbdba3eb6aa552dfbfa8fa821fd7c6c17f616612417472ef8d7c0ff581b91",
+      "stream-completed-content.png": "341052f72142a6788897fada2cd932323a71fa78c3ef2290e0614c0de204e988",
+      "stream-completed-content.txt": "96805c271e719b18d99cc00d83125040a0a37b013fa8382bb206738e5e40da57",
+      "stream-completed-content.json": "99d8ea1b45f7cd0c80207035e2f28e4f189a012456172955b8947c3ea203082a",
+      "wire-initial-content.jsonl": "8a52c78874ea637c2591245696e21b03cf01cb9a48fd465b9a6849aa0a4030bf",
+      "wire-resumed-content.jsonl": "250e848f073c14760d0e27cc0500c78f1fe732f3558b995a7524356defa44fe5"
+    },
+    "files_listed_at": "2026-09-07T14:01:43.762828+00:00",
+    "read_confirmations": []
+  }
+}

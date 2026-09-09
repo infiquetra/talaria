@@ -1,0 +1,40 @@
+                                                                        ┌─ Inspector [docked 48] ──────────────────────┐
+                                                                        │ TASKS                                        │
+                                                                        │   [none available from this session]         │
+                                                                        │                                              │
+                                                                        │ CONTEXT                                      │
+                                                                        │   caret    palette                           │
+                                                                        │   session  ba7c850c                          │
+                                                                        │   profile  default                           │
+                                                                        │   model    muse-spark-1.3-contributor-free   │
+                                                                        │   launch   [redacted:absolute-filesystem-path:1]  │
+                                                                        │   agent    [redacted:absolute-filesystem-path:2]  │
+                                                                        │   usage    0 input · 0 output                │
+                                                                        │                                              │
+                                                                        │ CHANGED FILES                                │
+                                                                        │   [none available from this session]         │
+                                                                        │                                              │
+                                                                        │ OPERATION DETAILS                            │
+                                                                        │   [none available from this session]         │
+                                                                        │                                              │
+                                                                        │ MIXTURE OF AGENTS                            │
+                                                                        │   no progress events observed                │
+                                                                        │                                              │
+                                                                        │ DIAGNOSTICS                                  │
+                                                                        │ > roster: present — fleet roster available … │
+                                                                        │ > approval-detail: present — foreign approv… │
+                                                                        │ > http-runner: present — admin catalogue av… │
+themes: Up/Down preview · Enter select and save · Escape cancel         │ > kanban-dispatcher: not observed — board q… │
+> Refined Default                                                       │                                              │
+  Dark Green Terminal                                                   │ KEYS                                         │
+  Neutral Dark                                                          │ > F1 does nothing here. F2 toggles sub-agen… │
+  Accessible High Contrast                                              │                                              │
+  Homebrew — Talaria-designed green-black palette (v0.6.0) — not sampled│                                              │
+from a host terminal, not the Homebrew package manager                  │                                              │
+                                                                        └──────────────────────────────────────────────┘
+╭─ compose [ ] caret elsewhere ────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ the newest line is already followed — nothing changed                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

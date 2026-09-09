@@ -1,0 +1,14 @@
+{
+  "image": "step-07-narrow.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-09T20:30:04.692536+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "resize witness draft",
+  "nothing_else_masked": true
+}

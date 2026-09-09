@@ -1,0 +1,252 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-15",
+  "title": "File attachment success",
+  "issue": "147",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T14:03:22.443865+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_100023_b5f5ef",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "text-slash: cancel initial confirmation, attach sample.txt, inspect removal, remove, re-add and submit once. The agent returned the actual content value a7f2283d385468b32fd084bb. Complete wire interval: 82 consecutive frames, 28 outgoing requests; two file.attach and one prompt.submit; removal is a local composer operation and emits no file.detach. No frame filter is applied to the derived interval.\ntext-paste: cancel initial confirmation, attach sample.txt, inspect removal, remove, re-add and submit once. The agent returned the actual content value a7f2283d385468b32fd084bb. Complete wire interval: 110 consecutive frames, 39 outgoing requests; two file.attach and one prompt.submit; removal is a local composer operation and emits no file.detach. No frame filter is applied to the derived interval.\ncode-slash: cancel initial confirmation, attach sample.py, inspect removal, remove, re-add and submit once. The agent returned the actual content value f9d1d9a7c39347cf75e4f2c5. Complete wire interval: 80 consecutive frames, 27 outgoing requests; two file.attach and one prompt.submit; removal is a local composer operation and emits no file.detach. No frame filter is applied to the derived interval.\ncode-paste: cancel initial confirmation, attach sample.py, inspect removal, remove, re-add and submit once. The agent returned the actual content value f9d1d9a7c39347cf75e4f2c5. Complete wire interval: 106 consecutive frames, 37 outgoing requests; two file.attach and one prompt.submit; removal is a local composer operation and emits no file.detach. No frame filter is applied to the derived interval.",
+  "expected": {
+    "source": "case contract",
+    "text": "Attach a disposable text/code file through each selected route; inspect, remove, re-add and submit. The UI identifies the attachment and the agent demonstrates actual content receipt."
+  },
+  "actual": "Four isolated real gateway sessions completed the text/code and slash/paste combinations. Twenty reviewed frames preserve confirmation, staging, removal inspection, removal and completed content evidence. Absolute resource paths alone are masked, with matching twins and completed reads; filenames, state and content answers remain visible.\nClause 1: pass: Both disposable text and code files were attached by slash input and by bracketed paste of their paths. The confirmation identifies the name, text/code kind and 47-byte size. Desktop terminal drop uses this same bracketed-paste ingress under the architecture ruling. (https://github.com/infiquetra/talaria/issues/147)\nClause 2: pass: Each route shows the staged filename, the removal dialog explaining staged and never delivered, and the removed notice with an empty composer. Re-addition precedes the sole prompt submission in each complete wire log. (https://github.com/infiquetra/talaria/issues/147)\nClause 3: pass: Every completed frame shows a read_file tool result and the exact content value: a7f2283d385468b32fd084bb for text and f9d1d9a7c39347cf75e4f2c5 for code. Each value matches its fixture content and is not present in its filename. (https://github.com/infiquetra/talaria/issues/147)",
+  "evidence": {
+    "files": {
+      "text-slash/01-live-15-slash-slash-confirm.png": "9fbb8ab5d8ed473251f77feac5f8936fc901dbb0931b295aac35b21cfd2ddf59",
+      "text-slash/01-live-15-slash-slash-confirm.txt": "d136f8bc33a7049735957d9b4afe6ed358372c2642be70228f5b39dd27f42c5e",
+      "text-slash/01-live-15-slash-slash-confirm.json": "53ef51589e4ce36e914112ca1f8581ca5efd1e398a3846537d6fa0670bb75b5c",
+      "text-slash/03-live-15-slash-staged.png": "05edace828bf89b3f6a74bd9903e13cf2dea638606123508b1307d45a505de53",
+      "text-slash/03-live-15-slash-staged.txt": "3d87dd40d51a662129a70d20d9f19e2d8abc5af76c33384e2ed39918e1f7f4dc",
+      "text-slash/03-live-15-slash-staged.json": "6f77498c0b4e4e9a5738e63df7df2700ff3d7476d41652eefd320eaadcbfc605",
+      "text-slash/03-live-15-slash-staged.read.json": "019ffe38abcec20900b8e694db431a8f9ce7b82ef7840ac88c65643e634672b4",
+      "text-slash/04-live-15-slash-inspect-removal.png": "077a57176c5c3911526531a6ae4b660295a0d448eec740e596d98fa03f33a0a9",
+      "text-slash/04-live-15-slash-inspect-removal.txt": "00c7db544abd849df8ed4e9f91dd476e81b55bfa11aa44172fdb117c5f00d707",
+      "text-slash/04-live-15-slash-inspect-removal.json": "5665ea5a9dbd15571a329072f324aec9cf4028ccd42d8f6258c6e2680e3a91cd",
+      "text-slash/05-live-15-slash-removed.png": "c4878b362be6aadab5c869a36b3b9f19d2f5100214438aa280e6266ce4a13b69",
+      "text-slash/05-live-15-slash-removed.txt": "20e5a2b4fc4e4ee8254e3d1a1a1c90b4e401da852a7cab7645c68e6d5f40bea8",
+      "text-slash/05-live-15-slash-removed.json": "460acd9e750e3569feef3d36b3ae82e401eeb4961918c723c25e75c85c87599a",
+      "text-slash/07-live-15-slash-completed-content.png": "ebceb1a3e7b7906f30ca61206e701bd01651480fc9ec2749cd45b5bd85266827",
+      "text-slash/07-live-15-slash-completed-content.txt": "1edec57d935ebbbdd0b69870edf2678cdf1f30336598ed5d4d23410964b88dc9",
+      "text-slash/07-live-15-slash-completed-content.json": "33fd1ce6e6912ce8b30a9330043355ed4e108d3d3c80769867eff7499bc50cd6",
+      "text-slash/07-live-15-slash-completed-content.read.json": "a7fe752a00644834f580b0b8afbb4206f8ca0f79fc6c7bcc3293ed681c42a08a",
+      "text-paste/01-live-15-paste-paste-confirm.png": "b941aa5c2cc1c17da7ef9b78e40e1f626e4f401fc4e3f78d75efe625a4b5dd02",
+      "text-paste/01-live-15-paste-paste-confirm.txt": "59563e3c1141244a836a4f58bccb28aa54c7d6a5e3b2bc9480e6176a27807874",
+      "text-paste/01-live-15-paste-paste-confirm.json": "b50f107eac887bce72dca17827fb24be318d82bf97d449780cb3a36b12b5230f",
+      "text-paste/03-live-15-paste-staged.png": "45385fcfa145acc6041cd0ef0f47356d10938ff6fd57e15d79bc1cbba9f3f4ab",
+      "text-paste/03-live-15-paste-staged.txt": "3407bba0c918d2bca14d5480920946d83c61d3d168b47795dfdbf1d6dfa72da4",
+      "text-paste/03-live-15-paste-staged.json": "3134725a7d55a43a082b0dda7d23bd1e9e0db7c04f5016bf06613e6bddbbac0c",
+      "text-paste/03-live-15-paste-staged.read.json": "b24bcae26c0eae24e4c41136a7501e148002269a174ce94906b541f52a48a5e7",
+      "text-paste/04-live-15-paste-inspect-removal.png": "1f817817431e0e4f772ad50d6f1693f22e40654cce752cb02afb952f6af291af",
+      "text-paste/04-live-15-paste-inspect-removal.txt": "00c7db544abd849df8ed4e9f91dd476e81b55bfa11aa44172fdb117c5f00d707",
+      "text-paste/04-live-15-paste-inspect-removal.json": "c4cdf1c6e25c2420f8d9f389deb6cd06b5281eb4d1ac2b033fbfc818876b615d",
+      "text-paste/05-live-15-paste-removed.png": "1fe83986f27ecf81cc4fad0c51e9db52c297654d44f73bb385bf9afda8578178",
+      "text-paste/05-live-15-paste-removed.txt": "20e5a2b4fc4e4ee8254e3d1a1a1c90b4e401da852a7cab7645c68e6d5f40bea8",
+      "text-paste/05-live-15-paste-removed.json": "4934db3c4ba471b1d525cc7dbdef793a5f34c8d4b4331244f6302c3b37a2e72d",
+      "text-paste/07-live-15-paste-completed-content.png": "4de82ca4db954ba16670e94dd0f5e311fb308f94dcb1c0209a4250e0a1ad8dbc",
+      "text-paste/07-live-15-paste-completed-content.txt": "314b6b9cede02ecfebe0603976c306eaa7e5a6d0f52c1d6dee00bbb972c8220a",
+      "text-paste/07-live-15-paste-completed-content.json": "b8d360bfd9574b77f55b0f0237b88c964a4fb6a97ca769350349d3ebf0024408",
+      "text-paste/07-live-15-paste-completed-content.read.json": "28bdf2acfb1bb723e68accdc911852137674fe0fd906582f75b040af5f29ccf9",
+      "code-slash/01-live-15-slash-slash-confirm.png": "ec121fb37b4fc0cccc06cd089de98d5034ee7e8fdc23d8cd5cc64b40345b12a2",
+      "code-slash/01-live-15-slash-slash-confirm.txt": "c063d7f887d1e7653f1d9c2df4a6f54b0a31d6f9ba4e97dca7c5e712d967d45a",
+      "code-slash/01-live-15-slash-slash-confirm.json": "5bb79f9dd08c26c53dbdabc1d93c60846dbcad368ec61091764705600628f50e",
+      "code-slash/03-live-15-slash-staged.png": "2d9fd46787cb2819e25e173ac18c070e719a7c7656c5b6aa74fd34cfdd141418",
+      "code-slash/03-live-15-slash-staged.txt": "2006237c715685760ba6e227a21b78c20158f6f245dda38f38a31043c1c17dcd",
+      "code-slash/03-live-15-slash-staged.json": "92b11e40a0f0b2d139d996bbfe5c1bf3a35eec8d03f5d6bc7cdc86ae1ad2430f",
+      "code-slash/03-live-15-slash-staged.read.json": "2cc32b1f677b6d6fc7fa749537615c4f3c1614384dbfe1fa2071e1e2e1facb9f",
+      "code-slash/04-live-15-slash-inspect-removal.png": "b656e3a46788ccd5bb7080b1b85034bbaf5335ca41878a90bce8830b6dd7e8f9",
+      "code-slash/04-live-15-slash-inspect-removal.txt": "ce66100b5d5a00d34dda70440185f182dc2bd67657cd68d70ee50c0d8cf73e8b",
+      "code-slash/04-live-15-slash-inspect-removal.json": "230368f63133588bbefd0318f119ce9525ebe81b0777eec32f2759efb7d26923",
+      "code-slash/05-live-15-slash-removed.png": "e6e264ba391f962c209a3e0edac511c488a16693de155ce164d3223cb8b6be87",
+      "code-slash/05-live-15-slash-removed.txt": "ca2ce2c7f6b841a0e4d97b7a7b1201db727ed5cef086da218fa922c4b6b5cbe1",
+      "code-slash/05-live-15-slash-removed.json": "2169a046ff091304764df9942c71a9742dce9dd4f4398bda860a18181301e9a2",
+      "code-slash/07-live-15-slash-completed-content.png": "e2d26f29b7960d5c0f2c727f8b12fb812df7abaafc0fe9d8e0a2cc1225047953",
+      "code-slash/07-live-15-slash-completed-content.txt": "dae13ce032804bcf214cc91fd7751302e9242519106aa5d40b0b412886c82685",
+      "code-slash/07-live-15-slash-completed-content.json": "003dbe80ca09e9815dc24ffd344caa1d48518b13d76d4cb9358e51603469a927",
+      "code-slash/07-live-15-slash-completed-content.read.json": "efda12a4dc5f6ff0d29c76d619d7495b2c3a92fead2043a2bb48920bf267b55d",
+      "code-paste/01-live-15-paste-paste-confirm.png": "94ef6211f54d0de0dfb246b2230a857ad41cbc9279ae63fd1f65ee1db22a0971",
+      "code-paste/01-live-15-paste-paste-confirm.txt": "98bc89c95839548bf842ef4fef673462a277fb3897d9f756ca42e6e3d4fd77cd",
+      "code-paste/01-live-15-paste-paste-confirm.json": "91a931871fbb50ecebc68ea410a1a1b50bdf9df45d02d5776ddca68e461beb5f",
+      "code-paste/03-live-15-paste-staged.png": "04cca2a37dfe38a977addd0def6fc429510a6469b1f7c418944116915d2ac28f",
+      "code-paste/03-live-15-paste-staged.txt": "e0ae7c2d8c94cd9a7ba59716693cef59914600e2969989ac4746ee27345d54d8",
+      "code-paste/03-live-15-paste-staged.json": "fdd136313c5c21b486365f83d1f64c8e19097a63ddf97f38360e7d5a46e03c4a",
+      "code-paste/03-live-15-paste-staged.read.json": "f5d0488e80eef9e07f90db48b86f081ffac641912a022066ae6d2a7c612548cb",
+      "code-paste/04-live-15-paste-inspect-removal.png": "c666c76378aca6ec0470fc7e575fa108e3bf3670aae3b5138e287dd78a0fc203",
+      "code-paste/04-live-15-paste-inspect-removal.txt": "ce66100b5d5a00d34dda70440185f182dc2bd67657cd68d70ee50c0d8cf73e8b",
+      "code-paste/04-live-15-paste-inspect-removal.json": "219f24d3cf0a08800d16dad45f383b4a3327bdcf13144fde5071db9977b96e1a",
+      "code-paste/05-live-15-paste-removed.png": "5480b583e4390161e7cfbcbd14996f7233b1f8fca94d8e389f27e714ddbe11cf",
+      "code-paste/05-live-15-paste-removed.txt": "ca2ce2c7f6b841a0e4d97b7a7b1201db727ed5cef086da218fa922c4b6b5cbe1",
+      "code-paste/05-live-15-paste-removed.json": "c77684b73c6df19cc68d5af7bce79552d5892403b0db33382f29c89ef9b85013",
+      "code-paste/07-live-15-paste-completed-content.png": "e45c540a5c859e6f7565027fd14e51e54042b8bac3f6f0483be420b2bf8c982a",
+      "code-paste/07-live-15-paste-completed-content.txt": "690d12511c864a4a23bfdf3e5da9140f0e900fbc73ffd45e9b2f9448f5870146",
+      "code-paste/07-live-15-paste-completed-content.json": "52e73c3ba0fdbca871e1bfd1c016a766b42a6ca98bcff5f9ac44e6d263755cb1",
+      "code-paste/07-live-15-paste-completed-content.read.json": "13223e9cae61587d300a153bbb4d678f17db38357f31ff4f29b61c0b47f87c2a",
+      "text-slash/wire-sample-txt-slash.jsonl": "090a4f3e7e8aad85481464dbc458b05800e9c00ed09ceafc81d0a43c6b016080",
+      "text-paste/wire-sample-txt-paste.jsonl": "b32432f8ea474810e0c28f5213887452c6970cdb80551c7ad5f53072d7d78bdf",
+      "code-slash/wire-sample-py-slash.jsonl": "3c98532de12bc55e53d2c4ad3e3eaaff956eec7b52bd196294ce806ea9e1a852",
+      "code-paste/wire-sample-py-paste.jsonl": "6998b3b3db7f7966e4eeaab174c6b758c2660cea40895ff4724e4c78252a252b"
+    },
+    "files_listed_at": "2026-09-07T14:25:01.983696+00:00",
+    "read_confirmations": [
+      {
+        "image": "text-slash/03-live-15-slash-staged.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:25:01.340462+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "staged sample.txt",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "text-slash/07-live-15-slash-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:25:01.370906+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "a7f2283d385468b32fd084bb",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "text-paste/03-live-15-paste-staged.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:25:01.506586+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "staged sample.txt",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "text-paste/07-live-15-paste-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:25:01.508692+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "a7f2283d385468b32fd084bb",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "code-slash/03-live-15-slash-staged.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:25:01.662017+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "staged sample.py",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "code-slash/07-live-15-slash-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:25:01.663942+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "f9d1d9a7c39347cf75e4f2c5",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "code-paste/03-live-15-paste-staged.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:25:01.799117+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "staged sample.py",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "code-paste/07-live-15-paste-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:25:01.801416+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "f9d1d9a7c39347cf75e4f2c5",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

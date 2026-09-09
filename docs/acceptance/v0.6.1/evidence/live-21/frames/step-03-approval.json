@@ -1,0 +1,136 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<tool-environment>/bin/talaria",
+    "source_module": "talaria/__init__.py",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "captured_at": "2026-09-09T19:42:01.051486+00:00",
+  "case": "live-21",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 170,
+  "diagnostics_cells": [
+    136,
+    30,
+    167,
+    36
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 842275,
+  "first_ansi_offset": 842275,
+  "first_frame_sha256": "5c075c605251876779ee5d5fa929e26967a17918dc99652aa7febf12195ad67d",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "step-03-approval",
+  "frame_sha256": "5c075c605251876779ee5d5fa929e26967a17918dc99652aa7febf12195ad67d",
+  "gateway": "<gateway>",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1323,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1323,
+        "y": 198
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 3,
+      "region": {
+        "height": 18,
+        "width": 774,
+        "x": 396,
+        "y": 216
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:3]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 4,
+      "region": {
+        "height": 18,
+        "width": 657,
+        "x": 324,
+        "y": 252
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:4]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 5,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 153,
+        "y": 288
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:5]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 6,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 1224,
+        "y": 396
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:6]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 7,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 90,
+        "y": 630
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:7]"
+    }
+  ],
+  "rows": 46,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260909_151322_bfe0f2",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "abcb775a"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.1,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "step-03-approval.txt",
+    "frame_sha256": "5c075c605251876779ee5d5fa929e26967a17918dc99652aa7febf12195ad67d",
+    "sha256": "224740e4230574d55ce16f0ec18f2df9c54132ed70619cf85a755972d6d7a8e9"
+  },
+  "twin_digest": "224740e4230574d55ce16f0ec18f2df9c54132ed70619cf85a755972d6d7a8e9",
+  "png_sha256": "fa1b6003e038e7b48df6191ce590d0b80d935d7ecfd87c70e6a87a514708abb7"
+}
