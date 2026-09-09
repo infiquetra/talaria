@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T13:55:30.941099+00:00",
+  "case": "live-09",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "diagnostics_cells": [
+    74,
+    22,
+    117,
+    28
+  ],
+  "event_log": "wire-reconnect.jsonl",
+  "final_ansi_offset": 381947,
+  "first_ansi_offset": 381947,
+  "first_frame_sha256": "831df72f048b93e6c7cff8281a6f7902a8a3a20a69ef95aa33d007ed4cf95c55",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "reconnect-01-open-composer",
+  "frame_sha256": "831df72f048b93e6c7cff8281a6f7902a8a3a20a69ef95aa33d007ed4cf95c55",
+  "gateway": "ws://127.0.0.1:8000/api/ws",
+  "png_sha256": "6699a0d654711c4aa300bae0d9e461ceac43d3f32f5cdce302d402e63102836a",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 765,
+        "y": 162
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 765,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_095527_5a84a1",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "67016a34"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "reconnect-01-open-composer.txt",
+    "frame_sha256": "831df72f048b93e6c7cff8281a6f7902a8a3a20a69ef95aa33d007ed4cf95c55",
+    "sha256": "74196fdb5e5da185057bfcf43aeecef40cf4b8760a433a1979b395b9c082e560"
+  },
+  "twin_digest": "74196fdb5e5da185057bfcf43aeecef40cf4b8760a433a1979b395b9c082e560"
+}

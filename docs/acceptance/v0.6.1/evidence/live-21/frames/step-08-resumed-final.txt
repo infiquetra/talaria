@@ -1,0 +1,46 @@
+█  30. Ask for a second review before deleting shared or team owned data.                                                             ┌─ Inspector [docked 36] ──────────┐
+█  31. Verify backups are restorable before cleaning up old files.                                                                    │ TASKS                            │
+█  32. Prefer moving files to trash or archive over immediate permanent deletion.                                                     │   [none available from this      │
+█  33. Check for mounted network drives before running broad cleanup commands.                                                        │ session]                         │
+█  34. Avoid running bulk commands across many hosts without staged rollout.                                                          │                                  │
+█  35. Keep dangerous aliases clearly named so they do not surprise future users.                                                     │ CONTEXT                          │
+█  36. Review environment variables because they can alter command behavior silently.                                                 │   caret    transcript            │
+█  37. Disable history expansion when pasting commands with exclamation marks.                                                        │   session  ab2673ad              │
+█  38. Use checksums to verify downloads before making them executable.                                                               │   profile  default               │
+█  39. Limit background jobs and verify they exit instead of leaving orphans.                                                         │   model                          │
+█  40. Close terminal sessions cleanly to release locks and temporary resources.                                                      │ muse-spark-1.3-contributor       │
+█  41. Teach teammates safe patterns so shortcuts do not become hidden risks.                                                         │   launch   [redacted:absolute-filesystem-path:1]  │
+█  42. Document every production shell action so others can audit and recover.                                                        │   agent    [redacted:absolute-filesystem-path:2]  │
+█> You  Provide a long numbered explanation of terminal session safety, with at least 200 numbered points and one sentence per point. │   (session's own)                │
+█  1. Always confirm your present working directory before executing any command.                                                     │   usage    23169 input · 583     │
+█  2. Never run destructive removal commands                                                                                          │ output                           │
+█> You  Reply with exactly 60 lines, each line exactly SAFE. Do not add any other words and do not use tools.                         │                                  │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE   │ CHANGED FILES                    │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE   │   [none available from this      │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE                                                                                             │ session]                         │
+█> You  Report the checkpoint word in the attached notes.@file:[redacted:absolute-filesystem-path:3]                            │                                  │
+█                                                                                                                                     │ OPERATION DETAILS                │
+█--- Context Warnings ---                                                                                                             │   vision_analyze · What are the  │
+█- @file:[redacted:absolute-filesystem-path:4] path is outside the allowed workspace                                           │ two shapes in this image and     │
+█ . Reasoning  [reasoning withheld by the provider]                                                                                   │ their colors? Describe           │
+█$ Tool/Subagent  ⏺ read_file notes.txt L1-2000                                                                                       │ precisely.                       │
+█ kingfisher                                                                                                                          │   running                        │
+█> You  Report the two shapes and their colors in the attached image.                                                                 │                                  │
+█@image:[redacted:absolute-filesystem-path:5]                                                                     │ MIXTURE OF AGENTS                │
+█[screenshot]                                                                                                                         │   no progress events observed    │
+█ . Reasoning  [reasoning withheld by the provider]                                                                                   │                                  │
+█$ Tool/Subagent  ⏺ vision_analyze What are the two shapes in this image and their colors? Describe precisely.                        │ DIAGNOSTICS                      │
+█ A blue square (left) and an orange circle (right).                                                                                  │   roster: present — fleet roste… │
+█> You  resume_final                                                                                                                  │   approval-detail: present — fo… │
+█ . Reasoning  Analyzing session history and developer instructions to interpret the ambiguous resume_final probe.                    │   http-runner: incompatible — a… │
+█                                                                                                                                     │   kanban-dispatcher: not observ… │
+█ Formulating an Ivaldi-voice clarification while keeping work ownership in the right house.                                          │                                  │
+█ That word lands with no work attached. Name the anvil — what am I resuming for you?                                                 │ KEYS                             │
+                                                                                                                                      │   F1 does nothing here. F2 togg… │
+                                                                                                                                      └──────────────────────────────────┘
+╭─ compose [ ] caret elsewhere ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                                                                             │
+│                                                                                                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                                                                          
+[ok] connected│v0.6.1                                                                                                                                                     

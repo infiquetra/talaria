@@ -1,0 +1,308 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-12",
+  "title": "Sectioned connected slash inventory and wire-backed command classes",
+  "issue": "146",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:50:21.625125+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094915_5cc39c",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "The actual connected catalogue produces148 selectable entries. All six visible section headings are unique; selection never lands on a heading. Page keys move13 entries, Home and End clamp, and Escape closes. Name, description, origin badge and section-name filtering were exercised.\nThe complete180-character goal description was read. A Talaria model picker opens and cancels with the inspector closed. Missing MoA arguments produce real4004 usage. File confirmation cancels without upload.\nEach selected help and plugins inventory command produces exactly one slash.exec request and zero prompt.submit in its measured interval. Full gapless derived run logs preserve every outgoing method, including prompt.submit if present; no method filter removes it.\nUnder Jeff amendment5570596491, the selected local /config control is independently present in the actual registry Configuration category. The contributed /agent-launcher command is a result.skills member with literal origin local, matching the visible [local] badge. The full derived wire retains these exact fields. This gateway has no Plugin commands category; the amendment does not require one and no per-plugin ownership is claimed.\nFull wire intervals: {\"wire-menu.jsonl\": {\"frames\": 100, \"methods\": {\"agents.list\": 1, \"approval.pending\": 11, \"command.dispatch\": 1, \"commands.catalog\": 2, \"delegation.status\": 1, \"session.active_list\": 11, \"session.create\": 1, \"session.list\": 11, \"session.most_recent\": 1, \"slash.exec\": 3, \"spawn_tree.list\": 1}, \"requests\": 44}}",
+  "expected": {
+    "source": "case contract",
+    "text": "Browse the real sectioned inventory with keyboard navigation, understandable descriptions, usable arguments and confirmations, and exactly one dispatch per selection across the required command classes."
+  },
+  "actual": "All thirteen images were visually reviewed. Navigation, class provenance, long descriptions, required arguments, cancel and single dispatch meet the amended contract. The plugins inventory result is not claimed as command ownership.\nClause 1: pass: The actual connected catalogue produces148 selectable entries. All six visible section headings are unique; selection never lands on a heading. Page keys move13 entries, Home and End clamp, and Escape closes. Name, description, origin badge and section-name filtering were exercised. (https://github.com/infiquetra/talaria/issues/146; amended by https://github.com/infiquetra/talaria/issues/150#issuecomment-5570596491)\nClause 2: pass: The complete180-character goal description was read. A Talaria model picker opens and cancels with the inspector closed. Missing MoA arguments produce real4004 usage. File confirmation cancels without upload. (https://github.com/infiquetra/talaria/issues/146; amended by https://github.com/infiquetra/talaria/issues/150#issuecomment-5570596491)\nClause 3: pass: Each selected help and plugins inventory command produces exactly one slash.exec request and zero prompt.submit in its measured interval. Full gapless derived run logs preserve every outgoing method, including prompt.submit if present; no method filter removes it. (https://github.com/infiquetra/talaria/issues/146; amended by https://github.com/infiquetra/talaria/issues/150#issuecomment-5570596491)\nClause 4: pass: Under Jeff amendment5570596491, the selected local /config control is independently present in the actual registry Configuration category. The contributed /agent-launcher command is a result.skills member with literal origin local, matching the visible [local] badge. The full derived wire retains these exact fields. This gateway has no Plugin commands category; the amendment does not require one and no per-plugin ownership is claimed. (https://github.com/infiquetra/talaria/issues/146; amended by https://github.com/infiquetra/talaria/issues/150#issuecomment-5570596491)",
+  "evidence": {
+    "files": {
+      "01-live-12-rehearsal-slash-confirm.png": "aa12d981c3cace6fca850309342cc17e5aeb985303a4ffff55e3b659b532f27b",
+      "01-live-12-rehearsal-slash-confirm.txt": "5685b00ea9b46034c98b6c1ca133ec711b4b97e55b4bf9cbddf618106505cc8a",
+      "01-live-12-rehearsal-slash-confirm.json": "8b962e6339aa8fa37d77e15d678a946aaf14e1ebec8280de5311e6e47d912535",
+      "01-sectioned-menu.png": "2a489534087f3728f2c8c79d762f1e8e5fe696a96d8ef57abf557bc5aca7a93f",
+      "01-sectioned-menu.txt": "0e0a682b3be8f737cf548b139216012323997def3656f22ab0594d2d1d22e8d6",
+      "01-sectioned-menu.json": "c40139db3c76a8b45448ab72f6499ca8c743ee92d99c7c264164b030301ec1b5",
+      "01-sectioned-menu.read.json": "266b6169077c9805bea62ca91b32d6ec16d65ab86c49d9c25cfd2c174ff8c16f",
+      "02-page-down.png": "93e6b00e31c1ac185289cb57c335725e0a1037632d1cc46239d905f40310f1e5",
+      "02-page-down.txt": "0ec7aac531e50b95fedcca8d156e50c3931f841b5c89ccbd37e9b824a301f1c0",
+      "02-page-down.json": "78ec519a1930c1298f854d51647645e6a5a411cc9ed7fc5155cb4edb618dde21",
+      "02-page-down.read.json": "3132eca8c7692d33f33cd99bc023c6658174707169a1dd0a84aeb1c5dfcb5025",
+      "03-page-up.png": "4928c75605c32349bf93fe82d0ba84dd929404f6e0aee4894c133f9be3343be6",
+      "03-page-up.txt": "59084d4d4f21484cb87a3aa23293ef6ddf2745fb8d136b2c6a29596d3a540da7",
+      "03-page-up.json": "f559d4834a869fa5c76dd854e147f6b62eb7a5e1eee81b02f6bed41c6ee1d6aa",
+      "03-page-up.read.json": "cbf0e2431739a1b8cd63c48c3aa985d847cacbc63ec43daa18463e6a819133fd",
+      "04-last-entry.png": "71205a7bc36e22e56e7dd4c58823e4f609de4f093784181b50f3024e3e680f14",
+      "04-last-entry.txt": "ce56026f1620133eacb12b1a74e40ba5e818c956d05baa69c0cfd654d2a77d69",
+      "04-last-entry.json": "00e8ec9338c375b0cd8187abb0c2cd96ea5447a9b0af07f9babc29bab446ac75",
+      "04-last-entry.read.json": "a04b4176527c4f3387693b8ab7bacae8b9452259656612ddcc0d423a788d68ac",
+      "05-home.png": "89ad2d529959d43a2029d7a307a3e61b41e407be6a8bd4e22a3ea690c55071bf",
+      "05-home.txt": "59084d4d4f21484cb87a3aa23293ef6ddf2745fb8d136b2c6a29596d3a540da7",
+      "05-home.json": "fba73116e02a2511df77f9b40a0d51b914ce96aa9eac13bdf9f459007bc70aad",
+      "05-home.read.json": "b16c4d3ad442156a108f8e8ad5f26c50645254efe9f51edeaf5970df0f0bfa80",
+      "06-skill-provenance.png": "f3fba90837ce3b5d722abd32d5f2e0391191e5c633501ca6b9dff9c176471f75",
+      "06-skill-provenance.txt": "050a6c2fe8cc94b0e4d8fbf6e882fb26bf874ccca56f955f8fd32e4936f300fd",
+      "06-skill-provenance.json": "7c72f5603864d77ae9939055c0f304e52fd20214674886b2d6632ebf3bb314bf",
+      "06-skill-provenance.read.json": "da73b327425507087bfc7b4e4f7634173510c540137aca2f295444e1d07519e0",
+      "06-talaria-control-provenance.png": "e2a8e20d0b5c1aa61ff1f7ac53853145dc2baf2a4cb2521893a90a63a1eb728d",
+      "06-talaria-control-provenance.txt": "ba8acbc15b1362ae42ab9f6303fa5b64244468b98acc8ea54a78d31379cc58ec",
+      "06-talaria-control-provenance.json": "125442b9cbdada068206f20ddfac15a265187a7ca406136f01f1fc80104e2b92",
+      "06-talaria-control-provenance.read.json": "bbd5f265271e9b5cf4ea2cbf8ad35229184fe6d4b049d62f6eaf9a0acddf1167",
+      "07-long-description.png": "3a7654a543e1daf160e5dae1b6e147ebc3df3e13eaf3715dde6881a19ec88d00",
+      "07-long-description.txt": "ff4fc34f8cda60af43af00ed670c8b1b352c83425eb56aeeae549ee715c3c733",
+      "07-long-description.json": "baf361d6bc3cfc5827dc9635bb08a959de4a5627174cccafdc677a803d6b2927",
+      "07-long-description.read.json": "1cfc2ef905797868b1b643de308b9a60a1d153b7e28689d4d46083a4a6640d8c",
+      "08-dispatch-help.png": "e906bfc2d4126857568c23752e735755d0bd0b6ce5225144c78b69de6466a92c",
+      "08-dispatch-help.txt": "564817e9e09d0740368c4eeacc34f5f79d9729aa6e2ac5137b50f97ea28867dd",
+      "08-dispatch-help.json": "0ede338073eb0e12252a92f5052a932928a7e303b98cc0416d1f6735e1c09f54",
+      "08-dispatch-help.read.json": "af2bb5b75110ae2d048d2d7db2cd78df24150b97965627766bcb66923c6da57b",
+      "08-dispatch-plugins.png": "634e14e848b7ca90fc8c0ffc3ff8c71c583e924bf9febf8c9d28e86fafc779fa",
+      "08-dispatch-plugins.txt": "96013e69fa797b68eeeff28acd408026eb33b1eab81bc3ed5c66fe30e694aaad",
+      "08-dispatch-plugins.json": "bde72223746cab8507b68237edb91e6f356cc2103ea8dc04992153148ee3b1a3",
+      "08-dispatch-plugins.read.json": "cfbb90580373eda09bbcb104c12c2e8991f8a4cfab28da6f4b416b9ba4a3053f",
+      "09-required-arguments.png": "ff0de2ead06c0695e2e8f5d31d6e54d8090aaec04ee7f8163a64fc8065cceabf",
+      "09-required-arguments.txt": "5f7272077533678936dbbead2c816ddd5f2772b705e0a35251b991205ff898e2",
+      "09-required-arguments.json": "62992d89df4651a5b8251d47040ac725cfef14534dad4065645c7535e4c816df",
+      "09-required-arguments.read.json": "de369e3f5debf4a82a54c0b829429d03743584d6486cdcad47eb0517bffd82d8",
+      "10-model-picker.png": "bfcacc11346c2bc1d71e28d80d8fdd99b671cbb2f35572e3bad3b58173874c4f",
+      "10-model-picker.txt": "f127d063fa5ed5c9ea9cf0cbc01bdce7a46fe7b23fd7a725cf0f2b863fd27332",
+      "10-model-picker.json": "f94af1a40ff87307864065c3c119ab7b1d3f22681cae615e3917e0cdc530045f",
+      "wire-menu.jsonl": "c310d1a8cce08d78ba4d4e8a22f483e1b1e94e908c7792de63f289b2ca70ce1b"
+    },
+    "files_listed_at": "2026-09-07T14:03:34.524011+00:00",
+    "read_confirmations": [
+      {
+        "image": "01-sectioned-menu.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.314739+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "Talaria",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "02-page-down.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.342793+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "/speed",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "03-page-up.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.343674+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "/agents",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "04-last-entry.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.344487+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "/yuanbao",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "05-home.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.345326+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "/agents",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "06-skill-provenance.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.346143+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "/agent-launcher",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "06-talaria-control-provenance.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.346937+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "/config",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "07-long-description.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.347756+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "/goal",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "08-dispatch-help.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.348527+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "/plan",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "08-dispatch-plugins.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.349353+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "plugins",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "09-required-arguments.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:03:34.350166+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "Usage: /moa",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

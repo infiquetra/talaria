@@ -1,0 +1,238 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-22",
+  "title": "Keyboard defaults under nested terminal capture",
+  "issue": "150",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:58:53.865010+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_095829_15e44c",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 160,
+    "rows": 49
+  },
+  "actions": "Enumerate the actual isolated Herdr keymap before launching the candidate under its host relay.\nDrive Ctrl+O twice, Ctrl+S idle, F1, F2 and Ctrl+G through the outer host input, then focus the KEYS explanation.\nRun an isolated host collision control that explicitly binds Ctrl+O.\nRead the frozen candidate release notes, docs/releases/v0.6.1.md lines30\u201336 and144\u2013147.",
+  "expected": {
+    "source": "case contract",
+    "text": "The shipped footer is honest, chords reach Talaria, four tested defaults do not collide with host bindings, and F1/F2 behavior agrees with the KEYS explanation and notes."
+  },
+  "actual": "Nine actual foreground frame trios reviewed. Host noncollision is supported by43 live bindings and a44-binding positive control. Complete recorded gateway interval:66 consecutive frames,29 outgoing requests. This tests delivered terminal keys, not the macOS desktop setting itself. No claim of resistance to user-defined conflicting host bindings is made.\nClause 1: pass: The exact live footer names ctrl+o inspector, / commands, ctrl+s cancel-turn, ctrl+q quit and ctrl+g agents. It contains no F1/F2 eaten advisory. The configured Talaria keys are the shipped defaults. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5562886840)\nClause 2: pass: Through the real nested host input path, Ctrl+O closes and reopens Inspector in the same recorded session. The open, closed and reopened bound frames witness the effect. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5562886840)\nClause 3: pass: Ctrl+S in the foreground produces the complete notice: nothing to interrupt \u2014 no turn is in flight. Talaria remains running and responds to subsequent input. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5562886840)\nClause 4: pass: The same live host used for every frame has43 enumerated bindings: its complete scrolled key-help inventory plus four active pane-swap bindings omitted by that help but explicit in its unchanged launch configuration. Ctrl+O, Ctrl+S, F1 and F2 are all absent. A separate isolated positive control with a direct Ctrl+O binding yields44 bindings and detects Ctrl+O; the control file is listed separately. Both files contain keys and action labels only. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5562886840)\nClause 5: pass: F1 leaves the full captured cell frame unchanged; the before and after frames agree and its absence from the binding inventory supports that observation. F2 displays no sub-agents to show or hide \u2014 the region stays hidden. After a real focus change resets the documented notice latch, Ctrl+G independently displays the same notice. The focused KEYS row explains F1, F2 and the macOS standard-function-key setting in full. Frozen release notes lines30\u201336 describe those same semantics and setting. (https://github.com/infiquetra/talaria/issues/150#issuecomment-5562886840)",
+  "evidence": {
+    "files": {
+      "01-footer-inspector-open.png": "7554a8fdd0c3715ba7d0d00b59494af042aa852b03d8a3e0e0e89424285220bb",
+      "01-footer-inspector-open.txt": "7a8f91a647143dddf7287e4bd10672c4d6d0e9b0f7cfcb4a2cd06b83c6c39e9f",
+      "01-footer-inspector-open.json": "c769c8d0dd604adaaf76a0a217ad9755cbe4d9836077ea1be85a032913d7532e",
+      "01-footer-inspector-open.read.json": "541a1e1f8f6361cefb3de7dc70171fbd6aa2caea89326abfcde836b3907047c1",
+      "02-inspector-closed.png": "481ce37ad7f7ff501d7eeaf2c9e43b2f285308ee45163a9f01b268bf44593a13",
+      "02-inspector-closed.txt": "e3d3d03cd20e9cf38f415cfb147ecc51f896ddced8fef032e5cf84a1a1ba8c68",
+      "02-inspector-closed.json": "d3a5f2b77cd3ee61b7a3e54f1403100f385237714b16b1a4c384b27c5de34fcf",
+      "03-inspector-reopened.png": "a8ec7b7128e172e586ddc76744dd20152646564a3be2212b791683281656f333",
+      "03-inspector-reopened.txt": "b552e2d4eba33694f2d764526d133a7f1a72bd34618192ede8ee8ac7c6094b17",
+      "03-inspector-reopened.json": "c9f766b9ab153e4590e6b95a4010e2c73675ec54329551fa15d3e33e78d22f8c",
+      "03-inspector-reopened.read.json": "268e67cb6ec644a6946969356bf28a26725fb76934e7b9fc91531df632dac366",
+      "04-cancel-idle.png": "8f5241c7da6905fbcd94891ecab1cb908c1dabd9ecee56151f5a98ac7e2bd7a0",
+      "04-cancel-idle.txt": "8a919b88f36a3d51ddaa12a42546d0de1d397a988f1a34df6ceb871cf475f0c3",
+      "04-cancel-idle.json": "b104b502cb9becc4c5f6733b04393aae93c247ce9b7fe6f1aa734865f2982ead",
+      "04-cancel-idle.read.json": "1cbb0560b3b79bed73afe2013b4c874bd5d3d2dc389024628cee94bd224d4b4a",
+      "05-f1-before.png": "7dd68e976785a471359e4c126711690160b178d9b5150345b5fa7afaa9501673",
+      "05-f1-before.txt": "855ed9d2991b365daf7af0a87391c549250d467ad99b4c415334b227270cdc9d",
+      "05-f1-before.json": "a16fa8e76b2efd1270f4bc57ca6b10f69c9c2a93f44a71e8f74dc6dcc4fe0ce8",
+      "05-f1-before.read.json": "7c2910e4bb812df8cd0a93e25d241feede8a0b41dd3a13f2898497c3f0ebb40e",
+      "06-f1-after.png": "5ce1a630333ec6b29d1b0a8ff2c5c982cda011c25d57a0c6a4a32ecc0db83068",
+      "06-f1-after.txt": "855ed9d2991b365daf7af0a87391c549250d467ad99b4c415334b227270cdc9d",
+      "06-f1-after.json": "73d60eb16f43980f4a49fbee80263a499c34df0ec996cdc48cec8cdaeb8cdaf8",
+      "06-f1-after.read.json": "c5de980f4f0d7cd7493de1aa2eca32d3a6ee18432e406da4d13003929c881122",
+      "07-f2-alias.png": "76afaa42784d59501c286bdcd3725fca1a4f3248a04c9f12f934658048728f3b",
+      "07-f2-alias.txt": "b3ca507f41c098b936d67f6ec63577ab1df8af6fdaac41ed82581c7fec78c5aa",
+      "07-f2-alias.json": "fadde4ca664e541dd7a2490cf9de68587a077c24e80d569fe29fc49cebd6bba5",
+      "07-f2-alias.read.json": "fd53f3baedb4c287b77f97688b32c08b5a522003c5af0a8155a20841acf94cf3",
+      "08-ctrlg-primary.png": "9e5d0fa981b1efc01986fcc4209f87df479a077c1fea0e8543bf5d4b806fe36e",
+      "08-ctrlg-primary.txt": "64a83972d49657f015274b4d88168fd5f5bf736eacb0104b7b4af2a8cc9afd0a",
+      "08-ctrlg-primary.json": "41a4336bed5c82ae217ed26d49bbd6ded419ba22883eb8442ded5a7521dbef53",
+      "08-ctrlg-primary.read.json": "fc8d64a2f08bfd152a5e5450b788c11f4854b69802a33a6e89776b02db40ecaf",
+      "09-keys-explanation.png": "bf7dff2d10156ea60db1a86234ca169accb504feacc913836454f5cf84ee0382",
+      "09-keys-explanation.txt": "ed3ce0cc3fe49b7ec60cded419b337f003b2ee5653cac08fe2dffefaf76d8673",
+      "09-keys-explanation.json": "35d5adade3c0ccec5d4a1043b9b0084a261d708351d1f93ed7c30db97f16ac0e",
+      "09-keys-explanation.read.json": "e70cf68532157e8e73fc8cade7c0459d7c493576917f7f6b296d738be2846e6b",
+      "wire-evidence.jsonl": "bb3fd1091b230fa098dfbc774509c27872955e85290e0a8c02a34b2646e7e7e6",
+      "host-bindings.txt": "dd5a2a1dec662f4203f500fd0365d74954ad367e7d399008b8db73aee9a799c9",
+      "host-bindings-positive-control.txt": "84a9024cf8409019600999fd8a28de66eb20703eee2ef4b9870094d7bfb3f834"
+    },
+    "files_listed_at": "2026-09-07T14:05:27.634885+00:00",
+    "read_confirmations": [
+      {
+        "image": "01-footer-inspector-open.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:05:27.452808+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ctrl+o inspector",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "03-inspector-reopened.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:05:27.482364+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ctrl+o inspector",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "04-cancel-idle.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:05:27.483876+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ctrl+o inspector",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "05-f1-before.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:05:27.485307+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ctrl+o inspector",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "06-f1-after.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:05:27.486811+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ctrl+o inspector",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "07-f2-alias.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:05:27.488103+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ctrl+o inspector",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "08-ctrlg-primary.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:05:27.489348+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ctrl+o inspector",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "09-keys-explanation.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:05:27.490788+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "ctrl+o inspector",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

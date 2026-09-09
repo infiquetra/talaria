@@ -1,0 +1,141 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-18",
+  "title": "Mixture of Agents live success",
+  "issue": "148",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T14:07:05.374224+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_100550_500925",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "A real /moa turn emits five moa.progress, five moa.reference, one moa.phase and one moa.aggregating event. The first selected frame shows collecting2/5 and three pending references; pending is not portrayed as zero work.\nReference text remains visible while aggregation starts. The real phase and aggregating payloads name openai-codex:gpt-5.6-sol; the live aggregation line displays that name. The final transcript and Inspector both report5/5 references aggregated by the same model. No no-aggregation-observed fallback is shown.\nThe completed response gives three explanations of two plus two. The reference block remains above it; the working indicator has ended. All four frames are visually reviewed, with only directory values masked. Full gapless wire interval: {\"frames\": 93, \"methods\": {\"agents.list\": 1, \"approval.pending\": 6, \"commands.catalog\": 2, \"delegation.status\": 1, \"prompt.submit\": 1, \"session.active_list\": 8, \"session.create\": 1, \"session.list\": 8, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}, \"requests\": 31}",
+  "expected": {
+    "source": "case contract",
+    "text": "Real reference activity, progress, aggregation and completion track their events; reference text survives and the interface remains usable."
+  },
+  "actual": "Four reviewed frame trios show real intermediate and completed states. All four rich event types were observed; unavailable-backend fallback is not credited as success.\nClause 1: pass: A real /moa turn emits five moa.progress, five moa.reference, one moa.phase and one moa.aggregating event. The first selected frame shows collecting2/5 and three pending references; pending is not portrayed as zero work. (https://github.com/infiquetra/talaria/issues/148)\nClause 2: pass: Reference text remains visible while aggregation starts. The real phase and aggregating payloads name openai-codex:gpt-5.6-sol; the live aggregation line displays that name. The final transcript and Inspector both report5/5 references aggregated by the same model. No no-aggregation-observed fallback is shown. (https://github.com/infiquetra/talaria/issues/148)\nClause 3: pass: The completed response gives three explanations of two plus two. The reference block remains above it; the working indicator has ended. All four frames are visually reviewed, with only directory values masked. Full gapless wire interval: {\"frames\": 93, \"methods\": {\"agents.list\": 1, \"approval.pending\": 6, \"commands.catalog\": 2, \"delegation.status\": 1, \"prompt.submit\": 1, \"session.active_list\": 8, \"session.create\": 1, \"session.list\": 8, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}, \"requests\": 31} (https://github.com/infiquetra/talaria/issues/148)",
+  "evidence": {
+    "files": {
+      "aggregating.png": "a1506924cc18481f2634748d7e6d38f7ee020f16807a56920f10c357ef41d09e",
+      "aggregating.txt": "16f4a4d33f2c5b8284e29c2d2825ae3a1b38eaa816c0267779519eef4da008a1",
+      "aggregating.json": "fb3482e054cc3d5fbea287b4f0a0b502c7d6aa20297291cbc3c01eb520359fcc",
+      "aggregating.read.json": "ba11d1036d894d6aa2a57bc245a0d329f82cad05afc0038364ec9b75c5e86886",
+      "completed.png": "2957c8182824d33e262b06b64da5842587c929057ea93620107f8e1225145954",
+      "completed.txt": "36849eb21f6e71be37d9500ccb28ed6665510370b568db6af4fa7283e6ac85b7",
+      "completed.json": "a9b7b74ed91634c9773b02a540e09633646ab584d0333b3e4ca66cb91020fafb",
+      "completed.read.json": "8be6f095c290696b3339f9f22e7fc19fc2637a488f37958da2ab8987baca0e8c",
+      "reference-text.png": "d341c85bdd30fc904460f3ede42251b4551c027b779f397f83f222598976d185",
+      "reference-text.txt": "1048409a30ab2f020e90173a7d788115f7331af3e1fab4518881672354969d15",
+      "reference-text.json": "9649a0dc3beb1131fbc9f2abfa148ceb5a0bfb6070b7955a6ff0d84a080d047e",
+      "reference-text.read.json": "253848e08037a982edd78875a7833792b8b8025f2a629cf0878b30584c4efb07",
+      "references.png": "8d852f3a6867020b41d524ce45877e733e17f2befd29f66c7fb1325768528a83",
+      "references.txt": "5c3504f880e1402b1cc39fff0e4697ac9ad59fe9d3ef62a7f813666b6cc88bf8",
+      "references.json": "f1215cb2b5e2c71539807789463c8942fb4cd43e57e3e5a3e1ca49d69e610e83",
+      "references.read.json": "d3777bd606fef83db92f95e407aef85c1940a82dbecb0a73284339e22c642f0b",
+      "wire-evidence.jsonl": "9b7e346d928d79b2951c1026404ceb3de7cbf41b8d931d453848a479bb35a4be"
+    },
+    "files_listed_at": "2026-09-07T14:14:11.891143+00:00",
+    "read_confirmations": [
+      {
+        "image": "aggregating.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:12:51.042957+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "Mixture of Agents",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "completed.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:12:51.073381+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "Mixture of Agents",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "reference-text.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:14:11.698446+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "MIXTURE OF AGENTS",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "references.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:14:11.727231+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "MIXTURE OF AGENTS",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

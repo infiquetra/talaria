@@ -1,0 +1,40 @@
+█fallback: talaria.inspector.border <- Refined Default #6E7781                                                          
+█fallback: talaria.inspector.heading <- Refined Default #0969DA                                                         
+█fallback: talaria.transcript.operator <- Refined Default #0969DA                                                       
+█fallback: talaria.transcript.operator.background <- Refined Default #EAF2FC                                            
+█fallback: talaria.transcript.assistant <- Refined Default #1A7F37                                                      
+█fallback: talaria.transcript.assistant.background <- Refined Default #EAF7ED                                           
+█fallback: talaria.transcript.reasoning <- Refined Default #6F42C1                                                      
+█fallback: talaria.transcript.reasoning.background <- Refined Default #F1EBFC                                           
+█fallback: talaria.transcript.activity <- Refined Default #0B7285                                                       
+█fallback: talaria.transcript.activity.background <- Refined Default #E7F5F7                                            
+█fallback: talaria.transcript.session <- Refined Default #57606A                                                        
+█fallback: talaria.transcript.session.background <- Refined Default #EEF1F4                                             
+█fallback: talaria.transcript.fault <- Refined Default #CF222E                                                          
+█fallback: talaria.transcript.fault.background <- Refined Default #FDEDEF                                               
+█fallback: talaria.diff.line-number <- Refined Default #57606A                                                          
+█fallback: talaria.diff.added <- Refined Default #116329                                                                
+█fallback: talaria.diff.added.background <- Refined Default #E6F4EA                                                     
+█fallback: talaria.diff.removed <- Refined Default #A40E26                                                              
+█fallback: talaria.diff.removed.background <- Refined Default #FCE8E6                                                   
+█fallback: talaria.diff.hunk <- Refined Default #0550AE                                                                 
+█fallback: talaria.diff.hunk.background <- Refined Default #EAF2FC                                                      
+█fallback: talaria.diff.intraline-added.background <- Refined Default #BFE3C8                                           
+█fallback: talaria.diff.intraline-removed.background <- Refined Default #F4C7C3                                         
+█fallback: talaria.syntax.comment <- Refined Default #57606A                                                           ▅
+█fallback: talaria.syntax.keyword <- Refined Default #6F42C1                                                            
+█fallback: talaria.syntax.string <- Refined Default #116329                                                             
+█fallback: talaria.syntax.number <- Refined Default #953800                                                             
+█fallback: talaria.syntax.function <- Refined Default #0550AE                                                           
+█fallback: talaria.syntax.type <- Refined Default #0B7285                                                               
+█fallback: talaria.syntax.variable <- Refined Default #1F2328                                                           
+█fallback: talaria.syntax.operator <- Refined Default #6F42C1                                                           
+█fallback: talaria.syntax.constant <- Refined Default #A40E4C                                                           
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ theme 'imported-probe' fetched: 3 source tokens, 55 fallbacks, 0 warnings (applied live, no restart required) — ful… │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

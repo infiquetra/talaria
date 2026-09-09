@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T14:07:05.374224+00:00",
+  "case": "live-18",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "diagnostics_cells": [
+    74,
+    27,
+    117,
+    33
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 835743,
+  "first_ansi_offset": 835743,
+  "first_frame_sha256": "757a1a932f59a5ee9357a22e0077eb1624e6bc6c11a98a1c5389367946f7b397",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "completed",
+  "frame_sha256": "757a1a932f59a5ee9357a22e0077eb1624e6bc6c11a98a1c5389367946f7b397",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "2957c8182824d33e262b06b64da5842587c929057ea93620107f8e1225145954",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 765,
+        "y": 162
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 765,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_100550_500925",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "2fd42d33"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "completed.txt",
+    "frame_sha256": "757a1a932f59a5ee9357a22e0077eb1624e6bc6c11a98a1c5389367946f7b397",
+    "sha256": "36849eb21f6e71be37d9500ccb28ed6665510370b568db6af4fa7283e6ac85b7"
+  },
+  "twin_digest": "36849eb21f6e71be37d9500ccb28ed6665510370b568db6af4fa7283e6ac85b7"
+}

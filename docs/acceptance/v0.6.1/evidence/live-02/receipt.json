@@ -1,0 +1,70 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-02",
+  "title": "Theme reload failure and recovery",
+  "issue": "140",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:48:34.109000+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094826_0648f4",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 200,
+    "rows": 40
+  },
+  "actions": "Created a custom theme without an import source, selected it and successfully reloaded from its stored file.\nMalformed stored JSON caused an explicit reload failure while the last good canvas and transcript remained; the visible explanation identifies a double-quoted property-name syntax error.\nCorrected stored theme values and reloaded without restart; the refreshed notice and changed purple canvas demonstrate recovery.",
+  "expected": {
+    "source": "case contract",
+    "text": "Satisfy the named live matrix case through the real application and connected gateway."
+  },
+  "actual": "Created a custom theme without an import source, selected it and successfully reloaded from its stored file. Malformed stored JSON caused an explicit reload failure while the last good canvas and transcript remained; the visible explanation identifies a double-quoted property-name syntax error. Corrected stored theme values and reloaded without restart; the refreshed notice and changed purple canvas demonstrate recovery.\nClause 1: pass: Supported source-less custom theme reload: the custom theme was selected and successfully reloaded from its stored file without an import-source prerequisite. (https://github.com/infiquetra/talaria/issues/140)\nClause 2: pass: Malformed input and recovery: malformed stored JSON produced actionable double-quoted property-name syntax feedback and kept the last good canvas and transcript; correcting the saved values and reloading without restart produced the refreshed notice and purple canvas. (https://github.com/infiquetra/talaria/issues/140)\nClause 3: pass: No false success: the malformed reload visibly reported failure and retained the last good appearance; the refreshed notice and changed canvas were observed only after correction. (https://github.com/infiquetra/talaria/issues/140)\nClause 4: pass: No lost customizations: the last good custom appearance survived the malformed reload, and the corrected saved custom values took effect on reload without restart. (https://github.com/infiquetra/talaria/issues/140)",
+  "evidence": {
+    "files": {
+      "malformed-retains-good-theme.png": "d9e9b1c6ae19b0a7cb14c2d6708c0956cc78a56e42615bfe23b52f80435604bb",
+      "malformed-retains-good-theme.txt": "8ea39548173e79c0aa8d9a425866dd5b48c3261b04c3472bcc641e2721f48927",
+      "malformed-retains-good-theme.json": "58f20f3c61f8c828f99344233265f8e87973c980501024e36ea8c400aec1fd32",
+      "malformed-retains-good-theme.read.json": "5ffaf0a7bffa111ad522d0ee7d5f3dc7167fac044a80dfe5b9f355534c236a81",
+      "corrected-reload.png": "ab4b258fbe1b464019a20814d772a2552c750f34f83d0278c9b9bdc25bb8555d",
+      "corrected-reload.txt": "d61d0a2bb0cb4ebfe7f9382c9e8d8f2a4649e6c459193ccdae6458820a58e571",
+      "corrected-reload.json": "0d742646da835e1e0766a8bbdfae0ec75017f9b0608f30f6034c22cdabd38780",
+      "wire-evidence.jsonl": "669ddf956dc13b4093f5a40671579b2d1a491dd10b327e59df0c59b9b97c5e0e"
+    },
+    "files_listed_at": "2026-09-07T13:56:15.051233+00:00",
+    "read_confirmations": [
+      {
+        "image": "malformed-retains-good-theme.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T13:56:14.940791+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "theme reload failed",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

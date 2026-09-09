@@ -1,0 +1,14 @@
+{
+  "image": "malformed-file-visible.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-07T14:07:00.270839+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "is not valid TOML",
+  "nothing_else_masked": true
+}

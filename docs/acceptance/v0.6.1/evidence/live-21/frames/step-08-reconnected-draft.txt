@@ -1,0 +1,46 @@
+█  25. Explain the impact of a destructive command before requesting approval.                                                        ┌─ Inspector [docked 36] ──────────┐
+█  26. Stop the workflow immediately if an approval request times out or is denied.                                                   │ TASKS                            │
+█  27. Never retry a blocked destructive command without fresh explicit consent.                                                      │   [none available from this      │
+█  28. Avoid rephrasing a denied command to bypass safety controls.                                                                   │ session]                         │
+█  29. Treat silence as denial and never assume consent from lack of response.                                                        │                                  │
+█  30. Ask for a second review before deleting shared or team owned data.                                                             │ CONTEXT                          │
+█  31. Verify backups are restorable before cleaning up old files.                                                                    │   caret    transcript            │
+█  32. Prefer moving files to trash or archive over immediate permanent deletion.                                                     │   session  6689aecf              │
+█  33. Check for mounted network drives before running broad cleanup commands.                                                        │   profile  default               │
+█  34. Avoid running bulk commands across many hosts without staged rollout.                                                          │   model                          │
+█  35. Keep dangerous aliases clearly named so they do not surprise future users.                                                     │ muse-spark-1.3-contributor       │
+█  36. Review environment variables because they can alter command behavior silently.                                                 │   launch   [redacted:absolute-filesystem-path:1]  │
+█  37. Disable history expansion when pasting commands with exclamation marks.                                                        │   agent    [redacted:absolute-filesystem-path:2]  │
+█  38. Use checksums to verify downloads before making them executable.                                                               │   (session's own)                │
+█  39. Limit background jobs and verify they exit instead of leaving orphans.                                                         │   usage    0 input · 0 output    │
+█  40. Close terminal sessions cleanly to release locks and temporary resources.                                                      │                                  │
+█  41. Teach teammates safe patterns so shortcuts do not become hidden risks.                                                         │ CHANGED FILES                    │
+█  42. Document every production shell action so others can audit and recover.                                                        │   [none available from this      │
+█> You  Provide a long numbered explanation of terminal session safety, with at least 200 numbered points and one sentence per point. │ session]                         │
+█  1. Always confirm your present working directory before executing any command.                                                     │                                  │
+█  2. Never run destructive removal commands                                                                                          │ OPERATION DETAILS                │
+█> You  Reply with exactly 60 lines, each line exactly SAFE. Do not add any other words and do not use tools.                         │   vision_analyze · What are the  │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE  ▆│ two shapes in this image and     │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE   │ their colors? Describe           │
+█ SAFE SAFE SAFE SAFE SAFE SAFE SAFE SAFE                                                                                             │ precisely.                       │
+█> You  Report the checkpoint word in the attached notes.@file:[redacted:absolute-filesystem-path:3]                            │   running                        │
+█                                                                                                                                     │                                  │
+█--- Context Warnings ---                                                                                                             │ MIXTURE OF AGENTS                │
+█- @file:[redacted:absolute-filesystem-path:4] path is outside the allowed workspace                                           │   no progress events observed    │
+█ . Reasoning  [reasoning withheld by the provider]                                                                                   │                                  │
+█$ Tool/Subagent  ⏺ read_file notes.txt L1-2000                                                                                       │ DIAGNOSTICS                      │
+█ kingfisher                                                                                                                          │   roster: present — fleet roste… │
+█> You  Report the two shapes and their colors in the attached image.                                                                 │   approval-detail: present — fo… │
+█@image:[redacted:absolute-filesystem-path:5]                                                                     │   http-runner: incompatible — a… │
+█[screenshot]                                                                                                                         │   kanban-dispatcher: not observ… │
+█ . Reasoning  [reasoning withheld by the provider]                                                                                   │                                  │
+█$ Tool/Subagent  ⏺ vision_analyze What are the two shapes in this image and their colors? Describe precisely.                        │ KEYS                             │
+█ A blue square (left) and an orange circle (right).                                                                                  │   F1 does nothing here. F2 togg… │
+                                                                                                                                      │                                  │
+                                                                                                                                      └──────────────────────────────────┘
+╭─ compose [ ] caret elsewhere ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ draft before reconnect + edited after reconnect                                                                                                                        │
+│                                                                                                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                                                                          
+[ok] connected│v0.6.1                                                                                                                                                     

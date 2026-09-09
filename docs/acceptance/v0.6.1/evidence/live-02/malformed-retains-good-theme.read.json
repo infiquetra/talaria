@@ -1,0 +1,14 @@
+{
+  "image": "malformed-retains-good-theme.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-07T13:56:14.940791+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "theme reload failed",
+  "nothing_else_masked": true
+}

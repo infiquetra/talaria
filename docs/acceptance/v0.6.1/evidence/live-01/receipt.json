@@ -1,0 +1,63 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-01",
+  "title": "Custom theme workflow",
+  "issue": "140",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T13:48:24.270114+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_094813_04fc44",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Created and selected a custom theme, changed its stored canvas and reloaded in the same live session; retained Ready transcript and controls changed from dark to purple.\nFetched an imported theme through a served source, changed its stored canvas and reloaded locally; the imported theme remained active with the local maroon canvas.\nChanged the served upstream canvas and explicitly fetched again; the canvas became green, distinguishing upstream reimport from stored-file reload.",
+  "expected": {
+    "source": "case contract",
+    "text": "Satisfy the named live matrix case through the real application and connected gateway."
+  },
+  "actual": "Created and selected a custom theme, changed its stored canvas and reloaded in the same live session; retained Ready transcript and controls changed from dark to purple. Fetched an imported theme through a served source, changed its stored canvas and reloaded locally; the imported theme remained active with the local maroon canvas. Changed the served upstream canvas and explicitly fetched again; the canvas became green, distinguishing upstream reimport from stored-file reload.\nClause 1: pass: Created and selected a custom theme, changed its stored canvas and reloaded in the same live session; retained Ready transcript and controls changed from dark to purple. (https://github.com/infiquetra/talaria/issues/140)\nClause 2: pass: Fetched an imported theme through a served source, changed its stored canvas and reloaded locally; the imported theme remained active with the local maroon canvas. (https://github.com/infiquetra/talaria/issues/140)\nClause 3: pass: Changed the served upstream canvas and explicitly fetched again; the canvas became green, distinguishing upstream reimport from stored-file reload. (https://github.com/infiquetra/talaria/issues/140) The retained original c798be0 run produced the edited custom-theme file before its custom-reloaded frame; its sanitized, filed copy is edited-theme-file.txt (SHA-256 6947769bbe11545cde00cc9c86056fb207cf174793c0ac2e703305c52f553fe5) and was checked for private values.",
+  "evidence": {
+    "files": {
+      "custom-selected.png": "b713536bfbdba29c37d92552f208d8523e6b44c7d849f8b7357ec2693aacefaa",
+      "custom-selected.txt": "7c2cb26efc6affeff60fab53a570c9c6d8c7f70a2262dff73f6d08dffddc904b",
+      "custom-selected.json": "23f34d0720f26fff0c2818008f1f4a1457fe5aa6f2f06f9b406e246c1b52df04",
+      "custom-reloaded.png": "54eee0c2933ad8225a757c771fcef704dee9f50a6489017dbb680d20bcd0e0ed",
+      "custom-reloaded.txt": "831944842aea831038e42fa9f5ff75703c6dfb99f13bf4e629a2a21e14b4fed9",
+      "custom-reloaded.json": "de8372f4a1a3890d7f2baffca4aae023d785d0fc0e7c4932f8efa4cf8209c811",
+      "imported-selected.png": "fd3b68e0fcc6ec4e875e73dd4902e88f276ee023ff5e60bad307bbc0b8367dbc",
+      "imported-selected.txt": "0fb022c87952e6dbfbea6fb8e8f1071cfa340e52ee9f97952aadf76e84a2f660",
+      "imported-selected.json": "ffd68623d8c867b4d8fe2b4da28601fa91310be9251ab0b24bf7a38e01a47b90",
+      "imported-local-reload.png": "93aa43f8182a05c8b4a326276bdc7a7ee22453fb863c60f10dcfacf3a8c5777c",
+      "imported-local-reload.txt": "438e0dc19b65a8a860401d4099fd5822f0f76a06e1eef57ef8d509117c51cc71",
+      "imported-local-reload.json": "3695edf1456832455d865d9947e01588febb3dd08aa39554040813388dffc04b",
+      "imported-refetched.png": "41d078a27df4adbf37ab12662abb413dcd8ab09585b328d9cd644438e24e9acc",
+      "imported-refetched.txt": "e3044007805508749c16c57fd940ba475a7ed7cbec4c9d4f8e61a369469ac4ad",
+      "imported-refetched.json": "4bb0a3ae522871544e1a1dbdccb45f469427c16714b8894450215da24cdb379b",
+      "wire-evidence.jsonl": "817049a0529809866347f99bdc957acaf6043b5da511f62dff6433f67e6b0b77",
+      "edited-theme-file.txt": "6947769bbe11545cde00cc9c86056fb207cf174793c0ac2e703305c52f553fe5"
+    },
+    "files_listed_at": "2026-09-07T19:23:00+00:00",
+    "read_confirmations": []
+  }
+}

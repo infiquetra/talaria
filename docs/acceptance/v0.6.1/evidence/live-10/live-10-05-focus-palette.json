@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T13:55:46.917806+00:00",
+  "case": "live-10",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "diagnostics_cells": [
+    74,
+    22,
+    117,
+    28
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 831268,
+  "first_ansi_offset": 831268,
+  "first_frame_sha256": "333c888f68fd0e0c1ca9112819334a3d6f1a1bfce55395fa07994dbed392e215",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "live-10-05-focus-palette",
+  "frame_sha256": "333c888f68fd0e0c1ca9112819334a3d6f1a1bfce55395fa07994dbed392e215",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "4faafe9cf49dc2885d1e64fdd845a5f1c1593e142563062a36cc823652c89fc9",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 765,
+        "y": 162
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 765,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "recapture; stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_095528_bc2bcc",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "ba7c850c"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 1.0,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "live-10-05-focus-palette.txt",
+    "frame_sha256": "333c888f68fd0e0c1ca9112819334a3d6f1a1bfce55395fa07994dbed392e215",
+    "sha256": "00361021abad0f507e0091ca2d166cf71f21f0c7537466cf510086c39a84d762"
+  },
+  "twin_digest": "00361021abad0f507e0091ca2d166cf71f21f0c7537466cf510086c39a84d762"
+}

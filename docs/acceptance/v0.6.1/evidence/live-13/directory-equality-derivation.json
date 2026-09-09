@@ -1,0 +1,125 @@
+{
+  "candidate_commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "case": "live-13",
+  "checklist_item": "live-13",
+  "derived_at": "2026-09-07T17:14:05+00:00",
+  "derived_by": "dedicated-tester",
+  "format_version": "talaria-directory-equality-v1",
+  "observations": {
+    "a-after-reconnect": {
+      "fixture_content_matches": true,
+      "override_supplied": false,
+      "pwd_equals_expected": true,
+      "source_id": "session-a-init",
+      "tool_complete_seq": 258,
+      "tool_start_seq": 256
+    },
+    "a-tool-override": {
+      "fixture_content_matches": true,
+      "override_supplied": true,
+      "pwd_equals_expected": true,
+      "source_id": "session-a-init",
+      "tool_complete_seq": 173,
+      "tool_start_seq": 172
+    },
+    "b-after-a-override": {
+      "b_reported_cwd_unchanged": true,
+      "bounded_absence_session_cwd_set": true,
+      "fixture_content_matches": true,
+      "override_supplied": false,
+      "pwd_equals_expected": true,
+      "source_id": "session-b-init",
+      "tool_complete_seq": 173,
+      "tool_start_seq": 172
+    },
+    "fresh-a": {
+      "reply_seq": 23,
+      "reply_source_seq": 23,
+      "reported_equals_expected": true,
+      "request_seq": 22,
+      "request_source_seq": 22,
+      "requested_equals_launch": true,
+      "source_id": "session-a-fresh"
+    },
+    "project-a-adoption": {
+      "reply_seq": 22,
+      "reply_source_seq": 22,
+      "reported_equals_expected": true,
+      "request_seq": 21,
+      "request_source_seq": 21,
+      "requested_equals_launch": true,
+      "source_id": "session-a-init"
+    },
+    "project-a-tool": {
+      "fixture_content_matches": true,
+      "override_supplied": false,
+      "pwd_equals_expected": true,
+      "source_id": "session-a-init",
+      "tool_complete_seq": 96,
+      "tool_start_seq": 85
+    },
+    "project-b-adoption": {
+      "reply_seq": 21,
+      "reply_source_seq": 21,
+      "reported_equals_expected": true,
+      "request_seq": 20,
+      "request_source_seq": 20,
+      "requested_equals_launch": true,
+      "source_id": "session-b-init"
+    },
+    "project-b-tool": {
+      "fixture_content_matches": true,
+      "override_supplied": false,
+      "pwd_equals_expected": true,
+      "source_id": "session-b-init",
+      "tool_complete_seq": 108,
+      "tool_start_seq": 99
+    },
+    "resumed-a": {
+      "reply_seq": 21,
+      "reply_source_seq": 21,
+      "reported_equals_expected": true,
+      "request_seq": 20,
+      "request_source_seq": 20,
+      "requested_equals_launch": false,
+      "source_id": "session-a-resume"
+    },
+    "resumed-a-tool": {
+      "fixture_content_matches": true,
+      "override_supplied": false,
+      "pwd_equals_expected": true,
+      "source_id": "session-a-resume",
+      "tool_complete_seq": 41,
+      "tool_start_seq": 40
+    }
+  },
+  "permission_semantics": "No permission change was made or claimed.",
+  "record_type": "directory-equality-derivation",
+  "sources": {
+    "session-a-fresh": {
+      "derived_file": "wire-fresh-a.jsonl",
+      "derived_sha256": "906e994b02be3cf01d97470da4730a8243c13c9b59fe9ce8f82fabbfa2c6e18b",
+      "source_file": "raw-fresh-a.jsonl",
+      "source_sha256": "e302eb8332a93c153beda461374d4c0c86dacece69ca6bda8c34c1c435dcf5b4"
+    },
+    "session-a-init": {
+      "derived_file": "wire-project-a.jsonl",
+      "derived_sha256": "bc170664e239cb95ece535263e456472f7c30d036366e33f2baac6851f6723b1",
+      "source_file": "raw-project-a.jsonl",
+      "source_sha256": "12822a76d0ee5b4d278113caf85b20b3aac72c573836bcae90da1156a713c4d6"
+    },
+    "session-a-resume": {
+      "derived_file": "wire-resumed-a.jsonl",
+      "derived_sha256": "ae5b30954d5e0588c7968de72bccc7cb192b154c509e931360474e1dab068900",
+      "source_file": "raw-resumed-a.jsonl",
+      "source_sha256": "3fcbb4f9bc8f068dea7eea850f9be87ee20df02e8ab5e6da86a9308bc0157e66"
+    },
+    "session-b-init": {
+      "derived_file": "wire-project-b.jsonl",
+      "derived_sha256": "f2e03a25b2db86e0ad91f65de4dba5541b6799041943d1b1768455d55fc3a83d",
+      "source_file": "raw-project-b.jsonl",
+      "source_sha256": "35a0759c9d19913f0526856a95c7641fe8acab07205244d7a9390fe591a6e688"
+    }
+  },
+  "status": "pass"
+}

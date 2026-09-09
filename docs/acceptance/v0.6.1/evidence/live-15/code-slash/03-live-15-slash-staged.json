@@ -1,0 +1,74 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T14:02:08.824775+00:00",
+  "case": "live-15",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "event_log": "wire-sample-py-slash.jsonl",
+  "final_ansi_offset": 405873,
+  "first_ansi_offset": 405873,
+  "first_frame_sha256": "dc6a87d2dd3a5daf7e6374a385cbbc4a0965f84d26706781e3b26cddc63dfcd7",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "03-live-15-slash-staged",
+  "frame_sha256": "dc6a87d2dd3a5daf7e6374a385cbbc4a0965f84d26706781e3b26cddc63dfcd7",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "2d9fd46787cb2819e25e173ac18c070e719a7c7656c5b6aa74fd34cfdd141418",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 414,
+        "x": 72,
+        "y": 630
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 414,
+        "x": 432,
+        "y": 648
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_100202_b38287",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "e456fcbc"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "03-live-15-slash-staged.txt",
+    "frame_sha256": "dc6a87d2dd3a5daf7e6374a385cbbc4a0965f84d26706781e3b26cddc63dfcd7",
+    "sha256": "2006237c715685760ba6e227a21b78c20158f6f245dda38f38a31043c1c17dcd"
+  },
+  "twin_digest": "2006237c715685760ba6e227a21b78c20158f6f245dda38f38a31043c1c17dcd"
+}

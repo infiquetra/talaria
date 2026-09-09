@@ -1,0 +1,50 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T19:09:47.367730+00:00",
+  "case": "live-03",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 375247,
+  "first_ansi_offset": 375247,
+  "first_frame_sha256": "180ade12a828dad52c4139bdc1bf0a80df5c7834c6062867f22f816fd4d1a030",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "preview-cancelled",
+  "frame_sha256": "180ade12a828dad52c4139bdc1bf0a80df5c7834c6062867f22f816fd4d1a030",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "255011b009fb3f122746ed8f05814d56bf0b77921b271daaf401f65ee1359695",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_150941_6bc6ab",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "16e092dd"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "preview-cancelled.txt",
+    "frame_sha256": "180ade12a828dad52c4139bdc1bf0a80df5c7834c6062867f22f816fd4d1a030",
+    "sha256": "f4886c009a833e92f4d7de649607e4cf7514758c68d6f8271308e87fb1a2b64e"
+  },
+  "twin_digest": "f4886c009a833e92f4d7de649607e4cf7514758c68d6f8271308e87fb1a2b64e"
+}

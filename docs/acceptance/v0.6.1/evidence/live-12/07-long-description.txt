@@ -1,0 +1,40 @@
+                                                                                    ┌─ Inspector [docked 36] ──────────┐
+                                                                                    │ TASKS                            │
+                                                                                    │   [!] approval  waiting — scrip… │
+                                                                                    │                                  │
+                                                                                    │ CONTEXT                          │
+                                                                                    │   caret    composer              │
+                                                                                    │   session  3e27fcef              │
+                                                                                    │   profile  default               │
+                                                                                    │   model                          │
+                                                                                    │ muse-spark-1.3-contributor-free  │
+                                                                                    │   launch   [redacted:absolute-filesystem-path:1]  │
+                                                                                    │   agent    [redacted:absolute-filesystem-path:2]  │
+                                                                                    │   usage    0 input · 0 output    │
+                                                                                    │                                  │
+                                                                                    │ CHANGED FILES                    │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+                                                                                    │ OPERATION DETAILS                │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+                                                                                    │ MIXTURE OF AGENTS                │
+                                                                                    │   no progress events observed    │
+                                                                                    │                                  │
+                                                                                    │ DIAGNOSTICS                      │
+commands: 133 from the gateway · 15 local · 3 unsupported                           │   roster: present — fleet roste… │
+── Session ──                                                                       │   approval-detail: present — fo… │
+/goal              Set a standing goal Hermes works on across turns until achieved  │   http-runner: present — admin … │
+                   (usage: /goal [text | draft <text> | show | gate add <cmd> |     │   kanban-dispatcher: not observ… │
+                   pause | resume | clear | status | wait <pid> | unwait])          │                                  │
+/subgoal           Add or manage extra criteria on the active goal (usage: /subgoal │ KEYS                             │
+                   [text | remove N | clear])                                       │   F1 does nothing here. F2 togg… │
+                                                                                    └──────────────────────────────────┘
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ /goal                                                                                                                │
+│ the newest line is already followed — nothing changed                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

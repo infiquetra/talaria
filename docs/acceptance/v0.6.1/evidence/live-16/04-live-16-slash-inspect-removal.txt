@@ -1,0 +1,40 @@
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                      ╭──────────────────────────────────────────╮                                      
+                                      │ Remove this attachment?                  │                                      
+                                      │ sample.png                               │                                      
+                                      │ image · 2714 bytes · staged              │                                      
+                                      │ Staged, never delivered: removing        │                                      
+                                      │ unstages, nothing was read.              │                                      
+                                      │ keep it                                  │                                      
+                                      │ remove this attachment                   │                                      
+                                      │ ↑↓ move · enter choose · esc cancel      │                                      
+                                      ╰──────────────────────────────────────────╯                                      
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ the newest line is already followed — nothing changed                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

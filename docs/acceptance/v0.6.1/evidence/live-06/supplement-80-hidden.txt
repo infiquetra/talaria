@@ -1,0 +1,40 @@
+    Max output: 65,536 tokens               ┌─ Inspector [overlay] ────────────┐
+    Capabilities: reasoning, tools, vision, │ TASKS                          ▁ │
+    (session only — add --global to persist)│   [none available from this      │
+> You  No tools. Reply in exactly these thre│ session]                         │
+total: one plain sentence about a blue bird;│                                  │
+code fence containing print("bird").        │ CONTEXT                          │
+. Reasoning  Considering the Format         │   caret    composer              │
+                                            │   session  1ce9c792              │
+Okay, I'm now structuring the response preci│   profile  default               │
+constraints – single sentence, bullets, and │   model    gemini-3.6-flash      │
+been successfully noted, and I will be using│   launch   [redacted:absolute-filesystem-path:1]  │
+response format. I'm focusing on ensuring ac│   agent    [redacted:absolute-filesystem-path:2]  │
+specification of the required forms for the │   usage    4105 input · 52       │
+structure, the challenge is now accurately e│ output                           │
+mistakes!                                   │                                  │
+                                            │ CHANGED FILES                    │
+Verifying the Execution                     │   [none available from this      │
+                                            │ session]                         │
+I've meticulously crafted the example, ensur│                                  │
+constraint. I've double-checked the line cou│ OPERATION DETAILS                │
+under ten lines. I've also verified the thre│   [none available from this      │
+sentence, the bullet points, and the Python │ session]                         │
+precise, reflecting a complete and accurate │                                  │
+specification.                              │ MIXTURE OF AGENTS                │
+A blue bird sang softly from the high branch│   no progress events observed    │
+                                            │                                  │
+• Bluebirds are widely recognized symbols of│ DIAGNOSTICS                      │
+• They primarily feed on insects, wild berri│   roster: present — fleet rost…  │
+                                            │   approval-detail: present — f…  │
+                                            │   http-runner: present — admin…  │
+  print("bird")                             │   kanban-dispatcher: not obser…  │
+                                            │                                  │
+                                            │ KEYS                             │
+                                            └──────────────────────────────────┘
+╭─ compose [*] caret here ─────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                   │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents
+[ok] up                                                                         

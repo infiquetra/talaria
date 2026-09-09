@@ -1,0 +1,49 @@
+                                                                                                                            ┌─ Inspector [docked 36] ──────────┐
+                                                                                                                            │ TASKS                            │
+                                                                                                                            │   [none available from this      │
+                                                                                                                            │ session]                         │
+                                                                                                                            │                                  │
+                                                                                                                            │ CONTEXT                          │
+                                                                                                                            │   caret    inspector             │
+                                                                                                                            │   session  5a2f7a06              │
+                                                                                                                            │   profile  default               │
+                                                                                                                            │   model                          │
+                                                                                                                            │ muse-spark-1.3-contributor-free  │
+                                                                                                                            │   launch   [redacted:absolute-filesystem-path:1]  │
+                                                                                                                            │   agent    [redacted:absolute-filesystem-path:2]  │
+                                                                                                                            │   usage    0 input · 0 output    │
+                                                                                                                            │                                  │
+                                                                                                                            │ CHANGED FILES                    │
+                                                                                                                            │   [none available from this      │
+                                                                                                                            │ session]                         │
+                                                                                                                            │                                  │
+                                                                                                                            │ OPERATION DETAILS                │
+                                                                                                                            │   [none available from this      │
+                                                                                                                            │ session]                         │
+                                                                                                                            │                                  │
+                                                                                                                            │ MIXTURE OF AGENTS                │
+                                                                                                                            │   no progress events observed    │
+                                                                                                                            │                                  │
+                                                                                                                            │ DIAGNOSTICS                      │
+                                                                                                                            │   roster: present — fleet roster │
+                                                                                                                            │ available (probe                 │
+                                                                                                                            │ session.active_list, 1s ago)     │
+                                                                                                                            │   approval-detail: present — fo… │
+                                                                                                                            │   http-runner: present — admin … │
+                                                                                                                            │   kanban-dispatcher: not observ… │
+                                                                                                                            │                                  │
+                                                                                                                            │ KEYS                             │
+                                                                                                                            │   F1 does nothing here. F2 togg… │
+                                                                                                                            │                                  │
+                                                                                                                            │                                  │
+                                                                                                                            │                                  │
+                                                                                                                            │                                  │
+                                                                                                                            │                                  │
+                                                                                                                            │                                  │
+                                                                                                                            └──────────────────────────────────┘
+╭─ compose [ ] caret elsewhere ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                                                                   │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                                                                
+[ok] connected│v0.6.1                                                                                                                                           

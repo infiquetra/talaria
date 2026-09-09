@@ -1,0 +1,46 @@
+Herdr live key bindings
+key	action
+1..9	switch workspace
+ctrl+b	prefix mode
+ctrl+o	custom command
+enter	open workspace
+esc	back
+h / j / k / l / left / right	move focus
+prefix+-	split horizontal
+prefix+1..9	switch tab 1-9
+prefix+?	keybinds
+prefix+[	copy mode
+prefix+b	toggle sidebar
+prefix+c	new tab
+prefix+e	edit scrollback
+prefix+g	session navigator
+prefix+h	focus pane left
+prefix+j	focus pane down
+prefix+k	focus pane up
+prefix+l	focus pane right
+prefix+n	next tab
+prefix+o	open notification target
+prefix+p	previous tab
+prefix+q	detach
+prefix+r	resize mode
+prefix+s	settings
+prefix+shift+d	close workspace
+prefix+shift+g	new worktree
+prefix+shift+h	swap pane left
+prefix+shift+j	swap pane down
+prefix+shift+k	swap pane up
+prefix+shift+l	swap pane right
+prefix+shift+n	new workspace
+prefix+shift+p	rename pane
+prefix+shift+r	reload config
+prefix+shift+t	rename tab
+prefix+shift+tab	cycle pane previous
+prefix+shift+w	rename workspace
+prefix+shift+x	close tab
+prefix+tab	cycle pane next
+prefix+v	split vertical
+prefix+w	workspace navigation
+prefix+x	close pane
+prefix+z	zoom pane
+tab / shift+tab	cycle pane
+up / down	workspace list

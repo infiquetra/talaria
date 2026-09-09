@@ -1,0 +1,78 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-16",
+  "title": "Image attachment success through both selected routes",
+  "issue": "147",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T14:00:22.181497+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_095802_0f3008",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Both slash entry and bracketed paste open confirmation naming sample.png, image and2714bytes. Cancel sends no attachment; confirming stages it and identifies it before prompt submission.\nEach route inspects removal, detaches the image, re-adds it and submits exactly once. Complete gapless logs retain all outgoing methods with no method filter: {\"paste\": {\"frames\": 177, \"methods\": {\"agents.list\": 1, \"approval.pending\": 26, \"commands.catalog\": 2, \"delegation.status\": 1, \"image.attach_bytes\": 2, \"image.detach\": 1, \"prompt.submit\": 1, \"session.active_list\": 15, \"session.create\": 1, \"session.list\": 15, \"session.most_recent\": 1, \"spawn_tree.list\": 1}, \"requests\": 67}, \"slash\": {\"frames\": 99, \"methods\": {\"agents.list\": 1, \"approval.pending\": 9, \"commands.catalog\": 2, \"delegation.status\": 1, \"image.attach_bytes\": 2, \"image.detach\": 1, \"prompt.submit\": 1, \"session.active_list\": 6, \"session.create\": 1, \"session.list\": 6, \"session.most_recent\": 1, \"spawn_tree.list\": 1}, \"requests\": 32}}\nBoth real completed responses identify a red square left, blue circle center and green triangle right against white. The actual supplied image was visually inspected and agrees. The prompt asks for shapes and positions without supplying those answers.",
+  "expected": {
+    "source": "case contract",
+    "text": "Both selected input routes support visible attachment, removal/re-add and submission with a prompt; the agent identifies actual image content."
+  },
+  "actual": "Ten reviewed frame trios and two full derived logs establish both routes. The host-drag route is the bracketed-paste ingress under the architectural ruling, not a separate OS drop handler. Unselected repeated confirmation frames remain in private custody.\nClause 1: pass: Both slash entry and bracketed paste open confirmation naming sample.png, image and2714bytes. Cancel sends no attachment; confirming stages it and identifies it before prompt submission. (https://github.com/infiquetra/talaria/issues/147#issuecomment-5560884480)\nClause 2: pass: Each route inspects removal, detaches the image, re-adds it and submits exactly once. Complete gapless logs retain all outgoing methods with no method filter: {\"paste\": {\"frames\": 177, \"methods\": {\"agents.list\": 1, \"approval.pending\": 26, \"commands.catalog\": 2, \"delegation.status\": 1, \"image.attach_bytes\": 2, \"image.detach\": 1, \"prompt.submit\": 1, \"session.active_list\": 15, \"session.create\": 1, \"session.list\": 15, \"session.most_recent\": 1, \"spawn_tree.list\": 1}, \"requests\": 67}, \"slash\": {\"frames\": 99, \"methods\": {\"agents.list\": 1, \"approval.pending\": 9, \"commands.catalog\": 2, \"delegation.status\": 1, \"image.attach_bytes\": 2, \"image.detach\": 1, \"prompt.submit\": 1, \"session.active_list\": 6, \"session.create\": 1, \"session.list\": 6, \"session.most_recent\": 1, \"spawn_tree.list\": 1}, \"requests\": 32}} (https://github.com/infiquetra/talaria/issues/147#issuecomment-5560884480)\nClause 3: pass: Both real completed responses identify a red square left, blue circle center and green triangle right against white. The actual supplied image was visually inspected and agrees. The prompt asks for shapes and positions without supplying those answers. (https://github.com/infiquetra/talaria/issues/147#issuecomment-5560884480)",
+  "evidence": {
+    "files": {
+      "01-live-16-slash-slash-confirm.png": "c9b6194bde9002259434235953e2d4ffe482c631e34704f252a95d82d83370c7",
+      "01-live-16-slash-slash-confirm.txt": "682db09319875feb86f4ce9201d3156324f901f6bc068b002f367bbb9b68f864",
+      "01-live-16-slash-slash-confirm.json": "e8c63abb5e96bc5c6f60b56e0ac8662daa750a276dbb0c15391c84e6e25014b0",
+      "03-live-16-slash-staged.png": "14ddeec3d4a4c5750134b15b9e20f98e446711062cc099e37f136bfcf19452c2",
+      "03-live-16-slash-staged.txt": "6b765377e179a63f62a687517002e2ba5a1c831f28420249293bf2c9f390d5ed",
+      "03-live-16-slash-staged.json": "03fef1c0dde34c1adfbf25c82f987bfa2d3a1e16f7bc65a4bb8f70ae7746abf9",
+      "04-live-16-slash-inspect-removal.png": "3ccaabb043f0ff3cb7c502005bc314b0c0aa0af827ecdc8b465c4ada3369104f",
+      "04-live-16-slash-inspect-removal.txt": "49129ff5c4fb2820a46fbe234a7b6eeb0283f0d4e8bbe1290fb9e45fc643d9e5",
+      "04-live-16-slash-inspect-removal.json": "b12112b500e2d3e247f3173114f8a2f28efe7ca80dff94f6f85c3fa4e4bdc8ac",
+      "05-live-16-slash-removed.png": "9ca06307a752beb4190ff9c35d117896ce00323d55ec67b394fca71a1ac8c98a",
+      "05-live-16-slash-removed.txt": "dc8585abcd22e0a8a6a669299ee8fb4b89dc8cb926fe9dc6b433f7a0d3506f78",
+      "05-live-16-slash-removed.json": "a29cfa90ad571bb9f8206515e70bbcc3a011c09516895a846103e4625313231b",
+      "07-live-16-slash-completed-content.png": "1e26e2766b2a168c62f375f84265ee0d6bc2208a235dfecda84eb9f2c1351c52",
+      "07-live-16-slash-completed-content.txt": "ac9496887a030d78772aa426c78bae5105c193646c3f73f2366ea134f0f22322",
+      "07-live-16-slash-completed-content.json": "6396d7326a596c4b7c838d3679eb27e96aa1615665a40930b35b62366f1f2e47",
+      "01-live-16-paste-paste-confirm.png": "20694428081e891119642535c77f2e9a68e4b61346d204b8fd7f3605b0bcde59",
+      "01-live-16-paste-paste-confirm.txt": "04552eb065865534035ab7953be6f0fc9c36bfbe80aed55ea5e58fedbe33458d",
+      "01-live-16-paste-paste-confirm.json": "1d154b13585b8962b9d1ad2612ee249ef45b9f9a94c37ef61d2ce97a8c0e6ad6",
+      "03-live-16-paste-staged.png": "5d8e0db225f70c68c676c6f58f6ea801e6b998a746543567c7fd3f251c5742b2",
+      "03-live-16-paste-staged.txt": "6b765377e179a63f62a687517002e2ba5a1c831f28420249293bf2c9f390d5ed",
+      "03-live-16-paste-staged.json": "0bd09591c805f69a4fba086f5190fa5f7e2ee1093f5142582933d6c32ec3efe7",
+      "04-live-16-paste-inspect-removal.png": "581acfa864ce3ddf6bf7b82db940f3d77139af4bab9a50261ff1cc4514a71961",
+      "04-live-16-paste-inspect-removal.txt": "49129ff5c4fb2820a46fbe234a7b6eeb0283f0d4e8bbe1290fb9e45fc643d9e5",
+      "04-live-16-paste-inspect-removal.json": "6e69c90ee6a576ba82392754ade1df7cf08701f9043e678dc2cd1a8cef2de434",
+      "05-live-16-paste-removed.png": "a94221c2dc6344278a4ec258e7a804e2f54b935cc0f72dfac9f3c198ec6c9c20",
+      "05-live-16-paste-removed.txt": "dc8585abcd22e0a8a6a669299ee8fb4b89dc8cb926fe9dc6b433f7a0d3506f78",
+      "05-live-16-paste-removed.json": "574c1cbb6e5334bc1c78042900519b523f81605bb1be05ebc84cf2edd2406719",
+      "07-live-16-paste-completed-content.png": "731f934e48a312024554212a7b295721cf96faa6f7b05140bb928fef6d10c4c7",
+      "07-live-16-paste-completed-content.txt": "59293793a180bd36f003611af8ca07fa82b11deda1c2fd6c82b9ac3c97a634da",
+      "07-live-16-paste-completed-content.json": "16bb50e49eac0453d1a1b1f7452bcb078de84b9475c933c8d47dd55606d253cd",
+      "wire-sample-png-slash.jsonl": "fbe3f32308105da5e5d172cf79f4f3ddbc2c9329fed16aff79e6084a93e51359",
+      "wire-sample-png-paste.jsonl": "a48e3f8d39093054f46ec2384593223718e9966f1c9ba46a07cfd140f4680e4a"
+    },
+    "files_listed_at": "2026-09-07T14:08:54.461423+00:00",
+    "read_confirmations": []
+  }
+}

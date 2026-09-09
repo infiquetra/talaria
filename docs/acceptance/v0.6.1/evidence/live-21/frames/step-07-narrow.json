@@ -1,0 +1,64 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<tool-environment>/bin/talaria",
+    "source_module": "talaria/__init__.py",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "captured_at": "2026-09-09T20:30:04.571792+00:00",
+  "case": "live-21",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 100,
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 12681133,
+  "first_ansi_offset": 12681133,
+  "first_frame_sha256": "f95f3dab3e8f64e55d726caa37e105db17873ad7a61b0a8057afea77442879f3",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "step-07-narrow",
+  "frame_sha256": "f95f3dab3e8f64e55d726caa37e105db17873ad7a61b0a8057afea77442879f3",
+  "gateway": "<gateway>",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 387,
+        "x": 117,
+        "y": 234
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    }
+  ],
+  "rows": 32,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260909_151322_bfe0f2",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "abcb775a"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.1,
+    "timeout_seconds": 60,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "step-07-narrow.txt",
+    "frame_sha256": "f95f3dab3e8f64e55d726caa37e105db17873ad7a61b0a8057afea77442879f3",
+    "sha256": "74fcabf26b97f9acbb9fcdb4f6384b216927560394e20f6a450a124c6a9ec5f7"
+  },
+  "twin_digest": "74fcabf26b97f9acbb9fcdb4f6384b216927560394e20f6a450a124c6a9ec5f7",
+  "png_sha256": "3ac542238db990c89450a274f3fdcf9908883de0722d6b578fa40b228fc77ea8"
+}

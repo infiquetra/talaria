@@ -1,0 +1,40 @@
+█    /compress       - Compress conversation context (add 'here [N]' to keep                                            
+█recent N turns; --preview shows what would happen) (usage: /compress [here [N] |                                       
+█focus topic | --preview|--dry-run])                                                                                    
+█    /compact        - Compress conversation context (add 'here [N]' to keep                                            
+█recent N turns; --preview shows what would happen) (alias for /compress)                                               
+█    /status         - Show session, model, token, and context info                                                     
+█    /context        - Show detailed context window view with usage gauge,                                              
+█category breakdown, compression stats, and throughput (usage: /context [all])                                          
+█    /ctx            - Show detailed context window view with usage gauge,                                              
+█category breakdown, compression stats, and throughput (alias for /context)                                             
+█             ╭──────────────────────────────────────────────────────────────────────────────────────────╮              
+█  ── Backgrou│ models — choose a provider                                                               │              
+█    /bg      │                                                                                          │              
+█<prompt>)    │  Qwen Cloud (alibaba)  (20 models)                                                       │              
+█    /btw     │  xAI Grok OAuth (SuperGrok / Premium+) (xai-oauth)  (13 models)                          │              
+█interrupting │  GitHub Copilot (copilot)  (21 models)                                                   │              
+█    /agents  │  GitHub Copilot ACP (copilot-acp)  (21 models)                                           │              
+█    /tasks   │  Google AI Studio (gemini)  (15 models)                                                  │              
+█    /journey │  DeepSeek (deepseek)  (3 models)                                                         │             ▂
+█[list|delete │  Ollama Cloud (ollama-cloud)  (23 models)                                                │              
+█    /learning│  OpenCode Zen (opencode-zen)  (73 models)                                                │              
+█    /memory-g│  OpenCode Go (opencode-go)  (36 models)                                                  │              
+█    /queue   │  Alibaba Cloud DashScope (China) (alibaba-cn)  (15 models)                               │              
+█(usage: /queu│  Alibaba Coding Plan (alibaba-coding-plan)  (10 models)                                  │              
+█    /q  …    │ *OpenCode Free (opencode-free)  (7 models) · profile default                             │              
+█- Session  /p│                                                                                          │              
+█  ✓ herdr-age│                                                                                          │              
+█  (+57 bundle│                                                                                          │              
+█  Enable/disa│ ↑↓ move · →/enter select · ←/esc back · type to filter · ctrl+q quit                     │              
+█- Session  /m╰──────────────────────────────────────────────────────────────────────────────────────────╯ prompt       
+█through the default MoA preset, then restores your model; pick a preset from the model picker to switch for the        
+█session)                                                                                                               
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ the newest line is already followed — nothing changed                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

@@ -1,0 +1,92 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<tool-environment>/bin/talaria",
+    "source_module": "talaria/__init__.py",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "captured_at": "2026-09-09T19:53:32.363670+00:00",
+  "case": "live-21",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 170,
+  "diagnostics_cells": [
+    136,
+    31,
+    167,
+    37
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 1848874,
+  "first_ansi_offset": 1848874,
+  "first_frame_sha256": "ce70124ab4dbd7e5174d54b7a2931b59ab161d5315311f3d7cd5c2f5f2131084",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "step-04-interrupted",
+  "frame_sha256": "ce70124ab4dbd7e5174d54b7a2931b59ab161d5315311f3d7cd5c2f5f2131084",
+  "gateway": "<gateway>",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1323,
+        "y": 198
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 1323,
+        "y": 216
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 3,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 1224,
+        "y": 414
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:3]"
+    }
+  ],
+  "rows": 46,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260909_151322_bfe0f2",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "abcb775a"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.1,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "step-04-interrupted.txt",
+    "frame_sha256": "ce70124ab4dbd7e5174d54b7a2931b59ab161d5315311f3d7cd5c2f5f2131084",
+    "sha256": "da27f4c74cc8b245aea9e141258a79d9ef17c39c874a54006b2cf52e7d750ad3"
+  },
+  "twin_digest": "da27f4c74cc8b245aea9e141258a79d9ef17c39c874a54006b2cf52e7d750ad3",
+  "png_sha256": "5c91c40d0e8f6e3e9440067928bbccef124c8f52a032825d3f4fbb79795b1132"
+}

@@ -1,0 +1,40 @@
+                                                                                    ┌─ Inspector [docked 36] ──────────┐
+                                                                                    │ TASKS                            │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+                                                                                    │ CONTEXT                          │
+                                                                                    │   caret    composer              │
+                                                                                    │   session  3e27fcef              │
+                                                                                    │   profile  default               │
+                                                                                    │   model                          │
+                                                                                    │ muse-spark-1.3-contributor-free  │
+                                                                                    │   launch   [redacted:absolute-filesystem-path:1]  │
+                                                                                    │   agent    [redacted:absolute-filesystem-path:2]  │
+                                                                                    │   usage    0 input · 0 output    │
+                                                                                    │                                  │
+                                                                                    │ CHANGED FILES                    │
+                                                                                    │   [none available from this      │
+                                                                                    │ session]                         │
+                                                                                    │                                  │
+/agents            Toggle sub-agent rows (F2 / ctrl+g)                              │ OPERATION DETAILS                │
+/attach            Stage a text, code or image file for the agent (or drop its      │   [none available from this      │
+path;                                                                               │ session]                         │
+                   no PDFs) [<path>]                                                │                                  │
+/bar               Show the status-bar segments or toggle one for this session      │ MIXTURE OF AGENTS                │
+                   [segment]                                                        │   no progress events observed    │
+/config            Open the configuration view (effective values, sources, save)    │                                  │
+/diffs             Open the session's read-only diff viewer                         │ DIAGNOSTICS                      │
+/inspector         Toggle the session inspector (ctrl+o)                            │   roster: present — fleet rost…  │
+/models            Open the model picker, select a row, or set a row as the         │   approval-detail: present — f…  │
+                   profile's default (F11 from every focus; F6 only outside         │   http-runner: present — admin…  │
+compose…                                                                            │   kanban-dispatcher: not obser…  │
+/needs             Open the needs-you list and go to what is waiting                │                                  │
+/pause             Hold the replay clock (F8)                                       │ KEYS                           ▇ │
+                                                                                    └──────────────────────────────────┘
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ /                                                                                                                    │
+│ the newest line is already followed — nothing changed                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

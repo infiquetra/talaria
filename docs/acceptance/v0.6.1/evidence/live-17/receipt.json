@@ -1,0 +1,168 @@
+{
+  "schema_version": "talaria-v0.6.1-receipt-v1",
+  "release": "0.6.1",
+  "checklist_item": "live-17",
+  "title": "Attachment ordinary failures and recovery",
+  "issue": "147",
+  "tester": "dedicated-tester",
+  "verdict": "pass",
+  "candidate_commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "recorded_at": "2026-09-07T15:20:42.141809+00:00",
+  "install": {
+    "kind": "source-checkout",
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "basis": "real candidate source checkout in its repository virtual environment"
+  },
+  "harness": {
+    "kind": "scratch-capture",
+    "commit": null,
+    "identity": "talaria-live-pty-driver-v2"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:8765/api/ws",
+    "profile": "default"
+  },
+  "session": {
+    "session_id": "20260907_100324_798583",
+    "profile": "default"
+  },
+  "terminal": {
+    "program": "Talaria via POSIX PTY on macOS",
+    "columns": 120,
+    "rows": 40
+  },
+  "actions": "Missing-file and permission-denied attempts show nothing was sent; unsupported PDF shows the explicit client format exclusion. No attach request or prompt submission occurs for those refusal actions; their later corrected file produces one prompt.submit and the actual fixture answer in the same conversation.\nOversize image.attach_bytes returns gateway4018: image too large (28830054 bytes; cap25MB). The visible notice names the size cap and shrink-and-retry action. Corrected attachment recovery completes in the same conversation.\nThe image-incapable route is transport-inapplicable: this gateway routes images to auxiliary vision even when the acting model lacks image support; Talaria has no client-visible capability flag to induce this route. This rests on the architectural ruling alone, not a claimed4016 capture.\nThe test-only client link drops the first file.attach before forwarding it. Talaria retains the command and displays interruption plus uncertain staging after reconnect. Retry produces the actual attached-file answer; Hermes itself is not restarted.\nJeff authorized gemini-3.6-flash through gemini for the unreadable, unsupported and oversize recovery sessions, each selected with --session. Missing-file and transfer recovery used the original muse-spark-1.3-contributor-free actor. Gateway, credentials, profile, shared default and tester model/account were unchanged.\nComplete gapless intervals retain all event types and outgoing methods, including prompt.submit: {\"missing\": {\"frames\": 98, \"requests\": 34, \"methods\": {\"agents.list\": 1, \"approval.pending\": 7, \"commands.catalog\": 2, \"delegation.status\": 1, \"file.attach\": 1, \"prompt.submit\": 1, \"session.active_list\": 9, \"session.create\": 1, \"session.list\": 9, \"session.most_recent\": 1, \"spawn_tree.list\": 1}}, \"unreadable\": {\"frames\": 98, \"requests\": 34, \"methods\": {\"agents.list\": 1, \"approval.pending\": 9, \"commands.catalog\": 2, \"delegation.status\": 1, \"file.attach\": 1, \"prompt.submit\": 1, \"session.active_list\": 7, \"session.create\": 1, \"session.list\": 8, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}}, \"unsupported\": {\"frames\": 101, \"requests\": 35, \"methods\": {\"agents.list\": 1, \"approval.pending\": 9, \"commands.catalog\": 2, \"delegation.status\": 1, \"file.attach\": 1, \"prompt.submit\": 1, \"session.active_list\": 8, \"session.create\": 1, \"session.list\": 8, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}}, \"oversize\": {\"frames\": 96, \"requests\": 33, \"methods\": {\"agents.list\": 1, \"approval.pending\": 8, \"commands.catalog\": 2, \"delegation.status\": 1, \"file.attach\": 1, \"image.attach_bytes\": 1, \"prompt.submit\": 1, \"session.active_list\": 7, \"session.create\": 1, \"session.list\": 7, \"session.most_recent\": 1, \"slash.exec\": 1, \"spawn_tree.list\": 1}}, \"transfer\": {\"frames\": 91, \"requests\": 34, \"methods\": {\"agents.list\": 2, \"approval.pending\": 5, \"commands.catalog\": 3, \"delegation.status\": 2, \"file.attach\": 2, \"prompt.submit\": 1, \"session.active_list\": 7, \"session.create\": 1, \"session.list\": 7, \"session.most_recent\": 2, \"spawn_tree.list\": 2}}}",
+  "expected": {
+    "source": "case contract",
+    "text": "Show ordinary attachment refusals and uncertain transfer outcomes honestly, preserve correction/retry, and demonstrate actual successful recovery."
+  },
+  "actual": "Ten selected frames were visually reviewed. Masks cover resource paths only; refusal explanations and recovery answers remain visible. Each complete wire interval has exactly one prompt.submit for its successful recovery. Jeff authorized gemini-3.6-flash through gemini for the unreadable, unsupported and oversize recovery sessions, each selected with --session. Missing-file and transfer recovery used the original muse-spark-1.3-contributor-free actor. Gateway, credentials, profile, shared default and tester model/account were unchanged.\nClause 1: pass: Missing-file and permission-denied attempts show nothing was sent; unsupported PDF shows the explicit client format exclusion. No attach request or prompt submission occurs for those refusal actions; their later corrected file produces one prompt.submit and the actual fixture answer in the same conversation. (https://github.com/infiquetra/talaria/issues/147)\nClause 2: pass: Oversize image.attach_bytes returns gateway4018: image too large (28830054 bytes; cap25MB). The visible notice names the size cap and shrink-and-retry action. Corrected attachment recovery completes in the same conversation. (https://github.com/infiquetra/talaria/issues/147)\nClause 3: not-applicable: The image-incapable route is transport-inapplicable: this gateway routes images to auxiliary vision even when the acting model lacks image support; Talaria has no client-visible capability flag to induce this route. This rests on the architectural ruling alone, not a claimed4016 capture. (https://github.com/infiquetra/talaria/issues/147); The case explicitly allows a documented transport-inapplicable disposition; auxiliary vision routing is gateway-controlled and no client flag induces incapability.\nClause 4: pass: The test-only client link drops the first file.attach before forwarding it. Talaria retains the command and displays interruption plus uncertain staging after reconnect. Retry produces the actual attached-file answer; Hermes itself is not restarted. (https://github.com/infiquetra/talaria/issues/147)",
+  "evidence": {
+    "files": {
+      "01-live-17-missing-failure.png": "9b8e26e0b6f6999b59d4c0785755274f4a62e19f6d5ee3c78d2fad14b2f0e211",
+      "01-live-17-missing-failure.txt": "b2e2e9f6de8cadf5e4ca299ed4817b96a2d2a3db48fbd6b77506f07c34eda34b",
+      "01-live-17-missing-failure.json": "21bb6667c13ebb3232b4540ec7d1c7d7938c935dcc4bdfb0360958c8d6881127",
+      "03-live-17-missing-completed-content.png": "f1d1fe995d2575bbf4235698ebd0a64d31fefebca95d19b19b1e289c4736a176",
+      "03-live-17-missing-completed-content.txt": "9efebc224f241f4e9771047e872f40a00e29b05d3320552022c8001213a464e8",
+      "03-live-17-missing-completed-content.json": "f8d902fe78d28d49c8bcc59b1969991fa454d662e6dedd9f02606442ca625d2c",
+      "03-live-17-missing-completed-content.read.json": "1f26f361c7afd37505a2778931860134958576868f1bdff726bf0cc91cf6d6e9",
+      "01-live-17-unreadable-failure.png": "4be15cef4b4803f28a8eed2d8448af1096475ec137ca1ac8358e80cb5facf0f3",
+      "01-live-17-unreadable-failure.txt": "2c94b9cf1a2ea068c1afa3515ee4b646b6517dccfeac668e1c2c71d0eba56890",
+      "01-live-17-unreadable-failure.json": "016a8f41858023c23623abc4503172e8e97f663cbfa9ca90eda5e23d677ef8e8",
+      "03-live-17-unreadable-completed-content.png": "ecd0adab121b0dda88ffffe434c11cbfd7120c294a5bdb70bca6512a930808e5",
+      "03-live-17-unreadable-completed-content.txt": "7868a7d67ed377374e6eeacd4e7f3f212c59097e2f1efcd6298cc54c69e8ce0e",
+      "03-live-17-unreadable-completed-content.json": "6d6f8424446280bf628b3bb68bdafb0d58f7a0e36cf57d9a7f17d637925abafb",
+      "03-live-17-unreadable-completed-content.read.json": "1ad0b084c3602e96f0d55d8fbdd393e226903b9a9581b8be07672c5df5b791bf",
+      "01-live-17-unsupported-failure.png": "df1c45038affe5ad0d5cc6f0ad656fb3ca0d867e5702ad4b8ac069e68b10fef7",
+      "01-live-17-unsupported-failure.txt": "541c18759563917c39168480866c7dc1d92407c93489ccd6806e9baf47d28653",
+      "01-live-17-unsupported-failure.json": "53c7a6f02154ace7ab411eeee34d61a078f49e34f7d0760ef70a7a642caba413",
+      "03-live-17-unsupported-completed-content.png": "68e27f7f2b945246aec1c893b67b5f433b450e177ca1851f6f181fe16a731032",
+      "03-live-17-unsupported-completed-content.txt": "87b9526462d68d6ebac15b3bdfce6a9c8b77303492204da1b5a37f7795290c58",
+      "03-live-17-unsupported-completed-content.json": "872e2ba8879895dce4aaa556d31e6fbd849df20db65481e1ff681069b20cf63a",
+      "03-live-17-unsupported-completed-content.read.json": "235d3273d8156fbec6740bb0fd3ac06cf06c3ef42c9907e215339bd471a0c5f3",
+      "01-live-17-oversize-failure.png": "9a0ae44bbdcf8ba9a8adfe0d2f04a2efe4d29b0cb1596783f21d6d2f98ec2b73",
+      "01-live-17-oversize-failure.txt": "2697c043b7318309b05c1d4e878eebd4aa81515f0bc64c8af1618193bdd49582",
+      "01-live-17-oversize-failure.json": "e4e7ff0c4fac51b5a4bbb1ffa6710b96bed127b2b3953ffbfbce1ea08f6dad11",
+      "03-live-17-oversize-completed-content.png": "91e7301f6d1e4ad95f5271cb39720809af93c4c85a3c4be2d5788793d421f5fa",
+      "03-live-17-oversize-completed-content.txt": "01f2947962e5b0e5e30329d019a569f2d7a9cdbdca7ad93e5ba6491fab40cc6b",
+      "03-live-17-oversize-completed-content.json": "2ff12e0c34fd0a9986c44626a49eb76b15db30277d8325ddb37b50ed4e33da9e",
+      "03-live-17-oversize-completed-content.read.json": "19a1576cf57bc9c5aa81ad39307a85b4861227db199f2b13a8f100d1bb77406a",
+      "02-live-17-transfer-unknown.png": "8bf7840c0768ae34a6481e86e1afd36a65310d5a6fc4f14bed2b8dacb5ae4fa6",
+      "02-live-17-transfer-unknown.txt": "6048e27457950fb522421a329d07ce32bb6950aa4c60cddb9f56af8cf329ec73",
+      "02-live-17-transfer-unknown.json": "a39d6ba78bbd95365f5411e7305f359caf3e9967adb02f2d9ddae42073ccafb6",
+      "04-live-17-transfer-completed-content.png": "1cd1920953088e0f936123f711895a1d716b19e00d926bdab3a98dd74db9ee56",
+      "04-live-17-transfer-completed-content.txt": "cbf0039ed6a33c9c06a9ae91bb3a4d03a3a89f6577afff313a4142ded13b753d",
+      "04-live-17-transfer-completed-content.json": "88e06cd73d887fc6c4c46a362aa878f947dded63c1ed45c504b6ca91bbef365f",
+      "04-live-17-transfer-completed-content.read.json": "efd1dacac19f0d0c8f40e6fb0b4caf3f1e6f9cf9a5560a88de31feb5292a2738",
+      "wire-failure-missing.jsonl": "d7223e88f1b2d95a1ba250930fb5402249ac70371da74626781a83762a2c6651",
+      "wire-failure-unreadable.jsonl": "06a0d9cf026068c7f82f5ec2d9d84db14bbd74ea1e51538027c86c11f32087c4",
+      "wire-failure-unsupported.jsonl": "06c02c20f598b0f85de563bf2efb085192b3cbfca310e4e05cbef7949b6c85b2",
+      "wire-failure-oversize.jsonl": "8e1263ea79c16293fedbe356c6e8febd1cc58da9761696a14affdd9e02d37f9b",
+      "wire-transfer.jsonl": "61d78d1f90a572c48ce77438c5b2a2ef0e5b55fec68f86dac0b22e65a24ea1e4"
+    },
+    "files_listed_at": "2026-09-07T15:24:52.707776+00:00",
+    "read_confirmations": [
+      {
+        "image": "03-live-17-missing-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:27:54.968875+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "361050f42f1f012052e0b2ed",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "03-live-17-unreadable-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:24:52.072286+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "a98a8ae999f8a33c1eb7f3fd",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "03-live-17-unsupported-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:24:52.249583+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "a98a8ae999f8a33c1eb7f3fd",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "03-live-17-oversize-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T15:24:52.399300+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          },
+          {
+            "index": 2,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "a98a8ae999f8a33c1eb7f3fd",
+        "nothing_else_masked": true
+      },
+      {
+        "image": "04-live-17-transfer-completed-content.png",
+        "read_by": "dedicated-tester",
+        "read_at": "2026-09-07T14:27:54.889266+00:00",
+        "redactions_confirmed": [
+          {
+            "index": 1,
+            "covered_class": "absolute-filesystem-path",
+            "region_matches_twin_span": true
+          }
+        ],
+        "witnessed_element": "085b0f00cb45cfcbb1102f59",
+        "nothing_else_masked": true
+      }
+    ],
+    "redaction_review": "passed"
+  }
+}

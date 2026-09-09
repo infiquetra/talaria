@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T13:50:40.960542+00:00",
+  "case": "live-11",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "diagnostics_cells": [
+    86,
+    26,
+    117,
+    32
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 766570,
+  "first_ansi_offset": 766570,
+  "first_frame_sha256": "420f05f53dd9ed4a9079e657d8b36ddb87de69492e02482bb1fcae51bf9bd0ee",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "usage-after-turns",
+  "frame_sha256": "420f05f53dd9ed4a9079e657d8b36ddb87de69492e02482bb1fcae51bf9bd0ee",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "5ee2f87db73ca300be53324fbbe88a2811831733fc115796c2323f1e6c9a4484",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 873,
+        "y": 162
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 180,
+        "x": 873,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_094909_0a2504",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "f9c04987"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "usage-after-turns.txt",
+    "frame_sha256": "420f05f53dd9ed4a9079e657d8b36ddb87de69492e02482bb1fcae51bf9bd0ee",
+    "sha256": "0df736eaca4b8cf4ea02c49a2fdcb71eacfe2b2e29d3f02ed32e52fb6077a371"
+  },
+  "twin_digest": "0df736eaca4b8cf4ea02c49a2fdcb71eacfe2b2e29d3f02ed32e52fb6077a371"
+}

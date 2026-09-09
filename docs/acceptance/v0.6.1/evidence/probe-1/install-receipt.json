@@ -1,0 +1,23 @@
+{
+  "candidate": {
+    "commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "version": "0.6.1",
+    "wheel_filename": "talaria-0.6.1-py3-none-any.whl",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "harness_commit": "c798be0016936c79e356fe0d82cfab7208869c88",
+  "install": {
+    "executable": "<scratch-root>/venv/bin/talaria",
+    "executable_sha256": "a03583afe66e0759e84b87ee28da2498ee2a47bae4eb14a8bc7ade2d0bdfd90d",
+    "help_ok": true,
+    "installed_file_count": 941,
+    "installed_files_sha256": "2f7b8ee941beed500fd59e01d8243a4a318ab90296150b96635c79dc071169bb",
+    "scratch_root": "<scratch-root>",
+    "venv": "<scratch-root>/venv",
+    "version_reported": "0.6.1"
+  },
+  "recorded_at": "2026-09-09T21:22:49+00:00",
+  "release": "0.6.1",
+  "schema_version": "talaria-v0.6.1-install-v1",
+  "tester": "operator"
+}

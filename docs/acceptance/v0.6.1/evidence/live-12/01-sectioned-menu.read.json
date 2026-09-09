@@ -1,0 +1,19 @@
+{
+  "image": "01-sectioned-menu.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-07T14:03:34.314739+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    },
+    {
+      "index": 2,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "Talaria",
+  "nothing_else_masked": true
+}

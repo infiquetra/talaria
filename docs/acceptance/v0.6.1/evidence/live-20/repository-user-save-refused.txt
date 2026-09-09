@@ -1,0 +1,40 @@
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                      ╭──────────────────────────────────────────────────────────────────────────────────────────╮                                                      
+                                                      │ configuration — effective values and sources                                             │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ theme                                                                                    │                                                      
+                                                      │ theme.name refined-default · source: user · live                                         │                                                      
+                                                      │  open the theme picker (closes this view)                                                │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ status — takes effect on restart                                                         │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ command                                                                                  │                                                      
+                                                      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      
+                                                      │ ▊                                                                                      ▎ │                                                      
+                                                      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      
+                                                      │ effective: (no status script) · source: default · mode: restart                          │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ interval_seconds (1–3600)                                                                │                                                      
+                                                      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      
+                                                      │ ▊  11                                                                                  ▎ │                                                      
+                                                      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      
+                                                      │ effective: 9 · source: repository file · mode: restart · a user-file save would be       │                                                      
+                                                      │ shadowed — save to repository instead                                                    │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ segments (space toggles · shift+↑↓ reorders the shown set)                               │                                                      
+                                                      │ [x] connection                                                                           │                                                      
+                                                      │ [x] version                                                                              │                                                      
+                                                      │ effective: connection, version · source: user · mode: restart                            │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ status.interval_seconds is set by the repository file; a user-file write would be        │                                                      
+                                                      │ shadowed — save to repository                                                            │                                                      
+                                                      │  apply — save to user configuration  save to repository      cancel                      │                                                      
+                                                      │                                                                                          │                                                      
+╭─ compose [ ] caret elsewhere ───────────────────────│                                                                                          │─────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline          │ tab moves · enter opens or presses · esc cancels                                         │                                                     │
+│ the newest line is already followed — nothing change╰──────────────────────────────────────────────────────────────────────────────────────────╯                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                                                                                                        
+[ok] connected│v0.6.1                                                                                                                                                                                   

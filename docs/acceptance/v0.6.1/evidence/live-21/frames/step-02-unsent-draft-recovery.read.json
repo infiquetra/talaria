@@ -1,0 +1,19 @@
+{
+  "image": "step-02-unsent-draft-recovery.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-09T19:38:22.156272+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    },
+    {
+      "index": 2,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "daily_ready",
+  "nothing_else_masked": true
+}

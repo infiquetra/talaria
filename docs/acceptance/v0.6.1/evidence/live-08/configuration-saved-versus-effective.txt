@@ -1,0 +1,40 @@
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+              ╭──────────────────────────────────────────────────────────────────────────────────────────╮              
+              │ configuration — effective values and sources                                             │              
+              │                                                                                          │              
+              │ theme                                                                                    │              
+              │ theme.name refined-default · source: default · live                                      │              
+              │  open the theme picker (closes this view)                                                │              
+              │                                                                                          │              
+              │ status — takes effect on restart                                                         │              
+              │                                                                                          │              
+              │ command                                                                                  │              
+              │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │              
+              │ ▊  python3 status.py                                                                   ▎ │              
+              │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │              
+              │ effective: python3 status.py · source: user · mode: restart                              │              
+              │                                                                                          │              
+              │ interval_seconds (1–3600)                                                                │              
+              │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │              
+              │ ▊  7                                                                                   ▎ │              
+              │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │              
+              │ saved: 7 · effective now: 2 · takes effect on restart                                    │              
+              │                                                                                          │              
+              │ segments (space toggles · shift+↑↓ reorders the shown set)                               │              
+              │ [x] connection                                                                           │              
+              │ [x] version                                                                              │              
+              │ [ ] cwd                                                                                  │              
+              │ effective: connection, version · source: user · mode: restart                            │              
+              │                                                                                          │              
+              │ saved to user configuration                                                              │              
+              │  apply — save to user configuration  save to repository      cancel                      │              
+status configu│                                                                                          │              
+              │                                                                                          │              
+╭─ compose [ ]│                                                                                          │─────────────╮
+│ Message  ·  │ tab moves · enter opens or presses · esc cancels                                         │             │
+│ the newest l╰──────────────────────────────────────────────────────────────────────────────────────────╯             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

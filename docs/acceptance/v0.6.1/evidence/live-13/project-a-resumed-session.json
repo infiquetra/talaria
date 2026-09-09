@@ -1,0 +1,146 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T15:21:24.437346+00:00",
+  "case": "live-13",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 240,
+  "diagnostics_cells": [
+    194,
+    24,
+    237,
+    30
+  ],
+  "event_log": "wire-resumed-a.jsonl",
+  "final_ansi_offset": 705665,
+  "first_ansi_offset": 704815,
+  "first_frame_sha256": "3dd0e759b738523ba714e2f585d6b193975212f4b44cf3eb846b97a49258a5f7",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "project-a-resumed-session",
+  "frame_sha256": "3dd0e759b738523ba714e2f585d6b193975212f4b44cf3eb846b97a49258a5f7",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "a5e13d5278501041e925f3cdb00decff4973b09a346f99fc9ba4673d3c90feb2",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 1845,
+        "y": 162
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 1845,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 3,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 18,
+        "y": 72
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:3]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 4,
+      "region": {
+        "height": 18,
+        "width": 783,
+        "x": 9,
+        "y": 108
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:4]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 5,
+      "region": {
+        "height": 18,
+        "width": 783,
+        "x": 18,
+        "y": 144
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:5]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 6,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 18,
+        "y": 216
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:6]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 7,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 135,
+        "y": 306
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:7]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 8,
+      "region": {
+        "height": 18,
+        "width": 765,
+        "x": 18,
+        "y": 324
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:8]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_111953_40d369",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "f29294d1"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 1.0,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "project-a-resumed-session.txt",
+    "frame_sha256": "3dd0e759b738523ba714e2f585d6b193975212f4b44cf3eb846b97a49258a5f7",
+    "sha256": "e12f4f65d838e6c5af31e75913f608a66a024ff4428faf9f2092b3d6facbbdb8"
+  },
+  "twin_digest": "e12f4f65d838e6c5af31e75913f608a66a024ff4428faf9f2092b3d6facbbdb8"
+}

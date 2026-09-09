@@ -1,0 +1,40 @@
+█- Session  /model: ✓ Model switched: gemini-3.6-flash                                                                  
+█    Provider: Google                                                                                                   
+█    Context: 1,048,576 tokens                                                                                          
+█    Max output: 65,536 tokens                                                                                          
+█    Capabilities: reasoning, tools, vision, PDF, audio, structured output                                              
+█    (session only — add --global to persist)                                                                           
+█> You  No tools. Reply in exactly these three forms, staying under ten lines total: one plain sentence about a blue    
+█bird; two Markdown bullets; and a Python code fence containing print("bird").                                          
+█ . Reasoning  Considering the Format                                                                                   
+█                                                                                                                       
+█ Okay, I'm now structuring the response precisely as requested. I've noted the constraints – single sentence,          
+█ bullets, and code. The blue bird example has been successfully noted, and I will be using it as my test case for the  
+█ response format. I'm focusing on ensuring accuracy in meeting the specification of the required forms for the         
+█ response. I'm confident in the structure, the challenge is now accurately executing and not making any mistakes!      
+█                                                                                                                       
+█ Refining the Structure                                                                                                
+█                                                                                                                       
+█ I've finalized the response format with a concise sentence, two bullets, and Python code. The blue bird example is    
+█ my benchmark. I'm prioritizing accuracy and efficiency in the line-by-line construction. I've double-checked against  
+█ all the constraints: no tool usage, the three forms are present in order, and the total lines is under ten.           
+█ A blue bird perched quietly on a high branch in the morning sun.                                                      
+█                                                                                                                       
+█ • Bluebirds are known for their vibrant blue plumage.                                                                 
+█ • Many blue birds feed on insects, seeds, and berries.                                                                
+█                                                                                                                       
+█                                                                                                                       
+█   print("bird")                                                                                                       
+█                                                                                                                       
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+                                                                                                                        
+╭─ compose [*] caret here ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline                                                                           │
+│ theme 'neutral-dark' selected (applied live, saved to user configuration)                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                        
+[ok] up│v0.6.1                                                                                                          

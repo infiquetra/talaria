@@ -1,0 +1,64 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<tool-environment>/bin/talaria",
+    "source_module": "talaria/__init__.py",
+    "wheel_sha256": "ae15f8f6107cbf1dc6910ccdd4a68e889cd194c1daa823bc3087abd180d79d74"
+  },
+  "captured_at": "2026-09-09T20:30:45.533791+00:00",
+  "case": "live-21",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 140,
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 12804143,
+  "first_ansi_offset": 12804143,
+  "first_frame_sha256": "4062e519aaf578a56a5ade00f3e8505e2bc11055cf54d478bd3f2fce33468fef",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "step-07-wide",
+  "frame_sha256": "4062e519aaf578a56a5ade00f3e8505e2bc11055cf54d478bd3f2fce33468fef",
+  "gateway": "<gateway>",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 387,
+        "x": 567,
+        "y": 486
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    }
+  ],
+  "rows": 45,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260909_151322_bfe0f2",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "abcb775a"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.1,
+    "timeout_seconds": 60,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "step-07-wide.txt",
+    "frame_sha256": "4062e519aaf578a56a5ade00f3e8505e2bc11055cf54d478bd3f2fce33468fef",
+    "sha256": "e392328e4ca71528fb2e092053deba4522f909006d1f7452990dd6af5788b582"
+  },
+  "twin_digest": "e392328e4ca71528fb2e092053deba4522f909006d1f7452990dd6af5788b582",
+  "png_sha256": "f27015d3bc3226a8d5d0cfd78220df5030f9e5f9bd7a18a15e79030f572e7003"
+}

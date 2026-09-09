@@ -1,0 +1,14 @@
+{
+  "image": "04-live-17-transfer-completed-content.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-07T14:27:54.889266+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "085b0f00cb45cfcbb1102f59",
+  "nothing_else_masked": true
+}

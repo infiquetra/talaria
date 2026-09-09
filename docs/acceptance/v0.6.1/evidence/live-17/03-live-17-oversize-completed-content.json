@@ -1,0 +1,74 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T15:20:42.141809+00:00",
+  "case": "live-17",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "event_log": "wire-failure-oversize.jsonl",
+  "final_ansi_offset": 624779,
+  "first_ansi_offset": 624779,
+  "first_frame_sha256": "7728391b1f30e6004ba70575af2a4ff06ad1b8fea530599421fd2c854a7c704a",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "03-live-17-oversize-completed-content",
+  "frame_sha256": "7728391b1f30e6004ba70575af2a4ff06ad1b8fea530599421fd2c854a7c704a",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "91e7301f6d1e4ad95f5271cb39720809af93c4c85a3c4be2d5788793d421f5fa",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 423,
+        "x": 126,
+        "y": 108
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 423,
+        "x": 324,
+        "y": 234
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_112024_18d923",
+    "profile": "default",
+    "reply_seq": 22,
+    "request_id": "10",
+    "runtime_id": "86524ebe"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "03-live-17-oversize-completed-content.txt",
+    "frame_sha256": "7728391b1f30e6004ba70575af2a4ff06ad1b8fea530599421fd2c854a7c704a",
+    "sha256": "01f2947962e5b0e5e30329d019a569f2d7a9cdbdca7ad93e5ba6491fab40cc6b"
+  },
+  "twin_digest": "01f2947962e5b0e5e30329d019a569f2d7a9cdbdca7ad93e5ba6491fab40cc6b"
+}

@@ -1,0 +1,63 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T14:02:01.282681+00:00",
+  "case": "live-15",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "event_log": "wire-sample-txt-paste.jsonl",
+  "final_ansi_offset": 482932,
+  "first_ansi_offset": 482932,
+  "first_frame_sha256": "3998549a8c112c35057aa9534e82fd8ee3026f488913ed8c270248e7a8bbc6c8",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "07-live-15-paste-completed-content",
+  "frame_sha256": "3998549a8c112c35057aa9534e82fd8ee3026f488913ed8c270248e7a8bbc6c8",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "4de82ca4db954ba16670e94dd0f5e311fb308f94dcb1c0209a4250e0a1ad8dbc",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 423,
+        "x": 126,
+        "y": 0
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    }
+  ],
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_100046_24b483",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "4417ca64"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "07-live-15-paste-completed-content.txt",
+    "frame_sha256": "3998549a8c112c35057aa9534e82fd8ee3026f488913ed8c270248e7a8bbc6c8",
+    "sha256": "314b6b9cede02ecfebe0603976c306eaa7e5a6d0f52c1d6dee00bbb972c8220a"
+  },
+  "twin_digest": "314b6b9cede02ecfebe0603976c306eaa7e5a6d0f52c1d6dee00bbb972c8220a"
+}

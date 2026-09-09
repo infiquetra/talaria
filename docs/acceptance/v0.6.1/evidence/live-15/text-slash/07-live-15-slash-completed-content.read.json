@@ -1,0 +1,14 @@
+{
+  "image": "07-live-15-slash-completed-content.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-07T14:25:01.370906+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "a7f2283d385468b32fd084bb",
+  "nothing_else_masked": true
+}

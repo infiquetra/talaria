@@ -1,0 +1,40 @@
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                                                                                                                                                                        
+                                                      ╭──────────────────────────────────────────────────────────────────────────────────────────╮                                                      
+                                                      │ configuration — effective values and sources                                             │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ theme                                                                                    │                                                      
+                                                      │ theme.name refined-default · source: user · live                                         │                                                      
+                                                      │  open the theme picker (closes this view)                                                │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ status — takes effect on restart                                                         │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ command                                                                                  │                                                      
+                                                      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      
+                                                      │ ▊  python3 status_probe.py                                                             ▎ │                                                      
+                                                      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      
+                                                      │ saved: python3 status_probe.py · effective now: (no status script) · takes effect on     │                                                      
+                                                      │ restart                                                                                  │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ interval_seconds (1–3600)                                                                │                                                      
+                                                      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      
+                                                      │ ▊  7                                                                                   ▎ │                                                      
+                                                      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      
+                                                      │ saved: 7 · effective now: 5 · takes effect on restart                                    │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ segments (space toggles · shift+↑↓ reorders the shown set)                               │                                                      
+                                                      │ [x] version                                                                              │                                                      
+                                                      │ [ ] cwd                                                                                  │                                                      
+                                                      │ [ ] git_branch                                                                           │                                                      
+                                                      │ saved: version · effective now: connection, version · takes effect on restart            │                                                      
+                                                      │                                                                                          │                                                      
+                                                      │ saved to user configuration                                                              │                                                      
+                                                      │  apply — save to user configuration  save to repository      cancel                      │                                                      
+                                                      │                                                                                          │                                                      
+╭─ compose [ ] caret elsewhere ───────────────────────│                                                                                          │─────────────────────────────────────────────────────╮
+│ Message  ·  Enter sends  ·  Ctrl+J newline          │ tab moves · enter opens or presses · esc cancels                                         │                                                     │
+│ the newest line is already followed — nothing change╰──────────────────────────────────────────────────────────────────────────────────────────╯                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ctrl+o inspector · / commands · ctrl+s cancel-turn · ctrl+q quit · ctrl+g agents                                                                                                                        
+[ok] connected│v0.6.1                                                                                                                                                                                   

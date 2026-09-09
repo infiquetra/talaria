@@ -1,0 +1,34 @@
+{
+  "image": "step-08-reconnected-identity.png",
+  "read_by": "dedicated-tester",
+  "read_at": "2026-09-09T20:48:52.909695+00:00",
+  "redactions_confirmed": [
+    {
+      "index": 1,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    },
+    {
+      "index": 2,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    },
+    {
+      "index": 3,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    },
+    {
+      "index": 4,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    },
+    {
+      "index": 5,
+      "covered_class": "absolute-filesystem-path",
+      "region_matches_twin_span": true
+    }
+  ],
+  "witnessed_element": "6689aecf",
+  "nothing_else_masked": true
+}

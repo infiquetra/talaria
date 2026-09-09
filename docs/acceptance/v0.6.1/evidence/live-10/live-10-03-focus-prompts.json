@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T13:55:38.407340+00:00",
+  "case": "live-10",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 120,
+  "diagnostics_cells": [
+    74,
+    22,
+    117,
+    28
+  ],
+  "event_log": "wire-evidence.jsonl",
+  "final_ansi_offset": 513817,
+  "first_ansi_offset": 513817,
+  "first_frame_sha256": "4a7ef33141af3b0f4efe1a8e8f92ca96fc7b1eae678ada5759963809ef6e50fa",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "live-10-03-focus-prompts",
+  "frame_sha256": "4a7ef33141af3b0f4efe1a8e8f92ca96fc7b1eae678ada5759963809ef6e50fa",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "b2f73aa480b7757de89a078328466c14605c11fd6b04b9a09974b8fca15601a9",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "redactions": [
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 1,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 765,
+        "y": 162
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:1]"
+    },
+    {
+      "covered_class": "absolute-filesystem-path",
+      "index": 2,
+      "region": {
+        "height": 18,
+        "width": 288,
+        "x": 765,
+        "y": 180
+      },
+      "twin_span": "[redacted:absolute-filesystem-path:2]"
+    }
+  ],
+  "rows": 40,
+  "scope": "recapture; stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_095528_bc2bcc",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "ba7c850c"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 1.0,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "live-10-03-focus-prompts.txt",
+    "frame_sha256": "4a7ef33141af3b0f4efe1a8e8f92ca96fc7b1eae678ada5759963809ef6e50fa",
+    "sha256": "d491bc83de8c44c5d1e299b7527a8862379fdb0f43cc4ec2dd1fa478fef9c2ac"
+  },
+  "twin_digest": "d491bc83de8c44c5d1e299b7527a8862379fdb0f43cc4ec2dd1fa478fef9c2ac"
+}

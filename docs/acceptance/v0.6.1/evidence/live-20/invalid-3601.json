@@ -1,0 +1,50 @@
+{
+  "candidate": {
+    "commit_sha": "c798be0016936c79e356fe0d82cfab7208869c88",
+    "entry_point": "<candidate-root>/.venv/bin/talaria",
+    "source_module": "talaria/__init__.py"
+  },
+  "captured_at": "2026-09-07T13:46:50.364193+00:00",
+  "case": "live-20",
+  "cell_height": 18,
+  "cell_width": 9.0,
+  "columns": 200,
+  "event_log": "wire-config-initial.jsonl",
+  "final_ansi_offset": 893817,
+  "first_ansi_offset": 893817,
+  "first_frame_sha256": "f581493b2054c904236830b41774be26948c44e659b66fbba159e98ab20dbf88",
+  "format_version": "talaria-live-capture-v2",
+  "frame": "invalid-3601",
+  "frame_sha256": "f581493b2054c904236830b41774be26948c44e659b66fbba159e98ab20dbf88",
+  "gateway": "ws://127.0.0.1:8765/api/ws",
+  "png_sha256": "f3b81720427919c3a5493aed1fd38a22dd050b64fa2c20471c016b405a555069",
+  "purpose": "acceptance",
+  "record_type": "capture-metadata",
+  "rows": 40,
+  "scope": "stable frame; session fenced to visible anchor and unchanged attachment; not proof of completed turn",
+  "self_check": {
+    "algorithm": "cell-frame-equality-v1",
+    "expected_rejection": "deliberately unsettled screen rejected",
+    "stable_control": "pass",
+    "status": "pass"
+  },
+  "session": {
+    "durable_id": "20260907_094642_2b120a",
+    "profile": "default",
+    "reply_seq": 21,
+    "request_id": "10",
+    "runtime_id": "1e525bce"
+  },
+  "settling": {
+    "quiet_seconds_per_window": 0.05,
+    "timeout_seconds": 15.0,
+    "windows": 2
+  },
+  "tester": "dedicated-tester",
+  "text_twin": {
+    "file": "invalid-3601.txt",
+    "frame_sha256": "f581493b2054c904236830b41774be26948c44e659b66fbba159e98ab20dbf88",
+    "sha256": "7a1a184efde29b255070db6a6f6171e9f57b9db09c2a5d161c7484828aacab77"
+  },
+  "twin_digest": "7a1a184efde29b255070db6a6f6171e9f57b9db09c2a5d161c7484828aacab77"
+}
