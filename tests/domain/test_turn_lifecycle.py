@@ -135,3 +135,81 @@ def test_a_delta_without_a_start_opens_a_visible_synthetic_turn() -> None:
     assert state.synthetic_turn_starts == 1
     assert state.transcript[0].text == "stream began without a message.start event"
     assert state.streaming_text == "orphaned text"
+
+
+def test_remote_interrupt_via_message_complete_cancels_non_moa_turn() -> None:
+    """A gateway ``status=interrupted`` complete is the remote twin of
+    ``cancel_turn``: the turn stays cancelled, the partial is marked, and
+    late stream deltas are ignored (R4)."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("message.complete", {"text": "partial response", "status": "interrupted"}),
+    ])
+    assert state.turn == "cancelled"
+    assert [e.text for e in state.transcript if e.kind == "assistant"] == [
+        "partial response\n\n*[interrupted]*"
+    ]
+
+    after = replay([raw_event("message.delta", {"text": " more text"})], state)
+    assert after.turn == "cancelled"
+    assert after.late_events_ignored == 1
+    assert after.streaming_text == ""
+    assert " more text" not in "".join(e.text for e in after.transcript)
+
+
+def test_remote_interrupt_with_empty_text_still_leaves_cancelled_marker() -> None:
+    """Empty-text interrupted complete still has to record that the turn was
+    cancelled, matching ``interruptTurn``'s bare-note branch."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("message.complete", {"text": "", "status": "interrupted"}),
+    ])
+    assert state.turn == "cancelled"
+    assert [e.kind for e in state.transcript] == ["cancelled"]
+    assert state.transcript[0].text == "*[interrupted]*"
+
+    after = replay([raw_event("message.delta", {"text": "late"})], state)
+    assert after.late_events_ignored == 1
+    assert after.turn == "cancelled"
+
+
+def test_second_turn_error_complete_is_not_suppressed_by_prior_turn_error() -> None:
+    """Dedup of status=error completes is per-turn (entry.turn_index). A
+    previous turn's error must not swallow the next turn's failure."""
+    turn_one = replay([
+        raw_event("message.start"),
+        raw_event("error", {"message": "first error"}),
+    ])
+    assert [e.kind for e in turn_one.transcript] == ["error"]
+    first_turn_index = turn_one.turn_index
+
+    turn_two = replay(
+        [
+            raw_event("message.start"),
+            raw_event("message.complete", {"text": "second error", "status": "error"}),
+        ],
+        turn_one,
+    )
+    assert turn_two.turn_index != first_turn_index
+    errors = [e for e in turn_two.transcript if e.kind == "error"]
+    assert len(errors) == 2
+    assert errors[0].text == "error: first error"
+    assert errors[0].turn_index == first_turn_index
+    assert "second error" in errors[1].text
+    assert errors[1].turn_index == turn_two.turn_index
+
+
+def test_same_turn_error_complete_dedupes_even_with_intervening_system() -> None:
+    """Dedup must not require the error to be the last transcript kind. A
+    system note between the error event and the status=error complete is
+    still the same turn."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("error", {"message": "first error"}),
+        raw_event("status.update", {"text": "compressing context"}),
+        raw_event("message.complete", {"text": "first error", "status": "error"}),
+    ])
+    errors = [e for e in state.transcript if e.kind == "error"]
+    assert [e.text for e in errors] == ["error: first error"]
+    assert all(e.turn_index == state.turn_index for e in errors)
+    assert any(e.kind == "system" and "compressing context" in e.text for e in state.transcript)
