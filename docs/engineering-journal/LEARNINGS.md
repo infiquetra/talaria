@@ -2,6 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-09-11 — Turn completion status must drive session state and aggregation honesty
+
+**Evidence.** `talaria/domain/state.py`, `tests/domain/test_moa.py`,
+`tests/domain/test_turn_lifecycle.py`.
+
+**Mechanism.** The Hermes gateway sends `message.complete` with `status`
+('error', 'interrupted', 'complete'). Previously, Talaria's
+`_on_message_complete` ignored `payload.status`, unconditionally marking
+live Mixture of Agents (MoA) runs complete with fabricated aggregation
+lines and treating raw error strings as assistant prose. Ordinary error
+payloads synthesize error text in `payload.text`, which must not be
+preserved as assistant output unless `payload.partial` is true; error
+deduplication must be scoped per turn; and error lines must be clipped
+to `TRANSCRIPT_LINE_CLIP`.
+
+**Generalizable rule.** Never infer turn success from completion event
+arrival alone; wire status must dictate terminal state, and synthesized
+error text must never be relabeled as assistant output.
+
 ## 2026-09-07 — Four things in one release looked like verification and performed none
 
 **Evidence.** All four surfaced during the v0.6.1 acceptance run.

@@ -30,6 +30,7 @@ from talaria.domain.models import (
 from talaria.domain.normalize import (
     AMBIENT_IGNORED_EVENTS,
     MOA_FALLBACK_TEXT,
+    TRANSCRIPT_LINE_CLIP,
     format_moa_committed_line,
     format_moa_inspector_rows,
     format_moa_live_line,
@@ -886,3 +887,337 @@ def test_moa_terminal_run_leaves_no_pending_row() -> None:
         "interrupted at 3/5 references",
         "m1 · finished 1/5",
     )
+
+
+# ── message.complete payload status honesty ──────────────────────────────
+#
+# Hermes can close a turn with message.complete and payload.status in
+# {complete, error, interrupted}. _on_message_complete currently ignores
+# that key and always treats the turn as a successful complete.
+
+
+_AGGREGATOR = "openai-codex:gpt-5.6-sol"
+
+
+def test_message_complete_status_error_during_aggregation_fails_honestly() -> None:
+    """A failing aggregator must not fabricate a completion line."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 5, "refs_total": 5}),
+        raw_event("moa.aggregating", {"aggregator": _AGGREGATOR}),
+        raw_event("message.complete", {"text": "API failed", "status": "error"}),
+    ])
+    assert state.moa is not None
+    assert state.moa.phase == "failed"
+    assert state.turn == "idle"
+    system_entries = [e for e in state.transcript if e.kind == "system"]
+    assert any(
+        e.text == f"Mixture of Agents: failed while aggregating · {_AGGREGATOR}"
+        for e in system_entries
+    )
+    assert not any("aggregated by" in e.text for e in system_entries)
+    error_entries = [e for e in state.transcript if e.kind == "error"]
+    assert any("API failed" in e.text for e in error_entries)
+    assert not any(e.kind == "assistant" and "API failed" in e.text for e in state.transcript)
+
+
+def test_message_complete_status_error_without_moa_is_error_entry() -> None:
+    """Non-MoA completions with status=error are errors, not assistant text."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("message.complete", {"text": "something broke", "status": "error"}),
+    ])
+    assert state.moa is None
+    assert state.turn == "idle"
+    assert [e.kind for e in state.transcript] == ["error"]
+    assert "something broke" in state.transcript[0].text
+
+
+def test_message_complete_status_complete_matches_existing_path() -> None:
+    """status=complete must stay byte-identical to the status-absent complete path."""
+    shared = [
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 5, "refs_total": 5}),
+        raw_event("moa.aggregating", {"aggregator": _AGGREGATOR}),
+    ]
+    with_status = replay(
+        [*shared, raw_event("message.complete", {"text": "result", "status": "complete"})]
+    )
+    without_status = replay([*shared, raw_event("message.complete", {"text": "result"})])
+    assert with_status.turn == without_status.turn == "idle"
+    assert with_status.transcript == without_status.transcript
+    assert with_status.moa == without_status.moa
+    assert with_status.moa is not None
+    assert with_status.moa.phase == "complete"
+    system_entries = [e for e in with_status.transcript if e.kind == "system"]
+    assert any(
+        e.text == f"Mixture of Agents: 5/5 references · aggregated by {_AGGREGATOR}"
+        for e in system_entries
+    )
+    assert any(e.kind == "assistant" and e.text == "result" for e in with_status.transcript)
+
+
+def test_message_complete_status_interrupted_mid_aggregation_cancels() -> None:
+    state = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 5, "refs_total": 5}),
+        raw_event("moa.aggregating", {"aggregator": _AGGREGATOR}),
+        raw_event("message.complete", {"text": "stopped", "status": "interrupted"}),
+    ])
+    assert state.moa is not None
+    assert state.moa.phase == "cancelled"
+    assert state.turn == "cancelled"
+    system_entries = [e for e in state.transcript if e.kind == "system"]
+    assert any(
+        f"interrupted while aggregating · {_AGGREGATOR}" in e.text for e in system_entries
+    )
+    assert not any("aggregated by" in e.text for e in system_entries)
+
+
+def test_message_complete_absent_status_is_treated_as_complete() -> None:
+    """Older gateways omit status; that remains a successful complete."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 5, "refs_total": 5}),
+        raw_event("moa.aggregating", {"aggregator": _AGGREGATOR}),
+        raw_event("message.complete", {"text": "result"}),
+    ])
+    assert state.moa is not None
+    assert state.moa.phase == "complete"
+    assert state.turn == "idle"
+    system_entries = [e for e in state.transcript if e.kind == "system"]
+    assert any(
+        e.text == f"Mixture of Agents: 5/5 references · aggregated by {_AGGREGATOR}"
+        for e in system_entries
+    )
+    assert any(e.kind == "assistant" and e.text == "result" for e in state.transcript)
+
+
+def test_error_event_then_message_complete_status_error_keeps_terminal() -> None:
+    """The first terminal outcome wins; a later status=error must not restamp it."""
+    after_error = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 5, "refs_total": 5}),
+        raw_event("moa.aggregating", {"aggregator": _AGGREGATOR}),
+        raw_event("error", {"message": "turn failed"}),
+    ])
+    assert after_error.moa is not None
+    assert after_error.moa.phase == "failed"
+    summaries_after_error = [
+        e
+        for e in after_error.transcript
+        if e.kind == "system" and "Mixture of Agents:" in e.text
+    ]
+    assert len(summaries_after_error) == 1
+
+    after_complete = replay(
+        [raw_event("message.complete", {"text": "API failed", "status": "error"})],
+        after_error,
+    )
+    assert after_complete.moa is not None
+    assert after_complete.moa.phase == "failed"
+    assert after_complete.turn == "idle"
+    summaries_after_complete = [
+        e
+        for e in after_complete.transcript
+        if e.kind == "system" and "Mixture of Agents:" in e.text
+    ]
+    assert summaries_after_complete == summaries_after_error
+    assert [e.kind for e in after_complete.transcript] == [
+        e.kind for e in after_error.transcript
+    ]
+    assert [e for e in after_complete.transcript if e.kind == "error"] == [
+        e for e in after_error.transcript if e.kind == "error"
+    ]
+
+
+def test_message_complete_unrecognized_status_falls_back_to_complete() -> None:
+    state = replay([
+        raw_event("message.start"),
+        raw_event("moa.progress", {"label": "m1", "refs_done": 5, "refs_total": 5}),
+        raw_event("moa.aggregating", {"aggregator": _AGGREGATOR}),
+        raw_event(
+            "message.complete",
+            {"text": "result", "status": "unknown_weird_status"},
+        ),
+    ])
+    assert state.moa is not None
+    assert state.moa.phase == "complete"
+    assert state.turn == "idle"
+    system_entries = [e for e in state.transcript if e.kind == "system"]
+    assert any(
+        e.text == f"Mixture of Agents: 5/5 references · aggregated by {_AGGREGATOR}"
+        for e in system_entries
+    )
+    assert any(e.kind == "assistant" and e.text == "result" for e in state.transcript)
+
+
+def test_moa_failing_turn_wire_replay_orders_summary_then_error() -> None:
+    """End-to-end replay of the live MoA fixture with a failing complete.
+
+    The capture is a successful turn. Only the terminal payload is rewritten
+    to the failing-aggregation wire shape; advisor frames stay as observed.
+    """
+    frames = [
+        json.loads(line)
+        for line in _MOA_TURN_FIXTURE_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    complete = frames[-1]
+    assert complete["params"]["type"] == "message.complete"
+    complete["params"]["payload"]["text"] = "API failed"
+    complete["params"]["payload"]["status"] = "error"
+
+    state = replay(frames)
+    assert state.moa is not None
+    assert state.moa.phase == "failed"
+    assert state.turn == "idle"
+    assert [e.kind for e in state.transcript[-2:]] == ["system", "error"]
+    assert state.transcript[-2].text == (
+        f"Mixture of Agents: failed while aggregating · {_AGGREGATOR}"
+    )
+    assert "API failed" in state.transcript[-1].text
+    assert not any(e.kind == "assistant" for e in state.transcript)
+
+
+def test_message_complete_status_error_preserves_partial_text_and_error_field() -> None:
+    """Gateway error completions can carry partial assistant text plus a
+    separate error field. The partial is content (R6); the error is why it
+    stopped. They must not be collapsed into one error line."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event(
+            "message.complete",
+            {
+                "text": "half an ans",
+                "error": "connection reset mid-stream",
+                "status": "error",
+                "partial": True,
+            },
+        ),
+    ])
+    assert state.turn == "idle"
+    assert [e.kind for e in state.transcript] == ["assistant", "error"]
+    assert state.transcript[0].text == "half an ans"
+    assert "connection reset mid-stream" in state.transcript[1].text
+    assert "half an ans" not in state.transcript[1].text
+
+
+def test_message_complete_status_error_without_partial_does_not_become_assistant() -> None:
+    """Ordinary failures synthesize an error representation in ``text``.
+    Without ``partial=True`` that string is not assistant content."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event(
+            "message.complete",
+            {
+                "text": "Error: invalid model",
+                "error": "invalid model",
+                "status": "error",
+            },
+        ),
+    ])
+    assert state.turn == "idle"
+    assert [e.kind for e in state.transcript] == ["error"]
+    assert state.transcript[0].text == "error: invalid model"
+    assert not any(e.kind == "assistant" for e in state.transcript)
+
+
+def test_message_complete_non_string_error_field_is_coerced_not_dumped() -> None:
+    """A dict (or other non-string) ``error`` field must go through
+    ``coerce_text``, not ``str(dict)``, so the transcript never contains a
+    Python repr dump."""
+    error_field = {"code": "E_CONN", "detail": "reset"}
+    state = replay([
+        raw_event("message.start"),
+        raw_event(
+            "message.complete",
+            {
+                "text": "something broke",
+                "error": error_field,
+                "status": "error",
+            },
+        ),
+    ])
+    joined = "\n".join(e.text for e in state.transcript)
+    assert str(error_field) not in joined
+    assert "E_CONN" not in joined
+    error_entries = [e for e in state.transcript if e.kind == "error"]
+    assert error_entries
+    assert "something broke" in error_entries[0].text or "unknown error" in error_entries[0].text
+    assert not any(e.kind == "assistant" for e in state.transcript)
+
+
+def test_error_event_then_message_complete_status_error_without_moa_does_not_duplicate() -> None:
+    """A prior error event already recorded the outcome; the follow-up
+    status=error complete must not append a second error line."""
+    after_error = replay([
+        raw_event("message.start"),
+        raw_event("error", {"message": "first error"}),
+    ])
+    assert [e.kind for e in after_error.transcript] == ["error"]
+    assert [e.text for e in after_error.transcript] == ["error: first error"]
+
+    after_complete = replay(
+        [raw_event("message.complete", {"text": "first error", "status": "error"})],
+        after_error,
+    )
+    assert after_complete.turn == "idle"
+    assert [e.kind for e in after_complete.transcript] == ["error"]
+    assert [e.text for e in after_complete.transcript] == ["error: first error"]
+
+
+def test_message_complete_preprefixed_long_error_is_clipped() -> None:
+    """A payload whose ``text`` already starts with ``error: `` must still
+    be bounded by ``TRANSCRIPT_LINE_CLIP``. The prefix is not a licence to
+    skip the clip."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event(
+            "message.complete",
+            {"text": "error: " + ("x" * 2500), "status": "error"},
+        ),
+    ])
+    errors = [e for e in state.transcript if e.kind == "error"]
+    assert len(errors) == 1
+    assert errors[0].text.startswith("error: ")
+    assert len(errors[0].text) <= TRANSCRIPT_LINE_CLIP + 1
+    assert errors[0].text.endswith("…")
+    assert not any(e.kind == "assistant" for e in state.transcript)
+
+
+def test_partial_error_without_error_field_does_not_reuse_assistant_text() -> None:
+    """Partial assistant content is not an error reason. With no ``error``
+    field the diagnostic line is the unknown-error fallback."""
+    state = replay([
+        raw_event("message.start"),
+        raw_event(
+            "message.complete",
+            {"text": "half an ans", "status": "error", "partial": True},
+        ),
+    ])
+    assert [e.kind for e in state.transcript] == ["assistant", "error"]
+    assert state.transcript[0].text == "half an ans"
+    assert state.transcript[1].text == "error: unknown error"
+
+
+def test_partial_error_with_non_string_error_field_uses_unknown_error() -> None:
+    """A non-string ``error`` field is not a reason and must not dump a
+    dict repr or reuse the partial assistant text."""
+    error_field = {"detail": "fail"}
+    state = replay([
+        raw_event("message.start"),
+        raw_event(
+            "message.complete",
+            {
+                "text": "half an ans",
+                "error": error_field,
+                "status": "error",
+                "partial": True,
+            },
+        ),
+    ])
+    assert [e.kind for e in state.transcript] == ["assistant", "error"]
+    assert state.transcript[0].text == "half an ans"
+    assert state.transcript[1].text == "error: unknown error"
+    assert str(error_field) not in "\n".join(e.text for e in state.transcript)

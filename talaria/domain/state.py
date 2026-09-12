@@ -1971,6 +1971,18 @@ def _on_message_complete(state: SessionState, event: GatewayEvent) -> SessionSta
     operator cancelled must not resurrect the turn or overwrite its terminal
     state. Usage still merges, because token accounting describes what the
     provider actually billed and is not a claim about the turn's outcome.
+
+    ``payload.status`` is the gateway's turn outcome. Older gateways omit it.
+    ``error`` settles a live MoA run as failed. A separate ``payload.error`` is
+    the failure reason (coerced, never ``str()``-dumped). ``payload.text`` is
+    assistant content only when ``partial`` is set (R6); a partial is never
+    reused as the error reason. Every error line is clipped. Dedup is
+    per-turn so a previous turn's error cannot swallow this one.
+    ``interrupted`` is the remote twin of ``cancel_turn``:
+    a live MoA run settles as cancelled, the transcript carries the
+    interrupted marker, and the turn stays ``cancelled`` so late deltas are
+    ignored (R4). ``complete``, a missing value, and any unrecognised value
+    keep the historical complete path.
     """
     usage_payload = event.payload.get("usage")
     usage = (
@@ -1987,21 +1999,65 @@ def _on_message_complete(state: SessionState, event: GatewayEvent) -> SessionSta
         )
 
     final = _resolve_final_text(state, event.payload)
+    raw_status = event.payload.get("status")
+    status = str(raw_status) if raw_status is not None else None
 
     next_state = state
     if state.reasoning_text:
         next_state = _append(next_state, "reasoning", state.reasoning_text)
-    if state.moa is not None and not state.moa.is_terminal:
-        moa_completed = replace(state.moa, phase="complete", updated_at=event.at)
-        summary_line = format_moa_committed_line(moa_completed)
-        next_state = _append(next_state, "system", summary_line)
-        next_state = replace(next_state, moa=moa_completed)
-    if final:
-        next_state = _append(next_state, "assistant", final)
+
+    next_turn: TurnPhase = "idle"
+    if status == "error":
+        if state.moa is not None and not state.moa.is_terminal:
+            moa_failed = replace(state.moa, phase="failed", updated_at=event.at)
+            summary_line = format_moa_committed_line(moa_failed)
+            next_state = _append(next_state, "system", summary_line)
+            next_state = replace(next_state, moa=moa_failed)
+        turn_has_error = any(
+            e.kind == "error" and e.turn_index == state.turn_index
+            for e in state.transcript
+        )
+        if not turn_has_error:
+            error_msg = coerce_text(event.payload.get("error"))
+            is_partial = bool(event.payload.get("partial"))
+            if is_partial and final:
+                next_state = _append(next_state, "assistant", final)
+            if error_msg:
+                error_line = f"error: {error_msg}"
+            elif final and not is_partial:
+                error_line = (
+                    final if final.startswith("error: ") else f"error: {final}"
+                )
+            else:
+                error_line = "error: unknown error"
+            next_state = _append(
+                next_state, "error", clip_transcript_line(error_line)
+            )
+    elif status == "interrupted":
+        if state.moa is not None and not state.moa.is_terminal:
+            moa_cancelled = replace(state.moa, phase="cancelled", updated_at=event.at)
+            summary_line = format_moa_committed_line(moa_cancelled)
+            next_state = _append(next_state, "system", summary_line)
+            next_state = replace(next_state, moa=moa_cancelled)
+        if final:
+            next_state = _append(
+                next_state, "assistant", f"{final}\n\n*[interrupted]*"
+            )
+        else:
+            next_state = _append(next_state, "cancelled", "*[interrupted]*")
+        next_turn = "cancelled"
+    else:
+        if state.moa is not None and not state.moa.is_terminal:
+            moa_completed = replace(state.moa, phase="complete", updated_at=event.at)
+            summary_line = format_moa_committed_line(moa_completed)
+            next_state = _append(next_state, "system", summary_line)
+            next_state = replace(next_state, moa=moa_completed)
+        if final:
+            next_state = _append(next_state, "assistant", final)
 
     return replace(
         next_state,
-        turn="idle",
+        turn=next_turn,
         streaming_text="",
         reasoning_text="",
         thinking_notice="",
