@@ -1,0 +1,14 @@
+{
+  "schema_version": "talaria-v0.6.3-receipt-v1",
+  "release": "0.6.3",
+  "checklist_item": "cfg-cr3",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "7c34cc2a7187dd8a89173fe5658821e5e5da21e1",
+  "applies_to_candidate": "Production-identical to a11d426 except the U1V version/docs bump.",
+  "evidence": {
+    "source": "CFG-P2-CR3 accepted review artifact",
+    "observation": "The C1 residual repair candidate was accepted with no new findings; C2 and C3 remained closed.",
+    "review_artifact_sha256": "dd968d8faa9406953c9678a75930ed2bc16f7d80463248a400414b741c38f29c"
+  }
+}

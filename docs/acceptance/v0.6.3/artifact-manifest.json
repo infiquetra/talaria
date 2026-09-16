@@ -1,0 +1,57 @@
+{
+  "$schema": "./artifact-manifest.schema.json",
+  "schema_version": "talaria-v0.6.3-artifact-manifest-v1",
+  "gate_id": "v0-6-3-configuration-residuals",
+  "generated_command": "uv build --wheel; assemble the v0.6.3 configuration-residuals acceptance record",
+  "status": "complete",
+  "recorded_at": "2026-09-16T17:43:50Z",
+  "harness_commit": "a11d4261ffb15b8ac7b596c7170ea9faea152f28",
+  "candidate": {
+    "commit": "a11d4261ffb15b8ac7b596c7170ea9faea152f28",
+    "version": "0.6.3",
+    "wheel_filename": "talaria-0.6.3-py3-none-any.whl",
+    "wheel_sha256": "933034ca03cee4697922591229ece1387d2fab39122ea7bfce7e8c11b2f2b1c9"
+  },
+  "counts": {
+    "install_receipts": 0,
+    "item_receipts": 3,
+    "item_verdicts": {
+      "blocked": 0,
+      "fail": 0,
+      "pass": 3,
+      "reserved": 0
+    }
+  },
+  "receipts": [
+    {
+      "receipt_path": "docs/acceptance/v0.6.3/evidence/cfg-cr3/receipts/receipt.json",
+      "receipt_sha256": "866ef8085e1c77763cff115a534e15e55f53c33dec475e13b25ae0ed8a40be0d",
+      "checklist_item": "cfg-cr3",
+      "tester": "controller",
+      "verdict": "pass",
+      "candidate_commit_sha": "7c34cc2a7187dd8a89173fe5658821e5e5da21e1",
+      "applies_to_candidate": "Production-identical to a11d426 except the U1V version/docs bump."
+    },
+    {
+      "receipt_path": "docs/acceptance/v0.6.3/evidence/cfg-project-check/receipts/receipt.json",
+      "receipt_sha256": "00858a71210b2d7efc1a76e8ec561b72862b7fcbfc075e41e083e395b2c07624",
+      "checklist_item": "cfg-project-check",
+      "tester": "controller",
+      "verdict": "pass",
+      "candidate_commit_sha": "7c34cc2a7187dd8a89173fe5658821e5e5da21e1",
+      "applies_to_candidate": "Production-identical to a11d426 except the U1V version/docs bump."
+    },
+    {
+      "receipt_path": "docs/acceptance/v0.6.3/evidence/cfg-u1v/receipts/receipt.json",
+      "receipt_sha256": "a085445cfe0267d717bfea9143931a0e79c551bb81b824149642a416deb28ed9",
+      "checklist_item": "cfg-u1v",
+      "tester": "controller",
+      "verdict": "pass",
+      "candidate_commit_sha": "a11d4261ffb15b8ac7b596c7170ea9faea152f28",
+      "applies_to_candidate": "same"
+    }
+  ],
+  "install_receipts": [],
+  "results_document": "docs/acceptance/v0.6.3/results.md",
+  "notes_document": "docs/acceptance/v0.6.3/notes.md"
+}

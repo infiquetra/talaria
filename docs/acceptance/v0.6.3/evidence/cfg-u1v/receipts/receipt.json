@@ -1,0 +1,13 @@
+{
+  "schema_version": "talaria-v0.6.3-receipt-v1",
+  "release": "0.6.3",
+  "checklist_item": "cfg-u1v",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "a11d4261ffb15b8ac7b596c7170ea9faea152f28",
+  "applies_to_candidate": "same",
+  "evidence": {
+    "source": "CFG-P2-U1V version and release-notes commit",
+    "observation": "The product declares __version__ = 0.6.3 and carries the dated v0.6.3 release documentation."
+  }
+}

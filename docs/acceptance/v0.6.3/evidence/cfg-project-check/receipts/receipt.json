@@ -1,0 +1,14 @@
+{
+  "schema_version": "talaria-v0.6.3-receipt-v1",
+  "release": "0.6.3",
+  "checklist_item": "cfg-project-check",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "7c34cc2a7187dd8a89173fe5658821e5e5da21e1",
+  "applies_to_candidate": "Production-identical to a11d426 except the U1V version/docs bump.",
+  "evidence": {
+    "source": "project-check-7c34cc2.txt",
+    "observation": "Ruff, mypy, both Bandit runs, diff-check, and conflict-scan exited 0; pytest reported 3767 passed, 1 expected v0.6.2 HEAD-gate failure, and 31 skipped.",
+    "project_check_sha256": "7e81f05edc7afecf48fcd7749721c60825d82060b1d4d8aca4648f775c2174f8"
+  }
+}
