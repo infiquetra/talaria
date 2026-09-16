@@ -26,6 +26,8 @@ No network, no filesystem, no Textual (ADR-0002).
 from __future__ import annotations
 
 import importlib
+import inspect
+import secrets
 from typing import Any
 
 import pytest
@@ -493,3 +495,179 @@ def test_a_failed_save_never_paints_success() -> None:
 
     assert [group.effect for group in summary.groups] == ["rejected"]
     assert summary.groups[0].keys == ("agent.max_turns",)
+
+
+# ── P2-1: the live target picker projection (dev-4) ────────────────────────
+
+
+def test_target_options_flag_current_and_selected_without_reordering() -> None:
+    """The picker lists API-visible (connection, profile) pairs with stable
+    order and exact current/selected markers — same-named profiles on two
+    connections stay distinct entries (A1-2's pair rule, in the picker)."""
+    settings = _settings()
+    project = _require_attr(settings, "project_target_options")
+    local_a = _target(settings, "local-fixture", "alpha-fixture")
+    remote_a = _target(settings, "remote-fixture", "alpha-fixture")
+    local_b = _target(settings, "local-fixture", "beta-fixture")
+
+    options = project(
+        [local_a, remote_a, local_b], selected=local_a, current=local_b
+    )
+
+    assert [(o.connection_id, o.profile_name) for o in options] == [
+        ("local-fixture", "alpha-fixture"),
+        ("remote-fixture", "alpha-fixture"),
+        ("local-fixture", "beta-fixture"),
+    ]
+    assert [(o.is_selected, o.is_current) for o in options] == [
+        (True, False),
+        (False, False),
+        (False, True),
+    ]
+
+
+def test_an_empty_target_list_projects_no_options() -> None:
+    settings = _settings()
+    project = _require_attr(settings, "project_target_options")
+    target = _target(settings, "local-fixture", "alpha-fixture")
+
+    assert project([], selected=target, current=target) == ()
+
+
+def test_the_workspace_view_carries_the_projected_options() -> None:
+    """The screen renders the picker from the view, not from a second
+    fetch: the projector takes the visible pairs and attaches options."""
+    settings = _settings()
+    projection = _require_module("talaria.domain.projection")
+    project_workspace = _require_attr(projection, "project_settings_workspace")
+    if "targets" not in inspect.signature(project_workspace).parameters:
+        pytest.fail(
+            "unimplemented interface project_settings_workspace(targets=...) (P2-1)"
+        )
+    local_a = _target(settings, "local-fixture", "alpha-fixture")
+    local_b = _target(settings, "local-fixture", "beta-fixture")
+
+    identity = project_workspace(
+        connection_id="local-fixture",
+        connection_label="local-fixture",
+        current_profile="beta-fixture",
+        selected_profile="alpha-fixture",
+        targets=[local_a, local_b],
+    )
+
+    options = identity.view.target_options
+    assert [(o.profile_name, o.is_selected) for o in options] == [
+        ("alpha-fixture", True),
+        ("beta-fixture", False),
+    ]
+
+
+# ── P2-2: env decode and secret rows (dev-4) ───────────────────────────────
+
+
+def test_decode_env_listing_keeps_masks_and_presence_only() -> None:
+    """Hermes ``GET /api/env`` rows (``{is_set, redacted_value}`` at
+    3236f440) decode to presence + masked pairs. Raw values never appear
+    in this listing, so the decoder takes no value parameter at all."""
+    settings = _settings()
+    decode = _require_attr(settings, "decode_env_listing")
+
+    listing = decode(
+        {
+            "EXAMPLE_ONE": {"is_set": True, "redacted_value": "sk-…aa11"},
+            "EXAMPLE_TWO": {"is_set": False, "redacted_value": None},
+        }
+    )
+
+    assert listing == {
+        "EXAMPLE_ONE": (True, "sk-…aa11"),
+        "EXAMPLE_TWO": (False, ""),
+    }
+
+
+def test_decode_env_listing_tolerates_shape_drift() -> None:
+    """Unknown keys ride along untouched; mistyped presence/masks read as
+    unset rather than refusing the whole listing."""
+    settings = _settings()
+    decode = _require_attr(settings, "decode_env_listing")
+
+    listing = decode(
+        {
+            "EXAMPLE_ONE": {
+                "is_set": "yes",
+                "redacted_value": 7,
+                "invented_next_release": True,
+            },
+            "EXAMPLE_TWO": "not-an-object",
+        }
+    )
+
+    assert listing == {"EXAMPLE_ONE": (False, ""), "EXAMPLE_TWO": (False, "")}
+
+
+def test_decode_env_listing_refuses_a_body_that_is_not_a_json_object() -> None:
+    settings = _settings()
+    decode = _require_attr(settings, "decode_env_listing")
+    decode_error = _require_attr(settings, "SettingsDecodeError")
+
+    with pytest.raises(decode_error):
+        decode(["EXAMPLE_ONE"])
+
+
+def test_project_secret_rows_maps_presence_to_rows_in_sorted_order() -> None:
+    """One SecretRow per key, sorted for a deterministic listing; set rows
+    carry the server mask, unset rows carry nothing."""
+    settings = _settings()
+    project = _require_attr(settings, "project_secret_rows")
+
+    rows = project({"B_KEY": (True, "sk-…b"), "A_KEY": (False, "")})
+
+    assert [row.key for row in rows] == ["A_KEY", "B_KEY"]
+    assert rows[0].provenance == "default"
+    assert rows[0].masked == ""
+    assert rows[1].provenance == "saved"
+    assert rows[1].masked == "sk-…b"
+
+
+# ── P2-2: the presentation-ephemeral reveal value (dev-4, KTD6) ────────────
+
+
+def test_a_reveal_value_is_takeable_exactly_once() -> None:
+    """The overlay takes the plaintext a single time; every later take
+    yields nothing. Single-take is what makes the display one-shot by
+    construction rather than by discipline."""
+    settings = _settings()
+    holder_type = _require_attr(settings, "RevealDisplayValue")
+    canary = f"p2-canary-{secrets.token_hex(4)}"
+
+    holder = holder_type(key="EXAMPLE_P2_KEY", value=canary)
+
+    assert holder.is_cleared is False
+    assert holder.take() == canary
+    assert holder.is_cleared is True
+    assert holder.take() is None
+
+
+def test_a_reveal_value_never_appears_in_its_repr() -> None:
+    settings = _settings()
+    holder_type = _require_attr(settings, "RevealDisplayValue")
+    canary = f"p2-canary-{secrets.token_hex(4)}"
+
+    holder = holder_type(key="EXAMPLE_P2_KEY", value=canary)
+
+    assert canary not in repr(holder)
+    assert "EXAMPLE_P2_KEY" in repr(holder)
+
+
+def test_clear_wipes_without_returning_the_value() -> None:
+    """Close/timeout wipe through the same path whether or not the value
+    was ever displayed."""
+    settings = _settings()
+    holder_type = _require_attr(settings, "RevealDisplayValue")
+    canary = f"p2-canary-{secrets.token_hex(4)}"
+
+    holder = holder_type(key="EXAMPLE_P2_KEY", value=canary)
+    holder.clear()
+
+    assert holder.is_cleared is True
+    assert holder.take() is None

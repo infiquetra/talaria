@@ -32,6 +32,7 @@ policy; none is written to disk outside the test process.
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import secrets
 from typing import Any
@@ -299,3 +300,82 @@ def test_a_save_summary_names_the_secret_key_and_changed_never_the_value() -> No
     assert "EXAMPLE_API_KEY" in saved.keys
     assert "agent.max_turns" in saved.keys
     assert saved.details == ()
+
+
+# ── P2-2: rate-limit error records keep status, never values ──────────────
+#
+# A 429 reveal error carries no secret — only rate metadata the evidence
+# rules explicitly permit ("route/status metadata"). Denying it whole would
+# erase the rate-limit signal P2-2 must prove; recording it raw risks a
+# value-shaped field. Status-aware redaction preserves the status wording
+# while withholding any value, and only error metadata persists.
+
+
+def _require_status_support(recorder: Any) -> None:
+    for name in ("redact_http_body", "http_response_persistable"):
+        params = inspect.signature(getattr(recorder, name)).parameters
+        if "status" not in params:
+            pytest.fail(
+                f"unimplemented interface talaria.recorder.redact.{name}"
+                "(status=...) (P2-2)"
+            )
+
+
+def test_a_429_reveal_error_preserves_status_wording_without_values() -> None:
+    recorder = _recorder_redact()
+    _require_status_support(recorder)
+    canary = _canary()
+
+    result = _require_attr(recorder, "redact_http_body")(
+        method="POST",
+        path="/api/env/reveal",
+        body={"detail": "Too many reveal requests. Try again shortly."},
+        status=429,
+    )
+
+    assert "Too many reveal requests" in json.dumps(result.frame)
+    assert canary not in json.dumps(result.frame)
+    assert any(
+        entry.reason == "deny-route:POST /api/env/reveal"
+        for entry in result.redactions
+    )
+
+
+def test_a_value_shaped_field_in_an_error_body_is_still_withheld() -> None:
+    """Status-awareness must not become a bypass: value-shaped content in
+    an error body is withheld even while the status wording survives."""
+    recorder = _recorder_redact()
+    _require_status_support(recorder)
+    redacted_marker = _require_attr(recorder, "REDACTED")
+    canary = _canary()
+
+    result = _require_attr(recorder, "redact_http_body")(
+        method="POST",
+        path="/api/env/reveal",
+        body={"detail": "Too many reveal requests.", "value": canary},
+        status=429,
+    )
+
+    assert canary not in json.dumps(result.frame)
+    assert result.frame.get("value") == redacted_marker
+    assert "Too many reveal requests" in json.dumps(result.frame)
+
+
+@pytest.mark.parametrize(
+    ("status", "persistable"),
+    [(429, True), (200, False), (None, False)],
+)
+def test_only_error_metadata_persists_for_reveal_responses(
+    status: int | None, persistable: bool
+) -> None:
+    """Successful reveal responses never reach disk (A1-9, unchanged);
+    429 error metadata persists so the rate-limit proof is recordable."""
+    recorder = _recorder_redact()
+    _require_status_support(recorder)
+
+    assert (
+        _require_attr(recorder, "http_response_persistable")(
+            method="POST", path="/api/env/reveal", status=status
+        )
+        is persistable
+    )

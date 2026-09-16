@@ -29,12 +29,15 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, Static
 
 from talaria.config import setting_scopes
 from talaria.domain.commands import LocalInvocation, resolve_command
+from talaria.transport.connection_set import EnsureReport
 from talaria.ui.config_view import ConfigViewResult, ConfigViewScreen
+from talaria.ui.settings_overlays import TargetSwitchOverlay
 from tests.ui.conftest import event, paused_app, screen_text
 
 
@@ -710,3 +713,121 @@ async def test_a_malformed_configuration_file_is_named_rather_than_swallowed(
         assert app.composer.notice.startswith("/config:")
         assert "is not valid TOML" in app.composer.notice
         assert "config.toml" in app.composer.notice
+
+
+# ── P2-1: the Talaria branch across a Hermes target switch (dev-4) ─────────
+
+
+class _P2Connections:
+    """One configured connection; the switch must not disturb sessions."""
+
+    def __init__(self, home: str) -> None:
+        self._home = home
+
+    @property
+    def home(self) -> str:
+        return self._home
+
+    async def ensure(self, profile: str) -> EnsureReport:
+        return EnsureReport(profile, "already_up", "connected")
+
+
+class _P2SettingsClient:
+    """Minimal recording Hermes stand-in for the branch-ownership test."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def factory(self, endpoint: str) -> _P2SettingsClient:
+        del endpoint
+        return self
+
+    async def get_schema(self, target: Any) -> Any:
+        self.calls.append(("get_schema", target.profile_name))
+        return {
+            "fields": {
+                "agent.max_turns": {
+                    "type": "number",
+                    "description": "Maximum agent turns.",
+                    "category": "agent",
+                }
+            },
+            "category_order": ["agent"],
+        }
+
+    async def get_config(self, target: Any) -> Any:
+        self.calls.append(("get_config", target.profile_name))
+        saved = {"agent.max_turns": 25}
+        if target.profile_name.endswith("-switch"):
+            saved = {"agent.max_turns": 30}
+        return {"saved": dict(saved), "effective": dict(saved), "defaults": {}}
+
+
+@pytest.mark.asyncio
+async def test_talaria_branch_edits_survive_a_hermes_target_switch(
+    isolated_global_config_dir: Path,
+) -> None:
+    """P2-1 ownership across the switch: Talaria-owned branch edits are not
+    Hermes pending edits — discarding the Hermes edit and switching targets
+    leaves the branch input intact, and its apply still writes the user
+    file afterwards."""
+    test_a = "talaria-v062-cfg-p2-local-active-a"
+    test_e = "talaria-v062-cfg-p2-local-active-switch"
+    url = "http://127.0.0.1:8765"
+    workspace_type = _workspace_screen_type()
+    fake = _P2SettingsClient()
+    app, _ = paused_app(
+        [event("gateway.ready", {})],
+        profile_endpoints={test_a: url, test_e: url},
+        current_profile=test_a,
+        connections=_P2Connections(home="local"),
+        settings_factory=fake.factory,
+    )
+    user_config = isolated_global_config_dir / "config.toml"
+    async with app.run_test(size=SIZE) as pilot:
+        invocation = resolve_command("/config", None)
+        assert isinstance(invocation, LocalInvocation)
+        assert app.perform_local_command(invocation) is True
+        for _ in range(30):
+            await pilot.pause()
+            if isinstance(app.screen, workspace_type):
+                break
+        assert isinstance(app.screen, workspace_type)
+
+        app.screen.query_one("#command", Input).value = "echo branch-edit"
+        schema_row = app.screen.query_one("#settings-row-agent-max_turns")
+        schema_row.query_one(Input).value = "40"
+        try:
+            app.screen.query_one("#settings-target", Button)
+        except NoMatches:
+            pytest.fail(
+                "live /config exposes no reachable target control (P2-1)"
+            )
+        await pilot.click("#settings-target")
+        await pilot.pause()
+        for button in app.screen.query(Button):
+            if str(button.label).strip() == f"local / {test_e}":
+                button.press()
+                break
+        for _ in range(30):
+            await pilot.pause()
+            if isinstance(app.screen, TargetSwitchOverlay):
+                break
+        assert isinstance(app.screen, TargetSwitchOverlay)
+
+        await pilot.click("#switch-discard")
+        for _ in range(60):
+            await pilot.pause()
+            if f"selected: {test_e}" in screen_text(app):
+                break
+        assert f"selected: {test_e}" in screen_text(app)
+        assert ("get_config", test_e) in fake.calls
+        assert app.screen.query_one("#command", Input).value == "echo branch-edit"
+        schema_row = app.screen.query_one("#settings-row-agent-max_turns")
+        assert schema_row.query_one(Input).value == "30"
+
+        app.screen.query_one("#apply-user", Button).press()
+        await pilot.pause()
+        assert user_config.read_bytes() == (
+            b'[status]\ncommand = "echo branch-edit"\n'
+        )

@@ -20,13 +20,17 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
+from textual.css.query import NoMatches
+from textual.pilot import Pilot
+from textual.widgets import Button, Input
 
-from talaria.domain.commands import CATALOG_METHOD
+from talaria.domain.commands import CATALOG_METHOD, LocalInvocation, resolve_command
 from talaria.domain.compat import SeamObservation, apply_probe_round, empty_board
 from talaria.domain.models import ConnectionStatus
 from talaria.replay.controls import INERT_NOTICE, ReplayControls
 from talaria.replay.source import ReplaySource
 from talaria.status.runner import StatusTickResult
+from talaria.transport.connection_set import EnsureReport
 from talaria.transport.rpc import (
     LOST_WITH_TRANSPORT,
     NEVER_SENT,
@@ -35,8 +39,12 @@ from talaria.transport.rpc import (
     RpcOutcome,
     unknown_outcome,
 )
+from talaria.transport.settings import SettingsError
 from talaria.ui.app import INTERRUPT_METHOD, SUBMIT_METHOD, LiveDispatcher, TalariaApp
-from tests.ui.conftest import event, records
+from talaria.ui.settings_overlays import TargetSwitchOverlay
+from talaria.ui.settings_widgets import row_widget_id
+from talaria.ui.settings_workspace import SettingsWorkspaceScreen
+from tests.ui.conftest import event, paused_app, records, screen_text
 
 
 class RecordingDispatcher:
@@ -551,3 +559,216 @@ async def test_live_failure_paths_stay_visible_while_diagnostics_move() -> None:
         assert app.status_region.row_texts == ()
         assert len(app.inspector.diag_texts) == 4
         await app.shutdown_sources()
+
+
+# ── P2-1/P2-2: settings command dispatch through the live app (dev-4) ─────
+#
+# The workspace emits typed commands; the app routes Save/Reveal through the
+# injected settings client. The routing pins below already hold and must
+# survive the P2 refactor; the post-switch save proves Save selection is
+# connected to live target loading, which needs the P2-1 control.
+
+_P2_TEST_A = "talaria-v062-cfg-p2-local-active-a"
+_P2_TEST_E = "talaria-v062-cfg-p2-local-active-switch"
+_P2_URL = "http://127.0.0.1:8765"
+_P2_SIZE = (120, 36)
+
+
+class _P2Connections:
+    def __init__(self, home: str) -> None:
+        self._home = home
+
+    @property
+    def home(self) -> str:
+        return self._home
+
+    async def ensure(self, profile: str) -> EnsureReport:
+        return EnsureReport(profile, "already_up", "connected")
+
+
+class _P2SettingsClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+        self.saved: dict[str, Any] = {"agent": {"max_turns": 25}}
+        self.put_failure: SettingsError | None = None
+
+    def factory(self, endpoint: str) -> _P2SettingsClient:
+        del endpoint
+        return self
+
+    async def get_schema(self, target: Any) -> Any:
+        self.calls.append(("get_schema", target.profile_name, ""))
+        return {
+            "fields": {
+                "agent.max_turns": {
+                    "type": "number",
+                    "description": "Maximum agent turns.",
+                    "category": "agent",
+                }
+            },
+            "category_order": ["agent"],
+        }
+
+    async def get_config(self, target: Any) -> Any:
+        self.calls.append(("get_config", target.profile_name, ""))
+        saved = dict(self.saved)
+        return {"saved": saved, "effective": dict(saved), "defaults": {}}
+
+    async def put_config(self, target: Any, patch: Any) -> Any:
+        self.calls.append(("put_config", target.profile_name, ""))
+        if self.put_failure is not None:
+            raise self.put_failure
+        self.saved = {**self.saved, **{k: v for k, v in dict(patch).items()}}
+        return {"ok": True}
+
+    async def reveal_env(self, target: Any, key: str) -> Any:
+        self.calls.append(("reveal_env", target.profile_name, key))
+        return {"key": key, "value": "p2-wiring-value"}
+
+
+def _p2_app(fake: _P2SettingsClient) -> tuple[TalariaApp, Any]:
+    return paused_app(
+        [event("gateway.ready", {})],
+        profile_endpoints={_P2_TEST_A: _P2_URL, _P2_TEST_E: _P2_URL},
+        current_profile=_P2_TEST_A,
+        connections=_P2Connections(home="local"),
+        settings_factory=fake.factory,
+    )
+
+
+async def _p2_open(pilot: Pilot[None], app: TalariaApp) -> None:
+    invocation = resolve_command("/config", None)
+    assert isinstance(invocation, LocalInvocation)
+    assert app.perform_local_command(invocation) is True
+    for _ in range(30):
+        await pilot.pause()
+        if isinstance(app.screen, SettingsWorkspaceScreen):
+            return
+    raise AssertionError("live /config never mounted the workspace")
+
+
+def _p2_editor(app: TalariaApp) -> Input:
+    row = app.screen.query_one(f"#{row_widget_id('agent.max_turns')}")
+    editor: Input = row.query_one(Input)
+    return editor
+
+
+@pytest.mark.asyncio
+async def test_settings_save_dispatches_put_then_reread() -> None:
+    """The dispatch route P2 must preserve: footer Save sends one sparse
+    PUT for the selected profile, then re-reads that same profile."""
+    fake = _P2SettingsClient()
+    app, _ = _p2_app(fake)
+    async with app.run_test(size=_P2_SIZE) as pilot:
+        await _p2_open(pilot, app)
+        _p2_editor(app).value = "40"
+
+        await pilot.click("#settings-save")
+        for _ in range(30):
+            await pilot.pause()
+            puts = [c for c in fake.calls if c[0] == "put_config"]
+            rereads = [
+                c for c in fake.calls if c == ("get_config", _P2_TEST_A, "")
+            ]
+            if puts and len(rereads) >= 2:
+                break
+
+        puts = [c for c in fake.calls if c[0] == "put_config"]
+        assert puts == [("put_config", _P2_TEST_A, "")]
+        assert ("get_config", _P2_TEST_A, "") in fake.calls
+        assert fake.saved == {"agent": {"max_turns": 40}}
+
+
+@pytest.mark.asyncio
+async def test_settings_reveal_dispatch_calls_reveal_env_once() -> None:
+    """Reveal dispatch reaches the injected client exactly once with the
+    selected target and key. (Value handoff to the overlay is P2-2 work,
+    proven in the acceptance file; this pins the call itself.)"""
+    fake = _P2SettingsClient()
+    app, _ = _p2_app(fake)
+    async with app.run_test(size=_P2_SIZE) as pilot:
+        await _p2_open(pilot, app)
+        screen = app.screen
+        assert isinstance(screen, SettingsWorkspaceScreen)
+        screen.open_reveal("EXAMPLE_P2_KEY")
+        await pilot.pause()
+
+        await pilot.click("#reveal-once")
+        for _ in range(30):
+            await pilot.pause()
+            if [c for c in fake.calls if c[0] == "reveal_env"]:
+                break
+
+        assert [c for c in fake.calls if c[0] == "reveal_env"] == [
+            ("reveal_env", _P2_TEST_A, "EXAMPLE_P2_KEY")
+        ]
+
+
+@pytest.mark.asyncio
+async def test_failed_settings_save_renders_rejection_without_switching() -> None:
+    """A refused PUT surfaces the server detail and keeps selection and
+    edits — the failure branch every P2-1 save path must preserve."""
+    fake = _P2SettingsClient()
+    fake.put_failure = SettingsError("http_error", "PUT refused: locked")
+    app, _ = _p2_app(fake)
+    async with app.run_test(size=_P2_SIZE) as pilot:
+        await _p2_open(pilot, app)
+        _p2_editor(app).value = "40"
+
+        await pilot.click("#settings-save")
+        for _ in range(30):
+            await pilot.pause()
+            if "locked" in screen_text(app):
+                break
+
+        assert "locked" in screen_text(app)
+        assert f"selected: {_P2_TEST_A}" in screen_text(app)
+        assert _p2_editor(app).value == "40"
+        assert [c for c in fake.calls if c[0] == "put_config"] == [
+            ("put_config", _P2_TEST_A, "")
+        ]
+
+
+@pytest.mark.asyncio
+async def test_post_switch_footer_save_targets_the_new_profile() -> None:
+    """Save selection follows live target loading: after a completed
+    switch to testE, a footer save PUTs testE — never the stale testA."""
+    fake = _P2SettingsClient()
+    app, _ = _p2_app(fake)
+    async with app.run_test(size=_P2_SIZE) as pilot:
+        await _p2_open(pilot, app)
+        _p2_editor(app).value = "40"
+        try:
+            app.screen.query_one("#settings-target", Button)
+        except NoMatches:
+            pytest.fail(
+                "live /config exposes no reachable target control (P2-1)"
+            )
+        await pilot.click("#settings-target")
+        await pilot.pause()
+        for button in app.screen.query(Button):
+            if str(button.label).strip() == f"local / {_P2_TEST_E}":
+                button.press()
+                break
+        for _ in range(30):
+            await pilot.pause()
+            if isinstance(app.screen, TargetSwitchOverlay):
+                break
+        assert isinstance(app.screen, TargetSwitchOverlay)
+
+        await pilot.click("#switch-discard")
+        for _ in range(60):
+            await pilot.pause()
+            if f"selected: {_P2_TEST_E}" in screen_text(app):
+                break
+        assert f"selected: {_P2_TEST_E}" in screen_text(app)
+
+        _p2_editor(app).value = "41"
+        await pilot.click("#settings-save")
+        for _ in range(30):
+            await pilot.pause()
+            if [c for c in fake.calls if c[0] == "put_config"]:
+                break
+
+        puts = [c for c in fake.calls if c[0] == "put_config"]
+        assert puts == [("put_config", _P2_TEST_E, "")]

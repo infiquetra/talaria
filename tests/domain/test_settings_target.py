@@ -466,12 +466,131 @@ def test_save_issues_a_write_to_the_old_target_only() -> None:
     state = stage(state, target=old, key="agent.max_turns", value=40)
     after, issued = switch(state, new_target=new, choice="save")
 
-    assert after.selected == new
-    assert after.pending.get(new) is None
+    # P2-1 KTD1: Save completes before selection changes. The switch is a
+    # pending continuation, committed only when the old target re-read
+    # succeeds — the header must not show the new target while the old
+    # target's write is unresolved.
+    assert after.selected == old
+    assert hasattr(after, "pending_target"), (
+        "SettingsState carries no pending_target continuation (P2-1)"
+    )
+    assert after.pending_target == new
+    assert old in after.awaiting_save
     assert len(issued) == 1
     assert isinstance(issued[0], save_type)
     assert issued[0].target == old
     assert issued[0].patch == {"agent": {"max_turns": 40}}
+
+
+def test_save_reread_commits_the_pending_switch() -> None:
+    """P2-1: the old target re-read lands, clears awaiting/pending, and only
+    then moves selection to the pending target."""
+    settings = _settings()
+    state_type, select, begin, apply, stage = _state_helpers(settings)
+    switch = _require_attr(settings, "request_settings_switch")
+    old = _target(settings, "local-fixture", "alpha-fixture")
+    new = _target(settings, "local-fixture", "beta-fixture")
+
+    state = select(state_type.empty(), old)
+    state = stage(state, target=old, key="agent.max_turns", value=40)
+    state, _issued = switch(state, new_target=new, choice="save")
+    assert hasattr(state, "pending_target"), (
+        "SettingsState carries no pending_target continuation (P2-1)"
+    )
+    state, generation = begin(state, old)
+    after = apply(
+        state,
+        target=old,
+        generation=generation,
+        saved={"agent": {"max_turns": 40}},
+        effective={"agent": {"max_turns": 40}},
+    )
+
+    assert after.selected == new
+    assert after.pending_target is None
+    assert old not in after.awaiting_save
+    assert after.pending.get(old) is None
+    assert after.documents[old].saved == {"agent": {"max_turns": 40}}
+
+
+def test_failed_save_abandons_the_switch_and_retains_edits() -> None:
+    """P2-1: a failed Save clears awaiting/pending, keeps selection and the
+    staged edits — the operator sees the old target with work intact."""
+    settings = _settings()
+    state_type, select, _, _, stage = _state_helpers(settings)
+    switch = _require_attr(settings, "request_settings_switch")
+    fail = _require_attr(settings, "fail_settings_save")
+    old = _target(settings, "local-fixture", "alpha-fixture")
+    new = _target(settings, "local-fixture", "beta-fixture")
+
+    state = select(state_type.empty(), old)
+    state = stage(state, target=old, key="agent.max_turns", value=40)
+    state, _issued = switch(state, new_target=new, choice="save")
+    after = fail(state, target=old)
+
+    assert after.selected == old
+    assert getattr(after, "pending_target", None) is None
+    assert old not in after.awaiting_save
+    assert after.pending.get(old) == {"agent.max_turns": 40}
+
+
+def test_a_stale_reread_neither_lands_nor_commits() -> None:
+    """P2-1: an older-generation re-read is dropped with awaiting retained,
+    so the newer in-flight re-read still completes the switch."""
+    settings = _settings()
+    state_type, select, begin, apply, stage = _state_helpers(settings)
+    switch = _require_attr(settings, "request_settings_switch")
+    old = _target(settings, "local-fixture", "alpha-fixture")
+    new = _target(settings, "local-fixture", "beta-fixture")
+
+    state = select(state_type.empty(), old)
+    state = stage(state, target=old, key="agent.max_turns", value=40)
+    state, _issued = switch(state, new_target=new, choice="save")
+    assert hasattr(state, "pending_target"), (
+        "SettingsState carries no pending_target continuation (P2-1)"
+    )
+    state, first = begin(state, old)
+    state, _second = begin(state, old)
+    after = apply(
+        state,
+        target=old,
+        generation=first,
+        saved={"agent": {"max_turns": 40}},
+        effective={"agent": {"max_turns": 40}},
+    )
+
+    assert after.selected == old
+    assert after.pending_target == new
+    assert old in after.awaiting_save
+    assert after.documents.get(old) is None
+
+
+def test_a_reread_without_a_pending_switch_lands_in_place() -> None:
+    """P2-1: same-target footer saves await a re-read with no pending
+    target; it lands, clears awaiting, and selection never moves."""
+    from dataclasses import replace
+
+    settings = _settings()
+    state_type, select, begin, apply, stage = _state_helpers(settings)
+    old = _target(settings, "local-fixture", "alpha-fixture")
+
+    state = select(state_type.empty(), old)
+    state = stage(state, target=old, key="agent.max_turns", value=40)
+    state = replace(state, awaiting_save=frozenset({old}))
+    assert getattr(state, "pending_target", None) is None
+    state, generation = begin(state, old)
+    after = apply(
+        state,
+        target=old,
+        generation=generation,
+        saved={"agent": {"max_turns": 40}},
+        effective={"agent": {"max_turns": 40}},
+    )
+
+    assert after.selected == old
+    assert getattr(after, "pending_target", None) is None
+    assert old not in after.awaiting_save
+    assert after.documents[old].saved == {"agent": {"max_turns": 40}}
 
 
 def test_an_unknown_switch_choice_is_refused() -> None:

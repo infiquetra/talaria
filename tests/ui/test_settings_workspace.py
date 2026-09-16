@@ -40,6 +40,7 @@ from typing import Any, cast
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, Static
 
@@ -953,3 +954,179 @@ async def test_escape_cancels_an_overlay_without_a_command() -> None:
         assert host.screen is view
         assert list(host.screen.query("#reset-confirm")) == []
         assert view.query_one("#settings-save", Button).has_focus
+
+
+# ── P2-1: pending switch and the live target control (dev-4) ───────────────
+
+
+@pytest.mark.asyncio
+async def test_switch_save_keeps_the_header_on_the_old_target() -> None:
+    """P2-1 KTD1 at the screen seam: choosing Save emits the old-target
+    write but the header stays on the old profile until the re-read
+    commits the pending switch — no premature selection flip."""
+    settings = _settings()
+    commands = _commands()
+    requested: list[Any] = []
+    host = _Host(lambda: _screen(settings, requested, save_enabled=True))
+
+    async with host.run_test(size=SIZE) as pilot:
+        view = await _mounted(pilot, host)
+        (editor,) = _row_inputs(view)
+        editor.value = "50"
+        view.open_target_switch(
+            _require_attr(settings, "ConfigTarget")(
+                connection_id="local-fixture", profile_name="beta-fixture"
+            )
+        )
+        await pilot.pause()
+
+        await pilot.click("#switch-save")
+        await pilot.pause()
+
+        assert len(requested) == 1
+        assert isinstance(requested[0], _require_attr(commands, "SaveConfig"))
+        assert "selected: alpha-fixture" in _text(host)
+        assert "selected: beta-fixture" not in _text(host)
+
+
+@pytest.mark.asyncio
+async def test_the_target_control_lists_options_and_routes_choice() -> None:
+    """The live target picker: a header control lists the projected
+    options as ``"<connection> / <profile>"`` buttons, and choosing one
+    opens the switch prompt — the production route the P2-1 acceptance
+    file drives end to end."""
+    settings = _settings()
+    option_type = _require_attr(settings, "TargetOption")
+    options = (
+        option_type(
+            connection_id="local-fixture",
+            profile_name="alpha-fixture",
+            is_current=False,
+            is_selected=True,
+        ),
+        option_type(
+            connection_id="local-fixture",
+            profile_name="beta-fixture",
+            is_current=True,
+            is_selected=False,
+        ),
+    )
+    requested: list[Any] = []
+    try:
+        screen_view = _view(settings, target_options=options)
+    except TypeError:
+        pytest.fail(
+            "SettingsWorkspaceView carries no target_options (P2-1 residual)"
+        )
+    host = _Host(
+        lambda: _require_attr(_workspace_mod(), "SettingsWorkspaceScreen")(
+            screen_view, on_command=requested.append
+        )
+    )
+
+    async with host.run_test(size=SIZE) as pilot:
+        view = await _mounted(pilot, host)
+        try:
+            view.query_one("#settings-target", Button)
+        except NoMatches:
+            pytest.fail(
+                "settings workspace exposes no #settings-target control (P2-1)"
+            )
+
+        await pilot.click("#settings-target")
+        await pilot.pause()
+        labels = {
+            str(button.label).strip() for button in view.query(Button)
+        }
+        assert "local-fixture / alpha-fixture" in labels
+        assert "local-fixture / beta-fixture" in labels
+
+        for button in view.query(Button):
+            if str(button.label).strip() == "local-fixture / beta-fixture":
+                button.press()
+                break
+        await pilot.pause()
+
+        overlay_type = _require_attr(_overlays_mod(), "TargetSwitchOverlay")
+        assert isinstance(host.screen, overlay_type), (
+            "choosing a picker option must open the switch prompt (P2-1)"
+        )
+        assert "Save to alpha-fixture" in _text(host)
+
+
+# ── P2-2: secret reveal button and display bound (dev-4) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_secret_row_reveal_button_emits_a_scoped_reveal() -> None:
+    """A row whose key the view marks secret renders a Reveal control;
+    confirming it emits one profile-explicit RevealEnv — the production
+    route the P2-2 acceptance file drives end to end."""
+    settings = _settings()
+    commands = _commands()
+    requested: list[Any] = []
+    groups = (
+        _require_attr(settings, "SettingsRowGroupView")(
+            owner="hermes-profile",
+            title="Environment",
+            rows=(
+                _row(
+                    settings,
+                    key="EXAMPLE_P2_KEY",
+                    label="EXAMPLE_P2_KEY",
+                    help_text="P2 test key.",
+                    type="string",
+                    provenance="saved",
+                    default_value="",
+                    saved_value="sk-…p2ab",
+                    effective_value="sk-…p2ab",
+                    effect="next-session",
+                    tier=1,
+                    read_only=True,
+                ),
+            ),
+        ),
+    )
+    host = _Host(
+        lambda: _screen(
+            settings,
+            requested,
+            groups=groups,
+            secrets={"EXAMPLE_P2_KEY": (True, "sk-…p2ab")},
+        )
+    )
+
+    async with host.run_test(size=SIZE) as pilot:
+        view = await _mounted(pilot, host)
+        revealers = [
+            button
+            for button in view.query(Button)
+            if str(button.label).strip().lower() == "reveal"
+        ]
+        assert len(revealers) == 1, (
+            "secret row renders no Reveal control (P2-2 residual)"
+        )
+
+        revealers[0].press()
+        await pilot.pause()
+        overlay_type = _require_attr(_overlays_mod(), "RevealSecretOverlay")
+        assert isinstance(host.screen, overlay_type)
+
+        await pilot.click("#reveal-once")
+        await pilot.pause()
+
+        assert len(requested) == 1
+        assert isinstance(requested[0], _require_attr(commands, "RevealEnv"))
+        assert requested[0].target.profile_name == "alpha-fixture"
+        assert requested[0].key == "EXAMPLE_P2_KEY"
+
+
+def test_the_reveal_display_interval_is_bounded() -> None:
+    """KTD6's timeout half, statically: the overlay wipes after a bounded
+    interval. Close-wipe is proven behaviorally; firing is installed-J3
+    territory. The bound keeps the constant honest in between."""
+    bound = getattr(_overlays_mod(), "REVEAL_DISPLAY_SECONDS", None)
+    assert bound is not None, (
+        "settings overlays define no REVEAL_DISPLAY_SECONDS (P2-2)"
+    )
+    assert isinstance(bound, (int, float)) and 1 <= bound <= 60

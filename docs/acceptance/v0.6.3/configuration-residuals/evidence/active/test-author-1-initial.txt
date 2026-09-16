@@ -1,0 +1,125 @@
+CFG-P2-T1A initial expected-failure log — Test Author One
+========================================================
+
+Assignment: CFG-P2-T1A (live switch and reveal failures, P2-1 + P2-2)
+Branch: feat/v0.6.3-cfg-p2-ta1
+Baseline: cb93c5d7ff728b59eb85a6c7f0faf19a4e12e9ab (published v0.6.2, clean)
+Hermes pin cited by tests: 3236f4405 (read-only; no Hermes change)
+Recorded: 2026-09-16T16:08:17Z
+
+Dispatchable plans verified by SHA-256 before use (CFG-PR4 pair):
+- CFG-P2-implementation-plan.md 82e9af536520132e4e82a84329b1069c0d86bca22703fd2786e57fa8121a022a MATCH
+- CFG-P2-test-plan.md          adc1fdb96fb00fba82850e95907a6a16dabbfacd6206f92dcba62ddf5e26d9d6 MATCH
+
+Command (exclusive owned paths):
+  uv run pytest tests/ui/test_cfg_p2_live_settings.py \
+    tests/ui/test_settings_workspace.py tests/ui/test_config_view.py \
+    tests/ui/test_live_wiring.py tests/domain/test_settings_target.py \
+    tests/domain/test_settings_projection.py \
+    tests/recorder/test_settings_http_redaction.py \
+    -p no:cacheprovider --tb=no -q
+
+Result: 36 failed, 183 passed, 0 skipped, 0 errors. Collection clean.
+Every failure identifies absent production behavior on cb93c5d: no
+reachable target control, no secret Reveal control, no live target
+loading on switch, discarded reveal responses, no pending-continuation
+reducer, no picker/env/one-shot projections, no 429 error record.
+Exit code 1 is the expected T1 signal.
+
+Failures per owned file:
+  tests/ui/test_cfg_p2_live_settings.py          11  (P2-1 x6, P2-2 x5 real-app)
+  tests/ui/test_settings_workspace.py             4  (pending header, picker, reveal button, timeout bound)
+  tests/ui/test_config_view.py                    1  (branch preservation across switch)
+  tests/ui/test_live_wiring.py                    1  (post-switch save targets new)
+  tests/domain/test_settings_target.py            4  (pending continuation + commit/fail/stale)
+  tests/domain/test_settings_projection.py       10  (picker options, env decode, secret rows, one-shot value)
+  tests/recorder/test_settings_http_redaction.py  5  (status-aware 429 record)
+
+P2-1 disposition (live Stay/Save/Discard): all FAIL for missing behavior.
+  Control routes choice through overlay; Stay preserves target/edit with
+  no write; Discard clears and loads testE; Save PUTs/re-reads testA then
+  switches; failed Save retains and shows rejection; delayed testA reply
+  dropped after testE selected; write log scanned for default/testB/
+  unreceipted on every mutating case. Blocked: none.
+P2-2 disposition (reachable one-shot reveal): all FAIL for missing behavior.
+  Secret row + Reveal control reachable; confirm sends one profile-explicit
+  request; value shown once with in-process equality; close wipes with no
+  plaintext in widgets/view/notices/recordings; reopen masked with no
+  refetch; sixth reveal in 30s shows rate-limit state without stale value.
+  Blocked: none.
+
+Representative failure messages (all failures are one of these shapes):
+  Failed: live /config exposes no reachable target control (P2-1 ...)
+  Failed: live /config renders no secret row for EXAMPLE_P2_KEY (P2-2 ...)
+  Failed: unimplemented interface ...TargetOption / ...project_target_options
+  Failed: unimplemented interface ...decode_env_listing / ...project_secret_rows
+  Failed: unimplemented interface ...RevealDisplayValue
+  Failed: unimplemented interface ...fail_settings_save
+  Failed: unimplemented interface project_settings_workspace(targets=...) (P2-1)
+  Failed: unimplemented interface ...redact( status=...) (P2-2)
+  AssertionError: SettingsState carries no pending_target continuation (P2-1)
+  AssertionError: settings overlays define no REVEAL_DISPLAY_SECONDS (P2-2)
+
+Passing pins inside owned paths (183, all pre-existing or preservation):
+- Every pre-existing test in the six updated files passes unmodified,
+  except test_save_issues_a_write_to_the_old_target_only, whose expectation
+  was updated to the mandated P2-1 KTD1 pending-continuation semantics.
+- New passing pins: footer-save re-read lands without switching (target);
+  save/reveal dispatch routing and rejection render (live_wiring x3).
+- Zero skips in owned paths.
+
+Frozen-test verification (full suite, --tb=no -rfs):
+  Full-suite FAILED set is identical to the targeted owned-paths FAILED
+  set (36 == 36, diff empty, 0 errors). All frozen unlisted tests green.
+  Owned paths: zero skips.
+
+Quality gates on this worktree (T1-relevant subset):
+  uv run ruff check .   -> All checks passed
+  uv run mypy           -> Success: no issues found in 251 source files
+  (bandit/full-project-check run at candidate time per the test plan;
+  this worktree changes test files only, and bandit excludes tests.)
+
+Acceptance-file prohibition verified: tests/ui/test_cfg_p2_live_settings.py
+contains zero references to the switch/reveal opener methods (grep clean).
+
+No secrets, credentials, or revealed plaintext in tests, logs, or
+evidence. Secret values are random in-memory canaries; visibility recorded
+as booleans only. All profile names are P2-legal or plan aliases.
+
+Full FAILED list (targeted owned-paths run):
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_target_control_routes_choice_through_switch_overlay
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_stay_preserves_target_edit_and_issues_no_write
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_discard_clears_edit_and_loads_new_target
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_save_writes_old_target_then_switches_after_reread
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_failed_save_retains_edit_selection_and_shows_rejection
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_delayed_old_target_response_is_dropped_after_switch
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_secret_row_exposes_reachable_reveal_control
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_confirm_sends_one_profile_explicit_reveal
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_revealed_value_clears_on_close_and_stays_out_of_state
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_reopen_starts_masked_with_no_background_refetch
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_sixth_reveal_in_30s_shows_rate_limit_without_plaintext
+FAILED tests/ui/test_settings_workspace.py::test_switch_save_keeps_the_header_on_the_old_target
+FAILED tests/ui/test_settings_workspace.py::test_the_target_control_lists_options_and_routes_choice
+FAILED tests/ui/test_settings_workspace.py::test_a_secret_row_reveal_button_emits_a_scoped_reveal
+FAILED tests/ui/test_settings_workspace.py::test_the_reveal_display_interval_is_bounded
+FAILED tests/ui/test_config_view.py::test_talaria_branch_edits_survive_a_hermes_target_switch
+FAILED tests/ui/test_live_wiring.py::test_post_switch_footer_save_targets_the_new_profile
+FAILED tests/domain/test_settings_target.py::test_save_issues_a_write_to_the_old_target_only
+FAILED tests/domain/test_settings_target.py::test_save_reread_commits_the_pending_switch
+FAILED tests/domain/test_settings_target.py::test_failed_save_abandons_the_switch_and_retains_edits
+FAILED tests/domain/test_settings_target.py::test_a_stale_reread_neither_lands_nor_commits
+FAILED tests/domain/test_settings_projection.py::test_target_options_flag_current_and_selected_without_reordering
+FAILED tests/domain/test_settings_projection.py::test_an_empty_target_list_projects_no_options
+FAILED tests/domain/test_settings_projection.py::test_the_workspace_view_carries_the_projected_options
+FAILED tests/domain/test_settings_projection.py::test_decode_env_listing_keeps_masks_and_presence_only
+FAILED tests/domain/test_settings_projection.py::test_decode_env_listing_tolerates_shape_drift
+FAILED tests/domain/test_settings_projection.py::test_decode_env_listing_refuses_a_body_that_is_not_a_json_object
+FAILED tests/domain/test_settings_projection.py::test_project_secret_rows_maps_presence_to_rows_in_sorted_order
+FAILED tests/domain/test_settings_projection.py::test_a_reveal_value_is_takeable_exactly_once
+FAILED tests/domain/test_settings_projection.py::test_a_reveal_value_never_appears_in_its_repr
+FAILED tests/domain/test_settings_projection.py::test_clear_wipes_without_returning_the_value
+FAILED tests/recorder/test_settings_http_redaction.py::test_a_429_reveal_error_preserves_status_wording_without_values
+FAILED tests/recorder/test_settings_http_redaction.py::test_a_value_shaped_field_in_an_error_body_is_still_withheld
+FAILED tests/recorder/test_settings_http_redaction.py::test_only_error_metadata_persists_for_reveal_responses[429-True]
+FAILED tests/recorder/test_settings_http_redaction.py::test_only_error_metadata_persists_for_reveal_responses[200-False]
+FAILED tests/recorder/test_settings_http_redaction.py::test_only_error_metadata_persists_for_reveal_responses[None-False]
