@@ -571,8 +571,14 @@ async def test_restart_polls_action_and_status_and_does_not_claim_dashboard() ->
         plan_cls = getattr(load_module("talaria.domain.settings"), "RestartPlan", None)
         assert plan_cls is not None, "unimplemented interface: RestartPlan"
         plan = plan_cls(
-            kind="shared-multiplexer",
-            profile=FIXTURE_PROFILE,
+            scope="shared-multiplexer",
+            title=(
+                "Restart the shared default gateway — this also restarts the "
+                "gateways serving sibling-fixture"
+            ),
+            dashboard_note=(
+                "Talaria's own connection is to the dashboard and is unaffected."
+            ),
             affected_profiles=(FIXTURE_PROFILE, "sibling-fixture"),
         )
         result = await client.restart_gateway(make_target(), plan)
