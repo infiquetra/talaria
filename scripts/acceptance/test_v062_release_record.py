@@ -297,13 +297,18 @@ def test_verify_run_is_clean_for_v062_cfg_receipt_shape(tmp_path: Path) -> None:
 
 
 def test_verify_run_is_clean_for_committed_v062_record() -> None:
-    """Publication gate: verify-run --expect-candidate HEAD must print no errors."""
+    """Publication gate: the committed v0.6.2 record binds to published cb93c5d.
+
+    Do not bind this check to HEAD. A later product SHA is a different
+    release; the published v0.6.2 record stays valid against cb93c5d (or
+    a docs-only descendant of that product SHA).
+    """
     repo_root = Path(__file__).resolve().parents[2]
     errors = verify_run(
         repo_root / "docs" / "acceptance" / "v0.6.2" / "artifact-manifest.json",
         evidence_root=repo_root / "docs" / "acceptance" / "v0.6.2" / "evidence",
         repo_root=repo_root,
-        expected_candidate_commit=_head(repo_root),
+        expected_candidate_commit="cb93c5d7ff728b59eb85a6c7f0faf19a4e12e9ab",
     )
 
     assert errors == [], errors
