@@ -59,22 +59,21 @@ SELECTED_SCHEMA_KEY = "agent.max_turns"
 SELECTED_ENV_LABEL = "synthetic-env"
 PLACEHOLDER_PROFILE = "placeholder-old-target"
 
-# Measured live wrapper: top-level fields + category_order. Field entries are
-# a list (not a map). Values are synthetic; none are copied from Hermes.
+# T3R measured wrapper: {fields, category_order} with fields a JSON object.
+# Values are synthetic; none are copied from Hermes.
 _LIVE_SCHEMA: dict[str, Any] = {
-    "fields": [
-        {
-            "key": SELECTED_SCHEMA_KEY,
+    "fields": {
+        SELECTED_SCHEMA_KEY: {
             "type": "number",
             "description": "synthetic-p4-field",
             "category": "agent",
         }
-    ],
+    },
     "category_order": ["agent"],
 }
-_LIVE_ENV: list[dict[str, Any]] = [
-    {"name": SELECTED_ENV_LABEL, "is_set": True, "redacted_value": "sk-…p4"}
-]
+_LIVE_ENV: dict[str, Any] = {
+    SELECTED_ENV_LABEL: {"is_set": True, "redacted_value": "sk-…p4"}
+}
 
 
 def require_legal_p4_name(name: str) -> str:
@@ -181,9 +180,9 @@ class LiveShapeDashboard:
                     return
                 if route == "/api/env":
                     if profile in {LEGAL_LOCAL_A_INSTALLED, LEGAL_LOCAL_E_INSTALLED}:
-                        self._send(200, list(_LIVE_ENV), profile=profile)
+                        self._send(200, dict(_LIVE_ENV), profile=profile)
                         return
-                    self._send(200, [], profile=profile)
+                    self._send(200, {}, profile=profile)
                     return
                 self._send(404, {"detail": "not found"}, profile=profile)
 
@@ -438,20 +437,20 @@ def observe_fixture_remount_control(*, scratch: Path) -> TargetMountObservation:
     return observe_candidate_target_mount(scratch=scratch)
 
 
-def observe_live_diagnosis(
-    executable: Path,
-    *,
-    worktree: Path,
-    scratch: Path,
-) -> LiveDiagnosisObservation:
-    """Drive the real identity loader against the measured live HTTP shape."""
+def observe_live_diagnosis(*, scratch: Path, worktree: Path) -> LiveDiagnosisObservation:
+    """Drive the candidate identity loader against the T3R live HTTP shape."""
     from talaria.domain.settings import ConfigTarget
     from talaria.replay.controls import ReplayControls
     from talaria.replay.source import ReplaySource
     from talaria.transport.source import FrameRecord
     from talaria.ui.app import TalariaApp
 
-    exe = require_outside_worktree(executable, worktree=worktree)
+    stub_root = scratch / "outside"
+    stub_root.mkdir()
+    stub = stub_root / "talaria"
+    stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    stub.chmod(0o755)
+    exe = require_outside_worktree(stub, worktree=worktree)
     config_dir = scratch / "config-live"
     launched = False
     with LiveShapeDashboard() as dashboard:

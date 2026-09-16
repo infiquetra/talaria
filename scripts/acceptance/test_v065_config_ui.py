@@ -1,8 +1,8 @@
 """CFG-P4 Test Author Two: black-box diagnosis driver.
 
 Isolation, identity, reject-once, redaction, cleanup, and the fixture
-remount control must pass. Live diagnosis must fail on v0.6.4 because
-selected schema/env remain absent. Direct opener calls are forbidden.
+remount control must pass. Live diagnosis uses the T3R object-fields
+shape against the candidate tree. Direct opener calls are forbidden.
 """
 
 from __future__ import annotations
@@ -169,26 +169,25 @@ def test_fixture_remount_control_stays_green(tmp_path: Path) -> None:
 
 
 def test_live_diagnosis_mounts_selected_schema_and_env(tmp_path: Path) -> None:
-    """Desired acceptance on live shape. v0.6.4 leaves selected schema/env absent."""
-    observation = observe_live_diagnosis(
-        INSTALLED_EXECUTABLE, worktree=REPO_ROOT, scratch=tmp_path
-    )
+    """T3R: object fields on the candidate tree; selected schema/env mount."""
+    observation = observe_live_diagnosis(scratch=tmp_path, worktree=REPO_ROOT)
     assert observation.launched is True
     record = observation.oracle.as_record()
     assert set(record) == set(ORACLE_KEYS)
     assert record["target_profile"] == LEGAL_LOCAL_A_INSTALLED
     assert record["schema_field_count"] >= 1
+    assert record["schema_decode_result"] == "ok"
     assert "fields" in record["schema_top_level_keys"]
     assert "category_order" in record["schema_top_level_keys"]
     assert scan_for_canaries(record, ("password", "token", "sk-", "secret-value")) == []
     assert observation.selected_schema_mounted, (
-        "unimplemented: v0.6.4 live loader leaves selected schema absent; "
+        "candidate live loader left selected schema absent; "
         f"placeholder={observation.placeholder_schema_present} "
         f"decode={observation.oracle.schema_decode_result} "
         f"titles={observation.oracle.projected_group_titles}"
     )
     assert observation.selected_env_mounted, (
-        "unimplemented: v0.6.4 live loader leaves selected env absent; "
+        "candidate live loader left selected env absent; "
         f"env={observation.oracle.env_route_status_or_reason} "
         f"rows={observation.oracle.env_row_count}"
     )
