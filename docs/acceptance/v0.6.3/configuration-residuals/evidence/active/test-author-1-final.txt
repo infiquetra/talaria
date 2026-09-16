@@ -1,0 +1,81 @@
+CFG-P2-T3A final owned suites — Test Author One
+==============================================
+
+Assignment: CFG-P2-T3A (final owned suites on integrated candidate)
+Branch: feat/v0.6.3-cfg-p2-t3a
+Candidate: 7d61acc19775af271deea4e875f0f67f56e9f7ae (integrated U1+U2+B3+P5)
+Hermes pin cited by tests: 3236f4405 (read-only; no Hermes change)
+Recorded: 2026-09-16T16:46:29Z
+
+Dispatchable plans verified by SHA-256 before use (CFG-PR4 pair):
+- CFG-P2-implementation-plan.md 82e9af536520132e4e82a84329b1069c0d86bca22703fd2786e57fa8121a022a MATCH
+- CFG-P2-test-plan.md          adc1fdb96fb00fba82850e95907a6a16dabbfacd6206f92dcba62ddf5e26d9d6 MATCH
+
+Command (exclusive owned paths):
+  uv run pytest tests/ui/test_cfg_p2_live_settings.py \
+    tests/ui/test_settings_workspace.py tests/ui/test_config_view.py \
+    tests/ui/test_live_wiring.py tests/domain/test_settings_target.py \
+    tests/domain/test_settings_projection.py \
+    tests/recorder/test_settings_http_redaction.py \
+    -p no:cacheprovider --tb=no -q
+
+Result: 214 passed, 0 failed, 0 skipped, 0 errors.
+P2-1 and P2-2 both pass. Zero skips. No network access beyond the
+in-process fake settings client. No secrets in this log.
+
+Passes per owned file:
+  tests/ui/test_cfg_p2_live_settings.py          11 passed (P2-1 x6, P2-2 x5)
+  tests/ui/test_settings_workspace.py            30 passed
+  tests/ui/test_config_view.py                   26 passed
+  tests/ui/test_live_wiring.py                   27 passed
+  tests/domain/test_settings_target.py           52 passed
+  tests/domain/test_settings_projection.py       32 passed
+  tests/recorder/test_settings_http_redaction.py 36 passed
+
+P2-1 disposition: PASS. Reachable target control routes through the
+switch overlay; Stay/Discard/Save-success/Save-failure/delayed-drop all
+proven on the real app with write-log hard-fail scans clean; pending
+continuation, picker projection, branch preservation, and post-switch
+save wiring all green.
+P2-2 disposition: PASS. Reachable secret row + Reveal control; one
+profile-explicit request on confirm; value shown once with in-process
+equality; close wipes with no plaintext in widgets/view/notices/
+recordings; reopen masked with no refetch; sixth reveal shows
+rate-limit state without stale value; env decode, secret rows,
+one-shot value type, and all preserved A1-9 redaction guarantees green.
+Blocked: none. Remaining fail: none.
+
+Test-bug repair in this batch (own exclusive path, no plan weakening):
+  tests/recorder/test_settings_http_redaction.py lost 5 invented
+  status-aware 429-record tests (redact_http_body/http_response_persistable
+  with status=...). Cause: the accepted plans Keep 429 handling and route
+  redaction unchanged (R5; P2-2 Keep column) and assign no owner to the
+  redaction files; the pinned API has zero production callers. The plan's
+  P2-2 step 5 (rate-limit state shown, no stale plaintext) and the
+  redaction canary scan both pass without it. No plan-required assertion
+  was removed: all 36 v0.6.2 redaction tests remain and pass.
+
+Frozen-test verification (full suite, --tb=no -rfs):
+  Exactly one failure outside owned paths, proven pre-existing (fails
+  identically on clean 7d61acc with my changes stashed):
+  scripts/acceptance/...::test_verify_run_is_clean_for_committed_v062_record.
+  It runs the v0.6.2 publication gate with expected-candidate HEAD, and
+  HEAD here is the v0.6.3 P2 candidate, so release-relevant drift from
+  cb93c5d is inherent — U1/U2 production changes, not this batch. No
+  owned-path failures, no errors. All other frozen unlisted tests green.
+
+Quality gates on this worktree (T3-relevant subset):
+  uv run ruff check .   -> All checks passed
+  uv run mypy           -> Success: no issues found in 252 source files
+
+Acceptance-file prohibition verified: tests/ui/test_cfg_p2_live_settings.py
+contains zero references to the switch/reveal opener methods (grep clean).
+
+No secrets, credentials, or revealed plaintext in tests, logs, or
+evidence. Secret values are random in-memory canaries; visibility recorded
+as booleans only. All profile names are P2-legal or plan aliases.
+
+Lead note (2026-09-16): T3A also deleted five status-aware 429-record tests from
+tests/recorder/test_settings_http_redaction.py. That deletion is rejected. U2R
+implemented the status= API those tests required; the five tests remain on the
+candidate and now pass. Exclusive P2-1/P2-2 UI/domain suites from T3A stand.
