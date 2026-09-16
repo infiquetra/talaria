@@ -410,3 +410,67 @@ def test_denial_does_not_leak_across_exchanges() -> None:
         "model": {"name": "example-large"},
     }
     assert kept.redactions == []
+
+
+# ── P4-1: diagnostic metadata survives redaction; values do not ─────────────
+#
+# The T3 live diagnosis records route/target/status/reason/counts shapes.
+# Those metadata keys must never trip the suspicious-key net (else the
+# record would be a hole), while a server echoing a value inside an error
+# body must still be withheld.
+
+
+def test_diagnostic_metadata_keys_are_never_suspicious() -> None:
+    """Every Diagnostic Oracle field name passes the key-name net, and a
+    metadata-only record round-trips byte-identical with no redactions."""
+    policy = _redaction_policy()
+    recorder = _recorder_redact()
+    suspicious = _require_attr(policy, "is_suspicious_key")
+
+    for key in (
+        "route",
+        "target_connection",
+        "target_profile",
+        "reason",
+        "status",
+        "response_bytes",
+        "top_level_keys",
+        "field_count",
+        "category_count",
+        "generation",
+    ):
+        assert suspicious(key) is False, f"diagnostic key withheld: {key}"
+
+    record = {
+        "route": "GET /api/config/schema",
+        "target_profile": "testA",
+        "reason": "unreachable",
+        "response_bytes": 0,
+        "top_level_keys": [],
+        "field_count": 0,
+    }
+    result = _require_attr(recorder, "redact_frame")({"diagnostic": record})
+
+    assert result.frame == {"diagnostic": record}
+    assert result.redactions == []
+
+
+def test_error_detail_keeps_wording_while_values_are_withheld() -> None:
+    """A 400-class error body keeps its operational wording; any
+    credential-shaped mirrored value is withheld by the key-name net."""
+    recorder = _recorder_redact()
+    redacted_marker = _require_attr(recorder, "REDACTED")
+    canary = _canary()
+
+    result = _require_attr(recorder, "redact_http_body")(
+        method="PUT",
+        path="/api/config",
+        body={
+            "detail": "invalid request: check the field and retry",
+            "received": {"api_key": canary},
+        },
+    )
+
+    assert canary not in json.dumps(result.frame)
+    assert result.frame["received"] == {"api_key": redacted_marker}
+    assert "invalid request" in json.dumps(result.frame)

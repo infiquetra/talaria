@@ -1,0 +1,98 @@
+CFG-P4-T1A initial expected-failure log — Test Author One
+========================================================
+
+Assignment: CFG-P4-T1A (typed live-load failures, P4-1/P4-2 test side)
+Branch: feat/v0.6.5-cfg-p4-ta1
+Baseline: 4497048a77f1ebcdf855ed541ead340d10ac42df (published v0.6.4, clean)
+Hermes pin cited by tests: 3236f4405 (read-only; no Hermes change)
+Live shape reference: local 127.0.0.1:8765 Hermes 0.21.3 public
+  /api/config/schema read (836 fields, 5 types, zero shape gaps,
+  110KB under the 2MB transport cap) — values never fetched.
+Recorded: 2026-09-16T22:26:06Z
+
+Dispatchable plans verified by SHA-256 before use (CFG-PR7 pair):
+- CFG-P4-implementation-plan.md 4c9be5a1195e2c16cbd60d3f23dfdbb7cb46987a2fcb14b4b6c9cac4def0ba61 MATCH
+- CFG-P4-test-plan.md          ef55f522fb12740d81e0e20f48a5c0c2dfd641cba39cea421febb6be3893b6c7 MATCH
+Rejected pair c212ded1… / 7721fb82… not used.
+
+Command (exclusive owned paths):
+  uv run pytest tests/ui/test_cfg_p4_live_hermes.py \
+    tests/ui/test_cfg_p3_live_schema.py \
+    tests/ui/test_cfg_p2_live_settings.py \
+    tests/ui/test_settings_workspace.py \
+    tests/domain/test_settings_target.py \
+    tests/recorder/test_settings_http_redaction.py \
+    -p no:cacheprovider --tb=no -q
+
+Result: 11 failed, 162 passed, 0 skipped, 0 errors. Collection clean.
+Every failure identifies absent P4 production behavior on v0.6.4: the
+app loader's broad catches collapse schema transport/decode and env
+failures into one silent placeholder, and no metadata-only shape
+summary exists. Header movement alone satisfies no assertion — every
+load test pins mounted rows or reason-labeled safe states. Exit code 1
+is the expected T1 signal.
+
+Failures per owned file:
+  tests/ui/test_cfg_p4_live_hermes.py            5  (schema unreachable/timeout,
+                                                     schema decode, env x2)
+  tests/ui/test_cfg_p3_live_schema.py            3  (switch-load transport/decode/env)
+  tests/ui/test_cfg_p2_live_settings.py          1  (switch-load timeout, same-schema)
+  tests/ui/test_settings_workspace.py            0  (1 new pin passes)
+  tests/domain/test_settings_target.py           2  (shape summary + refusal)
+  tests/recorder/test_settings_http_redaction.py 0  (2 new pins pass)
+
+P4-1 disposition (typed live load): all new load-failure cases FAIL for
+missing behavior — schema unreachable/timeout/decode and env outage/
+decode each require a distinct phase+reason safe state through the real
+app loader at mount and at switch time; no-decision silent placeholder
+rejected everywhere. Blocked: none.
+Live-shape/control disposition: fixture remount control passes (kept
+green per plan); realistic multi-field/multi-category/all-types/unknown
+live-shape mount passes as the fidelity anchor; AST source guard passes
+(zero opener references). The v0.6.4 loader handles clean payloads —
+only failure typing is absent.
+
+Representative failure messages (all failures are one of these shapes):
+  AssertionError: schema unreachable renders no typed reason (P4-1 ...)
+  AssertionError: decode failure renders no decode-typed state (P4-1 ...)
+  AssertionError: env outage renders no env-named state (P4 ...)
+  AssertionError: failed switch-load renders no typed reason (P4-1 ...)
+  Failed: unimplemented interface ...summarize_schema_shape
+
+Passing pins inside owned files (162, all pre-existing or preservation):
+- Every pre-existing test in the five updated files passes unmodified.
+- New passing pins: fixture remount control, live-shape mount, source
+  guard, load-error notice surface, decode-error sanitization,
+  diagnostic metadata preservation, error-value withholding.
+
+Frozen-test verification (full suite, --tb=no -rfs):
+  Full-suite FAILED set is identical to the targeted owned-paths FAILED
+  set (11 == 11, diff empty, 0 errors). All frozen unlisted tests green.
+  Owned paths: zero skips.
+
+Quality gates on this worktree (T1-relevant subset):
+  uv run ruff check .   -> All checks passed
+  uv run mypy           -> Success: no issues found in 260 source files
+  (bandit/full-project-check run at candidate time per the test plan;
+  this worktree changes test files only, and bandit excludes tests.)
+
+Acceptance-file prohibition verified: the P4 acceptance file contains
+zero references to the switch/reveal opener methods (grep clean; the
+AST source guard passes).
+
+No secrets, credentials, or revealed plaintext in tests, logs, or
+evidence. Secret values are random in-memory canaries; visibility recorded
+as booleans only. All profile names are P2-legal active-family names.
+
+Full FAILED list (targeted owned-paths run):
+FAILED tests/ui/test_cfg_p4_live_hermes.py::test_schema_transport_failure_names_its_reason[unreachable]
+FAILED tests/ui/test_cfg_p4_live_hermes.py::test_schema_transport_failure_names_its_reason[timeout]
+FAILED tests/ui/test_cfg_p4_live_hermes.py::test_schema_decode_failure_names_decode_distinctly
+FAILED tests/ui/test_cfg_p4_live_hermes.py::test_env_transport_failure_keeps_schema_and_names_env
+FAILED tests/ui/test_cfg_p4_live_hermes.py::test_env_decode_failure_names_env_distinctly
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_switch_load_schema_transport_failure_is_typed_not_silent
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_switch_load_schema_decode_failure_reports_decode_state
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_switch_load_env_failure_mounts_schema_with_env_state
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_switch_load_schema_timeout_replaces_rows_with_typed_state
+FAILED tests/domain/test_settings_target.py::test_summarize_schema_shape_counts_without_values
+FAILED tests/domain/test_settings_target.py::test_summarize_schema_shape_refuses_a_non_object

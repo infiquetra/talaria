@@ -120,6 +120,9 @@ class _FakeSettingsClient:
         # P3: per-profile schema field override. Empty means the default
         # max_turns field for every profile (all P2 flows unchanged).
         self.schema_fields: dict[str, str] = {}
+        # P4: per-profile schema fetch failure injection. Empty means every
+        # load succeeds (all P2/P3 flows unchanged).
+        self.schema_failures: dict[str, Exception] = {}
 
     def factory(self, endpoint: str) -> _FakeSettingsClient:
         self.endpoints.append(endpoint)
@@ -155,6 +158,9 @@ class _FakeSettingsClient:
     async def get_schema(self, target: Any) -> Any:
         self._log("get_schema", target)
         await self._gate("get_schema", target.profile_name)
+        failure = self.schema_failures.get(target.profile_name)
+        if failure is not None:
+            raise failure
         return self._schema_body(
             self.schema_fields.get(target.profile_name, "agent.max_turns")
         )
@@ -802,5 +808,56 @@ async def test_discard_mounts_new_schema_and_removes_stale_rows(
             pass
         else:
             pytest.fail("stale testA-only row survives the testE load (P3-1)")
+        assert fake.writes == []
+        fake.assert_only_receipted_writes()
+
+
+# ── P4: switch-load failure in the same-schema flow ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_switch_load_schema_timeout_replaces_rows_with_typed_state(
+    isolated_global_config_dir: Path,
+) -> None:
+    """P4 through the P2 same-schema flow: when testE's schema fetch times
+    out mid-switch, the committed load shows a timeout-named safe state
+    with the labeled placeholder — never testA's stale row under testE's
+    header, never the silent placeholder."""
+    fake = _FakeSettingsClient()
+    _seed_switch_fixture(fake)
+    fake.schema_failures[TEST_E] = SettingsError("timeout", "schema fetch timeout")
+    app, _ = _live_config_app(fake)
+    async with app.run_test(size=SIZE) as pilot:
+        screen = await _open_config(pilot, app)
+        _schema_editor(screen).value = "40"
+
+        await _switch_via_control(pilot, app, TEST_E)
+        await _await_condition(
+            pilot,
+            "switch overlay",
+            lambda: isinstance(app.screen, TargetSwitchOverlay),
+        )
+        await pilot.click("#switch-discard")
+        await _await_condition(
+            pilot,
+            "testE header",
+            lambda: f"selected: {TEST_E}" in screen_text(app),
+        )
+        for _ in range(10):
+            await pilot.pause()
+
+        text = screen_text(app).lower()
+        assert "timeout" in text, (
+            "failed switch-load renders no typed reason (P4-1 residual)"
+        )
+        try:
+            app.screen.query_one(f"#{row_widget_id('agent.max_turns')}")
+        except NoMatches:
+            pass
+        else:
+            pytest.fail(
+                "stale same-schema row survives a failed load (P4-1): "
+                "testA values would masquerade as testE"
+            )
         assert fake.writes == []
         fake.assert_only_receipted_writes()

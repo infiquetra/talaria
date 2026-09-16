@@ -1270,3 +1270,27 @@ async def test_apply_loaded_view_reapplies_search_and_keeps_focus_attached() -> 
         assert row.display
         focused = view.focused
         assert focused is None or focused.is_mounted
+
+
+# ── P4-1: the load-error notice surface (dev-4 preserves) ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_apply_loaded_view_renders_the_load_error_notice() -> None:
+    """U1 routes typed load failures through an actionable placeholder
+    notice. Whatever the loader reports, the apply path must render the
+    notice text — this pins the surface while the loader work lands."""
+    settings = _settings()
+    requested: list[Any] = []
+    host = _Host(lambda: _screen(settings, requested))
+
+    async with host.run_test(size=SIZE) as pilot:
+        view = await _mounted(pilot, host)
+        view.apply_loaded_view(
+            _view(settings, notice="schema unavailable (unreachable)"),
+            "local-fixture",
+        )
+        for _ in range(3):
+            await pilot.pause()
+
+        assert "schema unavailable (unreachable)" in _text(host)

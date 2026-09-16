@@ -730,3 +730,69 @@ def test_generations_advance_independently_per_target() -> None:
     )
 
     assert after.documents[old].saved == {"agent": {"max_turns": 40}}
+
+
+# ── P4-1: metadata-only diagnostics (dev-4, R1/R2) ──────────────────────────
+#
+# The T3 live diagnosis classifies the failure from metadata alone: route,
+# target, status/reason, byte count, top-level keys, field/category counts,
+# and decode class. Values, descriptions, options, and raw bodies never
+# enter the diagnostic record.
+
+
+def test_summarize_schema_shape_counts_without_values() -> None:
+    """Field/category counts plus top-level keys — the shape half of the
+    Diagnostic Oracle, with no descriptions, options, or values."""
+    settings = _settings()
+    summarize = _require_attr(settings, "summarize_schema_shape")
+
+    shape = summarize(
+        {
+            "fields": {
+                "agent.max_turns": {
+                    "type": "number",
+                    "description": "Maximum agent turns.",
+                    "category": "agent",
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone.",
+                    "category": "general",
+                },
+            },
+            "category_order": ["general", "agent"],
+        }
+    )
+
+    assert shape.field_count == 2
+    assert shape.category_count == 2
+    assert shape.top_level_keys == ("category_order", "fields")
+    assert "Maximum agent turns" not in repr(shape)
+
+
+def test_summarize_schema_shape_refuses_a_non_object() -> None:
+    """Undecodable bodies fail loudly as a typed decode error — the
+    classification branch — never as silent placeholder input."""
+    settings = _settings()
+    summarize = _require_attr(settings, "summarize_schema_shape")
+    decode_error = _require_attr(settings, "SettingsDecodeError")
+
+    with pytest.raises(decode_error):
+        summarize(["fields"])
+
+
+def test_decode_errors_never_carry_body_content() -> None:
+    """R2 at the decoder: even a hostile body cannot smuggle values into
+    the typed error the diagnosis records and the notice renders."""
+    settings = _settings()
+    decode = _require_attr(settings, "decode_settings_schema")
+    decode_error = _require_attr(settings, "SettingsDecodeError")
+    marker = "p4-marker-value"
+
+    with pytest.raises(decode_error) as first:
+        decode(["not", "an", "object", marker])
+    with pytest.raises(decode_error) as second:
+        decode({"fields": {"k": marker}, "category_order": []})
+
+    assert marker not in str(first.value)
+    assert marker not in str(second.value)

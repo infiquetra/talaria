@@ -122,6 +122,12 @@ class _FakeSettingsClient:
         self.reveal_calls: list[tuple[str, str]] = []
         self.reveal_limit_from: int | None = None
         self.reveal_value = f"p3-canary-{secrets.token_hex(4)}"
+        # P4: per-profile load failure injection. Empty means every load
+        # succeeds (all P3 flows unchanged).
+        self.schema_failures: dict[str, Exception] = {}
+        self.schema_bodies: dict[str, Any] = {}
+        self.env_failures: dict[str, Exception] = {}
+        self.env_bodies: dict[str, Any] = {}
 
     def factory(self, endpoint: str) -> _FakeSettingsClient:
         del endpoint
@@ -141,6 +147,12 @@ class _FakeSettingsClient:
     async def get_schema(self, target: Any) -> Any:
         self._log("get_schema", target)
         await self._gate("get_schema", target.profile_name)
+        failure = self.schema_failures.get(target.profile_name)
+        if failure is not None:
+            raise failure
+        if target.profile_name in self.schema_bodies:
+            body: dict[str, Any] = self.schema_bodies[target.profile_name]
+            return body
         if target.profile_name == TEST_E:
             field, description = FIELD_E, "Maximum API retries."
         else:
@@ -170,6 +182,11 @@ class _FakeSettingsClient:
     async def get_env(self, target: Any) -> Any:
         self._log("get_env", target)
         await self._gate("get_env", target.profile_name)
+        failure = self.env_failures.get(target.profile_name)
+        if failure is not None:
+            raise failure
+        if target.profile_name in self.env_bodies:
+            return self.env_bodies[target.profile_name]
         return dict(self.envs.get(target.profile_name, {}))
 
     async def reveal_env(self, target: Any, key: str) -> Any:
@@ -330,6 +347,99 @@ async def _switch_to_test_a(
 
 
 # ── P3-1. Selected target mounts authoritative rows ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_switch_load_schema_transport_failure_is_typed_not_silent(
+    isolated_global_config_dir: Path,
+) -> None:
+    """P4 through the P3 switch flow: when testA's schema fetch raises a
+    typed transport error, the committed load shows a reason-named safe
+    state and the stale testE row is gone — never silent stale rows."""
+    fake = _FakeSettingsClient()
+    _seed_remount_fixture(fake)
+    fake.schema_failures[TEST_A] = SettingsError("unreachable", "schema unreachable")
+    app, _ = _live_config_app(fake)
+    async with app.run_test(size=SIZE) as pilot:
+        await _open_config(pilot, app)
+        await _switch_to_test_a(pilot, app, "discard")
+        await _await_condition(
+            pilot,
+            "testA header",
+            lambda: f"selected: {TEST_A}" in screen_text(app),
+        )
+        for _ in range(10):
+            await pilot.pause()
+
+        text = screen_text(app).lower()
+        assert "unreachable" in text, (
+            "failed switch-load renders no typed reason (P4-1 residual)"
+        )
+        assert not _row_present(app.screen, FIELD_E), (
+            "stale testE row survives a failed testA load (P4-1)"
+        )
+        fake.assert_only_receipted_writes()
+
+
+@pytest.mark.asyncio
+async def test_switch_load_schema_decode_failure_reports_decode_state(
+    isolated_global_config_dir: Path,
+) -> None:
+    """P4 through the P3 switch flow: an undecodable testA schema body
+    surfaces a decode-named state instead of the silent placeholder."""
+    fake = _FakeSettingsClient()
+    _seed_remount_fixture(fake)
+    fake.schema_bodies[TEST_A] = {
+        "fields": {"agent.max_turns": {"description": "No type.", "category": "agent"}},
+        "category_order": ["agent"],
+    }
+    app, _ = _live_config_app(fake)
+    async with app.run_test(size=SIZE) as pilot:
+        await _open_config(pilot, app)
+        await _switch_to_test_a(pilot, app, "discard")
+        await _await_condition(
+            pilot,
+            "testA header",
+            lambda: f"selected: {TEST_A}" in screen_text(app),
+        )
+        for _ in range(10):
+            await pilot.pause()
+
+        text = screen_text(app).lower()
+        assert "decode" in text, (
+            "undecodable switch-load renders no decode-typed state (P4-1)"
+        )
+        assert not _row_present(app.screen, FIELD_E)
+        fake.assert_only_receipted_writes()
+
+
+@pytest.mark.asyncio
+async def test_switch_load_env_failure_mounts_schema_with_env_state(
+    isolated_global_config_dir: Path,
+) -> None:
+    """P4 through the P3 switch flow: testA schema mounts while its env
+    outage gets an env-named state — the secret row stays absent without
+    reading as no-env-configured."""
+    fake = _FakeSettingsClient()
+    _seed_remount_fixture(fake)
+    fake.env_failures[TEST_A] = SettingsError("timeout", "env fetch timeout")
+    app, _ = _live_config_app(fake)
+    async with app.run_test(size=SIZE) as pilot:
+        await _open_config(pilot, app)
+        await _switch_to_test_a(pilot, app, "discard")
+        await _await_condition(
+            pilot,
+            "testA header",
+            lambda: f"selected: {TEST_A}" in screen_text(app),
+        )
+
+        assert _row_present(app.screen, FIELD_A)
+        text = screen_text(app).lower()
+        assert "env" in text, (
+            "failed env load on switch renders no env-named state (P4)"
+        )
+        assert not _row_present(app.screen, SECRET_KEY)
+        fake.assert_only_receipted_writes()
 
 
 @pytest.mark.asyncio
