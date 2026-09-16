@@ -1,0 +1,45 @@
+CFG-P2-T1B Test Author Two initial failures
+baseline: cb93c5d7ff728b59eb85a6c7f0faf19a4e12e9ab
+worktree: talaria-cfg-p2-ta2
+branch: feat/v0.6.3-cfg-p2-ta2
+
+command:
+  uv run pytest tests/transport/test_cfg_p2_remote_gateway.py \
+    tests/transport/test_gated_auth.py tests/transport/test_settings_api.py \
+    tests/transport/test_connection_set.py tests/transport/test_admin.py \
+    tests/transport/test_refresh.py tests/transport/test_session_startup.py \
+    tests/transport/test_reconnect.py tests/test_cli.py tests/test_config.py \
+    scripts/acceptance/test_v062_configuration.py --tb=line -q
+
+result: 487 passed, 27 failed, 0 skipped, collection clean
+
+Existing loopback, HTTPS, redaction, ticket, restart, and wake tests stayed green.
+No invented credentials, cookies, tokens, or fabricated remote successes.
+No collection, syntax, or fixture failures.
+
+P2-3 fail (missing behavior):
+  require_gated_origin is absent; GatedAuthSession still calls require_fetchable_origin
+  explicit gated http://10.220.1.139 is refused as loopback policy
+  public, hostname, CGNAT, link-local, and multicast HTTP stay refused once gated origin exists
+  credential_provider_factory still returns LoopbackTokenProvider for auth=gated
+  build_live_app / session startup plan_connections omits connections=
+
+P2-3 blocked (not a pass, not a pytest fail):
+  test_p2_3_installed_remote_login_is_blocked_without_live_access
+  live remote Hermes access is off; row status is blocked
+
+P2-4 fail (missing behavior):
+  StartGateway / StopGateway commands are absent
+  SettingsClient.start_gateway / stop_gateway are absent
+  no POST /api/gateway/start|stop?profile= product path
+
+P2-4 not claimed by harness (pytest pass):
+  product_gateway_lifecycle_accepted(..., harness_posted=True) is False
+
+P2-5 fail (missing behavior):
+  disposable_profile_name still emits dotted talaria-v0.6.2-cfg-t0-* names
+  generated names fail require_legal_p2_name / P2 family / Hermes grammar
+
+P2-5 keep (pytest pass):
+  dotted legacy candidates are rejected by require_legal_p2_name
+  T7-R3 evidence files remain present and were not rewritten

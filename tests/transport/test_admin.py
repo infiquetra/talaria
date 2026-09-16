@@ -1723,3 +1723,15 @@ def test_admin_failure_vocabulary_includes_timeout_and_conflict() -> None:
     for reason in ("conflict", "timeout"):
         assert reason in allowed, f"unimplemented interface: AdminFailure reason {reason!r}"
 
+
+def test_p2_3_gated_rfc1918_admin_origin_is_not_loopback_refresh() -> None:
+    from talaria.transport import gated_auth as gated_mod
+
+    require = getattr(gated_mod, "require_gated_origin", None)
+    assert require is not None, "unimplemented interface: require_gated_origin"
+    require("http://10.220.1.139:8765/", auth="gated")
+    with pytest.raises(AdminError) as caught:
+        fetch_admin_json("http://10.220.1.139:8765/", MODEL_OPTIONS_PATH, token=CANARY)
+    assert caught.value.reason == "refused_origin"
+    assert CANARY not in str(caught.value)
+

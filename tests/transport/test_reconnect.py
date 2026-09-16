@@ -1004,3 +1004,20 @@ async def test_closing_the_source_closes_the_recorder(
 
     with pytest.raises(RecorderError, match="already closed"):
         recorder.record("in", "{}")
+
+
+def test_p2_3_reconnect_uses_gated_ticket_provider_not_loopback() -> None:
+    from talaria.transport.connection_set import (
+        credential_provider_factory,
+        plan_connections,
+    )
+
+    plan = plan_connections(
+        default_endpoint="ws://127.0.0.1:8765/api/ws",
+        connections={
+            "remote": {"url": "ws://10.220.1.139:8765/api/ws", "auth": "gated"}
+        },
+    )
+    provider = credential_provider_factory(None)(plan[0])
+    assert type(provider).__name__ == "GatedTicketProvider"
+    assert not isinstance(provider, LoopbackTokenProvider)

@@ -1158,3 +1158,20 @@ async def test_a_create_reply_naming_another_directory_speaks_once() -> None:
             await app.shutdown_sources()
     finally:
         await stub.stop()
+
+
+def test_p2_3_live_launch_must_plan_configured_connections() -> None:
+    """Gated [connections] must reach plan_connections; profile endpoints are not enough."""
+    import ast
+    from pathlib import Path
+
+    from talaria import cli as cli_module
+
+    tree = ast.parse(Path(cli_module.__file__).read_text(encoding="utf-8"))
+    planned = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "plan_connections"
+    ]
+    assert planned, "build_live_app must call plan_connections"
+    assert any("connections" in {kw.arg for kw in node.keywords} for node in planned)

@@ -78,6 +78,10 @@ READONLY_HOST_STATUS_PATHS: Final[frozenset[str]] = frozenset(
 _PROFILE_NAME_RE = re.compile(
     r"\Atalaria-v0\.6\.2-cfg-t0-(local|remote)-(active|installed)-(a|switch|clone|renamed)\Z"
 )
+P2_PROFILE_NAME_RE = re.compile(
+    r"\Atalaria-v062-cfg-p2-(local|remote)-(active|installed)-(a|switch|clone|renamed)\Z"
+)
+P2_HERMES_NAME_RE = re.compile(r"\A[a-z0-9][a-z0-9_-]{0,63}\Z")
 _CANARY_HINTS = (
     "token",
     "ticket",
@@ -153,6 +157,33 @@ def disposable_profile_name(connection: ConnectionLabel, stage: StageName, alias
     if _PROFILE_NAME_RE.fullmatch(name) is None:
         raise HarnessError(f"disposable name {name!r} failed the reserved pattern")
     return name
+
+
+def require_legal_p2_name(name: str) -> str:
+    """Reject dotted legacy candidates and any name outside the P2 family."""
+    if "." in name:
+        raise HarnessError(f"disposable name {name!r} contains a dot")
+    if len(name) > 64:
+        raise HarnessError(f"disposable name {name!r} exceeds 64 characters")
+    if P2_PROFILE_NAME_RE.fullmatch(name) is None:
+        raise HarnessError(f"disposable name {name!r} is not the P2 reserved family")
+    if P2_HERMES_NAME_RE.fullmatch(name) is None:
+        raise HarnessError(f"disposable name {name!r} is not a legal Hermes profile")
+    return name
+
+
+def product_gateway_lifecycle_accepted(
+    recorded_paths: Sequence[str], *, harness_posted: bool
+) -> bool:
+    """A harness POST is setup only and cannot pass P2-4."""
+    if harness_posted:
+        return False
+    if any("/api/rpc" in path or "wake." in path for path in recorded_paths):
+        return False
+    return any(
+        "/api/gateway/start" in path or "/api/gateway/stop" in path
+        for path in recorded_paths
+    )
 
 
 def stage_name_set(connection: ConnectionLabel, stage: StageName) -> dict[str, str]:

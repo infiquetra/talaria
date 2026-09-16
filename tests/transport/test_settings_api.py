@@ -47,6 +47,8 @@ ROUTE_CONTRACTS: tuple[tuple[str, str, str, str], ...] = (
     ("delete_profile", "DELETE", "/api/profiles/{name}", "path"),
     ("get_status", "GET", "/api/status", "profile"),
     ("restart_gateway", "POST", "/api/gateway/restart", "profile"),
+    ("start_gateway", "POST", "/api/gateway/start", "profile"),
+    ("stop_gateway", "POST", "/api/gateway/stop", "profile"),
     ("wake_start", "RPC", "wake.start", "params.profile"),
     ("reset_profile", "PUT", "/api/config", "profile"),
 )

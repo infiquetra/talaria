@@ -19,6 +19,8 @@ from scripts.acceptance.v062_configuration import (
     LEDGER_SCHEMA_PATH,
     LIVE_CREDENTIALS_PATH_FLAG,
     LIVE_HERMES_FLAG,
+    P2_HERMES_NAME_RE,
+    P2_PROFILE_NAME_RE,
     TEST_SECRET_KEY,
     HarnessError,
     access_limitation,
@@ -27,8 +29,10 @@ from scripts.acceptance.v062_configuration import (
     disposable_profile_name,
     live_hermes_enabled,
     multiplexer_preflight_is_batch_gate,
+    product_gateway_lifecycle_accepted,
     readonly_host_status_allowed,
     remote_reuse_map,
+    require_legal_p2_name,
     scan_for_canaries,
     sha256_text,
     stage_name_set,
@@ -104,12 +108,18 @@ def test_a_ledger_document_accepts_the_blocked_a1_11_20_set() -> None:
 def test_disposable_names_are_stage_and_connection_specific() -> None:
     local_active = stage_name_set("local", "active")
     remote_installed = stage_name_set("remote", "installed")
-    assert local_active["testA"] == "talaria-v0.6.2-cfg-t0-local-active-a"
-    assert local_active["testE"] == "talaria-v0.6.2-cfg-t0-local-active-switch"
-    assert local_active["testC"] == "talaria-v0.6.2-cfg-t0-local-active-clone"
-    assert local_active["testD"] == "talaria-v0.6.2-cfg-t0-local-active-renamed"
-    assert remote_installed["testA"] == "talaria-v0.6.2-cfg-t0-remote-installed-a"
+    assert local_active["testA"] == "talaria-v062-cfg-p2-local-active-a"
+    assert local_active["testE"] == "talaria-v062-cfg-p2-local-active-switch"
+    assert local_active["testC"] == "talaria-v062-cfg-p2-local-active-clone"
+    assert local_active["testD"] == "talaria-v062-cfg-p2-local-active-renamed"
+    assert remote_installed["testA"] == "talaria-v062-cfg-p2-remote-installed-a"
     assert set(local_active.values()).isdisjoint(remote_installed.values())
+    for name in (*local_active.values(), *remote_installed.values()):
+        require_legal_p2_name(name)
+        assert P2_PROFILE_NAME_RE.fullmatch(name)
+        assert P2_HERMES_NAME_RE.fullmatch(name)
+        assert "." not in name
+        assert len(name) <= 64
 
 
 def test_testb_and_default_are_not_disposable_write_aliases() -> None:
@@ -278,6 +288,17 @@ def test_blocked_row_helper_does_not_claim_a_pass() -> None:
     )
     assert row["status"] == "blocked"
     validate_ledger_row(row)
+
+
+def test_p2_5_dotted_legacy_names_are_rejected_and_harness_post_is_not_p2_4() -> None:
+    with pytest.raises(HarnessError, match="dot"):
+        require_legal_p2_name("talaria-v0.6.2-cfg-t0-local-active-a")
+    assert (
+        product_gateway_lifecycle_accepted(
+            ["POST /api/gateway/start"], harness_posted=True
+        )
+        is False
+    )
 
 
 def test_the_harness_does_not_import_or_spawn_host_admin_tools() -> None:
