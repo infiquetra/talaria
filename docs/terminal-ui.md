@@ -268,6 +268,13 @@ version. Canonical id `default` is shown as `default` and may additionally show 
 name. Below 100 columns the owner/category navigation collapses; the selected target stays
 visible, including at 80×24.
 
+The header `#settings-target` control lists configured `(connection, profile)`
+pairs as `"<connection> / <profile>"` and routes a choice through Stay / Save /
+Discard. Save keeps the old target selected until its re-read lands, then loads
+the new target. Discard loads the new target without a write. Stay keeps edits.
+Secret rows fetched from `/api/env` expose a Reveal control; plaintext is
+overlay-only, one-shot, and clears on close or a bounded timeout.
+
 Talaria-owned rows remain the existing theme and status branch — `theme.name`,
 `status.command`, `status.interval_seconds`, `status.segments` — with each row's effective
 value and source scope (default, user file, repository file, environment, or session) and

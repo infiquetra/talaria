@@ -19,7 +19,7 @@ elapsed seconds are a function of the corpus rather than of when the test ran.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -967,15 +967,18 @@ def project_settings_workspace(
     reset_patch: Mapping[str, Any] | None = None,
     secrets: Mapping[str, tuple[bool, str]] | None = None,
     model_picker: Any = None,
+    targets: Sequence[Any] | None = None,
 ) -> SettingsWorkspaceIdentity:
     """Project a settings workspace. ``connection_id`` is the write key."""
     from talaria.domain.settings import (
+        ConfigTarget,
         FieldRowView,
         SettingsField,
         SettingsRowGroupView,
         SettingsWorkspaceView,
         TargetHeaderView,
         project_field_row,
+        project_target_options,
     )
     from talaria.domain.settings_catalog import surface_disposition, tier_of
 
@@ -1040,6 +1043,26 @@ def project_settings_workspace(
             )
         )
 
+    secret_doc = dict(secrets or {})
+    secret_rows = tuple(
+        FieldRowView(
+            key=key,
+            label=key,
+            help_text="",
+            type="string",
+            provenance="saved" if is_set else "default",
+            default_value="",
+            saved_value=masked,
+            effective_value=masked,
+            pending_value=None,
+            effect="unverified",
+            tier=1,
+            read_only=True,
+            ownership="hermes-profile",
+        )
+        for key, (is_set, masked) in sorted(secret_doc.items())
+    )
+
     host_rows = tuple(
         FieldRowView(
             key=key,
@@ -1059,7 +1082,17 @@ def project_settings_workspace(
         for key, label, help_text in _HOST_STATUS
     )
 
-    groups = (
+    selected = ConfigTarget(
+        connection_id=connection_id, profile_name=selected_profile
+    )
+    current = ConfigTarget(
+        connection_id=connection_id, profile_name=current_profile
+    )
+    options = project_target_options(
+        tuple(targets or ()), selected=selected, current=current
+    )
+
+    groups: list[SettingsRowGroupView] = [
         SettingsRowGroupView(
             owner="hermes-profile",
             title=_OWNER_TITLES["hermes-profile"],
@@ -1070,20 +1103,49 @@ def project_settings_workspace(
             title=_OWNER_TITLES["hermes-host"],
             rows=host_rows,
         ),
-    )
+    ]
+    if secret_rows:
+        groups.append(
+            SettingsRowGroupView(
+                owner="environment",
+                title="Environment",
+                rows=secret_rows,
+            )
+        )
+    group_views = tuple(groups)
     return SettingsWorkspaceIdentity(
         connection_id=connection_id,
         view=SettingsWorkspaceView(
             header=header,
-            groups=groups,
-            notice=notice
-            or " · ".join(group.title for group in groups if group.title),
+            groups=group_views,
+            notice=_settings_notice(notice, group_views, secret_doc),
             wake_state=wake_state,
             reset_patch=dict(reset_patch or {}),
             secrets=dict(secrets or {}),
             model_picker=model_picker,
+            target_options=options,
         ),
     )
+
+
+def _settings_notice(
+    notice: str,
+    groups: tuple[Any, ...],
+    secret_doc: Mapping[str, tuple[bool, str]],
+) -> str:
+    """Docked header line: group titles plus env masks (never plaintext)."""
+    if notice:
+        text = notice
+    else:
+        text = " · ".join(group.title for group in groups if group.title)
+    masks = "  ".join(
+        f"{key} {masked}"
+        for key, (is_set, masked) in sorted(secret_doc.items())
+        if is_set and masked
+    )
+    if masks:
+        return f"{text}  {masks}" if text else masks
+    return text
 
 
 def _catalog_effect(key: str) -> str:
@@ -1096,6 +1158,8 @@ def _catalog_effect(key: str) -> str:
 
 
 def _nested_get(tree: Mapping[str, Any], dotted: str) -> object:
+    if dotted in tree:
+        return tree[dotted]
     current: object = tree
     for part in dotted.split("."):
         if not isinstance(current, Mapping) or part not in current:

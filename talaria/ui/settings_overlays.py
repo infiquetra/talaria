@@ -19,12 +19,16 @@ from talaria.domain.settings import (
     ModelPickerView,
     ResetConfirmView,
     RestartConfirmView,
+    RevealDisplayValue,
     RevealSecretView,
     TargetSwitchPrompt,
 )
 from talaria.ui.literal import literal_text
 
+REVEAL_DISPLAY_SECONDS = 15
+
 __all__ = (
+    "REVEAL_DISPLAY_SECONDS",
     "ModelPickerOverlay",
     "ModelPickResult",
     "ResetConfirmOverlay",
@@ -301,6 +305,9 @@ class RevealSecretOverlay(ModalScreen[RevealSecretResult | None]):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._view = view
         self._on_result = on_result
+        self._holder: RevealDisplayValue | None = None
+        self._value_line: Static | None = None
+        self._status_line: Static | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -310,6 +317,10 @@ class RevealSecretOverlay(ModalScreen[RevealSecretResult | None]):
                 classes="settings--overlay-title",
             )
             yield Static(literal_text(self._view.masked), markup=False)
+            self._value_line = Static(literal_text(""), markup=False)
+            yield self._value_line
+            self._status_line = Static(literal_text(""), markup=False)
+            yield self._status_line
             with Horizontal():
                 yield Button("Reveal once", id="reveal-once", compact=True)
                 yield Button("Cancel", id="reveal-cancel", compact=True)
@@ -317,7 +328,15 @@ class RevealSecretOverlay(ModalScreen[RevealSecretResult | None]):
     def on_key(self, event: events.Key) -> None:
         _own_keyboard(event)
 
+    def _wipe(self) -> None:
+        if self._holder is not None:
+            self._holder.clear()
+            self._holder = None
+        if self._value_line is not None:
+            self._value_line.update(literal_text(""))
+
     def _finish(self, result: RevealSecretResult | None) -> None:
+        self._wipe()
         if self._on_result is not None:
             self._on_result(result)
         self.dismiss(result)
@@ -325,9 +344,27 @@ class RevealSecretOverlay(ModalScreen[RevealSecretResult | None]):
     def action_cancel_overlay(self) -> None:
         self._finish(None)
 
+    def show_plaintext(self, holder: RevealDisplayValue) -> None:
+        self._holder = holder
+        value = holder.take() or ""
+        if self._value_line is not None:
+            self._value_line.update(literal_text(value))
+        self.set_timer(REVEAL_DISPLAY_SECONDS, self._timeout_wipe)
+
+    def show_error(self, message: str) -> None:
+        self._wipe()
+        if self._status_line is not None:
+            self._status_line.update(literal_text(message))
+
+    def _timeout_wipe(self) -> None:
+        self._wipe()
+        if self.is_attached:
+            self.dismiss(None)
+
     @on(Button.Pressed, "#reveal-once")
     def _reveal(self) -> None:
-        self._finish(RevealSecretResult(reveal=True))
+        if self._on_result is not None:
+            self._on_result(RevealSecretResult(reveal=True))
 
     @on(Button.Pressed, "#reveal-cancel")
     def _cancel(self) -> None:

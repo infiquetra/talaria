@@ -32,12 +32,14 @@ from talaria.domain.settings import (
     apply_settings_response,
     begin_settings_request,
     build_config_patch,
+    fail_settings_save,
     project_save_summary,
     request_settings_switch,
     select_settings_target,
     stage_settings_edit,
 )
 from talaria.domain.settings_commands import (
+    LoadTarget,
     ResetConfig,
     RestartGateway,
     RevealEnv,
@@ -99,6 +101,9 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         dock: top;
         height: auto;
         color: $text;
+    }
+    SettingsWorkspaceScreen #settings-target-header {
+        height: auto;
     }
     SettingsWorkspaceScreen #settings-footer {
         dock: bottom;
@@ -171,6 +176,8 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         self._reveal_key = ""
         self._restart_plan: RestartPlan | None = None
         self._switch_target: ConfigTarget | None = None
+        self._target_picker: Vertical | None = None
+        self._picker_open = False
         self._settings_state = SettingsState(
             selected=ConfigTarget(
                 connection_id=self._connection_id,
@@ -188,7 +195,7 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         header = self._view.header
         return (
             f"{header.connection_label}  "
-            f"current: {header.current_profile}  "
+            f"current: {header.current_profile}\n"
             f"selected: {header.selected_profile}  "
             f"{header.auth_mode}  {header.hermes_version}"
         )
@@ -216,6 +223,9 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
                     id="settings-target-header",
                 )
                 yield self._header_line
+                yield Button("Target", id="settings-target", compact=True)
+                self._target_picker = Vertical(id="settings-target-picker")
+                yield self._target_picker
                 yield Static(
                     literal_text("owner · category"),
                     markup=False,
@@ -257,7 +267,11 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
                     yield self._talaria
                 for group in self._view.groups:
                     widget = SettingsGroupWidget(
-                        group.owner, group.title, group.rows
+                        group.owner,
+                        group.title,
+                        group.rows,
+                        secrets=self._view.secrets,
+                        on_reveal=self.open_reveal,
                     )
                     self._groups.append(widget)
                     yield widget
@@ -270,6 +284,40 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
     def on_mount(self) -> None:
         self._apply_search(self._view.search_text)
         self._apply_layout(self.size.width)
+        if self._target_picker is not None:
+            self._target_picker.display = False
+
+    @on(Button.Pressed, "#settings-target")
+    def _toggle_target_picker(self) -> None:
+        picker = self._target_picker
+        if picker is None:
+            return
+        if self._picker_open:
+            picker.display = False
+            self._picker_open = False
+            return
+        picker.remove_children()
+        for option in self._view.target_options:
+            label = f"{option.connection_id} / {option.profile_name}"
+            picker.mount(Button(label, compact=True, classes="settings--target-option"))
+        picker.display = True
+        self._picker_open = True
+
+    @on(Button.Pressed)
+    def _choose_target_option(self, event: Button.Pressed) -> None:
+        if "settings--target-option" not in event.button.classes:
+            return
+        event.stop()
+        label = str(event.button.label).strip()
+        connection_id, _, profile_name = label.partition(" / ")
+        if self._target_picker is not None:
+            self._target_picker.display = False
+            self._picker_open = False
+        if not connection_id or not profile_name:
+            return
+        self.open_target_switch(
+            ConfigTarget(connection_id=connection_id, profile_name=profile_name)
+        )
 
     def on_resize(self, event: events.Resize) -> None:
         self._apply_layout(event.size.width)
@@ -473,6 +521,33 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         )
         self.update_view(replace(self._view, header=header))
 
+    def fail_save(self, target: ConfigTarget) -> None:
+        self._settings_state = fail_settings_save(
+            self._settings_state, target=target
+        )
+
+    def apply_loaded_view(self, view: SettingsWorkspaceView, connection_id: str) -> None:
+        """Refresh Hermes editors after a live target load. Talaria branch stays."""
+        self._connection_id = connection_id
+        self._settings_state = replace(
+            self._settings_state,
+            selected=ConfigTarget(
+                connection_id=connection_id,
+                profile_name=view.header.selected_profile,
+            ),
+        )
+        rows_by_key = {
+            row.key: row for group in view.groups for row in group.rows
+        }
+        for widget in self._row_widgets():
+            row = rows_by_key.get(widget.row.key)
+            if row is None:
+                continue
+            widget.row = row
+            if widget.editor is not None:
+                widget.editor.value = display_row_value(row)
+        self.update_view(view)
+
     def _on_switch_result(self, result: SwitchChoice | None) -> None:
         self._restore_focus()
         new_target = self._switch_target
@@ -490,10 +565,13 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
             self._emit(command)
         if choice == "stay":
             return
+        if choice == "save":
+            return
         if choice == "discard":
             self._restore_editors()
-        if next_state.selected is not None:
-            self._apply_selected(next_state.selected)
+            if next_state.selected is not None:
+                self._apply_selected(next_state.selected)
+                self._emit(LoadTarget(target=next_state.selected))
 
     def open_reset(self) -> None:
         confirm = ResetConfirmView(
