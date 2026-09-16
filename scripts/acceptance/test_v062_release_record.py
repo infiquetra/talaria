@@ -1,9 +1,9 @@
-"""Fixture-only v0.6.2 verify_run contract.
+"""v0.6.2 verify_run contract.
 
-These tests do not read the missing repo record. They name the receipt
-schema the implementer must teach ``verify_run`` (``talaria-v0.6.2-receipt-v1``)
-and pin the existing ``_release_candidate_matches`` rule so a docs-only
-descendant of the product SHA can carry the tag.
+The first six tests name the receipt schema and pin
+``_release_candidate_matches``. The cleanliness tests require an empty
+error list for a real CFG receipt shape and for the committed record —
+``release.yml`` fails the tag if ``verify-run`` prints any error.
 """
 
 from __future__ import annotations
@@ -64,6 +64,21 @@ def _v062_receipt(*, item: str = _CFG_ITEM, verdict: str = "pass") -> dict[str, 
         "checklist_item": item,
         "tester": "dedicated-tester",
         "verdict": verdict,
+    }
+
+
+def _v062_cfg_shape_receipt() -> dict[str, Any]:
+    """The published CFG shape: applies_to_candidate plus one evidence digest."""
+    return {
+        "schema_version": V062_RECEIPT_SCHEMA,
+        "release": "0.6.2",
+        "checklist_item": _CFG_ITEM,
+        "tester": "dedicated-tester",
+        "verdict": "pass",
+        "applies_to_candidate": "same",
+        "evidence": {
+            "review_artifact_sha256": "a" * 64,
+        },
     }
 
 
@@ -257,3 +272,38 @@ def test_v061_expected_receipts_ready_rule_does_not_apply_to_v062_cfg_set(
         "live receipts on disk" in error and "expected_receipts" in error
         for error in errors
     ), errors
+
+
+def test_verify_run_is_clean_for_v062_cfg_receipt_shape(tmp_path: Path) -> None:
+    """A real CFG receipt must produce no verify_run errors.
+
+    Do not weaken this to ignore SchemaRegistry vocabulary or undeclared-key
+    errors. Teaching the registry the v0.6.2 receipt is how this flips.
+    """
+    product = _init_repo(tmp_path)
+    manifest_path, evidence_root = _write_v062_run(
+        tmp_path,
+        candidate_commit=product,
+        receipts=[("cfg-cr4/receipts/receipt.json", _v062_cfg_shape_receipt())],
+    )
+
+    errors = verify_run(
+        manifest_path,
+        evidence_root=evidence_root,
+        repo_root=tmp_path,
+    )
+
+    assert errors == [], errors
+
+
+def test_verify_run_is_clean_for_committed_v062_record() -> None:
+    """Publication gate: verify-run --expect-candidate HEAD must print no errors."""
+    repo_root = Path(__file__).resolve().parents[2]
+    errors = verify_run(
+        repo_root / "docs" / "acceptance" / "v0.6.2" / "artifact-manifest.json",
+        evidence_root=repo_root / "docs" / "acceptance" / "v0.6.2" / "evidence",
+        repo_root=repo_root,
+        expected_candidate_commit=_head(repo_root),
+    )
+
+    assert errors == [], errors
