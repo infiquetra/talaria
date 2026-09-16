@@ -1,0 +1,476 @@
+"""Bounded settings workspace: target header, searchable rows, overlays.
+
+Renders a domain :class:`~talaria.domain.settings.SettingsWorkspaceView` and
+reports typed commands through ``on_command``. Widgets do not hold protocol
+or session state (ADR-0002). Overlay cancellation never commits.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
+
+from textual import events, on
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widget import Widget
+from textual.widgets import Button, Input, Static
+
+from talaria.domain.settings import (
+    ConfigTarget,
+    ResetConfirmView,
+    RestartConfirmView,
+    RestartPlan,
+    RevealSecretView,
+    SettingsWorkspaceView,
+    TargetSwitchPrompt,
+    build_config_patch,
+)
+from talaria.domain.settings_commands import (
+    ResetConfig,
+    RestartGateway,
+    RevealEnv,
+    SaveConfig,
+    SetModel,
+    WakeWord,
+)
+from talaria.ui.config_view import ConfigViewResult
+from talaria.ui.literal import literal_text
+from talaria.ui.settings_overlays import (
+    ModelPickerOverlay,
+    ModelPickResult,
+    ResetConfirmOverlay,
+    ResetConfirmResult,
+    RestartConfirmOverlay,
+    RestartConfirmResult,
+    RevealSecretOverlay,
+    RevealSecretResult,
+    SwitchChoice,
+    TargetSwitchOverlay,
+)
+from talaria.ui.settings_widgets import (
+    SettingsGroupWidget,
+    TalariaOwnedSettings,
+    coerce_row_value,
+    display_row_value,
+    nested_assign,
+)
+
+__all__ = ("SettingsWorkspaceScreen",)
+
+
+class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
+    """Three-region settings workspace with focused overlays.
+
+    Widget ids pinned by Test Author One: ``#settings-search``,
+    ``#settings-save``, ``#settings-discard``, ``#settings-group-<owner>``,
+    ``#wake-toggle``. The Talaria-owned branch (``#interval``,
+    ``#apply-user``, ``#theme-picker``) mounts only when the app supplies
+    process state.
+    """
+
+    BINDINGS = [
+        ("escape", "cancel_view", "Cancel"),
+        ("slash", "focus_search", "Search"),
+    ]
+
+    DEFAULT_CSS = """
+    SettingsWorkspaceScreen {
+        align: left top;
+    }
+    SettingsWorkspaceScreen > #settings-root {
+        width: 100%;
+        height: 100%;
+        background: $surface;
+        padding: 0 1;
+    }
+    SettingsWorkspaceScreen #settings-header {
+        dock: top;
+        height: auto;
+        color: $text;
+    }
+    SettingsWorkspaceScreen #settings-footer {
+        dock: bottom;
+        height: auto;
+    }
+    SettingsWorkspaceScreen #settings-body {
+        height: 1fr;
+    }
+    SettingsWorkspaceScreen .settings--title {
+        color: $accent;
+        text-style: bold;
+    }
+    SettingsWorkspaceScreen .settings--group-title {
+        color: $accent;
+        text-style: bold;
+        margin-top: 1;
+    }
+    SettingsWorkspaceScreen .settings--help {
+        color: $text-muted;
+    }
+    SettingsWorkspaceScreen .settings--notice {
+        color: $warning;
+    }
+    SettingsWorkspaceScreen .settings--validation {
+        color: $error;
+    }
+    SettingsWorkspaceScreen .settings--readonly {
+        color: $text-muted;
+    }
+    SettingsWorkspaceScreen .settings--nav-wide {
+        display: none;
+    }
+    """
+
+    def __init__(
+        self,
+        view: SettingsWorkspaceView,
+        on_command: Callable[[object], None] | None = None,
+        *,
+        theme_name: str | None = None,
+        status_command: str = "",
+        status_interval_seconds: int = 5,
+        status_segments: Sequence[str] = (),
+        scopes: Mapping[tuple[str, str], str] | None = None,
+        segments_now: Sequence[str] = (),
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._view = view
+        self._on_command = on_command
+        self._theme_name = theme_name
+        self._status_command = status_command
+        self._status_interval_seconds = status_interval_seconds
+        self._status_segments = tuple(status_segments)
+        self._scopes = scopes
+        self._segments_now = tuple(segments_now)
+        self._header_line: Static | None = None
+        self._notice_line: Static | None = None
+        self._summary_line: Static | None = None
+        self._search: Input | None = None
+        self._groups: list[SettingsGroupWidget] = []
+        self._talaria: TalariaOwnedSettings | None = None
+        self._return_focus: Widget | None = None
+        self._nav_collapsed = False
+        self._reveal_key = ""
+        self._restart_plan: RestartPlan | None = None
+
+    def _selected_target(self) -> ConfigTarget:
+        header = self._view.header
+        return ConfigTarget(
+            connection_id=header.connection_label,
+            profile_name=header.selected_profile,
+        )
+
+    def _header_text(self) -> str:
+        header = self._view.header
+        return (
+            f"{header.connection_label}  "
+            f"current: {header.current_profile}  "
+            f"selected: {header.selected_profile}  "
+            f"{header.auth_mode}  {header.hermes_version}"
+        )
+
+    def _summary_text(self) -> str:
+        summary = self._view.summary
+        if summary is None:
+            return ""
+        parts: list[str] = []
+        for group in summary.groups:
+            parts.extend(detail for detail in group.details if detail)
+        return "  ".join(parts)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings-root"):
+            with Vertical(id="settings-header"):
+                yield Static(
+                    literal_text("settings"),
+                    markup=False,
+                    classes="settings--title",
+                )
+                self._header_line = Static(
+                    literal_text(self._header_text()),
+                    markup=False,
+                    id="settings-target-header",
+                )
+                yield self._header_line
+                yield Static(
+                    literal_text("owner · category"),
+                    markup=False,
+                    classes="settings--nav-wide settings--help",
+                    id="settings-nav",
+                )
+                self._search = Input(
+                    value=self._view.search_text,
+                    id="settings-search",
+                    placeholder="search labels, help, keys",
+                )
+                yield self._search
+                self._notice_line = Static(
+                    literal_text(self._view.notice),
+                    markup=False,
+                    classes="settings--notice",
+                    id="settings-notice",
+                )
+                yield self._notice_line
+                self._summary_line = Static(
+                    literal_text(self._summary_text()),
+                    markup=False,
+                    classes="settings--notice",
+                    id="settings-summary",
+                )
+                yield self._summary_line
+            with VerticalScroll(id="settings-body"):
+                if self._theme_name is not None and self._scopes is not None:
+                    self._talaria = TalariaOwnedSettings(
+                        theme_name=self._theme_name,
+                        status_command=self._status_command,
+                        status_interval_seconds=self._status_interval_seconds,
+                        status_segments=self._status_segments,
+                        scopes=self._scopes,
+                        segments_now=self._segments_now,
+                        on_dismiss=self._dismiss_from_branch,
+                        id="settings-talaria-branch",
+                    )
+                    yield self._talaria
+                for group in self._view.groups:
+                    widget = SettingsGroupWidget(
+                        group.owner, group.title, group.rows
+                    )
+                    self._groups.append(widget)
+                    yield widget
+            with Horizontal(id="settings-footer"):
+                yield Button("Save", id="settings-save", compact=True)
+                yield Button("Discard", id="settings-discard", compact=True)
+                if self._view.wake_state is not None:
+                    yield Button("Wake word", id="wake-toggle", compact=True)
+
+    def on_mount(self) -> None:
+        self._apply_search(self._view.search_text)
+        self._apply_layout(self.size.width)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._apply_layout(event.size.width)
+
+    def _apply_layout(self, width: int) -> None:
+        collapsed = width < 100
+        self._nav_collapsed = collapsed
+        try:
+            nav = self.query_one("#settings-nav", Static)
+        except Exception:
+            return
+        nav.display = not collapsed
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("/", "slash") and not isinstance(self.focused, Input):
+            event.stop()
+            event.prevent_default()
+            self.action_focus_search()
+            return
+        if event.key in ("escape", "tab", "shift+tab", "slash"):
+            return
+        event.stop()
+
+    def action_focus_search(self) -> None:
+        if isinstance(self.focused, Input):
+            return
+        if self._search is not None:
+            self._search.focus()
+
+    def action_cancel_view(self) -> None:
+        notice = self._talaria.notice_text if self._talaria is not None else ""
+        if not notice:
+            notice = self._view.notice
+        if notice:
+            self.dismiss(ConfigViewResult(notice=notice))
+        else:
+            self.dismiss(None)
+
+    def _dismiss_from_branch(self, result: ConfigViewResult | None) -> None:
+        self.dismiss(result)
+
+    def update_view(self, view: SettingsWorkspaceView) -> None:
+        """Refresh header, notice, and summary. Editors keep their values."""
+        self._view = view
+        if self._header_line is not None:
+            self._header_line.update(literal_text(self._header_text()))
+        if self._notice_line is not None:
+            self._notice_line.update(literal_text(view.notice))
+        if self._summary_line is not None:
+            self._summary_line.update(literal_text(self._summary_text()))
+
+    def _row_widgets(self) -> list[Any]:
+        widgets: list[Any] = []
+        for group in self._groups:
+            widgets.extend(group.row_widgets)
+        return widgets
+
+    def _apply_search(self, query: str) -> None:
+        needle = query.strip().lower()
+        for widget in self._row_widgets():
+            row = widget.row
+            match = (
+                not needle
+                or needle in row.label.lower()
+                or needle in row.help_text.lower()
+                or needle in row.key.lower()
+            )
+            widget.display = match
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "settings-search":
+            self._apply_search(event.value)
+
+    def _emit(self, command: object) -> None:
+        if self._on_command is not None:
+            self._on_command(command)
+
+    def _validation_blocks_save(self) -> bool:
+        for group in self._view.groups:
+            for row in group.rows:
+                if row.validation_message:
+                    return True
+        return False
+
+    def _edits_and_saved(self) -> tuple[dict[str, object], dict[str, object]]:
+        edits: dict[str, object] = {}
+        saved: dict[str, object] = {}
+        for widget in self._row_widgets():
+            nested_assign(saved, widget.row.key, widget.row.saved_value)
+            if widget.editor is None:
+                continue
+            edits[widget.row.key] = coerce_row_value(widget.row, widget.editor.value)
+        return edits, saved
+
+    def _emit_save(self) -> None:
+        if self._validation_blocks_save():
+            return
+        edits, saved = self._edits_and_saved()
+        patch = build_config_patch(saved=saved, edits=edits)
+        self._emit(SaveConfig(target=self._selected_target(), patch=patch))
+
+    def _restore_editors(self) -> None:
+        for widget in self._row_widgets():
+            if widget.editor is None:
+                continue
+            widget.editor.value = display_row_value(widget.row)
+
+    @on(Button.Pressed, "#settings-save")
+    def _save(self) -> None:
+        self._emit_save()
+
+    @on(Button.Pressed, "#settings-discard")
+    def _discard(self) -> None:
+        self._restore_editors()
+
+    @on(Button.Pressed, "#wake-toggle")
+    def _wake(self) -> None:
+        action = "stop" if self._view.wake_state == "on" else "start"
+        self._emit(WakeWord(target=self._selected_target(), action=action))
+
+    def _remember_focus(self) -> None:
+        focused = self.focused
+        self._return_focus = focused if isinstance(focused, Widget) else None
+
+    def _restore_focus(self) -> None:
+        if self._return_focus is not None:
+            self._return_focus.focus()
+
+    def _push_overlay(self, overlay: ModalScreen[Any]) -> None:
+        self._remember_focus()
+        self.app.push_screen(overlay)
+
+    def open_target_switch(self, new_target: ConfigTarget) -> None:
+        prompt = TargetSwitchPrompt(
+            old_target=self._selected_target(),
+            new_target=new_target,
+            pending_count=max(self._view.pending_count, 1),
+        )
+        self._push_overlay(
+            TargetSwitchOverlay(prompt, on_result=self._on_switch_result)
+        )
+
+    def _on_switch_result(self, result: SwitchChoice | None) -> None:
+        self._restore_focus()
+        if result is None or result.choice == "stay":
+            return
+        if result.choice == "save":
+            self._emit_save()
+            return
+        if result.choice == "discard":
+            self._restore_editors()
+
+    def open_reset(self) -> None:
+        confirm = ResetConfirmView(
+            target=self._selected_target(),
+            patch=self._view.reset_patch,
+        )
+        self._push_overlay(
+            ResetConfirmOverlay(confirm, on_result=self._on_reset_result)
+        )
+
+    def _on_reset_result(self, result: ResetConfirmResult | None) -> None:
+        self._restore_focus()
+        if result is None or not result.confirmed:
+            return
+        self._emit(
+            ResetConfig(
+                target=self._selected_target(),
+                patch=dict(self._view.reset_patch),
+            )
+        )
+
+    def open_restart(self, plan: RestartPlan) -> None:
+        self._restart_plan = plan
+        confirm = RestartConfirmView(plan=plan)
+        self._push_overlay(
+            RestartConfirmOverlay(confirm, on_result=self._on_restart_result)
+        )
+
+    def _on_restart_result(self, result: RestartConfirmResult | None) -> None:
+        self._restore_focus()
+        if result is None or not result.confirmed or self._restart_plan is None:
+            return
+        self._emit(
+            RestartGateway(
+                target=self._selected_target(),
+                plan=self._restart_plan,
+            )
+        )
+
+    def open_reveal(self, key: str) -> None:
+        secret = self._view.secrets.get(key, (False, ""))
+        confirm = RevealSecretView(key=key, masked=secret[1])
+        self._push_overlay(
+            RevealSecretOverlay(confirm, on_result=self._on_reveal_result)
+        )
+        self._reveal_key = key
+
+    def _on_reveal_result(self, result: RevealSecretResult | None) -> None:
+        self._restore_focus()
+        if result is None or not result.reveal:
+            return
+        self._emit(
+            RevealEnv(target=self._selected_target(), key=self._reveal_key)
+        )
+
+    def open_model_picker(self) -> None:
+        picker = self._view.model_picker
+        if picker is None:
+            return
+        self._push_overlay(
+            ModelPickerOverlay(picker, on_result=self._on_model_result)
+        )
+
+    def _on_model_result(self, result: ModelPickResult | None) -> None:
+        self._restore_focus()
+        if result is None:
+            return
+        self._emit(
+            SetModel(
+                target=self._selected_target(),
+                provider=result.provider,
+                model=result.model,
+            )
+        )

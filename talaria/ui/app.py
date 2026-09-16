@@ -141,6 +141,7 @@ from talaria.domain.session_list import (
     decode_active_list,
     decode_session_list,
 )
+from talaria.domain.settings import SettingsWorkspaceView, TargetHeaderView
 from talaria.domain.startup import StartupSelection
 from talaria.domain.state import (
     APPROVAL_COMMAND_LABEL,
@@ -249,7 +250,7 @@ from talaria.ui.attach import (
     stat_for_confirm,
 )
 from talaria.ui.composer import ChatTextArea, Composer
-from talaria.ui.config_view import ConfigViewResult, ConfigViewScreen
+from talaria.ui.config_view import ConfigViewResult
 from talaria.ui.dialog import ConfirmDialog, PickerDialog, attachment_dialog_copy
 from talaria.ui.diff_viewer import DiffViewer, adapt_diff_document
 from talaria.ui.focus import CaretReleased, focused_region
@@ -287,6 +288,7 @@ from talaria.ui.prompts import (
     gateway_refusal,
     respond_params,
 )
+from talaria.ui.settings_workspace import SettingsWorkspaceScreen
 from talaria.ui.status_bar import (
     BottomStatusBar,
     BottomStatusBarView,
@@ -1370,6 +1372,12 @@ class TalariaApp(App[None]):
         launch_cwd: Path | None = None,
         keybindings: Mapping[str, Any] | None = None,
         marketplace_transport: MarketplaceTransport | None = None,
+        inspector_width: int = 36,
+        inspector_open_at_start: bool = True,
+        inspector_dock_min_columns: int = 120,
+        diff_side_by_side_min_columns: int = 112,
+        show_timestamps: bool = False,
+        include_notifications: bool = True,
     ) -> None:
         super().__init__()
         #: The resolved inspector/interrupt chords (#120 U1). The class table
@@ -1404,6 +1412,12 @@ class TalariaApp(App[None]):
         # It never changes in response to a file edit or session command.
         self.motion = MotionPolicy(reduced=reduced_motion)
         self.animation_level = "none" if reduced_motion else "full"
+        self._inspector_width = inspector_width
+        self._inspector_open_at_start = inspector_open_at_start
+        self._inspector_dock_min_columns = inspector_dock_min_columns
+        self._diff_side_by_side_min_columns = diff_side_by_side_min_columns
+        self._show_timestamps = show_timestamps
+        self._include_notifications = include_notifications
         self._theme_preview_anchor: TranscriptAnchor | None = None
         self._startup_notices = (*startup_notices, *resolved_theme.notices)
         self._status_notices = tuple(
@@ -1868,7 +1882,12 @@ class TalariaApp(App[None]):
                     initial_marker="\n".join(self._status_notices),
                     id="status",
                 )
-            yield Inspector(id="inspector")
+            yield Inspector(
+                id="inspector",
+                panel_width=self._inspector_width,
+                dock_min_columns=self._inspector_dock_min_columns,
+                open_at_start=self._inspector_open_at_start,
+            )
         yield Composer(
             notice=self._idle_notice(),
             paste_threshold=self.paste_threshold,
@@ -2435,7 +2454,13 @@ class TalariaApp(App[None]):
         # exactly that, so it counts renders, not timer firings.
         self.render_ticks += 1
         previous = self.snapshot
-        snapshot = project(self.state, mode=self.mode, previous=previous)
+        snapshot = project(
+            self.state,
+            mode=self.mode,
+            previous=previous,
+            show_timestamps=self._show_timestamps,
+            include_notifications=self._include_notifications,
+        )
         self.snapshot = snapshot
         entries = entry_scoped_view(self.state)
 
@@ -2518,7 +2543,12 @@ class TalariaApp(App[None]):
         if runner is None or not runner.enabled:
             return None
         if self.snapshot is None:
-            self.snapshot = project(self.state, mode=self.mode)
+            self.snapshot = project(
+                self.state,
+                mode=self.mode,
+                show_timestamps=self._show_timestamps,
+                include_notifications=self._include_notifications,
+            )
         result = await runner.tick(self.snapshot.status)
         anchor = self._capture_layout_anchor()
         try:
@@ -2644,6 +2674,7 @@ class TalariaApp(App[None]):
                 file_key=None if selection is None else selection.file_key,
                 hunk_index=0 if selection is None else selection.hunk_index,
                 motion=self.motion,
+                side_by_side_min_columns=self._diff_side_by_side_min_columns,
             ),
             self._diff_closed,
         )
@@ -5704,8 +5735,21 @@ class TalariaApp(App[None]):
             # its operative clause: the command, the file, the parse error.
             self._notice(f"/config: {exc}")
             return
+        profile = self.current_profile or "default"
+        view = SettingsWorkspaceView(
+            header=TargetHeaderView(
+                connection_label="local",
+                current_profile=profile,
+                selected_profile=profile,
+                auth_mode="",
+                hermes_version="",
+                shows_both_names=False,
+            ),
+            groups=(),
+        )
         self.push_screen(
-            ConfigViewScreen(
+            SettingsWorkspaceScreen(
+                view,
                 theme_name=self.theme,
                 status_command=status_command,
                 status_interval_seconds=int(self.status_interval),

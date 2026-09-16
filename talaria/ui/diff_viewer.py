@@ -910,6 +910,7 @@ class DiffViewer(ModalScreen[None]):
         file_key: str | None = None,
         hunk_index: int = 0,
         motion: MotionPolicy = STANDARD_MOTION,
+        side_by_side_min_columns: int = SIDE_BY_SIDE_MIN_WIDTH,
     ) -> None:
         super().__init__()
         self._files = tuple(_parse_unified(file) for file in document.files)
@@ -918,6 +919,7 @@ class DiffViewer(ModalScreen[None]):
         self.hunk_index = max(0, hunk_index)
         self.preferred_mode: DiffMode = "side-by-side"
         self.effective_mode: DiffMode = "unified"
+        self._side_by_side_min = side_by_side_min_columns
         self._refusal = ""
         self._header: Static | None = None
         self._columns: Static | None = None
@@ -973,10 +975,10 @@ class DiffViewer(ModalScreen[None]):
     def _settle_mode(self, width: int, *, preserve_anchor: bool) -> None:
         effective: DiffMode = (
             self.preferred_mode
-            if width >= SIDE_BY_SIDE_MIN_WIDTH
+            if width >= self._side_by_side_min
             else "unified"
         )
-        if width >= SIDE_BY_SIDE_MIN_WIDTH:
+        if width >= self._side_by_side_min:
             self._refusal = ""
         self.effective_mode = effective
         self.canvas.set_view(
@@ -1067,8 +1069,10 @@ class DiffViewer(ModalScreen[None]):
 
     def action_side_by_side(self) -> None:
         self.preferred_mode = "side-by-side"
-        if self.size.width < SIDE_BY_SIDE_MIN_WIDTH:
-            self._refusal = SIDE_BY_SIDE_REFUSAL
+        if self.size.width < self._side_by_side_min:
+            self._refusal = (
+                f"side-by-side needs {self._side_by_side_min} columns; unified active"
+            )
             self.effective_mode = "unified"
             self._repaint_chrome()
             return

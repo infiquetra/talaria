@@ -20,6 +20,7 @@ elapsed seconds are a function of the corpus rather than of when the test ran.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from talaria.domain.models import (
@@ -39,6 +40,7 @@ from talaria.domain.normalize import (
     format_moa_committed_line,
     format_moa_inspector_rows,
     format_moa_live_line,
+    format_transcript_timestamp,
 )
 from talaria.domain.queue import approval_block_reason, prompt_feed_rows
 from talaria.domain.state import SessionState
@@ -470,24 +472,46 @@ SNAPSHOT_REGIONS: frozenset[str] = frozenset(
 )
 
 
-def transcript_view(state: SessionState) -> TranscriptView:
+def transcript_view(
+    state: SessionState,
+    *,
+    show_timestamps: bool = False,
+    include_notifications: bool = True,
+) -> TranscriptView:
     """Flatten the transcript into the plain-text line buffer (R6, KTD10).
 
     In-flight streaming text is included as a provisional trailing block. That
     is deliberate: a terminal-read arriving mid-stream should describe the screen
     the operator is looking at, and the alternative — serving only committed
     entries — would answer with a screen that is visibly not the one on display.
+
+    ``show_timestamps`` prefixes every line with the entry's committed clock
+    (reconstructed from ``last_observed_at`` and entry order — TranscriptEntry
+    does not store ``at``). ``include_notifications`` drops ``notification.show``
+    system lines while keeping other system lines such as ``status.update``.
     """
     lines: list[str] = []
     kinds: list[TranscriptKind] = []
-    for entry in state.transcript:
+    visible = [
+        entry
+        for entry in state.transcript
+        if include_notifications or not _is_notification_entry(state, entry)
+    ]
+    count = len(visible)
+    for index, entry in enumerate(visible):
+        stamp = ""
+        if show_timestamps:
+            stamp = _entry_timestamp(state, index, count) + " "
         entry_lines = _entry_lines(entry)
-        lines.extend(entry_lines)
+        lines.extend(stamp + line for line in entry_lines)
         kinds.extend([entry.kind] * len(entry_lines))
     committed = len(lines)
     if state.streaming_text:
         streamed = state.streaming_text.splitlines() or [""]
-        lines.extend(streamed)
+        stamp = ""
+        if show_timestamps:
+            stamp = _entry_timestamp(state, max(count - 1, 0), max(count, 1)) + " "
+        lines.extend(stamp + line for line in streamed)
         # The in-flight block is the assistant's reply being written. It has no
         # entry yet — that is what "provisional" means — so the kind is stated
         # here rather than read off one, and it is the kind the same text will
@@ -499,6 +523,26 @@ def transcript_view(state: SessionState) -> TranscriptView:
         committed_lines=committed,
         kinds=tuple(kinds),
     )
+
+
+def _is_notification_entry(state: SessionState, entry: TranscriptEntry) -> bool:
+    """Best-effort: notification.show shares the system kind with status lines.
+
+    ``status.update`` also writes ``last_status_note``. A system line that is
+    not that note is treated as a notification when the flag asks to hide them.
+    """
+    if entry.kind != "system":
+        return False
+    if state.last_status_note and entry.text == state.last_status_note:
+        return False
+    return True
+
+
+def _entry_timestamp(state: SessionState, index: int, count: int) -> str:
+    latest = state.last_observed_at
+    offset = max(count - 1 - index, 0)
+    instant = datetime.fromtimestamp(max(latest - offset, 0), tz=UTC)
+    return format_transcript_timestamp(instant)
 
 
 def _entry_lines(entry: TranscriptEntry) -> list[str]:
@@ -752,9 +796,15 @@ def project(
     mode: RunMode = "replay",
     now: float | None = None,
     previous: Snapshot | None = None,
+    show_timestamps: bool = False,
+    include_notifications: bool = True,
 ) -> Snapshot:
     """Emit one immutable snapshot and name the regions that changed."""
-    transcript = transcript_view(state)
+    transcript = transcript_view(
+        state,
+        show_timestamps=show_timestamps,
+        include_notifications=include_notifications,
+    )
     subagents = subagent_view(state, now=now)
     prompts = prompt_view(state)
     attachments = attachment_view(state)
