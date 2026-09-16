@@ -68,6 +68,7 @@ __all__ = [
     "request_settings_switch",
     "select_settings_target",
     "stage_settings_edit",
+    "summarize_schema_shape",
     "validate_settings_value",
     "RevealDisplayValue",
     "GatewayLifecyclePrompt",
@@ -413,6 +414,27 @@ def schema_response_shape(body: object) -> tuple[tuple[str, ...], int, int]:
     else:
         category_count = 0
     return keys, field_count, category_count
+
+
+@dataclass(frozen=True)
+class SchemaShapeSummary:
+    """Field/category counts and sorted keys. Never values or descriptions."""
+
+    field_count: int
+    category_count: int
+    top_level_keys: tuple[str, ...]
+
+
+def summarize_schema_shape(body: object) -> SchemaShapeSummary:
+    """Oracle shape for a schema object. Non-objects raise typed decode."""
+    if not isinstance(body, Mapping):
+        raise SettingsDecodeError("schema body is not a JSON object")
+    keys, field_count, category_count = schema_response_shape(body)
+    return SchemaShapeSummary(
+        field_count=field_count,
+        category_count=category_count,
+        top_level_keys=keys,
+    )
 
 
 def sanitized_response_size(body: object) -> int:
