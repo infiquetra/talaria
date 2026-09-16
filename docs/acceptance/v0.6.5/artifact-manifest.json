@@ -1,0 +1,39 @@
+{
+  "$schema": "./artifact-manifest.schema.json",
+  "schema_version": "talaria-v0.6.5-artifact-manifest-v1",
+  "gate_id": "v0-6-5-configuration-ui-residuals",
+  "generated_command": "uv build --wheel; assemble the v0.6.5 configuration UI residuals acceptance record",
+  "status": "complete",
+  "recorded_at": "2026-09-16T23:40:23Z",
+  "harness_commit": "a7cbeeca1a25696bc25900d74eaa3c4b335a1e11",
+  "candidate": {
+    "commit": "a7cbeeca1a25696bc25900d74eaa3c4b335a1e11",
+    "version": "0.6.5",
+    "wheel_filename": "talaria-0.6.5-py3-none-any.whl",
+    "wheel_sha256": "4b076de5d4fa9122dde49648fe91c91cfbd4bc7484cf3a138c7243c836ef1835"
+  },
+  "counts": {
+    "install_receipts": 0,
+    "item_receipts": 1,
+    "item_verdicts": {
+      "blocked": 0,
+      "fail": 0,
+      "pass": 1,
+      "reserved": 0
+    }
+  },
+  "receipts": [
+    {
+      "receipt_path": "docs/acceptance/v0.6.5/evidence/cfg-p4/receipts/receipt.json",
+      "receipt_sha256": "e559bfe9250e56a03020a5c010780c92a04f54dc9e61cce4d769e90cb9f114d5",
+      "checklist_item": "cfg-p4",
+      "tester": "controller",
+      "verdict": "pass",
+      "candidate_commit_sha": "a83238541bb0228f18e4ef3a911bf238f7b7d0bd",
+      "applies_to_candidate": "a7cbeec versions the reviewed load code (a832385) and is otherwise tests/docs/scripts."
+    }
+  ],
+  "install_receipts": [],
+  "results_document": "docs/acceptance/v0.6.5/results.md",
+  "notes_document": "docs/acceptance/v0.6.5/notes.md"
+}

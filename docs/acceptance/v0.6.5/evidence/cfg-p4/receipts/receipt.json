@@ -1,0 +1,14 @@
+{
+  "schema_version": "talaria-v0.6.5-receipt-v1",
+  "release": "0.6.5",
+  "checklist_item": "cfg-p4",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "a83238541bb0228f18e4ef3a911bf238f7b7d0bd",
+  "applies_to_candidate": "a7cbeec versions the reviewed load code (a832385) and is otherwise tests/docs/scripts.",
+  "evidence": {
+    "source": "CFG-P4-T6-CR accepted review artifact",
+    "observation": "CFG-P4-T6-CR accepted a832385; product SHA a7cbeec versions that load code for release 0.6.5.",
+    "review_artifact_sha256": "6044ac4d6b8cd242c37072567633261b44cbc30164848ac6283f8951e8557203"
+  }
+}
