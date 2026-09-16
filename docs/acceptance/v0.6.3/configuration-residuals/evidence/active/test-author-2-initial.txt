@@ -43,3 +43,9 @@ P2-5 fail (missing behavior):
 P2-5 keep (pytest pass):
   dotted legacy candidates are rejected by require_legal_p2_name
   T7-R3 evidence files remain present and were not rewritten
+
+CFG-P2-P5 append (7d077fc8d19e5d0dec0c6586ee7ea0f69ddee2a2, feat/v0.6.3-cfg-p2-p5):
+  disposable_profile_name now emits talaria-v062-cfg-p2-{local|remote}-{active|installed}-{a|switch|clone|renamed}
+  exclusive suite after replace: 514 passed, 0 failed, 0 skipped
+  P2-5 passes. P2-3/P2-4 stay green. T7-R3 not rewritten.
+  remaining blocked: test_p2_3_installed_remote_login_is_blocked_without_live_access

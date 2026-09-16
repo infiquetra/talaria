@@ -75,9 +75,6 @@ READONLY_HOST_STATUS_PATHS: Final[frozenset[str]] = frozenset(
     }
 )
 
-_PROFILE_NAME_RE = re.compile(
-    r"\Atalaria-v0\.6\.2-cfg-t0-(local|remote)-(active|installed)-(a|switch|clone|renamed)\Z"
-)
 P2_PROFILE_NAME_RE = re.compile(
     r"\Atalaria-v062-cfg-p2-(local|remote)-(active|installed)-(a|switch|clone|renamed)\Z"
 )
@@ -153,10 +150,7 @@ def disposable_profile_name(connection: ConnectionLabel, stage: StageName, alias
     }.get(alias)
     if suffix is None or connection not in {"local", "remote"}:
         raise HarnessError(f"unsupported disposable alias {alias!r} on {connection}")
-    name = f"talaria-v0.6.2-cfg-t0-{connection}-{stage}-{suffix}"
-    if _PROFILE_NAME_RE.fullmatch(name) is None:
-        raise HarnessError(f"disposable name {name!r} failed the reserved pattern")
-    return name
+    return require_legal_p2_name(f"talaria-v062-cfg-p2-{connection}-{stage}-{suffix}")
 
 
 def require_legal_p2_name(name: str) -> str:
