@@ -145,6 +145,7 @@ from talaria.domain.session_list import (
 from talaria.domain.settings import (
     ConfigTarget,
     FieldSaveResult,
+    Reauthenticate,
     RevealDisplayValue,
     decode_env_listing,
     decode_settings_schema,
@@ -157,6 +158,8 @@ from talaria.domain.settings_commands import (
     RevealEnv,
     SaveConfig,
     SetModel,
+    StartGateway,
+    StopGateway,
     WakeWord,
 )
 from talaria.domain.startup import StartupSelection
@@ -5858,6 +5861,8 @@ class TalariaApp(App[None]):
         effective: dict[str, Any] = {}
         defaults: dict[str, Any] = {}
         secrets: dict[str, tuple[bool, str]] = {}
+        gateway_running: bool | None = None
+        auth_state = ""
         client = self._ensure_settings_client()
         if client is not None:
             try:
@@ -5868,17 +5873,35 @@ class TalariaApp(App[None]):
             try:
                 raw_config = await client.get_config(target)
                 saved, effective, defaults = _split_config_documents(raw_config)
-            except SettingsError:
+            except SettingsError as exc:
                 saved, effective, defaults = {}, {}, {}
+                if getattr(exc, "reason", "") == "unauthorized":
+                    auth_state = "reauth"
             getter = getattr(client, "get_env", None)
             if getter is not None:
                 try:
                     raw_env = await getter(target)
                     secrets = decode_env_listing(raw_env)
-                except SettingsError:
+                except SettingsError as exc:
                     secrets = {}
+                    if getattr(exc, "reason", "") == "unauthorized":
+                        auth_state = "reauth"
                 except Exception:
                     secrets = {}
+            status_getter = getattr(client, "get_status", None)
+            if status_getter is not None:
+                try:
+                    raw_status = await status_getter(target)
+                except SettingsError as exc:
+                    raw_status = None
+                    if getattr(exc, "reason", "") == "unauthorized":
+                        auth_state = "reauth"
+                except Exception:
+                    raw_status = None
+                if isinstance(raw_status, Mapping):
+                    gateway_running = raw_status.get("gateway_running") is True
+            if not auth_state:
+                auth_state = await self._probe_gated_auth_state(connection_id)
         picker = None
         catalog = self.model_catalog
         if catalog is not None:
@@ -5894,20 +5917,28 @@ class TalariaApp(App[None]):
                     current_provider=catalog.current_provider,
                     current_model=catalog.current_model,
                 )
+        notice = (
+            "re-authenticate — pending edits retained"
+            if auth_state == "reauth"
+            else ""
+        )
         return project_settings_workspace(
             connection_id=connection_id,
             connection_label=connection_id,
             current_profile=profile,
             selected_profile=profile,
-            auth_mode="",
+            auth_mode=self._connection_auth(connection_id),
             hermes_version="",
             schema=schema,
             saved=saved,
             effective=effective,
             defaults=defaults,
+            notice=notice,
             secrets=secrets,
             model_picker=picker,
             targets=self._visible_settings_targets(connection_id),
+            gateway_running=gateway_running,
+            auth_state=auth_state,
         )
 
     def _visible_settings_targets(self, connection_id: str) -> tuple[ConfigTarget, ...]:
@@ -5929,6 +5960,120 @@ class TalariaApp(App[None]):
             for name in profiles
             if name.strip() and name != "current"
         )
+
+    def _connection_auth(self, connection_id: str) -> str:
+        connections = self.connections
+        entry = None
+        if connections is not None and hasattr(connections, "entry_for"):
+            entry = connections.entry_for(connection_id)
+        if entry is None:
+            return ""
+        return str(getattr(entry, "auth", "") or "")
+
+    async def _probe_gated_auth_state(self, connection_id: str) -> str:
+        if self._connection_auth(connection_id) != "gated":
+            return ""
+        try:
+            from talaria.config import credentials_path
+            from talaria.transport.gated_auth import GatedAuthError, GatedAuthSession
+            from talaria.transport.refresh import read_connection_tokens
+        except ImportError:
+            return ""
+        origin = self._settings_endpoint()
+        if not origin:
+            return ""
+        access, refresh = "", ""
+        try:
+            path = credentials_path(self._theme_config_root())
+            access, refresh = read_connection_tokens(path, connection_id)
+        except Exception:
+            access, refresh = "", ""
+        session = GatedAuthSession(
+            origin, access_token=access or None, refresh_token=refresh or None
+        )
+        try:
+            probed = await session.probe_protected()
+        except GatedAuthError as exc:
+            if exc.reason == "unauthorized":
+                return "reauth"
+            return ""
+        state = probed.get("state") if isinstance(probed, Mapping) else ""
+        return str(state or "")
+
+    def _apply_gateway_running(self, running: object, *, notice: str) -> None:
+        workspace = (
+            self.screen if isinstance(self.screen, SettingsWorkspaceScreen) else None
+        )
+        if workspace is None or not isinstance(running, bool):
+            if notice:
+                self._notice(notice)
+            return
+        workspace.apply_gateway_running(running, notice=notice)
+
+    async def _reauthenticate_gated(self, target: ConfigTarget) -> None:
+        """Run U1 native PKCE (password only if the server advertises it)."""
+        from talaria.config import credentials_path
+        from talaria.transport.credentials import Credential
+        from talaria.transport.gated_auth import GatedAuthError, GatedAuthSession
+        from talaria.transport.refresh import write_connection_tokens
+        from talaria.transport.settings import SettingsClient
+
+        origin = self._settings_endpoint()
+        if not origin:
+            self._notice("settings: no gated origin for re-authenticate")
+            return
+        try:
+            session = await GatedAuthSession.authorize_native(origin)
+        except GatedAuthError as exc:
+            if exc.reason == "absent_capability" and await GatedAuthSession.password_available(
+                origin
+            ):
+                if isinstance(self.screen, SettingsWorkspaceScreen):
+                    self.screen.mark_reauth(
+                        "password login is advertised; no credential was invented"
+                    )
+                else:
+                    self._notice("settings: re-authenticate — password advertised")
+                return
+            if isinstance(self.screen, SettingsWorkspaceScreen):
+                self.screen.mark_reauth(str(exc))
+            else:
+                self._notice(f"settings: re-authenticate failed ({exc})")
+            return
+        access = getattr(session, "_access_token", "") or ""
+        refresh = getattr(session, "_refresh_token", "") or ""
+        if not access:
+            if isinstance(self.screen, SettingsWorkspaceScreen):
+                self.screen.mark_reauth("gated session returned no access token")
+            return
+        try:
+            write_connection_tokens(
+                credentials_path(self._theme_config_root()),
+                target.connection_id,
+                access_token=access,
+                refresh_token=refresh,
+            )
+        except Exception as exc:
+            self._notice(f"settings: gated token write failed ({exc})")
+        class _Bearer:
+            def __init__(self, token: str) -> None:
+                self._token = token
+
+            async def acquire(self) -> Credential:
+                return Credential(parameter="token", value=self._token, source="file")
+
+        try:
+            self.settings_client = SettingsClient(origin, _Bearer(access))
+        except Exception:
+            self.settings_client = None
+        if isinstance(self.screen, SettingsWorkspaceScreen):
+            self.screen.update_view(
+                replace(
+                    self.screen._view,
+                    auth_state="authenticated",
+                    notice="re-authenticated — pending edits retained",
+                )
+            )
 
     def _on_settings_command(self, command: object) -> None:
         """Typed settings commands never land on a ``None`` callback."""
@@ -5967,10 +6112,37 @@ class TalariaApp(App[None]):
                 await surfaces.wake(command)
             elif isinstance(command, RestartGateway):
                 await client.restart_gateway(command.target, command.plan)
+            elif isinstance(command, StartGateway):
+                starter = getattr(client, "start_gateway", None)
+                if starter is None:
+                    self._notice("settings: start_gateway is unavailable")
+                    return
+                result = await starter(command.target)
+                self._apply_gateway_running(
+                    getattr(result, "gateway_running", None),
+                    notice="gateway start observed",
+                )
+            elif isinstance(command, StopGateway):
+                stopper = getattr(client, "stop_gateway", None)
+                if stopper is None:
+                    self._notice("settings: stop_gateway is unavailable")
+                    return
+                result = await stopper(command.target)
+                self._apply_gateway_running(
+                    getattr(result, "gateway_running", None),
+                    notice="gateway stop observed",
+                )
+            elif isinstance(command, Reauthenticate):
+                await self._reauthenticate_gated(command.target)
             else:
                 self._notice(f"settings: unsupported command {type(command).__name__}")
                 return
         except SettingsError as exc:
+            if getattr(exc, "reason", "") == "unauthorized" and isinstance(
+                self.screen, SettingsWorkspaceScreen
+            ):
+                self.screen.mark_reauth(str(exc))
+                return
             if isinstance(command, SaveConfig) and isinstance(
                 self.screen, SettingsWorkspaceScreen
             ):

@@ -65,6 +65,8 @@ __all__ = [
     "stage_settings_edit",
     "validate_settings_value",
     "RevealDisplayValue",
+    "GatewayLifecyclePrompt",
+    "Reauthenticate",
 ]
 
 
@@ -353,6 +355,28 @@ class SettingsWorkspaceView:
     secrets: Mapping[str, tuple[bool, str]] = field(default_factory=dict)
     model_picker: ModelPickerView | None = None
     target_options: tuple[TargetOption, ...] = ()
+    gateway_running: bool | None = None
+    auth_state: str = ""
+
+
+@dataclass(frozen=True)
+class GatewayLifecyclePrompt:
+    """Start/Stop confirmation. Action is observed, never inferred from wake."""
+
+    target: ConfigTarget
+    action: str
+    running: bool
+
+    def __post_init__(self) -> None:
+        if self.action not in {"start", "stop"}:
+            raise ValueError(f"gateway action must be start or stop; got {self.action!r}")
+
+
+@dataclass(frozen=True)
+class Reauthenticate:
+    """Ask the app to run U1's gated re-auth. Never carries a credential."""
+
+    target: ConfigTarget
 
 
 def decode_settings_schema(body: object) -> SettingsSchema:

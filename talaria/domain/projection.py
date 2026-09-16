@@ -968,6 +968,8 @@ def project_settings_workspace(
     secrets: Mapping[str, tuple[bool, str]] | None = None,
     model_picker: Any = None,
     targets: Sequence[Any] | None = None,
+    gateway_running: bool | None = None,
+    auth_state: str = "",
 ) -> SettingsWorkspaceIdentity:
     """Project a settings workspace. ``connection_id`` is the write key."""
     from talaria.domain.settings import (
@@ -1124,6 +1126,8 @@ def project_settings_workspace(
             secrets=dict(secrets or {}),
             model_picker=model_picker,
             target_options=options,
+            gateway_running=gateway_running,
+            auth_state=auth_state,
         ),
     )
 
