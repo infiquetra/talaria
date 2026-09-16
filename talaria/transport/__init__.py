@@ -42,6 +42,7 @@ __all__ = [
     "SettingsClient",
     "SettingsError",
     "SettingsFailure",
+    "SettingsLifecycleResult",
     "SettingsRestartResult",
     "SettingsSurfaces",
     "SurfaceNote",
@@ -55,6 +56,10 @@ _LAZY: dict[str, tuple[str, str]] = {
     "SettingsClient": ("talaria.transport.settings", "SettingsClient"),
     "SettingsError": ("talaria.transport.settings", "SettingsError"),
     "SettingsFailure": ("talaria.transport.settings", "SettingsFailure"),
+    "SettingsLifecycleResult": (
+        "talaria.transport.settings",
+        "SettingsLifecycleResult",
+    ),
     "SettingsRestartResult": (
         "talaria.transport.settings",
         "SettingsRestartResult",

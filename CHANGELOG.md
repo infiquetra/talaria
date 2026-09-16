@@ -10,6 +10,18 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+### Added
+
+- Gated connections use a separate origin policy from loopback token refresh:
+  HTTPS is accepted for any host; plain HTTP is accepted only for
+  `auth="gated"` plus a literal RFC1918 address. Public, hostname, CGNAT,
+  link-local, multicast, and unspecified HTTP stay refused.
+- Live composition hands a gated inventory row a `GatedTicketProvider` (Bearer
+  admin + per-dial WS ticket) instead of `LoopbackTokenProvider`.
+- Product-owned `StartGateway` / `StopGateway` call
+  `POST /api/gateway/start|stop?profile=` and poll `/api/status` for at most
+  30 seconds. Wake-word RPC is not a gateway lifecycle substitute.
+
 ## [0.6.2] — 2026-09-16
 
 Talaria-owned settings grow to the finite D12 set, writes stay surgical, and

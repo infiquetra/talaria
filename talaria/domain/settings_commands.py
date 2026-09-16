@@ -24,6 +24,8 @@ __all__ = [
     "ResetConfig",
     "RestartGateway",
     "RevealEnv",
+    "StartGateway",
+    "StopGateway",
     "RpcRequestSpec",
     "RestRequestSpec",
     "SaveConfig",
@@ -102,6 +104,16 @@ class ResetConfig:
 class RestartGateway:
     target: ConfigTarget
     plan: RestartPlan
+
+
+@dataclass(frozen=True)
+class StartGateway:
+    target: ConfigTarget
+
+
+@dataclass(frozen=True)
+class StopGateway:
+    target: ConfigTarget
 
 
 @dataclass(frozen=True)
@@ -208,6 +220,18 @@ def rest_request(command: object) -> RestRequestSpec:
         return RestRequestSpec(
             method="POST",
             path="/api/gateway/restart",
+            query=_profile_query(command.target),
+        )
+    if isinstance(command, StartGateway):
+        return RestRequestSpec(
+            method="POST",
+            path="/api/gateway/start",
+            query=_profile_query(command.target),
+        )
+    if isinstance(command, StopGateway):
+        return RestRequestSpec(
+            method="POST",
+            path="/api/gateway/stop",
             query=_profile_query(command.target),
         )
     if isinstance(command, CloneProfile):

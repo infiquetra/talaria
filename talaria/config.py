@@ -525,6 +525,32 @@ def profile_endpoints(cfg: Config) -> Mapping[str, str]:
     }
 
 
+def connection_inventory(cfg: Config) -> Mapping[str, Mapping[str, str]] | None:
+    """The operator's ``[connections.<id>]`` inventory, or ``None`` when empty.
+
+    Passed to :func:`~talaria.transport.connection_set.plan_connections` so a
+    gated row reaches the live composition root. Empty or absent inventories
+    stay ``None`` so the profile-endpoint path is unchanged.
+    """
+    section = cfg.get("connections", default={})
+    if not isinstance(section, Mapping) or not section:
+        return None
+    inventory: dict[str, dict[str, str]] = {}
+    for name, entry in section.items():
+        if not isinstance(name, str) or not isinstance(entry, Mapping):
+            continue
+        item: dict[str, str] = {}
+        url = entry.get("url")
+        auth = entry.get("auth")
+        if isinstance(url, str) and url.strip():
+            item["url"] = url
+        if isinstance(auth, str) and auth.strip():
+            item["auth"] = auth
+        if item:
+            inventory[name] = item
+    return inventory or None
+
+
 _INSPECTOR_WIDTH_BOUNDS = (28, 48)
 _CONNECTION_AUTH_MODES = frozenset({"loopback", "gated"})
 _CONNECTION_FILE_KEYS = frozenset({"url", "auth", "label"})

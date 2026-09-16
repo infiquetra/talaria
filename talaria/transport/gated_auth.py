@@ -12,6 +12,7 @@ import asyncio
 import base64
 import hashlib
 import http.client
+import ipaddress
 import json
 import secrets
 import urllib.error
@@ -23,13 +24,13 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlsplit
 
 from talaria.transport.admin import MAX_RESPONSE_BYTES
-from talaria.transport.credentials import Credential
-from talaria.transport.refresh import RefreshError, require_fetchable_origin
+from talaria.transport.credentials import Credential, CredentialError
 
 __all__ = [
     "GatedAuthError",
     "GatedAuthSession",
     "GatedTicketProvider",
+    "require_gated_origin",
 ]
 
 
@@ -67,6 +68,55 @@ def _host_of(origin: str) -> str:
         return "an unnamed host"
 
 
+def require_gated_origin(origin: str, *, auth: str) -> None:
+    """Refuse anything but HTTPS, or explicit gated HTTP to a literal RFC1918 host.
+
+    Distinct from :func:`~talaria.transport.refresh.require_fetchable_origin`.
+    Loopback token refresh stays HTTPS-or-this-machine. Gated sessions may use
+    plain HTTP only when ``auth="gated"`` and the hostname is a literal private
+    address — not a DNS name, public address, CGNAT, link-local, multicast, or
+    unspecified address.
+    """
+    parts = urlsplit(origin)
+    scheme = parts.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise GatedAuthError(
+            "refused_origin",
+            f"refusing to use a {scheme or 'schemeless'} dashboard origin; "
+            "the address must be http or https",
+        )
+    try:
+        host = (parts.hostname or "").lower()
+    except ValueError as exc:
+        raise GatedAuthError(
+            "refused_origin", f"the dashboard address is not usable: {exc}"
+        ) from exc
+    if not host:
+        raise GatedAuthError("refused_origin", "the dashboard address names no host")
+    if scheme == "https":
+        return
+    if auth != "gated":
+        raise GatedAuthError(
+            "refused_origin",
+            f"refusing to use {host} over plain HTTP without explicit gated auth",
+        )
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise GatedAuthError(
+            "refused_origin",
+            f"refusing to use hostname {host} over plain HTTP; use https, "
+            "or a literal RFC1918 address with auth=gated",
+        ) from exc
+    if address.is_private and not address.is_link_local and not address.is_unspecified:
+        return
+    raise GatedAuthError(
+        "refused_origin",
+        f"refusing to use {host} over plain HTTP; only a literal RFC1918 "
+        "address is accepted for gated cleartext",
+    )
+
+
 def _build_url(origin: str, path: str, params: dict[str, str] | None) -> str:
     candidate = urljoin(origin, path)
     origin_parts, candidate_parts = urlsplit(origin), urlsplit(candidate)
@@ -91,10 +141,7 @@ def _request_json(
     token: str | None = None,
     timeout: float = 15.0,
 ) -> Any:
-    try:
-        require_fetchable_origin(origin)
-    except RefreshError as exc:
-        raise GatedAuthError("refused_origin", str(exc)) from exc
+    require_gated_origin(origin, auth="gated")
 
     url = _build_url(origin, path, params)
     headers = {"Accept": "application/json"}
@@ -179,10 +226,7 @@ def _get_authorize(
     redirect; the Location is returned so a loopback ``code`` can be read
     without inventing one.
     """
-    try:
-        require_fetchable_origin(origin)
-    except RefreshError as exc:
-        raise GatedAuthError("refused_origin", str(exc)) from exc
+    require_gated_origin(origin, auth="gated")
 
     url = _build_url(origin, "/auth/native/authorize", params)
     request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
@@ -417,4 +461,7 @@ class GatedTicketProvider:
         return "GatedTicketProvider(value=<withheld>)"
 
     async def acquire(self) -> Credential:
-        return await self._session.mint_ws_ticket()
+        try:
+            return await self._session.mint_ws_ticket()
+        except GatedAuthError as exc:
+            raise CredentialError(str(exc)) from exc

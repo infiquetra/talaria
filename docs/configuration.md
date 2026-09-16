@@ -132,7 +132,7 @@ defaults.
 | `keys.replay_faster` | string, `"f10"` | Chord speeding replay. `TALARIA_KEYS_REPLAY_FASTER` is its environment alias. Restart. |
 | `profiles.endpoints` | table of string URLs, empty | Compatibility alias mapping a Hermes profile name to the gateway endpoint Talaria should dial. Blank or non-string values are ignored. The map has no environment alias and is not a UI write target — edit it by hand. Restart. |
 | `connections.<id>.url` | string dashboard base | One inventory entry's dashboard URL (`http(s)://…` or `ws://…/api/ws`). A URL carrying userinfo credentials is dropped on load and refused on write. No environment alias. Restart. |
-| `connections.<id>.auth` | `"loopback"` or `"gated"` | Authentication mode for that connection. An unknown mode visibly falls back to `loopback`. Credentials themselves live in the 0600 credentials file, never in `config.toml`. Restart. |
+| `connections.<id>.auth` | `"loopback"` or `"gated"` | Authentication mode for that connection. An unknown mode visibly falls back to `loopback`. `gated` uses Bearer admin plus a fresh WS ticket and may use plain HTTP only for a literal RFC1918 host; loopback token refresh is never widened to remote cleartext. Credentials themselves live in the 0600 credentials file, never in `config.toml`. Restart. |
 | `connections.<id>.label` | optional string | Display label for the connection. Restart. |
 
 The responsive widths and segment forms are fixed product behavior; changing a maximum does not move

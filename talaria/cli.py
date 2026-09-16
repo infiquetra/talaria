@@ -854,6 +854,7 @@ def build_live_app(
     members = plan_connections(
         default_endpoint=target.url,
         config_endpoints=config_module.profile_endpoints(cfg),
+        connections=config_module.connection_inventory(cfg),
     )
     # Synchronous launcher, asynchronous resolution — the same shape
     # :func:`_prime_credential` already uses, and for the same reason: reading a

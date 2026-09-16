@@ -19,6 +19,9 @@ The name comes from the _talaria_, Hermes's winged sandals. The project is inten
 > **v0.6.2 candidate.** Talaria-owned settings, byte-preserving writes, and route-aware HTTP
 > redaction are documented in the [v0.6.2 release notes](docs/releases/v0.6.2.md). Host
 > administration stays read-only status.
+>
+> **v0.6.3 in progress.** Gated-origin policy, live gated REST/WS composition, and
+> product Start/Stop are documented in the [v0.6.3 release notes](docs/releases/v0.6.3.md).
 
 ## Goals
 

@@ -8,6 +8,7 @@ mutations are absent from this module; restart never claims the dashboard moved.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -24,6 +25,7 @@ __all__ = [
     "SettingsClient",
     "SettingsError",
     "SettingsFailure",
+    "SettingsLifecycleResult",
     "SettingsRestartResult",
 ]
 
@@ -62,6 +64,17 @@ class SettingsRestartResult:
 
     dashboard_restarted: bool = False
     verified: bool = False
+
+
+@dataclass(frozen=True)
+class SettingsLifecycleResult:
+    """Observed gateway process state after Start/Stop plus status polls."""
+
+    gateway_running: bool = False
+
+
+_LIFECYCLE_POLL_SECONDS = 30.0
+_LIFECYCLE_POLL_INTERVAL = 0.25
 
 
 def _require_explicit_profile(target: ConfigTarget) -> str:
@@ -282,6 +295,34 @@ class SettingsClient:
             dashboard_restarted=False,
             verified=done and re_read,
         )
+
+    async def start_gateway(self, target: ConfigTarget) -> SettingsLifecycleResult:
+        return await self._poll_gateway_lifecycle(
+            target, path="/api/gateway/start", want_running=True
+        )
+
+    async def stop_gateway(self, target: ConfigTarget) -> SettingsLifecycleResult:
+        return await self._poll_gateway_lifecycle(
+            target, path="/api/gateway/stop", want_running=False
+        )
+
+    async def _poll_gateway_lifecycle(
+        self,
+        target: ConfigTarget,
+        *,
+        path: str,
+        want_running: bool,
+    ) -> SettingsLifecycleResult:
+        profile = _require_explicit_profile(target)
+        await self._request("POST", path, params={"profile": profile})
+        deadline = time.monotonic() + _LIFECYCLE_POLL_SECONDS
+        running = False
+        while True:
+            status = await self._request("GET", "/api/status", params={"profile": profile})
+            running = isinstance(status, Mapping) and status.get("gateway_running") is True
+            if running is want_running or time.monotonic() >= deadline:
+                return SettingsLifecycleResult(gateway_running=running)
+            await asyncio.sleep(_LIFECYCLE_POLL_INTERVAL)
 
     async def wake_start(self, target: ConfigTarget) -> Any:
         profile = _require_explicit_profile(target)
