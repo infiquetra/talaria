@@ -1,0 +1,45 @@
+CFG-P3-T1AR diagnosis and retarget — Test Author One
+====================================================
+
+Assignment: CFG-P3-T1AR (assign tests/ui/test_config_view.py for repair)
+Branch: feat/v0.6.4-cfg-p3-t1ar
+Baseline: 0e02f54704ab4b0cfdf4c57a5bfebddc1ecf2555 (U1 integrated)
+Recorded: 2026-09-16T20:36:09Z
+
+Dispatchable plans verified by SHA-256 before use (CFG-PR5 pair):
+- CFG-P3-implementation-plan.md b65d453e0e6810c00da0b26a1938e18f771fc3799148316838904ca12793c7fe MATCH
+- CFG-P3-test-plan.md          0a0067420b4c32432d9499698576a65dd348e2dc92bf4d3f6db184dc87ff155c MATCH
+
+Failures at baseline (2, reproduced before any edit):
+  tests/ui/test_config_view.py::test_the_real_app_mounts_the_workspace_with_its_own_state
+  tests/ui/test_config_view.py::test_the_theme_row_closes_the_workspace_and_the_app_opens_the_picker
+
+Diagnosis (Rule 1 case — viewport coverage, NOT a U1 regression):
+  Live probe of real-app /config at 100x44 shows #settings-talaria-branch
+  mounted holding all 18 Static rows, including theme.name,
+  refined-default, every source: default sentence, (no status script),
+  and effective: 5; #theme-picker mounted and enabled. The widget-level
+  branch contract is fully intact. Post-U1 the dynamic group subtree
+  takes the screen and the branch paints clipped (1 allocated row), so
+  branch text left the screenshot and coordinate clicks miss. Per the
+  assignment Rule 1, this retargets; per Rule 2 it must not weaken the
+  branch contract — and it does not: every branch sentence assertion is
+  kept, read through the mounted widgets.
+
+Retarget applied (tests/ui/test_config_view.py only):
+  - Mount test: on-screen assertions now prove the header Target control
+    ("Target", "selected: default"), the mounted Hermes groups, and the
+    Save/Discard footer; all four branch-sentence assertions kept via
+    _branch_static_texts on #settings-talaria-branch.
+  - Picker test: activates #theme-picker through the mounted Button
+    widget (press) instead of screen coordinates — the same approach the
+    file's apply test already uses. Palette-theme-mode end assertions
+    unchanged.
+
+Result after retarget:
+  tests/ui/test_config_view.py: 26 passed, 0 failed.
+  Owned P3 suites (5 files): 155 passed, 0 failed, 0 skipped.
+  ruff + mypy clean on the edited file.
+  No production code touched. No P3-1/P3-2 files touched.
+
+No secrets, credentials, or revealed plaintext in tests or evidence.

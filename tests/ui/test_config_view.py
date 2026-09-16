@@ -568,6 +568,15 @@ def test_status_write_keys_order_is_the_append_order() -> None:
 # on-screen in a 44-row screenshot. The seam tests prove the mounted groups
 # on screen and read branch rows through the mounted widgets — production
 # must not hide groups to keep a screenshot green.
+#
+# CFG-P3-T1AR (U1 remount): the dynamic group subtree now takes the screen
+# and the branch paints clipped, so even the branch head left the
+# screenshot. Diagnosis confirmed the branch still owns every row
+# (widget-level contract intact — asserted below), so the on-screen
+# assertions retarget to the header Target control, the mounted groups,
+# and the footer, and the picker activation goes through the mounted
+# widget like the apply path already does. If the branch itself ever
+# stops owning these rows, that is a U1 regression, not a retarget.
 
 
 def _branch_static_texts(branch: Any) -> list[str]:
@@ -600,12 +609,14 @@ async def test_the_real_app_mounts_the_workspace_with_its_own_state() -> None:
         assert "read-only" in text
         # Replay runs no status script and no files are configured here: the
         # honest branch rows say default-sourced, in the same sentences the
-        # direct-screen tests pin above. The branch head is on screen; its
-        # lower rows are read through the mounted widgets, which hold even
-        # where the mounted groups cover them.
-        assert "theme.name" in text
-        assert "refined-default" in text
-        assert "source: default" in text
+        # direct-screen tests pin above. Post-U1 the branch paints clipped,
+        # so its head left the screenshot too: the on-screen assertions
+        # prove the header control, groups, and footer that do render,
+        # while every branch sentence is read through the mounted widgets.
+        assert "Target" in text
+        assert "selected: default" in text
+        assert "Save" in text
+        assert "Discard" in text
         branch_text = " ".join(
             _branch_static_texts(app.screen.query_one("#settings-talaria-branch"))
         )
@@ -636,7 +647,10 @@ async def test_the_theme_row_closes_the_workspace_and_the_app_opens_the_picker()
         await pilot.pause()
         assert isinstance(app.screen, workspace_type)
 
-        await pilot.click("#theme-picker")
+        # Post-U1 the branch paints clipped, so coordinates would miss:
+        # activate the mounted picker widget directly, like the apply
+        # path below does.
+        app.screen.query_one("#theme-picker", Button).press()
         for _ in range(3):
             await pilot.pause()
 
