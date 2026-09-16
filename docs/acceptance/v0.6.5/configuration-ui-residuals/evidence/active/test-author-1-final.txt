@@ -1,0 +1,62 @@
+CFG-P4-T5A final owned suite — Test Author One
+=============================================
+
+Assignment: CFG-P4-T5A (final owned suite on candidate 25d1290)
+Branch: feat/v0.6.5-cfg-p4-t5a
+Candidate: 25d129023ace82e9ad1280d5e1b7441addf56ed2
+  (fix(cfg): type schema and env load failures instead of silent fallback)
+Gate: CFG-P4-T3R no-failure-class (live A mounts; U2 remount not authorized)
+Hermes pin cited by tests: 3236f4405 (read-only; no Hermes change)
+Recorded: 2026-09-16T23:08:00Z
+
+Dispatchable plans verified by SHA-256 before use (CFG-PR7 pair):
+- CFG-P4-implementation-plan.md 4c9be5a1195e2c16cbd60d3f23dfdbb7cb46987a2fcb14b4b6c9cac4def0ba61 MATCH
+- CFG-P4-test-plan.md          ef55f522fb12740d81e0e20f48a5c0c2dfd641cba39cea421febb6be3893b6c7 MATCH
+
+Command (exclusive owned paths):
+  uv run pytest tests/ui/test_cfg_p4_live_hermes.py \
+    tests/ui/test_cfg_p3_live_schema.py \
+    tests/ui/test_cfg_p2_live_settings.py \
+    tests/ui/test_settings_workspace.py \
+    tests/domain/test_settings_target.py \
+    tests/recorder/test_settings_http_redaction.py \
+    -p no:cacheprovider --tb=no -q
+
+Result: 171 passed, 2 failed, 0 skipped, 0 errors.
+No production code touched. No exclusive-test edits in this batch
+(final contract unchanged; remaining failures are still missing
+behavior). No Test Author Two paths edited. No push.
+
+Passes / fails per owned file:
+  tests/ui/test_cfg_p4_live_hermes.py            8 passed  (typed load + live shape)
+  tests/ui/test_cfg_p3_live_schema.py           17 passed  (incl. typed switch-load)
+  tests/ui/test_cfg_p2_live_settings.py         13 passed  (incl. switch timeout)
+  tests/ui/test_settings_workspace.py           34 passed
+  tests/domain/test_settings_target.py          55 passed, 2 failed
+  tests/recorder/test_settings_http_redaction.py 44 passed
+
+P4-1 disposition (typed live load): PASS. Schema unreachable/timeout/
+decode and env outage/decode each mount a distinct phase+reason safe
+state through the real app loader at mount and at switch time; silent
+placeholder path rejected. Fixture remount control, live-shape mount,
+and AST source guard remain green.
+
+P4-2 disposition (metadata-only shape summary): FAIL — missing
+behavior. Candidate does not export
+talaria.domain.settings.summarize_schema_shape. Both Diagnostic Oracle
+shape pins still fail as unimplemented interface (same shape as T1A).
+Blocked: none beyond that absent surface. U2 remount not authorized
+per T3R / this assignment.
+
+Remaining FAILED list (owned paths only):
+FAILED tests/domain/test_settings_target.py::test_summarize_schema_shape_counts_without_values
+FAILED tests/domain/test_settings_target.py::test_summarize_schema_shape_refuses_a_non_object
+
+T1A → T5A delta: the nine typed-load failures from the initial log
+(5 p4 + 3 p3 + 1 p2) are now green on 25d1290. The two summarize_schema
+shape pins are unchanged failures.
+
+No secrets, credentials, or revealed plaintext in tests, logs, or
+evidence. Secret values are random in-memory canaries; visibility
+recorded as booleans only. All profile names are P2-legal active-family
+names. Isolated config only.
