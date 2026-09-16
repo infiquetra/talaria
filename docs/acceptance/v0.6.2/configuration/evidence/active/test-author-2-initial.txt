@@ -1,6 +1,6 @@
 CFG-T1B Test Author Two — initial expected-failure log
 Date: 2026-09-16
-Worktree: /Users/jefcox/workspace/infiquetra/talaria-cfg-b1-ta2
+Worktree: talaria-cfg-b1-ta2
 Branch: feat/v0.6.2-cfg-b1-ta2
 Baseline: c87c7901e563346913a2764a57f6c4e47bf45f8f
 
@@ -10,7 +10,7 @@ Plans hashed before use (match CFG-PR3):
 
 No production code was added. No session settings were changed.
 No credential values, live tokens, or private profile content are in this log.
-Live Hermes flags were unset; fixtures did not read ~/.talaria.
+Live Hermes flags were unset; fixtures did not read the Talaria user config directory.
 
 Command (exclusive suite):
   uv run pytest \

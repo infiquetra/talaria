@@ -1,6 +1,6 @@
 CFG-T4B Test Author Two — final owned suite
 Date: 2026-09-16
-Worktree: /Users/jefcox/workspace/infiquetra/talaria-cfg-t4-ta2
+Worktree: talaria-cfg-t4-ta2
 Branch: feat/v0.6.2-cfg-t4-ta2
 Candidate: 764119bce0deb7742f0fe8736b28cec8951c80d8
 
@@ -10,7 +10,7 @@ Plans hashed before use (match CFG-PR3):
 
 No production code was added. No tests were edited. No session settings were changed.
 No credential values, live tokens, or private profile content are in this log.
-Live Hermes flags were unset; fixtures did not read ~/.talaria.
+Live Hermes flags were unset; fixtures did not read the Talaria user config directory.
 No Active disposable profiles were created.
 
 Command (exclusive suite):
