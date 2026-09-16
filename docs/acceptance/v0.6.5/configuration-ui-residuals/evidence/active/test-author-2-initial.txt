@@ -1,0 +1,32 @@
+CFG-P4-T1B Test Author Two — initial failures and controls
+Date: 2026-09-16
+Worktree: talaria-cfg-p4-ta2
+Branch: feat/v0.6.5-cfg-p4-ta2
+Baseline: 4497048a77f1ebcdf855ed541ead340d10ac42df
+Installed: talaria 0.6.4
+
+Plans hashed before use (match CFG-PR7):
+  CFG-P4-implementation-plan.md  4c9be5a1195e2c16cbd60d3f23dfdbb7cb46987a2fcb14b4b6c9cac4def0ba61
+  CFG-P4-test-plan.md            ef55f522fb12740d81e0e20f48a5c0c2dfd641cba39cea421febb6be3893b6c7
+
+uv run pytest scripts/acceptance/test_v065_config_ui.py --tb=short -q
+Result: 7 passed, 1 failed, 0 skipped
+
+Control pass:
+  test_legal_local_names_are_accepted_and_default_testb_hard_fail
+  test_process_isolation_refuses_operator_config_and_worktree_executable
+  test_installed_identity_uses_clean_pythonpath
+  test_reject_once_save_leaves_state_unchanged_then_retry_succeeds
+  test_oracle_and_cleanup_are_canary_free
+  test_harness_source_does_not_call_direct_openers
+  test_fixture_remount_control_stays_green
+
+Missing-behavior fail:
+  test_live_diagnosis_mounts_selected_schema_and_env
+  selected schema/env remain absent; placeholder remains
+  schema_decode_result=SettingsDecodeError
+  projected_group_titles=Hermes profile, Host
+  selected_at_reconcile=legal local A
+  no raw bodies, env keys, or credentials recorded
+
+No production code. No Test Author One paths. No attribution.
