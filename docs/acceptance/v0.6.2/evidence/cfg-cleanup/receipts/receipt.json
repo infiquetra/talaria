@@ -1,0 +1,14 @@
+{
+  "schema_version": "talaria-v0.6.2-receipt-v1",
+  "release": "0.6.2",
+  "checklist_item": "cfg-cleanup",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "fbaa534622c26fc3f1e370cc6d2d9b057bb2f5e0",
+  "applies_to_candidate": "same",
+  "evidence": {
+    "source": "configuration/evidence/active/cleanup-active.json",
+    "observation": "All reserved Active names were absent, testB was unchanged, and no server IDs were created.",
+    "cleanup_receipt_sha256": "43181b3cbc0578cada287cc6c71db4e567f0d7d52448a52409ac848b87b79f47"
+  }
+}

@@ -306,6 +306,10 @@ V061_ITEM_SCHEMA = "talaria-v0.6.1-receipt-v1"
 V061_INSTALL_SCHEMA = "talaria-v0.6.1-install-v1"
 V061_RELEASE = "0.6.1"
 V061_ROLE_LABELS = ("dedicated-tester", "worker-lane-a", "worker-lane-b", "controller")
+V062_ITEM_SCHEMA = "talaria-v0.6.2-receipt-v1"
+V062_MANIFEST_SCHEMA = "talaria-v0.6.2-artifact-manifest-v1"
+V062_GATE_ID = "v0-6-2-configuration"
+V062_RELEASE = "0.6.2"
 
 
 @dataclass(frozen=True)
@@ -4654,6 +4658,35 @@ def _manifest_candidate(manifest: dict[str, Any]) -> dict[str, Any] | None:
     return _object(candidate, field="manifest.current_candidate")
 
 
+def _is_v062_cfg_manifest(
+    manifest: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
+    return (
+        manifest.get("schema_version") == V062_MANIFEST_SCHEMA
+        or candidate.get("version") == V062_RELEASE
+    )
+
+
+def _validate_v062_receipt(receipt: dict[str, Any]) -> list[str]:
+    """Return defects in a v0.6.2 CFG receipt.
+
+    The named schema is the five-field stub: ``schema_version``, ``release``,
+    ``checklist_item``, ``tester``, ``verdict``. v0.6.1 fields (``install``,
+    ``harness``, ``issue``, ``title``, ``candidate_commit_sha``) are not
+    required. Extra keys are ignored.
+    """
+    errors: list[str] = []
+    if receipt.get("schema_version") != V062_ITEM_SCHEMA:
+        errors.append(f"schema_version is not {V062_ITEM_SCHEMA}")
+    if receipt.get("release") != V062_RELEASE:
+        errors.append(f"release is not {V062_RELEASE}")
+    for key in ("checklist_item", "tester", "verdict"):
+        value = receipt.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{key} must be a non-empty string")
+    return errors
+
+
 def verify_run(
     manifest_path: Path = _MANIFEST_PATH,
     *,
@@ -4685,6 +4718,12 @@ def verify_run(
         if current_receipt_paths or install_paths:
             errors.append("manifest candidate is null while receipts exist")
         return errors
+
+    v062_cfg = _is_v062_cfg_manifest(manifest, candidate)
+    if v062_cfg and manifest.get("gate_id") != V062_GATE_ID:
+        errors.append(
+            "gate_id must be v0-6-2-configuration; must not reuse v0-6-1-daily-driver"
+        )
 
     try:
         expected_commit = _string(candidate.get("commit"), field="manifest.candidate.commit")
@@ -4760,9 +4799,17 @@ def verify_run(
                 expected_wheel=expected_wheel,
             )
         elif schema_version == V061_ITEM_SCHEMA:
+            if v062_cfg:
+                errors.append(
+                    f"{relative}: must not reuse a v0.6.1 live receipt; "
+                    "v0.6.1 live-NN receipt is not a v0.6.2 CFG record"
+                )
+                continue
             validator = _validate_v061_receipt(
                 receipt, receipt_path=path, verify_files=True
             )
+        elif schema_version == V062_ITEM_SCHEMA:
+            validator = _validate_v062_receipt(receipt)
         elif schema_version == V050_ITEM_SCHEMA:
             validator = validate_receipt(
                 receipt,
@@ -4779,7 +4826,8 @@ def verify_run(
             # receipts keep their own validator rather than reading unknown.
             errors.append(
                 f"{relative}: unknown receipt schema_version {schema_version!r}; expected one of "
-                f"{V050_ITEM_SCHEMA}, {V060_ITEM_SCHEMA}, or {V061_ITEM_SCHEMA}"
+                f"{V050_ITEM_SCHEMA}, {V060_ITEM_SCHEMA}, {V061_ITEM_SCHEMA}, "
+                f"or {V062_ITEM_SCHEMA}"
             )
             continue
         for error in validator:
@@ -4860,7 +4908,7 @@ def verify_run(
                         f"applies_to_candidate must be a non-empty sentence naming the "
                         f"unchanged surfaces since the receipt's commit: {relative}"
                     )
-    if v061_expected is not None and v061_items:
+    if not v062_cfg and v061_expected is not None and v061_items:
         # The no-waiver READY rule, machine-enforced: the manifest declares how
         # many live receipts the run owes (a parameter read from the manifest,
         # never a literal here), and every one of them must read pass.

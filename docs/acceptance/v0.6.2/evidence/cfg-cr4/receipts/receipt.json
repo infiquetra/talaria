@@ -1,0 +1,14 @@
+{
+  "schema_version": "talaria-v0.6.2-receipt-v1",
+  "release": "0.6.2",
+  "checklist_item": "cfg-cr4",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "fbaa534622c26fc3f1e370cc6d2d9b057bb2f5e0",
+  "applies_to_candidate": "same",
+  "evidence": {
+    "source": "CFG-T5-CR4 accepted review artifact",
+    "observation": "The exact fbaa534 candidate was accepted after the B110 repair.",
+    "review_artifact_sha256": "bc47513c4ba9a2799f2edf0b15dab286f38faa4073f99fc9c93bd53bb93bccfc"
+  }
+}

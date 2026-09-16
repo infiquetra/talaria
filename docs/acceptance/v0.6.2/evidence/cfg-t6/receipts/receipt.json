@@ -1,0 +1,14 @@
+{
+  "schema_version": "talaria-v0.6.2-receipt-v1",
+  "release": "0.6.2",
+  "checklist_item": "cfg-t6",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "0f9e52f3018af99eda5f2464c97a0a81df24255a",
+  "applies_to_candidate": "Production-identical to fbaa534 except for the T1AR5 tests and the U4R3 SettingsError repair.",
+  "evidence": {
+    "source": "CFG-T6 mutation-free candidate smoke receipt",
+    "observation": "The selected settings-workspace, layout, cancellation, and validation smoke checks passed without product mutation.",
+    "smoke_receipt_sha256": "7ca10ce0e24661da75cdd0ee8ea08410697d9eef1c7e402264363d80776a747f"
+  }
+}
