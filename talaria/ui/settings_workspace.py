@@ -14,6 +14,7 @@ from typing import Any
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
@@ -342,7 +343,7 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         self._nav_collapsed = collapsed
         try:
             nav = self.query_one("#settings-nav", Static)
-        except Exception:
+        except NoMatches:
             return
         nav.display = not collapsed
 
@@ -425,7 +426,7 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         try:
             start = self.query_one("#settings-start", Button)
             stop = self.query_one("#settings-stop", Button)
-        except Exception:
+        except NoMatches:
             start = None
             stop = None
         if start is not None:
@@ -434,9 +435,9 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
             stop.display = running is True
         try:
             reauth = self.query_one("#settings-reauth", Button)
-            reauth.display = self._view.auth_state == "reauth"
-        except Exception:
-            pass
+        except NoMatches:
+            return
+        reauth.display = self._view.auth_state == "reauth"
 
     def mark_reauth(self, detail: str) -> None:
         """Show re-authenticate state. Pending editor values stay put."""
@@ -446,7 +447,7 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
             return
         try:
             footer = self.query_one("#settings-footer")
-        except Exception:
+        except NoMatches:
             return
         footer.mount(Button("Re-authenticate", id="settings-reauth", compact=True))
 

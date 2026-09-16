@@ -394,18 +394,47 @@ _HTTP_RESPONSE_NOT_PERSISTABLE: frozenset[tuple[str, str]] = frozenset(
 )
 
 
-def http_response_persistable(*, method: str, path: str) -> bool:
-    """False when this HTTP response must never reach disk, even redacted."""
-    return _http_route(method, path) not in _HTTP_RESPONSE_NOT_PERSISTABLE
+#: Keys that name a secret even when the route is an error record. ``value``
+#: is the reveal-response shape; the rest are the usual credential names.
+_VALUE_SHAPED_KEYS: frozenset[str] = frozenset(
+    {
+        "value",
+        "secret",
+        "token",
+        "access_token",
+        "refresh_token",
+        "ticket",
+    }
+)
 
 
-def redact_http_body(*, method: str, path: str, body: Any) -> RedactResult:
+def http_response_persistable(
+    *, method: str, path: str, status: int | None = None
+) -> bool:
+    """False when this HTTP response must never reach disk, even redacted.
+
+    A 429 reveal error is the exception: it carries rate-limit metadata and
+    no secret, so the record may persist. 200 and omitted status stay dropped.
+    """
+    route = _http_route(method, path)
+    if route == ("POST", "/api/env/reveal") and status == 429:
+        return True
+    return route not in _HTTP_RESPONSE_NOT_PERSISTABLE
+
+
+def redact_http_body(
+    *, method: str, path: str, body: Any, status: int | None = None
+) -> RedactResult:
     """Withhold a credential-bearing HTTP body before any recorder sink.
 
-    Route-denied exchanges are replaced whole with a recorded reason. All
-    other bodies walk the existing key-name net. The input is never mutated.
+    Route-denied exchanges are replaced whole with a recorded reason. A 429
+    reveal error keeps its status wording, withholds value-shaped fields, and
+    still records the deny-route reason. All other bodies walk the existing
+    key-name net. The input is never mutated.
     """
     verb, route = _http_route(method, path)
+    if (verb, route) == ("POST", "/api/env/reveal") and status == 429:
+        return _redact_reveal_error(verb, route, body)
     if is_sensitive_http_route(verb, route):
         return RedactResult(
             frame=REDACTED,
@@ -414,3 +443,23 @@ def redact_http_body(*, method: str, path: str, body: Any) -> RedactResult:
     if isinstance(body, (dict, list)):
         return redact_frame(body)
     return RedactResult(frame=body)
+
+
+def _redact_reveal_error(verb: str, route: str, body: Any) -> RedactResult:
+    """Keep 429 wording; withhold any value-shaped field; record deny-route."""
+    reason = Redaction(path="", reason=f"deny-route:{verb} {route}")
+    if not isinstance(body, dict):
+        return RedactResult(frame=REDACTED, redactions=[reason])
+    walked = redact_frame(body)
+    frame = walked.frame
+    redactions = [*walked.redactions, reason]
+    if isinstance(frame, dict):
+        out = dict(frame)
+        for key, value in list(out.items()):
+            if key not in _VALUE_SHAPED_KEYS:
+                continue
+            if value != REDACTED:
+                redactions.append(Redaction(path=key, reason="value-shaped"))
+            out[key] = REDACTED
+        frame = out
+    return RedactResult(frame=frame, redactions=redactions)
