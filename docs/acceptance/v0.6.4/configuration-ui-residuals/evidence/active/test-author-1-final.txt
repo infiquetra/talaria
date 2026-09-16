@@ -1,0 +1,72 @@
+CFG-P3-T3A final owned suites — Test Author One
+==============================================
+
+Assignment: CFG-P3-T3A (final owned suites on integrated candidate)
+Branch: feat/v0.6.4-cfg-p3-t3a
+Candidate: 7b73f8864941b65ab47a685f859f32992986211b (integrated U1)
+Hermes pin cited by tests: 3236f4405 (read-only; no Hermes change)
+Recorded: 2026-09-16T20:18:56Z
+
+Dispatchable plans verified by SHA-256 before use (CFG-PR5 pair):
+- CFG-P3-implementation-plan.md b65d453e0e6810c00da0b26a1938e18f771fc3799148316838904ca12793c7fe MATCH
+- CFG-P3-test-plan.md          0a0067420b4c32432d9499698576a65dd348e2dc92bf4d3f6db184dc87ff155c MATCH
+
+Command (exclusive owned paths):
+  uv run pytest tests/ui/test_cfg_p3_live_schema.py \
+    tests/ui/test_cfg_p2_live_settings.py \
+    tests/ui/test_settings_workspace.py \
+    tests/domain/test_settings_target.py \
+    tests/recorder/test_settings_http_redaction.py \
+    -p no:cacheprovider --tb=no -q
+
+Result: 155 passed, 0 failed, 0 skipped, 0 errors.
+P3-1 and P3-2 both pass. Zero skips. No production code touched, no
+expectation weakened, no test file edited in this batch.
+
+Passes per owned file:
+  tests/ui/test_cfg_p3_live_schema.py            14 passed (P3-1 x8, P3-2 x5, guard x1)
+  tests/ui/test_cfg_p2_live_settings.py          12 passed
+  tests/ui/test_settings_workspace.py            33 passed
+  tests/domain/test_settings_target.py           54 passed
+  tests/recorder/test_settings_http_redaction.py 42 passed
+
+P3-1 disposition: PASS. Selected target remounts authoritative schema
+and Environment rows, removes stale rows/groups, never rewrites session
+home mid-flight, preserves/applies search; Stay/Discard/Save-success/
+Save-failure/delayed-drop all proven through real controls with
+write-log hard-fail scans clean.
+P3-2 disposition: PASS. Environment row + Reveal mount after load;
+one profile-explicit request on confirm; value shown once with
+in-process equality; close wipes with no plaintext in widgets/view/
+notices/recordings; reopen masked with no refetch; no secret survives
+a switch; sixth reveal shows rate-limit state without stale value.
+Blocked: none. Remaining fail: none.
+
+Frozen-test verification (full suite, --tb=no -rfs):
+  4 failures, all outside owned paths, none edited here:
+  - tests/ui/test_config_view.py x2 (workspace mount + theme-picker seam):
+    `theme.name` no longer on the 44-row screenshot after U1's workspace
+    remount/layout change. Frozen file owned by no P3 author; needs Lead
+    assignment (repair owner or layout-contract update).
+  - scripts/acceptance/test_v063_release_record.py (publication gate):
+    v0.6.3 manifest vs v0.6.4 candidate HEAD drift; inherent on this
+    branch (same shape as the v062 gate at P2-T3A). Release-process item.
+  - scripts/acceptance/test_v064_config_ui.py x1 (Test Author Two path):
+    TA2's own v0.6.3-baseline assertion no longer holds post-U1; their
+    T3 final to address.
+  Zero owned-path failures. Zero errors. Everything else frozen is green.
+
+Quality gates on this worktree (T3-relevant subset):
+  uv run ruff check .   -> All checks passed
+  uv run mypy (owned 5) -> Success: no issues found in 5 source files
+  uv run mypy (tree)    -> 1 error in scripts/acceptance/v064_config_ui.py
+                             (Test Author Two path, str-bytes-safe; not edited
+                             here; returned to Lead/TA2 via this log)
+
+Acceptance-file prohibition verified: the P3 acceptance file contains
+zero references to the switch/reveal opener methods (grep clean; the
+AST source guard passes).
+
+No secrets, credentials, or revealed plaintext in tests, logs, or
+evidence. Secret values are random in-memory canaries; visibility recorded
+as booleans only. All profile names are P2-legal active-family names.
