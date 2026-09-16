@@ -24,6 +24,7 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 
 ## Releases
 
+- [Talaria v0.6.3](releases/v0.6.3.md)
 - [Talaria v0.6.2](releases/v0.6.2.md)
 - [Talaria v0.6.1](releases/v0.6.1.md)
 - [Talaria v0.6.0](releases/v0.6.0.md)

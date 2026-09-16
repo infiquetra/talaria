@@ -150,6 +150,8 @@ class ConnectionEntry:
     credential_profile: str | None = None
     aliases: tuple[str, ...] = ()
     problem: str = ""
+    auth: str = "loopback"
+    credential_kind: str = "loopback"
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -377,6 +379,11 @@ async def _token_for(
     stands, and the value returned here lives only until
     :func:`resolve_connections` has answered "same or not".
     """
+    if member.auth == "gated" or member.credential_kind in {"ticket", "gated"}:
+        # Tickets are single-use and minted per dial. Comparing them would
+        # invent a same-or-different answer that is already stale, so gated
+        # members never fold on an unavailable or unique ticket value.
+        return None
     try:
         credential = await provider_for(member).acquire()
     except CredentialError:
@@ -463,6 +470,8 @@ def _entry_for(member: PlannedConnection, *, aliases: tuple[str, ...] = ()) -> C
         credential_profile=member.credential_profile,
         aliases=aliases,
         problem=member.problem,
+        auth=member.auth,
+        credential_kind=member.credential_kind,
     )
 
 
@@ -485,6 +494,10 @@ def credential_provider_factory(
     """
 
     def build(entry: ConnectionEntry | PlannedConnection) -> CredentialProvider:
+        auth = getattr(entry, "auth", "loopback")
+        kind = getattr(entry, "credential_kind", "loopback")
+        if auth == "gated" or kind in {"ticket", "gated"}:
+            return _gated_ticket_provider(entry, credentials_path)
         return LoopbackTokenProvider(
             credentials_path=credentials_path,
             allow_prompt=False,
@@ -492,6 +505,36 @@ def credential_provider_factory(
         )
 
     return build
+
+
+def _gated_ticket_provider(
+    entry: ConnectionEntry | PlannedConnection,
+    credentials_path: Path | None,
+) -> CredentialProvider:
+    """Compose a per-dial WS ticket provider for one gated inventory row.
+
+    Tokens come from the credentials file when present. Nothing here invents
+    an access token, refresh token, cookie, or authorization code.
+    """
+    from talaria.transport.gated_auth import GatedAuthSession, GatedTicketProvider
+    from talaria.transport.refresh import RefreshError, dashboard_origin_for, read_connection_tokens
+
+    endpoint = entry.endpoint
+    try:
+        origin = dashboard_origin_for(endpoint)
+    except RefreshError:
+        origin = endpoint if endpoint.endswith("/") else f"{endpoint}/"
+    connection_id = (
+        entry.credential_profile
+        or getattr(entry, "profile", None)
+        or getattr(entry, "name", None)
+    )
+    access = ""
+    refresh = ""
+    if credentials_path is not None and connection_id:
+        access, refresh = read_connection_tokens(credentials_path, connection_id)
+    session = GatedAuthSession(origin, access_token=access or None, refresh_token=refresh or None)
+    return GatedTicketProvider(session)
 
 
 def recorded_connections(

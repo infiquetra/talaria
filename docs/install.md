@@ -7,8 +7,9 @@ Talaria connects to that gateway; it does not install or start Hermes for you.
 
 ## Platform support
 
-macOS is the supported platform for Talaria v0.5.0. The release has been exercised there with its
-real terminal interface and with Python 3.12 and 3.13.
+macOS is the supported platform for Talaria. Published tags through v0.6.2 have been
+exercised there with the real terminal interface and with Python 3.12 and 3.13.
+v0.6.3 is the next residual-configuration tag; install it only after it is published.
 
 Linux is not supported for interactive use in this release. The test suite runs on Linux in
 continuous integration, but no person has driven Talaria on Linux. That hands-on path was parked

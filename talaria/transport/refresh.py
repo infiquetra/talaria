@@ -55,6 +55,7 @@ __all__ = [
     "fetch_dashboard_index",
     "refresh_credential",
     "require_fetchable_origin",
+    "read_connection_tokens",
     "write_connection_tokens",
     "write_profile_token",
     "write_token",
@@ -448,6 +449,30 @@ def write_connection_tokens(
 
     _atomic_write(path, content)
     return created, tightened, preserved
+
+
+def read_connection_tokens(path: Path, connection_id: str) -> tuple[str, str]:
+    """Return stored ``(access, refresh)`` or empty strings. Never invents values."""
+    if not path.exists():
+        return "", ""
+    from talaria.transport.credentials import CredentialError, _read_credential_file
+
+    try:
+        document = _read_credential_file(path)
+    except (CredentialError, OSError):
+        return "", ""
+    connections = document.get("connections")
+    if not isinstance(connections, dict):
+        return "", ""
+    entry = connections.get(connection_id)
+    if not isinstance(entry, dict):
+        return "", ""
+    access = entry.get("access_token")
+    refresh = entry.get("refresh_token")
+    return (
+        access if isinstance(access, str) else "",
+        refresh if isinstance(refresh, str) else "",
+    )
 
 
 def _rewrite_connection_tokens(existing: str, connection_id: str, block: str) -> str:
