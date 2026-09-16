@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from talaria.domain.settings import ConfigTarget, RestartPlan
+from talaria.domain.settings_catalog import live_apply_allowed
 
 __all__ = [
     "ClearEnv",
@@ -148,6 +149,12 @@ class LiveApply:
     key: str
     value: object
 
+    def __post_init__(self) -> None:
+        if not live_apply_allowed(self.key):
+            raise ValueError(
+                f"config.set key {self.key!r} is not on the CFG-A1 D5 allowlist"
+            )
+
 
 def _profile_query(target: ConfigTarget) -> dict[str, str]:
     return {"profile": target.profile_name}
@@ -235,6 +242,10 @@ def rpc_request(command: object) -> RpcRequestSpec:
             params["persist"] = True
         return RpcRequestSpec(method=f"wake.{command.action}", params=params)
     if isinstance(command, LiveApply):
+        if not live_apply_allowed(command.key):
+            raise ValueError(
+                f"config.set key {command.key!r} is not on the CFG-A1 D5 allowlist"
+            )
         return RpcRequestSpec(
             method="config.set",
             params={
