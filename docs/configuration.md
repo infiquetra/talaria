@@ -39,6 +39,11 @@ name = "refined-default"
 
 [ui]
 reduced_motion = false
+inspector_width = 36
+inspector_open_at_start = false
+inspector_dock_min_columns = 120
+diff_side_by_side_min_columns = 112
+show_timestamps = false
 
 [status]
 # command = "git status --short"
@@ -62,13 +67,31 @@ allowlist = []
 [composer]
 paste_collapse_lines = 6
 paste_collapse_bytes = 512
+attachment_max_mb = 16
+
+[notifications]
+transcript_line = true
 
 [keys]
 toggle_inspector = "ctrl+o"
 interrupt = "ctrl+s"
+agents = "ctrl+g"
+commands = "f3"
+models = "f11"
+profiles = "f12"
+config = "ctrl+k"
+follow = "f5"
+replay_pause = "f8"
+replay_slower = "f9"
+replay_faster = "f10"
 
 [profiles.endpoints]
 # work = "ws://127.0.0.1:9119/api/ws"
+
+# [connections.home]
+# url = "http://127.0.0.1:8765"
+# auth = "loopback"
+# label = "local dashboard"
 ```
 
 `tests/test_config.py` parses the fenced example above and asserts its values against the runtime
@@ -79,7 +102,12 @@ defaults.
 | Path | Type and default | Contract |
 | --- | --- | --- |
 | `theme.name` | string, `"refined-default"` | Selects a theme. The five built-in slugs and canonical stored imported slugs discovered under `<TALARIA_CONFIG_DIR>/themes/` are accepted at startup. An unknown or non-string value visibly falls back to Refined Default. There is no environment or command-line alias. See [Themes](themes.md) for scopes and persistence. |
-| `ui.reduced_motion` | boolean, `false` | Makes nonessential progress frames static and routed scrolling immediate. A non-boolean value visibly falls back to `false`. There is no environment or command-line alias. |
+| `ui.reduced_motion` | boolean, `false` | Makes nonessential progress frames static and routed scrolling immediate. A non-boolean value visibly falls back to `false`. There is no environment or command-line alias. Live when the running process re-applies motion policy. |
+| `ui.inspector_width` | integer, `36` | Inclusive range 28–48, today's hardcoded inspector width. An invalid value visibly falls back to 36. No environment alias. Live on inspector resize. |
+| `ui.inspector_open_at_start` | boolean, `false` | Whether the inspector starts docked open. A non-boolean value visibly falls back to `false`. No environment alias. Live. |
+| `ui.inspector_dock_min_columns` | integer, `120` | Positive integer. The column count at which the inspector docks instead of overlaying. An invalid value visibly falls back to 120. No environment alias. Live. |
+| `ui.diff_side_by_side_min_columns` | integer, `112` | Positive integer. The column count at which diffs render side-by-side. An invalid value visibly falls back to 112. No environment alias. Live. |
+| `ui.show_timestamps` | boolean, `false` | Shows transcript timestamps. A non-boolean value visibly falls back to `false`. No environment alias. Live. |
 | `status.command` | optional string, omitted/disabled | Runs as a fixed argument vector without a shell in the existing multi-row `StatusRegion`. An empty, non-string, or unparseable value disables only that region and produces a startup notice. `TALARIA_STATUS_COMMAND` is its environment alias. |
 | `status.interval_seconds` | integer, `5` | Status-command cadence, inclusive range 1–3600. An invalid value visibly falls back to 5. `TALARIA_STATUS_INTERVAL_SECONDS` is its environment alias. |
 | `status.segments` | array of strings, `['cwd', 'git_branch', 'agent_model', 'context', 'task_progress', 'connection', 'version']` | Sets display order and visibility for the true-bottom bar. Known names keep their first occurrence; unknown names are identified after controls are rendered visibly, and duplicate names are skipped with notices. If none remain, only `connection` renders. No environment alias. |
@@ -87,11 +115,25 @@ defaults.
 | `status.git_branch_max_columns` | integer, `18` | Inclusive range 8–40. Invalid values visibly use 18. No environment alias. |
 | `status.agent_model_max_columns` | integer, `24` | Inclusive range 10–48. Invalid values visibly use 24. No environment alias. |
 | `environment.allowlist` | array of strings, empty | Environment-variable names the optional status command may receive. Its child environment is default-deny; credential-like names remain subject to the status security boundary. No environment alias. |
-| `composer.paste_collapse_lines` | integer, `6` | Collapses a paste meeting this line threshold. Zero or a negative value disables this half of the threshold. `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES` is its environment alias. |
-| `composer.paste_collapse_bytes` | integer, `512` | Collapses a paste meeting this byte threshold. Zero or a negative value disables this half of the threshold. `TALARIA_COMPOSER_PASTE_COLLAPSE_BYTES` is its environment alias. |
-| `keys.toggle_inspector` | string, `"ctrl+o"` | Chord toggling the session inspector. `Ctrl+B` was the previous default; Herdr captures it when nested, so it stays documented as replaced rather than bound. `TALARIA_KEYS_TOGGLE_INSPECTOR` is its environment alias. |
-| `keys.interrupt` | string, `"ctrl+s"` | Chord cancelling the in-flight turn. `Ctrl+C` left this action; pressed out of habit it reaches the text area's copy binding or the framework's quit hint, never the turn. `TALARIA_KEYS_INTERRUPT` is its environment alias. |
-| `profiles.endpoints` | table of string URLs, empty | Maps a Hermes profile name to the gateway endpoint Talaria should dial. Blank or non-string values are ignored. The map has no environment alias. |
+| `composer.paste_collapse_lines` | integer, `6` | Collapses a paste meeting this line threshold. Zero or a negative value disables this half of the threshold. `TALARIA_COMPOSER_PASTE_COLLAPSE_LINES` is its environment alias. Live. |
+| `composer.paste_collapse_bytes` | integer, `512` | Collapses a paste meeting this byte threshold. Zero or a negative value disables this half of the threshold. `TALARIA_COMPOSER_PASTE_COLLAPSE_BYTES` is its environment alias. Live. |
+| `composer.attachment_max_mb` | integer, `16` | Composer attachment size cap, Talaria's analogue of the Desktop attachment cap. A non-positive or non-integer value visibly falls back to 16. No environment alias. Live. |
+| `notifications.transcript_line` | boolean, `true` | Whether `notification.show` renders a transcript line. A non-boolean value visibly falls back to `true`. No environment alias. Live. |
+| `keys.toggle_inspector` | string, `"ctrl+o"` | Chord toggling the session inspector. `Ctrl+B` was the previous default; Herdr captures it when nested, so it stays documented as replaced rather than bound. `TALARIA_KEYS_TOGGLE_INSPECTOR` is its environment alias. Restart. |
+| `keys.interrupt` | string, `"ctrl+s"` | Chord cancelling the in-flight turn. `Ctrl+C` left this action; pressed out of habit it reaches the text area's copy binding or the framework's quit hint, never the turn. `TALARIA_KEYS_INTERRUPT` is its environment alias. Restart. |
+| `keys.agents` | string, `"ctrl+g"` | Chord toggling sub-agent rows. `TALARIA_KEYS_AGENTS` is its environment alias. Restart. |
+| `keys.commands` | string, `"f3"` | Chord opening the command palette. `TALARIA_KEYS_COMMANDS` is its environment alias. Restart. |
+| `keys.models` | string, `"f11"` | Chord opening the model picker. `TALARIA_KEYS_MODELS` is its environment alias. Restart. |
+| `keys.profiles` | string, `"f12"` | Chord opening the profile picker. `TALARIA_KEYS_PROFILES` is its environment alias. Restart. |
+| `keys.config` | string, `"ctrl+k"` | Chord opening the settings workspace. `TALARIA_KEYS_CONFIG` is its environment alias. Restart. |
+| `keys.follow` | string, `"f5"` | Chord toggling follow. `TALARIA_KEYS_FOLLOW` is its environment alias. Restart. |
+| `keys.replay_pause` | string, `"f8"` | Chord pausing replay. `TALARIA_KEYS_REPLAY_PAUSE` is its environment alias. Restart. |
+| `keys.replay_slower` | string, `"f9"` | Chord slowing replay. `TALARIA_KEYS_REPLAY_SLOWER` is its environment alias. Restart. |
+| `keys.replay_faster` | string, `"f10"` | Chord speeding replay. `TALARIA_KEYS_REPLAY_FASTER` is its environment alias. Restart. |
+| `profiles.endpoints` | table of string URLs, empty | Compatibility alias mapping a Hermes profile name to the gateway endpoint Talaria should dial. Blank or non-string values are ignored. The map has no environment alias and is not a UI write target — edit it by hand. Restart. |
+| `connections.<id>.url` | string dashboard base | One inventory entry's dashboard URL (`http(s)://…` or `ws://…/api/ws`). A URL carrying userinfo credentials is dropped on load and refused on write. No environment alias. Restart. |
+| `connections.<id>.auth` | `"loopback"` or `"gated"` | Authentication mode for that connection. An unknown mode visibly falls back to `loopback`. Credentials themselves live in the 0600 credentials file, never in `config.toml`. Restart. |
+| `connections.<id>.label` | optional string | Display label for the connection. Restart. |
 
 The responsive widths and segment forms are fixed product behavior; changing a maximum does not move
 a breakpoint. See [Terminal UI](terminal-ui.md#responsive-status-bar) for that table.
@@ -193,14 +235,15 @@ remains session-only and is never written unless applied here.
 
 Talaria deep-merges each configured table onto the defaults, so files written before 0.5.0 do not
 need migration. A missing table or key takes the new default. After precedence resolves, the
-`theme`, `ui`, `status`, and `keys` tables are normalized: an invalid value in those tables uses its
-documented fallback and adds a visible startup notice. For `keys`, empty, non-string, and
-unrecognized chord names fall back to their defaults; `ctrl+q` is reserved for quitting and falls
-back; and assigning both actions the same chord resets both to their defaults.
+`theme`, `ui`, `status`, `keys`, `composer.attachment_max_mb`, `notifications`, and `connections`
+tables are normalized: an invalid value in those tables uses its documented fallback and adds a
+visible startup notice. For `keys`, empty, non-string, and unrecognized chord names fall back to
+their defaults; `ctrl+q` is reserved for quitting and falls back; and assigning two actions the
+same chord resets both to their defaults.
 
-The other tables reach their launch consumers without that normalization. A malformed `composer`
-threshold remains raw in the loaded configuration, then is silently replaced by its default when
-the paste threshold is built. Blank or non-string `profiles.endpoints` rows are silently dropped.
+A malformed `composer` paste-collapse threshold remains raw in the loaded configuration, then is
+silently replaced by its default when the paste threshold is built. Blank or non-string
+`profiles.endpoints` rows are silently dropped.
 For an enabled status command, only a list of strings forwards as `environment.allowlist`.
 Any other shape — `42`, `true`, `false`, `0`, `0.0`, a string such as `"FOO"`, a mapping, or a
 nested list — falls back to the empty default with no notice: it never raises and never forwards
@@ -209,22 +252,44 @@ is different: it is a launch error that names the offending file.
 
 ## What Talaria writes
 
-Talaria writes two surfaces, both through the same narrow, byte-preserving targeted rewrite:
-the top-level `theme.name` setting, and — through the `/config` view's apply action — the
-`status.command`, `status.interval_seconds`, and `status.segments` keys. Nothing else.
+Talaria writes through the same narrow, byte-preserving targeted rewrite for every DEFAULTS
+table and for one `[connections.<id>]` entry at a time. Comments, layout, CRLF, and dotted
+keys survive. A missing table is appended. Unsupported hand-formatted shapes — an inline
+table, a comment inside a replaced value, a dotted-and-table mix — refuse and say to edit
+the file by hand rather than reformatting. The parsed document is verified to differ from
+the original in exactly the requested keys before anything is written.
 
 `theme.name` persists to the user configuration immediately upon explicit theme selection
 (`/theme select <name>` or `Enter` in the `/theme` picker) or explicit save (`/theme save [user]`),
-and to repository configuration upon `/theme save repository`. The status keys persist when the
+and to repository configuration upon `/theme save repository`. Status keys persist when the
 `/config` view's apply action writes the changed keys to the user file, or its save-to-repository
-action writes them to the repository scope. The writer supports an existing `[theme]` table or
-`[status]` table (dotted keys included, a whole assignment replaced in place including the
-multi-line `segments` array, a missing key appended); it leaves every other key and comment
-untouched, verifies the parsed document changed in exactly the requested way, and replaces the
-file atomically. It is not a general configuration serializer, and a file whose hand formatting
-defeats the targeted rewrite is refused rather than reformatted.
+action writes them to the repository scope. The settings workspace uses the same writer for
+the D12 Talaria-owned keys and for connection inventory entries.
 
-No command writes the user-interface, environment, composer, keybinding, or
-profile tables. `/bar` toggles a known segment in memory for the running process and never
-writes. Inspector width and open state, and diff mode/navigation state, are also process-local
-and have no configuration rows.
+`profiles.endpoints` is not a UI write target: a whole-map rewrite would re-render every
+entry. Operators edit that alias by hand; the workspace manages `[connections.*]` instead.
+A connection URL that carries `user:pass@` is refused at write time and dropped on load, so
+the secret never lands in the file. Credential material (`token`, `access_token`,
+`refresh_token`) belongs in `~/.talaria/credentials` at mode `0600`, never beside the URL.
+
+`/bar` toggles a known segment in memory for the running process and never writes.
+
+## Live versus restart-only
+
+A saved Talaria key is live only when the running process can apply it without restart:
+
+- **Live:** `theme.name`, `ui.reduced_motion`, `ui.inspector_*`, `ui.diff_side_by_side_min_columns`,
+  `ui.show_timestamps`, `composer.*` thresholds and attachment cap, `status.segments` (Apply
+  reuses the `/bar` path), `notifications.transcript_line`.
+- **Restart:** every `keys.*` chord, `status.command`, `status.interval_seconds`,
+  `environment.allowlist`, `profiles.endpoints`, and every `connections.*` field.
+
+A restart-only row still saves immediately; the Save summary reads
+`saved: X · effective now: Y · takes effect on restart` until the next start.
+
+## Host administration
+
+Hermes update checks and receipts, local-model status/catalog/hardware/jobs/search, and
+gateway-migration plans are shown as read-only status or plan rows. The installed workspace
+offers no Hermes-update, local-model mutation, or gateway-migration action. Those writes
+remain host-side; Talaria does not expose them.

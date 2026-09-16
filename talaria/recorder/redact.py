@@ -159,9 +159,14 @@ from talaria.domain.redaction import (
     REDACTED,
     SENSITIVE_KEY_PATTERNS,
     URL_ONLY_DENIED_QUERY_KEYS,
+    is_sensitive_http_route,
     is_suspicious_key,
     redact_url,
 )
+
+
+def _http_route(method: str, path: str) -> tuple[str, str]:
+    return method.upper(), path.split("?", 1)[0].split("#", 1)[0]
 
 __all__ = [
     "REDACTED",
@@ -169,8 +174,11 @@ __all__ = [
     "URL_ONLY_DENIED_QUERY_KEYS",
     "RedactResult",
     "Redaction",
+    "http_response_persistable",
+    "is_sensitive_http_route",
     "is_suspicious_key",
     "redact_frame",
+    "redact_http_body",
     "redact_url",
 ]
 
@@ -370,3 +378,39 @@ def redact_frame(frame: Any) -> RedactResult:
         return out
 
     return RedactResult(frame=walk(frame, "", (), None, False), redactions=redactions)
+
+
+#: Reveal and token/ticket responses contain only the secret. Even a redacted
+#: marker would be a hole a redaction bug could fill, so the recording layer
+#: drops the frame instead of writing one.
+_HTTP_RESPONSE_NOT_PERSISTABLE: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("POST", "/api/env/reveal"),
+        ("POST", "/auth/native/token"),
+        ("POST", "/auth/native/refresh"),
+        ("POST", "/api/auth/ws-ticket"),
+        ("POST", "/api/vault/reveal"),
+    }
+)
+
+
+def http_response_persistable(*, method: str, path: str) -> bool:
+    """False when this HTTP response must never reach disk, even redacted."""
+    return _http_route(method, path) not in _HTTP_RESPONSE_NOT_PERSISTABLE
+
+
+def redact_http_body(*, method: str, path: str, body: Any) -> RedactResult:
+    """Withhold a credential-bearing HTTP body before any recorder sink.
+
+    Route-denied exchanges are replaced whole with a recorded reason. All
+    other bodies walk the existing key-name net. The input is never mutated.
+    """
+    verb, route = _http_route(method, path)
+    if is_sensitive_http_route(verb, route):
+        return RedactResult(
+            frame=REDACTED,
+            redactions=[Redaction(path="", reason=f"deny-route:{verb} {route}")],
+        )
+    if isinstance(body, (dict, list)):
+        return redact_frame(body)
+    return RedactResult(frame=body)
