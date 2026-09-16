@@ -36,13 +36,21 @@ screen that looks selectable.
 **``GET /api/profiles`` decodes here too (U4), and drops two keys on purpose.**
 Hermes's row builder (``_profile_to_dict`` in ``hermes_cli/web_server.py``,
 confirmed live on 2026-08-06 against the running gateway) sends fourteen keys.
-:class:`ProfileEntry` keeps five of them and **discards ``path``**, which is an
-absolute filesystem path naming the operator's own directory layout. R12 forbids
-that inventory from reaching a committed fixture in this public repository, and
-the cheapest way to keep a value out of a fixture is for the type the fixture is
-built from to have nowhere to put it. Talaria has no use for the path either:
-it dials a URL, and Hermes publishes no per-profile URL at all — see
-``talaria/transport/admin.py`` for where the endpoint actually comes from.
+:class:`ProfileEntry` keeps six of them — including ``display_name`` so a
+renamed ``default`` can show its canonical id and the extra label without
+merging them — and **discards ``path``**, which is an absolute filesystem path
+naming the operator's own directory layout. R12 forbids that inventory from
+reaching a committed fixture in this public repository, and the cheapest way to
+keep a value out of a fixture is for the type the fixture is built from to have
+nowhere to put it. Talaria has no use for the path either: it dials a URL, and
+Hermes publishes no per-profile URL at all — see ``talaria/transport/admin.py``
+for where the endpoint actually comes from.
+
+**``GET /api/model/auxiliary`` and MoA presets decode here too (CFG v0.6.2).**
+Auxiliary slots keep the task name as identity and treat a missing provider as
+``auto``. MoA accepts either a named ``presets`` object or the legacy flat
+``reference_models`` / ``aggregator`` shape the server still folds into one
+preset.
 
 **``POST /api/model/set`` decodes here too (U5), and it is the one write in
 this module's whole wire.** Every other type above decodes a ``GET``; this one
@@ -61,13 +69,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
+    "AuxiliaryCatalog",
+    "AuxiliarySlot",
     "CatalogError",
+    "MoaConfig",
+    "MoaModelRef",
+    "MoaPreset",
     "ModelAssignmentResult",
     "ModelProvider",
     "ModelSelection",
     "ProfileDirectory",
     "ProfileEntry",
     "ProviderCatalog",
+    "decode_auxiliary_catalog",
+    "decode_moa_config",
     "decode_model_assignment_result",
     "decode_model_selection",
     "decode_profile_directory",
@@ -180,6 +195,7 @@ class ProfileEntry:
     gateway_running: bool = False
     is_default: bool = False
     description: str = ""
+    display_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -241,6 +257,7 @@ def _decode_profile(entry: object, index: int) -> ProfileEntry:
         gateway_running=_as_bool(row.get("gateway_running")),
         is_default=_as_bool(row.get("is_default")),
         description=_as_str(row.get("description")),
+        display_name=_as_str(row.get("display_name")),
     )
 
 
@@ -407,4 +424,168 @@ def decode_model_assignment_result(payload: object) -> ModelAssignmentResult:
         model=_as_str(body.get("model")),
         confirm_required=_as_bool(body.get("confirm_required")),
         confirm_message=_as_str(body.get("confirm_message")),
+    )
+
+
+@dataclass(frozen=True)
+class AuxiliarySlot:
+    """One ``GET /api/model/auxiliary`` task row.
+
+    ``task`` is the slot's identity. A missing or mistyped provider reads as
+    ``auto`` — that is Hermes's own fallback for an unassigned auxiliary row,
+    and inventing an empty provider would hide a slot the picker must still
+    show.
+    """
+
+    task: str
+    provider: str = "auto"
+    model: str = ""
+    base_url: str = ""
+    reasoning_effort: str | None = None
+    local_endpoint: bool = False
+
+
+@dataclass(frozen=True)
+class AuxiliaryCatalog:
+    """``GET /api/model/auxiliary`` decoded."""
+
+    tasks: tuple[AuxiliarySlot, ...]
+    main_provider: str = ""
+    main_model: str = ""
+
+
+@dataclass(frozen=True)
+class MoaModelRef:
+    """One provider/model pair inside a MoA preset."""
+
+    provider: str = ""
+    model: str = ""
+
+
+@dataclass(frozen=True)
+class MoaPreset:
+    """One named (or legacy-folded) MoA preset."""
+
+    name: str
+    reference_models: tuple[MoaModelRef, ...]
+    aggregator: MoaModelRef
+    enabled: bool = False
+
+
+@dataclass(frozen=True)
+class MoaConfig:
+    """MoA presets decoded from either the named or the flat wire shape."""
+
+    default_preset: str = ""
+    active_preset: str = ""
+    presets: tuple[MoaPreset, ...] = ()
+
+
+def _decode_auxiliary_slot(entry: object, index: int) -> AuxiliarySlot:
+    row = _require_mapping(entry, f"tasks[{index}]")
+
+    task = row.get("task")
+    if not isinstance(task, str) or not task.strip():
+        raise CatalogError(f"tasks[{index}] carries no usable 'task'")
+
+    provider = row.get("provider")
+    return AuxiliarySlot(
+        task=task,
+        provider=(
+            provider if isinstance(provider, str) and provider.strip() else "auto"
+        ),
+        model=_as_str(row.get("model")),
+        base_url=_as_str(row.get("base_url")),
+        reasoning_effort=(
+            row.get("reasoning_effort")
+            if isinstance(row.get("reasoning_effort"), str)
+            else None
+        ),
+        local_endpoint=_as_bool(row.get("local_endpoint")),
+    )
+
+
+def decode_auxiliary_catalog(payload: object) -> AuxiliaryCatalog:
+    """Decode a ``GET /api/model/auxiliary`` body, or raise :class:`CatalogError`.
+
+    An empty or absent ``tasks`` list is a real state. A row without ``task``
+    is a shape mismatch — the slot name is the only identifier the picker can
+    select by.
+    """
+    body = _require_mapping(payload, "the auxiliary catalog response")
+
+    raw = body.get("tasks", ())
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+        raise CatalogError(
+            f"'tasks' is {type(raw).__name__}, not a list of auxiliary slots"
+        )
+
+    main = _as_mapping(body.get("main"))
+    return AuxiliaryCatalog(
+        tasks=tuple(_decode_auxiliary_slot(entry, i) for i, entry in enumerate(raw)),
+        main_provider=_as_str(main.get("provider")),
+        main_model=_as_str(main.get("model")),
+    )
+
+
+def _decode_moa_ref(value: object) -> MoaModelRef:
+    row = value if isinstance(value, Mapping) else {}
+    return MoaModelRef(
+        provider=_as_str(row.get("provider")),
+        model=_as_str(row.get("model")),
+    )
+
+
+def _decode_moa_preset(name: str, spec: object) -> MoaPreset:
+    row = spec if isinstance(spec, Mapping) else {}
+    raw_refs = row.get("reference_models", ())
+    if isinstance(raw_refs, (str, bytes)) or not isinstance(raw_refs, Sequence):
+        refs: tuple[MoaModelRef, ...] = ()
+    else:
+        refs = tuple(_decode_moa_ref(item) for item in raw_refs)
+    return MoaPreset(
+        name=name,
+        reference_models=refs,
+        aggregator=_decode_moa_ref(row.get("aggregator")),
+        enabled=_as_bool(row.get("enabled")),
+    )
+
+
+def decode_moa_config(payload: object) -> MoaConfig:
+    """Decode a MoA config body, or raise :class:`CatalogError`.
+
+    The named ``presets`` object is the current shape. A body that only
+    carries ``reference_models`` / ``aggregator`` is the legacy flat form
+    ``normalize_moa_config`` still accepts; it folds into one preset whose
+    name is not pinned to a server-chosen label.
+    """
+    body = _require_mapping(payload, "the MoA config response")
+
+    if "presets" in body:
+        raw = body.get("presets")
+        if not isinstance(raw, Mapping):
+            raise CatalogError(
+                f"'presets' is {type(raw).__name__}, not a JSON object of presets"
+            )
+        presets = tuple(
+            _decode_moa_preset(name if isinstance(name, str) else "", spec)
+            for name, spec in raw.items()
+        )
+        return MoaConfig(
+            default_preset=_as_str(body.get("default_preset")),
+            active_preset=_as_str(body.get("active_preset")),
+            presets=presets,
+        )
+
+    if "reference_models" in body or "aggregator" in body:
+        name = _as_str(body.get("default_preset")) or "default"
+        return MoaConfig(
+            default_preset=name,
+            active_preset=name,
+            presets=(_decode_moa_preset(name, body),),
+        )
+
+    return MoaConfig(
+        default_preset=_as_str(body.get("default_preset")),
+        active_preset=_as_str(body.get("active_preset")),
     )
