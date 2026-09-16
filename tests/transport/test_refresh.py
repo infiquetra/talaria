@@ -677,3 +677,30 @@ def test_an_ordinary_multi_profile_file_still_writes(tmp_path: Path) -> None:
     assert document["url"] == "ws://127.0.0.1:9119/api/ws"
     assert document["profiles"]["alpha-fixture"]["token"] == "alpha-value"
     assert document["profiles"]["beta-fixture"]["token"] == CANARY
+
+
+# ── v0.6.2: loopback refresh stays; gated tokens are a different table ──
+
+
+def test_loopback_refresh_still_writes_the_top_level_token(tmp_path: Path) -> None:
+    path = tmp_path / "credentials"
+    with dashboard_serving(TOKEN_PAGE) as origin:
+        report = refresh_credential(origin, path, timeout=10)
+    assert report.created is True
+    assert f'token = "{CANARY}"' in path.read_text(encoding="utf-8")
+    assert CANARY not in repr(report)
+
+
+def test_write_connection_tokens_is_the_gated_credential_seam(tmp_path: Path) -> None:
+    from talaria.transport import refresh as refresh_mod
+
+    writer = getattr(refresh_mod, "write_connection_tokens", None)
+    assert writer is not None, "unimplemented interface: write_connection_tokens"
+    path = tmp_path / "credentials"
+    path.write_text(f'token = "{SECOND_CANARY}"\n', encoding="utf-8")
+    path.chmod(0o600)
+    writer(path, "remote", access_token=CANARY, refresh_token=SECOND_CANARY)
+    text = path.read_text(encoding="utf-8")
+    assert f'token = "{SECOND_CANARY}"' in text
+    assert "[connections.remote]" in text
+

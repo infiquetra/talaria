@@ -555,7 +555,7 @@ def test_a_body_exactly_at_the_cap_is_still_accepted() -> None:
 async def test_model_options_decodes_into_a_catalogue() -> None:
     with catalog_gateway() as origin:
         client = AdminClient(ws_endpoint(origin), StubProvider())
-        catalog = await client.model_options()
+        catalog = await client.model_options(profile="alpha-fixture")
 
     assert [p.slug for p in catalog.providers] == ["example-provider"]
     assert catalog.current_model == "example-large"
@@ -565,7 +565,7 @@ async def test_model_options_decodes_into_a_catalogue() -> None:
 async def test_model_info_decodes_into_a_selection() -> None:
     with catalog_gateway() as origin:
         client = AdminClient(ws_endpoint(origin), StubProvider())
-        selection = await client.model_info()
+        selection = await client.model_info(profile="alpha-fixture")
 
     assert selection.model == "example-large"
     assert selection.effective_context_length == 200000
@@ -582,9 +582,9 @@ async def test_the_credential_is_re_resolved_on_every_call_never_cached() -> Non
     provider = StubProvider()
     with catalog_gateway() as origin:
         client = AdminClient(ws_endpoint(origin), provider)
-        await client.model_options()
-        await client.model_options()
-        await client.model_info()
+        await client.model_options(profile="alpha-fixture")
+        await client.model_options(profile="alpha-fixture")
+        await client.model_info(profile="alpha-fixture")
 
     assert provider.acquisitions == 3
 
@@ -596,9 +596,9 @@ async def test_a_rotated_credential_is_picked_up_by_the_next_call() -> None:
     seen: list[Recorded] = []
     with catalog_gateway(seen) as origin:
         client = AdminClient(ws_endpoint(origin), provider)
-        await client.model_options()
+        await client.model_options(profile="alpha-fixture")
         provider.value = "second-value"
-        await client.model_options()
+        await client.model_options(profile="alpha-fixture")
 
     assert seen[0].headers["X-Hermes-Session-Token"] == "first-value"
     assert seen[1].headers["X-Hermes-Session-Token"] == "second-value"
@@ -611,7 +611,7 @@ async def test_a_credential_the_provider_cannot_supply_is_reported_not_raised() 
     with catalog_gateway() as origin:
         client = AdminClient(ws_endpoint(origin), provider)
         with pytest.raises(AdminError) as caught:
-            await client.model_options()
+            await client.model_options(profile="alpha-fixture")
 
     assert caught.value.reason == "credential_unavailable"
 
@@ -636,7 +636,7 @@ async def test_the_file_route_supplies_a_credential_without_any_environment_vari
     seen: list[Recorded] = []
     with catalog_gateway(seen) as origin:
         client = AdminClient(ws_endpoint(origin), provider)
-        catalog = await client.model_options()
+        catalog = await client.model_options(profile="alpha-fixture")
 
     assert catalog.providers[0].slug == "example-provider"
     assert seen[0].headers["Authorization"] == f"Bearer {CANARY}"
@@ -653,7 +653,7 @@ async def test_a_credential_file_looser_than_0600_is_refused(tmp_path: Path) -> 
     with catalog_gateway() as origin:
         client = AdminClient(ws_endpoint(origin), provider)
         with pytest.raises(AdminError) as caught:
-            await client.model_options()
+            await client.model_options(profile="alpha-fixture")
 
     assert caught.value.reason == "credential_unavailable"
     assert CANARY not in str(caught.value)
@@ -680,7 +680,7 @@ async def test_a_malformed_catalogue_is_reported_as_a_transport_failure() -> Non
     with gateway_serving({MODEL_OPTIONS_PATH: json_route(bad)}) as origin:
         client = AdminClient(ws_endpoint(origin), StubProvider())
         with pytest.raises(AdminError) as caught:
-            await client.model_options()
+            await client.model_options(profile="alpha-fixture")
 
     assert caught.value.reason == "malformed_response"
     assert not isinstance(caught.value, CatalogError)
@@ -692,7 +692,7 @@ async def test_an_empty_catalogue_is_a_value_and_not_a_failure() -> None:
     can say it differently from "the list could not be fetched"."""
     with gateway_serving({MODEL_OPTIONS_PATH: json_route({"providers": []})}) as origin:
         client = AdminClient(ws_endpoint(origin), StubProvider())
-        catalog = await client.model_options()
+        catalog = await client.model_options(profile="alpha-fixture")
 
     assert catalog.is_empty
 
@@ -702,7 +702,7 @@ async def test_a_gateway_without_the_endpoint_reaches_the_client_as_absent_capab
     with gateway_serving({}) as origin:
         client = AdminClient(ws_endpoint(origin), StubProvider())
         with pytest.raises(AdminError) as caught:
-            await client.model_options()
+            await client.model_options(profile="alpha-fixture")
 
     assert caught.value.reason == "absent_capability"
 
@@ -724,7 +724,7 @@ async def test_a_call_does_not_block_the_event_loop() -> None:
     with catalog_gateway() as origin:
         client = AdminClient(ws_endpoint(origin), StubProvider())
         ticker = asyncio.create_task(tick())
-        await client.model_options()
+        await client.model_options(profile="alpha-fixture")
         await ticker
 
     assert ticks == 20
@@ -1425,7 +1425,14 @@ def test_the_admin_client_has_no_way_to_set_the_active_profile() -> None:
     assert not calls_post(methods["model_options"])
     assert not calls_post(methods["model_info"])
     post_callers = sorted(name for name, node in methods.items() if calls_post(node))
-    assert post_callers == ["set_default_model"]
+    assert "set_default_model" in post_callers
+    assert not any("active" in name for name in post_callers)
+    for forbidden in (
+        "/api/hermes/update",
+        "/api/gateway/migrate",
+        "/api/local-models/",
+    ):
+        assert forbidden not in code
 
     post_call = next(
         call
@@ -1683,3 +1690,36 @@ def _without_docstrings(source: str) -> str:
         token.string if token.type != tokenize.COMMENT else ""
         for token in tokenize.generate_tokens(io.StringIO(stripped).readline)
     )
+
+
+# ── v0.6.2 replacement contract: generic verbs, 409, explicit profile ──
+
+
+def test_request_admin_json_is_the_generic_verb_primitive() -> None:
+    """U2 generalizes GET/POST into one same-origin primitive."""
+    import inspect
+
+    from talaria.transport import admin as admin_mod
+
+    request_fn = getattr(admin_mod, "request_admin_json", None)
+    assert request_fn is not None, "unimplemented interface: request_admin_json"
+    parameters = inspect.signature(request_fn).parameters
+    assert "method" in parameters
+
+
+def test_a_409_is_named_conflict_not_a_generic_http_error() -> None:
+    route = {MODEL_OPTIONS_PATH: json_route({"detail": "in progress"}, 409)}
+    with gateway_serving(route) as origin:
+        with pytest.raises(AdminError) as caught:
+            fetch_admin_json(origin, MODEL_OPTIONS_PATH, token=CANARY)
+    observed: str = caught.value.reason
+    assert observed == "conflict"
+
+
+def test_admin_failure_vocabulary_includes_timeout_and_conflict() -> None:
+    from talaria.transport.admin import AdminFailure
+
+    allowed = set(getattr(AdminFailure, "__args__", ()))
+    for reason in ("conflict", "timeout"):
+        assert reason in allowed, f"unimplemented interface: AdminFailure reason {reason!r}"
+

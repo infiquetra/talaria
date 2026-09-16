@@ -1247,6 +1247,49 @@ async def test_the_default_connection_reads_the_default_profile_table(
     assert credential.source == "profile-file"
 
 
+def test_plan_connections_accepts_a_connection_inventory_with_auth_mode() -> None:
+    """D11: configuration inventory is ``[connections.<id>]`` plus auth mode.
+
+    Session dials remain profile-specific; configuration uses one dashboard
+    connection and an explicit profile scope.
+    """
+    import inspect
+
+    signature = inspect.signature(plan_connections)
+    assert "connections" in signature.parameters, (
+        "unimplemented interface: plan_connections(connections=...) for auth selection"
+    )
+    kwargs: dict[str, Any] = {
+        "default_endpoint": "ws://127.0.0.1:8765/api/ws",
+        "connections": {
+            "local": {"url": "ws://127.0.0.1:8765/api/ws", "auth": "loopback"},
+            "remote": {"url": "ws://10.220.1.139:8765/api/ws", "auth": "gated"},
+        },
+    }
+    plan = plan_connections(**kwargs)
+    by_name = {member.name: member for member in plan}
+    assert getattr(by_name["local"], "auth", None) == "loopback"
+    assert getattr(by_name["remote"], "auth", None) == "gated"
+    assert "token" not in repr(plan)
+
+
+def test_a_gated_connection_is_not_planned_as_a_loopback_token_dial() -> None:
+    import inspect
+
+    if "connections" not in inspect.signature(plan_connections).parameters:
+        raise AssertionError("unimplemented interface: connection auth mode")
+    kwargs: dict[str, Any] = {
+        "default_endpoint": "ws://127.0.0.1:8765/api/ws",
+        "connections": {
+            "remote": {"url": "ws://10.220.1.139:8765/api/ws", "auth": "gated"}
+        },
+    }
+    plan = plan_connections(**kwargs)
+    remote = next(member for member in plan if member.name == "remote")
+    assert getattr(remote, "auth", None) == "gated"
+    assert getattr(remote, "credential_kind", "ticket") in {"ticket", "gated"}
+
+
 @pytest.mark.asyncio
 async def test_the_default_connection_still_falls_back_to_the_top_level_pair(
     tmp_path: Path,
