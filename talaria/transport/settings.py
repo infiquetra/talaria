@@ -93,10 +93,12 @@ class SettingsClient:
         provider: CredentialProvider,
         *,
         timeout: float = 15.0,
+        auth: str = "loopback",
     ) -> None:
         self.origin = admin_origin_for(endpoint)
         self._provider = provider
         self._timeout = timeout
+        self._auth = auth if auth == "gated" else "loopback"
         self._write_disabled: set[ConfigTarget] = set()
 
     def __repr__(self) -> str:
@@ -130,6 +132,7 @@ class SettingsClient:
                 params=params,
                 body=body,
                 timeout=self._timeout,
+                auth=self._auth,
             )
         except AdminError as exc:
             raise self._translate(exc) from exc
