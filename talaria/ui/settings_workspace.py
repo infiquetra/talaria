@@ -194,6 +194,7 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         self._picker_open = False
         self._pending_loaded_view: SettingsWorkspaceView | None = None
         self._reconcile_seq = 0
+        self._load_state = view.load_state
         self._settings_state = SettingsState(
             selected=ConfigTarget(
                 connection_id=self._connection_id,
@@ -426,6 +427,7 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
     def update_view(self, view: SettingsWorkspaceView) -> None:
         """Refresh header, notice, and summary. Editors keep their values."""
         self._view = view
+        self._load_state = view.load_state
         if self._header_line is not None:
             self._header_line.update(literal_text(self._header_text()))
         if self._notice_line is not None:

@@ -33,6 +33,7 @@ __all__ = [
     "SettingsDecodeError",
     "SettingsDocument",
     "SettingsField",
+    "SettingsLoadOutcome",
     "SettingsOwnerGroup",
     "SettingsRowGroupView",
     "SettingsSchema",
@@ -55,7 +56,10 @@ __all__ = [
     "fail_settings_save",
     "partition_settings_keys",
     "project_field_row",
+    "project_load_notice",
     "project_save_summary",
+    "schema_response_shape",
+    "sanitized_response_size",
     "project_secret_row",
     "project_secret_rows",
     "project_target_header",
@@ -358,6 +362,22 @@ class SettingsWorkspaceView:
     target_options: tuple[TargetOption, ...] = ()
     gateway_running: bool | None = None
     auth_state: str = ""
+    load_state: tuple[SettingsLoadOutcome, ...] = ()
+
+
+@dataclass(frozen=True)
+class SettingsLoadOutcome:
+    """Sanitized one-phase load result. No raw bodies, values, or credentials."""
+
+    phase: str
+    target: ConfigTarget
+    result: str
+    status: str = ""
+    response_bytes: int = 0
+    top_level_keys: tuple[str, ...] = ()
+    item_count: int = 0
+    category_count: int = 0
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -378,6 +398,34 @@ class Reauthenticate:
     """Ask the app to run U1's gated re-auth. Never carries a credential."""
 
     target: ConfigTarget
+
+
+def schema_response_shape(body: object) -> tuple[tuple[str, ...], int, int]:
+    """Top-level keys, field count, and category count. No values."""
+    if not isinstance(body, Mapping):
+        return (), 0, 0
+    keys = tuple(sorted(str(key) for key in body))
+    fields = body.get("fields")
+    field_count = len(fields) if isinstance(fields, Mapping) else 0
+    order = body.get("category_order")
+    if isinstance(order, Sequence) and not isinstance(order, (str, bytes)):
+        category_count = len(order)
+    else:
+        category_count = 0
+    return keys, field_count, category_count
+
+
+def sanitized_response_size(body: object) -> int:
+    """Byte count of top-level key names only — never values."""
+    if not isinstance(body, Mapping):
+        return 0
+    return sum(len(str(key).encode("utf-8")) for key in body)
+
+
+def project_load_notice(outcomes: Sequence[SettingsLoadOutcome]) -> str:
+    """Actionable placeholder naming phase and failure class. No values."""
+    failed = [item for item in outcomes if item.result != "ok"]
+    return " · ".join(f"{item.phase} {item.result}" for item in failed)
 
 
 def decode_settings_schema(body: object) -> SettingsSchema:

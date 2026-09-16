@@ -147,9 +147,14 @@ from talaria.domain.settings import (
     FieldSaveResult,
     Reauthenticate,
     RevealDisplayValue,
+    SettingsDecodeError,
+    SettingsLoadOutcome,
     decode_env_listing,
     decode_settings_schema,
+    project_load_notice,
     project_save_summary,
+    sanitized_response_size,
+    schema_response_shape,
 )
 from talaria.domain.settings_commands import (
     LoadTarget,
@@ -5912,31 +5917,54 @@ class TalariaApp(App[None]):
         secrets: dict[str, tuple[bool, str]] = {}
         gateway_running: bool | None = None
         auth_state = ""
+        load_state: list[SettingsLoadOutcome] = []
         client = self._settings_client_for(target)
         if client is not None:
             try:
                 raw_schema = await client.get_schema(target)
-                schema = decode_settings_schema(raw_schema)
-            except Exception:
+                schema, outcome = self._typed_schema_load(target, raw_schema)
+                load_state.append(outcome)
+            except SettingsError as exc:
                 schema = None
+                load_state.append(
+                    self._typed_load_failure(target, "schema", exc.reason)
+                )
+                if getattr(exc, "reason", "") == "unauthorized":
+                    auth_state = "reauth"
+            except SettingsDecodeError:
+                schema = None
+                load_state.append(self._typed_load_failure(target, "schema", "decode"))
             try:
                 raw_config = await client.get_config(target)
                 saved, effective, defaults = _split_config_documents(raw_config)
+                load_state.append(
+                    SettingsLoadOutcome(phase="config", target=target, result="ok")
+                )
             except SettingsError as exc:
                 saved, effective, defaults = {}, {}, {}
+                load_state.append(
+                    self._typed_load_failure(target, "config", exc.reason)
+                )
                 if getattr(exc, "reason", "") == "unauthorized":
                     auth_state = "reauth"
             getter = getattr(client, "get_env", None)
             if getter is not None:
                 try:
                     raw_env = await getter(target)
-                    secrets = decode_env_listing(raw_env)
+                    secrets, outcome = self._typed_env_load(target, raw_env)
+                    load_state.append(outcome)
                 except SettingsError as exc:
                     secrets = {}
+                    load_state.append(
+                        self._typed_load_failure(target, "env", exc.reason)
+                    )
                     if getattr(exc, "reason", "") == "unauthorized":
                         auth_state = "reauth"
-                except Exception:
+                except SettingsDecodeError:
                     secrets = {}
+                    load_state.append(
+                        self._typed_load_failure(target, "env", "decode")
+                    )
             status_getter = getattr(client, "get_status", None)
             if status_getter is not None:
                 try:
@@ -5969,7 +5997,7 @@ class TalariaApp(App[None]):
         notice = (
             "re-authenticate — pending edits retained"
             if auth_state == "reauth"
-            else ""
+            else project_load_notice(load_state)
         )
         return project_settings_workspace(
             connection_id=connection_id,
@@ -5988,6 +6016,52 @@ class TalariaApp(App[None]):
             targets=self._visible_settings_targets(connection_id),
             gateway_running=gateway_running,
             auth_state=auth_state,
+            load_state=tuple(load_state),
+        )
+
+    def _typed_schema_load(
+        self, target: ConfigTarget, raw: object, *, generation: int = 0
+    ) -> tuple[Any, SettingsLoadOutcome]:
+        keys, field_count, category_count = schema_response_shape(raw)
+        schema = decode_settings_schema(raw)
+        return schema, SettingsLoadOutcome(
+            phase="schema",
+            target=target,
+            result="ok",
+            response_bytes=sanitized_response_size(raw),
+            top_level_keys=keys,
+            item_count=field_count,
+            category_count=category_count,
+            generation=generation,
+        )
+
+    def _typed_env_load(
+        self, target: ConfigTarget, raw: object, *, generation: int = 0
+    ) -> tuple[dict[str, tuple[bool, str]], SettingsLoadOutcome]:
+        count = len(raw) if isinstance(raw, Mapping) else 0
+        secrets = decode_env_listing(raw)
+        return secrets, SettingsLoadOutcome(
+            phase="env",
+            target=target,
+            result="ok",
+            response_bytes=sanitized_response_size(raw),
+            item_count=count,
+            generation=generation,
+        )
+
+    def _typed_load_failure(
+        self,
+        target: ConfigTarget,
+        phase: str,
+        result: str,
+        *,
+        generation: int = 0,
+    ) -> SettingsLoadOutcome:
+        return SettingsLoadOutcome(
+            phase=phase,
+            target=target,
+            result=result,
+            generation=generation,
         )
 
     def _visible_settings_targets(self, connection_id: str) -> tuple[ConfigTarget, ...]:

@@ -970,16 +970,19 @@ def project_settings_workspace(
     targets: Sequence[Any] | None = None,
     gateway_running: bool | None = None,
     auth_state: str = "",
+    load_state: Sequence[Any] = (),
 ) -> SettingsWorkspaceIdentity:
     """Project a settings workspace. ``connection_id`` is the write key."""
     from talaria.domain.settings import (
         ConfigTarget,
         FieldRowView,
         SettingsField,
+        SettingsLoadOutcome,
         SettingsRowGroupView,
         SettingsWorkspaceView,
         TargetHeaderView,
         project_field_row,
+        project_load_notice,
         project_target_options,
     )
     from talaria.domain.settings_catalog import surface_disposition, tier_of
@@ -1115,12 +1118,16 @@ def project_settings_workspace(
             )
         )
     group_views = tuple(groups)
+    outcomes = tuple(
+        item for item in load_state if isinstance(item, SettingsLoadOutcome)
+    )
+    labeled = notice or project_load_notice(outcomes)
     return SettingsWorkspaceIdentity(
         connection_id=connection_id,
         view=SettingsWorkspaceView(
             header=header,
             groups=group_views,
-            notice=_settings_notice(notice, group_views, secret_doc),
+            notice=_settings_notice(labeled, group_views, secret_doc),
             wake_state=wake_state,
             reset_patch=dict(reset_patch or {}),
             secrets=dict(secrets or {}),
@@ -1128,6 +1135,7 @@ def project_settings_workspace(
             target_options=options,
             gateway_running=gateway_running,
             auth_state=auth_state,
+            load_state=outcomes,
         ),
     )
 
