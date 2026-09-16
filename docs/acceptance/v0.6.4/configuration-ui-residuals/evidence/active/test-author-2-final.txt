@@ -1,0 +1,36 @@
+CFG-P3-T3B Test Author Two — final owned suites
+Date: 2026-09-16
+Worktree: talaria-cfg-p3-t3b
+Branch: feat/v0.6.4-cfg-p3-t3b
+Candidate: 7b73f8864941b65ab47a685f859f32992986211b
+Installed: v0.6.3
+
+Plans hashed before use (match CFG-PR5):
+  CFG-P3-implementation-plan.md  b65d453e0e6810c00da0b26a1938e18f771fc3799148316838904ca12793c7fe
+  CFG-P3-test-plan.md            0a0067420b4c32432d9499698576a65dd348e2dc92bf4d3f6db184dc87ff155c
+
+No production code was added. No tests were edited. No Test Author One paths
+were edited. The v0.6.3 installed baseline fail was not weakened or skipped.
+No invented credentials, cookies, tokens, or revealed plaintext.
+
+Command:
+  uv run pytest scripts/acceptance/test_v064_config_ui.py --tb=short -q
+
+Result: 6 passed, 1 failed, 0 skipped
+Collection succeeded. No syntax or fixture failures.
+
+Harness unit tests (pass):
+  process isolation refuses operator config and worktree executables
+  reject-once Save leaves fixture state unchanged, then retry succeeds
+  evidence redaction finds planted canaries and keeps route logs clean
+  cleanup removes the isolated config and leaves testB/default untouched
+  harness source does not call open_target_switch or open_reveal
+  legal local A/E names accepted; default/testB and dotted legacy hard-fail
+
+Remaining fail (expected until T5 install):
+  test_v063_baseline_target_selection_mounts_fixture_only_rows
+  installed executable is still v0.6.3
+  apply_loaded_view leaves only hermes.schema mounted
+  fixture-only agent.max_turns and EXAMPLE_P3_KEY do not appear
+
+Blocked: none
