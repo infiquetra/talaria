@@ -1,0 +1,23 @@
+CFG-P3-T3BR Test Author Two — mypy and default pytest gate
+Date: 2026-09-16
+Worktree: talaria-cfg-p3-t3br
+Branch: feat/v0.6.4-cfg-p3-t3br
+Candidate: 0e02f54704ab4b0cfdf4c57a5bfebddc1ecf2555
+
+Plans hashed before use (match CFG-PR5):
+  CFG-P3-implementation-plan.md  b65d453e0e6810c00da0b26a1938e18f771fc3799148316838904ca12793c7fe
+  CFG-P3-test-plan.md            0a0067420b4c32432d9499698576a65dd348e2dc92bf4d3f6db184dc87ff155c
+
+mypy: no issues found (full project)
+
+Default exclusive suite:
+  uv run pytest scripts/acceptance/test_v064_config_ui.py --tb=short -q
+  Result: 7 passed, 0 failed, 0 skipped
+
+Installed-red path (opt-in, not skipped, not rewritten):
+  V064_INSTALLED_V063=1 uv run pytest \
+    scripts/acceptance/test_v064_config_ui.py::test_v063_baseline_target_selection_mounts_fixture_only_rows
+  Result: 0 passed, 1 failed
+  installed v0.6.3 still mounts only hermes.schema
+
+No production code. No Test Author One paths. No attribution.

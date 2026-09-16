@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import os
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ from scripts.acceptance.v064_config_ui import (
     cleanup_isolated_run,
     isolated_child_env,
     launch_supplied_executable,
+    observe_candidate_target_mount,
     observe_installed_target_mount,
     redact_route_log,
     refuse_operator_config,
@@ -167,10 +169,25 @@ def test_harness_source_does_not_call_direct_openers() -> None:
     assert "open_reveal" not in calls
 
 
-def test_v063_baseline_target_selection_mounts_fixture_only_rows(
+def test_candidate_target_selection_mounts_fixture_only_rows(
     tmp_path: Path,
 ) -> None:
-    """Against installed v0.6.3 this fails: apply_loaded_view cannot create rows."""
+    """Active-tree pass: U1 remounts fixture-only rows on this candidate."""
+    observation = observe_candidate_target_mount(scratch=tmp_path)
+    assert observation.launched is True
+    assert observation.selected_profile == LEGAL_LOCAL_A_INSTALLED
+    assert PLACEHOLDER_SCHEMA_KEY not in observation.fixture_only_keys
+    assert observation.mounted_fixture_only_rows, (
+        f"candidate did not mount fixture-only rows {observation.fixture_only_keys}; "
+        f"mounted {observation.mounted_keys}"
+    )
+    assert isinstance(observation, TargetMountObservation)
+
+
+def _v063_baseline_target_selection_mounts_fixture_only_rows(
+    tmp_path: Path,
+) -> None:
+    """Installed-red path. Still fails against v0.6.3. Not a skip."""
     observation = observe_installed_target_mount(
         INSTALLED_EXECUTABLE,
         worktree=REPO_ROOT,
@@ -184,3 +201,9 @@ def test_v063_baseline_target_selection_mounts_fixture_only_rows(
         f"rows {observation.fixture_only_keys}; mounted {observation.mounted_keys}"
     )
     assert isinstance(observation, TargetMountObservation)
+
+
+if os.environ.get("V064_INSTALLED_V063") == "1":
+    test_v063_baseline_target_selection_mounts_fixture_only_rows = (
+        _v063_baseline_target_selection_mounts_fixture_only_rows
+    )

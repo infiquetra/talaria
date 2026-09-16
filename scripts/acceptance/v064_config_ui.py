@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -120,7 +121,11 @@ async def _run() -> list[str]:
     app = _Probe(screen)
     async with app.run_test() as pilot:
         await pilot.pause()
-        screen.apply_loaded_view(loaded, "local")
+        reconcile = getattr(screen, "reconcile_loaded_view", None)
+        if reconcile is not None:
+            await reconcile(loaded, "local")
+        else:
+            screen.apply_loaded_view(loaded, "local")
         await pilot.pause()
         return [widget.row.key for widget in screen._row_widgets()]
 
@@ -268,7 +273,8 @@ class RejectOnceDashboard:
         if self._server is None:
             raise HarnessError("dashboard is not running")
         host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}"
+        host_text = host.decode("ascii") if isinstance(host, bytes) else str(host)
+        return f"http://{host_text}:{int(port)}"
 
     def __enter__(self) -> RejectOnceDashboard:
         harness = self
@@ -516,4 +522,33 @@ def observe_installed_target_mount(
         fixture_only_keys=(FIXTURE_ONLY_SCHEMA_KEY, FIXTURE_ONLY_ENV_KEY),
         mounted_keys=mounted,
         launched=launched,
+    )
+
+
+def observe_candidate_target_mount(*, scratch: Path) -> TargetMountObservation:
+    """Probe the candidate package in this interpreter (U1 remount)."""
+    config_dir = scratch / "config-candidate"
+    env = isolated_child_env(config_dir=config_dir, scratch=scratch)
+    completed = subprocess.run(
+        [sys.executable, "-c", _MOUNT_PROBE],
+        cwd=scratch,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    cleanup_isolated_run(config_dir=config_dir, scratch=scratch)
+    if completed.returncode != 0:
+        raise HarnessError(
+            "candidate mount probe failed: "
+            + (completed.stderr.strip() or completed.stdout.strip() or "no output")
+        )
+    mounted = tuple(json.loads(completed.stdout))
+    return TargetMountObservation(
+        executable=Path(sys.executable),
+        selected_profile=LEGAL_LOCAL_A_INSTALLED,
+        fixture_only_keys=(FIXTURE_ONLY_SCHEMA_KEY, FIXTURE_ONLY_ENV_KEY),
+        mounted_keys=mounted,
+        launched=True,
     )
