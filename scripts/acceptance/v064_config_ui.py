@@ -47,6 +47,7 @@ LEGAL_WRITE_TARGETS = frozenset(
     }
 )
 FORBIDDEN_WRITE_TARGETS = frozenset({"default", "testB"})
+_ALLOWED_FETCH_SCHEMES = frozenset({"http", "https"})
 PLACEHOLDER_PROFILE = "placeholder-old-target"
 PLACEHOLDER_SCHEMA_KEY = "hermes.schema"
 FIXTURE_ONLY_SCHEMA_KEY = "agent.max_turns"
@@ -407,11 +408,30 @@ class RejectOnceDashboard:
             method="PUT",
             headers={"Content-Type": "application/json"},
         )
-        try:
-            with urlopen(request, timeout=2) as response:
-                return response.status, json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            return exc.code, json.loads(exc.read().decode("utf-8"))
+        return open_json_request(request)
+
+
+def require_http_url(url: str) -> str:
+    """Refuse file: and custom schemes before urlopen (Bandit B310)."""
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in _ALLOWED_FETCH_SCHEMES:
+        raise HarnessError(
+            f"refusing {scheme or 'no'} scheme; fixture fetch is http or https only"
+        )
+    return url
+
+
+def open_json_request(
+    request: Request, *, timeout: float = 2
+) -> tuple[int, dict[str, Any]]:
+    require_http_url(request.full_url)
+    try:
+        # nosec B310 - the scheme is allowlisted to http/https immediately above,
+        # in require_http_url, which is what B310 asks to be audited.
+        with urlopen(request, timeout=timeout) as response:  # nosec B310
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
 def classify_body(body: Any, *, canaries: Sequence[str] = ()) -> str:

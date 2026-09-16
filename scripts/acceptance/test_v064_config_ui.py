@@ -11,6 +11,7 @@ import ast
 import inspect
 import os
 from pathlib import Path
+from urllib.request import Request
 
 import pytest
 
@@ -36,6 +37,7 @@ from scripts.acceptance.v064_config_ui import (
     launch_supplied_executable,
     observe_candidate_target_mount,
     observe_installed_target_mount,
+    open_json_request,
     redact_route_log,
     refuse_operator_config,
     require_legal_p3_name,
@@ -153,6 +155,22 @@ def test_cleanup_removes_isolated_config_and_never_touches_operator_home(
     assert not config_dir.exists()
     assert LEGAL_LOCAL_A_INSTALLED in receipt["absent_names"]
     assert scan_for_canaries(receipt, ("password", "token", "sk-")) == []
+
+
+def test_file_and_custom_schemes_never_reach_urlopen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        calls.append((args, kwargs))
+        raise AssertionError("urlopen must not be reached")
+
+    monkeypatch.setattr("scripts.acceptance.v064_config_ui.urlopen", forbidden)
+    for url in ("file:///etc/passwd", "ftp://127.0.0.1/x"):
+        with pytest.raises(HarnessError, match="scheme"):
+            open_json_request(Request(url))
+    assert calls == []
 
 
 def test_harness_source_does_not_call_direct_openers() -> None:

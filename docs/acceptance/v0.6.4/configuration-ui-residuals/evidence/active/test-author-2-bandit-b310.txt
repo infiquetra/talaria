@@ -1,0 +1,18 @@
+CFG-P3-T3BR2 Test Author Two — Bandit B310 on v064 harness
+Date: 2026-09-16
+Worktree: talaria-cfg-p3-t3br2
+Branch: feat/v0.6.4-cfg-p3-t3br2
+Baseline: 8398e5cfb0d94c917075db735385a62ea00b47b5
+
+Plans hashed before use (match CFG-PR5):
+  CFG-P3-implementation-plan.md  b65d453e0e6810c00da0b26a1938e18f771fc3799148316838904ca12793c7fe
+  CFG-P3-test-plan.md            0a0067420b4c32432d9499698576a65dd348e2dc92bf4d3f6db184dc87ff155c
+
+require_http_url allowlists http/https before urlopen. file: and
+ftp: raise HarnessError and never reach urlopen. nosec B310 is only
+on that audited line. Fixture put() stays loopback HTTP.
+
+bandit: uv run bandit -r scripts -q -ll  (must be clean)
+pytest: default scripts/acceptance/test_v064_config_ui.py
+
+No production code. No Test Author One paths. No attribution.
