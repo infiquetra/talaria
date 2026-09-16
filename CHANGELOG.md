@@ -10,14 +10,26 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-09-16
+
+Residual configuration after v0.6.2: live target switching, one-shot reveal,
+gated remote composition, and product Start/Stop. See the
+[v0.6.3 release notes](docs/releases/v0.6.3.md).
+
 ### Added
 
+- Live `/config` Stay / Save / Discard target switching. Save writes and
+  re-reads the old target before the selection changes; a failed Save keeps
+  the edits and does not switch.
+- A reachable one-shot Reveal on secret rows. The server value is shown once,
+  then cleared on close or timeout, and is never added to domain state,
+  notices, logs, or recordings.
 - Gated connections use a separate origin policy from loopback token refresh:
   HTTPS is accepted for any host; plain HTTP is accepted only for
   `auth="gated"` plus a literal RFC1918 address. Public, hostname, CGNAT,
   link-local, multicast, and unspecified HTTP stay refused.
-- Live composition hands a gated inventory row a `GatedTicketProvider` (Bearer
-  admin + per-dial WS ticket) instead of `LoopbackTokenProvider`.
+- Live composition hands a gated inventory row a Bearer admin bundle and a
+  `GatedTicketProvider` instead of `LoopbackTokenProvider`.
 - Product-owned `StartGateway` / `StopGateway` call
   `POST /api/gateway/start|stop?profile=` and poll `/api/status` for at most
   30 seconds. Wake-word RPC is not a gateway lifecycle substitute.
@@ -524,7 +536,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.3.md
 [0.6.2]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.2.md
 [0.6.1]: https://github.com/infiquetra/talaria/releases/tag/v0.6.1
 [0.6.0]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.0.md

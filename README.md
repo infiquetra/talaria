@@ -16,12 +16,14 @@ The name comes from the _talaria_, Hermes's winged sandals. The project is inten
 >
 > **Talaria is written in Python** ([ADR-0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)) with **Textual** as its terminal framework, which passed its validation gate on 2026-08-03 — see the [gate results](docs/analysis/2026-08-03-textual-validation-gate-results.md) and accepted [ADR-0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md). A small TypeScript tree remains under `src/`, reduced to the reference recorder the Python one is tested against; it is not the product and is described at the end of this page.
 >
-> **v0.6.2 candidate.** Talaria-owned settings, byte-preserving writes, and route-aware HTTP
+> **v0.6.2.** Talaria-owned settings, byte-preserving writes, and route-aware HTTP
 > redaction are documented in the [v0.6.2 release notes](docs/releases/v0.6.2.md). Host
 > administration stays read-only status.
 >
-> **v0.6.3 in progress.** Gated-origin policy, live gated REST/WS composition, and
-> product Start/Stop are documented in the [v0.6.3 release notes](docs/releases/v0.6.3.md).
+> **v0.6.3 residual-configuration release.** Live Stay/Save/Discard target switching,
+> one-shot reveal, gated-origin policy, live gated REST/WS composition, and product
+> Start/Stop are documented in the [v0.6.3 release notes](docs/releases/v0.6.3.md).
+> Installed remote login without live access stays blocked.
 
 ## Goals
 
