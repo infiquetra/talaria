@@ -274,6 +274,10 @@ Discard. Save keeps the old target selected until its re-read lands, then loads
 the new target. Discard loads the new target without a write. Stay keeps edits.
 Secret rows fetched from `/api/env` expose a Reveal control; plaintext is
 overlay-only, one-shot, and clears on close or a bounded timeout.
+Start and Stop render from observed `gateway_running`, confirm the named
+profile, then emit `StartGateway` / `StopGateway` — never wake `/api/rpc`.
+A gated 401 keeps pending edits and offers Re-authenticate through U1's
+native session; Talaria never invents a credential.
 
 Talaria-owned rows remain the existing theme and status branch — `theme.name`,
 `status.command`, `status.interval_seconds`, `status.segments` — with each row's effective

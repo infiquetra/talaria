@@ -21,6 +21,8 @@ from textual.widgets import Button, Input, Static
 from talaria.domain.settings import (
     ConfigTarget,
     FieldSaveResult,
+    GatewayLifecyclePrompt,
+    Reauthenticate,
     ResetConfirmView,
     RestartConfirmView,
     RestartPlan,
@@ -45,11 +47,15 @@ from talaria.domain.settings_commands import (
     RevealEnv,
     SaveConfig,
     SetModel,
+    StartGateway,
+    StopGateway,
     WakeWord,
 )
 from talaria.ui.config_view import ConfigViewResult
 from talaria.ui.literal import literal_text
 from talaria.ui.settings_overlays import (
+    GatewayLifecycleOverlay,
+    GatewayLifecycleResult,
     ModelPickerOverlay,
     ModelPickResult,
     ResetConfirmOverlay,
@@ -176,6 +182,7 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         self._reveal_key = ""
         self._restart_plan: RestartPlan | None = None
         self._switch_target: ConfigTarget | None = None
+        self._lifecycle_action = ""
         self._target_picker: Vertical | None = None
         self._picker_open = False
         self._settings_state = SettingsState(
@@ -280,10 +287,18 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
                 yield Button("Discard", id="settings-discard", compact=True)
                 if self._view.wake_state is not None:
                     yield Button("Wake word", id="wake-toggle", compact=True)
+                if self._view.gateway_running is not None:
+                    yield Button("Start", id="settings-start", compact=True)
+                    yield Button("Stop", id="settings-stop", compact=True)
+                if self._view.auth_state == "reauth":
+                    yield Button(
+                        "Re-authenticate", id="settings-reauth", compact=True
+                    )
 
     def on_mount(self) -> None:
         self._apply_search(self._view.search_text)
         self._apply_layout(self.size.width)
+        self._apply_lifecycle_controls()
         if self._target_picker is not None:
             self._target_picker.display = False
 
@@ -403,6 +418,42 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
             self._notice_line.update(literal_text(view.notice))
         if self._summary_line is not None:
             self._summary_line.update(literal_text(self._summary_text()))
+        self._apply_lifecycle_controls()
+
+    def _apply_lifecycle_controls(self) -> None:
+        running = self._view.gateway_running
+        try:
+            start = self.query_one("#settings-start", Button)
+            stop = self.query_one("#settings-stop", Button)
+        except Exception:
+            start = None
+            stop = None
+        if start is not None:
+            start.display = running is False
+        if stop is not None:
+            stop.display = running is True
+        try:
+            reauth = self.query_one("#settings-reauth", Button)
+            reauth.display = self._view.auth_state == "reauth"
+        except Exception:
+            pass
+
+    def mark_reauth(self, detail: str) -> None:
+        """Show re-authenticate state. Pending editor values stay put."""
+        notice = f"re-authenticate — edits retained ({detail})"
+        self.update_view(replace(self._view, auth_state="reauth", notice=notice))
+        if list(self.query("#settings-reauth")):
+            return
+        try:
+            footer = self.query_one("#settings-footer")
+        except Exception:
+            return
+        footer.mount(Button("Re-authenticate", id="settings-reauth", compact=True))
+
+    def apply_gateway_running(self, running: bool, *, notice: str) -> None:
+        self.update_view(
+            replace(self._view, gateway_running=running, notice=notice)
+        )
 
     def _row_widgets(self) -> list[Any]:
         widgets: list[Any] = []
@@ -472,6 +523,41 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
     def _wake(self) -> None:
         action = "stop" if self._view.wake_state == "on" else "start"
         self._emit(WakeWord(target=self._selected_target(), action=action))
+
+    @on(Button.Pressed, "#settings-start")
+    def _start_gateway(self) -> None:
+        self.open_gateway_lifecycle("start")
+
+    @on(Button.Pressed, "#settings-stop")
+    def _stop_gateway(self) -> None:
+        self.open_gateway_lifecycle("stop")
+
+    @on(Button.Pressed, "#settings-reauth")
+    def _reauth(self) -> None:
+        self._emit(Reauthenticate(target=self._selected_target()))
+
+    def open_gateway_lifecycle(self, action: str) -> None:
+        running = self._view.gateway_running is True
+        prompt = GatewayLifecyclePrompt(
+            target=self._selected_target(),
+            action=action,
+            running=running,
+        )
+        self._push_overlay(
+            GatewayLifecycleOverlay(prompt, on_result=self._on_lifecycle_result)
+        )
+        self._lifecycle_action = action
+
+    def _on_lifecycle_result(self, result: GatewayLifecycleResult | None) -> None:
+        self._restore_focus()
+        action = self._lifecycle_action
+        if result is None or not result.confirmed:
+            return
+        target = self._selected_target()
+        if action == "start":
+            self._emit(StartGateway(target=target))
+        elif action == "stop":
+            self._emit(StopGateway(target=target))
 
     def _remember_focus(self) -> None:
         focused = self.focused

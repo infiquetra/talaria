@@ -16,6 +16,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from talaria.domain.settings import (
+    GatewayLifecyclePrompt,
     ModelPickerView,
     ResetConfirmView,
     RestartConfirmView,
@@ -37,6 +38,8 @@ __all__ = (
     "RestartConfirmResult",
     "RevealSecretOverlay",
     "RevealSecretResult",
+    "GatewayLifecycleOverlay",
+    "GatewayLifecycleResult",
     "SwitchChoice",
     "TargetSwitchOverlay",
 )
@@ -68,6 +71,11 @@ class RevealSecretResult:
 class ModelPickResult:
     provider: str
     model: str
+
+
+@dataclass(frozen=True)
+class GatewayLifecycleResult:
+    confirmed: bool
 
 
 def _own_keyboard(event: events.Key) -> None:
@@ -457,3 +465,73 @@ class ModelPickerOverlay(ModalScreen[ModelPickResult | None]):
             index = min(self._selected, len(self._view.options) - 1)
             option = self._view.options[index]
             self._finish(ModelPickResult(provider=option.provider, model=option.model))
+
+
+class GatewayLifecycleOverlay(ModalScreen[GatewayLifecycleResult | None]):
+    """Confirm Start/Stop for one named profile. Cancellation does not send."""
+
+    BINDINGS = [("escape", "cancel_overlay", "Cancel")]
+
+    DEFAULT_CSS = """
+    GatewayLifecycleOverlay {
+        align: center middle;
+    }
+    GatewayLifecycleOverlay > Vertical {
+        width: auto;
+        min-width: 40;
+        max-width: 72;
+        height: auto;
+        border: round $accent;
+        background: $surface;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(
+        self,
+        view: GatewayLifecyclePrompt,
+        on_result: Callable[[GatewayLifecycleResult | None], None] | None = None,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._view = view
+        self._on_result = on_result
+
+    def compose(self) -> ComposeResult:
+        verb = "Start" if self._view.action == "start" else "Stop"
+        profile = self._view.target.profile_name
+        with Vertical():
+            yield Static(
+                literal_text(f"{verb} the gateway for profile {profile}"),
+                markup=False,
+                classes="settings--overlay-title",
+            )
+            yield Static(
+                literal_text(
+                    f"Observed gateway_running={self._view.running!s}. "
+                    "This calls the profile Start/Stop route, not wake."
+                ),
+                markup=False,
+            )
+            with Horizontal():
+                yield Button(verb, id="gateway-confirm", compact=True)
+                yield Button("Cancel", id="gateway-cancel", compact=True)
+
+    def on_key(self, event: events.Key) -> None:
+        _own_keyboard(event)
+
+    def _finish(self, result: GatewayLifecycleResult | None) -> None:
+        if self._on_result is not None:
+            self._on_result(result)
+        self.dismiss(result)
+
+    def action_cancel_overlay(self) -> None:
+        self._finish(None)
+
+    @on(Button.Pressed, "#gateway-confirm")
+    def _confirm(self) -> None:
+        self._finish(GatewayLifecycleResult(confirmed=True))
+
+    @on(Button.Pressed, "#gateway-cancel")
+    def _cancel(self) -> None:
+        self._finish(None)
